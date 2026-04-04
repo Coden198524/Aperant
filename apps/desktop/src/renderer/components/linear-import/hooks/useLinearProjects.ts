@@ -3,12 +3,15 @@
  */
 
 import { useState, useEffect } from 'react';
+import { useTranslation } from 'react-i18next';
+import { localizeLinearErrorMessage } from '../../../lib/linear-error-localizer';
 import type { LinearProject } from '../types';
 
 export function useLinearProjects(
   projectId: string,
   selectedTeamId: string
 ) {
+  const { t } = useTranslation('common');
   const [projects, setProjects] = useState<LinearProject[]>([]);
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,17 +34,27 @@ export function useLinearProjects(
         if (result.success && result.data) {
           setProjects(result.data);
         } else {
-          setError(result.error || 'Failed to load projects');
+          setError(
+            localizeLinearErrorMessage(t, result.error || 'Failed to load projects') ||
+              result.error ||
+              'Failed to load projects'
+          );
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        setError(
+          localizeLinearErrorMessage(
+            t,
+            err instanceof Error ? err.message : 'Unknown error'
+          ) ||
+            (err instanceof Error ? err.message : 'Unknown error')
+        );
       } finally {
         setIsLoadingProjects(false);
       }
     };
 
     loadProjects();
-  }, [projectId, selectedTeamId]);
+  }, [projectId, selectedTeamId, t]);
 
   return { projects, isLoadingProjects, error, setError };
 }

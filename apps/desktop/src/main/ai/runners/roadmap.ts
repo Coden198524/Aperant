@@ -31,6 +31,18 @@ const MAX_RETRIES = 3;
 /** Maximum agentic steps per phase */
 const MAX_STEPS_PER_PHASE = 30;
 
+function isResponsesApiModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  return (
+    modelId.startsWith('gpt-5') ||
+    modelId.includes('codex') ||
+    modelId === 'o3' ||
+    modelId.startsWith('o3-') ||
+    modelId === 'o4-mini' ||
+    modelId.startsWith('o4-')
+  );
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -116,6 +128,7 @@ async function runDiscoveryPhase(
   // Detect Codex models — they require instructions via providerOptions, not system
   const discoveryModelId = typeof client.model === 'string' ? client.model : client.model.modelId;
   const isCodexDiscovery = discoveryModelId?.includes('codex') ?? false;
+  const isResponsesDiscovery = isResponsesApiModel(discoveryModelId);
 
   // Load the full prompt file with JSON schema; fall back to inline prompt
   const loadedDiscoveryPrompt = tryLoadPrompt('roadmap_discovery');
@@ -152,11 +165,11 @@ Do NOT ask questions. Make educated inferences and create the file.`;
         tools: client.tools,
         stopWhen: stepCountIs(client.maxSteps),
         abortSignal,
-        ...(isCodexDiscovery ? {
+        ...(isResponsesDiscovery ? {
           providerOptions: {
             openai: {
-              instructions: prompt,
-              store: false,
+              ...(isCodexDiscovery ? { instructions: prompt } : {}),
+              store: true,
             },
           },
         } : {}),
@@ -238,6 +251,7 @@ async function runFeaturesPhase(
   // Detect Codex models — they require instructions via providerOptions, not system
   const featuresModelId = typeof client.model === 'string' ? client.model : client.model.modelId;
   const isCodexFeatures = featuresModelId?.includes('codex') ?? false;
+  const isResponsesFeatures = isResponsesApiModel(featuresModelId);
 
   // Load the full prompt file with JSON schema; fall back to inline prompt
   const loadedFeaturesPrompt = tryLoadPrompt('roadmap_features');
@@ -284,11 +298,11 @@ The JSON must contain: vision, target_audience (object with "primary" key), phas
         tools: client.tools,
         stopWhen: stepCountIs(client.maxSteps),
         abortSignal,
-        ...(isCodexFeatures ? {
+        ...(isResponsesFeatures ? {
           providerOptions: {
             openai: {
-              instructions: prompt,
-              store: false,
+              ...(isCodexFeatures ? { instructions: prompt } : {}),
+              store: true,
             },
           },
         } : {}),

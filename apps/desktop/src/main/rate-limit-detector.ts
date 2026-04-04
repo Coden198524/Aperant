@@ -100,7 +100,13 @@ const BILLING_FAILURE_PATTERNS = [
   /balance\s*(is\s*)?(zero|empty|insufficient)/i,
   // Add funds/credits messages
   /please\s*(add|purchase)\s*(more\s*)?(credits?|funds)/i,
-  /top\s*up\s*(your\s*)?(account|credits|balance)/i
+  /top\s*up\s*(your\s*)?(account|credits|balance)/i,
+  // OpenAI distributor errors (no available channel = quota/billing issue)
+  /distributor\.no_available_channel/i,
+  /no_available_channel/i,
+  // Endpoint not supported (wrong API configuration)
+  /endpoint\s+not\s+supported/i,
+  /codex\s+channel/i
 ];
 
 /**

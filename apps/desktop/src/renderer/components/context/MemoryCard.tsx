@@ -118,11 +118,15 @@ function ListItem({
 }
 
 function ConfidenceBar({ confidence }: { confidence: number }) {
+  const { t } = useTranslation('common');
   const pct = Math.round(confidence * 100);
   const color =
     pct >= 80 ? 'bg-green-500' : pct >= 50 ? 'bg-amber-500' : 'bg-red-500';
   return (
-    <div className="flex items-center gap-1.5" title={`Confidence: ${pct}%`}>
+    <div
+      className="flex items-center gap-1.5"
+      title={`${t('memory.badges.confidence')}: ${pct}%`}
+    >
       <div className="h-1.5 w-16 bg-muted rounded-full overflow-hidden">
         <div className={cn('h-full rounded-full', color)} style={{ width: `${pct}%` }} />
       </div>
@@ -235,9 +239,9 @@ export function MemoryCard({ memory, onVerify, onPin, onDeprecate }: MemoryCardP
 
   const Icon = memoryTypeIcons[memory.type] || memoryTypeIcons.module_insight;
   const typeColor = memoryTypeColors[memory.type] || '';
-  const typeLabel =
-    memoryTypeLabels[memory.type] ||
-    t(`memory.types.${memory.type}`, { defaultValue: memory.type.replace(/_/g, ' ') });
+  const typeLabel = t(`memory.types.${memory.type}`, {
+    defaultValue: memoryTypeLabels[memory.type] || memory.type.replace(/_/g, ' ')
+  });
 
   const sessionLabel = parsed?.session_number ? `Session #${parsed.session_number}` : null;
   const specId = parsed?.spec_id;
@@ -662,7 +666,9 @@ export function MemoryCard({ memory, onVerify, onPin, onDeprecate }: MemoryCardP
 
         {/* If no expandable content, show content inline for simple text-only memories */}
         {!hasContent && !memory.content && expanded && (
-          <p className="mt-4 text-xs text-muted-foreground italic">No additional details available.</p>
+          <p className="mt-4 text-xs text-muted-foreground italic">
+            {t('memory.noAdditionalDetails', { defaultValue: 'No additional details available.' })}
+          </p>
         )}
       </CardContent>
     </Card>

@@ -161,7 +161,10 @@ describe('WorkerBridge', () => {
       const msg: WorkerMessage = { type: 'execution-progress', taskId: 'task-123', data: progressData as never, projectId: 'proj-456' };
       getWorker().emit('message', msg);
 
-      expect(handler).toHaveBeenCalledWith('task-123', progressData, 'proj-456');
+      expect(handler).toHaveBeenCalledWith('task-123', {
+        ...progressData,
+        sequenceNumber: 1,
+      }, 'proj-456');
     });
 
     it('feeds stream-events to progress tracker and emits progress', () => {
@@ -177,6 +180,29 @@ describe('WorkerBridge', () => {
       expect(handler).toHaveBeenCalled();
     });
 
+    it('assigns increasing sequence numbers across progress sources', () => {
+      const handler = vi.fn();
+      bridge.on('execution-progress', handler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'execution-progress',
+        taskId: 'task-123',
+        data: { phase: 'planning', phaseProgress: 10, overallProgress: 5 },
+        projectId: 'proj-456'
+      } satisfies WorkerMessage);
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: { type: 'tool-call', toolName: 'Edit', toolCallId: 'call-1', args: {} },
+        projectId: 'proj-456'
+      } satisfies WorkerMessage);
+
+      expect(handler.mock.calls[0]?.[1]?.sequenceNumber).toBe(1);
+      expect(handler.mock.calls[1]?.[1]?.sequenceNumber).toBe(2);
+    });
+
     it('emits log for text-delta stream events', () => {
       const handler = vi.fn();
       bridge.on('log', handler);
@@ -187,6 +213,21 @@ describe('WorkerBridge', () => {
       getWorker().emit('message', msg);
 
       expect(handler).toHaveBeenCalledWith('task-123', 'some output', undefined);
+    });
+
+    it('emits task-token-usage for usage-update stream events', () => {
+      const handler = vi.fn();
+      bridge.on('task-token-usage', handler);
+      bridge.spawn(createConfig());
+
+      const streamEvent = {
+        type: 'usage-update' as const,
+        usage: { promptTokens: 120, completionTokens: 30, totalTokens: 150 }
+      };
+      const msg: WorkerMessage = { type: 'stream-event', taskId: 'task-123', data: streamEvent as never, projectId: 'proj-456' };
+      getWorker().emit('message', msg);
+
+      expect(handler).toHaveBeenCalledWith('task-123', streamEvent.usage, 'proj-456');
     });
   });
 
@@ -256,6 +297,19 @@ describe('WorkerBridge', () => {
         expect.stringContaining('Session complete'),
         undefined,
       );
+    });
+
+    it('emits final task-token-usage from session result', () => {
+      const usageHandler = vi.fn();
+      bridge.on('task-token-usage', usageHandler);
+      bridge.spawn(createConfig());
+
+      const result = createSessionResult({
+        usage: { promptTokens: 250, completionTokens: 80, totalTokens: 330 }
+      });
+      getWorker().emit('message', { type: 'result', taskId: 'task-123', data: result, projectId: 'proj-456' });
+
+      expect(usageHandler).toHaveBeenCalledWith('task-123', result.usage, 'proj-456');
     });
   });
 

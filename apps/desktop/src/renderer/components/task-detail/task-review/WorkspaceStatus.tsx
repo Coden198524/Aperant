@@ -114,6 +114,8 @@ export function WorkspaceStatus({
   const { settings } = useSettingsStore();
   const preferredIDE = settings.preferredIDE || 'vscode';
   const preferredTerminal = settings.preferredTerminal || 'system';
+  const preferredIDELabel = IDE_LABELS[preferredIDE] || 'IDE';
+  const preferredTerminalLabel = TERMINAL_LABELS[preferredTerminal] || 'Terminal';
 
   // Merge progress state
   const [mergeProgress, setMergeProgress] = useState<MergeProgress | null>(null);
@@ -124,7 +126,7 @@ export function WorkspaceStatus({
   const minDisplayTimerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const ipcCleanupRef = useRef<(() => void) | null>(null);
 
-  // Reset state when isMerging transitions from false ‚Üí true
+  // Reset state when isMerging transitions from false ‚Ü?true
   useEffect(() => {
     if (isMerging && !prevIsMergingRef.current) {
       setMergeProgress(null);
@@ -287,7 +289,9 @@ export function WorkspaceStatus({
         <div className="flex items-center justify-between mb-3">
           <h3 className="font-medium text-sm text-foreground flex items-center gap-2">
             <GitBranch className="h-4 w-4 text-purple-400" />
-            Build Ready for Review
+            {t('workspaceStatus.reviewReadyTitle', {
+              defaultValue: 'Build Ready for Review'
+            })}
           </h3>
           <Button
             variant="ghost"
@@ -296,7 +300,9 @@ export function WorkspaceStatus({
             className="h-7 px-2 text-xs"
           >
             <Eye className="h-3.5 w-3.5 mr-1" />
-            View
+            {t('workspaceStatus.view', {
+              defaultValue: 'View'
+            })}
           </Button>
         </div>
 
@@ -308,7 +314,12 @@ export function WorkspaceStatus({
           </span>
           <span className="flex items-center gap-1.5 text-muted-foreground">
             <GitCommit className="h-3.5 w-3.5" />
-            <span className="font-medium text-foreground">{worktreeStatus.commitCount || 0}</span> commits
+            <span className="font-medium text-foreground">{worktreeStatus.commitCount || 0}</span>{' '}
+            {t('workspaceStatus.commitsLabel', {
+              count: worktreeStatus.commitCount || 0,
+              defaultValue:
+                (worktreeStatus.commitCount || 0) === 1 ? 'commit' : 'commits'
+            })}
           </span>
           <span className="flex items-center gap-1 text-success">
             <Plus className="h-3.5 w-3.5" />
@@ -320,11 +331,11 @@ export function WorkspaceStatus({
           </span>
         </div>
 
-        {/* Branch info: spec branch ‚Üí user's current branch (merge target) */}
+        {/* Branch info: spec branch ‚Ü?user's current branch (merge target) */}
         {worktreeStatus.branch && (
           <div className="mt-2 text-xs text-muted-foreground">
             <code className="bg-background/80 px-1.5 py-0.5 rounded text-[11px]">{worktreeStatus.branch}</code>
-            <span className="mx-1.5">‚Üí</span>
+            <span className="mx-1.5">°˙</span>
             <code className="bg-background/80 px-1.5 py-0.5 rounded text-[11px]">{worktreeStatus.currentProjectBranch || worktreeStatus.baseBranch || 'main'}</code>
           </div>
         )}
@@ -332,7 +343,10 @@ export function WorkspaceStatus({
         {/* Worktree path display */}
         {worktreeStatus.worktreePath && (
           <div className="mt-2 text-xs text-muted-foreground font-mono">
-            üìÅ {worktreeStatus.worktreePath}
+            {t('workspaceStatus.pathLabel', {
+              defaultValue: 'Path:'
+            })}{' '}
+            {worktreeStatus.worktreePath}
           </div>
         )}
 
@@ -346,7 +360,10 @@ export function WorkspaceStatus({
               className="h-7 px-2 text-xs"
             >
               <Code className="h-3.5 w-3.5 mr-1" />
-              Open in {IDE_LABELS[preferredIDE]}
+              {t('workspaceStatus.openInIDE', {
+                name: preferredIDELabel,
+                defaultValue: 'Open in {{name}}'
+              })}
             </Button>
             <Button
               variant="outline"
@@ -355,7 +372,10 @@ export function WorkspaceStatus({
               className="h-7 px-2 text-xs"
             >
               <Terminal className="h-3.5 w-3.5 mr-1" />
-              Open in {TERMINAL_LABELS[preferredTerminal]}
+              {t('workspaceStatus.openInTerminal', {
+                name: preferredTerminalLabel,
+                defaultValue: 'Open in {{name}}'
+              })}
             </Button>
           </div>
         )}
@@ -377,10 +397,18 @@ export function WorkspaceStatus({
             <AlertTriangle className="h-4 w-4 text-warning mt-0.5 flex-shrink-0" />
             <div className="flex-1 min-w-0">
               <p className="text-sm font-medium text-warning">
-                {uncommittedCount} uncommitted {uncommittedCount === 1 ? 'change' : 'changes'} in main project
+                {t('workspaceStatus.uncommittedChangesWarning', {
+                  count: uncommittedCount,
+                  defaultValue:
+                    uncommittedCount === 1
+                      ? '{{count}} uncommitted change in main project'
+                      : '{{count}} uncommitted changes in main project'
+                })}
               </p>
               <p className="text-xs text-muted-foreground mt-0.5">
-                Commit or stash them in your terminal before staging to avoid conflicts.
+                {t('workspaceStatus.uncommittedChangesHint', {
+                  defaultValue: 'Commit or stash them in your terminal before staging to avoid conflicts.'
+                })}
               </p>
             </div>
           </div>
@@ -390,7 +418,9 @@ export function WorkspaceStatus({
         {isLoadingPreview && !mergePreview && (
           <div className="flex items-center gap-2 text-muted-foreground text-sm py-2">
             <Loader2 className="h-4 w-4 animate-spin" />
-            Checking for conflicts...
+            {t('workspaceStatus.checkingConflicts', {
+              defaultValue: 'Checking for conflicts...'
+            })}
           </div>
         )}
 
@@ -461,7 +491,12 @@ export function WorkspaceStatus({
                       {hasPathMappedMerges ? t('taskReview:merge.status.filesRenamed') : t('taskReview:merge.status.branchBehind')}
                     </span>
                     <span className="text-xs text-muted-foreground ml-2">
-                      {t('taskReview:merge.status.aiWillResolve')} ({hasPathMappedMerges ? `${pathMappedAIMergeCount} ${t('taskReview:merge.status.files')}` : `${commitsBehind} commits`})
+                      {t('taskReview:merge.status.aiWillResolve')} ({hasPathMappedMerges
+                        ? `${pathMappedAIMergeCount} ${t('taskReview:merge.status.files')}`
+                        : `${commitsBehind} ${t('workspaceStatus.commitsLabel', {
+                            count: commitsBehind,
+                            defaultValue: commitsBehind === 1 ? 'commit' : 'commits'
+                          })}`})
                     </span>
                   </div>
                 </>
@@ -540,7 +575,7 @@ export function WorkspaceStatus({
         )}
       </div>
 
-      {/* Merge Progress Overlay ‚Äî shown during merge and for minimum display time after */}
+      {/* Merge Progress Overlay ‚Ä?shown during merge and for minimum display time after */}
       {(isMerging || showOverlay) && (
         <MergeProgressOverlay mergeProgress={mergeProgress} logEntries={logEntries} />
       )}
@@ -573,7 +608,9 @@ export function WorkspaceStatus({
               className="flex-1"
             >
               <GitMerge className="mr-2 h-4 w-4" />
-              Check for Conflicts
+              {t('workspaceStatus.checkForConflicts', {
+                defaultValue: 'Check for Conflicts'
+              })}
             </Button>
           )}
 
@@ -585,7 +622,9 @@ export function WorkspaceStatus({
               className="flex-1"
             >
               <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-              Checking for conflicts...
+              {t('workspaceStatus.checkingConflicts', {
+                defaultValue: 'Checking for conflicts...'
+              })}
             </Button>
           )}
 
@@ -741,3 +780,6 @@ export function WorkspaceStatus({
     </div>
   );
 }
+
+
+

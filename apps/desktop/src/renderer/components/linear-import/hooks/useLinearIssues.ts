@@ -3,6 +3,8 @@
  */
 
 import { useState, useEffect, useRef } from 'react';
+import { useTranslation } from 'react-i18next';
+import { localizeLinearErrorMessage } from '../../../lib/linear-error-localizer';
 import type { LinearIssue } from '../types';
 
 export function useLinearIssues(
@@ -11,6 +13,7 @@ export function useLinearIssues(
   selectedProjectId: string,
   onIssuesChange?: () => void
 ) {
+  const { t } = useTranslation('common');
   const [issues, setIssues] = useState<LinearIssue[]>([]);
   const [isLoadingIssues, setIsLoadingIssues] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -39,17 +42,27 @@ export function useLinearIssues(
           setIssues(result.data);
           onIssuesChangeRef.current?.();
         } else {
-          setError(result.error || 'Failed to load issues');
+          setError(
+            localizeLinearErrorMessage(t, result.error || 'Failed to load issues') ||
+              result.error ||
+              'Failed to load issues'
+          );
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Unknown error');
+        setError(
+          localizeLinearErrorMessage(
+            t,
+            err instanceof Error ? err.message : 'Unknown error'
+          ) ||
+            (err instanceof Error ? err.message : 'Unknown error')
+        );
       } finally {
         setIsLoadingIssues(false);
       }
     };
 
     loadIssues();
-  }, [projectId, selectedTeamId, selectedProjectId]);
+  }, [projectId, selectedTeamId, selectedProjectId, t]);
 
   return { issues, isLoadingIssues, error, setError };
 }

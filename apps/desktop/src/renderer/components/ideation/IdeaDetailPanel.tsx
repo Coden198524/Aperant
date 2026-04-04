@@ -3,7 +3,6 @@ import { ChevronRight, ExternalLink, Lightbulb, Loader2, Play, X } from 'lucide-
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import {
-  IDEATION_TYPE_LABELS,
   IDEATION_TYPE_COLORS,
   IDEATION_STATUS_COLORS
 } from '../../../shared/constants';
@@ -23,6 +22,7 @@ import { DocumentationGapDetails } from './details/DocumentationGapDetails';
 import { SecurityHardeningDetails } from './details/SecurityHardeningDetails';
 import { PerformanceOptimizationDetails } from './details/PerformanceOptimizationDetails';
 import { CodeQualityDetails } from './details/CodeQualityDetails';
+import { getIdeationStatusLabel, getIdeationTypeLabel } from '../../lib/i18n-labels';
 
 interface IdeaDetailPanelProps {
   idea: Idea;
@@ -47,11 +47,11 @@ export function IdeaDetailPanel({ idea, onClose, onConvert, onGoToTask, onDismis
             <div className="flex items-center gap-2 mb-2">
               <Badge variant="outline" className={IDEATION_TYPE_COLORS[idea.type]}>
                 <TypeIcon type={idea.type} />
-                <span className="ml-1">{IDEATION_TYPE_LABELS[idea.type]}</span>
+                <span className="ml-1">{getIdeationTypeLabel(t, idea.type)}</span>
               </Badge>
               {idea.status !== 'draft' && (
                 <Badge variant="outline" className={IDEATION_STATUS_COLORS[idea.status]}>
-                  {idea.status}
+                  {getIdeationStatusLabel(t, idea.status)}
                 </Badge>
               )}
             </div>

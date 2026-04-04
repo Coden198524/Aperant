@@ -126,6 +126,23 @@ export function OllamaModelSelector({
   const completeDownload = useDownloadStore((state) => state.completeDownload);
   const failDownload = useDownloadStore((state) => state.failDownload);
 
+  const getModelDescription = (model: OllamaModel) => {
+    switch (model.name) {
+      case 'qwen3-embedding:4b':
+        return t('ollama.selector.descriptions.qwen3Embedding4b', { defaultValue: model.description });
+      case 'qwen3-embedding:8b':
+        return t('ollama.selector.descriptions.qwen3Embedding8b', { defaultValue: model.description });
+      case 'qwen3-embedding:0.6b':
+        return t('ollama.selector.descriptions.qwen3Embedding06b', { defaultValue: model.description });
+      case 'embeddinggemma':
+        return t('ollama.selector.descriptions.embeddinggemma', { defaultValue: model.description });
+      case 'nomic-embed-text':
+        return t('ollama.selector.descriptions.nomicEmbedText', { defaultValue: model.description });
+      default:
+        return model.description;
+    }
+  };
+
   /**
    * Checks if Ollama is installed, running, and fetches installed models.
    * Updates component state based on Ollama availability.
@@ -210,7 +227,7 @@ export function OllamaModelSelector({
     } catch (err) {
       if (!abortSignal?.aborted) {
         console.error('Failed to check Ollama models:', err);
-        setError('Failed to check Ollama models');
+        setError(t('ollama.selector.errors.checkFailed'));
       }
     } finally {
       if (!abortSignal?.aborted) {
@@ -239,10 +256,10 @@ export function OllamaModelSelector({
           checkInstalledModels();
         }, 5000);
       } else {
-        setError(result?.error || 'Failed to start Ollama installation');
+        setError(result?.error || t('ollama.selector.errors.installFailed'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to install Ollama');
+      setError(err instanceof Error ? err.message : t('ollama.selector.errors.installFailed'));
     } finally {
       setIsInstalling(false);
     }
@@ -281,12 +298,12 @@ export function OllamaModelSelector({
          // Refresh the model list
          await checkInstalledModels();
        } else {
-         const errorMsg = result?.error || `Failed to download ${modelName}`;
+         const errorMsg = result?.error || `${t('ollama.selector.errors.downloadFailed')}: ${modelName}`;
          failDownload(modelName, errorMsg);
          setError(errorMsg);
        }
      } catch (err) {
-       const errorMsg = err instanceof Error ? err.message : 'Download failed';
+       const errorMsg = err instanceof Error ? err.message : t('ollama.selector.errors.downloadFailed');
        failDownload(modelName, errorMsg);
        setError(errorMsg);
      }
@@ -315,7 +332,7 @@ export function OllamaModelSelector({
     return (
       <div className={cn('flex items-center justify-center py-8', className)}>
         <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-        <span className="ml-2 text-sm text-muted-foreground">Checking Ollama models...</span>
+        <span className="ml-2 text-sm text-muted-foreground">{t('ollama.selector.checkingModels')}</span>
       </div>
     );
   }
@@ -484,26 +501,26 @@ export function OllamaModelSelector({
                        </span>
                        {model.badge === 'recommended' && (
                          <span className="inline-flex items-center rounded-full bg-primary/15 px-2 py-0.5 text-xs font-medium text-primary">
-                           Recommended
+                           {t('ollama.selector.badges.recommended')}
                          </span>
                        )}
                        {model.badge === 'quality' && (
                          <span className="inline-flex items-center rounded-full bg-violet-500/15 px-2 py-0.5 text-xs font-medium text-violet-600 dark:text-violet-400">
-                           Highest Quality
+                           {t('ollama.selector.badges.quality')}
                          </span>
                        )}
                        {model.badge === 'fast' && (
                          <span className="inline-flex items-center rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600 dark:text-amber-400">
-                           Fastest
+                           {t('ollama.selector.badges.fast')}
                          </span>
                        )}
                        {model.installed && (
                          <span className="inline-flex items-center rounded-full bg-success/10 px-2 py-0.5 text-xs text-success">
-                           Installed
+                           {t('ollama.selector.badges.installed')}
                          </span>
                        )}
                      </div>
-                     <p className="text-xs text-muted-foreground">{model.description}</p>
+                     <p className="text-xs text-muted-foreground">{getModelDescription(model)}</p>
                    </div>
                  </div>
 
@@ -522,12 +539,12 @@ export function OllamaModelSelector({
                      {isCurrentlyDownloading ? (
                        <>
                          <Loader2 className="h-3.5 w-3.5 animate-spin mr-1.5" />
-                         Downloading...
+                         {t('ollama.selector.actions.downloading')}
                        </>
                      ) : (
                        <>
                          <Download className="h-3.5 w-3.5 mr-1.5" />
-                         Download
+                         {t('ollama.selector.actions.download')}
                          {model.size_estimate && (
                            <span className="ml-1 text-muted-foreground">
                              ({model.size_estimate})
@@ -557,7 +574,7 @@ export function OllamaModelSelector({
                    {/* Progress info: percentage, speed, time remaining */}
                    <div className="flex items-center justify-between text-xs text-muted-foreground">
                      <span className="font-medium text-foreground">
-                       {progress && progress.percentage > 0 ? `${Math.round(progress.percentage)}%` : 'Starting download...'}
+                       {progress && progress.percentage > 0 ? `${Math.round(progress.percentage)}%` : t('ollama.selector.actions.startingDownload')}
                      </span>
                      <div className="flex items-center gap-2">
                        {progress?.speed && <span>{progress.speed}</span>}
@@ -572,7 +589,7 @@ export function OllamaModelSelector({
        </div>
 
       <p className="text-xs text-muted-foreground">
-        Select an installed model for semantic search. Memory works with keyword search even without embeddings.
+        {t('ollama.selector.helpText')}
       </p>
     </div>
   );

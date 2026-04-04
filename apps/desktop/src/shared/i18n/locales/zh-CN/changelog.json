@@ -1,0 +1,255 @@
+{
+  "empty": {
+    "noProjectTitle": "未选择项目",
+    "noProjectDescription": "请先在侧边栏选择一个项目，再生成更新日志。"
+  },
+  "header": {
+    "title": "更新日志生成器",
+    "refresh": "刷新",
+    "labels": {
+      "select": "选择",
+      "generate": "生成",
+      "release": "发布"
+    },
+    "steps": {
+      "1": "步骤 1：选择要包含的已完成任务",
+      "2": "步骤 2：配置并生成更新日志",
+      "3": "步骤 3：发布并归档任务"
+    }
+  },
+  "filters": {
+    "source": "更新日志来源",
+    "gitHistoryOptions": "Git 历史选项",
+    "historyType": "历史类型",
+    "numberOfCommits": "提交数量",
+    "sinceDate": "起始日期",
+    "fromTag": "起始标签",
+    "toTagOptional": "结束标签（可选）",
+    "selectTag": "选择标签...",
+    "headLatest": "HEAD（最新）",
+    "lastVersion": "上一版本",
+    "selectVersion": "选择版本...",
+    "allCommitsSinceVersion": "将包含此版本之后的所有提交",
+    "includeMergeCommits": "包含合并提交",
+    "loading": "加载中...",
+    "loadCommits": "加载提交",
+    "branchComparison": "分支对比",
+    "baseBranch": "基准分支",
+    "selectBaseBranch": "选择基准分支...",
+    "defaultBadge": "默认",
+    "baseBranchHint": "将要合并进入的分支",
+    "compareBranch": "对比分支",
+    "selectCompareBranch": "选择对比分支...",
+    "currentBadge": "当前",
+    "compareBranchHint": "包含你的修改的分支",
+    "branchesMustBeDifferent": "两个分支必须不同"
+  },
+  "sourceModes": {
+    "tasks": {
+      "label": "已完成任务",
+      "description": "根据已完成的规格任务生成"
+    },
+    "git-history": {
+      "label": "Git 历史",
+      "description": "根据最近提交或标签区间生成"
+    },
+    "branch-diff": {
+      "label": "分支对比",
+      "description": "根据两个分支之间的提交生成"
+    }
+  },
+  "historyTypes": {
+    "since-version": "自某版本起",
+    "recent": "最近提交",
+    "since-date": "自某日期起",
+    "tag-range": "标签区间"
+  },
+  "list": {
+    "tasksSelected": "已选择 {{selected}} / {{total}} 个任务",
+    "selectAll": "全选",
+    "clear": "清除",
+    "noCompletedTasks": "没有已完成任务",
+    "noCompletedTasksDescription": "请先在看板中完成任务并标记为“已完成”，然后才能将其包含到更新日志中。",
+    "commitsFound": "找到 {{count}} 个提交",
+    "commitsFound_plural": "找到 {{count}} 个提交",
+    "loadingCommits": "正在加载提交...",
+    "noCommitsFound": "未找到提交",
+    "noGitHistoryDescription": "请配置历史选项并点击“加载提交”进行预览。",
+    "noBranchDiffDescription": "请选择两个分支并点击“加载提交”查看变更。",
+    "continue": "继续",
+    "summary": {
+      "task": "{{count}} 个任务",
+      "task_plural": "{{count}} 个任务",
+      "commit": "{{count}} 个提交",
+      "commit_plural": "{{count}} 个提交",
+      "item": "{{count}} 项",
+      "item_plural": "{{count}} 项"
+    }
+  },
+  "config": {
+    "backToSelection": "返回选择",
+    "including": "包含 {{count}} 个{{label}}",
+    "releaseInfo": "发布信息",
+    "version": "版本",
+    "date": "日期",
+    "versionPlaceholder": "1.0.0",
+    "previous": "上一版本：{{version}}",
+    "outputStyle": "输出样式",
+    "format": "格式",
+    "audience": "受众",
+    "emojis": "表情",
+    "advancedOptions": "高级选项",
+    "customInstructions": "自定义说明",
+    "customInstructionsPlaceholder": "为 AI 添加任何特殊说明...",
+    "customInstructionsHint": "可选。可引导 AI 的语气、需要包含的细节等。",
+    "generating": "生成中...",
+    "generate": "生成更新日志"
+  },
+  "formatOptions": {
+    "keep-a-changelog": {
+      "label": "Keep a Changelog",
+      "description": "带 Added/Changed/Fixed/Removed 分节的结构化格式"
+    },
+    "simple-list": {
+      "label": "简洁列表",
+      "description": "按分类组织的清晰项目符号列表"
+    },
+    "github-release": {
+      "label": "GitHub 发布说明",
+      "description": "GitHub 风格的发布说明"
+    }
+  },
+  "audienceOptions": {
+    "technical": {
+      "label": "技术向",
+      "description": "面向开发者的详细技术变更说明"
+    },
+    "user-facing": {
+      "label": "用户向",
+      "description": "面向最终用户的清晰、非技术化描述"
+    },
+    "marketing": {
+      "label": "营销向",
+      "description": "强调价值与收益的文案"
+    }
+  },
+  "emojiOptions": {
+    "none": {
+      "label": "无",
+      "description": "不使用表情"
+    },
+    "little": {
+      "label": "仅标题",
+      "description": "仅在章节标题中使用表情"
+    },
+    "medium": {
+      "label": "标题 + 重点",
+      "description": "在标题和重点条目中使用表情"
+    },
+    "high": {
+      "label": "全部",
+      "description": "标题和每一行都使用表情"
+    }
+  },
+  "progress": {
+    "stages": {
+      "loading_specs": "正在加载规格文件...",
+      "loading_commits": "正在加载提交...",
+      "generating": "正在生成更新日志...",
+      "formatting": "正在格式化输出...",
+      "complete": "已完成",
+      "error": "错误"
+    }
+  },
+  "preview": {
+    "title": "预览",
+    "markdown": "Markdown",
+    "preview": "预览",
+    "copied": "已复制！",
+    "copy": "复制",
+    "copyTooltip": "复制到剪贴板",
+    "saved": "已保存！",
+    "save": "保存到 CHANGELOG.md",
+    "saveTooltip": "插入到项目根目录的 CHANGELOG.md 开头",
+    "dropImages": "将图片拖到这里以添加到更新日志",
+    "imagePasteHint": "可在说明中粘贴图片，并将其保存到更新日志中",
+    "placeholder": "生成的更新日志将显示在这里...",
+    "emptyHint": "点击“生成更新日志”以创建发布说明。",
+    "loadingImage": "正在加载图片...",
+    "imageNotFound": "未找到图片",
+    "missingProjectPath": "无法加载本地图片：缺少项目路径",
+    "loadImageFailed": "加载图片失败"
+  },
+  "success": {
+    "title": "更新日志已保存！",
+    "description": "版本 {{tag}} 已添加到 CHANGELOG.md",
+    "done": "完成"
+  },
+  "githubRelease": {
+    "title": "创建 GitHub 发布",
+    "success": "发布创建成功！",
+    "view": "在 GitHub 上查看发布",
+    "description": "在 GitHub 上创建新的 {{tag}} 发布，并将更新日志作为发布说明。",
+    "creating": "正在创建发布...",
+    "create": "创建发布 {{tag}}",
+    "failed": "创建发布失败"
+  },
+  "archive": {
+    "title": "归档已完成任务",
+    "success": "已归档 {{count}} 个任务！",
+    "success_plural": "已归档 {{count}} 个任务！",
+    "description": "归档 {{count}} 个任务以清理看板。归档后的任务可通过“显示已归档”开关查看。",
+    "description_plural": "归档 {{count}} 个任务以清理看板。归档后的任务可通过“显示已归档”开关查看。",
+    "archiving": "归档中...",
+    "action": "归档 {{count}} 个任务",
+    "action_plural": "归档 {{count}} 个任务",
+    "failed": "归档任务失败"
+  },
+  "entry": {
+    "hasSpecs": "含规格说明",
+    "filesChanged": "变更了 {{count}} 个文件",
+    "filesChanged_plural": "变更了 {{count}} 个文件"
+  },
+  "summary": {
+    "separator": "、",
+    "more": "另有 {{count}} 项",
+    "labels": {
+      "task": "任务",
+      "task_plural": "任务",
+      "commit": "提交",
+      "commit_plural": "提交",
+      "item": "项",
+      "item_plural": "项"
+    }
+  },
+  "versionBump": {
+    "breaking": "建议升级主版本（检测到破坏性变更）",
+    "feature": "建议升级次版本（检测到新功能）",
+    "default": "建议升级补丁版本（修复/改进）"
+  },
+  "store": {
+    "generatedSuccessfully": "更新日志生成成功！",
+    "generationFailed": "生成失败",
+    "loadDataFailed": "加载更新日志数据失败",
+    "loadTaskSpecsFailed": "加载任务规格失败",
+    "loadGitDataFailed": "加载 Git 数据失败",
+    "loadCommitsFailed": "加载提交失败",
+    "loadCommitsPreviewFailed": "加载提交预览失败",
+    "selectAtLeastOneTask": "请至少选择一个要包含在更新日志中的任务",
+    "noCommitsForOptions": "当前选项下未找到提交，请调整筛选条件。",
+    "selectBothBranches": "请选择基准分支和对比分支",
+    "branchesDifferent": "基准分支和对比分支必须不同",
+    "noCommitsBetweenBranches": "所选分支之间未找到提交",
+    "loadingTaskSpecifications": "正在加载任务规格...",
+    "preparingCommitData": "正在准备提交数据...",
+    "invalidSourceMode": "无效的来源模式：{{mode}}",
+    "startGenerationFailed": "启动更新日志生成失败",
+    "invalidImageType": "图片类型无效，允许的类型：",
+    "saveImageFailed": "保存图片失败",
+    "processImageFailed": "处理图片失败",
+    "noChangelogToSave": "没有可保存的更新日志",
+    "saveFailed": "保存更新日志失败",
+    "noChangelogToCopy": "没有可复制的更新日志",
+    "copyFailed": "复制到剪贴板失败"
+  }
+}

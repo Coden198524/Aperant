@@ -10,7 +10,7 @@ import type { ToolContext } from '../../types';
 
 vi.mock('node:fs');
 vi.mock('../../../security/path-containment', () => ({
-  assertPathContained: vi.fn((_filePath: string, _projectDir: string) => ({
+  assertPathContained: vi.fn((_filePath: string, _projectDir: string | string[]) => ({
     contained: true,
     resolvedPath: _filePath,
   })),
@@ -76,7 +76,7 @@ function setupGlobMatches(absolutePaths: string[], mtimes?: number[]) {
 describe('Glob Tool', () => {
   beforeEach(() => {
     vi.clearAllMocks();
-    vi.mocked(assertPathContained).mockImplementation((_filePath: string, _projectDir: string) => ({
+    vi.mocked(assertPathContained).mockImplementation((_filePath: string, _projectDir: string | string[]) => ({
       contained: true,
       resolvedPath: _filePath,
     }));

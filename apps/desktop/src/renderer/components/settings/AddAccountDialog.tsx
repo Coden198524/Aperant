@@ -163,7 +163,7 @@ export function AddAccountDialog({
   }, [open, oauthStatus, isCodexOAuth]);
 
   const needsApiKey = provider !== 'ollama' && authType === 'api-key';
-  const needsBaseUrl = provider === 'ollama' || provider === 'azure' || provider === 'openai-compatible' || provider === 'zai' || (provider === 'anthropic' && authType === 'api-key');
+  const needsBaseUrl = provider === 'ollama' || provider === 'azure' || provider === 'openai-compatible' || provider === 'zai' || provider === 'openai' || (provider === 'anthropic' && authType === 'api-key');
   const needsRegion = provider === 'amazon-bedrock';
   const isBaseUrlRequired = provider === 'ollama' || provider === 'azure' || provider === 'openai-compatible';
 

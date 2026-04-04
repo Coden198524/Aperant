@@ -18,6 +18,7 @@ import {
 // Import fs/promises to use in tests
 import * as fsPromises from 'fs/promises';
 const { mkdir, readFile, writeFile, rm } = fsPromises;
+const windowsOnly = process.platform === 'win32' ? it : it.skip;
 
 // Test directory for isolated tests
 const TEST_DIR = path.join(__dirname, '.test-atomic-file');
@@ -114,6 +115,35 @@ describe('writeFileAtomic', () => {
       const files = await fsPromises.readdir(TEST_DIR);
       const tempFiles = files.filter(f => f.includes('.tmp.'));
 
+      expect(tempFiles).toHaveLength(0);
+    });
+
+    windowsOnly('should fall back to direct write when rename is locked on Windows', async () => {
+      const filePath = path.join(TEST_DIR, 'rename-fallback.txt');
+      await writeFile(filePath, 'Initial content', 'utf-8');
+
+      try {
+        vi.resetModules();
+        const originalFsPromises = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+        vi.doMock('fs/promises', () => ({
+          ...originalFsPromises,
+          rename: vi.fn(async () => {
+            const error = new Error('file is locked') as NodeJS.ErrnoException;
+            error.code = 'EPERM';
+            throw error;
+          })
+        }));
+
+        const atomicFile = await import('../atomic-file');
+        await atomicFile.writeFileAtomic(filePath, 'Updated content');
+      } finally {
+        vi.doUnmock('fs/promises');
+        vi.resetModules();
+      }
+
+      expect(await readFile(filePath, 'utf-8')).toBe('Updated content');
+      const files = await fsPromises.readdir(TEST_DIR);
+      const tempFiles = files.filter(f => f.includes('.tmp.'));
       expect(tempFiles).toHaveLength(0);
     });
   });
@@ -500,6 +530,35 @@ describe('writeFileAtomicSync', () => {
 
       writeFileAtomicSync(filePath, 'content');
 
+      const files = readdirSync(TEST_DIR);
+      const tempFiles = files.filter(name => name.includes('.tmp.'));
+      expect(tempFiles).toHaveLength(0);
+    });
+
+    windowsOnly('should fall back to direct sync write when rename is locked on Windows', async () => {
+      const filePath = path.join(TEST_DIR, 'sync-rename-fallback.txt');
+      writeFileSync(filePath, 'Initial content', 'utf-8');
+
+      try {
+        vi.resetModules();
+        const originalFs = await vi.importActual<typeof import('fs')>('fs');
+        vi.doMock('fs', () => ({
+          ...originalFs,
+          renameSync: vi.fn(() => {
+            const error = new Error('file is locked') as NodeJS.ErrnoException;
+            error.code = 'EPERM';
+            throw error;
+          })
+        }));
+
+        const atomicFile = await import('../atomic-file');
+        atomicFile.writeFileAtomicSync(filePath, 'Updated content');
+      } finally {
+        vi.doUnmock('fs');
+        vi.resetModules();
+      }
+
+      expect(readFileSync(filePath, 'utf-8')).toBe('Updated content');
       const files = readdirSync(TEST_DIR);
       const tempFiles = files.filter(name => name.includes('.tmp.'));
       expect(tempFiles).toHaveLength(0);

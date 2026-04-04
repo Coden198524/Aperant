@@ -2,6 +2,7 @@
  * Team and project selection dropdowns
  */
 
+import { useTranslation } from 'react-i18next';
 import { Label } from '../../ui/label';
 import {
   Select,
@@ -33,17 +34,27 @@ export function TeamProjectSelector({
   onTeamChange,
   onProjectChange
 }: TeamProjectSelectorProps) {
+  const { t } = useTranslation('common');
+
   return (
     <div className="flex gap-4 shrink-0">
       <div className="flex-1 space-y-2">
-        <Label className="text-sm font-medium text-foreground">Team</Label>
+        <Label className="text-sm font-medium text-foreground">
+          {t('linearImport.teamLabel', { defaultValue: 'Team' })}
+        </Label>
         <Select
           value={selectedTeamId}
           onValueChange={onTeamChange}
           disabled={isLoadingTeams}
         >
           <SelectTrigger>
-            <SelectValue placeholder={isLoadingTeams ? 'Loading...' : 'Select a team'} />
+            <SelectValue
+              placeholder={
+                isLoadingTeams
+                  ? t('labels.loading')
+                  : t('linearImport.selectTeam', { defaultValue: 'Select a team' })
+              }
+            />
           </SelectTrigger>
           <SelectContent>
             {teams.map(team => (
@@ -56,17 +67,29 @@ export function TeamProjectSelector({
       </div>
 
       <div className="flex-1 space-y-2">
-        <Label className="text-sm font-medium text-foreground">Project (Optional)</Label>
+        <Label className="text-sm font-medium text-foreground">
+          {t('linearImport.projectLabelOptional', {
+            defaultValue: 'Project (Optional)'
+          })}
+        </Label>
         <Select
           value={selectedProjectId || '__all__'}
           onValueChange={(value) => onProjectChange(value === '__all__' ? '' : value)}
           disabled={isLoadingProjects || !selectedTeamId}
         >
           <SelectTrigger>
-            <SelectValue placeholder={isLoadingProjects ? 'Loading...' : 'All projects'} />
+            <SelectValue
+              placeholder={
+                isLoadingProjects
+                  ? t('labels.loading')
+                  : t('linearImport.allProjects', { defaultValue: 'All projects' })
+              }
+            />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="__all__">All projects</SelectItem>
+            <SelectItem value="__all__">
+              {t('linearImport.allProjects', { defaultValue: 'All projects' })}
+            </SelectItem>
             {projects.map(project => (
               <SelectItem key={project.id} value={project.id}>
                 {project.name}

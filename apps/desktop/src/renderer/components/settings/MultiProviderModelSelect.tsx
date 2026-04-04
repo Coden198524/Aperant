@@ -91,11 +91,21 @@ export function MultiProviderModelSelect({ value, onChange, className, filterPro
     const groups = new Map<BuiltinProvider, ModelOption[]>();
     for (const model of ALL_AVAILABLE_MODELS) {
       // When filterProvider is set, only include models for that provider
-      if (filterProvider && model.provider !== filterProvider) continue;
+      if (filterProvider) {
+        const matchesProvider = model.provider === filterProvider;
+        const matchesOpenAICompatibleCatalog = filterProvider === 'openai-compatible' && model.provider === 'openai';
+        if (!matchesProvider && !matchesOpenAICompatibleCatalog) continue;
+      }
       // Hide apiKeyOnly OpenAI models when all OpenAI accounts are OAuth (Codex subscription)
       if (model.apiKeyOnly && model.provider === 'openai' && openaiIsOAuthOnly) continue;
-      if (!groups.has(model.provider)) groups.set(model.provider, []);
-      groups.get(model.provider)!.push(model);
+      const targetProvider = filterProvider === 'openai-compatible' && model.provider === 'openai'
+        ? 'openai-compatible'
+        : model.provider;
+      if (!groups.has(targetProvider)) groups.set(targetProvider, []);
+      groups.get(targetProvider)!.push({
+        ...model,
+        provider: targetProvider,
+      });
     }
 
     // Merge user-configured custom models from openai-compatible accounts

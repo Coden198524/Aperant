@@ -7,11 +7,15 @@ import { Card } from '../ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import {
   ROADMAP_PRIORITY_COLORS,
-  ROADMAP_PRIORITY_LABELS,
   ROADMAP_COMPLEXITY_COLORS,
   ROADMAP_IMPACT_COLORS,
 } from '../../../shared/constants';
 import type { FeatureCardProps } from './types';
+import {
+  getRoadmapComplexityLabel,
+  getRoadmapImpactLabel,
+  getRoadmapPriorityLabel
+} from '../../lib/i18n-labels';
 
 export function FeatureCard({
   feature,
@@ -29,29 +33,34 @@ export function FeatureCard({
         <div className="flex-1">
           <div className="flex items-center gap-2 mb-1 flex-wrap">
             <Badge variant="outline" className={ROADMAP_PRIORITY_COLORS[feature.priority]}>
-              {ROADMAP_PRIORITY_LABELS[feature.priority]}
+              {getRoadmapPriorityLabel(t, feature.priority)}
             </Badge>
             <Badge
               variant="outline"
               className={`text-xs ${ROADMAP_COMPLEXITY_COLORS[feature.complexity]}`}
             >
-              {feature.complexity}
+              {getRoadmapComplexityLabel(t, feature.complexity)}
             </Badge>
             <Badge
               variant="outline"
               className={`text-xs ${ROADMAP_IMPACT_COLORS[feature.impact]}`}
             >
-              {feature.impact} impact
+              {t('roadmap.impactValue', {
+                value: getRoadmapImpactLabel(t, feature.impact),
+                defaultValue: '{{value}} impact'
+              })}
             </Badge>
             {hasCompetitorInsight && (
               <Tooltip>
                 <TooltipTrigger asChild>
                   <Badge variant="outline" className="text-xs text-primary border-primary/50">
                     <TrendingUp className="h-3 w-3 mr-1" />
-                    Competitor Insight
+                    {t('roadmap.labels.competitorInsight', { defaultValue: 'Competitor Insight' })}
                   </Badge>
                 </TooltipTrigger>
-                <TooltipContent>This feature addresses competitor pain points</TooltipContent>
+                <TooltipContent>
+                  {t('roadmap.tooltips.competitorInsight', { defaultValue: 'This feature addresses competitor pain points' })}
+                </TooltipContent>
               </Tooltip>
             )}
           </div>

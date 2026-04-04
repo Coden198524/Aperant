@@ -55,6 +55,13 @@ function createProviderSDKInstance(
     case SupportedProvider.OpenAI:
       return createOpenAI({ apiKey, baseURL, headers });
 
+    case SupportedProvider.OpenAICompatible:
+      return createOpenAI({
+        apiKey: apiKey ?? 'custom-endpoint',
+        baseURL: baseURL ?? 'https://api.openai.com/v1',
+        headers,
+      });
+
     case SupportedProvider.Google:
       return createGoogleGenerativeAI({ apiKey, baseURL, headers });
 

@@ -1,7 +1,8 @@
+import i18n from '../../../../shared/i18n';
 import type { GitHubIssue } from '../../../../shared/types';
 
 export function formatDate(dateString: string): string {
-  return new Date(dateString).toLocaleDateString('en-US', {
+  return new Date(dateString).toLocaleDateString(i18n.resolvedLanguage || i18n.language || 'en-US', {
     year: 'numeric',
     month: 'short',
     day: 'numeric'

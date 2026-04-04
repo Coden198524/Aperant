@@ -2,7 +2,7 @@ import { app } from 'electron';
 import { readFileSync, existsSync, mkdirSync, readdirSync, Dirent } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import type { Project, ProjectSettings, Task, TaskStatus, TaskMetadata, ImplementationPlan, ReviewReason, PlanSubtask, KanbanPreferences, ExecutionPhase } from '../shared/types';
+import type { Project, ProjectSettings, Task, TaskStatus, TaskMetadata, ImplementationPlan, ReviewReason, PlanSubtask, KanbanPreferences, ExecutionPhase, TokenUsage } from '../shared/types';
 import { DEFAULT_PROJECT_SETTINGS, AUTO_BUILD_PATHS, getSpecsDir, JSON_ERROR_PREFIX, JSON_ERROR_TITLE_SUFFIX, TASK_STATUS_PRIORITY } from '../shared/constants';
 import { getAutoBuildPath, isInitialized } from './project-initializer';
 import { getTaskWorktreeDir } from './worktree-paths';
@@ -533,6 +533,7 @@ export class ProjectStore {
         const planWithStaged = plan as unknown as { stagedInMainProject?: boolean; stagedAt?: string } | null;
         const stagedInMainProject = planWithStaged?.stagedInMainProject;
         const stagedAt = planWithStaged?.stagedAt;
+        const tokenUsage = (plan as { tokenUsage?: TokenUsage } | null)?.tokenUsage;
 
         // Determine title - check if feature looks like a spec ID (e.g., "054-something-something")
         // For JSON error tasks, use directory name with marker for i18n suffix
@@ -574,6 +575,7 @@ export class ProjectStore {
           subtasks,
           logs: [],
           metadata,
+          ...(tokenUsage && { tokenUsage }),
           ...(correctedReviewReason !== undefined && { reviewReason: correctedReviewReason }),
           ...(executionProgress && { executionProgress }),
           stagedInMainProject,

@@ -1,13 +1,16 @@
 import { useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   useInvestigationStore,
   useIssuesStore,
   investigateGitHubIssue
 } from '../../../stores/github';
+import { localizeGitHubErrorMessage } from '../../../lib/github-error-localizer';
 import { loadTasks } from '../../../stores/task-store';
 import type { GitHubIssue } from '../../../../shared/types';
 
 export function useGitHubInvestigation(projectId: string | undefined) {
+  const { t } = useTranslation(['common', 'dialogs']);
   const {
     investigationStatus,
     lastInvestigationResult,
@@ -17,6 +20,34 @@ export function useGitHubInvestigation(projectId: string | undefined) {
 
   const { setError } = useIssuesStore();
 
+  const localizeInvestigationMessage = useCallback((message: string): string => {
+    if (message === 'Fetching issue details...') {
+      return t('issues.investigation.progress.fetching', {
+        defaultValue: 'Fetching issue details...'
+      });
+    }
+
+    if (message === 'AI is analyzing the issue...') {
+      return t('issues.investigation.progress.analyzing', {
+        defaultValue: 'AI is analyzing the issue...'
+      });
+    }
+
+    if (message === 'Creating task from investigation...') {
+      return t('issues.investigation.progress.creatingTask', {
+        defaultValue: 'Creating task from investigation...'
+      });
+    }
+
+    if (message === 'Investigation complete!') {
+      return t('issues.investigation.progress.complete', {
+        defaultValue: 'Investigation complete!'
+      });
+    }
+
+    return message;
+  }, [t]);
+
   // Set up event listeners for investigation progress
   useEffect(() => {
     if (!projectId) return;
@@ -24,7 +55,10 @@ export function useGitHubInvestigation(projectId: string | undefined) {
     const cleanupProgress = window.electronAPI.onGitHubInvestigationProgress(
       (eventProjectId, status) => {
         if (eventProjectId === projectId) {
-          setInvestigationStatus(status);
+          setInvestigationStatus({
+            ...status,
+            message: localizeInvestigationMessage(status.message)
+          });
         }
       }
     );
@@ -44,11 +78,12 @@ export function useGitHubInvestigation(projectId: string | undefined) {
     const cleanupError = window.electronAPI.onGitHubInvestigationError(
       (eventProjectId, error) => {
         if (eventProjectId === projectId) {
-          setError(error);
+          const localizedError = localizeGitHubErrorMessage(t, error) || error;
+          setError(localizedError);
           setInvestigationStatus({
             phase: 'error',
             progress: 0,
-            message: error
+            message: localizedError
           });
         }
       }
@@ -59,7 +94,7 @@ export function useGitHubInvestigation(projectId: string | undefined) {
       cleanupComplete();
       cleanupError();
     };
-  }, [projectId, setInvestigationStatus, setInvestigationResult, setError]);
+  }, [projectId, setInvestigationStatus, setInvestigationResult, setError, localizeInvestigationMessage]);
 
   const startInvestigation = useCallback((issue: GitHubIssue, selectedCommentIds: number[]) => {
     if (projectId) {

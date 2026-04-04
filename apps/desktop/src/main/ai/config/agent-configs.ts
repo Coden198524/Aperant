@@ -549,7 +549,7 @@ export function getRequiredMcpServers(
   options: McpServerResolveOptions = {},
 ): string[] {
   const config = getAgentConfig(agentType);
-  const servers = [...config.mcpServers];
+  const servers = [...config.mcpServers].filter((server) => server !== 'auto-claude');
 
   // Filter context7 if explicitly disabled
   if (options.context7Enabled === false) {

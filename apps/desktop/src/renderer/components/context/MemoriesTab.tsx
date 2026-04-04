@@ -296,10 +296,12 @@ export function MemoriesTab({
                   <CardContent className="pt-4">
                     <div className="flex items-center gap-2 mb-2">
                       <Badge variant="outline" className="text-xs capitalize">
-                        {result.type.replace('_', ' ')}
+                        {t(`memory.types.${result.type}`, {
+                          defaultValue: result.type.replace('_', ' ')
+                        })}
                       </Badge>
                       <span className="text-xs text-muted-foreground">
-                        Score: {result.score.toFixed(2)}
+                        {t('memory.search.score', { defaultValue: 'Score' })}: {result.score.toFixed(2)}
                       </span>
                     </div>
                     <pre className="text-xs text-muted-foreground whitespace-pre-wrap font-mono max-h-40 overflow-auto">

@@ -19,7 +19,7 @@ vi.mock('../../../../platform/index', () => ({
 }));
 
 vi.mock('../../../security/path-containment', () => ({
-  assertPathContained: vi.fn((_filePath: string, _projectDir: string) => ({
+  assertPathContained: vi.fn((_filePath: string, _projectDir: string | string[]) => ({
     contained: true,
     resolvedPath: _filePath,
   })),
@@ -71,7 +71,7 @@ describe('Grep Tool', () => {
     vi.clearAllMocks();
     // Re-set after clearAllMocks wipes the return value
     mockFindExecutable.mockReturnValue('/usr/bin/rg');
-    vi.mocked(assertPathContained).mockImplementation((_filePath: string, _projectDir: string) => ({
+    vi.mocked(assertPathContained).mockImplementation((_filePath: string, _projectDir: string | string[]) => ({
       contained: true,
       resolvedPath: _filePath,
     }));

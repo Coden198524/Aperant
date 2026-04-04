@@ -147,7 +147,10 @@ export function DisplaySettings({ settings, onSettingsChange }: DisplaySettingsP
                     'hover:bg-accent text-muted-foreground hover:text-foreground',
                     'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring'
                   )}
-                  title="Reset to default (100%)"
+                  title={t('scale.resetTooltip', {
+                    value: UI_SCALE_DEFAULT,
+                    defaultValue: 'Reset to default ({{value}}%)'
+                  })}
                 >
                   <RotateCcw className="h-3.5 w-3.5" />
                 </button>
@@ -170,7 +173,10 @@ export function DisplaySettings({ settings, onSettingsChange }: DisplaySettingsP
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent'
               )}
-              title={`Decrease scale by ${UI_SCALE_STEP}%`}
+              title={t('scale.decreaseTooltip', {
+                step: UI_SCALE_STEP,
+                defaultValue: 'Decrease scale by {{step}}%'
+              })}
             >
               <ZoomOut className="h-4 w-4" />
             </button>
@@ -214,7 +220,10 @@ export function DisplaySettings({ settings, onSettingsChange }: DisplaySettingsP
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-transparent'
               )}
-              title={`Increase scale by ${UI_SCALE_STEP}%`}
+              title={t('scale.increaseTooltip', {
+                step: UI_SCALE_STEP,
+                defaultValue: 'Increase scale by {{step}}%'
+              })}
             >
               <ZoomIn className="h-4 w-4" />
             </button>
@@ -228,10 +237,16 @@ export function DisplaySettings({ settings, onSettingsChange }: DisplaySettingsP
                 'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring',
                 'disabled:opacity-50 disabled:cursor-not-allowed disabled:hover:bg-primary'
               )}
-              title="Apply scale changes"
+              title={t('scale.applyTooltip', {
+                defaultValue: 'Apply scale changes'
+              })}
             >
               <Check className="h-4 w-4" />
-              <span className="text-sm font-medium">Apply</span>
+              <span className="text-sm font-medium">
+                {t('scale.apply', {
+                  defaultValue: 'Apply'
+                })}
+              </span>
             </button>
           </div>
 

@@ -6,6 +6,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { IDEATION_TYPE_COLORS } from '../../../shared/constants';
 import type { IdeationType } from '../../../shared/types';
 import { TypeIcon } from './TypeIcon';
+import { getIdeationTypeLabel } from '../../lib/i18n-labels';
 
 interface IdeationHeaderProps {
   totalIdeas: number;
@@ -48,11 +49,15 @@ export function IdeationHeader({
         <div>
           <div className="flex items-center gap-2 mb-1">
             <Lightbulb className="h-5 w-5 text-primary" />
-            <h2 className="text-lg font-semibold">Ideation</h2>
-            <Badge variant="outline">{totalIdeas} ideas</Badge>
+            <h2 className="text-lg font-semibold">{t('navigation:items.ideation')}</h2>
+            <Badge variant="outline">
+              {t('ideation.header.ideaCount', { count: totalIdeas, defaultValue: '{{count}} ideas' })}
+            </Badge>
           </div>
           <p className="text-sm text-muted-foreground">
-            AI-generated feature ideas for your project
+            {t('ideation.header.description', {
+              defaultValue: 'AI-generated feature ideas for your project'
+            })}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -60,7 +65,7 @@ export function IdeationHeader({
           {hasSelection ? (
             <>
               <Badge variant="secondary" className="mr-1">
-                {selectedCount} selected
+                {t('selection.selected', { count: selectedCount })}
               </Badge>
               <Button
                 variant="outline"
@@ -69,7 +74,7 @@ export function IdeationHeader({
                 onClick={onDeleteSelected}
               >
                 <Trash2 className="h-4 w-4 mr-1" />
-                Delete
+                {t('buttons.delete')}
               </Button>
               <Tooltip>
                 <TooltipTrigger asChild>
@@ -142,7 +147,7 @@ export function IdeationHeader({
                   aria-label={t('accessibility.addMoreAriaLabel')}
                 >
                   <Plus className="h-4 w-4 mr-1" />
-                  Add More
+                  {t('ideation.actions.addMore', { defaultValue: 'Add More' })}
                 </Button>
               </TooltipTrigger>
               <TooltipContent>{t('accessibility.addMoreAriaLabel')}</TooltipContent>
@@ -184,7 +189,9 @@ export function IdeationHeader({
             className={IDEATION_TYPE_COLORS[type]}
           >
             <TypeIcon type={type as IdeationType} />
-            <span className="ml-1">{count}</span>
+            <span className="ml-1">
+              {getIdeationTypeLabel(t, type as IdeationType)} ({count})
+            </span>
           </Badge>
         ))}
       </div>

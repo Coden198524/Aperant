@@ -99,6 +99,18 @@ export type IdeationStreamEvent =
   | { type: 'tool-use'; name: string }
   | { type: 'error'; error: string };
 
+function isResponsesApiModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  return (
+    modelId.startsWith('gpt-5') ||
+    modelId.includes('codex') ||
+    modelId === 'o3' ||
+    modelId.startsWith('o3-') ||
+    modelId === 'o4-mini' ||
+    modelId.startsWith('o4-')
+  );
+}
+
 // =============================================================================
 // Ideation Runner
 // =============================================================================
@@ -183,6 +195,7 @@ export async function runIdeation(
   // Detect Codex models — they require instructions via providerOptions, not system
   const modelId = typeof client.model === 'string' ? client.model : client.model.modelId;
   const isCodex = modelId?.includes('codex') ?? false;
+  const isResponsesModel = isResponsesApiModel(modelId);
   const userPrompt = `Analyze the project at ${projectDir} and generate up to ${maxIdeasPerType} ${ideationType.replace(/_/g, ' ')} ideas. Use the available tools to explore the codebase, then write your findings as a JSON file to the output directory.`;
 
   try {
@@ -193,11 +206,11 @@ export async function runIdeation(
       tools: client.tools,
       stopWhen: stepCountIs(client.maxSteps),
       abortSignal,
-      ...(isCodex ? {
+      ...(isResponsesModel ? {
         providerOptions: {
           openai: {
-            instructions: prompt,
-            store: false,
+            ...(isCodex ? { instructions: prompt } : {}),
+            store: true,
           },
         },
       } : {}),

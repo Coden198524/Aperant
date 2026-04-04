@@ -99,10 +99,10 @@ export function MemoryStep({ onNext, onBack }: MemoryStepProps) {
         updateSettings(storeUpdate);
         onNext();
       } else {
-        setError(result?.error || 'Failed to save memory configuration');
+        setError(result?.error || t('common:errors.unknownError'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      setError(err instanceof Error ? err.message : t('common:errors.unknownError'));
     } finally {
       setIsSaving(false);
     }

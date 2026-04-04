@@ -87,6 +87,18 @@ export type InsightsStreamEvent =
   | { type: 'tool-end'; name: string }
   | { type: 'error'; error: string };
 
+function isResponsesApiModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  return (
+    modelId.startsWith('gpt-5') ||
+    modelId.includes('codex') ||
+    modelId === 'o3' ||
+    modelId.startsWith('o3-') ||
+    modelId === 'o4-mini' ||
+    modelId.startsWith('o4-')
+  );
+}
+
 // =============================================================================
 // Project Context Loading
 // =============================================================================
@@ -270,6 +282,7 @@ export async function runInsightsQuery(
   // Detect Codex models — they require instructions via providerOptions, not system
   const insightsModelId = typeof client.model === 'string' ? client.model : client.model.modelId;
   const isCodexInsights = insightsModelId?.includes('codex') ?? false;
+  const isResponsesInsights = isResponsesApiModel(insightsModelId);
 
   try {
     const result = streamText({
@@ -279,11 +292,11 @@ export async function runInsightsQuery(
       tools: client.tools,
       stopWhen: stepCountIs(client.maxSteps),
       abortSignal,
-      ...(isCodexInsights ? {
+      ...(isResponsesInsights ? {
         providerOptions: {
           openai: {
-            instructions: client.systemPrompt,
-            store: false,
+            ...(isCodexInsights ? { instructions: client.systemPrompt } : {}),
+            store: true,
           },
         },
       } : {}),

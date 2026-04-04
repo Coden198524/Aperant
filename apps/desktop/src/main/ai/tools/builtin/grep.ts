@@ -153,9 +153,10 @@ export const grepTool = Tool.define({
   inputSchema,
   execute: async (input, context) => {
     const searchPath = input.path ?? context.cwd;
+    const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
-    // Security: ensure search path is within project boundary
-    assertPathContained(searchPath, context.projectDir);
+    // Security: ensure search path is within an allowed project boundary
+    assertPathContained(searchPath, allowedRoots);
 
     const resolvedPath = path.isAbsolute(searchPath)
       ? searchPath

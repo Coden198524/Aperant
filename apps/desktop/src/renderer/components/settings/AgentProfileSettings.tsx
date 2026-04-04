@@ -7,7 +7,6 @@ import { cn } from '../../lib/utils';
 import {
   DEFAULT_AGENT_PROFILES,
   AVAILABLE_MODELS,
-  THINKING_LEVELS,
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
   PHASE_KEYS,
@@ -20,6 +19,11 @@ import { Label } from '../ui/label';
 import { Button } from '../ui/button';
 import type { AgentProfile, PhaseModelConfig, PhaseThinkingConfig, ThinkingLevel } from '../../../shared/types/settings';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
+import {
+  getAgentProfileDescription,
+  getAgentProfileLabel,
+  getAgentThinkingLevelLabel
+} from '../../lib/i18n-labels';
 
 /**
  * Icon mapping for agent profile icons
@@ -48,6 +52,18 @@ export function AgentProfileSettings({ provider }: AgentProfileSettingsProps) {
   const providerConfig = provider ? settings.providerAgentConfig?.[provider] : undefined;
   const selectedProfileId = providerConfig?.selectedAgentProfile ?? settings.selectedAgentProfile ?? 'auto';
   const [showPhaseConfig, setShowPhaseConfig] = useState(true);
+
+  const getProfileId = (value: string): 'auto' | 'complex' | 'balanced' | 'quick' | 'custom' => {
+    switch (value) {
+      case 'complex':
+      case 'balanced':
+      case 'quick':
+      case 'custom':
+        return value;
+      default:
+        return 'auto';
+    }
+  };
 
   // Find the selected profile
   const selectedProfile = useMemo(() =>
@@ -162,15 +178,14 @@ export function AgentProfileSettings({ provider }: AgentProfileSettingsProps) {
   /**
    * Get human-readable thinking level label
    */
-  const getThinkingLabel = (thinkingValue: string): string => {
-    const level = THINKING_LEVELS.find((l) => l.value === thinkingValue);
-    return level?.label || thinkingValue;
-  };
+  const getThinkingLabel = (thinkingValue: 'low' | 'medium' | 'high' | 'xhigh'): string =>
+    getAgentThinkingLevelLabel(t, thinkingValue);
 
   /**
    * Render a single profile card
    */
   const renderProfileCard = (profile: AgentProfile) => {
+    const profileKey = getProfileId(profile.id);
     const isSelected = selectedProfileId === profile.id;
     const isCustomized = isSelected && hasCustomConfig;
     const Icon = iconMap[profile.icon || 'Brain'] || Brain;
@@ -217,7 +232,7 @@ export function AgentProfileSettings({ provider }: AgentProfileSettingsProps) {
 
           <div className="flex-1 min-w-0 pr-6">
             <div className="flex items-center gap-2">
-              <h3 className="font-medium text-sm text-foreground">{profile.name}</h3>
+              <h3 className="font-medium text-sm text-foreground">{getAgentProfileLabel(t, profileKey)}</h3>
               {isCustomized && (
                 <span className="inline-flex items-center rounded bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-medium text-amber-600 dark:text-amber-400">
                   {t('agentProfile.customized')}
@@ -225,7 +240,7 @@ export function AgentProfileSettings({ provider }: AgentProfileSettingsProps) {
               )}
             </div>
             <p className="mt-0.5 text-xs text-muted-foreground line-clamp-2">
-              {profile.description}
+              {getAgentProfileDescription(t, profileKey)}
             </p>
 
             {/* Model and thinking level badges */}
@@ -304,7 +319,9 @@ export function AgentProfileSettings({ provider }: AgentProfileSettingsProps) {
                     className="text-xs h-7"
                   >
                     <RotateCcw className="h-3 w-3 mr-1.5" />
-                    {t('agentProfile.resetToProfileDefaults', { profile: selectedProfile.name })}
+                    {t('agentProfile.resetToProfileDefaults', {
+                      profile: getAgentProfileLabel(t, getProfileId(selectedProfile.id))
+                    })}
                   </Button>
                 </div>
               )}

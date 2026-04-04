@@ -116,7 +116,7 @@ export class ToolRegistry {
     context: ToolContext,
   ): Record<string, AITool> {
     const config = getAgentConfig(agentType);
-    const allowedNames = new Set(config.tools);
+    const allowedNames = new Set([...config.tools, ...config.autoClaudeTools]);
     const result: Record<string, AITool> = {};
 
     for (const [name, definedTool] of Array.from(this.tools.entries())) {
@@ -158,6 +158,10 @@ export function getRequiredMcpServers(
 
   const config = getAgentConfig(agentType);
   let servers = [...config.mcpServers];
+
+  // Auto-Claude tools are shipped locally and registered in ToolRegistry,
+  // so they no longer require a separate MCP stdio server process.
+  servers = servers.filter((s) => s !== 'auto-claude');
 
   // Filter context7 if explicitly disabled
   if (servers.includes('context7')) {

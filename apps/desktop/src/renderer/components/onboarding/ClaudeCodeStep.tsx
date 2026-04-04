@@ -20,12 +20,15 @@ type DetectionStatus = 'loading' | 'installed' | 'outdated' | 'not-found' | 'err
  * and provides one-click installation/update functionality.
  */
 export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) {
-  const { t } = useTranslation('onboarding');
+  const { t } = useTranslation(['onboarding', 'common']);
   const [status, setStatus] = useState<DetectionStatus>('loading');
   const [versionInfo, setVersionInfo] = useState<ClaudeCodeVersionInfo | null>(null);
   const [isInstalling, setIsInstalling] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [installSuccess, setInstallSuccess] = useState(false);
+
+  const getClaudeCodeError = (key: string, fallback: string): string =>
+    t(`claudeCode.errors.${key}`, { defaultValue: fallback });
 
   // Check Claude Code version on mount
   const checkVersion = useCallback(async () => {
@@ -37,7 +40,7 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
       if (!window.electronAPI?.checkClaudeCodeVersion) {
         console.warn('[ClaudeCodeStep] Version check API not available');
         setStatus('error');
-        setError('Version check API not available');
+        setError(getClaudeCodeError('versionApiUnavailable', 'Version check API not available'));
         return;
       }
 
@@ -55,14 +58,14 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
         }
       } else {
         setStatus('error');
-        setError(result.error || 'Failed to check version');
+        setError(result.error || getClaudeCodeError('checkFailed', 'Failed to check version'));
       }
     } catch (err) {
       console.error('Failed to check Claude Code version:', err);
       setStatus('error');
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : t('common:errors.unknownError'));
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     checkVersion();
@@ -75,7 +78,7 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
 
     try {
       if (!window.electronAPI?.installClaudeCode) {
-        setError('Install API not available');
+        setError(getClaudeCodeError('installApiUnavailable', 'Install API not available'));
         return;
       }
 
@@ -88,10 +91,10 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
           checkVersion();
         }, 5000);
       } else {
-        setError(result.error || 'Failed to start installation');
+        setError(result.error || getClaudeCodeError('installStartFailed', 'Failed to start installation'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error');
+      setError(err instanceof Error ? err.message : t('common:errors.unknownError'));
     } finally {
       setIsInstalling(false);
     }
@@ -125,7 +128,7 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
       case 'not-found':
         return t('claudeCode.status.notFound', 'Not Installed');
       case 'error':
-        return error || 'Error checking status';
+        return error || getClaudeCodeError('statusCheckFailed', 'Error checking status');
     }
   };
 
@@ -205,7 +208,7 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
                         )}
                         {versionInfo.path && (
                           <p className="truncate max-w-md" title={versionInfo.path}>
-                            Path: <span className="font-mono">{versionInfo.path}</span>
+                            {t('claudeCode.version.path', 'Path')}: <span className="font-mono">{versionInfo.path}</span>
                           </p>
                         )}
                       </div>
@@ -293,20 +296,20 @@ export function ClaudeCodeStep({ onNext, onBack, onSkip }: ClaudeCodeStepProps) 
         {/* Navigation buttons */}
         <div className="flex justify-between mt-8 pt-6 border-t border-border">
           <Button variant="outline" onClick={onBack}>
-            {t('common:back', 'Back')}
+            {t('common:buttons.back')}
           </Button>
 
           <div className="flex gap-3">
             <Button variant="ghost" onClick={onSkip}>
-              {t('common:skip', 'Skip')}
+              {t('common:buttons.skip')}
             </Button>
             <Button
               onClick={onNext}
               disabled={status === 'loading'}
             >
               {status === 'installed'
-                ? t('common:continue', 'Continue')
-                : t('common:continueAnyway', 'Continue Anyway')
+                ? t('common:buttons.continue')
+                : t('claudeCode.continueAnyway', 'Continue Anyway')
               }
             </Button>
           </div>

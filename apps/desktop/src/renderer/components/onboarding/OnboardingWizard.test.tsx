@@ -39,6 +39,14 @@ vi.mock('react-i18next', () => ({
         'accounts.buttons.back': 'Back',
         'accounts.buttons.continue': 'Continue',
         'accounts.buttons.skip': 'Skip for now',
+        'authChoice.title': '选择你的验证方式',
+        'authChoice.description': '选择你希望如何连接 Claude。你后续也可以在设置中修改。',
+        'authChoice.oauthTitle': '使用 Anthropic 账户登录',
+        'authChoice.oauthDescription': '使用你的 Anthropic 账户进行验证，流程简单且安全。',
+        'authChoice.apiKeyTitle': '使用自定义 API 密钥',
+        'authChoice.apiKeyDescription': '使用你自己的 Anthropic 或兼容 API 提供商密钥。这个方式仍属高度实验性功能，可能会产生较高费用。',
+        'authChoice.info': '两种方式都能完整使用 Claude Code 功能，按你的使用偏好选择即可。',
+        'authChoice.skip': '暂时跳过',
         // Common translations
         'common:actions.close': 'Close'
       };
@@ -46,7 +54,11 @@ vi.mock('react-i18next', () => ({
     },
     i18n: { language: 'en' }
   }),
-  Trans: ({ children }: { children: React.ReactNode }) => children
+  Trans: ({ children }: { children: React.ReactNode }) => children,
+  initReactI18next: {
+    type: '3rdParty',
+    init: () => {}
+  }
 }));
 
 // Mock the settings store

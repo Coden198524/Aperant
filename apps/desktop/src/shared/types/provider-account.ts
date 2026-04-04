@@ -36,6 +36,8 @@ export interface ProviderAccount {
   rateLimitEvents?: ClaudeRateLimitEvent[];
   /** User-configured models for openai-compatible endpoints */
   customModels?: CustomModel[];
+  /** Override which provider's model equivalence table to use (e.g., use 'anthropic' models on an 'openai-compatible' endpoint) */
+  modelEquivalenceProvider?: BuiltinProvider;
 }
 
 export type ProviderCategory = 'popular' | 'infrastructure' | 'local';

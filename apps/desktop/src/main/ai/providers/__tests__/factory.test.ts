@@ -18,6 +18,7 @@ vi.mock('@ai-sdk/openai', () => ({
   createOpenAI: vi.fn(() => {
     const provider = vi.fn((modelId: string) => ({ modelId, provider: 'openai' }));
     (provider as any).chat = vi.fn((modelId: string) => ({ modelId, provider: 'openai-chat' }));
+    (provider as any).responses = vi.fn((modelId: string) => ({ modelId, provider: 'openai-responses' }));
     return provider;
   }),
 }));
@@ -67,7 +68,8 @@ vi.mock('@ai-sdk/xai', () => ({
 
 vi.mock('@ai-sdk/openai-compatible', () => ({
   createOpenAICompatible: vi.fn(() => {
-    const provider = vi.fn((modelId: string) => ({ modelId, provider: 'ollama' }));
+    const provider = vi.fn((modelId: string) => ({ modelId, provider: 'openai-compatible' }));
+    (provider as any).chatModel = vi.fn((modelId: string) => ({ modelId, provider: 'openai-compatible-chat' }));
     return provider;
   }),
 }));
@@ -80,6 +82,7 @@ vi.mock('@openrouter/ai-sdk-provider', () => ({
 }));
 
 import { createAnthropic } from '@ai-sdk/anthropic';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createProvider, detectProviderFromModel, createProviderFromModelId } from '../factory';
 import { SupportedProvider } from '../types';
 
@@ -101,6 +104,54 @@ describe('createProvider', () => {
       modelId: 'gpt-4o',
     }) as any;
     expect(result.provider).toBe('openai-chat');
+  });
+
+  it('uses .responses() for GPT-5 on OpenAI provider', () => {
+    const result = createProvider({
+      config: { provider: SupportedProvider.OpenAI, apiKey: 'test-key' },
+      modelId: 'gpt-5.4',
+    }) as any;
+    expect(result.provider).toBe('openai-responses');
+  });
+
+  it('uses openai-compatible chat for custom OpenAI base URLs', () => {
+    const result = createProvider({
+      config: {
+        provider: SupportedProvider.OpenAI,
+        apiKey: 'test-key',
+        baseURL: 'https://yunyi.rdzhvip.com/codex/v1',
+      },
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    expect(result.provider).toBe('openai-compatible-chat');
+    expect(createOpenAICompatible).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'openai-compatible',
+        baseURL: 'https://yunyi.rdzhvip.com/codex/v1',
+      }),
+    );
+  });
+
+  it('keeps Responses API for official OpenAI base URLs', () => {
+    const result = createProvider({
+      config: {
+        provider: SupportedProvider.OpenAI,
+        apiKey: 'test-key',
+        baseURL: 'https://api.openai.com/v1',
+      },
+      modelId: 'gpt-5.4',
+    }) as any;
+
+    expect(result.provider).toBe('openai-responses');
+  });
+
+  it('uses .chatModel() for GPT-5 on OpenAI-compatible provider', () => {
+    const result = createProvider({
+      config: { provider: SupportedProvider.OpenAICompatible, apiKey: 'test-key', baseURL: 'https://example.com/codex' },
+      modelId: 'gpt-5.4',
+    }) as any;
+    expect(result.provider).toBe('openai-compatible-chat');
   });
 
   it('uses .chat() with deploymentName for Azure provider', () => {

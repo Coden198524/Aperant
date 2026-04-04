@@ -3,6 +3,7 @@ import { AlertTriangle, RefreshCw } from 'lucide-react';
 import { Button } from './button';
 import { Card, CardContent } from './card';
 import { captureException } from '../../lib/sentry';
+import i18n from '../../../shared/i18n';
 
 interface ErrorBoundaryProps {
   children: React.ReactNode;
@@ -55,9 +56,9 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
             <div className="flex flex-col items-center gap-4 text-center">
               <AlertTriangle className="h-10 w-10 text-destructive" />
               <div className="space-y-2">
-                <h3 className="font-semibold text-lg">Something went wrong</h3>
+                <h3 className="font-semibold text-lg">{i18n.t('common:errorBoundary.title', 'Something went wrong')}</h3>
                 <p className="text-sm text-muted-foreground">
-                  An error occurred while rendering this content.
+                  {i18n.t('common:errorBoundary.description', 'An error occurred while rendering this content.')}
                 </p>
                 {this.state.error && (
                   <p className="text-xs text-muted-foreground font-mono bg-muted p-2 rounded max-w-md overflow-auto">
@@ -67,7 +68,7 @@ export class ErrorBoundary extends React.Component<ErrorBoundaryProps, ErrorBoun
               </div>
               <Button onClick={this.handleReset} variant="outline" size="sm">
                 <RefreshCw className="h-4 w-4 mr-2" />
-                Try Again
+                {i18n.t('common:errorBoundary.retry', 'Try Again')}
               </Button>
             </div>
           </CardContent>

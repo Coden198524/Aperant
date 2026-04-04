@@ -71,6 +71,7 @@ export interface AuthResolverContext {
 export const PROVIDER_ENV_VARS: Record<SupportedProvider, string | undefined> = {
   anthropic: 'ANTHROPIC_API_KEY',
   openai: 'OPENAI_API_KEY',
+  'openai-compatible': undefined,
   google: 'GOOGLE_GENERATIVE_AI_API_KEY',
   bedrock: undefined,  // Uses AWS credential chain, not a single env var
   azure: 'AZURE_OPENAI_API_KEY',
@@ -105,6 +106,7 @@ export const PROVIDER_BASE_URL_ENV: Partial<Record<SupportedProvider, string>> =
   anthropic: 'ANTHROPIC_BASE_URL',
   openai: 'OPENAI_BASE_URL',
   azure: 'AZURE_OPENAI_ENDPOINT',
+  'openai-compatible': 'OPENAI_BASE_URL',
 } as const;
 
 // ============================================

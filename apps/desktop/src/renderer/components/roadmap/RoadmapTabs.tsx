@@ -10,13 +10,17 @@ import { RoadmapKanbanView } from '../RoadmapKanbanView';
 import { getFeaturesByPhase } from '../../stores/roadmap-store';
 import {
   ROADMAP_PRIORITY_COLORS,
-  ROADMAP_PRIORITY_LABELS,
   ROADMAP_COMPLEXITY_COLORS,
   ROADMAP_IMPACT_COLORS,
 } from '../../../shared/constants';
 import { hasCompetitorInsight } from './utils';
 import type { RoadmapTabsProps } from './types';
 import type { RoadmapFeature, RoadmapPhase } from '../../../shared/types';
+import {
+  getRoadmapComplexityLabel,
+  getRoadmapImpactLabel,
+  getRoadmapPriorityLabel
+} from '../../lib/i18n-labels';
 
 export function RoadmapTabs({
   roadmap,
@@ -32,10 +36,10 @@ export function RoadmapTabs({
   return (
     <Tabs value={activeTab} onValueChange={onTabChange} className="h-full flex flex-col">
       <TabsList className="shrink-0 mx-4 mt-4">
-        <TabsTrigger value="kanban">Kanban</TabsTrigger>
-        <TabsTrigger value="phases">Phases</TabsTrigger>
-        <TabsTrigger value="features">All Features</TabsTrigger>
-        <TabsTrigger value="priorities">By Priority</TabsTrigger>
+        <TabsTrigger value="kanban">{t('navigation:items.kanban')}</TabsTrigger>
+        <TabsTrigger value="phases">{t('roadmap.tabs.phases', { defaultValue: 'Phases' })}</TabsTrigger>
+        <TabsTrigger value="features">{t('roadmap.tabs.features', { defaultValue: 'All Features' })}</TabsTrigger>
+        <TabsTrigger value="priorities">{t('roadmap.tabs.priorities', { defaultValue: 'By Priority' })}</TabsTrigger>
       </TabsList>
 
       {/* Kanban View */}
@@ -95,9 +99,14 @@ export function RoadmapTabs({
               <Card key={priority} className="p-4">
                 <div className="flex items-center gap-2 mb-3">
                   <Badge variant="outline" className={ROADMAP_PRIORITY_COLORS[priority]}>
-                    {ROADMAP_PRIORITY_LABELS[priority]}
+                    {getRoadmapPriorityLabel(t, priority as RoadmapFeature['priority'])}
                   </Badge>
-                  <span className="text-sm text-muted-foreground">{features.length} features</span>
+                  <span className="text-sm text-muted-foreground">
+                    {t('roadmap.header.featureCount', {
+                      count: features.length,
+                      defaultValue: '{{count}} features'
+                    })}
+                  </span>
                 </div>
                 <div className="space-y-2">
                   {features.map((feature: RoadmapFeature) => {
@@ -118,18 +127,21 @@ export function RoadmapTabs({
                               variant="outline"
                               className={`text-xs ${ROADMAP_COMPLEXITY_COLORS[feature.complexity]}`}
                             >
-                              {feature.complexity}
+                              {getRoadmapComplexityLabel(t, feature.complexity)}
                             </Badge>
                             <Badge
                               variant="outline"
                               className={`text-xs ${ROADMAP_IMPACT_COLORS[feature.impact]}`}
                             >
-                              {feature.impact} impact
+                              {t('roadmap.impactValue', {
+                                value: getRoadmapImpactLabel(t, feature.impact),
+                                defaultValue: '{{value}} impact'
+                              })}
                             </Badge>
                             {hasCompetitorInsight(feature) && (
                               <Badge variant="outline" className="text-xs text-primary border-primary/50">
                                 <TrendingUp className="h-3 w-3 mr-1" />
-                                Insight
+                                {t('roadmap.labels.insight', { defaultValue: 'Insight' })}
                               </Badge>
                             )}
                           </div>
@@ -138,7 +150,7 @@ export function RoadmapTabs({
                           <div className="flex items-center justify-between mt-2 pt-2 border-t border-border/50">
                             <span className="flex items-center gap-1 text-xs text-muted-foreground">
                               <CheckCircle2 className="h-3 w-3 text-success" />
-                              Completed
+                              {t('roadmap.taskCompleted')}
                             </span>
                             <Button
                               variant="ghost"
@@ -151,7 +163,7 @@ export function RoadmapTabs({
                               }}
                             >
                               <Archive className="h-3 w-3 mr-1" />
-                              Archive
+                              {t('roadmap.archiveFeature')}
                             </Button>
                           </div>
                         )}

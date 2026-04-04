@@ -70,6 +70,7 @@ export class WorkerBridge extends EventEmitter {
   private taskId: string = '';
   private projectId: string | undefined;
   private processType: ProcessType = 'task-execution';
+  private executionProgressSequence = 0;
 
   /**
    * Spawn a worker thread with the given configuration.
@@ -86,6 +87,7 @@ export class WorkerBridge extends EventEmitter {
     this.projectId = config.projectId;
     this.processType = config.processType;
     this.progressTracker = new ProgressTracker();
+    this.executionProgressSequence = 0;
 
     const workerConfig: WorkerConfig = {
       taskId: config.taskId,
@@ -169,13 +171,16 @@ export class WorkerBridge extends EventEmitter {
         break;
 
       case 'execution-progress':
-        this.emitTyped('execution-progress', message.taskId, message.data, message.projectId);
+        this.emitExecutionProgress(message.taskId, message.data, message.projectId);
         break;
 
       case 'stream-event':
         // Feed the progress tracker and emit progress updates
         this.progressTracker.processEvent(message.data);
         this.emitProgressFromTracker(message.taskId, message.projectId);
+        if (message.data.type === 'usage-update') {
+          this.emitTyped('task-token-usage', message.taskId, message.data.usage, message.projectId);
+        }
         // Also forward raw log for text events
         if (message.data.type === 'text-delta') {
           this.emitTyped('log', message.taskId, message.data.text, message.projectId);
@@ -206,7 +211,7 @@ export class WorkerBridge extends EventEmitter {
       message: state.currentMessage,
       completedPhases: state.completedPhases as ExecutionProgressData['completedPhases'],
     };
-    this.emitTyped('execution-progress', taskId, progressData, projectId);
+    this.emitExecutionProgress(taskId, progressData, projectId);
   }
 
   /**
@@ -216,6 +221,8 @@ export class WorkerBridge extends EventEmitter {
   private handleResult(taskId: string, result: SessionResult, projectId?: string): void {
     // Map outcome to exit code
     const exitCode = result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window' ? 0 : 1;
+
+    this.emitTyped('task-token-usage', taskId, result.usage, projectId);
 
     // Log the result summary
     const summary = `Session complete: outcome=${result.outcome}, steps=${result.stepsExecuted}, tools=${result.toolCallCount}, duration=${result.durationMs}ms`;
@@ -228,6 +235,19 @@ export class WorkerBridge extends EventEmitter {
     // Emit exit and cleanup
     this.emitTyped('exit', taskId, exitCode, this.processType, projectId);
     this.cleanup();
+  }
+
+  private emitExecutionProgress(taskId: string, progress: ExecutionProgressData, projectId?: string): void {
+    const nextSequence =
+      progress.sequenceNumber && progress.sequenceNumber > 0
+        ? progress.sequenceNumber
+        : this.executionProgressSequence + 1;
+
+    this.executionProgressSequence = Math.max(this.executionProgressSequence, nextSequence);
+    this.emitTyped('execution-progress', taskId, {
+      ...progress,
+      sequenceNumber: nextSequence,
+    }, projectId);
   }
 
   // ===========================================================================

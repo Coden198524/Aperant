@@ -312,28 +312,41 @@ Return ONLY valid JSON (no markdown fencing):
  * Build provider-agnostic options for generateText().
  *
  * Codex models require system prompt via providerOptions.openai.instructions
- * instead of the `system` parameter, plus `store: false`.
+ * instead of the `system` parameter. Responses API models also need
+ * `store: true` so multi-step tool continuations can reference prior items.
  * Other providers use the standard `system` parameter.
  */
 function buildGenerateTextOptions(
   client: SimpleClientResult,
 ): { system: string | undefined; providerOptions?: Record<string, Record<string, string | number | boolean | null>> } {
-  const isCodex = client.resolvedModelId?.includes('codex') ?? false;
+  const modelId = client.resolvedModelId;
+  const isCodex = modelId?.includes('codex') ?? false;
+  const isResponsesModel = Boolean(
+    modelId &&
+      (
+        modelId.startsWith('gpt-5') ||
+        modelId.includes('codex') ||
+        modelId === 'o3' ||
+        modelId.startsWith('o3-') ||
+        modelId === 'o4-mini' ||
+        modelId.startsWith('o4-')
+      ),
+  );
 
   // Build thinking/reasoning provider options
   const thinkingOptions = client.thinkingLevel
     ? buildThinkingProviderOptions(client.resolvedModelId, client.thinkingLevel)
     : undefined;
 
-  if (isCodex) {
+  if (isResponsesModel) {
     return {
-      system: undefined,
+      system: isCodex ? undefined : client.systemPrompt,
       providerOptions: {
         ...(thinkingOptions ?? {}),
         openai: {
           ...(thinkingOptions?.openai as Record<string, string | number | boolean | null> ?? {}),
-          ...(client.systemPrompt ? { instructions: client.systemPrompt } : {}),
-          store: false,
+          ...(isCodex && client.systemPrompt ? { instructions: client.systemPrompt } : {}),
+          store: true,
         },
       },
     };

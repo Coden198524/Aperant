@@ -48,8 +48,7 @@ const IDE_NAMES: Partial<Record<SupportedIDE, string>> = {
   webstorm: 'WebStorm',
   windsurf: 'Windsurf',
   xcode: 'Xcode',
-  zed: 'Zed',
-  custom: 'Custom...'  // Always last
+  zed: 'Zed'
 };
 
 // CLI display names
@@ -58,8 +57,7 @@ const CLI_NAMES: Partial<Record<SupportedCLI, string>> = {
   gemini: 'Gemini CLI',
   opencode: 'OpenCode',
   kilocode: 'Kilo Code CLI',
-  codex: 'Codex CLI',
-  custom: 'Custom...'
+  codex: 'Codex CLI'
 };
 
 // Terminal display names - alphabetically sorted
@@ -81,8 +79,7 @@ const TERMINAL_NAMES: Partial<Record<SupportedTerminal, string>> = {
   warp: 'Warp',
   wezterm: 'WezTerm',
   windowsterminal: 'Windows Terminal',
-  zellij: 'Zellij',
-  custom: 'Custom...'  // Always last
+  zellij: 'Zellij'
 };
 
 /**
@@ -110,14 +107,14 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
       if (result.success && result.data) {
         setDetectedTools(result.data as DetectedTools);
       } else {
-        setDetectError(result.error || 'Failed to detect tools');
+        setDetectError(result.error || t('common:errors.unknownError'));
       }
     } catch (err) {
-      setDetectError(err instanceof Error ? err.message : 'Failed to detect tools');
+      setDetectError(err instanceof Error ? err.message : t('common:errors.unknownError'));
     } finally {
       setIsDetecting(false);
     }
-  }, []);
+  }, [t]);
 
   useEffect(() => {
     detectTools();
@@ -197,7 +194,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
   }
 
   // Add custom option last
-  ideOptions.push({ value: 'custom', label: 'Custom...', detected: false });
+  ideOptions.push({ value: 'custom', label: t('devtools.custom'), detected: false });
 
   // Build Terminal options with detection status
   const terminalOptions: Array<{ value: SupportedTerminal; label: string; detected: boolean }> = [];
@@ -236,7 +233,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
   }
 
   // Add custom option last
-  terminalOptions.push({ value: 'custom', label: 'Custom...', detected: false });
+  terminalOptions.push({ value: 'custom', label: t('devtools.custom'), detected: false });
 
   // Build CLI options with detection status
   const cliOptions: Array<{ value: SupportedCLI; label: string; detected: boolean }> = [];
@@ -262,7 +259,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
     }
   }
 
-  cliOptions.push({ value: 'custom', label: 'Custom...', detected: false });
+  cliOptions.push({ value: 'custom', label: t('devtools.custom'), detected: false });
 
   return (
     <SettingsSection
@@ -334,7 +331,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
                   id="custom-ide-path"
                   value={settings.customIDEPath || ''}
                   onChange={(e) => handleCustomIDEPathChange(e.target.value)}
-                  placeholder="/path/to/your/ide"
+                  placeholder={t('devtools.ide.customPathPlaceholder', '/path/to/your/ide')}
                   className="flex-1"
                 />
                 <Button
@@ -396,7 +393,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
                   id="custom-terminal-path"
                   value={settings.customTerminalPath || ''}
                   onChange={(e) => handleCustomTerminalPathChange(e.target.value)}
-                  placeholder="/path/to/your/terminal"
+                  placeholder={t('devtools.terminal.customPathPlaceholder', '/path/to/your/terminal')}
                   className="flex-1"
                 />
                 <Button
@@ -458,7 +455,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
                   id="custom-cli-path"
                   value={settings.customCLIPath || ''}
                   onChange={(e) => handleCustomCLIPathChange(e.target.value)}
-                  placeholder="/path/to/your/cli"
+                  placeholder={t('devtools.cli.customPathPlaceholder', '/path/to/your/cli')}
                   className="flex-1"
                 />
                 <Button

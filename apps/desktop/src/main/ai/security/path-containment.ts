@@ -27,6 +27,8 @@ export interface PathContainmentResult {
   reason?: string;
 }
 
+type ContainmentRoots = string | string[];
+
 // ---------------------------------------------------------------------------
 // Core enforcement
 // ---------------------------------------------------------------------------
@@ -86,39 +88,42 @@ function resolveSymlinks(filePath: string): string {
  */
 export function assertPathContained(
   filePath: string,
-  projectDir: string,
+  projectDir: ContainmentRoots,
 ): PathContainmentResult {
-  if (!filePath || !projectDir) {
+  const candidateRoots = Array.isArray(projectDir) ? projectDir : [projectDir];
+  const validRoots = candidateRoots.filter(Boolean);
+
+  if (!filePath || validRoots.length === 0) {
     throw new Error(
       'Path containment check requires both filePath and projectDir',
     );
   }
 
-  // Resolve the project directory (with symlinks)
-  const resolvedProjectDir = resolveSymlinks(projectDir);
-  const normalizedProjectDir = normalizePath(
-    resolvedProjectDir,
-    resolvedProjectDir,
+  // Resolve all allowed roots (with symlinks)
+  const resolvedRoots = validRoots.map((root) => resolveSymlinks(root));
+  const normalizedRoots = resolvedRoots.map((root) =>
+    normalizePath(root, root),
   );
 
   // Resolve the target path (with symlinks)
   const absolutePath = path.isAbsolute(filePath)
     ? filePath
-    : path.resolve(resolvedProjectDir, filePath);
+    : path.resolve(resolvedRoots[0], filePath);
   const resolvedPath = resolveSymlinks(absolutePath);
-  const normalizedPath = normalizePath(resolvedPath, resolvedProjectDir);
+  const normalizedPath = normalizePath(resolvedPath, resolvedRoots[0]);
 
-  // Ensure the resolved path starts with the project directory
-  const projectDirWithSep = normalizedProjectDir.endsWith(path.sep)
-    ? normalizedProjectDir
-    : normalizedProjectDir + path.sep;
-
-  const isContained =
-    normalizedPath === normalizedProjectDir ||
-    normalizedPath.startsWith(projectDirWithSep);
+  // Ensure the resolved path starts with one of the allowed roots
+  const isContained = normalizedRoots.some((normalizedRoot) => {
+    const rootWithSep = normalizedRoot.endsWith(path.sep)
+      ? normalizedRoot
+      : normalizedRoot + path.sep;
+    return normalizedPath === normalizedRoot || normalizedPath.startsWith(rootWithSep);
+  });
 
   if (!isContained) {
-    const reason = `Path '${filePath}' resolves to '${resolvedPath}' which is outside the project directory '${resolvedProjectDir}'`;
+    const reason = resolvedRoots.length === 1
+      ? `Path '${filePath}' resolves to '${resolvedPath}' which is outside the project directory '${resolvedRoots[0]}'`
+      : `Path '${filePath}' resolves to '${resolvedPath}' which is outside the allowed directories '${resolvedRoots.join("', '")}'`;
     throw new Error(reason);
   }
 
@@ -133,7 +138,7 @@ export function assertPathContained(
  */
 export function isPathContained(
   filePath: string,
-  projectDir: string,
+  projectDir: ContainmentRoots,
 ): PathContainmentResult {
   try {
     return assertPathContained(filePath, projectDir);

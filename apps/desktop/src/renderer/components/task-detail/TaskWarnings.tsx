@@ -1,4 +1,5 @@
 import { AlertTriangle, Play, RotateCcw, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Button } from '../ui/button';
 
 interface TaskWarningsProps {
@@ -18,6 +19,7 @@ export function TaskWarnings({
   onRecover,
   onResume
 }: TaskWarningsProps) {
+  const { t } = useTranslation('tasks');
   if (!isStuck && !isIncomplete) return null;
 
   return (
@@ -29,11 +31,10 @@ export function TaskWarnings({
             <AlertTriangle className="h-5 w-5 text-warning shrink-0 mt-0.5" />
             <div className="flex-1">
               <h3 className="font-medium text-sm text-foreground mb-1">
-                Task Appears Stuck
+                {t('detail.stuckTitle', 'Task Appears Stuck')}
               </h3>
               <p className="text-sm text-muted-foreground mb-3">
-                This task is marked as running but no active process was found.
-                This can happen if the app crashed or the process was terminated unexpectedly.
+                {t('detail.stuckDescription', 'This task is marked as running but no active process was found. This can happen if the app crashed or the process was terminated unexpectedly.')}
               </p>
               <Button
                 variant="warning"
@@ -45,12 +46,12 @@ export function TaskWarnings({
                 {isRecovering ? (
                   <>
                     <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                    Recovering...
+                    {t('labels.recovering')}
                   </>
                 ) : (
                   <>
                     <RotateCcw className="mr-2 h-4 w-4" />
-                    Recover & Restart Task
+                    {t('detail.recoverAndRestart', 'Recover & Restart Task')}
                   </>
                 )}
               </Button>
@@ -66,11 +67,14 @@ export function TaskWarnings({
             <AlertTriangle className="h-5 w-5 text-orange-400 shrink-0 mt-0.5" />
             <div className="flex-1">
               <h3 className="font-medium text-sm text-foreground mb-1">
-                Task Incomplete
+                {t('detail.incompleteTitle', 'Task Incomplete')}
               </h3>
               <p className="text-sm text-muted-foreground mb-3">
-                This task has a spec and implementation plan but never completed any subtasks ({taskProgress.completed}/{taskProgress.total}).
-                The process likely crashed during spec creation. Click Resume to continue implementation.
+                {t('detail.incompleteDescription', {
+                  completed: taskProgress.completed,
+                  total: taskProgress.total,
+                  defaultValue: 'This task has a spec and implementation plan but never completed any subtasks ({{completed}}/{{total}}). The process likely crashed during spec creation. Click Resume to continue implementation.'
+                })}
               </p>
               <Button
                 variant="default"
@@ -79,7 +83,7 @@ export function TaskWarnings({
                 className="w-full"
               >
                 <Play className="mr-2 h-4 w-4" />
-                Resume Task
+                {t('actions.resume')}
               </Button>
             </div>
           </div>

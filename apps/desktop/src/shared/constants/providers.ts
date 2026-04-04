@@ -11,7 +11,7 @@ export const PROVIDER_REGISTRY: ProviderInfo[] = [
     id: 'openai', name: 'OpenAI', description: 'GPT and Codex models',
     category: 'popular',
     authMethods: ['oauth', 'api-key'], envVars: ['OPENAI_API_KEY'],
-    configFields: [], website: 'https://platform.openai.com/api-keys',
+    configFields: ['baseUrl'], website: 'https://platform.openai.com/api-keys',
   },
   {
     id: 'google', name: 'Google AI', description: 'Gemini models',

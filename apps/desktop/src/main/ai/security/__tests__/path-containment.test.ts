@@ -16,16 +16,20 @@ import { assertPathContained, isPathContained } from '../path-containment';
 // ---------------------------------------------------------------------------
 
 let projectDir: string;
+let secondaryDir: string;
 
 beforeEach(() => {
   projectDir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-test-'));
-  // Create a subdirectory for testing
+  secondaryDir = fs.mkdtempSync(path.join(os.tmpdir(), 'security-test-secondary-'));
   fs.mkdirSync(path.join(projectDir, 'src'), { recursive: true });
   fs.writeFileSync(path.join(projectDir, 'src', 'index.ts'), '');
+  fs.mkdirSync(path.join(secondaryDir, 'specs'), { recursive: true });
+  fs.writeFileSync(path.join(secondaryDir, 'specs', 'implementation_plan.json'), '{}');
 });
 
 afterEach(() => {
   fs.rmSync(projectDir, { recursive: true, force: true });
+  fs.rmSync(secondaryDir, { recursive: true, force: true });
 });
 
 // ---------------------------------------------------------------------------
@@ -84,11 +88,18 @@ describe('assertPathContained', () => {
   });
 
   it('allows deeply nested path inside project', () => {
-    // Create parent dirs so symlink resolution works on macOS (/var -> /private/var)
     const deepDir = path.join(projectDir, 'a', 'b', 'c', 'd');
     fs.mkdirSync(deepDir, { recursive: true });
     const deepPath = path.join(deepDir, 'file.ts');
     const result = assertPathContained(deepPath, projectDir);
+    expect(result.contained).toBe(true);
+  });
+
+  it('allows file inside a secondary allowed root', () => {
+    const result = assertPathContained(
+      path.join(secondaryDir, 'specs', 'implementation_plan.json'),
+      [projectDir, secondaryDir],
+    );
     expect(result.contained).toBe(true);
   });
 });
@@ -139,7 +150,15 @@ describe('isPathContained', () => {
       const result = isPathContained(symlinkPath, projectDir);
       expect(result.contained).toBe(false);
     } catch {
-      // Symlink creation may fail on some systems/CI — skip gracefully
+      // Symlink creation may fail on some systems/CI; skip gracefully.
     }
+  });
+
+  it('returns contained=true for path inside secondary allowed root', () => {
+    const result = isPathContained(
+      path.join(secondaryDir, 'specs', 'implementation_plan.json'),
+      [projectDir, secondaryDir],
+    );
+    expect(result.contained).toBe(true);
   });
 });

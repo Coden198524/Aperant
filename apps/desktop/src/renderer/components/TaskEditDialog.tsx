@@ -75,6 +75,8 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     p => p.id === resolvedProfileId
   ) || DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto')!;
   const providerPreset = activeProvider ? getProviderPreset(activeProvider, resolvedProfileId) : null;
+  const profilePrimaryModel = (providerPreset?.primaryModel ?? selectedProfile.model) as ModelType;
+  const profilePrimaryThinking = providerPreset?.primaryThinking ?? selectedProfile.thinkingLevel;
   const profilePhaseModels = providerPreset?.phaseModels ?? selectedProfile.phaseModels ?? DEFAULT_PHASE_MODELS;
   const profilePhaseThinking = providerPreset?.phaseThinking ?? selectedProfile.phaseThinking ?? DEFAULT_PHASE_THINKING;
 
@@ -113,9 +115,9 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     }
     return resolvedProfileId;
   });
-  const [model, setModel] = useState<ModelType | ''>(task.metadata?.model || selectedProfile.model);
+  const [model, setModel] = useState<ModelType | ''>(task.metadata?.model || profilePrimaryModel);
   const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel | ''>(
-    task.metadata?.thinkingLevel || selectedProfile.thinkingLevel
+    task.metadata?.thinkingLevel || profilePrimaryThinking
   );
   const [phaseModels, setPhaseModels] = useState<PhaseModelConfig | undefined>(
     task.metadata?.phaseModels || profilePhaseModels
@@ -162,8 +164,8 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
 
       if (isAutoProfile) {
         setProfileId('auto');
-        setModel(taskModel || selectedProfile.model);
-        setThinkingLevel(taskThinking || selectedProfile.thinkingLevel);
+        setModel(taskModel || profilePrimaryModel);
+        setThinkingLevel(taskThinking || profilePrimaryThinking);
         setPhaseModels(task.metadata?.phaseModels || DEFAULT_PHASE_MODELS);
         setPhaseThinking(task.metadata?.phaseThinking || DEFAULT_PHASE_THINKING);
       } else if (taskModel && taskThinking) {
@@ -177,8 +179,8 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
         setPhaseThinking(task.metadata?.phaseThinking || DEFAULT_PHASE_THINKING);
       } else {
         setProfileId(resolvedProfileId);
-        setModel(selectedProfile.model);
-        setThinkingLevel(selectedProfile.thinkingLevel);
+        setModel(profilePrimaryModel);
+        setThinkingLevel(profilePrimaryThinking);
         setPhaseModels(profilePhaseModels);
         setPhaseThinking(profilePhaseThinking);
       }
@@ -195,7 +197,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
         setShowClassification(false);
       }
     }
-  }, [open, task, resolvedProfileId, selectedProfile.model, selectedProfile.thinkingLevel, profilePhaseModels, profilePhaseThinking]);
+  }, [open, task, resolvedProfileId, profilePrimaryModel, profilePrimaryThinking, profilePhaseModels, profilePhaseThinking]);
 
   /**
    * Handle file reference drop from FileTreeItem drag

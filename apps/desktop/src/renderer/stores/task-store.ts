@@ -1,6 +1,7 @@
 import { create } from 'zustand';
 import { arrayMove } from '@dnd-kit/sortable';
-import type { Task, TaskStatus, SubtaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft, ImageAttachment, TaskOrderState } from '../../shared/types';
+import type { Task, TaskStatus, SubtaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft, ImageAttachment, TaskOrderState, TokenUsage } from '../../shared/types';
+import { wouldPhaseRegress } from '../../shared/constants/phase-protocol';
 import { debugLog, debugWarn } from '../../shared/utils/debug-logger';
 import { useProjectStore } from './project-store';
 
@@ -25,6 +26,7 @@ interface TaskState {
   updateTaskStatus: (taskId: string, status: TaskStatus, reviewReason?: ReviewReason) => void;
   updateTaskFromPlan: (taskId: string, plan: ImplementationPlan) => void;
   updateExecutionProgress: (taskId: string, progress: Partial<ExecutionProgress>) => void;
+  updateTaskTokenUsage: (taskId: string, usage: TokenUsage) => void;
   appendLog: (taskId: string, log: string) => void;
   batchAppendLogs: (taskId: string, logs: string[]) => void;
   selectTask: (taskId: string | null) => void;
@@ -126,6 +128,10 @@ function updateTaskAtIndex(tasks: Task[], index: number, updater: (task: Task) =
   newTasks[index] = updatedTask;
 
   return newTasks;
+}
+
+function isAllowedPhaseRegression(currentPhase: ExecutionPhase, nextPhase: ExecutionPhase): boolean {
+  return currentPhase === 'qa_fixing' && nextPhase === 'qa_review';
 }
 
 /**
@@ -454,6 +460,24 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             return t; // Skip out-of-order update
           }
 
+          const currentPhase = existingProgress.phase;
+          const nextPhase = progress.phase;
+          if (
+            currentPhase &&
+            nextPhase &&
+            currentPhase !== nextPhase &&
+            incomingSeq === 0 &&
+            wouldPhaseRegress(currentPhase, nextPhase) &&
+            !isAllowedPhaseRegression(currentPhase, nextPhase)
+          ) {
+            console.warn('[updateExecutionProgress] Dropping regressive phase update without sequence number:', {
+              taskId,
+              currentPhase,
+              nextPhase
+            });
+            return t;
+          }
+
           // Only update updatedAt on phase transitions (not on every progress tick)
           // This prevents unnecessary re-renders from the memo comparator
           const phaseChanged = progress.phase && progress.phase !== existingProgress.phase;
@@ -468,6 +492,22 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             ...(phaseChanged ? { updatedAt: new Date() } : {})
           };
         })
+      };
+    });
+  },
+
+  updateTaskTokenUsage: (taskId, usage) => {
+    recordTaskActivity(taskId);
+
+    set((state) => {
+      const index = findTaskIndex(state.tasks, taskId);
+      if (index === -1) return state;
+
+      return {
+        tasks: updateTaskAtIndex(state.tasks, index, (t) => ({
+          ...t,
+          tokenUsage: usage
+        }))
       };
     });
   },
@@ -984,6 +1024,7 @@ export async function deleteTask(
     const result = await window.electronAPI.deleteTask(taskId);
 
     if (result.success) {
+      clearTaskActivity(taskId);
       // Remove from local state
       store.setTasks(store.tasks.filter(t => t.id !== taskId && t.specId !== taskId));
       // Clear selection if this task was selected
@@ -1027,6 +1068,7 @@ export async function deleteTasks(
 
     // Remove successfully deleted tasks from local state
     const deletedIds = new Set(taskIds.filter(id => !failedIds.includes(id)));
+    deletedIds.forEach((taskId) => clearTaskActivity(taskId));
     store.setTasks(store.tasks.filter(t => !deletedIds.has(t.id) && !deletedIds.has(t.specId || '')));
 
     // Clear selection if selected task was deleted

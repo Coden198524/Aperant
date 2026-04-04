@@ -34,6 +34,7 @@ const browserMockAPI: ElectronAPI = {
 
   // Task Operations
   ...taskMock,
+  onTaskTokenUsage: () => () => {},
 
   // Workspace Management
   ...workspaceMock,

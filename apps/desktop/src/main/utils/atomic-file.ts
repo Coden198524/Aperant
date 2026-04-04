@@ -21,12 +21,151 @@ import { randomBytes } from 'crypto';
 
 /** Error codes for transient filesystem errors that are safe to retry */
 const TRANSIENT_ERROR_CODES = ['EBUSY', 'EACCES', 'EAGAIN', 'EPERM', 'EMFILE', 'ENFILE'] as const;
+const WINDOWS_RENAME_RETRY_CODES = ['EBUSY', 'EACCES', 'EAGAIN', 'EPERM'] as const;
+const WINDOWS_RENAME_MAX_RETRIES = 2;
+const WINDOWS_RENAME_RETRY_DELAY_MS = 20;
 
 export class AtomicFileError extends Error {
   constructor(message: string) {
     super(message);
     this.name = 'AtomicFileError';
   }
+}
+
+function isTransientError(error: unknown): error is NodeJS.ErrnoException {
+  const code = (error as NodeJS.ErrnoException).code;
+  return Boolean(code && (TRANSIENT_ERROR_CODES as readonly string[]).includes(code));
+}
+
+function shouldUseWindowsRenameFallback(error: unknown): error is NodeJS.ErrnoException {
+  if (process.platform !== 'win32') {
+    return false;
+  }
+
+  const code = (error as NodeJS.ErrnoException).code;
+  return Boolean(code && (WINDOWS_RENAME_RETRY_CODES as readonly string[]).includes(code));
+}
+
+function getRetryDelay(attempt: number): number {
+  return WINDOWS_RENAME_RETRY_DELAY_MS * 2 ** attempt;
+}
+
+function sleepSync(ms: number): void {
+  if (ms <= 0) {
+    return;
+  }
+
+  Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, ms);
+}
+
+async function replaceFileWithFallback(
+  tempPath: string,
+  absolutePath: string,
+  data: string | Buffer,
+  options?: { encoding?: BufferEncoding; mode?: number }
+): Promise<void> {
+  let renameError: NodeJS.ErrnoException | undefined;
+
+  for (let attempt = 0; attempt <= WINDOWS_RENAME_MAX_RETRIES; attempt++) {
+    try {
+      await rename(tempPath, absolutePath);
+      return;
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      renameError = nodeError;
+
+      if (!shouldUseWindowsRenameFallback(nodeError)) {
+        throw nodeError;
+      }
+
+      if (attempt < WINDOWS_RENAME_MAX_RETRIES) {
+        await new Promise(resolve => setTimeout(resolve, getRetryDelay(attempt)));
+      }
+    }
+  }
+
+  for (let attempt = 0; attempt <= WINDOWS_RENAME_MAX_RETRIES; attempt++) {
+    try {
+      await writeFile(absolutePath, data, {
+        encoding: options?.encoding,
+        mode: options?.mode,
+      });
+      await unlink(tempPath).catch(() => {});
+      return;
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+
+      if (!isTransientError(nodeError) || attempt === WINDOWS_RENAME_MAX_RETRIES) {
+        throw nodeError;
+      }
+
+      await new Promise(resolve => setTimeout(resolve, getRetryDelay(attempt)));
+    }
+  }
+
+  throw renameError ?? new AtomicFileError(`Failed to replace file ${absolutePath}`);
+}
+
+function writeSyncTargetFile(
+  filepath: string,
+  data: string | Buffer,
+  encoding: BufferEncoding
+): void {
+  if (Buffer.isBuffer(data)) {
+    writeFileSync(filepath, data);
+    return;
+  }
+
+  writeFileSync(filepath, data, encoding);
+}
+
+function replaceFileWithFallbackSync(
+  tempPath: string,
+  absolutePath: string,
+  data: string | Buffer,
+  encoding: BufferEncoding
+): void {
+  let renameError: NodeJS.ErrnoException | undefined;
+
+  for (let attempt = 0; attempt <= WINDOWS_RENAME_MAX_RETRIES; attempt++) {
+    try {
+      renameSync(tempPath, absolutePath);
+      return;
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+      renameError = nodeError;
+
+      if (!shouldUseWindowsRenameFallback(nodeError)) {
+        throw nodeError;
+      }
+
+      if (attempt < WINDOWS_RENAME_MAX_RETRIES) {
+        sleepSync(getRetryDelay(attempt));
+      }
+    }
+  }
+
+  for (let attempt = 0; attempt <= WINDOWS_RENAME_MAX_RETRIES; attempt++) {
+    try {
+      writeSyncTargetFile(absolutePath, data, encoding);
+      try {
+        unlinkSync(tempPath);
+      } catch {
+        // Best-effort cleanup after fallback write.
+      }
+      return;
+    } catch (error) {
+      const nodeError = error as NodeJS.ErrnoException;
+
+      if (!isTransientError(nodeError) || attempt === WINDOWS_RENAME_MAX_RETRIES) {
+        throw nodeError;
+      }
+
+      sleepSync(getRetryDelay(attempt));
+    }
+  }
+
+  throw renameError ?? new AtomicFileError(`Failed to replace file ${absolutePath}`);
 }
 
 /**
@@ -67,8 +206,8 @@ export async function writeFileAtomic(
       mode: options?.mode,
     });
 
-    // Atomic replace - only happens if write succeeded
-    await rename(tempPath, absolutePath);
+    // Atomic replace when possible, with a Windows fallback when the target is locked.
+    await replaceFileWithFallback(tempPath, absolutePath, data, options);
   } catch (error) {
     // Clean up temp file on error
     try {
@@ -106,8 +245,8 @@ export function writeFileAtomicSync(
   const tempSuffix = randomBytes(8).toString('hex');
   const tempPath = path.join(dir, `.${path.basename(absolutePath)}.tmp.${tempSuffix}`);
   try {
-    writeFileSync(tempPath, data, encoding);
-    renameSync(tempPath, absolutePath);
+    writeSyncTargetFile(tempPath, data, encoding);
+    replaceFileWithFallbackSync(tempPath, absolutePath, data, encoding);
   } catch (err) {
     try { unlinkSync(tempPath); } catch { /* ignore cleanup */ }
     throw err;
@@ -156,7 +295,7 @@ export async function writeFileWithRetry(
       lastError = nodeError;
 
       // Check if this is a transient error we should retry
-      const isTransient = nodeError.code && (TRANSIENT_ERROR_CODES as readonly string[]).includes(nodeError.code);
+      const isTransient = isTransientError(nodeError);
 
       if (!isTransient || attempt === maxRetries) {
         // Not transient or out of retries - throw
@@ -212,7 +351,7 @@ export async function readFileWithRetry(
       lastError = nodeError;
 
       // Check if this is a transient error we should retry
-      const isTransient = nodeError.code && (TRANSIENT_ERROR_CODES as readonly string[]).includes(nodeError.code);
+      const isTransient = isTransientError(nodeError);
 
       if (!isTransient || attempt === maxRetries) {
         // Not transient or out of retries - throw

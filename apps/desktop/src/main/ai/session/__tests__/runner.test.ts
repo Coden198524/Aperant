@@ -312,4 +312,64 @@ describe('runAgentSession', () => {
     const callArgs = mockStreamText.mock.calls[0][0];
     expect(callArgs.stopWhen).toEqual({ type: 'stepCount', count: 500 });
   });
+
+  it('should keep system prompt for openai-compatible chat models even when model id is codex', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Spec prompt',
+      model: {
+        modelId: 'gpt-5.3-codex',
+        provider: 'openai-compatible.chat',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.system).toBe('Spec prompt');
+    expect(callArgs.providerOptions?.openai).toBeUndefined();
+  });
+
+  it('should only enable instructions/store for openai responses transport', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Spec prompt',
+      model: {
+        modelId: 'gpt-5.3-codex',
+        provider: 'openai.responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.system).toBeUndefined();
+    expect(callArgs.providerOptions?.openai).toMatchObject({
+      instructions: 'Spec prompt',
+      store: true,
+    });
+  });
+
+  it('should enable instructions/store for hyphenated openai-responses provider ids', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Spec prompt',
+      model: {
+        modelId: 'gpt-5.3-codex',
+        provider: 'openai-responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.system).toBeUndefined();
+    expect(callArgs.providerOptions?.openai).toMatchObject({
+      instructions: 'Spec prompt',
+      store: true,
+    });
+  });
 });

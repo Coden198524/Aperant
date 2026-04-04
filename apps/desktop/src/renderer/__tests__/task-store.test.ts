@@ -4,7 +4,7 @@
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { useTaskStore, hasRecentActivity, clearTaskActivity } from '../stores/task-store';
-import type { Task, TaskStatus, ImplementationPlan } from '../../shared/types';
+import type { Task, TaskStatus, ImplementationPlan, TokenUsage } from '../../shared/types';
 
 // Helper to create test tasks
 function createTestTask(overrides: Partial<Task> = {}): Task {
@@ -44,6 +44,15 @@ function createTestPlan(overrides: Partial<ImplementationPlan> = {}): Implementa
     created_at: new Date().toISOString(),
     updated_at: new Date().toISOString(),
     spec_file: 'spec.md',
+    ...overrides
+  };
+}
+
+function createTokenUsage(overrides: Partial<TokenUsage> = {}): TokenUsage {
+  return {
+    promptTokens: 100,
+    completionTokens: 25,
+    totalTokens: 125,
     ...overrides
   };
 }
@@ -388,6 +397,28 @@ describe('Task Store', () => {
     });
   });
 
+  describe('updateTaskTokenUsage', () => {
+    it('should update task token usage by id', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      useTaskStore.getState().updateTaskTokenUsage('task-1', createTokenUsage({ totalTokens: 320 }));
+
+      expect(useTaskStore.getState().tasks[0].tokenUsage?.totalTokens).toBe(320);
+    });
+
+    it('should update task token usage by specId', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1', specId: 'spec-001' })]
+      });
+
+      useTaskStore.getState().updateTaskTokenUsage('spec-001', createTokenUsage({ promptTokens: 222 }));
+
+      expect(useTaskStore.getState().tasks[0].tokenUsage?.promptTokens).toBe(222);
+    });
+  });
+
   describe('selectTask', () => {
     it('should set selected task id', () => {
       useTaskStore.getState().selectTask('task-1');
@@ -589,6 +620,52 @@ describe('Task Store', () => {
         expect(tasks).toHaveLength(1);
         expect(tasks[0].status).toBe(status);
       });
+    });
+  });
+
+  describe('execution phase regression protection', () => {
+    it('should ignore regressive planning update after coding when no sequence number is present', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'in_progress',
+          executionProgress: {
+            phase: 'coding',
+            phaseProgress: 40,
+            overallProgress: 35,
+          }
+        })]
+      });
+
+      useTaskStore.getState().updateExecutionProgress('task-1', {
+        phase: 'planning',
+        phaseProgress: 10,
+        overallProgress: 5,
+      });
+
+      expect(useTaskStore.getState().tasks[0].executionProgress?.phase).toBe('coding');
+    });
+
+    it('should allow qa_fixing to qa_review transition without sequence number', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'ai_review',
+          executionProgress: {
+            phase: 'qa_fixing',
+            phaseProgress: 60,
+            overallProgress: 90,
+          }
+        })]
+      });
+
+      useTaskStore.getState().updateExecutionProgress('task-1', {
+        phase: 'qa_review',
+        phaseProgress: 20,
+        overallProgress: 85,
+      });
+
+      expect(useTaskStore.getState().tasks[0].executionProgress?.phase).toBe('qa_review');
     });
   });
 

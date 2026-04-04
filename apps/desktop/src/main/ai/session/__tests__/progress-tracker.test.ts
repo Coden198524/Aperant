@@ -42,6 +42,20 @@ describe('ProgressTracker', () => {
       expect(tracker.currentPhase).toBe('planning');
     });
 
+    it('should ignore implementation_plan.json writes during coding', () => {
+      tracker.forcePhase('coding', 'Coding...');
+
+      const result = tracker.processEvent({
+        type: 'tool-call',
+        toolName: 'Edit',
+        toolCallId: 'c1',
+        args: { file_path: '/project/.auto-claude/specs/001/implementation_plan.json' },
+      });
+
+      expect(result).toBeNull();
+      expect(tracker.currentPhase).toBe('coding');
+    });
+
     it('should detect qa_review from qa_report.md write', () => {
       // First advance to coding
       tracker.forcePhase('coding', 'Coding...');

@@ -20,10 +20,9 @@
 
 import type { ZodSchema, ZodError } from 'zod';
 import type { LanguageModel } from 'ai';
-import { readFile, writeFile, mkdtemp, rename, unlink } from 'node:fs/promises';
-import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { readFile } from 'node:fs/promises';
 import { safeParseJson } from '../../utils/json-repair';
+import { writeFileAtomic } from '../../utils/atomic-file';
 
 // =============================================================================
 // LLM Text → Typed Data Helper
@@ -158,19 +157,9 @@ export async function validateAndNormalizeJsonFile<T>(
   const result = await validateJsonFile(filePath, schema);
 
   if (result.valid && result.data) {
-    // Write back the coerced data so downstream consumers get canonical field names.
-    // Use a secure temp file + atomic rename to avoid TOCTOU races on the target path.
-    const tempDir = await mkdtemp(join(tmpdir(), 'auto-claude-normalize-'));
-    const tempFile = join(tempDir, 'output.json');
-    try {
-      await writeFile(tempFile, JSON.stringify(result.data, null, 2));
-      await rename(tempFile, filePath);
-    } finally {
-      await unlink(tempFile).catch(() => undefined);
-      // Best-effort cleanup of the temp directory; ignore errors if already removed
-      const { rmdir } = await import('node:fs/promises');
-      await rmdir(tempDir).catch(() => undefined);
-    }
+    await writeFileAtomic(filePath, JSON.stringify(result.data, null, 2), {
+      encoding: 'utf-8',
+    });
   }
 
   return result;
@@ -337,17 +326,9 @@ export async function repairJsonWithLLM<T>(
         // coercion schema (which may normalize fields further) and write back
         const coerced = schema.safeParse(result.output);
         if (coerced.success) {
-          // Use a secure temp file + atomic rename to avoid TOCTOU races
-          const tempDir = await mkdtemp(join(tmpdir(), 'auto-claude-repair-'));
-          const tempFile = join(tempDir, 'output.json');
-          try {
-            await writeFile(tempFile, JSON.stringify(coerced.data, null, 2));
-            await rename(tempFile, filePath);
-          } finally {
-            await unlink(tempFile).catch(() => undefined);
-            const { rmdir } = await import('node:fs/promises');
-            await rmdir(tempDir).catch(() => undefined);
-          }
+          await writeFileAtomic(filePath, JSON.stringify(coerced.data, null, 2), {
+            encoding: 'utf-8',
+          });
           return { valid: true, data: coerced.data, errors: [] };
         }
         // Output.object() passed but coercion schema didn't — update errors for next attempt

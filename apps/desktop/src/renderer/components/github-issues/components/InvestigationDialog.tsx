@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Sparkles, Loader2, CheckCircle2, MessageCircle } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Progress } from '../../ui/progress';
@@ -32,12 +33,12 @@ export function InvestigationDialog({
   onClose,
   projectId
 }: InvestigationDialogProps) {
+  const { t } = useTranslation('common');
   const [comments, setComments] = useState<GitHubComment[]>([]);
   const [selectedCommentIds, setSelectedCommentIds] = useState<number[]>([]);
   const [loadingComments, setLoadingComments] = useState(false);
   const [fetchCommentsError, setFetchCommentsError] = useState<string | null>(null);
 
-  // Fetch comments when dialog opens
   useEffect(() => {
     if (open && selectedIssue && projectId) {
       let isMounted = true;
@@ -52,15 +53,18 @@ export function InvestigationDialog({
           if (!isMounted) return;
           if (result.success && result.data) {
             setComments(result.data);
-            // By default, select all comments
-            setSelectedCommentIds(result.data.map((c: GitHubComment) => c.id));
+            setSelectedCommentIds(result.data.map((comment: GitHubComment) => comment.id));
           }
         })
         .catch((err: unknown) => {
           if (!isMounted) return;
           console.error('Failed to fetch comments:', err);
           setFetchCommentsError(
-            err instanceof Error ? err.message : 'Failed to load comments'
+            err instanceof Error
+              ? err.message
+              : t('issues.investigation.failedToLoadComments', {
+                  defaultValue: 'Failed to load comments'
+                })
           );
         })
         .finally(() => {
@@ -73,7 +77,7 @@ export function InvestigationDialog({
         isMounted = false;
       };
     }
-  }, [open, selectedIssue, projectId]);
+  }, [open, selectedIssue, projectId, t]);
 
   const toggleComment = (commentId: number) => {
     setSelectedCommentIds(prev =>
@@ -87,7 +91,7 @@ export function InvestigationDialog({
     if (selectedCommentIds.length === comments.length) {
       setSelectedCommentIds([]);
     } else {
-      setSelectedCommentIds(comments.map(c => c.id));
+      setSelectedCommentIds(comments.map(comment => comment.id));
     }
   };
 
@@ -101,12 +105,16 @@ export function InvestigationDialog({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Sparkles className="h-5 w-5 text-info" />
-            Create Task from Issue
+            {t('issues.investigation.title', {
+              defaultValue: 'Create Task from Issue'
+            })}
           </DialogTitle>
           <DialogDescription>
             {selectedIssue && (
               <span>
-                Issue #{selectedIssue.number}: {selectedIssue.title}
+                {t('issues.investigation.issuePrefix', {
+                  defaultValue: 'Issue'
+                })} #{selectedIssue.number}: {selectedIssue.title}
               </span>
             )}
           </DialogDescription>
@@ -115,17 +123,22 @@ export function InvestigationDialog({
         {investigationStatus.phase === 'idle' ? (
           <div className="space-y-4 flex-1 min-h-0 flex flex-col">
             <p className="text-sm text-muted-foreground">
-              Create a task from this GitHub issue. The task will be added to your Kanban board in the Backlog column.
+              {t('issues.investigation.description', {
+                defaultValue: 'Create a task from this GitHub issue. The task will be added to your Kanban board in the Backlog column.'
+              })}
             </p>
 
-            {/* Comments section */}
             {loadingComments ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
               </div>
             ) : fetchCommentsError ? (
               <div className="rounded-lg bg-destructive/10 border border-destructive/30 p-4">
-                <p className="text-sm text-destructive font-medium">Failed to load comments</p>
+                <p className="text-sm text-destructive font-medium">
+                  {t('issues.investigation.failedToLoadComments', {
+                    defaultValue: 'Failed to load comments'
+                  })}
+                </p>
                 <p className="text-xs text-destructive/80 mt-1">{fetchCommentsError}</p>
               </div>
             ) : comments.length > 0 ? (
@@ -133,7 +146,9 @@ export function InvestigationDialog({
                 <div className="flex items-center justify-between">
                   <h4 className="text-sm font-medium flex items-center gap-2">
                     <MessageCircle className="h-4 w-4" />
-                    Select Comments to Include ({selectedCommentIds.length}/{comments.length})
+                    {t('issues.investigation.selectComments', {
+                      defaultValue: 'Select Comments to Include'
+                    })} ({selectedCommentIds.length}/{comments.length})
                   </h4>
                   <Button
                     variant="ghost"
@@ -141,7 +156,13 @@ export function InvestigationDialog({
                     onClick={toggleAllComments}
                     className="text-xs"
                   >
-                    {selectedCommentIds.length === comments.length ? 'Deselect All' : 'Select All'}
+                    {selectedCommentIds.length === comments.length
+                      ? t('issues.investigation.deselectAll', {
+                          defaultValue: 'Deselect All'
+                        })
+                      : t('issues.investigation.selectAll', {
+                          defaultValue: 'Select All'
+                        })}
                   </Button>
                 </div>
                 <ScrollArea
@@ -163,7 +184,7 @@ export function InvestigationDialog({
                         <div className="flex-1 space-y-1 min-w-0">
                           <div className="flex items-center gap-2 text-xs text-muted-foreground">
                             <span className="font-medium">{comment.user.login}</span>
-                            <span>•</span>
+                            <span>&middot;</span>
                             <span>{formatDate(comment.created_at)}</span>
                           </div>
                           <p className="text-sm text-foreground whitespace-pre-wrap break-words line-clamp-3">
@@ -177,12 +198,32 @@ export function InvestigationDialog({
               </div>
             ) : (
               <div className="rounded-lg border border-border bg-muted/30 p-4">
-                <h4 className="text-sm font-medium mb-2">The task will include:</h4>
-                <ul className="text-sm text-muted-foreground space-y-1">
-                  <li>• Issue title and description</li>
-                  <li>• Link back to the GitHub issue</li>
-                  <li>• Labels and metadata from the issue</li>
-                  <li>• No comments (this issue has no comments)</li>
+                <h4 className="text-sm font-medium mb-2">
+                  {t('issues.investigation.willInclude', {
+                    defaultValue: 'The task will include:'
+                  })}
+                </h4>
+                <ul className="list-disc pl-5 text-sm text-muted-foreground space-y-1">
+                  <li>
+                    {t('issues.investigation.includeTitle', {
+                      defaultValue: 'Issue title and description'
+                    })}
+                  </li>
+                  <li>
+                    {t('issues.investigation.includeLink', {
+                      defaultValue: 'Link back to the GitHub issue'
+                    })}
+                  </li>
+                  <li>
+                    {t('issues.investigation.includeLabels', {
+                      defaultValue: 'Labels and metadata from the issue'
+                    })}
+                  </li>
+                  <li>
+                    {t('issues.investigation.noComments', {
+                      defaultValue: 'No comments (this issue has no comments)'
+                    })}
+                  </li>
                 </ul>
               </div>
             )}
@@ -206,7 +247,9 @@ export function InvestigationDialog({
             {investigationStatus.phase === 'complete' && (
               <div className="rounded-lg bg-success/10 border border-success/30 p-3 flex items-center gap-2 text-sm text-success">
                 <CheckCircle2 className="h-4 w-4" />
-                Task created! View it in your Kanban board.
+                {t('issues.investigation.taskCreated', {
+                  defaultValue: 'Task created! View it in your Kanban board.'
+                })}
               </div>
             )}
           </div>
@@ -216,23 +259,25 @@ export function InvestigationDialog({
           {investigationStatus.phase === 'idle' && (
             <>
               <Button variant="outline" onClick={() => onOpenChange(false)}>
-                Cancel
+                {t('issues.investigation.cancel', { defaultValue: 'Cancel' })}
               </Button>
               <Button onClick={handleStartInvestigation}>
                 <Sparkles className="h-4 w-4 mr-2" />
-                Create Task
+                {t('issues.detail.createTask', { defaultValue: 'Create Task' })}
               </Button>
             </>
           )}
           {investigationStatus.phase !== 'idle' && investigationStatus.phase !== 'complete' && (
             <Button variant="outline" disabled>
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Creating...
+              {t('issues.investigation.creating', {
+                defaultValue: 'Creating...'
+              })}
             </Button>
           )}
           {investigationStatus.phase === 'complete' && (
             <Button onClick={onClose}>
-              Done
+              {t('issues.investigation.done', { defaultValue: 'Done' })}
             </Button>
           )}
         </DialogFooter>

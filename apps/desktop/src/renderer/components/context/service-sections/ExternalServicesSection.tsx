@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { Server, ChevronDown, ChevronRight, HardDrive, Mail, CreditCard, Zap } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge } from '../../ui/badge';
 import {
   Collapsible,
@@ -13,6 +14,7 @@ interface ExternalServicesSectionProps {
 }
 
 export function ExternalServicesSection({ services }: ExternalServicesSectionProps) {
+  const { t } = useTranslation('common');
   const [expanded, setExpanded] = useState(false);
 
   if (!services || !Object.values(services).some(arr => arr && arr.length > 0)) {
@@ -28,14 +30,16 @@ export function ExternalServicesSection({ services }: ExternalServicesSectionPro
       <CollapsibleTrigger className="flex w-full items-center justify-between text-xs font-medium hover:text-foreground">
         <div className="flex items-center gap-2">
           <Server className="h-3 w-3" />
-          External Services
+          {t('context.projectIndex.labels.externalServices', { defaultValue: 'External Services' })}
         </div>
         {expanded ? <ChevronDown className="h-3 w-3" /> : <ChevronRight className="h-3 w-3" />}
       </CollapsibleTrigger>
       <CollapsibleContent className="mt-2 space-y-2">
         {services.databases && services.databases.length > 0 && (
           <div>
-            <span className="text-xs text-muted-foreground">Databases</span>
+            <span className="text-xs text-muted-foreground">
+              {t('context.projectIndex.labels.databases', { defaultValue: 'Databases' })}
+            </span>
             <div className="flex flex-wrap gap-1 mt-1">
               {services.databases.map((db, idx) => (
                 <Badge key={idx} variant="secondary" className="text-xs">
@@ -48,7 +52,9 @@ export function ExternalServicesSection({ services }: ExternalServicesSectionPro
         )}
         {services.email && services.email.length > 0 && (
           <div>
-            <span className="text-xs text-muted-foreground">Email</span>
+            <span className="text-xs text-muted-foreground">
+              {t('context.projectIndex.labels.email', { defaultValue: 'Email' })}
+            </span>
             <div className="flex flex-wrap gap-1 mt-1">
               {services.email.map((email, idx) => (
                 <Badge key={idx} variant="secondary" className="text-xs">
@@ -61,7 +67,9 @@ export function ExternalServicesSection({ services }: ExternalServicesSectionPro
         )}
         {services.payments && services.payments.length > 0 && (
           <div>
-            <span className="text-xs text-muted-foreground">Payments</span>
+            <span className="text-xs text-muted-foreground">
+              {t('context.projectIndex.labels.payments', { defaultValue: 'Payments' })}
+            </span>
             <div className="flex flex-wrap gap-1 mt-1">
               {services.payments.map((payment, idx) => (
                 <Badge key={idx} variant="secondary" className="text-xs">
@@ -74,7 +82,9 @@ export function ExternalServicesSection({ services }: ExternalServicesSectionPro
         )}
         {services.cache && services.cache.length > 0 && (
           <div>
-            <span className="text-xs text-muted-foreground">Cache</span>
+            <span className="text-xs text-muted-foreground">
+              {t('context.projectIndex.labels.cache', { defaultValue: 'Cache' })}
+            </span>
             <div className="flex flex-wrap gap-1 mt-1">
               {services.cache.map((cache, idx) => (
                 <Badge key={idx} variant="secondary" className="text-xs">

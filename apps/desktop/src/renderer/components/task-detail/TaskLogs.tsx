@@ -1,4 +1,6 @@
 import { useState, useMemo } from 'react';
+import { useTranslation } from 'react-i18next';
+import type { TFunction } from 'i18next';
 import {
   Terminal,
   Loader2,
@@ -39,12 +41,6 @@ interface TaskLogsProps {
   onTogglePhase: (phase: TaskLogPhase) => void;
 }
 
-const PHASE_LABELS: Record<TaskLogPhase, string> = {
-  planning: 'Planning',
-  coding: 'Coding',
-  validation: 'Validation'
-};
-
 const PHASE_ICONS: Record<TaskLogPhase, typeof Pencil> = {
   planning: Pencil,
   coding: FileCode,
@@ -66,12 +62,16 @@ const LOG_PHASE_TO_CONFIG_PHASE: Record<TaskLogPhase, keyof PhaseModelConfig> = 
 };
 
 // Short labels for thinking levels
-const THINKING_SHORT_LABELS: Record<ThinkingLevel, string> = {
-  low: 'Low',
-  medium: 'Med',
-  high: 'High',
-  xhigh: 'XHigh'
-};
+function getThinkingShortLabel(thinking: ThinkingLevel, t: TFunction): string {
+  const labels: Record<ThinkingLevel, string> = {
+    low: t('tasks:logs.thinkingLabels.low', { defaultValue: 'Low' }),
+    medium: t('tasks:logs.thinkingLabels.medium', { defaultValue: 'Med' }),
+    high: t('tasks:logs.thinkingLabels.high', { defaultValue: 'High' }),
+    xhigh: t('tasks:logs.thinkingLabels.xhigh', { defaultValue: 'XHigh' })
+  };
+
+  return labels[thinking] || thinking;
+}
 
 // Resolve a model shorthand to a display label, using provider context when available
 function resolveModelLabel(model: string, provider?: string): string {
@@ -85,7 +85,8 @@ function resolveModelLabel(model: string, provider?: string): string {
 // Helper to get model and thinking info for a log phase
 function getPhaseConfig(
   metadata: TaskMetadata | undefined,
-  logPhase: TaskLogPhase
+  logPhase: TaskLogPhase,
+  t: TFunction
 ): { model: string; thinking: string } | null {
   if (!metadata) return null;
 
@@ -99,7 +100,7 @@ function getPhaseConfig(
     const provider = metadata.phaseProviders?.[configPhase] ?? metadata.provider;
     return {
       model: resolveModelLabel(model, provider),
-      thinking: THINKING_SHORT_LABELS[thinking] || thinking
+      thinking: getThinkingShortLabel(thinking, t)
     };
   }
 
@@ -107,7 +108,7 @@ function getPhaseConfig(
   if (metadata.model && metadata.thinkingLevel) {
     return {
       model: resolveModelLabel(metadata.model, metadata.provider),
-      thinking: THINKING_SHORT_LABELS[metadata.thinkingLevel] || metadata.thinkingLevel
+      thinking: getThinkingShortLabel(metadata.thinkingLevel, t)
     };
   }
 
@@ -125,6 +126,7 @@ export function TaskLogs({
   onLogsScroll,
   onTogglePhase
 }: TaskLogsProps) {
+  const { t } = useTranslation(['tasks', 'common']);
   return (
     <div
       ref={logsContainerRef}
@@ -148,7 +150,7 @@ export function TaskLogs({
                 onToggle={() => onTogglePhase(phase)}
                 isTaskStuck={isStuck}
                 isTaskSettled={task.status === 'human_review' || task.status === 'done' || task.status === 'pr_created' || task.status === 'error'}
-                phaseConfig={getPhaseConfig(task.metadata, phase)}
+                phaseConfig={getPhaseConfig(task.metadata, phase, t)}
               />
             ))}
             <div ref={logsEndRef} />
@@ -162,8 +164,8 @@ export function TaskLogs({
         ) : (
           <div className="text-center text-sm text-muted-foreground py-8">
             <Terminal className="mx-auto mb-2 h-8 w-8 opacity-50" />
-            <p>No logs yet</p>
-            <p className="text-xs mt-1">Logs will appear here when the task runs</p>
+            <p>{t('tasks:logs.emptyTitle', 'No logs yet')}</p>
+            <p className="text-xs mt-1">{t('tasks:logs.emptyDescription', 'Logs will appear here when the task runs')}</p>
           </div>
         )}
       </div>
@@ -183,6 +185,12 @@ interface PhaseLogSectionProps {
 }
 
 function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, isTaskSettled, phaseConfig }: PhaseLogSectionProps) {
+  const { t } = useTranslation(['tasks', 'common']);
+  const phaseLabel = {
+    planning: t('tasks:logs.phaseLabels.planning', { defaultValue: 'Planning' }),
+    coding: t('tasks:logs.phaseLabels.coding', { defaultValue: 'Coding' }),
+    validation: t('tasks:logs.phaseLabels.validation', { defaultValue: 'Validation' })
+  }[phase];
   const Icon = PHASE_ICONS[phase];
   const logOrder = useSettingsStore(s => s.settings.logOrder);
   // If the task is in a settled state (human_review, done, etc.), any "active" phase
@@ -205,36 +213,36 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
       case 'active':
         if (isTaskStuck) {
           return (
-            <Badge variant="outline" className="text-xs bg-warning/10 text-warning border-warning/30 flex items-center gap-1">
-              <AlertTriangle className="h-3 w-3" />
-              Interrupted
-            </Badge>
-          );
+              <Badge variant="outline" className="text-xs bg-warning/10 text-warning border-warning/30 flex items-center gap-1">
+                <AlertTriangle className="h-3 w-3" />
+                {t('tasks:execution.labels.interrupted')}
+              </Badge>
+            );
         }
         return (
           <Badge variant="outline" className="text-xs bg-info/10 text-info border-info/30 flex items-center gap-1">
             <Loader2 className="h-3 w-3 animate-spin" />
-            Running
+            {t('tasks:labels.running', 'Running')}
           </Badge>
         );
       case 'completed':
         return (
           <Badge variant="outline" className="text-xs bg-success/10 text-success border-success/30 flex items-center gap-1">
             <CheckCircle2 className="h-3 w-3" />
-            Complete
+            {t('tasks:status.complete', 'Complete')}
           </Badge>
         );
       case 'failed':
         return (
           <Badge variant="outline" className="text-xs bg-destructive/10 text-destructive border-destructive/30 flex items-center gap-1">
             <XCircle className="h-3 w-3" />
-            Failed
+            {t('tasks:labels.failed', 'Failed')}
           </Badge>
         );
       default:
         return (
           <Badge variant="secondary" className="text-xs text-muted-foreground">
-            Pending
+            {t('tasks:labels.pending', 'Pending')}
           </Badge>
         );
     }
@@ -263,10 +271,13 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
               <ChevronRight className="h-4 w-4 text-muted-foreground" />
             )}
             <Icon className={cn('h-4 w-4', isInterrupted ? 'text-warning' : status === 'active' ? PHASE_COLORS[phase].split(' ')[0] : 'text-muted-foreground')} />
-            <span className="font-medium text-sm">{PHASE_LABELS[phase]}</span>
+            <span className="font-medium text-sm">{phaseLabel}</span>
             {hasEntries && (
               <span className="text-xs text-muted-foreground">
-                ({phaseLog?.entries.length} entries)
+                {t('tasks:logs.entriesCount', {
+                  count: phaseLog?.entries.length ?? 0,
+                  defaultValue: '({{count}} entries)'
+                })}
               </span>
             )}
           </div>
@@ -274,12 +285,24 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
             {/* Model and thinking level indicator */}
             {phaseConfig && (
               <div className="flex items-center gap-1.5 text-[10px] text-muted-foreground">
-                <div className="flex items-center gap-0.5" title={`Model: ${phaseConfig.model}`}>
+                <div
+                  className="flex items-center gap-0.5"
+                  title={t('tasks:logs.modelTooltip', {
+                    model: phaseConfig.model,
+                    defaultValue: 'Model: {{model}}'
+                  })}
+                >
                   <Cpu className="h-3 w-3" />
                   <span>{phaseConfig.model}</span>
                 </div>
                 <span className="text-muted-foreground/50">|</span>
-                <div className="flex items-center gap-0.5" title={`Thinking: ${phaseConfig.thinking}`}>
+                <div
+                  className="flex items-center gap-0.5"
+                  title={t('tasks:logs.thinkingTooltip', {
+                    thinking: phaseConfig.thinking,
+                    defaultValue: 'Thinking: {{thinking}}'
+                  })}
+                >
                   <Brain className="h-3 w-3" />
                   <span>{phaseConfig.thinking}</span>
                 </div>
@@ -292,7 +315,7 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
       <CollapsibleContent>
         <div className="mt-1 ml-6 border-l-2 border-border pl-4 py-2 space-y-1">
           {!hasEntries ? (
-            <p className="text-xs text-muted-foreground italic">No logs yet</p>
+            <p className="text-xs text-muted-foreground italic">{t('tasks:logs.emptyTitle', 'No logs yet')}</p>
           ) : (
             displayedEntries.map((entry) => (
               <LogEntry key={`${entry.timestamp}-${entry.type}-${entry.content}`} entry={entry} />
@@ -310,23 +333,24 @@ interface LogEntryProps {
 }
 
 function LogEntry({ entry }: LogEntryProps) {
+  const { t } = useTranslation(['tasks', 'common']);
   const [isExpanded, setIsExpanded] = useState(false);
   const hasDetail = Boolean(entry.detail);
 
   const getToolInfo = (toolName: string) => {
     switch (toolName) {
       case 'Read':
-        return { icon: FileText, label: 'Reading', color: 'text-blue-500 bg-blue-500/10' };
+        return { icon: FileText, label: t('tasks:logs.toolLabels.reading', 'Reading'), color: 'text-blue-500 bg-blue-500/10' };
       case 'Glob':
-        return { icon: FolderSearch, label: 'Searching files', color: 'text-amber-500 bg-amber-500/10' };
+        return { icon: FolderSearch, label: t('tasks:logs.toolLabels.searchingFiles', 'Searching files'), color: 'text-amber-500 bg-amber-500/10' };
       case 'Grep':
-        return { icon: Search, label: 'Searching code', color: 'text-green-500 bg-green-500/10' };
+        return { icon: Search, label: t('tasks:logs.toolLabels.searchingCode', 'Searching code'), color: 'text-green-500 bg-green-500/10' };
       case 'Edit':
-        return { icon: Pencil, label: 'Editing', color: 'text-purple-500 bg-purple-500/10' };
+        return { icon: Pencil, label: t('tasks:logs.toolLabels.editing', 'Editing'), color: 'text-purple-500 bg-purple-500/10' };
       case 'Write':
-        return { icon: FileCode, label: 'Writing', color: 'text-cyan-500 bg-cyan-500/10' };
+        return { icon: FileCode, label: t('tasks:logs.toolLabels.writing', 'Writing'), color: 'text-cyan-500 bg-cyan-500/10' };
       case 'Bash':
-        return { icon: Terminal, label: 'Running', color: 'text-orange-500 bg-orange-500/10' };
+        return { icon: Terminal, label: t('tasks:logs.toolLabels.running', 'Running'), color: 'text-orange-500 bg-orange-500/10' };
       default:
         return { icon: Wrench, label: toolName, color: 'text-muted-foreground bg-muted' };
     }
@@ -377,7 +401,7 @@ function LogEntry({ entry }: LogEntryProps) {
           <div className={cn('inline-flex items-center gap-2 rounded-md px-2 py-1 text-xs', color, 'opacity-60')}>
             <Icon className="h-3 w-3" />
             <CheckCircle2 className="h-3 w-3 text-success" />
-            <span className="text-muted-foreground">Done</span>
+            <span className="text-muted-foreground">{t('common:selection.done')}</span>
           </div>
           {hasDetail && (
             <button
@@ -391,12 +415,12 @@ function LogEntry({ entry }: LogEntryProps) {
               {isExpanded ? (
                 <>
                   <ChevronDown className="h-2.5 w-2.5" />
-                  <span>Hide output</span>
+                  <span>{t('tasks:logs.hideOutput', 'Hide output')}</span>
                 </>
               ) : (
                 <>
                   <ChevronRight className="h-2.5 w-2.5" />
-                  <span>Show output</span>
+                  <span>{t('tasks:logs.showOutput', 'Show output')}</span>
                 </>
               )}
             </button>
@@ -485,12 +509,12 @@ function LogEntry({ entry }: LogEntryProps) {
             {isExpanded ? (
               <>
                 <ChevronDown className="h-2.5 w-2.5" />
-                <span>Less</span>
+                <span>{t('tasks:logs.less', 'Less')}</span>
               </>
             ) : (
               <>
                 <ChevronRight className="h-2.5 w-2.5" />
-                <span>More</span>
+                <span>{t('tasks:logs.more', 'More')}</span>
               </>
             )}
           </button>

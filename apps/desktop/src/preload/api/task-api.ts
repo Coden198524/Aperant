@@ -16,7 +16,8 @@ import type {
   SupportedTerminal,
   WorktreeCreatePROptions,
   WorktreeCreatePRResult,
-  ImageAttachment
+  ImageAttachment,
+  TokenUsage
 } from '../../shared/types';
 
 export interface TaskAPI {
@@ -84,6 +85,7 @@ export interface TaskAPI {
   onTaskExecutionProgress: (
     callback: (taskId: string, progress: import('../../shared/types').ExecutionProgress, projectId?: string) => void
   ) => () => void;
+  onTaskTokenUsage: (callback: (taskId: string, usage: TokenUsage, projectId?: string) => void) => () => void;
 
   // Task Phase Logs
   getTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs | null>>;
@@ -286,6 +288,23 @@ export const createTaskAPI = (): TaskAPI => ({
     ipcRenderer.on(IPC_CHANNELS.TASK_EXECUTION_PROGRESS, handler);
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.TASK_EXECUTION_PROGRESS, handler);
+    };
+  },
+
+  onTaskTokenUsage: (
+    callback: (taskId: string, usage: TokenUsage, projectId?: string) => void
+  ): (() => void) => {
+    const handler = (
+      _event: Electron.IpcRendererEvent,
+      taskId: string,
+      usage: TokenUsage,
+      projectId?: string
+    ): void => {
+      callback(taskId, usage, projectId);
+    };
+    ipcRenderer.on(IPC_CHANNELS.TASK_TOKEN_USAGE, handler);
+    return () => {
+      ipcRenderer.removeListener(IPC_CHANNELS.TASK_TOKEN_USAGE, handler);
     };
   },
 

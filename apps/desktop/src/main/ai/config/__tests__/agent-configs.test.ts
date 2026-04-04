@@ -291,12 +291,12 @@ describe('getRequiredMcpServers', () => {
     expect(servers).toContain('context7');
   });
 
-  it('should support per-agent MCP removals but never remove auto-claude', () => {
+  it('should not expose auto-claude as an external MCP server anymore', () => {
     const servers = getRequiredMcpServers('coder', {
       memoryEnabled: true,
       agentMcpRemove: 'auto-claude,memory',
     });
-    expect(servers).toContain('auto-claude');
+    expect(servers).not.toContain('auto-claude');
     expect(servers).not.toContain('memory');
   });
 });

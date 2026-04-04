@@ -1,4 +1,6 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
+import { localizeGitHubErrorMessage } from '../../../lib/github-error-localizer';
 import { createTask } from '../../../stores/task-store';
 import type {
   AnalyzePreviewResult,
@@ -28,12 +30,31 @@ interface UseAnalyzePreviewReturn {
 }
 
 export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAnalyzePreviewReturn {
+  const { t } = useTranslation(['common', 'dialogs']);
   const [isWizardOpen, setIsWizardOpen] = useState(false);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
   const [isApproving, setIsApproving] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState<AnalyzePreviewProgress | null>(null);
   const [analysisResult, setAnalysisResult] = useState<AnalyzePreviewResult | null>(null);
   const [analysisError, setAnalysisError] = useState<string | null>(null);
+
+  const localizeAnalyzePreviewMessage = useCallback((message: string): string => {
+    if (message === 'Fetching issues for analysis...') {
+      return t('issues.batchReview.progress.fetching', {
+        defaultValue: 'Fetching issues for analysis...'
+      });
+    }
+
+    const analyzingMatch = message.match(/^Analyzing (\d+) issues\.\.\.$/u);
+    if (analyzingMatch) {
+      return t('issues.batchReview.progress.analyzingCount', {
+        count: Number(analyzingMatch[1]),
+        defaultValue: 'Analyzing {{count}} issues...'
+      });
+    }
+
+    return message;
+  }, [t]);
 
   // Subscribe to analysis events
   useEffect(() => {
@@ -42,7 +63,10 @@ export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAna
     const cleanupProgress = window.electronAPI.github.onAnalyzePreviewProgress(
       (eventProjectId, progress) => {
         if (eventProjectId === projectId) {
-          setAnalysisProgress(progress);
+          setAnalysisProgress({
+            ...progress,
+            message: localizeAnalyzePreviewMessage(progress.message)
+          });
         }
       }
     );
@@ -61,7 +85,7 @@ export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAna
       (eventProjectId, error) => {
         if (eventProjectId === projectId) {
           setIsAnalyzing(false);
-          setAnalysisError(error.error);
+          setAnalysisError(localizeGitHubErrorMessage(t, error.error) || error.error);
         }
       }
     );
@@ -71,7 +95,7 @@ export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAna
       cleanupComplete();
       cleanupError();
     };
-  }, [projectId]);
+  }, [projectId, localizeAnalyzePreviewMessage]);
 
   const openWizard = useCallback(() => {
     setIsWizardOpen(true);
@@ -110,7 +134,12 @@ export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAna
     try {
       const result = await window.electronAPI.github.approveBatches(projectId, batches);
       if (!result.success) {
-        throw new Error(result.error || 'Failed to approve batches');
+        throw new Error(
+          localizeGitHubErrorMessage(t, result.error) ||
+            t('issues.taskGeneration.approveFailed', {
+              defaultValue: 'Failed to approve batches'
+            })
+        );
       }
 
       // Create tasks for each approved batch
@@ -119,10 +148,17 @@ export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAna
         const isSingleIssue = issueNumbers.length === 1;
 
         // Build task title
-        const title = batch.theme ||
-          (isSingleIssue
-            ? `GitHub Issue #${issueNumbers[0]}: ${batch.issues[0].title}`
-            : `GitHub Issues: ${batch.theme || issueNumbers.map(n => `#${n}`).join(', ')}`);
+        const batchTheme = batch.theme || issueNumbers.map(n => `#${n}`).join(', ');
+        const title = isSingleIssue
+          ? t('issues.taskGeneration.singleIssueTitle', {
+              number: issueNumbers[0],
+              title: batch.issues[0].title,
+              defaultValue: 'GitHub Issue #{{number}}: {{title}}'
+            })
+          : t('issues.taskGeneration.batchTitle', {
+              theme: batchTheme,
+              defaultValue: 'GitHub Issues: {{theme}}'
+            });
 
         // Build task description
         const issueList = batch.issues
@@ -131,7 +167,14 @@ export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAna
 
         const description = isSingleIssue
           ? batch.issues[0].title
-          : `**Issues in this batch:**\n${issueList}\n\n**Common themes:** ${batch.commonThemes.join(', ') || 'N/A'}\n\n**Reasoning:** ${batch.reasoning}`;
+          : t('issues.taskGeneration.batchDescription', {
+              issueList,
+              commonThemes: batch.commonThemes.join(', ') || t('issues.taskGeneration.noCommonThemes', {
+                defaultValue: 'None'
+              }),
+              reasoning: batch.reasoning,
+              defaultValue: '**Issues in this batch:**\n{{issueList}}\n\n**Common themes:** {{commonThemes}}\n\n**Reasoning:** {{reasoning}}'
+            });
 
         // Build metadata
         const metadata: TaskMetadata = {
@@ -145,12 +188,18 @@ export function useAnalyzePreview({ projectId }: UseAnalyzePreviewProps): UseAna
         await createTask(projectId, title, description, metadata);
       }
     } catch (error) {
-      setAnalysisError(error instanceof Error ? error.message : 'Failed to approve batches');
+      setAnalysisError(
+        error instanceof Error
+          ? localizeGitHubErrorMessage(t, error.message) || error.message
+          : t('issues.taskGeneration.approveFailed', {
+              defaultValue: 'Failed to approve batches'
+            })
+      );
       throw error;
     } finally {
       setIsApproving(false);
     }
-  }, [projectId]);
+  }, [projectId, t]);
 
   return {
     isWizardOpen,

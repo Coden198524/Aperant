@@ -7,7 +7,7 @@
  *
  * Used in TaskCreationWizard and TaskEditDialog.
  */
-import { useState, useMemo, useEffect, useCallback } from 'react';
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { useActiveProvider } from '../hooks/useActiveProvider';
 import { getProviderModelLabel } from '../../shared/utils/model-display';
@@ -21,39 +21,34 @@ import {
   SelectValue
 } from './ui/select';
 import { ThinkingLevelSelect } from './settings/ThinkingLevelSelect';
+import { MultiProviderModelSelect } from './settings/MultiProviderModelSelect';
 import {
   DEFAULT_AGENT_PROFILES,
   AVAILABLE_MODELS,
-  ALL_AVAILABLE_MODELS,
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
+  getProviderPreset,
 } from '../../shared/constants';
 import type { ModelType, ThinkingLevel } from '../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
 import { cn } from '../lib/utils';
+import {
+  getAgentProfileDescription,
+  getAgentProfileLabel,
+  getAgentThinkingLevelLabel
+} from '../lib/i18n-labels';
 
 interface AgentProfileSelectorProps {
-  /** Currently selected profile ID ('auto', 'complex', 'balanced', 'quick', or 'custom') */
   profileId: string;
-  /** Current model value (fallback for non-auto profiles) */
   model: ModelType | '';
-  /** Current thinking level value (fallback for non-auto profiles) */
   thinkingLevel: ThinkingLevel | '';
-  /** Phase model configuration (for auto profile) */
   phaseModels?: PhaseModelConfig;
-  /** Phase thinking configuration (for auto profile) */
   phaseThinking?: PhaseThinkingConfig;
-  /** Called when profile selection changes */
   onProfileChange: (profileId: string, model: ModelType, thinkingLevel: ThinkingLevel) => void;
-  /** Called when model changes (in custom mode) */
   onModelChange: (model: ModelType) => void;
-  /** Called when thinking level changes (in custom mode) */
   onThinkingLevelChange: (level: ThinkingLevel) => void;
-  /** Called when phase models change (in auto mode) */
   onPhaseModelsChange?: (phaseModels: PhaseModelConfig) => void;
-  /** Called when phase thinking changes (in auto mode) */
   onPhaseThinkingChange?: (phaseThinking: PhaseThinkingConfig) => void;
-  /** Whether the selector is disabled */
   disabled?: boolean;
 }
 
@@ -64,7 +59,6 @@ const iconMap: Record<string, React.ElementType> = {
   Sparkles
 };
 
-// Phase label translation keys
 const PHASE_LABEL_KEYS: Record<keyof PhaseModelConfig, { label: string; description: string }> = {
   spec: { label: 'agentProfile.phases.spec.label', description: 'agentProfile.phases.spec.description' },
   planning: { label: 'agentProfile.phases.planning.label', description: 'agentProfile.phases.planning.description' },
@@ -89,117 +83,92 @@ export function AgentProfileSelector({
   const { provider: activeProvider } = useActiveProvider();
   const [showPhaseDetails, setShowPhaseDetails] = useState(false);
 
-  // Ollama models are user-installed — fetch dynamically from the local server
-  const [ollamaModels, setOllamaModels] = useState<Array<{ value: string; label: string }>>([]);
-
-  const fetchOllamaModels = useCallback(async (signal?: AbortSignal) => {
-    try {
-      const result = await window.electronAPI.listOllamaModels();
-      if (signal?.aborted) return;
-      if (result?.success && Array.isArray(result?.data?.models)) {
-        const llmModels = (result.data.models as Array<{ name: string; is_embedding: boolean }>)
-          .filter(m => !m.is_embedding)
-          .map(m => ({ value: m.name, label: m.name }));
-        setOllamaModels(llmModels);
-      }
-    } catch {
-      // Ollama not available — leave empty
+  const getProfileId = (value: string): 'auto' | 'complex' | 'balanced' | 'quick' | 'custom' => {
+    switch (value) {
+      case 'complex':
+      case 'balanced':
+      case 'quick':
+      case 'custom':
+        return value;
+      default:
+        return 'auto';
     }
-  }, []);
-
-  useEffect(() => {
-    if (activeProvider !== 'ollama') {
-      setOllamaModels([]);
-      return;
-    }
-    const controller = new AbortController();
-    fetchOllamaModels(controller.signal);
-    return () => { controller.abort(); };
-  }, [activeProvider, fetchOllamaModels]);
+  };
 
   const isCustom = profileId === 'custom';
-  const _isAuto = profileId === 'auto';
-
-  // Use provided phase configs or defaults
   const currentPhaseModels = phaseModels || DEFAULT_PHASE_MODELS;
   const currentPhaseThinking = phaseThinking || DEFAULT_PHASE_THINKING;
 
-  // Build model options filtered to the active provider (falls back to Anthropic models)
-  const phaseModelOptions = useMemo(() => {
-    if (!activeProvider || activeProvider === 'anthropic') {
-      return AVAILABLE_MODELS.map(m => ({ value: m.value, label: m.label }));
-    }
-    // Ollama: use dynamically fetched installed models
-    if (activeProvider === 'ollama' && ollamaModels.length > 0) {
-      return ollamaModels;
-    }
-    const providerModels = ALL_AVAILABLE_MODELS.filter(m => m.provider === activeProvider);
-    if (providerModels.length === 0) {
-      return AVAILABLE_MODELS.map(m => ({ value: m.value, label: m.label }));
-    }
-    return providerModels.map(m => ({ value: m.value, label: m.label }));
-  }, [activeProvider, ollamaModels]);
-
   const handleProfileSelect = (selectedId: string) => {
     if (selectedId === 'custom') {
-      // Keep current model/thinking level, just mark as custom
-      onProfileChange('custom', model as ModelType || 'sonnet', thinkingLevel as ThinkingLevel || 'medium');
+      const currentProfile = DEFAULT_AGENT_PROFILES.find(p => p.id === profileId)
+        || DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto')!;
+      const currentProviderPreset = activeProvider ? getProviderPreset(activeProvider, currentProfile.id) : null;
+      onProfileChange(
+        'custom',
+        (model as ModelType) || (currentProviderPreset?.primaryModel ?? currentProfile.model) as ModelType,
+        thinkingLevel as ThinkingLevel || currentProviderPreset?.primaryThinking || currentProfile.thinkingLevel
+      );
       return;
     }
-    // Select preset profile - all profiles now have phase configs
+
     const profile = DEFAULT_AGENT_PROFILES.find(p => p.id === selectedId);
-    if (profile) {
-      onProfileChange(profile.id, profile.model, profile.thinkingLevel);
-      // Initialize phase configs with profile defaults if callbacks provided
-      if (onPhaseModelsChange && profile.phaseModels) {
-        onPhaseModelsChange(profile.phaseModels);
-      }
-      if (onPhaseThinkingChange && profile.phaseThinking) {
-        onPhaseThinkingChange(profile.phaseThinking);
-      }
+    if (!profile) return;
+
+    const providerPreset = activeProvider ? getProviderPreset(activeProvider, profile.id) : null;
+    onProfileChange(
+      profile.id,
+      (providerPreset?.primaryModel ?? profile.model) as ModelType,
+      providerPreset?.primaryThinking ?? profile.thinkingLevel
+    );
+
+    if (onPhaseModelsChange) {
+      onPhaseModelsChange(providerPreset?.phaseModels ?? profile.phaseModels ?? DEFAULT_PHASE_MODELS);
+    }
+    if (onPhaseThinkingChange) {
+      onPhaseThinkingChange(providerPreset?.phaseThinking ?? profile.phaseThinking ?? DEFAULT_PHASE_THINKING);
     }
   };
 
   const handlePhaseModelChange = (phase: keyof PhaseModelConfig, value: ModelType) => {
-    if (onPhaseModelsChange) {
-      onPhaseModelsChange({
-        ...currentPhaseModels,
-        [phase]: value
-      });
-    }
+    if (!onPhaseModelsChange) return;
+    onPhaseModelsChange({
+      ...currentPhaseModels,
+      [phase]: value
+    });
   };
 
   const handlePhaseThinkingChange = (phase: keyof PhaseThinkingConfig, value: ThinkingLevel) => {
-    if (onPhaseThinkingChange) {
-      onPhaseThinkingChange({
-        ...currentPhaseThinking,
-        [phase]: value
-      });
-    }
+    if (!onPhaseThinkingChange) return;
+    onPhaseThinkingChange({
+      ...currentPhaseThinking,
+      [phase]: value
+    });
   };
 
-  // Get profile display info
   const getProfileDisplay = () => {
     if (isCustom) {
       return {
         icon: Sliders,
         label: t('agentProfile.customConfiguration'),
-        description: t('agentProfile.customDescription')
+        description: getAgentProfileDescription(t, 'custom')
       };
     }
+
     const profile = DEFAULT_AGENT_PROFILES.find(p => p.id === profileId);
     if (profile) {
+      const profileKey = getProfileId(profile.id);
       return {
         icon: iconMap[profile.icon || 'Scale'] || Scale,
-        label: profile.name,
-        description: profile.description
+        label: getAgentProfileLabel(t, profileKey),
+        description: getAgentProfileDescription(t, profileKey)
       };
     }
-    // Default to auto profile (the actual default)
+
     return {
       icon: Sparkles,
-      label: 'Auto (Optimized)',
-      description: 'Uses Opus across all phases with optimized thinking levels'
+      label: getAgentProfileLabel(t, 'auto'),
+      description: getAgentProfileDescription(t, 'auto')
     };
   };
 
@@ -207,7 +176,6 @@ export function AgentProfileSelector({
 
   return (
     <div className="space-y-4">
-      {/* Agent Profile Selection */}
       <div className="space-y-2">
         <Label htmlFor="agent-profile" className="text-sm font-medium text-foreground">
           {t('agentProfile.label')}
@@ -227,18 +195,21 @@ export function AgentProfileSelector({
           </SelectTrigger>
           <SelectContent>
             {DEFAULT_AGENT_PROFILES.map((profile) => {
+              const profileKey = getProfileId(profile.id);
               const ProfileIcon = iconMap[profile.icon || 'Scale'] || Scale;
+              const providerPreset = activeProvider ? getProviderPreset(activeProvider, profile.id) : null;
               const modelLabel = activeProvider
-                ? getProviderModelLabel(profile.model, activeProvider)
+                ? getProviderModelLabel(providerPreset?.primaryModel ?? profile.model, activeProvider)
                 : AVAILABLE_MODELS.find(m => m.value === profile.model)?.label;
+
               return (
                 <SelectItem key={profile.id} value={profile.id}>
                   <div className="flex items-center gap-2">
                     <ProfileIcon className="h-4 w-4 shrink-0" />
                     <div>
-                      <span className="font-medium">{profile.name}</span>
+                      <span className="font-medium">{getAgentProfileLabel(t, profileKey)}</span>
                       <span className="ml-2 text-xs text-muted-foreground">
-                        ({modelLabel} + {profile.thinkingLevel})
+                        ({modelLabel} + {getAgentThinkingLevelLabel(t, providerPreset?.primaryThinking ?? profile.thinkingLevel)})
                       </span>
                     </div>
                   </div>
@@ -263,10 +234,8 @@ export function AgentProfileSelector({
         </p>
       </div>
 
-      {/* Phase Configuration - shown for all preset profiles */}
       {!isCustom && (
         <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
-          {/* Clickable Header */}
           <button
             type="button"
             onClick={() => setShowPhaseDetails(!showPhaseDetails)}
@@ -293,7 +262,6 @@ export function AgentProfileSelector({
             )}
           </button>
 
-          {/* Compact summary when collapsed */}
           {!showPhaseDetails && (
             <div className="px-4 pb-4 -mt-1">
               <div className="grid grid-cols-2 gap-2 text-xs">
@@ -301,6 +269,7 @@ export function AgentProfileSelector({
                   const modelLabel = activeProvider
                     ? getProviderModelLabel(currentPhaseModels[phase], activeProvider)
                     : (AVAILABLE_MODELS.find(m => m.value === currentPhaseModels[phase])?.label?.replace('Claude ', '') || currentPhaseModels[phase]);
+
                   return (
                     <div key={phase} className="flex items-center justify-between rounded bg-background/50 px-2 py-1">
                       <span className="text-muted-foreground">{t(PHASE_LABEL_KEYS[phase].label)}:</span>
@@ -312,7 +281,6 @@ export function AgentProfileSelector({
             </div>
           )}
 
-          {/* Detailed Phase Configuration */}
           {showPhaseDetails && (
             <div className="px-4 pb-4 space-y-4 border-t border-border pt-4">
               {(Object.keys(PHASE_LABEL_KEYS) as Array<keyof PhaseModelConfig>).map((phase) => (
@@ -328,22 +296,12 @@ export function AgentProfileSelector({
                   <div className="grid grid-cols-2 gap-2">
                     <div className="space-y-1">
                       <Label className="text-[10px] text-muted-foreground">{t('agentProfile.model')}</Label>
-                      <Select
+                      <MultiProviderModelSelect
                         value={currentPhaseModels[phase]}
-                        onValueChange={(value) => handlePhaseModelChange(phase, value as ModelType)}
-                        disabled={disabled}
-                      >
-                        <SelectTrigger className="h-8 text-xs">
-                          <SelectValue />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {phaseModelOptions.map((m) => (
-                            <SelectItem key={m.value} value={m.value}>
-                              {m.label}
-                            </SelectItem>
-                          ))}
-                        </SelectContent>
-                      </Select>
+                        onChange={(value) => handlePhaseModelChange(phase, value as ModelType)}
+                        filterProvider={activeProvider ?? undefined}
+                        className={disabled ? 'pointer-events-none opacity-50' : undefined}
+                      />
                     </div>
                     <ThinkingLevelSelect
                       value={currentPhaseThinking[phase]}
@@ -360,33 +318,22 @@ export function AgentProfileSelector({
         </div>
       )}
 
-      {/* Custom Configuration (shown only when custom is selected) */}
       {isCustom && (
         <div className="space-y-4 rounded-lg border border-border bg-muted/30 p-4">
-          {/* Model Selection */}
           <div className="space-y-2">
             <Label htmlFor="custom-model" className="text-xs font-medium text-muted-foreground">
               {t('agentProfile.model')}
             </Label>
-            <Select
-              value={model}
-              onValueChange={(value) => onModelChange(value as ModelType)}
-              disabled={disabled}
-            >
-              <SelectTrigger id="custom-model" className="h-9">
-                <SelectValue placeholder={t('agentProfile.selectModel')} />
-              </SelectTrigger>
-              <SelectContent>
-                {phaseModelOptions.map((m) => (
-                  <SelectItem key={m.value} value={m.value}>
-                    {m.label}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
+            <div id="custom-model">
+              <MultiProviderModelSelect
+                value={model}
+                onChange={(value) => onModelChange(value as ModelType)}
+                filterProvider={activeProvider ?? undefined}
+                className={disabled ? 'pointer-events-none opacity-50' : undefined}
+              />
+            </div>
           </div>
 
-          {/* Thinking Level Selection */}
           <ThinkingLevelSelect
             value={thinkingLevel || 'low'}
             onChange={(value) => onThinkingLevelChange(value as ThinkingLevel)}

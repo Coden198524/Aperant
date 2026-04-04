@@ -880,6 +880,10 @@ export class AgentProcessManager {
       this.emitter.emit('execution-progress', tId, progress, pId);
     });
 
+    bridge.on('task-token-usage', (tId, usage, pId?: string) => {
+      this.emitter.emit('task-token-usage', tId, usage, pId);
+    });
+
     bridge.on('task-event', (tId: string, event: unknown, pId?: string) => {
       this.emitter.emit('task-event', tId, event, pId);
     });

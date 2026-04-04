@@ -53,6 +53,12 @@ export function CustomModelModal({ currentConfig, onSave, onClose, open = true }
     });
   };
 
+  const getThinkingLevelLabel = (value: ThinkingLevel) =>
+    t(`common:insights.modelSelector.thinking.${value}`, { defaultValue: value });
+
+  const getThinkingLevelDescription = (value: ThinkingLevel, fallback: string) =>
+    t(`common:insights.modelSelector.thinkingDescriptions.${value}`, { defaultValue: fallback });
+
   return (
     <Dialog open={open} onOpenChange={onClose}>
       <DialogContent className="sm:max-w-md">
@@ -90,9 +96,9 @@ export function CustomModelModal({ currentConfig, onSave, onClose, open = true }
                 {THINKING_LEVELS.map((level) => (
                   <SelectItem key={level.value} value={level.value}>
                     <div className="flex items-center gap-2">
-                      <span className="font-medium">{level.label}</span>
+                      <span className="font-medium">{getThinkingLevelLabel(level.value)}</span>
                       <span className="text-xs text-muted-foreground">
-                        {level.description}
+                        {getThinkingLevelDescription(level.value, level.description)}
                       </span>
                     </div>
                   </SelectItem>

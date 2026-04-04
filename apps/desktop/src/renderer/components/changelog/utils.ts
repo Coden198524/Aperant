@@ -1,9 +1,26 @@
+import i18n from '../../../shared/i18n';
 import type { ChangelogTask, ChangelogSourceMode, GitCommit } from '../../../shared/types';
 
 export interface SummaryInfo {
   count: number;
-  label: string;
+  labelKey: 'task' | 'commit' | 'item';
   details: string;
+}
+
+function formatSummaryDetails(items: string[], remainingCount: number): string {
+  const separator = i18n.t('changelog:summary.separator', { defaultValue: ', ' });
+  const summary = items.join(separator);
+
+  if (remainingCount <= 0) {
+    return summary;
+  }
+
+  const moreLabel = i18n.t('changelog:summary.more', {
+    count: remainingCount,
+    defaultValue: '+{{count}} more'
+  });
+
+  return summary ? `${summary}${separator}${moreLabel}` : moreLabel;
 }
 
 export function getSummaryInfo(
@@ -16,20 +33,24 @@ export function getSummaryInfo(
     case 'tasks':
       return {
         count: selectedTaskIds.length,
-        label: 'task',
-        details: selectedTasks.slice(0, 3).map((t) => t.title).join(', ') +
-          (selectedTasks.length > 3 ? ` +${selectedTasks.length - 3} more` : '')
+        labelKey: 'task',
+        details: formatSummaryDetails(
+          selectedTasks.slice(0, 3).map((t) => t.title),
+          selectedTasks.length - 3
+        )
       };
     case 'git-history':
     case 'branch-diff':
       return {
         count: previewCommits.length,
-        label: 'commit',
-        details: previewCommits.slice(0, 3).map((c) => c.subject.substring(0, 40)).join(', ') +
-          (previewCommits.length > 3 ? ` +${previewCommits.length - 3} more` : '')
+        labelKey: 'commit',
+        details: formatSummaryDetails(
+          previewCommits.slice(0, 3).map((c) => c.subject.substring(0, 40)),
+          previewCommits.length - 3
+        )
       };
     default:
-      return { count: 0, label: 'item', details: '' };
+      return { count: 0, labelKey: 'item', details: '' };
   }
 }
 
@@ -42,10 +63,10 @@ export function getVersionBumpDescription(versionReason: string | null): string 
 
   switch (versionReason) {
     case 'breaking':
-      return 'Major version bump (breaking changes detected)';
+      return i18n.t('changelog:versionBump.breaking');
     case 'feature':
-      return 'Minor version bump (new features detected)';
+      return i18n.t('changelog:versionBump.feature');
     default:
-      return 'Patch version bump (fixes/improvements)';
+      return i18n.t('changelog:versionBump.default');
   }
 }

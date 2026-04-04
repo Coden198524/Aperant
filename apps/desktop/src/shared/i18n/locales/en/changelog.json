@@ -1,0 +1,255 @@
+{
+  "empty": {
+    "noProjectTitle": "No Project Selected",
+    "noProjectDescription": "Select a project from the sidebar to generate changelogs."
+  },
+  "header": {
+    "title": "Changelog Generator",
+    "refresh": "Refresh",
+    "labels": {
+      "select": "Select",
+      "generate": "Generate",
+      "release": "Release"
+    },
+    "steps": {
+      "1": "Step 1: Select completed tasks to include",
+      "2": "Step 2: Configure and generate changelog",
+      "3": "Step 3: Release and archive tasks"
+    }
+  },
+  "filters": {
+    "source": "Changelog Source",
+    "gitHistoryOptions": "Git History Options",
+    "historyType": "History Type",
+    "numberOfCommits": "Number of Commits",
+    "sinceDate": "Since Date",
+    "fromTag": "From Tag",
+    "toTagOptional": "To Tag (optional)",
+    "selectTag": "Select tag...",
+    "headLatest": "HEAD (latest)",
+    "lastVersion": "Last Version",
+    "selectVersion": "Select version...",
+    "allCommitsSinceVersion": "All commits since this version will be included",
+    "includeMergeCommits": "Include merge commits",
+    "loading": "Loading...",
+    "loadCommits": "Load Commits",
+    "branchComparison": "Branch Comparison",
+    "baseBranch": "Base Branch",
+    "selectBaseBranch": "Select base branch...",
+    "defaultBadge": "default",
+    "baseBranchHint": "The branch you're merging into",
+    "compareBranch": "Compare Branch",
+    "selectCompareBranch": "Select compare branch...",
+    "currentBadge": "current",
+    "compareBranchHint": "The branch with your changes",
+    "branchesMustBeDifferent": "Branches must be different"
+  },
+  "sourceModes": {
+    "tasks": {
+      "label": "Completed Tasks",
+      "description": "Generate from completed spec tasks"
+    },
+    "git-history": {
+      "label": "Git History",
+      "description": "Generate from recent commits or tag range"
+    },
+    "branch-diff": {
+      "label": "Branch Comparison",
+      "description": "Generate from commits between two branches"
+    }
+  },
+  "historyTypes": {
+    "since-version": "Since Version",
+    "recent": "Recent Commits",
+    "since-date": "Since Date",
+    "tag-range": "Tag Range"
+  },
+  "list": {
+    "tasksSelected": "{{selected}} of {{total}} tasks selected",
+    "selectAll": "Select All",
+    "clear": "Clear",
+    "noCompletedTasks": "No Completed Tasks",
+    "noCompletedTasksDescription": "Complete tasks in the Kanban board and mark them as \"Done\" to include them in your changelog.",
+    "commitsFound": "{{count}} commit found",
+    "commitsFound_plural": "{{count}} commits found",
+    "loadingCommits": "Loading commits...",
+    "noCommitsFound": "No Commits Found",
+    "noGitHistoryDescription": "Configure the history options and click \"Load Commits\" to preview.",
+    "noBranchDiffDescription": "Select both branches and click \"Load Commits\" to see the changes.",
+    "continue": "Continue",
+    "summary": {
+      "task": "{{count}} task",
+      "task_plural": "{{count}} tasks",
+      "commit": "{{count}} commit",
+      "commit_plural": "{{count}} commits",
+      "item": "{{count}} item",
+      "item_plural": "{{count}} items"
+    }
+  },
+  "config": {
+    "backToSelection": "Back to Selection",
+    "including": "Including {{count}} {{label}}",
+    "releaseInfo": "Release Info",
+    "version": "Version",
+    "date": "Date",
+    "versionPlaceholder": "1.0.0",
+    "previous": "Previous: {{version}}",
+    "outputStyle": "Output Style",
+    "format": "Format",
+    "audience": "Audience",
+    "emojis": "Emojis",
+    "advancedOptions": "Advanced Options",
+    "customInstructions": "Custom Instructions",
+    "customInstructionsPlaceholder": "Add any special instructions for the AI...",
+    "customInstructionsHint": "Optional. Guide the AI on tone, specific details to include, etc.",
+    "generating": "Generating...",
+    "generate": "Generate Changelog"
+  },
+  "formatOptions": {
+    "keep-a-changelog": {
+      "label": "Keep a Changelog",
+      "description": "Structured format with Added/Changed/Fixed/Removed sections"
+    },
+    "simple-list": {
+      "label": "Simple List",
+      "description": "Clean bulleted list with categories"
+    },
+    "github-release": {
+      "label": "GitHub Release",
+      "description": "GitHub-style release notes"
+    }
+  },
+  "audienceOptions": {
+    "technical": {
+      "label": "Technical",
+      "description": "Detailed technical changes for developers"
+    },
+    "user-facing": {
+      "label": "User-Facing",
+      "description": "Clear, non-technical descriptions for end users"
+    },
+    "marketing": {
+      "label": "Marketing",
+      "description": "Value-focused copy emphasizing benefits"
+    }
+  },
+  "emojiOptions": {
+    "none": {
+      "label": "None",
+      "description": "No emojis"
+    },
+    "little": {
+      "label": "Headings Only",
+      "description": "Emojis on section headings only"
+    },
+    "medium": {
+      "label": "Headings + Highlights",
+      "description": "Emojis on headings and key items"
+    },
+    "high": {
+      "label": "Everything",
+      "description": "Emojis on headings and every line"
+    }
+  },
+  "progress": {
+    "stages": {
+      "loading_specs": "Loading spec files...",
+      "loading_commits": "Loading commits...",
+      "generating": "Generating changelog...",
+      "formatting": "Formatting output...",
+      "complete": "Complete",
+      "error": "Error"
+    }
+  },
+  "preview": {
+    "title": "Preview",
+    "markdown": "Markdown",
+    "preview": "Preview",
+    "copied": "Copied!",
+    "copy": "Copy",
+    "copyTooltip": "Copy to clipboard",
+    "saved": "Saved!",
+    "save": "Save to CHANGELOG.md",
+    "saveTooltip": "Prepend to CHANGELOG.md in project root",
+    "dropImages": "Drop images here to add to changelog",
+    "imagePasteHint": "Paste images into the description to save them to the changelog",
+    "placeholder": "Generated changelog will appear here...",
+    "emptyHint": "Click \"Generate Changelog\" to create release notes.",
+    "loadingImage": "Loading image...",
+    "imageNotFound": "Image not found",
+    "missingProjectPath": "Cannot load local image: no project path",
+    "loadImageFailed": "Failed to load image"
+  },
+  "success": {
+    "title": "Changelog Saved!",
+    "description": "Version {{tag}} has been added to CHANGELOG.md",
+    "done": "Done"
+  },
+  "githubRelease": {
+    "title": "Create GitHub Release",
+    "success": "Release created successfully!",
+    "view": "View Release on GitHub",
+    "description": "Create a new release {{tag}} on GitHub with the changelog as release notes.",
+    "creating": "Creating Release...",
+    "create": "Create Release {{tag}}",
+    "failed": "Failed to create release"
+  },
+  "archive": {
+    "title": "Archive Completed Tasks",
+    "success": "{{count}} task archived!",
+    "success_plural": "{{count}} tasks archived!",
+    "description": "Archive {{count}} task to clean up your Kanban board. Archived tasks can be viewed using the \"Show Archived\" toggle.",
+    "description_plural": "Archive {{count}} tasks to clean up your Kanban board. Archived tasks can be viewed using the \"Show Archived\" toggle.",
+    "archiving": "Archiving...",
+    "action": "Archive {{count}} Task",
+    "action_plural": "Archive {{count}} Tasks",
+    "failed": "Failed to archive tasks"
+  },
+  "entry": {
+    "hasSpecs": "Has Specs",
+    "filesChanged": "{{count}} file changed",
+    "filesChanged_plural": "{{count}} files changed"
+  },
+  "summary": {
+    "separator": ", ",
+    "more": "+{{count}} more",
+    "labels": {
+      "task": "task",
+      "task_plural": "tasks",
+      "commit": "commit",
+      "commit_plural": "commits",
+      "item": "item",
+      "item_plural": "items"
+    }
+  },
+  "versionBump": {
+    "breaking": "Major version bump (breaking changes detected)",
+    "feature": "Minor version bump (new features detected)",
+    "default": "Patch version bump (fixes/improvements)"
+  },
+  "store": {
+    "generatedSuccessfully": "Changelog generated successfully!",
+    "generationFailed": "Generation failed",
+    "loadDataFailed": "Failed to load changelog data",
+    "loadTaskSpecsFailed": "Failed to load task specs",
+    "loadGitDataFailed": "Failed to load git data",
+    "loadCommitsFailed": "Failed to load commits",
+    "loadCommitsPreviewFailed": "Failed to load commits preview",
+    "selectAtLeastOneTask": "Please select at least one task to include in the changelog",
+    "noCommitsForOptions": "No commits found for the selected options. Please adjust your filters.",
+    "selectBothBranches": "Please select both base and compare branches",
+    "branchesDifferent": "Base and compare branches must be different",
+    "noCommitsBetweenBranches": "No commits found between the selected branches",
+    "loadingTaskSpecifications": "Loading task specifications...",
+    "preparingCommitData": "Preparing commit data...",
+    "invalidSourceMode": "Invalid source mode: {{mode}}",
+    "startGenerationFailed": "Failed to start changelog generation",
+    "invalidImageType": "Invalid image type. Allowed:",
+    "saveImageFailed": "Failed to save image",
+    "processImageFailed": "Failed to process image",
+    "noChangelogToSave": "No changelog to save",
+    "saveFailed": "Failed to save changelog",
+    "noChangelogToCopy": "No changelog to copy",
+    "copyFailed": "Failed to copy to clipboard"
+  }
+}

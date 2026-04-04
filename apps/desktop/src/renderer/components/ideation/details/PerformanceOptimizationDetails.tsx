@@ -10,14 +10,19 @@ import {
   FileCode,
   AlertTriangle
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge } from '../../ui/badge';
 import { Card } from '../../ui/card';
 import {
   IDEATION_IMPACT_COLORS,
-  IDEATION_EFFORT_COLORS,
-  PERFORMANCE_CATEGORY_LABELS
+  IDEATION_EFFORT_COLORS
 } from '../../../../shared/constants';
 import type { PerformanceOptimizationIdea } from '../../../../shared/types';
+import {
+  getIdeationEffortLabel,
+  getIdeationImpactLabel,
+  getPerformanceCategoryLabel
+} from '../../../lib/i18n-labels';
 
 interface PerformanceOptimizationDetailsProps {
   idea: PerformanceOptimizationIdea;
@@ -40,21 +45,23 @@ function getCategoryIcon(category: string) {
 }
 
 export function PerformanceOptimizationDetails({ idea }: PerformanceOptimizationDetailsProps) {
+  const { t } = useTranslation('common');
+
   return (
     <>
       {/* Metrics */}
       <div className="grid grid-cols-2 gap-2">
         <Card className="p-3 text-center">
           <div className={`text-lg font-semibold ${IDEATION_IMPACT_COLORS[idea.impact]}`}>
-            {idea.impact}
+            {getIdeationImpactLabel(t, idea.impact)}
           </div>
-          <div className="text-xs text-muted-foreground">Impact</div>
+          <div className="text-xs text-muted-foreground">{t('ideation.detail.impact', { defaultValue: 'Impact' })}</div>
         </Card>
         <Card className="p-3 text-center">
           <div className={`text-lg font-semibold ${IDEATION_EFFORT_COLORS[idea.estimatedEffort]}`}>
-            {idea.estimatedEffort}
+            {getIdeationEffortLabel(t, idea.estimatedEffort)}
           </div>
-          <div className="text-xs text-muted-foreground">Effort</div>
+          <div className="text-xs text-muted-foreground">{t('ideation.detail.effort', { defaultValue: 'Effort' })}</div>
         </Card>
       </div>
 
@@ -62,10 +69,10 @@ export function PerformanceOptimizationDetails({ idea }: PerformanceOptimization
       <div>
         <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
           {getCategoryIcon(idea.category)}
-          Category
+          {t('ideation.detail.category', { defaultValue: 'Category' })}
         </h3>
         <Badge variant="outline">
-          {PERFORMANCE_CATEGORY_LABELS[idea.category]}
+          {getPerformanceCategoryLabel(t, idea.category)}
         </Badge>
       </div>
 
@@ -74,7 +81,7 @@ export function PerformanceOptimizationDetails({ idea }: PerformanceOptimization
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <AlertCircle className="h-4 w-4" />
-            Current State
+            {t('ideation.detail.currentState', { defaultValue: 'Current State' })}
           </h3>
           <p className="text-sm text-muted-foreground">{idea.currentMetric}</p>
         </div>
@@ -84,7 +91,7 @@ export function PerformanceOptimizationDetails({ idea }: PerformanceOptimization
       <div>
         <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
           <TrendingUp className="h-4 w-4 text-success" />
-          Expected Improvement
+          {t('ideation.detail.expectedImprovement', { defaultValue: 'Expected Improvement' })}
         </h3>
         <p className="text-sm text-muted-foreground">{idea.expectedImprovement}</p>
       </div>
@@ -93,7 +100,7 @@ export function PerformanceOptimizationDetails({ idea }: PerformanceOptimization
       <div>
         <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
           <Wrench className="h-4 w-4" />
-          Implementation
+          {t('ideation.detail.implementation', { defaultValue: 'Implementation' })}
         </h3>
         <p className="text-sm text-muted-foreground whitespace-pre-line">{idea.implementation}</p>
       </div>
@@ -103,7 +110,7 @@ export function PerformanceOptimizationDetails({ idea }: PerformanceOptimization
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />
-            Affected Areas
+            {t('ideation.detail.affectedAreas', { defaultValue: 'Affected Areas' })}
           </h3>
           <ul className="space-y-1">
             {idea.affectedAreas.map((area, i) => (
@@ -120,7 +127,7 @@ export function PerformanceOptimizationDetails({ idea }: PerformanceOptimization
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <AlertTriangle className="h-4 w-4 text-warning" />
-            Tradeoffs
+            {t('ideation.detail.tradeoffs', { defaultValue: 'Tradeoffs' })}
           </h3>
           <p className="text-sm text-muted-foreground">{idea.tradeoffs}</p>
         </div>

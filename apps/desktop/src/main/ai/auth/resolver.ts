@@ -323,6 +323,7 @@ export async function hasCredentials(ctx: AuthResolverContext): Promise<boolean>
 const BUILTIN_TO_SUPPORTED: Record<string, SupportedProvider> = {
   anthropic: 'anthropic',
   openai: 'openai',
+  'openai-compatible': 'openai-compatible',
   google: 'google',
   'amazon-bedrock': 'bedrock',
   azure: 'azure',
@@ -352,6 +353,7 @@ export async function resolveAuthFromQueue(
     excludeAccountIds?: string[];
     userModelOverrides?: Record<string, Partial<Record<BuiltinProvider, import('../../../shared/constants/models').ProviderModelSpec>>>;
     autoSwitchSettings?: ClaudeAutoSwitchSettings;
+    executionMode?: 'standard' | 'agentic';
   }
 ): Promise<QueueResolvedAuth | null> {
   const excludeSet = new Set(options?.excludeAccountIds ?? []);
@@ -378,6 +380,9 @@ export async function resolveAuthFromQueue(
     const supportedProvider = BUILTIN_TO_SUPPORTED[account.provider];
     if (!supportedProvider) continue;
 
+    // Use modelEquivalenceProvider if specified, otherwise use the account's provider
+    const equivalenceProvider = account.modelEquivalenceProvider ?? account.provider;
+
     // Resolve which model to use on this account.
     // First try the equivalence table (maps shorthands like 'sonnet' across providers).
     // If no equivalence exists, check if the model is native to this provider
@@ -386,7 +391,7 @@ export async function resolveAuthFromQueue(
     // an Anthropic model ID to an OpenAI endpoint → 400 Bad Request).
     const modelSpec = resolveModelEquivalent(
       requestedModel,
-      account.provider,
+      equivalenceProvider,
       options?.userModelOverrides,
     );
 
@@ -405,6 +410,7 @@ export async function resolveAuthFromQueue(
     }
 
     const resolvedModelId = modelSpec?.modelId ?? requestedModel;
+    const reasoningConfig = modelSpec?.reasoning ?? { type: 'none' as const };
 
     // Note: Codex OAuth accounts now use .responses() for ALL models (not just
     // Codex-named ones) in the provider factory, so no format mismatch guard
@@ -420,7 +426,7 @@ export async function resolveAuthFromQueue(
       accountId: account.id,
       resolvedProvider: supportedProvider,
       resolvedModelId,
-      reasoningConfig: modelSpec?.reasoning ?? { type: 'none' },
+      reasoningConfig,
     };
   }
 

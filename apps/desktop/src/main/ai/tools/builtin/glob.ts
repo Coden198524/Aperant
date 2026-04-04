@@ -48,9 +48,10 @@ export const globTool = Tool.define({
   inputSchema,
   execute: async (input, context) => {
     const searchDir = input.path ?? context.cwd;
+    const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
-    // Security: ensure search directory is within project boundary
-    assertPathContained(searchDir, context.projectDir);
+    // Security: ensure search directory is within an allowed project boundary
+    assertPathContained(searchDir, allowedRoots);
 
     // Resolve the search directory
     const resolvedDir = path.isAbsolute(searchDir)

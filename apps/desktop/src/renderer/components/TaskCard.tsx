@@ -1,10 +1,20 @@
 import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, GitPullRequest, MoreVertical } from 'lucide-react';
+import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, GitPullRequest, MoreVertical, Trash2 } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Checkbox } from './ui/checkbox';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from './ui/alert-dialog';
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -13,27 +23,30 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { cn, formatRelativeTime, sanitizeMarkdownForDisplay } from '../lib/utils';
+import { cn, formatRelativeTime, formatTokenCount, sanitizeMarkdownForDisplay } from '../lib/utils';
 import { PhaseProgressIndicator } from './PhaseProgressIndicator';
 import {
-  TASK_CATEGORY_LABELS,
   TASK_CATEGORY_COLORS,
   TASK_COMPLEXITY_COLORS,
-  TASK_COMPLEXITY_LABELS,
   TASK_IMPACT_COLORS,
-  TASK_IMPACT_LABELS,
   TASK_PRIORITY_COLORS,
-  TASK_PRIORITY_LABELS,
-  EXECUTION_PHASE_LABELS,
   EXECUTION_PHASE_BADGE_COLORS,
   TASK_STATUS_COLUMNS,
   TASK_STATUS_LABELS,
   JSON_ERROR_PREFIX,
   JSON_ERROR_TITLE_SUFFIX
 } from '../../shared/constants';
-import { stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks, hasRecentActivity, startTaskOrQueue } from '../stores/task-store';
+import { stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks, hasRecentActivity, startTaskOrQueue, deleteTask } from '../stores/task-store';
 import { useToast } from '../hooks/use-toast';
 import type { Task, TaskCategory, ReviewReason, TaskStatus } from '../../shared/types';
+import {
+  getTaskCategoryLabel,
+  getTaskComplexityLabel,
+  getTaskExecutionPhaseLabel,
+  getTaskImpactLabel,
+  getTaskPriorityLabel,
+  getTaskSeverityLabel
+} from '../lib/i18n-labels';
 
 // Category icon mapping
 const CategoryIcon: Record<TaskCategory, typeof Zap> = {
@@ -105,6 +118,12 @@ function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProp
     prevTask.metadata?.complexity === nextTask.metadata?.complexity &&
     prevTask.metadata?.archivedAt === nextTask.metadata?.archivedAt &&
     prevTask.metadata?.prUrl === nextTask.metadata?.prUrl &&
+    prevTask.tokenUsage?.promptTokens === nextTask.tokenUsage?.promptTokens &&
+    prevTask.tokenUsage?.completionTokens === nextTask.tokenUsage?.completionTokens &&
+    prevTask.tokenUsage?.thinkingTokens === nextTask.tokenUsage?.thinkingTokens &&
+    prevTask.tokenUsage?.cacheReadTokens === nextTask.tokenUsage?.cacheReadTokens &&
+    prevTask.tokenUsage?.cacheCreationTokens === nextTask.tokenUsage?.cacheCreationTokens &&
+    prevTask.tokenUsage?.totalTokens === nextTask.tokenUsage?.totalTokens &&
     // Check if any subtask statuses changed (compare all subtasks)
     prevTask.subtasks.every((s, i) => s.status === nextTask.subtasks[i]?.status)
   );
@@ -137,6 +156,11 @@ export const TaskCard = memo(function TaskCard({
   const { toast } = useToast();
   const [isStuck, setIsStuck] = useState(false);
   const [isRecovering, setIsRecovering] = useState(false);
+  const [showDeleteDialog, setShowDeleteDialog] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
+  const [worktreeChangesInfo, setWorktreeChangesInfo] = useState<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number } | null>(null);
+  const [isCheckingChanges, setIsCheckingChanges] = useState(false);
   const stuckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const isRunning = task.status === 'in_progress';
@@ -174,6 +198,39 @@ export const TaskCard = memo(function TaskCard({
     () => formatRelativeTime(task.updatedAt),
     [task.updatedAt]
   );
+
+  const tokenBadges = useMemo(() => {
+    if (!task.tokenUsage?.totalTokens) return [];
+
+    return [
+      {
+        key: 'prompt',
+        label: t('detail.promptTokensShort', { defaultValue: 'In' }),
+        title: t('detail.promptTokens', { defaultValue: 'Prompt' }),
+        value: formatTokenCount(task.tokenUsage.promptTokens),
+        variant: 'outline' as const,
+      },
+      {
+        key: 'completion',
+        label: t('detail.completionTokensShort', { defaultValue: 'Out' }),
+        title: t('detail.completionTokens', { defaultValue: 'Completion' }),
+        value: formatTokenCount(task.tokenUsage.completionTokens),
+        variant: 'outline' as const,
+      },
+      {
+        key: 'total',
+        label: t('detail.totalTokensShort', { defaultValue: 'Total' }),
+        title: t('detail.totalTokens', { defaultValue: 'Total' }),
+        value: formatTokenCount(task.tokenUsage.totalTokens),
+        variant: 'secondary' as const,
+      },
+    ];
+  }, [
+    task.tokenUsage?.promptTokens,
+    task.tokenUsage?.completionTokens,
+    task.tokenUsage?.totalTokens,
+    t,
+  ]);
 
   // Memoize status menu items to avoid recreating on every render
   const statusMenuItems = useMemo(() => {
@@ -226,6 +283,24 @@ export const TaskCard = memo(function TaskCard({
     };
   }, [task.id, isRunning]);
 
+  useEffect(() => {
+    if (!showDeleteDialog) {
+      setWorktreeChangesInfo(null);
+      setDeleteError(null);
+      return;
+    }
+
+    setIsCheckingChanges(true);
+    window.electronAPI.checkWorktreeChanges(task.id).then((result) => {
+      if (result.success && result.data) {
+        setWorktreeChangesInfo(result.data);
+      }
+      setIsCheckingChanges(false);
+    }).catch(() => {
+      setIsCheckingChanges(false);
+    });
+  }, [showDeleteDialog, task.id]);
+
   const handleStartStop = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isRunning) {
@@ -270,6 +345,23 @@ export const TaskCard = memo(function TaskCard({
     if (task.metadata?.prUrl && window.electronAPI?.openExternal) {
       window.electronAPI.openExternal(task.metadata.prUrl);
     }
+  };
+
+  const handleDeleteClick = (e: React.MouseEvent | Event) => {
+    e.stopPropagation();
+    setShowDeleteDialog(true);
+  };
+
+  const handleDelete = async () => {
+    setIsDeleting(true);
+    setDeleteError(null);
+    const result = await deleteTask(task.id);
+    if (result.success) {
+      setShowDeleteDialog(false);
+    } else {
+      setDeleteError(result.error || t('detail.deleteFailed', { defaultValue: 'Failed to delete task' }));
+    }
+    setIsDeleting(false);
   };
 
   const getStatusBadgeVariant = (status: string) => {
@@ -412,7 +504,7 @@ export const TaskCard = memo(function TaskCard({
                 )}
               >
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
-                {EXECUTION_PHASE_LABELS[executionPhase]}
+                {getTaskExecutionPhaseLabel(t, executionPhase)}
               </Badge>
             )}
              {/* Status badge - hide when execution phase badge is showing */}
@@ -464,7 +556,7 @@ export const TaskCard = memo(function TaskCard({
                     return <Icon className="h-2.5 w-2.5 mr-0.5" />;
                   })()
                 )}
-                {TASK_CATEGORY_LABELS[task.metadata.category]}
+                {getTaskCategoryLabel(t, task.metadata.category)}
               </Badge>
             )}
             {/* Impact badge - high visibility for important tasks */}
@@ -473,7 +565,7 @@ export const TaskCard = memo(function TaskCard({
                 variant="outline"
                 className={cn('text-[10px] px-1.5 py-0', TASK_IMPACT_COLORS[task.metadata.impact])}
               >
-                {TASK_IMPACT_LABELS[task.metadata.impact]}
+                {getTaskImpactLabel(t, task.metadata.impact)}
               </Badge>
             )}
             {/* Complexity badge */}
@@ -482,7 +574,7 @@ export const TaskCard = memo(function TaskCard({
                 variant="outline"
                 className={cn('text-[10px] px-1.5 py-0', TASK_COMPLEXITY_COLORS[task.metadata.complexity])}
               >
-                {TASK_COMPLEXITY_LABELS[task.metadata.complexity]}
+                {getTaskComplexityLabel(t, task.metadata.complexity)}
               </Badge>
             )}
             {/* Priority badge - only show urgent/high */}
@@ -491,7 +583,7 @@ export const TaskCard = memo(function TaskCard({
                 variant="outline"
                 className={cn('text-[10px] px-1.5 py-0', TASK_PRIORITY_COLORS[task.metadata.priority])}
               >
-                {TASK_PRIORITY_LABELS[task.metadata.priority]}
+                {getTaskPriorityLabel(t, task.metadata.priority)}
               </Badge>
             )}
             {/* Security severity - always show */}
@@ -500,7 +592,7 @@ export const TaskCard = memo(function TaskCard({
                 variant="outline"
                 className={cn('text-[10px] px-1.5 py-0', TASK_IMPACT_COLORS[task.metadata.securitySeverity])}
               >
-                {task.metadata.securitySeverity} {t('metadata.severity')}
+                {getTaskSeverityLabel(t, task.metadata.securitySeverity)} {t('metadata.severity')}
               </Badge>
             )}
           </div>
@@ -516,6 +608,23 @@ export const TaskCard = memo(function TaskCard({
               isStuck={isStuck}
               isRunning={isRunning}
             />
+          </div>
+        )}
+
+        {tokenBadges.length > 0 && (
+          <div className="mt-3 flex flex-wrap items-center gap-1.5">
+            {tokenBadges.map((stat) => (
+              <Badge
+                key={stat.key}
+                variant={stat.variant}
+                className="px-1.5 py-0.5 text-[10px] font-mono"
+                title={stat.title}
+              >
+                {stat.key === 'total' && <Gauge className="mr-1 h-2.5 w-2.5" />}
+                <span className="text-muted-foreground mr-1">{stat.label}</span>
+                <span className="tabular-nums">{stat.value}</span>
+              </Badge>
+            ))}
           </div>
         )}
 
@@ -616,26 +725,37 @@ export const TaskCard = memo(function TaskCard({
             )}
 
             {/* Move to menu for keyboard accessibility */}
-            {statusMenuItems && (
-              <DropdownMenu>
-                <DropdownMenuTrigger asChild>
-                  <Button
-                    variant="ghost"
-                    size="sm"
-                    className="h-7 w-7 p-0"
-                    onClick={(e) => e.stopPropagation()}
-                    aria-label={t('actions.taskActions')}
-                  >
-                    <MoreVertical className="h-4 w-4" />
-                  </Button>
-                </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
-                  <DropdownMenuLabel>{t('actions.moveTo')}</DropdownMenuLabel>
-                  <DropdownMenuSeparator />
-                  {statusMenuItems}
-                </DropdownMenuContent>
-              </DropdownMenu>
-            )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  className="h-7 w-7 p-0"
+                  onClick={(e) => e.stopPropagation()}
+                  aria-label={t('actions.taskActions')}
+                >
+                  <MoreVertical className="h-4 w-4" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" onClick={(e) => e.stopPropagation()}>
+                {statusMenuItems && (
+                  <>
+                    <DropdownMenuLabel>{t('actions.moveTo')}</DropdownMenuLabel>
+                    <DropdownMenuSeparator />
+                    {statusMenuItems}
+                    <DropdownMenuSeparator />
+                  </>
+                )}
+                <DropdownMenuItem
+                  onClick={handleDeleteClick}
+                  disabled={isRunning && !isStuck}
+                  className="text-destructive focus:text-destructive"
+                >
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {t('actions.delete')}
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
         {/* Close content wrapper for selectable mode */}
@@ -643,6 +763,72 @@ export const TaskCard = memo(function TaskCard({
         {/* Close flex container for selectable mode */}
         </div>
       </CardContent>
+      <AlertDialog open={showDeleteDialog} onOpenChange={setShowDeleteDialog}>
+        <AlertDialogContent onClick={(e) => e.stopPropagation()}>
+          <AlertDialogHeader>
+            <AlertDialogTitle className="flex items-center gap-2">
+              <AlertTriangle className="h-5 w-5 text-destructive" />
+              {t('deleteDialog.title')}
+            </AlertDialogTitle>
+            <AlertDialogDescription asChild>
+              <div className="text-sm text-muted-foreground space-y-3">
+                <p>
+                  {t('deleteDialog.confirmMessage')} <strong className="text-foreground">"{displayTitle}"</strong>?
+                </p>
+                {isCheckingChanges && (
+                  <div className="flex items-center gap-2 text-sm text-muted-foreground">
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                    {t('deleteDialog.checkingChanges')}
+                  </div>
+                )}
+                {worktreeChangesInfo?.hasChanges && (
+                  <div className="bg-amber-500/10 border border-amber-500/30 px-3 py-2 rounded-lg text-sm space-y-1">
+                    <p className="font-medium text-amber-600 dark:text-amber-400 flex items-center gap-1.5">
+                      <AlertTriangle className="h-4 w-4" />
+                      {t('deleteDialog.uncommittedChanges', { count: worktreeChangesInfo.changedFileCount })}
+                    </p>
+                    <p className="text-muted-foreground text-xs">
+                      {t('deleteDialog.uncommittedChangesHint')}
+                    </p>
+                  </div>
+                )}
+                <p className="text-destructive">
+                  {t('deleteDialog.destructiveWarning')}
+                </p>
+                {deleteError && (
+                  <p className="text-destructive bg-destructive/10 px-3 py-2 rounded-lg text-sm">
+                    {deleteError}
+                  </p>
+                )}
+              </div>
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={isDeleting}>{t('deleteDialog.cancel')}</AlertDialogCancel>
+            <AlertDialogAction
+              onClick={(e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                void handleDelete();
+              }}
+              disabled={isDeleting}
+              className="bg-destructive text-destructive-foreground hover:bg-destructive/90"
+            >
+              {isDeleting ? (
+                <>
+                  <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                  {t('deleteDialog.deleting')}
+                </>
+              ) : (
+                <>
+                  <Trash2 className="mr-2 h-4 w-4" />
+                  {t('deleteDialog.deletePermanently')}
+                </>
+              )}
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Card>
   );
 }, taskCardPropsAreEqual);

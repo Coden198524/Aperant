@@ -57,6 +57,8 @@ interface MemoryConfigPanelProps {
  */
 export function MemoryConfigPanel({ config, onChange, disabled = false }: MemoryConfigPanelProps) {
   const { t } = useTranslation('onboarding');
+  const getMemoryPlaceholder = (key: string, fallback: string): string =>
+    t(`memory.placeholders.${key}`, { defaultValue: fallback });
 
   return (
     <div className="space-y-6">
@@ -127,7 +129,7 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
               <PasswordInput
                 value={config.openaiApiKey}
                 onChange={(value) => onChange({ openaiApiKey: value })}
-                placeholder="sk-..."
+                placeholder={getMemoryPlaceholder('openaiApiKey', 'sk-...')}
               />
               <div className="space-y-1 mt-2">
                 <Label className="text-xs text-muted-foreground">{t('memory.embeddingModel')}</Label>
@@ -140,8 +142,8 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="text-embedding-3-small">text-embedding-3-small (default, cheapest)</SelectItem>
-                    <SelectItem value="text-embedding-3-large">text-embedding-3-large (higher quality)</SelectItem>
+                    <SelectItem value="text-embedding-3-small">{t('memory.modelOptions.openaiSmall')}</SelectItem>
+                    <SelectItem value="text-embedding-3-large">{t('memory.modelOptions.openaiLarge')}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -167,12 +169,12 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
               <PasswordInput
                 value={config.voyageApiKey}
                 onChange={(value) => onChange({ voyageApiKey: value })}
-                placeholder="pa-..."
+                placeholder={getMemoryPlaceholder('voyageApiKey', 'pa-...')}
               />
               <div className="space-y-1 mt-2">
                 <Label className="text-xs text-muted-foreground">{t('memory.embeddingModel')}</Label>
                 <Input
-                  placeholder="voyage-3"
+                  placeholder={getMemoryPlaceholder('voyageEmbeddingModel', 'voyage-3')}
                   value={config.voyageEmbeddingModel}
                   onChange={(e) => onChange({ voyageEmbeddingModel: e.target.value })}
                   disabled={disabled}
@@ -200,7 +202,7 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
               <PasswordInput
                 value={config.googleApiKey}
                 onChange={(value) => onChange({ googleApiKey: value })}
-                placeholder="AIza..."
+                placeholder={getMemoryPlaceholder('googleApiKey', 'AIza...')}
               />
               <div className="space-y-1 mt-2">
                 <Label className="text-xs text-muted-foreground">{t('memory.embeddingModel')}</Label>
@@ -213,8 +215,8 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
                     <SelectValue />
                   </SelectTrigger>
                   <SelectContent>
-                    <SelectItem value="gemini-embedding-001">gemini-embedding-001 (default)</SelectItem>
-                    <SelectItem value="text-embedding-004">text-embedding-004</SelectItem>
+                    <SelectItem value="gemini-embedding-001">{t('memory.modelOptions.googleDefault')}</SelectItem>
+                    <SelectItem value="text-embedding-004">{t('memory.modelOptions.googleLegacy', { defaultValue: 'text-embedding-004' })}</SelectItem>
                   </SelectContent>
                 </Select>
               </div>
@@ -241,13 +243,13 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
                 <PasswordInput
                   value={config.azureOpenaiApiKey}
                   onChange={(value) => onChange({ azureOpenaiApiKey: value })}
-                  placeholder="Azure API Key"
+                  placeholder={getMemoryPlaceholder('azureApiKey', 'Azure API Key')}
                 />
               </div>
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">{t('memory.azureBaseUrl')}</Label>
                 <Input
-                  placeholder="https://your-resource.openai.azure.com"
+                  placeholder={getMemoryPlaceholder('azureBaseUrl', 'https://your-resource.openai.azure.com')}
                   value={config.azureOpenaiBaseUrl}
                   onChange={(e) => onChange({ azureOpenaiBaseUrl: e.target.value })}
                   className="font-mono text-sm"
@@ -257,7 +259,7 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
               <div className="space-y-1">
                 <Label className="text-xs text-muted-foreground">{t('memory.azureEmbeddingDeployment')}</Label>
                 <Input
-                  placeholder="text-embedding-ada-002"
+                  placeholder={getMemoryPlaceholder('azureEmbeddingDeployment', 'text-embedding-ada-002')}
                   value={config.azureOpenaiEmbeddingDeployment}
                   onChange={(e) => onChange({ azureOpenaiEmbeddingDeployment: e.target.value })}
                   className="font-mono text-sm"
@@ -274,7 +276,7 @@ export function MemoryConfigPanel({ config, onChange, disabled = false }: Memory
               <div className="space-y-2">
                 <Label className="text-xs text-muted-foreground">{t('memory.baseUrl')}</Label>
                 <Input
-                  placeholder="http://localhost:11434"
+                  placeholder={getMemoryPlaceholder('ollamaBaseUrl', 'http://localhost:11434')}
                   value={config.ollamaBaseUrl}
                   onChange={(e) => onChange({ ollamaBaseUrl: e.target.value })}
                   disabled={disabled}

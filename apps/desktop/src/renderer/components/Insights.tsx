@@ -16,7 +16,9 @@ import {
   PanelLeftClose,
   PanelLeft,
   Camera,
-  X
+  X,
+  ChevronDown,
+  ChevronUp
 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -51,13 +53,12 @@ import { ChatHistorySidebar } from './ChatHistorySidebar';
 import { InsightsModelSelector } from './InsightsModelSelector';
 import type { InsightsChatMessage, InsightsModelConfig, TaskMetadata, ImageAttachment } from '../../shared/types';
 import {
-  TASK_CATEGORY_LABELS,
   TASK_CATEGORY_COLORS,
-  TASK_COMPLEXITY_LABELS,
   TASK_COMPLEXITY_COLORS,
   MAX_IMAGE_SIZE,
   MAX_IMAGES_PER_TASK
 } from '../../shared/constants';
+import { getTaskCategoryLabel, getTaskComplexityLabel } from '../lib/i18n-labels';
 
 // createSafeLink - factory function that creates a SafeLink component with i18n support
 const createSafeLink = (opensInNewWindowText: string) => {
@@ -414,7 +415,7 @@ export function Insights({ projectId }: InsightsProps) {
               size="icon"
               className="h-8 w-8"
               onClick={() => setShowSidebar(!showSidebar)}
-              title={showSidebar ? 'Hide sidebar' : 'Show sidebar'}
+              title={showSidebar ? t('insights.header.hideSidebar') : t('insights.header.showSidebar')}
             >
               {showSidebar ? (
                 <PanelLeftClose className="h-4 w-4" />
@@ -426,9 +427,9 @@ export function Insights({ projectId }: InsightsProps) {
               <Sparkles className="h-5 w-5 text-primary" />
             </div>
             <div>
-              <h2 className="font-semibold text-foreground">Insights</h2>
+              <h2 className="font-semibold text-foreground">{t('insights.header.title')}</h2>
               <p className="text-sm text-muted-foreground">
-                Ask questions about your codebase
+                {t('insights.header.description')}
               </p>
             </div>
           </div>
@@ -444,7 +445,7 @@ export function Insights({ projectId }: InsightsProps) {
               onClick={handleNewSession}
             >
               <Plus className="mr-2 h-4 w-4" />
-              New Chat
+              {t('insights.header.newChat')}
             </Button>
           </div>
         </div>
@@ -460,18 +461,17 @@ export function Insights({ projectId }: InsightsProps) {
               <MessageSquare className="h-8 w-8 text-muted-foreground" />
             </div>
             <h3 className="mb-2 text-lg font-medium text-foreground">
-              Start a Conversation
+              {t('insights.empty.title')}
             </h3>
             <p className="max-w-md text-sm text-muted-foreground">
-              Ask questions about your codebase, get suggestions for improvements,
-              or discuss features you'd like to implement.
+              {t('insights.empty.description')}
             </p>
             <div className="mt-6 flex flex-wrap justify-center gap-2">
               {[
-                'What is the architecture of this project?',
-                'Suggest improvements for code quality',
-                'What features could I add next?',
-                'Are there any security concerns?'
+                t('insights.empty.suggestionArchitecture'),
+                t('insights.empty.suggestionCodeQuality'),
+                t('insights.empty.suggestionNextFeatures'),
+                t('insights.empty.suggestionSecurity')
               ].map((suggestion) => (
                 <Button
                   key={suggestion}
@@ -509,7 +509,7 @@ export function Insights({ projectId }: InsightsProps) {
                 </div>
                 <div className="flex-1">
                   <div className="mb-1 text-sm font-medium text-foreground">
-                    Assistant
+                    {t('insights.messages.assistant')}
                   </div>
                   {streamingContent && (
                     <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -520,7 +520,7 @@ export function Insights({ projectId }: InsightsProps) {
                   )}
                   {/* Tool usage indicator */}
                   {currentTool && (
-                    <ToolIndicator name={currentTool.name} input={currentTool.input} />
+                    <LocalizedToolIndicator name={currentTool.name} input={currentTool.input} />
                   )}
                 </div>
               </div>
@@ -534,7 +534,7 @@ export function Insights({ projectId }: InsightsProps) {
                 </div>
                 <div className="flex items-center gap-2 text-sm text-muted-foreground">
                   <Loader2 className="h-4 w-4 animate-spin" />
-                  Thinking...
+                  {t('insights.status.thinking')}
                 </div>
               </div>
             )}
@@ -564,7 +564,7 @@ export function Insights({ projectId }: InsightsProps) {
               onDragOver={handleDragOver}
               onDragLeave={handleDragLeave}
               onDrop={handleDrop}
-              placeholder="Ask about your codebase..."
+              placeholder={t('insights.input.placeholder')}
               className={cn(
                 'min-h-[80px] resize-none',
                 isDragOver && 'border-primary ring-2 ring-primary/20'
@@ -649,7 +649,7 @@ export function Insights({ projectId }: InsightsProps) {
         )}
 
         <p className="mt-2 text-xs text-muted-foreground">
-          {t('insights.images.pasteHint')} · Press Enter to send, Shift+Enter for new line
+          {t('insights.images.pasteHint')} | {t('insights.input.sendHint')}
         </p>
       </div>
 
@@ -698,7 +698,7 @@ function MessageBubble({
       </div>
       <div className="flex-1 space-y-2">
         <div className="text-sm font-medium text-foreground">
-          {isUser ? 'You' : 'Assistant'}
+          {isUser ? t('insights.messages.user') : t('insights.messages.assistant')}
         </div>
         {message.content && (
           <div className="prose prose-sm dark:prose-invert max-w-none">
@@ -729,7 +729,7 @@ function MessageBubble({
 
         {/* Tool usage history for assistant messages */}
         {!isUser && message.toolsUsed && message.toolsUsed.length > 0 && (
-          <ToolUsageHistory tools={message.toolsUsed} />
+          <LocalizedToolUsageHistory tools={message.toolsUsed} />
         )}
 
         {/* Task suggestion cards */}
@@ -765,8 +765,7 @@ function MessageBubble({
                               TASK_CATEGORY_COLORS[task.metadata.category]
                             )}
                           >
-                            {TASK_CATEGORY_LABELS[task.metadata.category] ||
-                              task.metadata.category}
+                            {getTaskCategoryLabel(t, task.metadata.category)}
                           </Badge>
                         )}
                         {task.metadata.complexity && (
@@ -777,8 +776,7 @@ function MessageBubble({
                               TASK_COMPLEXITY_COLORS[task.metadata.complexity]
                             )}
                           >
-                            {TASK_COMPLEXITY_LABELS[task.metadata.complexity] ||
-                              task.metadata.complexity}
+                            {getTaskComplexityLabel(t, task.metadata.complexity)}
                           </Badge>
                         )}
                       </div>
@@ -816,7 +814,6 @@ function MessageBubble({
   );
 }
 
-// Tool usage history component for showing tools used in completed messages
 interface ToolUsageHistoryProps {
   tools: Array<{
     name: string;
@@ -825,12 +822,33 @@ interface ToolUsageHistoryProps {
   }>;
 }
 
-function ToolUsageHistory({ tools }: ToolUsageHistoryProps) {
+interface ToolIndicatorProps {
+  name: string;
+  input?: string;
+}
+
+function getLocalizedToolLabel(
+  t: ReturnType<typeof useTranslation>['t'],
+  toolName: string
+): string {
+  switch (toolName) {
+    case 'Read':
+      return t('insights.tools.readingFile');
+    case 'Glob':
+      return t('insights.tools.searchingFiles');
+    case 'Grep':
+      return t('insights.tools.searchingCode');
+    default:
+      return toolName;
+  }
+}
+
+function LocalizedToolUsageHistory({ tools }: ToolUsageHistoryProps) {
+  const { t } = useTranslation('common');
   const [expanded, setExpanded] = useState(false);
 
   if (tools.length === 0) return null;
 
-  // Group tools by name for summary
   const toolCounts = tools.reduce((acc, tool) => {
     acc[tool.name] = (acc[tool.name] || 0) + 1;
     return acc;
@@ -880,8 +898,10 @@ function ToolUsageHistory({ tools }: ToolUsageHistoryProps) {
             );
           })}
         </span>
-        <span>{tools.length} tool{tools.length !== 1 ? 's' : ''} used</span>
-        <span className="text-[10px]">{expanded ? '▲' : '▼'}</span>
+        <span>{t('insights.tools.used', { count: tools.length })}</span>
+        <span className="text-[10px]">
+          {expanded ? <ChevronUp className="h-3 w-3" /> : <ChevronDown className="h-3 w-3" />}
+        </span>
       </button>
 
       {expanded && (
@@ -889,12 +909,9 @@ function ToolUsageHistory({ tools }: ToolUsageHistoryProps) {
           {tools.map((tool, index) => {
             const Icon = getToolIcon(tool.name);
             return (
-              <div
-                key={`${tool.name}-${index}`}
-                className="flex items-center gap-2 text-xs"
-              >
+              <div key={`${tool.name}-${index}`} className="flex items-center gap-2 text-xs">
                 <Icon className={cn('h-3 w-3 shrink-0', getToolColor(tool.name))} />
-                <span className="font-medium">{tool.name}</span>
+                <span className="font-medium">{getLocalizedToolLabel(t, tool.name)}</span>
                 {tool.input && (
                   <span className="text-muted-foreground truncate max-w-[250px]">
                     {tool.input}
@@ -909,32 +926,27 @@ function ToolUsageHistory({ tools }: ToolUsageHistoryProps) {
   );
 }
 
-// Tool indicator component for showing what the AI is currently doing
-interface ToolIndicatorProps {
-  name: string;
-  input?: string;
-}
+function LocalizedToolIndicator({ name, input }: ToolIndicatorProps) {
+  const { t } = useTranslation('common');
 
-function ToolIndicator({ name, input }: ToolIndicatorProps) {
-  // Get friendly name and icon for each tool
   const getToolInfo = (toolName: string) => {
     switch (toolName) {
       case 'Read':
         return {
           icon: FileText,
-          label: 'Reading file',
+          label: t('insights.tools.readingFile'),
           color: 'text-blue-500 bg-blue-500/10'
         };
       case 'Glob':
         return {
           icon: FolderSearch,
-          label: 'Searching files',
+          label: t('insights.tools.searchingFiles'),
           color: 'text-amber-500 bg-amber-500/10'
         };
       case 'Grep':
         return {
           icon: Search,
-          label: 'Searching code',
+          label: t('insights.tools.searchingCode'),
           color: 'text-green-500 bg-green-500/10'
         };
       default:
@@ -949,10 +961,7 @@ function ToolIndicator({ name, input }: ToolIndicatorProps) {
   const { icon: Icon, label, color } = getToolInfo(name);
 
   return (
-    <div className={cn(
-      'mt-2 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm',
-      color
-    )}>
+    <div className={cn('mt-2 inline-flex items-center gap-2 rounded-lg px-3 py-2 text-sm', color)}>
       <Icon className="h-4 w-4 animate-pulse" />
       <span className="font-medium">{label}</span>
       {input && (
@@ -963,3 +972,4 @@ function ToolIndicator({ name, input }: ToolIndicatorProps) {
     </div>
   );
 }
+

@@ -18,6 +18,18 @@ function debug(...args: unknown[]): void {
 const SYSTEM_PROMPT =
   'You generate short, concise task titles (3-7 words). Output ONLY the title, nothing else. No quotes, no explanation, no preamble.';
 
+function isResponsesApiModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  return (
+    modelId.startsWith('gpt-5') ||
+    modelId.includes('codex') ||
+    modelId === 'o3' ||
+    modelId.startsWith('o3-') ||
+    modelId === 'o4-mini' ||
+    modelId.startsWith('o4-')
+  );
+}
+
 /**
  * Service for generating task titles from descriptions using the Vercel AI SDK.
  *
@@ -40,7 +52,7 @@ export class TitleGenerator extends EventEmitter {
   }
 
   /**
-   * Generate a task title from a description using Claude AI
+   * Generate a task title from a description using the configured AI provider
    * @param description - The task description to generate a title from
    * @returns Promise resolving to the generated title or null on failure
    */
@@ -72,15 +84,16 @@ export class TitleGenerator extends EventEmitter {
       // Handle Codex models the same way as runner.ts:
       // Codex requires instructions field (not system messages in input) and store=false
       const isCodex = client.resolvedModelId?.includes('codex') ?? false;
+      const isResponsesModel = isResponsesApiModel(client.resolvedModelId);
 
       const result = streamText({
         model: client.model,
         system: isCodex ? undefined : client.systemPrompt,
         prompt,
-        providerOptions: isCodex ? {
+        providerOptions: isResponsesModel ? {
           openai: {
-            ...(client.systemPrompt ? { instructions: client.systemPrompt } : {}),
-            store: false,
+            ...(isCodex && client.systemPrompt ? { instructions: client.systemPrompt } : {}),
+            store: true,
           },
         } : undefined,
       });

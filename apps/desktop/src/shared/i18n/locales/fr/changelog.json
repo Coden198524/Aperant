@@ -1,0 +1,255 @@
+{
+  "empty": {
+    "noProjectTitle": "Aucun projet sélectionné",
+    "noProjectDescription": "Sélectionnez un projet dans la barre latérale pour générer des changelogs."
+  },
+  "header": {
+    "title": "Générateur de changelog",
+    "refresh": "Actualiser",
+    "labels": {
+      "select": "Sélection",
+      "generate": "Générer",
+      "release": "Publier"
+    },
+    "steps": {
+      "1": "Étape 1 : sélectionner les tâches terminées à inclure",
+      "2": "Étape 2 : configurer et générer le changelog",
+      "3": "Étape 3 : publier et archiver les tâches"
+    }
+  },
+  "filters": {
+    "source": "Source du changelog",
+    "gitHistoryOptions": "Options de l'historique Git",
+    "historyType": "Type d'historique",
+    "numberOfCommits": "Nombre de commits",
+    "sinceDate": "Depuis la date",
+    "fromTag": "Tag de départ",
+    "toTagOptional": "Tag de fin (optionnel)",
+    "selectTag": "Sélectionner un tag...",
+    "headLatest": "HEAD (dernier)",
+    "lastVersion": "Dernière version",
+    "selectVersion": "Sélectionner une version...",
+    "allCommitsSinceVersion": "Tous les commits depuis cette version seront inclus",
+    "includeMergeCommits": "Inclure les commits de fusion",
+    "loading": "Chargement...",
+    "loadCommits": "Charger les commits",
+    "branchComparison": "Comparaison de branches",
+    "baseBranch": "Branche de base",
+    "selectBaseBranch": "Sélectionner la branche de base...",
+    "defaultBadge": "par défaut",
+    "baseBranchHint": "La branche dans laquelle vous fusionnez",
+    "compareBranch": "Branche comparée",
+    "selectCompareBranch": "Sélectionner la branche comparée...",
+    "currentBadge": "actuelle",
+    "compareBranchHint": "La branche contenant vos modifications",
+    "branchesMustBeDifferent": "Les branches doivent être différentes"
+  },
+  "sourceModes": {
+    "tasks": {
+      "label": "Tâches terminées",
+      "description": "Générer à partir des tâches de spécification terminées"
+    },
+    "git-history": {
+      "label": "Historique Git",
+      "description": "Générer à partir des commits récents ou d'une plage de tags"
+    },
+    "branch-diff": {
+      "label": "Comparaison de branches",
+      "description": "Générer à partir des commits entre deux branches"
+    }
+  },
+  "historyTypes": {
+    "since-version": "Depuis une version",
+    "recent": "Commits récents",
+    "since-date": "Depuis une date",
+    "tag-range": "Plage de tags"
+  },
+  "list": {
+    "tasksSelected": "{{selected}} sur {{total}} tâches sélectionnées",
+    "selectAll": "Tout sélectionner",
+    "clear": "Effacer",
+    "noCompletedTasks": "Aucune tâche terminée",
+    "noCompletedTasksDescription": "Terminez des tâches dans le tableau Kanban et marquez-les comme « Done » pour les inclure dans votre changelog.",
+    "commitsFound": "{{count}} commit trouvé",
+    "commitsFound_plural": "{{count}} commits trouvés",
+    "loadingCommits": "Chargement des commits...",
+    "noCommitsFound": "Aucun commit trouvé",
+    "noGitHistoryDescription": "Configurez les options d'historique puis cliquez sur « Charger les commits » pour prévisualiser.",
+    "noBranchDiffDescription": "Sélectionnez les deux branches puis cliquez sur « Charger les commits » pour voir les changements.",
+    "continue": "Continuer",
+    "summary": {
+      "task": "{{count}} tâche",
+      "task_plural": "{{count}} tâches",
+      "commit": "{{count}} commit",
+      "commit_plural": "{{count}} commits",
+      "item": "{{count}} élément",
+      "item_plural": "{{count}} éléments"
+    }
+  },
+  "config": {
+    "backToSelection": "Retour à la sélection",
+    "including": "Inclut {{count}} {{label}}",
+    "releaseInfo": "Informations de version",
+    "version": "Version",
+    "date": "Date",
+    "versionPlaceholder": "1.0.0",
+    "previous": "Précédente : {{version}}",
+    "outputStyle": "Style de sortie",
+    "format": "Format",
+    "audience": "Audience",
+    "emojis": "Emojis",
+    "advancedOptions": "Options avancées",
+    "customInstructions": "Instructions personnalisées",
+    "customInstructionsPlaceholder": "Ajoutez des instructions particulières pour l'IA...",
+    "customInstructionsHint": "Optionnel. Indiquez à l'IA le ton, les détails à inclure, etc.",
+    "generating": "Génération...",
+    "generate": "Générer le changelog"
+  },
+  "formatOptions": {
+    "keep-a-changelog": {
+      "label": "Keep a Changelog",
+      "description": "Format structuré avec sections Added/Changed/Fixed/Removed"
+    },
+    "simple-list": {
+      "label": "Liste simple",
+      "description": "Liste à puces claire avec catégories"
+    },
+    "github-release": {
+      "label": "Release GitHub",
+      "description": "Notes de version au style GitHub"
+    }
+  },
+  "audienceOptions": {
+    "technical": {
+      "label": "Technique",
+      "description": "Changements techniques détaillés pour les développeurs"
+    },
+    "user-facing": {
+      "label": "Côté utilisateur",
+      "description": "Descriptions claires et non techniques pour les utilisateurs finaux"
+    },
+    "marketing": {
+      "label": "Marketing",
+      "description": "Texte orienté valeur mettant en avant les bénéfices"
+    }
+  },
+  "emojiOptions": {
+    "none": {
+      "label": "Aucun",
+      "description": "Aucun emoji"
+    },
+    "little": {
+      "label": "Titres uniquement",
+      "description": "Emojis sur les titres de section uniquement"
+    },
+    "medium": {
+      "label": "Titres + points clés",
+      "description": "Emojis sur les titres et les éléments importants"
+    },
+    "high": {
+      "label": "Partout",
+      "description": "Emojis sur les titres et sur chaque ligne"
+    }
+  },
+  "progress": {
+    "stages": {
+      "loading_specs": "Chargement des fichiers de spécification...",
+      "loading_commits": "Chargement des commits...",
+      "generating": "Génération du changelog...",
+      "formatting": "Mise en forme de la sortie...",
+      "complete": "Terminé",
+      "error": "Erreur"
+    }
+  },
+  "preview": {
+    "title": "Aperçu",
+    "markdown": "Markdown",
+    "preview": "Aperçu",
+    "copied": "Copié !",
+    "copy": "Copier",
+    "copyTooltip": "Copier dans le presse-papiers",
+    "saved": "Enregistré !",
+    "save": "Enregistrer dans CHANGELOG.md",
+    "saveTooltip": "Ajouter au début de CHANGELOG.md à la racine du projet",
+    "dropImages": "Déposez des images ici pour les ajouter au changelog",
+    "imagePasteHint": "Collez des images dans la description pour les enregistrer dans le changelog",
+    "placeholder": "Le changelog généré apparaîtra ici...",
+    "emptyHint": "Cliquez sur « Générer le changelog » pour créer les notes de version.",
+    "loadingImage": "Chargement de l'image...",
+    "imageNotFound": "Image introuvable",
+    "missingProjectPath": "Impossible de charger l'image locale : chemin du projet manquant",
+    "loadImageFailed": "Échec du chargement de l'image"
+  },
+  "success": {
+    "title": "Changelog enregistré !",
+    "description": "La version {{tag}} a été ajoutée à CHANGELOG.md",
+    "done": "Terminé"
+  },
+  "githubRelease": {
+    "title": "Créer une release GitHub",
+    "success": "Release créée avec succès !",
+    "view": "Voir la release sur GitHub",
+    "description": "Créez une nouvelle release {{tag}} sur GitHub avec le changelog comme notes de version.",
+    "creating": "Création de la release...",
+    "create": "Créer la release {{tag}}",
+    "failed": "Échec de la création de la release"
+  },
+  "archive": {
+    "title": "Archiver les tâches terminées",
+    "success": "{{count}} tâche archivée !",
+    "success_plural": "{{count}} tâches archivées !",
+    "description": "Archivez {{count}} tâche pour alléger votre tableau Kanban. Les tâches archivées peuvent être affichées avec l'option « Show Archived ».",
+    "description_plural": "Archivez {{count}} tâches pour alléger votre tableau Kanban. Les tâches archivées peuvent être affichées avec l'option « Show Archived ».",
+    "archiving": "Archivage...",
+    "action": "Archiver {{count}} tâche",
+    "action_plural": "Archiver {{count}} tâches",
+    "failed": "Échec de l'archivage des tâches"
+  },
+  "entry": {
+    "hasSpecs": "A des specs",
+    "filesChanged": "{{count}} fichier modifié",
+    "filesChanged_plural": "{{count}} fichiers modifiés"
+  },
+  "summary": {
+    "separator": ", ",
+    "more": "+{{count}} autres",
+    "labels": {
+      "task": "tâche",
+      "task_plural": "tâches",
+      "commit": "commit",
+      "commit_plural": "commits",
+      "item": "élément",
+      "item_plural": "éléments"
+    }
+  },
+  "versionBump": {
+    "breaking": "Incrémentation majeure (changements incompatibles détectés)",
+    "feature": "Incrémentation mineure (nouvelles fonctionnalités détectées)",
+    "default": "Incrémentation de correctif (correctifs/améliorations)"
+  },
+  "store": {
+    "generatedSuccessfully": "Changelog généré avec succès !",
+    "generationFailed": "Échec de la génération",
+    "loadDataFailed": "Échec du chargement des données du changelog",
+    "loadTaskSpecsFailed": "Échec du chargement des spécifications de tâche",
+    "loadGitDataFailed": "Échec du chargement des données Git",
+    "loadCommitsFailed": "Échec du chargement des commits",
+    "loadCommitsPreviewFailed": "Échec du chargement de l'aperçu des commits",
+    "selectAtLeastOneTask": "Veuillez sélectionner au moins une tâche à inclure dans le changelog",
+    "noCommitsForOptions": "Aucun commit trouvé pour les options sélectionnées. Veuillez ajuster vos filtres.",
+    "selectBothBranches": "Veuillez sélectionner les branches de base et de comparaison",
+    "branchesDifferent": "Les branches de base et de comparaison doivent être différentes",
+    "noCommitsBetweenBranches": "Aucun commit trouvé entre les branches sélectionnées",
+    "loadingTaskSpecifications": "Chargement des spécifications de tâche...",
+    "preparingCommitData": "Préparation des données de commit...",
+    "invalidSourceMode": "Mode de source invalide : {{mode}}",
+    "startGenerationFailed": "Échec du démarrage de la génération du changelog",
+    "invalidImageType": "Type d'image invalide. Autorisés :",
+    "saveImageFailed": "Échec de l'enregistrement de l'image",
+    "processImageFailed": "Échec du traitement de l'image",
+    "noChangelogToSave": "Aucun changelog à enregistrer",
+    "saveFailed": "Échec de l'enregistrement du changelog",
+    "noChangelogToCopy": "Aucun changelog à copier",
+    "copyFailed": "Échec de la copie dans le presse-papiers"
+  }
+}

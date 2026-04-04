@@ -1,4 +1,5 @@
 import { useEffect, useState, useCallback } from 'react';
+import i18n from '../../../../shared/i18n';
 import { useProjectStore } from '../../../stores/project-store';
 import {
   useChangelogStore,
@@ -139,10 +140,10 @@ export function useChangelog() {
             setGenerationProgress({
               stage: 'complete',
               progress: 100,
-              message: 'Changelog generated successfully!'
+              message: i18n.t('changelog:store.generatedSuccessfully')
             });
           } else {
-            setError(result.error || 'Generation failed');
+            setError(result.error || i18n.t('changelog:store.generationFailed'));
           }
         }
       }

@@ -4,35 +4,43 @@ import {
   CheckCircle2,
   FileCode
 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import { Badge } from '../../ui/badge';
 import { Card } from '../../ui/card';
 import {
-  DOCUMENTATION_CATEGORY_LABELS,
   IDEATION_EFFORT_COLORS,
   IDEATION_IMPACT_COLORS
 } from '../../../../shared/constants';
 import type { DocumentationGapIdea } from '../../../../shared/types';
+import {
+  getDocumentationAudienceLabel,
+  getDocumentationCategoryLabel,
+  getIdeationEffortLabel,
+  getIdeationPriorityLabel
+} from '../../../lib/i18n-labels';
 
 interface DocumentationGapDetailsProps {
   idea: DocumentationGapIdea;
 }
 
 export function DocumentationGapDetails({ idea }: DocumentationGapDetailsProps) {
+  const { t } = useTranslation('common');
+
   return (
     <>
       {/* Metrics */}
       <div className="grid grid-cols-2 gap-2">
         <Card className="p-3 text-center">
           <div className="text-lg font-semibold">
-            {DOCUMENTATION_CATEGORY_LABELS[idea.category]}
+            {getDocumentationCategoryLabel(t, idea.category)}
           </div>
-          <div className="text-xs text-muted-foreground">Category</div>
+          <div className="text-xs text-muted-foreground">{t('ideation.detail.category', { defaultValue: 'Category' })}</div>
         </Card>
         <Card className="p-3 text-center">
           <div className={`text-lg font-semibold ${IDEATION_EFFORT_COLORS[idea.estimatedEffort]}`}>
-            {idea.estimatedEffort}
+            {getIdeationEffortLabel(t, idea.estimatedEffort)}
           </div>
-          <div className="text-xs text-muted-foreground">Effort</div>
+          <div className="text-xs text-muted-foreground">{t('ideation.detail.effort', { defaultValue: 'Effort' })}</div>
         </Card>
       </div>
 
@@ -40,10 +48,10 @@ export function DocumentationGapDetails({ idea }: DocumentationGapDetailsProps) 
       <div>
         <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
           <Users className="h-4 w-4" />
-          Target Audience
+          {t('ideation.detail.targetAudience', { defaultValue: 'Target Audience' })}
         </h3>
         <Badge variant="outline" className="capitalize">
-          {idea.targetAudience}
+          {getDocumentationAudienceLabel(t, idea.targetAudience)}
         </Badge>
       </div>
 
@@ -52,7 +60,7 @@ export function DocumentationGapDetails({ idea }: DocumentationGapDetailsProps) 
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <AlertCircle className="h-4 w-4" />
-            Current Documentation
+            {t('ideation.detail.currentDocumentation', { defaultValue: 'Current Documentation' })}
           </h3>
           <p className="text-sm text-muted-foreground">{idea.currentDocumentation}</p>
         </div>
@@ -62,7 +70,7 @@ export function DocumentationGapDetails({ idea }: DocumentationGapDetailsProps) 
       <div>
         <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
           <CheckCircle2 className="h-4 w-4" />
-          Proposed Content
+          {t('ideation.detail.proposedContent', { defaultValue: 'Proposed Content' })}
         </h3>
         <p className="text-sm text-muted-foreground">{idea.proposedContent}</p>
       </div>
@@ -72,7 +80,7 @@ export function DocumentationGapDetails({ idea }: DocumentationGapDetailsProps) 
         <div>
           <h3 className="text-sm font-medium mb-2 flex items-center gap-2">
             <FileCode className="h-4 w-4" />
-            Affected Areas
+            {t('ideation.detail.affectedAreas', { defaultValue: 'Affected Areas' })}
           </h3>
           <ul className="space-y-1">
             {idea.affectedAreas.map((area, i) => (
@@ -86,9 +94,9 @@ export function DocumentationGapDetails({ idea }: DocumentationGapDetailsProps) 
 
       {/* Priority */}
       <div>
-        <h3 className="text-sm font-medium mb-2">Priority</h3>
+        <h3 className="text-sm font-medium mb-2">{t('ideation.detail.priority', { defaultValue: 'Priority' })}</h3>
         <Badge variant="outline" className={IDEATION_IMPACT_COLORS[idea.priority]}>
-          {idea.priority}
+          {getIdeationPriorityLabel(t, idea.priority)}
         </Badge>
       </div>
     </>

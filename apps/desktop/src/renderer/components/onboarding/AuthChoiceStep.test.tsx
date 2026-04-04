@@ -14,6 +14,24 @@ import '@testing-library/jest-dom';
 import { AuthChoiceStep } from './AuthChoiceStep';
 import type { APIProfile } from '@shared/types/profile';
 
+const translations: Record<string, string> = {
+  'authChoice.title': '选择你的验证方式',
+  'authChoice.description': '选择你希望如何连接 Claude。你后续也可以在设置中修改。',
+  'authChoice.oauthTitle': '使用 Anthropic 账户登录',
+  'authChoice.oauthDescription': '使用你的 Anthropic 账户进行验证，流程简单且安全。',
+  'authChoice.apiKeyTitle': '使用自定义 API 密钥',
+  'authChoice.apiKeyDescription': '使用你自己的 Anthropic 或兼容 API 提供商密钥。这个方式仍属高度实验性功能，可能会产生较高费用。',
+  'authChoice.info': '两种方式都能完整使用 Claude Code 功能，按你的使用偏好选择即可。',
+  'authChoice.skip': '暂时跳过'
+};
+
+vi.mock('react-i18next', () => ({
+  useTranslation: () => ({
+    t: (key: string) => translations[key] || key,
+    i18n: { language: 'zh-CN' }
+  })
+}));
+
 // Mock the settings store
 const mockGoToNext = vi.fn();
 const mockGoToPrevious = vi.fn();
@@ -76,16 +94,16 @@ describe('AuthChoiceStep', () => {
       );
 
       // Check for heading
-      expect(screen.getByText('Choose Your Authentication Method')).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.title'])).toBeInTheDocument();
 
       // Check for OAuth option
-      expect(screen.getByText('Sign in with Anthropic')).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.oauthTitle'])).toBeInTheDocument();
 
       // Check for API Key option
-      expect(screen.getByText('Use Custom API Key')).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.apiKeyTitle'])).toBeInTheDocument();
 
       // Check for skip button
-      expect(screen.getByText('Skip for now')).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.skip'])).toBeInTheDocument();
     });
 
     it('should display two auth option cards with equal visual weight', () => {
@@ -128,7 +146,7 @@ describe('AuthChoiceStep', () => {
         />
       );
 
-      const oauthButton = screen.getByText('Sign in with Anthropic').closest('.cursor-pointer');
+      const oauthButton = screen.getByText(translations['authChoice.oauthTitle']).closest('.cursor-pointer');
       fireEvent.click(oauthButton!);
 
       expect(mockGoToNext).toHaveBeenCalledTimes(1);
@@ -143,7 +161,7 @@ describe('AuthChoiceStep', () => {
         />
       );
 
-      const oauthButton = screen.getByText('Sign in with Anthropic').closest('.cursor-pointer');
+      const oauthButton = screen.getByText(translations['authChoice.oauthTitle']).closest('.cursor-pointer');
       fireEvent.click(oauthButton!);
 
       expect(mockGoToNext).toHaveBeenCalled();
@@ -161,7 +179,7 @@ describe('AuthChoiceStep', () => {
         />
       );
 
-      const apiKeyButton = screen.getByText('Use Custom API Key').closest('.cursor-pointer');
+      const apiKeyButton = screen.getByText(translations['authChoice.apiKeyTitle']).closest('.cursor-pointer');
       fireEvent.click(apiKeyButton!);
 
       // ProfileEditDialog should be rendered
@@ -184,7 +202,7 @@ describe('AuthChoiceStep', () => {
       );
 
       // Click API Key button to open dialog
-      const apiKeyButton = screen.getByText('Use Custom API Key').closest('.cursor-pointer');
+      const apiKeyButton = screen.getByText(translations['authChoice.apiKeyTitle']).closest('.cursor-pointer');
       fireEvent.click(apiKeyButton!);
 
       // Dialog should be open - verifies the API key path works
@@ -209,7 +227,7 @@ describe('AuthChoiceStep', () => {
         />
       );
 
-      const skipButton = screen.getByText('Skip for now');
+      const skipButton = screen.getByText(translations['authChoice.skip']);
       fireEvent.click(skipButton);
 
       expect(mockSkipWizard).toHaveBeenCalledTimes(1);
@@ -224,7 +242,7 @@ describe('AuthChoiceStep', () => {
         />
       );
 
-      const skipButton = screen.getByText('Skip for now');
+      const skipButton = screen.getByText(translations['authChoice.skip']);
       // Ghost variant buttons have specific styling classes
       expect(skipButton.className).toContain('text-muted-foreground');
       expect(skipButton.className).toContain('hover:text-foreground');
@@ -280,10 +298,10 @@ describe('AuthChoiceStep', () => {
       );
 
       // OAuth option description
-      expect(screen.getByText(/Use your Anthropic account to authenticate/)).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.oauthDescription'])).toBeInTheDocument();
 
       // API Key option description
-      expect(screen.getByText(/Bring your own API key/)).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.apiKeyDescription'])).toBeInTheDocument();
     });
 
     it('should have helper text explaining both options', () => {
@@ -295,7 +313,7 @@ describe('AuthChoiceStep', () => {
         />
       );
 
-      expect(screen.getByText(/Both options provide full access to Claude Code features/)).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.info'])).toBeInTheDocument();
     });
   });
 
@@ -310,8 +328,8 @@ describe('AuthChoiceStep', () => {
       );
 
       // Two main options visible
-      expect(screen.getByText('Sign in with Anthropic')).toBeInTheDocument();
-      expect(screen.getByText('Use Custom API Key')).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.oauthTitle'])).toBeInTheDocument();
+      expect(screen.getByText(translations['authChoice.apiKeyTitle'])).toBeInTheDocument();
 
       // Both should be clickable cards
       const cards = document.querySelectorAll('.cursor-pointer');

@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import i18n from '../../shared/i18n';
 import type {
   ChangelogTask,
   TaskSpecContent,
@@ -18,6 +19,10 @@ import type {
 import { useTaskStore } from './task-store';
 import { useSettingsStore } from './settings-store';
 import { saveSettings } from './settings-store';
+
+function tChangelog(key: string, defaultValue: string, options?: Record<string, unknown>): string {
+  return i18n.t(`changelog:${key}`, { defaultValue, ...options });
+}
 
 interface ChangelogState {
   // Data
@@ -298,7 +303,9 @@ export async function loadChangelogData(projectId: string): Promise<void> {
       store.setExistingChangelog(changelogResult.data);
     }
   } catch (error) {
-    store.setError(error instanceof Error ? error.message : 'Failed to load changelog data');
+    store.setError(
+      error instanceof Error ? error.message : tChangelog('store.loadDataFailed', 'Failed to load changelog data')
+    );
   }
 }
 
@@ -311,7 +318,9 @@ export async function loadTaskSpecs(projectId: string, taskIds: string[]): Promi
       store.setLoadedSpecs(result.data);
     }
   } catch (error) {
-    store.setError(error instanceof Error ? error.message : 'Failed to load task specs');
+    store.setError(
+      error instanceof Error ? error.message : tChangelog('store.loadTaskSpecsFailed', 'Failed to load task specs')
+    );
   }
 }
 
@@ -367,7 +376,9 @@ export async function loadGitData(projectId: string): Promise<void> {
       }
     }
   } catch (error) {
-    store.setError(error instanceof Error ? error.message : 'Failed to load git data');
+    store.setError(
+      error instanceof Error ? error.message : tChangelog('store.loadGitDataFailed', 'Failed to load git data')
+    );
   } finally {
     store.setIsLoadingGitData(false);
   }
@@ -414,11 +425,13 @@ export async function loadCommitsPreview(projectId: string): Promise<void> {
     if (result.success && result.data) {
       store.setPreviewCommits(result.data);
     } else {
-      store.setError(result.error || 'Failed to load commits');
+      store.setError(result.error || tChangelog('store.loadCommitsFailed', 'Failed to load commits'));
       store.setPreviewCommits([]);
     }
   } catch (error) {
-    store.setError(error instanceof Error ? error.message : 'Failed to load commits preview');
+    store.setError(
+      error instanceof Error ? error.message : tChangelog('store.loadCommitsPreviewFailed', 'Failed to load commits preview')
+    );
     store.setPreviewCommits([]);
   } finally {
     store.setIsLoadingCommits(false);
@@ -442,25 +455,25 @@ export async function generateChangelog(projectId: string): Promise<void> {
   // Validate based on source mode
   if (store.sourceMode === 'tasks') {
     if (store.selectedTaskIds.length === 0) {
-      store.setError('Please select at least one task to include in the changelog');
+      store.setError(tChangelog('store.selectAtLeastOneTask', 'Please select at least one task to include in the changelog'));
       return;
     }
   } else if (store.sourceMode === 'git-history') {
     if (store.previewCommits.length === 0) {
-      store.setError('No commits found for the selected options. Please adjust your filters.');
+      store.setError(tChangelog('store.noCommitsForOptions', 'No commits found for the selected options. Please adjust your filters.'));
       return;
     }
   } else if (store.sourceMode === 'branch-diff') {
     if (!store.baseBranch || !store.compareBranch) {
-      store.setError('Please select both base and compare branches');
+      store.setError(tChangelog('store.selectBothBranches', 'Please select both base and compare branches'));
       return;
     }
     if (store.baseBranch === store.compareBranch) {
-      store.setError('Base and compare branches must be different');
+      store.setError(tChangelog('store.branchesDifferent', 'Base and compare branches must be different'));
       return;
     }
     if (store.previewCommits.length === 0) {
-      store.setError('No commits found between the selected branches');
+      store.setError(tChangelog('store.noCommitsBetweenBranches', 'No commits found between the selected branches'));
       return;
     }
   }
@@ -472,8 +485,8 @@ export async function generateChangelog(projectId: string): Promise<void> {
     progress: 0,
     message:
       store.sourceMode === 'tasks'
-        ? 'Loading task specifications...'
-        : 'Preparing commit data...'
+        ? tChangelog('store.loadingTaskSpecifications', 'Loading task specifications...')
+        : tChangelog('store.preparingCommitData', 'Preparing commit data...')
   });
 
   // Build the generation request based on source mode
@@ -520,15 +533,24 @@ export async function generateChangelog(projectId: string): Promise<void> {
       });
     } else {
       // This should never happen due to validation, but handle it for TypeScript
-      throw new Error(`Invalid source mode: ${store.sourceMode}`);
+      throw new Error(
+        tChangelog('store.invalidSourceMode', 'Invalid source mode: {{mode}}', {
+          mode: store.sourceMode
+        })
+      );
     }
 
     // Check if generation started successfully
     if (!result.success) {
-      handleGenerationError(store, result.error || 'Failed to start changelog generation');
+      handleGenerationError(
+        store,
+        result.error || tChangelog('store.startGenerationFailed', 'Failed to start changelog generation')
+      );
     }
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : 'Failed to start changelog generation';
+    const errorMessage = error instanceof Error
+      ? error.message
+      : tChangelog('store.startGenerationFailed', 'Failed to start changelog generation');
     handleGenerationError(store, errorMessage);
   }
 }
@@ -540,7 +562,7 @@ export async function saveChangelog(
   const store = useChangelogStore.getState();
 
   if (!store.generatedChangelog) {
-    store.setError('No changelog to save');
+    store.setError(tChangelog('store.noChangelogToSave', 'No changelog to save'));
     return false;
   }
 
@@ -554,11 +576,11 @@ export async function saveChangelog(
     if (result.success) {
       return true;
     } else {
-      store.setError(result.error || 'Failed to save changelog');
+      store.setError(result.error || tChangelog('store.saveFailed', 'Failed to save changelog'));
       return false;
     }
   } catch (error) {
-    store.setError(error instanceof Error ? error.message : 'Failed to save changelog');
+    store.setError(error instanceof Error ? error.message : tChangelog('store.saveFailed', 'Failed to save changelog'));
     return false;
   }
 }
@@ -567,7 +589,7 @@ export function copyChangelogToClipboard(): boolean {
   const store = useChangelogStore.getState();
 
   if (!store.generatedChangelog) {
-    store.setError('No changelog to copy');
+    store.setError(tChangelog('store.noChangelogToCopy', 'No changelog to copy'));
     return false;
   }
 
@@ -575,7 +597,7 @@ export function copyChangelogToClipboard(): boolean {
     navigator.clipboard.writeText(store.generatedChangelog);
     return true;
   } catch (_error) {
-    store.setError('Failed to copy to clipboard');
+    store.setError(tChangelog('store.copyFailed', 'Failed to copy to clipboard'));
     return false;
   }
 }

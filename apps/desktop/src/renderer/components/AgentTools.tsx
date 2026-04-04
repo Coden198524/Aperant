@@ -75,6 +75,21 @@ interface AgentConfig {
   settingsSource: AgentSettingsSource;
 }
 
+function getLocalizedStaticText(
+  language: string,
+  values: { en: string; fr: string; 'zh-CN': string }
+): string {
+  if (language.startsWith('zh')) {
+    return values['zh-CN'];
+  }
+
+  if (language.startsWith('fr')) {
+    return values.fr;
+  }
+
+  return values.en;
+}
+
 // Helper to get model label from short name
 function getModelLabel(modelShort: string): string {
   const model = AVAILABLE_MODELS.find(m => m.value === modelShort);
@@ -374,9 +389,24 @@ interface AgentCardProps {
 function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServerStates, customServers, onAddMcp, onRemoveMcp }: AgentCardProps) {
   const [isExpanded, setIsExpanded] = useState(false);
   const [showAddDialog, setShowAddDialog] = useState(false);
-  const { t } = useTranslation(['settings']);
+  const { t, i18n } = useTranslation(['settings']);
   const category = CATEGORIES[config.category as keyof typeof CATEGORIES];
   const CategoryIcon = category.icon;
+  const mcpServersLabel = getLocalizedStaticText(i18n.language, {
+    en: 'MCP Servers',
+    fr: 'Serveurs MCP',
+    'zh-CN': 'MCP 服务器'
+  });
+  const availableToolsLabel = getLocalizedStaticText(i18n.language, {
+    en: 'Available Tools',
+    fr: 'Outils disponibles',
+    'zh-CN': '可用工具'
+  });
+  const textOnlyLabel = getLocalizedStaticText(i18n.language, {
+    en: 'Text-only (no tools)',
+    fr: 'Texte uniquement (aucun outil)',
+    'zh-CN': '纯文本模式（无工具）'
+  });
 
   // Build combined MCP server info including custom servers
   const allMcpServers = useMemo(() => {
@@ -475,7 +505,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
           <div>
             <div className="flex items-center justify-between mb-2">
               <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
-                MCP Servers
+                {mcpServersLabel}
               </h4>
               {availableMcps.length > 0 && (
                 <button
@@ -558,7 +588,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
           {/* Tools */}
           <div>
             <h4 className="text-xs font-medium text-muted-foreground uppercase tracking-wider mb-2">
-              Available Tools
+              {availableToolsLabel}
             </h4>
             {config.tools.length > 0 ? (
               <div className="flex flex-wrap gap-1.5">
@@ -572,7 +602,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
                 ))}
               </div>
             ) : (
-              <p className="text-sm text-muted-foreground">Text-only (no tools)</p>
+              <p className="text-sm text-muted-foreground">{textOnlyLabel}</p>
             )}
           </div>
         </div>
@@ -644,7 +674,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
 }
 
 export function AgentTools() {
-  const { t } = useTranslation(['settings']);
+  const { t, i18n } = useTranslation(['settings']);
   const settings = useSettingsStore((state) => state.settings);
   const projects = useProjectStore((state) => state.projects);
   const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
@@ -663,6 +693,68 @@ export function AgentTools() {
   // Health status tracking for custom servers
   const [serverHealthStatus, setServerHealthStatus] = useState<Record<string, McpHealthCheckResult>>({});
   const [testingServers, setTestingServers] = useState<Set<string>>(new Set());
+  const healthCheckFailedMessage = getLocalizedStaticText(i18n.language, {
+    en: 'Health check failed',
+    fr: 'Echec de la verification de sante',
+    'zh-CN': '健康检查失败'
+  });
+  const connectionTestFailedMessage = getLocalizedStaticText(i18n.language, {
+    en: 'Connection test failed',
+    fr: 'Echec du test de connexion',
+    'zh-CN': '连接测试失败'
+  });
+  const testConnectionLabel = getLocalizedStaticText(i18n.language, {
+    en: 'Test Connection',
+    fr: 'Tester la connexion',
+    'zh-CN': '测试连接'
+  });
+  const testLabel = getLocalizedStaticText(i18n.language, {
+    en: 'Test',
+    fr: 'Tester',
+    'zh-CN': '测试'
+  });
+  const editLabel = getLocalizedStaticText(i18n.language, {
+    en: 'Edit',
+    fr: 'Modifier',
+    'zh-CN': '编辑'
+  });
+  const deleteLabel = getLocalizedStaticText(i18n.language, {
+    en: 'Delete',
+    fr: 'Supprimer',
+    'zh-CN': '删除'
+  });
+  const categoryLabels = {
+    spec: getLocalizedStaticText(i18n.language, {
+      en: 'Spec Creation',
+      fr: 'Creation de spec',
+      'zh-CN': '规格创建'
+    }),
+    build: getLocalizedStaticText(i18n.language, {
+      en: 'Build',
+      fr: 'Build',
+      'zh-CN': '构建'
+    }),
+    qa: getLocalizedStaticText(i18n.language, {
+      en: 'QA',
+      fr: 'QA',
+      'zh-CN': '质量检查'
+    }),
+    utility: getLocalizedStaticText(i18n.language, {
+      en: 'Utility',
+      fr: 'Utilitaire',
+      'zh-CN': '工具'
+    }),
+    ideation: getLocalizedStaticText(i18n.language, {
+      en: 'Ideation',
+      fr: 'Ideation',
+      'zh-CN': '创意'
+    })
+  } as const;
+  const agentsLabel = getLocalizedStaticText(i18n.language, {
+    en: 'agents',
+    fr: 'agents',
+    'zh-CN': '个智能体'
+  });
 
   // Load project env config when project changes
   useEffect(() => {
@@ -915,16 +1007,16 @@ export function AgentTools() {
       } catch (_error) {
         setServerHealthStatus(prev => ({
           ...prev,
-          [server.id]: {
-            serverId: server.id,
-            status: 'unknown',
-            message: 'Health check failed',
-            checkedAt: new Date().toISOString(),
-          }
-        }));
+            [server.id]: {
+              serverId: server.id,
+              status: 'unknown',
+              message: healthCheckFailedMessage,
+              checkedAt: new Date().toISOString(),
+            }
+          }));
       }
     }
-  }, [envConfig?.customMcpServers]);
+  }, [envConfig?.customMcpServers, healthCheckFailedMessage]);
 
   // Check health when custom servers change
   useEffect(() => {
@@ -958,7 +1050,7 @@ export function AgentTools() {
         [server.id]: {
           serverId: server.id,
           status: 'unhealthy',
-          message: 'Connection test failed',
+          message: connectionTestFailedMessage,
           checkedAt: new Date().toISOString(),
         }
       }));
@@ -969,7 +1061,7 @@ export function AgentTools() {
         return next;
       });
     }
-  }, []);
+  }, [connectionTestFailedMessage]);
 
   // Resolve agent settings using the centralized utility, scoped to the active provider
   // Resolution order: custom overrides -> selected profile's config -> global defaults
@@ -1031,12 +1123,11 @@ export function AgentTools() {
           </div>
           <div className="flex-1">
             <div className="flex items-center gap-2">
-              <h1 className="text-xl font-semibold text-foreground">MCP Server Overview</h1>
-              {selectedProject && (
-                <span className="text-sm text-muted-foreground">
-                  for {selectedProject.name}
-                </span>
-              )}
+              <h1 className="text-xl font-semibold text-foreground">
+                {selectedProject
+                  ? t('settings:mcp.titleWithProject', { projectName: selectedProject.name })
+                  : t('settings:mcp.title')}
+              </h1>
             </div>
             <p className="text-sm text-muted-foreground">
               {selectedProject
@@ -1275,14 +1366,14 @@ export function AgentTools() {
                                 onClick={() => handleTestConnection(server)}
                                 disabled={isTesting}
                                 className="h-7 px-2 text-xs"
-                                title="Test Connection"
+                                title={testConnectionLabel}
                               >
                                 {isTesting ? (
                                   <Loader2 className="h-3 w-3 animate-spin" />
                                 ) : (
                                   <RefreshCw className="h-3 w-3" />
                                 )}
-                                <span className="ml-1">Test</span>
+                                <span className="ml-1">{testLabel}</span>
                               </Button>
                               {/* Edit/Delete - show on hover */}
                               <div className="flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity">
@@ -1290,7 +1381,7 @@ export function AgentTools() {
                                   type="button"
                                   onClick={() => { setEditingCustomServer(server); setShowCustomMcpDialog(true); }}
                                   className="p-1.5 text-muted-foreground hover:text-foreground transition-colors"
-                                  title="Edit"
+                                  title={editLabel}
                                 >
                                   <Pencil className="h-3.5 w-3.5" />
                                 </button>
@@ -1298,7 +1389,7 @@ export function AgentTools() {
                                   type="button"
                                   onClick={() => handleDeleteCustomServer(server.id)}
                                   className="p-1.5 text-muted-foreground hover:text-destructive transition-colors"
-                                  title="Delete"
+                                  title={deleteLabel}
                                 >
                                   <Trash2 className="h-3.5 w-3.5" />
                                 </button>
@@ -1341,10 +1432,10 @@ export function AgentTools() {
                   )}
                   <CategoryIcon className="h-4 w-4 text-muted-foreground" />
                   <h2 className="text-sm font-semibold text-foreground">
-                    {category.label}
+                    {categoryLabels[categoryId as keyof typeof categoryLabels]}
                   </h2>
                   <span className="text-xs text-muted-foreground">
-                    ({agents.length} agents)
+                    ({agents.length} {agentsLabel})
                   </span>
                 </button>
 

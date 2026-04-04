@@ -5,7 +5,7 @@ import { useRoadmapStore } from '../stores/roadmap-store';
 import { useRateLimitStore } from '../stores/rate-limit-store';
 import { useAuthFailureStore } from '../stores/auth-failure-store';
 import { useProjectStore } from '../stores/project-store';
-import type { ImplementationPlan, TaskStatus, RoadmapGenerationStatus, Roadmap, ExecutionProgress, RateLimitInfo, SDKRateLimitInfo, AuthFailureInfo } from '../../shared/types';
+import type { ImplementationPlan, TaskStatus, RoadmapGenerationStatus, Roadmap, ExecutionProgress, RateLimitInfo, SDKRateLimitInfo, AuthFailureInfo, TokenUsage } from '../../shared/types';
 
 /** Maximum log entries to buffer in the batch queue between flushes (OOM prevention) */
 const MAX_BATCH_QUEUE_LOGS = 100;
@@ -19,6 +19,7 @@ interface BatchedUpdate {
   status?: TaskStatus;
   reviewReason?: import('../../shared/types').ReviewReason;
   progress?: ExecutionProgress;
+  tokenUsage?: TokenUsage;
   plan?: ImplementationPlan;
   logs?: string[]; // Batched log lines
   queuedAt?: number; // For debug timing
@@ -30,6 +31,7 @@ interface BatchedUpdate {
 interface StoreActions {
   updateTaskStatus: (taskId: string, status: TaskStatus, reviewReason?: import('../../shared/types').ReviewReason) => void;
   updateExecutionProgress: (taskId: string, progress: ExecutionProgress) => void;
+  updateTaskTokenUsage: (taskId: string, usage: TokenUsage) => void;
   updateTaskFromPlan: (taskId: string, plan: ImplementationPlan) => void;
   batchAppendLogs: (taskId: string, logs: string[]) => void;
 }
@@ -75,6 +77,10 @@ function flushBatch(): void {
       }
       if (updates.progress) {
         actions.updateExecutionProgress(taskId, updates.progress);
+        totalUpdates++;
+      }
+      if (updates.tokenUsage) {
+        actions.updateTaskTokenUsage(taskId, updates.tokenUsage);
         totalUpdates++;
       }
       // Batch append all logs at once (instead of one state update per log line)
@@ -170,13 +176,14 @@ export function useIpcListeners(): void {
   const updateTaskFromPlan = useTaskStore((state) => state.updateTaskFromPlan);
   const updateTaskStatus = useTaskStore((state) => state.updateTaskStatus);
   const updateExecutionProgress = useTaskStore((state) => state.updateExecutionProgress);
+  const updateTaskTokenUsage = useTaskStore((state) => state.updateTaskTokenUsage);
   const appendLog = useTaskStore((state) => state.appendLog);
   const batchAppendLogs = useTaskStore((state) => state.batchAppendLogs);
   const setError = useTaskStore((state) => state.setError);
 
   // Update module-level store actions reference for batch flushing
   // This ensures flushBatch() always has access to current action implementations
-  storeActionsRef = { updateTaskStatus, updateExecutionProgress, updateTaskFromPlan, batchAppendLogs };
+  storeActionsRef = { updateTaskStatus, updateExecutionProgress, updateTaskTokenUsage, updateTaskFromPlan, batchAppendLogs };
 
   useEffect(() => {
     // Set up listeners with batched updates
@@ -242,6 +249,13 @@ export function useIpcListeners(): void {
         // execution progress from Project A's task could update Project B's UI
         if (!isTaskForCurrentProject(projectId)) return;
         queueUpdate(taskId, { progress });
+      }
+    );
+
+    const cleanupTokenUsage = window.electronAPI.onTaskTokenUsage(
+      (taskId: string, tokenUsage: TokenUsage, projectId?: string) => {
+        if (!isTaskForCurrentProject(projectId)) return;
+        queueUpdate(taskId, { tokenUsage });
       }
     );
 
@@ -391,6 +405,7 @@ export function useIpcListeners(): void {
       cleanupLog();
       cleanupStatus();
       cleanupExecutionProgress();
+      cleanupTokenUsage();
       cleanupRoadmapProgress();
       cleanupRoadmapComplete();
       cleanupRoadmapError();

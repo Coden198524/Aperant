@@ -15,6 +15,7 @@ import {
 } from '../ui/select';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
+import { getAgentThinkingLevelLabel } from '../../lib/i18n-labels';
 
 interface ThinkingLevelSelectProps {
   value: string;
@@ -146,13 +147,13 @@ export function ThinkingLevelSelect({
         <SelectTrigger className="h-9">
           <SelectValue />
         </SelectTrigger>
-        <SelectContent>
-          {levels.map((level) => (
-            <SelectItem key={level.value} value={level.value}>
-              {level.label}
-            </SelectItem>
-          ))}
-        </SelectContent>
+          <SelectContent>
+            {levels.map((level) => (
+              <SelectItem key={level.value} value={level.value}>
+                {getAgentThinkingLevelLabel(t, level.value)}
+              </SelectItem>
+            ))}
+          </SelectContent>
       </Select>
     </div>
   );

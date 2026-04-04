@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Wand2, Loader2, AlertCircle, CheckCircle2 } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Progress } from '../../ui/progress';
@@ -13,6 +14,7 @@ interface AutoFixButtonProps {
 }
 
 export function AutoFixButton({ issue, projectId, config, queueItem }: AutoFixButtonProps) {
+  const { t } = useTranslation('common');
   const [isStarting, setIsStarting] = useState(false);
   const [progress, setProgress] = useState<AutoFixProgress | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -67,6 +69,54 @@ export function AutoFixButton({ issue, projectId, config, queueItem }: AutoFixBu
   const isInQueue = queueItem && queueItem.status !== 'completed' && queueItem.status !== 'failed';
   const isProcessing = isStarting || progress !== null || isInQueue;
 
+  const getLocalizedProgressMessage = useCallback((message?: string | null): string => {
+    if (!message) {
+      return t('issues.autoFix.processing', {
+        defaultValue: 'Processing...'
+      });
+    }
+
+    const fetchingMatch = message.match(/^Fetching issue #(\d+)\.\.\.$/u);
+    if (fetchingMatch) {
+      return t('issues.autoFix.progress.fetchingIssue', {
+        issueNumber: Number(fetchingMatch[1]),
+        defaultValue: 'Fetching issue #{{issueNumber}}...'
+      });
+    }
+
+    if (message === 'Analyzing issue...') {
+      return t('issues.autoFix.progress.analyzingIssue', {
+        defaultValue: 'Analyzing issue...'
+      });
+    }
+
+    if (message === 'Creating spec from issue...') {
+      return t('issues.autoFix.progress.creatingSpec', {
+        defaultValue: 'Creating spec from issue...'
+      });
+    }
+
+    if (message === 'Starting spec creation...') {
+      return t('issues.autoFix.progress.startingSpecCreation', {
+        defaultValue: 'Starting spec creation...'
+      });
+    }
+
+    if (message === 'Auto-fix spec creation started!') {
+      return t('issues.autoFix.progress.started', {
+        defaultValue: 'Auto-fix spec creation started!'
+      });
+    }
+
+    if (message === 'Spec directory created. Click Start to begin.') {
+      return t('issues.autoFix.progress.specReady', {
+        defaultValue: 'Spec directory created. Click Start to begin.'
+      });
+    }
+
+    return message;
+  }, [t]);
+
   const handleStartAutoFix = useCallback(() => {
     setIsStarting(true);
     setError(null);
@@ -84,7 +134,11 @@ export function AutoFixButton({ issue, projectId, config, queueItem }: AutoFixBu
     return (
       <div className="flex items-center gap-2 text-success text-sm">
         <CheckCircle2 className="h-4 w-4" />
-        <span>Spec created from issue</span>
+        <span>
+          {t('issues.autoFix.specCreated', {
+            defaultValue: 'Spec created from issue'
+          })}
+        </span>
       </div>
     );
   }
@@ -95,11 +149,15 @@ export function AutoFixButton({ issue, projectId, config, queueItem }: AutoFixBu
       <div className="space-y-2">
         <div className="flex items-center gap-2 text-destructive text-sm">
           <AlertCircle className="h-4 w-4" />
-          <span>{error || queueItem?.error || 'Auto-fix failed'}</span>
+          <span>
+            {error || queueItem?.error || t('issues.autoFix.failed', {
+              defaultValue: 'Auto-fix failed'
+            })}
+          </span>
         </div>
         <Button size="sm" variant="outline" onClick={handleStartAutoFix}>
           <Wand2 className="h-4 w-4 mr-2" />
-          Retry Auto Fix
+          {t('issues.autoFix.retry', { defaultValue: 'Retry Auto Fix' })}
         </Button>
       </div>
     );
@@ -111,7 +169,7 @@ export function AutoFixButton({ issue, projectId, config, queueItem }: AutoFixBu
       <div className="space-y-2">
         <div className="flex items-center gap-2 text-sm text-muted-foreground">
           <Loader2 className="h-4 w-4 animate-spin" />
-          <span>{progress?.message || 'Processing...'}</span>
+          <span>{getLocalizedProgressMessage(progress?.message)}</span>
         </div>
         {progress && (
           <Progress value={progress.progress} className="h-1" />
@@ -128,7 +186,7 @@ export function AutoFixButton({ issue, projectId, config, queueItem }: AutoFixBu
       onClick={handleStartAutoFix}
     >
       <Wand2 className="h-4 w-4 mr-2" />
-      Auto Fix
+      {t('issues.autoFix.button', { defaultValue: 'Auto Fix' })}
     </Button>
   );
 }

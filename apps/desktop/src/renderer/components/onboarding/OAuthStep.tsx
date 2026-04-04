@@ -43,6 +43,8 @@ interface OAuthStepProps {
 export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
   const { t } = useTranslation(['onboarding', 'common']);
   const { toast } = useToast();
+  const getOAuthError = (key: string, fallback: string): string =>
+    t(`oauth.errors.${key}`, { defaultValue: fallback });
 
   // Claude Profiles state
   const [claudeProfiles, setClaudeProfiles] = useState<ClaudeProfile[]>([]);
@@ -91,7 +93,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
         await loadGlobalClaudeProfiles();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to load profiles');
+      setError(err instanceof Error ? err.message : getOAuthError('loadProfiles', 'Failed to load profiles'));
     } finally {
       setIsLoadingProfiles(false);
     }
@@ -119,7 +121,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
 
       // Validate that sanitized slug is not empty (e.g., "!!!" becomes "")
       if (!profileSlug) {
-        setError('Profile name must contain at least one letter or number');
+        setError(getOAuthError('invalidProfileName', 'Profile name must contain at least one letter or number'));
         setIsAddingProfile(false);
         return;
       }
@@ -157,7 +159,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
         }
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to add profile');
+      setError(err instanceof Error ? err.message : getOAuthError('addProfile', 'Failed to add profile'));
       toast({
         variant: 'destructive',
         title: t('oauth.toast.addProfileFailed'),
@@ -177,7 +179,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
         await loadClaudeProfiles();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to delete profile');
+      setError(err instanceof Error ? err.message : getOAuthError('deleteProfile', 'Failed to delete profile'));
     } finally {
       setDeletingProfileId(null);
     }
@@ -203,7 +205,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
         await loadClaudeProfiles();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to rename profile');
+      setError(err instanceof Error ? err.message : getOAuthError('renameProfile', 'Failed to rename profile'));
     } finally {
       setEditingProfileId(null);
       setEditingProfileName('');
@@ -219,7 +221,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
         await loadGlobalClaudeProfiles();
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to set active profile');
+      setError(err instanceof Error ? err.message : getOAuthError('setActiveProfile', 'Failed to set active profile'));
     }
   };
 
@@ -250,7 +252,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
   const handleAuthenticateProfile = async (profileId: string) => {
     // Find the profile name for display
     const profile = claudeProfiles.find(p => p.id === profileId);
-    const profileName = profile?.name || 'Profile';
+    const profileName = profile?.name || t('oauth.profileFallbackName', 'Profile');
 
     setAuthenticatingProfileId(profileId);
     setError(null);
@@ -274,7 +276,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
 
       console.warn('[OAuthStep] Auth terminal ready:', result.data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to authenticate profile');
+      setError(err instanceof Error ? err.message : getOAuthError('authenticateProfile', 'Failed to authenticate profile'));
       alert(t('oauth.alerts.authStartFailedMessage'));
       setAuthenticatingProfileId(null);
     }
@@ -323,7 +325,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
         });
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to save token');
+      setError(err instanceof Error ? err.message : getOAuthError('saveToken', 'Failed to save token'));
       toast({
         variant: 'destructive',
         title: t('oauth.toast.tokenSaveFailed'),
@@ -596,7 +598,7 @@ export function OAuthStep({ onNext, onBack, onSkip }: OAuthStepProps) {
                               <div className="relative">
                                 <Input
                                   type={showManualToken ? 'text' : 'password'}
-                                  placeholder="sk-ant-oat01-..."
+                                  placeholder={t('common:oauth.tokenPlaceholder')}
                                   value={manualToken}
                                   onChange={(e) => setManualToken(e.target.value)}
                                   className="pr-10 font-mono text-xs h-8"

@@ -22,6 +22,8 @@ import {
   DEFAULT_PHASE_THINKING,
   DEFAULT_FEATURE_MODELS,
   DEFAULT_FEATURE_THINKING,
+  getProviderDefaultFeatureModels,
+  getProviderDefaultFeatureThinking,
   getProviderPresetOrFallback,
 } from '../../shared/constants/models';
 import type {
@@ -146,8 +148,10 @@ export function useResolvedAgentSettings(
     const phaseThinking = providerConfig?.customPhaseThinking ?? settings.customPhaseThinking ?? profilePhaseThinking;
 
     // Feature settings
-    const featureModels = providerConfig?.featureModels ?? settings.featureModels ?? DEFAULT_FEATURE_MODELS;
-    const featureThinking = providerConfig?.featureThinking ?? settings.featureThinking ?? DEFAULT_FEATURE_THINKING;
+    const providerFeatureModels = getProviderDefaultFeatureModels(provider);
+    const providerFeatureThinking = getProviderDefaultFeatureThinking(provider);
+    const featureModels = providerConfig?.featureModels ?? providerFeatureModels ?? settings.featureModels ?? DEFAULT_FEATURE_MODELS;
+    const featureThinking = providerConfig?.featureThinking ?? providerFeatureThinking ?? settings.featureThinking ?? DEFAULT_FEATURE_THINKING;
 
     return { phaseModels, phaseThinking, featureModels, featureThinking };
   }, [

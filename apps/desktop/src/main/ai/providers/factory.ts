@@ -38,6 +38,30 @@ function isOAuthToken(token: string | undefined): boolean {
   return token.startsWith('sk-ant-oa') || token.startsWith('sk-ant-ort');
 }
 
+function isOfficialOpenAIBaseUrl(baseURL: string | undefined): boolean {
+  if (!baseURL) return true;
+
+  try {
+    const { hostname } = new URL(baseURL);
+    return (
+      hostname === 'openai.com' ||
+      hostname.endsWith('.openai.com') ||
+      hostname === 'chatgpt.com' ||
+      hostname.endsWith('.chatgpt.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function shouldUseOpenAICompatibleChat(config: ProviderConfig): boolean {
+  return (
+    config.provider === SupportedProvider.OpenAI &&
+    !config.oauthTokenFilePath &&
+    !isOfficialOpenAIBaseUrl(config.baseURL)
+  );
+}
+
 // =============================================================================
 // Provider Instance Creators
 // =============================================================================
@@ -71,6 +95,15 @@ function createProviderInstance(config: ProviderConfig) {
     }
 
     case SupportedProvider.OpenAI: {
+      if (shouldUseOpenAICompatibleChat(config)) {
+        return createOpenAICompatible({
+          name: 'openai-compatible',
+          apiKey: apiKey ?? 'custom-endpoint',
+          baseURL: baseURL ?? 'https://api.openai.com/v1',
+          headers,
+        });
+      }
+
       // File-based OAuth: use generic fetch interceptor for token injection + URL rewriting
       if (config.oauthTokenFilePath) {
         return createOpenAI({
@@ -86,6 +119,14 @@ function createProviderInstance(config: ProviderConfig) {
         headers,
       });
     }
+
+    case SupportedProvider.OpenAICompatible:
+      return createOpenAICompatible({
+        name: 'openai-compatible',
+        apiKey: apiKey ?? 'custom-endpoint',
+        baseURL: baseURL ?? 'https://api.openai.com/v1',
+        headers,
+      });
 
     case SupportedProvider.Google:
       return createGoogleGenerativeAI({
@@ -175,6 +216,21 @@ function isCodexModel(modelId: string): boolean {
   return modelId.includes('codex');
 }
 
+/**
+ * Detects models that should use the OpenAI Responses API.
+ * Covers GPT-5, Codex, and modern reasoning models exposed through OpenAI-compatible backends.
+ */
+function isResponsesApiModel(modelId: string): boolean {
+  return (
+    modelId.startsWith('gpt-5') ||
+    isCodexModel(modelId) ||
+    modelId === 'o3' ||
+    modelId.startsWith('o3-') ||
+    modelId === 'o4-mini' ||
+    modelId.startsWith('o4-')
+  );
+}
+
 // =============================================================================
 // Model Creation Options
 // =============================================================================
@@ -216,10 +272,19 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
   // format sent to Responses endpoint → 400). Regular API-key accounts use
   // `.responses()` for Codex models and `.chat()` for everything else.
   if (config.provider === SupportedProvider.OpenAI) {
-    if (config.oauthTokenFilePath || isCodexModel(modelId)) {
+    if (shouldUseOpenAICompatibleChat(config)) {
+      return (instance as ReturnType<typeof createOpenAICompatible>).chatModel(modelId);
+    }
+
+    if (config.oauthTokenFilePath || isResponsesApiModel(modelId)) {
       return (instance as ReturnType<typeof createOpenAI>).responses(modelId);
     }
     return (instance as ReturnType<typeof createOpenAI>).chat(modelId);
+  }
+
+  if (config.provider === SupportedProvider.OpenAICompatible) {
+    const provider = instance as ReturnType<typeof createOpenAICompatible>;
+    return provider.chatModel(modelId);
   }
 
   // Generic path: call provider instance as function with model ID

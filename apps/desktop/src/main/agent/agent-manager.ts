@@ -173,7 +173,9 @@ export class AgentManager extends EventEmitter {
         orderedQueue.splice(0, orderedQueue.length, ...preferred, ...rest);
       }
 
-      const resolved = await resolveAuthFromQueue(requestedModel, orderedQueue);
+      const resolved = await resolveAuthFromQueue(requestedModel, orderedQueue, {
+        executionMode: 'agentic',
+      });
       if (resolved) {
         console.warn(`[AgentManager] Resolved auth from provider queue: account=${resolved.accountId} provider=${resolved.resolvedProvider} model=${resolved.resolvedModelId}`);
         return {
@@ -510,6 +512,7 @@ export class AgentManager extends EventEmitter {
       maxSteps: 1000,
       specDir: worktreeSpecDir,
       projectDir: effectiveProjectDir,
+      sourceProjectDir: worktreePath ? projectPath : undefined,
       // When running in a worktree, sourceSpecDir points to the main project spec dir
       // so the subtask iterator can sync phase updates in real time (not just on exit).
       sourceSpecDir: worktreePath ? specDir : undefined,
@@ -616,6 +619,7 @@ export class AgentManager extends EventEmitter {
       maxSteps: 1000,
       specDir: effectiveSpecDir,
       projectDir: effectiveProjectDir,
+      sourceProjectDir: worktreePath ? projectPath : undefined,
       provider: resolved.provider,
       modelId: resolved.modelId,
       apiKey: resolved.auth?.apiKey,

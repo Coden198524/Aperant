@@ -1,0 +1,270 @@
+{
+  "wizard": {
+    "title": "设置向导",
+    "description": "用几个简单步骤完成 Aperant 环境配置",
+    "helpText": "这个向导会帮助你快速完成环境设置。你可以连接 Claude Code、Codex 或兼容的 API 提供商，配置记忆功能，并创建第一个任务。"
+  },
+  "welcome": {
+    "title": "欢迎使用 Aperant",
+    "subtitle": "借助 AI 智能体自主构建软件",
+    "getStarted": "开始使用",
+    "skip": "跳过设置",
+    "features": {
+      "aiPowered": {
+        "title": "AI 驱动开发",
+        "description": "使用 Claude Code、Codex 以及兼容的 AI 智能体生成代码并构建功能"
+      },
+      "specDriven": {
+        "title": "规格驱动工作流",
+        "description": "先定义清晰的任务规格，再由 Aperant 负责实现流程"
+      },
+      "memory": {
+        "title": "记忆与上下文",
+        "description": "通过 Graphiti 在多次会话之间保留上下文"
+      },
+      "parallel": {
+        "title": "并行执行",
+        "description": "并行运行多个智能体，加快开发节奏"
+      }
+    }
+  },
+  "oauth": {
+    "title": "Claude 认证",
+    "description": "连接你的 Claude 账户以启用 AI 功能",
+    "configureTitle": "配置 Claude 认证",
+    "addAccountsDesc": "添加你的 Claude 账户以启用 AI 功能",
+    "multiAccountInfo": "添加多个 Claude 订阅，在达到速率限制时自动切换。",
+    "noAccountsYet": "尚未配置账户",
+    "badges": {
+      "default": "默认",
+      "active": "当前活跃",
+      "authenticated": "已认证",
+      "needsAuth": "需要认证"
+    },
+    "buttons": {
+      "authenticate": "去认证",
+      "setActive": "设为活跃",
+      "rename": "重命名",
+      "delete": "删除",
+      "add": "添加",
+      "adding": "正在添加...",
+      "showToken": "显示令牌",
+      "hideToken": "隐藏令牌",
+      "copyToken": "复制令牌",
+      "back": "返回",
+      "continue": "继续",
+      "skip": "跳过"
+    },
+    "labels": {
+      "accountName": "账户名称",
+      "namePlaceholder": "配置名称（如：工作、个人）",
+      "tokenLabel": "OAuth 令牌",
+      "tokenPlaceholder": "在此输入令牌",
+      "tokenHint": "粘贴完成 OAuth 登录后在终端中显示的令牌。"
+    },
+    "keychainTitle": "安全存储",
+    "keychainDescription": "您的令牌使用系统的钥匙串进行加密。您可能会看到来自 macOS 的密码提示 — 请点击“始终允许”以避免再次看到它。",
+    "toast": {
+      "authSuccess": "配置文件验证成功",
+      "authSuccessWithEmail": "账户：{{email}}",
+      "authSuccessGeneric": "认证完成。您现在可以使用此配置文件。",
+      "authStartFailed": "无法启动认证",
+      "addProfileFailed": "无法添加配置文件",
+      "tokenSaved": "令牌已保存",
+      "tokenSavedDescription": "您的令牌已成功保存。",
+      "tokenSaveFailed": "无法保存令牌",
+      "tryAgain": "请重试。"
+    },
+    "alerts": {
+      "profileCreatedAuthFailed": "配置文件已创建，但准备认证失败：{{error}}",
+      "authPrepareFailed": "准备认证失败：{{error}}",
+      "authStartFailedMessage": "启动认证失败。请重试。"
+    }
+  },
+  "accounts": {
+    "title": "添加 AI 账户",
+    "description": "连接你的 AI 提供商账户。之后也可以随时在设置中继续添加。",
+    "buttons": {
+      "back": "返回",
+      "continue": "继续",
+      "skip": "暂时跳过"
+    }
+  },
+  "devtools": {
+    "title": "开发工具",
+    "description": "选择你在 Aperant 工作树中使用的 IDE、终端和 CLI",
+    "detecting": "正在检测已安装工具...",
+    "detectAgain": "重新检测",
+    "whyConfigure": "为什么要配置这些工具？",
+    "whyConfigureDescription": "当 Aperant 在隔离工作树中构建功能时，你可以直接用偏好的 IDE 或终端打开它们，进行测试和审查。",
+    "ide": {
+      "label": "首选 IDE",
+      "description": "Aperant 会在此编辑器中打开工作树",
+      "customPath": "自定义 IDE 路径"
+    },
+    "terminal": {
+      "label": "首选终端",
+      "description": "Aperant 会在此终端中打开会话",
+      "customPath": "自定义终端路径"
+    },
+    "cli": {
+      "label": "首选 CLI",
+      "description": "用于 AI 终端会话的 CLI 工具",
+      "customPath": "自定义 CLI 路径"
+    },
+    "detectedSummary": "系统中检测到：",
+    "noToolsDetected": "未检测到其他工具（将使用 VS Code 和系统终端）",
+    "custom": "自定义...",
+    "saveAndContinue": "保存并继续"
+  },
+  "memory": {
+    "title": "记忆",
+    "description": "为智能体配置跨会话持久记忆",
+    "contextDescription": "Aperant Memory 可以在编码会话之间记住上下文",
+    "enableMemory": "启用记忆",
+    "enableMemoryDescription": "使用内置数据库提供跨会话持久记忆",
+    "memoryDisabledInfo": "当前未启用记忆。会话洞察只会保存在本地文件中。启用后可获得持久上下文与语义搜索。",
+    "embeddingProvider": "Embedding 提供商",
+    "embeddingProviderDescription": "用于语义搜索的提供商（可选，不配置时仍可使用关键词搜索）",
+    "selectEmbeddingModel": "选择 Embedding 模型",
+    "ollamaWarning": "需要先在系统上安装并运行 Ollama。",
+    "ollamaNotInstalled": "未检测到 Ollama。",
+    "ollamaNotRunning": "Ollama 未在运行。",
+    "ollamaReady": "Ollama 已就绪。",
+    "googleApiKey": "Google AI API 密钥",
+    "googleApiKeyDescription": "Google AI Embedding 所需",
+    "openaiApiKey": "OpenAI API 密钥",
+    "openaiApiKeyDescription": "OpenAI Embedding 所需",
+    "openaiGetKey": "前往此处获取密钥",
+    "voyageApiKey": "Voyage AI API 密钥",
+    "voyageApiKeyDescription": "Voyage AI Embedding 所需",
+    "voyageEmbeddingModel": "Embedding 模型",
+    "azureConfig": "Azure OpenAI 配置",
+    "azureApiKey": "API 密钥",
+    "azureBaseUrl": "基准 URL",
+    "azureEmbeddingDeployment": "Embedding 部署名称",
+    "memoryInfo": "记忆功能可以存储有关您的代码库的发现、模式和见解，以便将来的会话在加载上下文的情况下开始。",
+    "learnMore": "了解有关记忆功能的更多信息",
+    "back": "返回",
+    "skip": "跳过",
+    "saving": "正在保存...",
+    "saveAndContinue": "保存并继续",
+    "providers": {
+      "ollama": "Ollama (本地 - 免费)",
+      "openai": "OpenAI",
+      "voyage": "Voyage AI",
+      "google": "Google AI",
+      "azure": "Azure OpenAI"
+    },
+    "ollamaConfig": "Ollama 配置",
+    "checking": "正在检查...",
+    "connected": "已连接",
+    "notRunning": "未运行",
+    "baseUrl": "基准 URL",
+    "embeddingModel": "Embedding 模型",
+    "embeddingDim": "Embedding 维度",
+    "embeddingDimDescription": "Ollama Embedding 所需（例如 nomic-embed-text 为 768）",
+    "modelRecommendation": "推荐：qwen3-embedding:4b (均衡), :8b (高质量), :0.6b (快速)",
+    "buttons": {
+      "back": "返回",
+      "continue": "继续",
+      "skip": "跳过"
+    }
+  },
+  "steps": {
+    "welcome": "欢迎",
+    "accounts": "账户",
+    "devtools": "开发工具",
+    "privacy": "隐私",
+    "memory": "记忆",
+    "done": "完成"
+  },
+  "privacy": {
+    "title": "帮助改进 Aperant",
+    "subtitle": "匿名错误上报可以帮助我们更快修复问题",
+    "whatWeCollect": {
+      "title": "我们会收集什么",
+      "crashReports": "崩溃报告和错误堆栈",
+      "errorMessages": "错误信息（文件路径会匿名化）",
+      "appVersion": "应用版本与平台信息"
+    },
+    "whatWeNeverCollect": {
+      "title": "我们绝不会收集",
+      "code": "您的代码或项目文件",
+      "filenames": "完整文件路径（用户名会被隐藏）",
+      "apiKeys": "API 密钥或令牌",
+      "personalData": "个人信息或使用数据"
+    },
+    "toggle": {
+      "label": "发送匿名错误报告",
+      "description": "帮助我们定位并修复问题"
+    }
+  },
+  "claudeCode": {
+    "title": "Claude Code CLI",
+    "description": "安装或更新 Claude Code CLI 以启用相关 AI 功能",
+    "detecting": "正在检查 Claude Code 安装情况...",
+    "info": {
+      "title": "什么是 Claude Code？",
+      "description": "Claude Code 是 Anthropic 官方提供的 CLI，可为 Aperant 的部分 AI 功能提供认证与模型访问能力。"
+    },
+    "status": {
+      "installed": "已安装",
+      "outdated": "有可用更新",
+      "notFound": "未安装"
+    },
+    "version": {
+      "current": "当前版本",
+      "latest": "最新版本"
+    },
+    "install": {
+      "button": "安装 Claude Code",
+      "updating": "更新 Claude Code",
+      "inProgress": "安装中...",
+      "success": "安装命令已发送到终端，请在终端中完成安装。",
+      "instructions": "安装程序会在终端中打开，请按照提示完成安装。"
+    },
+    "learnMore": "了解更多 Claude Code"
+  },
+  "ollama": {
+    "notInstalled": {
+      "title": "未安装 Ollama",
+      "description": "Ollama 提供免费的本地 Embedding 模型用于语义搜索。点击一键安装即可启用此功能。",
+      "installSuccess": "已在终端开始安装。完成后请点击重试。",
+      "installButton": "安装 Ollama",
+      "installing": "安装中...",
+      "retry": "重试",
+      "learnMore": "了解更多",
+      "fallbackNote": "即使没有 Ollama，记忆功能仍可通过关键词搜索使用。"
+    },
+    "notRunning": {
+      "title": "Ollama 未运行",
+      "description": "已安装 Ollama 但未运行。请启动 Ollama 以使用本地 Embedding 模型。",
+      "retry": "重试",
+      "fallbackNote": "即使没有 Embedding，记忆功能仍可通过关键词搜索使用。"
+    }
+  },
+  "completion": {
+    "title": "一切就绪！",
+    "subtitle": "Aperant 已准备好帮助您构建出色的软件",
+    "setupComplete": "设置完成",
+    "setupCompleteDescription": "您的环境已配置并就绪。您可以立即开始创建任务，或按照自己的步调探索应用程序。",
+    "whatsNext": "接下来要做什么？",
+    "createTask": {
+      "title": "创建任务",
+      "description": "从创建第一个任务开始，查看 Aperant 的实际操作。",
+      "action": "打开任务创建器"
+    },
+    "customizeSettings": {
+      "title": "自定义设置",
+      "description": "微调您的偏好，配置集成，或重新运行此向导。",
+      "action": "打开设置"
+    },
+    "exploreDocs": {
+      "title": "探索文档",
+      "description": "了解有关高级功能、最佳实践和故障排查的更多信息。"
+    },
+    "finish": "完成并开始构建",
+    "rerunHint": "您可以随时重新运行此向导。"
+  }
+}

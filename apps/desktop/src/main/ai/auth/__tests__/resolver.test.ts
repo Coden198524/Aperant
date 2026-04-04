@@ -446,6 +446,33 @@ describe('resolveAuthFromQueue', () => {
 
     expect(result?.accountId).toBe('acc-2');
   });
+
+  it('keeps gpt-5.4 for agentic openai-compatible execution', async () => {
+    const openAICompatibleAccount = {
+      ...baseAccount,
+      id: 'acc-openai-compatible',
+      provider: 'openai-compatible' as const,
+      baseUrl: 'https://yunyi.rdzhvip.com/codex',
+    };
+
+    mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
+      if (modelValue === 'gpt-5.4' && targetProvider === 'openai-compatible') {
+        return {
+          modelId: 'gpt-5.4',
+          reasoning: { type: 'reasoning_effort', level: 'high' },
+        };
+      }
+      return null;
+    });
+
+    const result = await resolveAuthFromQueue('gpt-5.4', [openAICompatibleAccount], {
+      executionMode: 'agentic',
+    });
+
+    expect(result?.resolvedProvider).toBe('openai-compatible');
+    expect(result?.resolvedModelId).toBe('gpt-5.4');
+    expect(result?.reasoningConfig).toEqual({ type: 'reasoning_effort', level: 'high' });
+  });
 });
 
 // =============================================================================

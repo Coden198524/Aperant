@@ -34,6 +34,7 @@ async function migrateToProviderAccounts(settings: AppSettings): Promise<{ chang
   }
 
   const accounts: ProviderAccount[] = settings.providerAccounts ? [...settings.providerAccounts] : [];
+  const hasExistingProviderAccounts = accounts.length > 0;
   const now = Date.now();
 
   const genId = () => `pa_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`;
@@ -138,6 +139,7 @@ async function migrateToProviderAccounts(settings: AppSettings): Promise<{ chang
   }
 
   // Migrate APIProfile[] (custom Anthropic-compatible endpoints stored in profiles.json)
+  if (!hasExistingProviderAccounts) {
   try {
     const profilesFile = await loadProfilesFile();
     for (const apiProfile of profilesFile.profiles as APIProfile[]) {
@@ -160,8 +162,10 @@ async function migrateToProviderAccounts(settings: AppSettings): Promise<{ chang
   } catch {
     // profiles.json may not exist for new users — skip silently
   }
+  }
 
   // Migrate ClaudeProfile[] (OAuth accounts stored in claude-profiles.json)
+  if (!hasExistingProviderAccounts) {
   try {
     const claudeStorePath = path.join(app.getPath('userData'), 'config', 'claude-profiles.json');
     const claudeStore = loadProfileStore(claudeStorePath);
@@ -187,6 +191,7 @@ async function migrateToProviderAccounts(settings: AppSettings): Promise<{ chang
     }
   } catch {
     // claude-profiles.json may not exist — skip silently
+  }
   }
 
   // Build globalPriorityOrder from migrated accounts

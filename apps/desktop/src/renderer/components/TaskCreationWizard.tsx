@@ -35,7 +35,7 @@ import {
   PHASE_KEYS,
   getProviderPreset
 } from '../../shared/constants';
-import { useSettingsStore } from '../stores/settings-store';
+import { loadSettings, useSettingsStore } from '../stores/settings-store';
 import { useActiveProvider } from '../hooks/useActiveProvider';
 
 interface TaskCreationWizardProps {
@@ -55,6 +55,7 @@ export function TaskCreationWizard({
   const { t } = useTranslation(['tasks', 'common']);
   const { settings } = useSettingsStore();
   const { isAnthropic, provider: activeProvider } = useActiveProvider();
+  const [isSyncingSettings, setIsSyncingSettings] = useState(false);
 
   // Resolve per-provider settings (same chain as AgentProfileSettings)
   const providerConfig = activeProvider ? settings.providerAgentConfig?.[activeProvider] : undefined;
@@ -63,6 +64,8 @@ export function TaskCreationWizard({
     p => p.id === resolvedProfileId
   ) || DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto')!;
   const providerPreset = activeProvider ? getProviderPreset(activeProvider, resolvedProfileId) : null;
+  const profilePrimaryModel = (providerPreset?.primaryModel ?? selectedProfile.model) as ModelType;
+  const profilePrimaryThinking = providerPreset?.primaryThinking ?? selectedProfile.thinkingLevel;
   const profilePhaseModels = providerPreset?.phaseModels ?? selectedProfile.phaseModels ?? DEFAULT_PHASE_MODELS;
   const profilePhaseThinking = providerPreset?.phaseThinking ?? selectedProfile.phaseThinking ?? DEFAULT_PHASE_THINKING;
   // When a provider is active, use provider-specific config or preset defaults (skip global fallback)
@@ -131,8 +134,8 @@ export function TaskCreationWizard({
 
   // Model configuration
   const [profileId, setProfileId] = useState<string>(resolvedProfileId);
-  const [model, setModel] = useState<ModelType | ''>(selectedProfile.model);
-  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel | ''>(selectedProfile.thinkingLevel);
+  const [model, setModel] = useState<ModelType | ''>(profilePrimaryModel);
+  const [thinkingLevel, setThinkingLevel] = useState<ThinkingLevel | ''>(profilePrimaryThinking);
   const [phaseModels, setPhaseModels] = useState<PhaseModelConfig | undefined>(resolvedPhaseModels);
   const [phaseThinking, setPhaseThinking] = useState<PhaseThinkingConfig | undefined>(resolvedPhaseThinking);
 
@@ -172,9 +175,34 @@ export function TaskCreationWizard({
     descriptionValueRef.current = description;
   }, [description]);
 
+  // Reload settings when the dialog opens so provider/model defaults reflect
+  // the latest on-disk configuration even if settings changed externally.
+  useEffect(() => {
+    if (!open) return;
+
+    let cancelled = false;
+
+    const syncSettings = async () => {
+      setIsSyncingSettings(true);
+      try {
+        await loadSettings();
+      } finally {
+        if (!cancelled) {
+          setIsSyncingSettings(false);
+        }
+      }
+    };
+
+    void syncSettings();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [open]);
+
   // Load draft when dialog opens
   useEffect(() => {
-    if (open && projectId) {
+    if (open && projectId && !isSyncingSettings) {
       const draft = loadDraft(projectId);
       if (draft && !isDraftEmpty(draft)) {
         setTitle(draft.title);
@@ -184,8 +212,8 @@ export function TaskCreationWizard({
         setComplexity(draft.complexity);
         setImpact(draft.impact);
         setProfileId(draft.profileId || resolvedProfileId);
-        setModel(draft.model || selectedProfile.model);
-        setThinkingLevel(draft.thinkingLevel || selectedProfile.thinkingLevel);
+        setModel(draft.model || profilePrimaryModel);
+        setThinkingLevel(draft.thinkingLevel || profilePrimaryThinking);
         setPhaseModels(draft.phaseModels || resolvedPhaseModels);
         setPhaseThinking(draft.phaseThinking || resolvedPhaseThinking);
         setImages(draft.images);
@@ -208,8 +236,8 @@ export function TaskCreationWizard({
         setComplexity('');
         setImpact('');
         setProfileId(resolvedProfileId);
-        setModel(selectedProfile.model);
-        setThinkingLevel(selectedProfile.thinkingLevel);
+        setModel(profilePrimaryModel);
+        setThinkingLevel(profilePrimaryThinking);
         setPhaseModels(resolvedPhaseModels);
         setPhaseThinking(resolvedPhaseThinking);
         setImages([]);
@@ -225,7 +253,7 @@ export function TaskCreationWizard({
         setShowGitOptions(false);
       }
     }
-  }, [open, projectId, projectPushNewBranches, resolvedProfileId, resolvedPhaseModels, resolvedPhaseThinking, selectedProfile.model, selectedProfile.thinkingLevel]);
+  }, [open, projectId, projectPushNewBranches, resolvedProfileId, resolvedPhaseModels, resolvedPhaseThinking, profilePrimaryModel, profilePrimaryThinking, isSyncingSettings]);
 
   // Fetch branches when dialog opens - using structured branch data with type indicators
   useEffect(() => {
@@ -531,8 +559,8 @@ export function TaskCreationWizard({
     setComplexity('');
     setImpact('');
     setProfileId(resolvedProfileId);
-    setModel(selectedProfile.model);
-    setThinkingLevel(selectedProfile.thinkingLevel);
+    setModel(profilePrimaryModel);
+    setThinkingLevel(profilePrimaryThinking);
     setPhaseModels(resolvedPhaseModels);
     setPhaseThinking(resolvedPhaseThinking);
     setImages([]);
@@ -605,7 +633,7 @@ export function TaskCreationWizard({
       onOpenChange={handleClose}
       title={t('tasks:wizard.createTitle')}
       description={t('tasks:wizard.createDescription')}
-      disabled={isCreating}
+      disabled={isCreating || isSyncingSettings}
       sidebar={
         projectPath && (
           <TaskFileExplorerDrawer
@@ -654,10 +682,10 @@ export function TaskCreationWizard({
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={handleClose} disabled={isCreating}>
+            <Button variant="outline" onClick={handleClose} disabled={isCreating || isSyncingSettings}>
               {t('common:buttons.cancel')}
             </Button>
-            <Button onClick={handleCreate} disabled={isCreating || !description.trim()}>
+            <Button onClick={handleCreate} disabled={isCreating || isSyncingSettings || !description.trim()}>
               {isCreating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -725,7 +753,7 @@ export function TaskCreationWizard({
           fastMode={fastMode}
           onFastModeChange={setFastMode}
           showFastModeToggle={showFastModeToggle}
-          disabled={isCreating}
+          disabled={isCreating || isSyncingSettings}
           error={error}
           onError={setError}
           onFileReferenceDrop={handleFileReferenceDrop}
@@ -751,7 +779,7 @@ export function TaskCreationWizard({
             'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
             'w-full justify-between py-2 px-3 rounded-md hover:bg-muted/50'
           )}
-          disabled={isCreating}
+          disabled={isCreating || isSyncingSettings}
           aria-expanded={showGitOptions}
           aria-controls="git-options-section"
         >
@@ -789,7 +817,7 @@ export function TaskCreationWizard({
                 }
                 searchPlaceholder={t('tasks:wizard.gitOptions.searchBranches')}
                 emptyMessage={t('tasks:wizard.gitOptions.noBranchesFound')}
-                disabled={isCreating || isLoadingBranches}
+                disabled={isCreating || isSyncingSettings || isLoadingBranches}
                 className="h-9"
               />
               <p className="text-xs text-muted-foreground">
@@ -815,9 +843,33 @@ export function TaskCreationWizard({
                   pushNewBranches ? 'border-primary/40 text-primary' : 'border-border text-muted-foreground'
                 )}
                 onClick={() => setPushNewBranches((current) => !current)}
-                disabled={isCreating}
+                disabled={isCreating || isSyncingSettings}
               >
                 {pushNewBranches ? 'On' : 'Off'}
+              </Button>
+            </div>
+
+            <div className="flex items-center justify-between">
+              <div className="space-y-0.5">
+                <Label className="text-sm font-medium text-foreground">
+                  {t('tasks:wizard.gitOptions.useWorktreeLabel')}
+                </Label>
+                <p className="text-xs text-muted-foreground">
+                  {t('tasks:wizard.gitOptions.useWorktreeDescription')}
+                </p>
+              </div>
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                className={cn(
+                  'h-8 px-3 border',
+                  useWorktree ? 'border-primary/40 text-primary' : 'border-border text-muted-foreground'
+                )}
+                onClick={() => setUseWorktree((current) => !current)}
+                disabled={isCreating || isSyncingSettings}
+              >
+                {useWorktree ? 'On' : 'Off'}
               </Button>
             </div>
           </div>

@@ -40,10 +40,10 @@ export function PrivacyStep({ onNext, onBack }: PrivacyStepProps) {
         notifySentryStateChanged(sentryEnabled);
         onNext();
       } else {
-        setError(t('onboarding:privacy.saveFailed', 'Failed to save privacy settings. Please try again.'));
+        setError(t('onboarding:privacy.saveFailed'));
       }
     } catch (_err) {
-      setError(t('onboarding:privacy.saveFailed', 'Failed to save privacy settings. Please try again.'));
+      setError(t('onboarding:privacy.saveFailed'));
     } finally {
       setIsSaving(false);
     }
@@ -143,10 +143,10 @@ export function PrivacyStep({ onNext, onBack }: PrivacyStepProps) {
         {/* Action Buttons */}
         <div className="flex justify-between items-center mt-10 pt-6 border-t border-border">
           <Button variant="ghost" onClick={onBack}>
-            {t('common:back', 'Back')}
+            {t('common:buttons.back')}
           </Button>
           <Button onClick={handleSave} disabled={isSaving}>
-            {isSaving ? t('common:saving', 'Saving...') : t('common:continue', 'Continue')}
+            {isSaving ? t('common:buttons.saving') : t('common:buttons.continue')}
           </Button>
         </div>
       </div>

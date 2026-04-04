@@ -26,7 +26,7 @@ import { buildMemoryAwareStopCondition } from '../memory/injection/memory-stop-c
 import { buildThinkingProviderOptions } from '../config/types';
 import { createStreamHandler } from './stream-handler';
 import type { FullStreamPart } from './stream-handler';
-import { classifyError, isAuthenticationError, isRateLimitError } from './error-classifier';
+import { classifyError, isAuthenticationError, isRateLimitError, isModelNotFoundError } from './error-classifier';
 import { ProgressTracker } from './progress-tracker';
 import type {
   SessionConfig,
@@ -78,6 +78,33 @@ const POST_STREAM_TIMEOUT_MS = 10_000;
  *  (observed with OpenAI Codex via chatgpt.com/backend-api/codex/responses). */
 const STREAM_INACTIVITY_TIMEOUT_MS = 60_000;
 
+function isResponsesApiModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  return (
+    modelId.startsWith('gpt-5') ||
+    modelId.includes('codex') ||
+    modelId === 'o3' ||
+    modelId.startsWith('o3-') ||
+    modelId === 'o4-mini' ||
+    modelId.startsWith('o4-')
+  );
+}
+
+function isOpenAIResponsesTransport(
+  modelProviderId: string | undefined,
+  modelId: string | undefined,
+): boolean {
+  if (modelProviderId) {
+    const normalizedProviderId = modelProviderId.toLowerCase();
+    return normalizedProviderId === 'openai-responses' ||
+      normalizedProviderId.endsWith('.responses') ||
+      normalizedProviderId.endsWith('-responses');
+  }
+
+  // Fallback for tests or provider implementations that only expose model IDs.
+  return isResponsesApiModel(modelId);
+}
+
 // =============================================================================
 // Runner Options
 // =============================================================================
@@ -117,7 +144,7 @@ export interface RunnerOptions {
    */
   memoryContext?: MemorySessionContext;
   /**
-   * Called when an account switch is needed (429 rate limit or 401 auth failure).
+   * Called when an account switch is needed (429 rate limit, 401 auth failure, or 404 model not found).
    * Returns new resolved auth from the next account in the global priority queue, or null.
    * The caller (orchestration layer) provides this by calling resolveAuthFromQueue()
    * with the failed account excluded.
@@ -167,17 +194,26 @@ export async function runAgentSession(
     } catch (error: unknown) {
       const { sessionError, outcome } = classifyError(error);
 
-      // Account-switch on rate limit (429) or auth failure (401)
+      // Account-switch on rate limit (429), auth failure (401), or model not found (404)
       // This enables cross-provider fallback via the global priority queue
       if (
-        (isRateLimitError(error) || isAuthenticationError(error)) &&
+        (isRateLimitError(error) || isAuthenticationError(error) || isModelNotFoundError(error)) &&
         onAccountSwitch &&
         activeAccountId &&
         authRetries < MAX_AUTH_RETRIES
       ) {
         authRetries++;
+
+        // Log the reason for switching
+        const errorType = isRateLimitError(error) ? 'rate limit' :
+                         isAuthenticationError(error) ? 'authentication failure' :
+                         'model not found';
+        console.warn(`[SessionRunner] ${errorType} detected, attempting to switch accounts...`);
+
         const newAuth = await onAccountSwitch(activeAccountId, sessionError);
         if (newAuth) {
+          console.log(`[SessionRunner] Switching to account ${newAuth.accountId} with model ${newAuth.resolvedModelId}`);
+
           // Switch to new account — dynamic import to avoid circular deps
           const { createProvider } = await import('../providers/factory');
           activeConfig = {
@@ -334,10 +370,14 @@ async function executeStream(
     content: msg.content,
   }));
 
-  // Codex models (via chatgpt.com/backend-api/codex/responses) require
-  // `instructions` in the request body instead of system messages in `input`.
-  // Pass system prompt via providerOptions and enable store for proper Codex API behavior.
+  // Responses API models need response persistence enabled when the SDK performs
+  // multi-step/tool-call continuation; otherwise later steps can reference
+  // transient `fc_*` items that no longer exist. Codex models additionally
+  // require `instructions` instead of system messages in `input`.
   const modelId = typeof config.model === 'string' ? config.model : config.model.modelId;
+  const modelProviderId = typeof config.model === 'string' ? undefined : config.model.provider;
+  const isResponsesModel = isResponsesApiModel(modelId);
+  const usesResponsesTransport = isOpenAIResponsesTransport(modelProviderId, modelId);
   const isCodex = modelId?.includes('codex') ?? false;
   const isAnthropicModel = modelId?.startsWith('claude-') ?? false;
 
@@ -363,20 +403,20 @@ async function executeStream(
 
   const result = streamText({
     model: config.model,
-    system: isCodex ? undefined : config.systemPrompt,
+    system: usesResponsesTransport && isCodex ? undefined : config.systemPrompt,
     messages: aiMessages,
     tools: tools ?? {},
     ...(useOutputSchema ? { output: Output.object({ schema: config.outputSchema! }) } : {}),
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
-    ...((thinkingOptions || isCodex || (useOutputSchema && isAnthropicModel)) ? {
+    ...((thinkingOptions || isResponsesModel || (useOutputSchema && isAnthropicModel)) ? {
       providerOptions: {
         ...(thinkingOptions ?? {}),
-        ...(isCodex ? {
+        ...(usesResponsesTransport ? {
           openai: {
             ...(thinkingOptions?.openai ?? {}),
-            ...(config.systemPrompt ? { instructions: config.systemPrompt } : {}),
-            store: false,
+            ...(isCodex && config.systemPrompt ? { instructions: config.systemPrompt } : {}),
+            store: true,
           },
         } : {}),
         ...(useOutputSchema && isAnthropicModel ? {

@@ -63,6 +63,15 @@ export interface QAIssue {
   line?: number;
 }
 
+export interface TokenUsage {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+  thinkingTokens?: number;
+  cacheReadTokens?: number;
+  cacheCreationTokens?: number;
+}
+
 // Task Log Types - for persistent, phase-based logging
 export type TaskLogPhase = 'planning' | 'coding' | 'validation';
 export type TaskLogPhaseStatus = 'pending' | 'active' | 'completed' | 'failed';
@@ -264,6 +273,7 @@ export interface Task {
   logs: string[];
   metadata?: TaskMetadata;  // Rich metadata from ideation or manual entry
   executionProgress?: ExecutionProgress;  // Real-time execution progress
+  tokenUsage?: TokenUsage;  // Real-time and persisted model token usage
   releasedInVersion?: string;  // Version in which this task was released
   stagedInMainProject?: boolean;  // True if changes were staged to main project (worktree merged with --no-commit)
   stagedAt?: string;  // ISO timestamp when changes were staged
@@ -297,6 +307,7 @@ export interface ImplementationPlan {
   };
   recoveryNote?: string;
   description?: string;
+  tokenUsage?: TokenUsage;
 }
 
 export interface Phase {

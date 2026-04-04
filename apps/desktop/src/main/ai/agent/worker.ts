@@ -149,13 +149,28 @@ function buildSecurityProfile(session: SerializableSessionConfig): SecurityProfi
  * Build a ToolContext for the given session config.
  */
 function buildToolContext(session: SerializableSessionConfig, securityProfile: SecurityProfile): ToolContext {
+  const allowedPathRoots = [
+    session.toolContext.projectDir,
+    session.sourceProjectDir,
+    session.toolContext.specDir,
+    session.sourceSpecDir,
+  ].filter((value): value is string => Boolean(value));
+
   return {
     cwd: session.toolContext.cwd,
     projectDir: session.toolContext.projectDir,
+    allowedPathRoots,
     specDir: session.toolContext.specDir,
     securityProfile,
     abortSignal: abortController.signal,
   };
+}
+
+function getSpecWritePaths(session: SerializableSessionConfig): string[] {
+  return [
+    session.specDir,
+    session.sourceSpecDir,
+  ].filter((value): value is string => Boolean(value));
 }
 
 
@@ -882,7 +897,7 @@ async function runSpecOrchestrator(
       // Spec agents can only write to the spec directory
       const specToolContext: ToolContext = {
         ...toolContext,
-        allowedWritePaths: [session.specDir],
+        allowedWritePaths: getSpecWritePaths(session),
       };
       return runSingleSession(
         runConfig.agentType,
@@ -1022,7 +1037,7 @@ async function runAgenticSpecOrchestrator(
     registry,
     baseToolContext: {
       ...toolContext,
-      allowedWritePaths: [session.specDir],
+      allowedWritePaths: getSpecWritePaths(session),
     },
     loadPrompt: async (promptName: string) => assemblePrompt(promptName, session),
     abortSignal: abortController.signal,
@@ -1034,7 +1049,7 @@ async function runAgenticSpecOrchestrator(
   // Create an extended tool context with the executor
   const orchestratorToolContext: ToolContext & { subagentExecutor: SubagentExecutorImpl } = {
     ...toolContext,
-    allowedWritePaths: [session.specDir],
+    allowedWritePaths: getSpecWritePaths(session),
     subagentExecutor: executor,
   };
 

@@ -107,9 +107,10 @@ export const readTool = Tool.define({
   inputSchema,
   execute: async (input, context) => {
     const { file_path, offset, limit, pages } = input;
+    const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
-    // Security: ensure path is within project boundary
-    const { resolvedPath } = assertPathContained(file_path, context.projectDir);
+    // Security: ensure path is within an allowed project boundary
+    const { resolvedPath } = assertPathContained(file_path, allowedRoots);
 
     // Open fd once — all subsequent stat/read go through this fd to avoid TOCTOU
     let fd: number;

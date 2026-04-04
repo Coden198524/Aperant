@@ -5,9 +5,9 @@ import { MultiProviderModelSelect } from './MultiProviderModelSelect';
 import { ThinkingLevelSelect } from './ThinkingLevelSelect';
 import { Label } from '../ui/label';
 import {
-  DEFAULT_FEATURE_MODELS,
-  DEFAULT_FEATURE_THINKING,
   FEATURE_LABELS,
+  getProviderDefaultFeatureModels,
+  getProviderDefaultFeatureThinking,
 } from '@shared/constants/models';
 import type { BuiltinProvider } from '@shared/types/provider-account';
 import type { FeatureModelConfig, ThinkingLevel } from '@shared/types/settings';
@@ -31,12 +31,8 @@ export function FeatureModelSettings({ provider }: FeatureModelSettingsProps) {
   const settings = useSettingsStore((state) => state.settings);
 
   // For Ollama, default to empty strings — Anthropic model shorthands are meaningless
-  const providerFeatureDefaults: FeatureModelConfig = provider === 'ollama'
-    ? { insights: '', ideation: '', roadmap: '', githubIssues: '', githubPrs: '', utility: '', naming: '' }
-    : DEFAULT_FEATURE_MODELS;
-  const providerThinkingDefaults = provider === 'ollama'
-    ? { insights: 'low' as ThinkingLevel, ideation: 'low' as ThinkingLevel, roadmap: 'low' as ThinkingLevel, githubIssues: 'low' as ThinkingLevel, githubPrs: 'low' as ThinkingLevel, utility: 'low' as ThinkingLevel, naming: 'low' as ThinkingLevel }
-    : DEFAULT_FEATURE_THINKING;
+  const providerFeatureDefaults: FeatureModelConfig = getProviderDefaultFeatureModels(provider);
+  const providerThinkingDefaults = getProviderDefaultFeatureThinking(provider);
 
   const featureModels: FeatureModelConfig =
     settings.providerAgentConfig?.[provider]?.featureModels ?? providerFeatureDefaults;

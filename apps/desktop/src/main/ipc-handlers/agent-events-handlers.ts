@@ -7,6 +7,7 @@ import type {
   SDKRateLimitInfo,
   AuthFailureInfo,
   ImplementationPlan,
+  TokenUsage,
 } from "../../shared/types";
 import { XSTATE_SETTLED_STATES, XSTATE_ACTIVE_STATES, XSTATE_TO_PHASE, mapStateToLegacy } from "../../shared/state-machines";
 import { AgentManager } from "../agent";
@@ -14,7 +15,7 @@ import type { ProcessType, ExecutionProgressData } from "../agent";
 import { titleGenerator } from "../title-generator";
 import { fileWatcher } from "../file-watcher";
 import { notificationService } from "../notification-service";
-import { persistPlanLastEventSync, getPlanPath, persistPlanPhaseSync, persistPlanStatusAndReasonSync, hasPlanWithSubtasks, syncPlanPhasesToMainSync } from "./task/plan-file-utils";
+import { persistPlanLastEventSync, getPlanPath, persistPlanPhaseSync, persistPlanStatusAndReasonSync, persistPlanTokenUsageSync, hasPlanWithSubtasks, syncPlanPhasesToMainSync } from "./task/plan-file-utils";
 import { findTaskWorktree } from "../worktree-paths";
 import { findTaskAndProject } from "./task/shared";
 import { safeSendToRenderer } from "./utils";
@@ -299,6 +300,40 @@ export function registerAgenteventsHandlers(
       );
       if (existsSync(worktreePlanPath)) {
         persistPlanLastEventSync(worktreePlanPath, event);
+      }
+    }
+  });
+
+  agentManager.on("task-token-usage", (taskId: string, usage: TokenUsage, projectId?: string) => {
+    const { task, project } = findTaskAndProject(taskId, projectId);
+    const taskProjectId = project?.id || projectId;
+
+    safeSendToRenderer(
+      getMainWindow,
+      IPC_CHANNELS.TASK_TOKEN_USAGE,
+      taskId,
+      usage,
+      taskProjectId
+    );
+
+    if (!task || !project) {
+      return;
+    }
+
+    const mainPlanPath = getPlanPath(project, task);
+    persistPlanTokenUsageSync(mainPlanPath, usage, project.id);
+
+    const worktreePath = findTaskWorktree(project.path, task.specId);
+    if (worktreePath) {
+      const specsBaseDir = getSpecsDir(project.autoBuildPath);
+      const worktreePlanPath = path.join(
+        worktreePath,
+        specsBaseDir,
+        task.specId,
+        AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN
+      );
+      if (existsSync(worktreePlanPath)) {
+        persistPlanTokenUsageSync(worktreePlanPath, usage, project.id);
       }
     }
   });

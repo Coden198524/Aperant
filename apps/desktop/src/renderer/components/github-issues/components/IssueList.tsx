@@ -71,7 +71,13 @@ export function IssueList({
   }
 
   if (issues.length === 0) {
-    return <EmptyState message="No issues found" />;
+    return (
+      <EmptyState
+        message={t('issues.empty.noIssues', {
+          defaultValue: 'No issues found'
+        })}
+      />
+    );
   }
 
   return (
@@ -103,15 +109,17 @@ export function IssueList({
             {isLoadingMore ? (
               <div className="flex items-center gap-2 text-muted-foreground">
                 <Loader2 className="h-4 w-4 animate-spin" />
-                <span className="text-sm">{t('issues.loadingMore', 'Loading more...')}</span>
+                <span className="text-sm">
+                  {t('issues.loadingMore', { defaultValue: 'Loading more...' })}
+                </span>
               </div>
             ) : hasMore ? (
               <span className="text-xs text-muted-foreground opacity-50">
-                {t('issues.scrollForMore', 'Scroll for more')}
+                {t('issues.scrollForMore', { defaultValue: 'Scroll for more' })}
               </span>
             ) : issues.length > 0 ? (
               <span className="text-xs text-muted-foreground opacity-50">
-                {t('issues.allLoaded', 'All issues loaded')}
+                {t('issues.allLoaded', { defaultValue: 'All issues loaded' })}
               </span>
             ) : null}
           </div>

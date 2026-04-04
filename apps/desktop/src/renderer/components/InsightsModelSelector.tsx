@@ -1,4 +1,5 @@
 import { useState } from 'react';
+import { useTranslation } from 'react-i18next';
 import { Brain, Scale, Zap, Sparkles, Sliders, Check } from 'lucide-react';
 import { Button } from './ui/button';
 import {
@@ -31,6 +32,7 @@ export function InsightsModelSelector({
   onConfigChange,
   disabled
 }: InsightsModelSelectorProps) {
+  const { t } = useTranslation('common');
   const [showCustomModal, setShowCustomModal] = useState(false);
 
   // Default to 'balanced' if no config, or if 'auto' profile was selected (not applicable for insights)
@@ -64,13 +66,45 @@ export function InsightsModelSelector({
     setShowCustomModal(false);
   };
 
+  const getProfileLabel = (profileId: string) => {
+    switch (profileId) {
+      case 'auto':
+        return t('insights.modelSelector.profiles.auto');
+      case 'complex':
+        return t('insights.modelSelector.profiles.complex');
+      case 'balanced':
+        return t('insights.modelSelector.profiles.balanced');
+      case 'quick':
+        return t('insights.modelSelector.profiles.quick');
+      case 'custom':
+        return t('insights.modelSelector.custom');
+      default:
+        return profile?.name || profileId;
+    }
+  };
+
+  const getThinkingLevelLabel = (thinkingLevel: string) => {
+    switch (thinkingLevel) {
+      case 'low':
+        return t('insights.modelSelector.thinking.low');
+      case 'medium':
+        return t('insights.modelSelector.thinking.medium');
+      case 'high':
+        return t('insights.modelSelector.thinking.high');
+      case 'xhigh':
+        return t('insights.modelSelector.thinking.xhigh');
+      default:
+        return thinkingLevel;
+    }
+  };
+
   // Build display text for current selection
   const getDisplayText = () => {
     if (selectedProfileId === 'custom' && currentConfig) {
       const modelLabel = AVAILABLE_MODELS.find(m => m.value === currentConfig.model)?.label || currentConfig.model;
-      return `${modelLabel} + ${currentConfig.thinkingLevel}`;
+      return `${modelLabel} + ${getThinkingLevelLabel(currentConfig.thinkingLevel)}`;
     }
-    return profile?.name || 'Balanced';
+    return getProfileLabel(selectedProfileId);
   };
 
   return (
@@ -82,7 +116,7 @@ export function InsightsModelSelector({
             size="sm"
             className="h-8 gap-2 px-2"
             disabled={disabled}
-            title={`Model: ${getDisplayText()}`}
+            title={t('insights.modelSelector.title', { model: getDisplayText() })}
           >
             <Icon className="h-4 w-4" />
             <span className="hidden text-xs text-muted-foreground sm:inline">
@@ -91,7 +125,7 @@ export function InsightsModelSelector({
           </Button>
         </DropdownMenuTrigger>
         <DropdownMenuContent align="end" className="w-64">
-          <DropdownMenuLabel>Agent Profile</DropdownMenuLabel>
+          <DropdownMenuLabel>{t('insights.modelSelector.label')}</DropdownMenuLabel>
           {DEFAULT_AGENT_PROFILES.filter(p => !p.isAutoProfile).map((p) => {
             const ProfileIcon = iconMap[p.icon || 'Brain'];
             const isSelected = selectedProfileId === p.id;
@@ -104,9 +138,9 @@ export function InsightsModelSelector({
               >
                 <ProfileIcon className="h-4 w-4 shrink-0" />
                 <div className="min-w-0 flex-1">
-                  <div className="font-medium">{p.name}</div>
+                  <div className="font-medium">{getProfileLabel(p.id)}</div>
                   <div className="truncate text-xs text-muted-foreground">
-                    {modelLabel} + {p.thinkingLevel}
+                    {modelLabel} + {getThinkingLevelLabel(p.thinkingLevel)}
                   </div>
                 </div>
                 {isSelected && (
@@ -122,9 +156,9 @@ export function InsightsModelSelector({
           >
             <Sliders className="h-4 w-4 shrink-0" />
             <div className="flex-1">
-              <div className="font-medium">Custom...</div>
+              <div className="font-medium">{t('insights.modelSelector.custom')}</div>
               <div className="text-xs text-muted-foreground">
-                Choose model & thinking level
+                {t('insights.modelSelector.customDescription')}
               </div>
             </div>
             {selectedProfileId === 'custom' && (

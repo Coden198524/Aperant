@@ -12,12 +12,19 @@ interface LoadingMessageProps {
 /**
  * Displays a loading indicator while workspace info is being fetched
  */
-export function LoadingMessage({ message = 'Loading workspace info...' }: LoadingMessageProps) {
+export function LoadingMessage({ message }: LoadingMessageProps) {
+  const { t } = useTranslation('taskReview');
+
   return (
     <div className="rounded-xl border border-border bg-secondary/30 p-4">
       <div className="flex items-center gap-2 text-muted-foreground">
         <Loader2 className="h-4 w-4 animate-spin" />
-        <span className="text-sm">{message}</span>
+        <span className="text-sm">
+          {message ||
+            t('workspaceMessages.loading', {
+              defaultValue: 'Loading workspace info...'
+            })}
+        </span>
       </div>
     </div>
   );
@@ -32,7 +39,7 @@ interface NoWorkspaceMessageProps {
  * Displays message when no workspace is found for the task
  */
 export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
-  const { t } = useTranslation(['tasks']);
+  const { t } = useTranslation(['taskReview', 'tasks']);
   const [isMarkingDone, setIsMarkingDone] = useState(false);
   const [isProceeding, setIsProceeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -72,7 +79,9 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
       }
     } catch (err) {
       console.error('Error proceeding to coding:', err);
-      setError(err instanceof Error ? err.message : 'Failed to start task');
+      setError(
+        err instanceof Error ? err.message : t('tasks:wizard.errors.startFailed')
+      );
     } finally {
       setIsProceeding(false);
     }
@@ -82,12 +91,24 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
     <div className="rounded-xl border border-border bg-secondary/30 p-4">
       <h3 className="font-medium text-sm text-foreground mb-2 flex items-center gap-2">
         <AlertCircle className="h-4 w-4 text-muted-foreground" />
-        {isPlanReview ? 'Human Review Required' : 'No Workspace Found'}
+        {isPlanReview
+          ? t('workspaceMessages.planReviewTitle', {
+              defaultValue: 'Human Review Required'
+            })
+          : t('workspaceMessages.noWorkspaceTitle', {
+              defaultValue: 'No Workspace Found'
+            })}
       </h3>
       <p className="text-sm text-muted-foreground mb-3">
         {isPlanReview
-          ? 'Human review required prior to coding. Review your spec.md for any necessary changes.'
-          : 'No isolated workspace was found for this task. The changes may have been made directly in your project.'}
+          ? t('workspaceMessages.planReviewDescription', {
+              defaultValue:
+                'Human review required prior to coding. Review your spec.md for any necessary changes.'
+            })
+          : t('workspaceMessages.noWorkspaceDescription', {
+              defaultValue:
+                'No isolated workspace was found for this task. The changes may have been made directly in your project.'
+            })}
       </p>
 
       {/* Allow marking as done */}
@@ -102,12 +123,16 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
           {isProceeding ? (
             <>
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Updating...
+              {t('workspaceMessages.updating', {
+                defaultValue: 'Updating...'
+              })}
             </>
           ) : (
             <>
               <Play className="h-4 w-4 mr-2" />
-              Proceed to Coding
+              {t('workspaceMessages.proceedToCoding', {
+                defaultValue: 'Proceed to Coding'
+              })}
             </>
           )}
         </Button>
@@ -122,12 +147,16 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
           {isMarkingDone ? (
             <>
               <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-              Updating...
+              {t('workspaceMessages.updating', {
+                defaultValue: 'Updating...'
+              })}
             </>
           ) : (
             <>
               <Check className="h-4 w-4 mr-2" />
-              Mark as Done
+              {t('stagedSuccess.markAsDone', {
+                defaultValue: 'Mark as Done'
+              })}
             </>
           )}
         </Button>
@@ -155,6 +184,7 @@ interface StagedInProjectMessageProps {
  * Displays message when changes have already been staged in the main project
  */
 export function StagedInProjectMessage({ task, projectPath, hasWorktree = false, onClose, onReviewAgain }: StagedInProjectMessageProps) {
+  const { t } = useTranslation(['taskReview', 'common']);
   const [isDeleting, setIsDeleting] = useState(false);
   const [isMarkingDone, setIsMarkingDone] = useState(false);
   const [isResetting, setIsResetting] = useState(false);
@@ -171,7 +201,12 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
       const result = await window.electronAPI.discardWorktree(task.id, true);
 
       if (!result.success) {
-        setError(result.error || 'Failed to delete worktree');
+        setError(
+          result.error ||
+            t('stagedSuccess.errors.failedToDeleteWorktree', {
+              defaultValue: 'Failed to delete worktree'
+            })
+        );
         return;
       }
 
@@ -179,7 +214,12 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
       const statusResult = await persistTaskStatus(task.id, 'done');
       if (!statusResult.success) {
         // Worktree is already deleted but status update failed - inform user of inconsistent state
-        setError('Worktree deleted but failed to update task status: ' + (statusResult.error || 'Unknown error'));
+        setError(
+          t('stagedSuccess.errors.worktreeDeletedButStatusFailed', {
+            error: statusResult.error || t('common:errors.unknownError'),
+            defaultValue: 'Worktree deleted but failed to update task status: {{error}}'
+          })
+        );
         return;
       }
 
@@ -187,7 +227,13 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
       onClose?.();
     } catch (err) {
       console.error('Error deleting worktree:', err);
-      setError(err instanceof Error ? err.message : 'Failed to delete worktree');
+      setError(
+        err instanceof Error
+          ? err.message
+          : t('stagedSuccess.errors.failedToDeleteWorktree', {
+              defaultValue: 'Failed to delete worktree'
+            })
+      );
     } finally {
       setIsDeleting(false);
     }
@@ -200,13 +246,24 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
     try {
       const result = await persistTaskStatus(task.id, 'done', { keepWorktree: true });
       if (!result.success) {
-        setError(result.error || 'Failed to mark as done');
+        setError(
+          result.error ||
+            t('stagedSuccess.errors.failedToMarkAsDone', {
+              defaultValue: 'Failed to mark as done'
+            })
+        );
         return;
       }
       onClose?.();
     } catch (err) {
       console.error('Error marking task as done:', err);
-      setError(err instanceof Error ? err.message : 'Failed to mark as done');
+      setError(
+        err instanceof Error
+          ? err.message
+          : t('stagedSuccess.errors.failedToMarkAsDone', {
+              defaultValue: 'Failed to mark as done'
+            })
+      );
     } finally {
       setIsMarkingDone(false);
     }
@@ -223,7 +280,12 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
       const result = await window.electronAPI.clearStagedState(task.id);
 
       if (!result.success) {
-        setError(result.error || 'Failed to reset staged state');
+        setError(
+          result.error ||
+            t('stagedSuccess.errors.failedToResetStagedState', {
+              defaultValue: 'Failed to reset staged state'
+            })
+        );
         return;
       }
 
@@ -231,7 +293,13 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
       onReviewAgain();
     } catch (err) {
       console.error('Error resetting staged state:', err);
-      setError(err instanceof Error ? err.message : 'Failed to reset staged state');
+      setError(
+        err instanceof Error
+          ? err.message
+          : t('stagedSuccess.errors.failedToResetStagedState', {
+              defaultValue: 'Failed to reset staged state'
+            })
+      );
     } finally {
       setIsResetting(false);
     }
@@ -241,17 +309,47 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
     <div className="rounded-xl border border-success/30 bg-success/10 p-4">
       <h3 className="font-medium text-sm text-foreground mb-2 flex items-center gap-2">
         <GitMerge className="h-4 w-4 text-success" />
-        Changes Staged in Project
+        {t('workspaceMessages.stagedInProjectTitle', {
+          defaultValue: 'Changes Staged in Project'
+        })}
       </h3>
       <p className="text-sm text-muted-foreground mb-3">
-        This task's changes have been staged in your main project{task.stagedAt ? ` on ${new Date(task.stagedAt).toLocaleDateString()}` : ''}.
+        {task.stagedAt
+          ? t('workspaceMessages.stagedInProjectDescriptionWithDate', {
+              date: new Date(task.stagedAt).toLocaleDateString(),
+              defaultValue:
+                "This task's changes have been staged in your main project on {{date}}."
+            })
+          : t('workspaceMessages.stagedInProjectDescription', {
+              defaultValue:
+                "This task's changes have been staged in your main project."
+            })}
       </p>
       <div className="bg-background/50 rounded-lg p-3 mb-3">
-        <p className="text-xs text-muted-foreground mb-2">Next steps:</p>
+        <p className="text-xs text-muted-foreground mb-2">
+          {t('stagedSuccess.nextSteps', {
+            defaultValue: 'Next steps:'
+          })}
+        </p>
         <ol className="text-xs text-muted-foreground space-y-1 list-decimal list-inside">
-          <li>Review staged changes with <code className="bg-background px-1 rounded">git status</code> and <code className="bg-background px-1 rounded">git diff --staged</code></li>
-          <li>Commit when ready: <code className="bg-background px-1 rounded">git commit -m "your message"</code></li>
-          <li>Push to remote when satisfied</li>
+          <li>
+            {t('stagedSuccess.reviewChanges', {
+              defaultValue: 'Review staged changes with'
+            })}{' '}
+            <code className="bg-background px-1 rounded">git status</code> and{' '}
+            <code className="bg-background px-1 rounded">git diff --staged</code>
+          </li>
+          <li>
+            {t('stagedSuccess.commitWhenReady', {
+              defaultValue: 'Commit when ready:'
+            })}{' '}
+            <code className="bg-background px-1 rounded">git commit -m "your message"</code>
+          </li>
+          <li>
+            {t('stagedSuccess.pushToRemote', {
+              defaultValue: 'Push to remote when satisfied'
+            })}
+          </li>
         </ol>
       </div>
 
@@ -270,12 +368,16 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
               {isDeleting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Cleaning up...
+                  {t('stagedSuccess.cleaningUp', {
+                    defaultValue: 'Cleaning up...'
+                  })}
                 </>
               ) : (
                 <>
                   <Check className="h-4 w-4 mr-2" />
-                  Delete Worktree & Mark Done
+                  {t('stagedSuccess.deleteWorktreeAndMarkDone', {
+                    defaultValue: 'Delete Worktree & Mark Done'
+                  })}
                 </>
               )}
             </Button>
@@ -290,12 +392,16 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
               {isMarkingDone ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Marking done...
+                  {t('stagedSuccess.markingDone', {
+                    defaultValue: 'Marking done...'
+                  })}
                 </>
               ) : (
                 <>
                   <Check className="h-4 w-4 mr-2" />
-                  Mark as Done
+                  {t('stagedSuccess.markAsDone', {
+                    defaultValue: 'Mark as Done'
+                  })}
                 </>
               )}
             </Button>
@@ -316,12 +422,16 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
               {isMarkingDone ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Marking done...
+                  {t('stagedSuccess.markingDone', {
+                    defaultValue: 'Marking done...'
+                  })}
                 </>
               ) : (
                 <>
                   <Check className="h-4 w-4 mr-2" />
-                  Mark Done Only
+                  {t('stagedSuccess.markDoneOnly', {
+                    defaultValue: 'Mark Done Only'
+                  })}
                 </>
               )}
             </Button>
@@ -339,12 +449,16 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
               {isResetting ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Resetting...
+                  {t('stagedSuccess.resetting', {
+                    defaultValue: 'Resetting...'
+                  })}
                 </>
               ) : (
                 <>
                   <RotateCcw className="h-4 w-4 mr-2" />
-                  Review Again
+                  {t('stagedSuccess.reviewAgain', {
+                    defaultValue: 'Review Again'
+                  })}
                 </>
               )}
             </Button>
@@ -357,7 +471,10 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
 
         {hasWorktree && (
           <p className="text-xs text-muted-foreground">
-            "Delete Worktree & Mark Done" cleans up the isolated workspace. "Mark Done Only" keeps it for reference.
+            {t('stagedSuccess.worktreeExplanation', {
+              defaultValue:
+                '"Delete Worktree & Mark Done" cleans up the isolated workspace. "Mark Done Only" keeps it for reference.'
+            })}
           </p>
         )}
       </div>

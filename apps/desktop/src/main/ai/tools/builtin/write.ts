@@ -41,9 +41,10 @@ export const writeTool = Tool.define({
   inputSchema,
   execute: async (input, context) => {
     const { file_path, content } = input;
+    const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
-    // Security: ensure path is within project boundary
-    const { resolvedPath } = assertPathContained(file_path, context.projectDir);
+    // Security: ensure path is within an allowed project boundary
+    const { resolvedPath } = assertPathContained(file_path, allowedRoots);
 
     // Ensure parent directory exists
     const parentDir = path.dirname(resolvedPath);

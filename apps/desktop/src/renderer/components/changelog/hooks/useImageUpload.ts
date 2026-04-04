@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, type DragEvent, type ClipboardEvent } from 'react';
 import { blobToBase64, isValidImageMimeType, resolveFilename } from '../../ImageUpload';
 import { ALLOWED_IMAGE_TYPES_DISPLAY } from '../../../../shared/constants';
+import i18n from '../../../../shared/i18n';
 
 interface UseImageUploadOptions {
   projectId: string | null;
@@ -35,7 +36,9 @@ export function useImageUpload({ projectId, content, onContentChange }: UseImage
     if (!projectId) return;
 
     if (!isValidImageMimeType(file.type)) {
-      setImageError(`Invalid image type. Allowed: ${ALLOWED_IMAGE_TYPES_DISPLAY}`);
+      setImageError(
+        `${i18n.t('changelog:store.invalidImageType', { defaultValue: 'Invalid image type. Allowed:' })} ${ALLOWED_IMAGE_TYPES_DISPLAY}`
+      );
       return;
     }
 
@@ -56,10 +59,10 @@ export function useImageUpload({ projectId, content, onContentChange }: UseImage
         const imageMarkdown = `\n![${filename}](${result.data.relativePath})\n`;
         insertImageAtCursor(imageMarkdown);
       } else {
-        setImageError(result.error || 'Failed to save image');
+        setImageError(result.error || i18n.t('changelog:store.saveImageFailed', { defaultValue: 'Failed to save image' }));
       }
     } catch (_err) {
-      setImageError('Failed to process image');
+      setImageError(i18n.t('changelog:store.processImageFailed', { defaultValue: 'Failed to process image' }));
     }
   }, [projectId, insertImageAtCursor]);
 

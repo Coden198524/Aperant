@@ -104,6 +104,7 @@ export function transformThinkingConfig(
     }
 
     case 'openai':
+    case 'openai-compatible':
     case 'azure': {
       // OpenAI reasoning models use effort-based reasoning
       return {
@@ -148,6 +149,7 @@ export function normalizeToolId(provider: SupportedProvider, toolId: string): st
     }
 
     case 'openai':
+    case 'openai-compatible':
     case 'azure': {
       // Sanitize and truncate to max length
       const sanitized = toolId.replace(/[^a-zA-Z0-9_-]/g, '_');

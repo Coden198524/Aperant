@@ -102,6 +102,20 @@ const TOOL_NAME_PHASE_PATTERNS: ReadonlyArray<{
   },
 ];
 
+function shouldDetectFilePatternPhase(
+  currentPhase: ExecutionPhase,
+  detectedPhase: ExecutionPhase,
+): boolean {
+  // implementation_plan.json is touched throughout coding/QA to update subtask
+  // and signoff state, so it only indicates planning while the session is still
+  // idle or already in planning.
+  if (detectedPhase === 'planning') {
+    return currentPhase === 'idle' || currentPhase === 'planning';
+  }
+
+  return true;
+}
+
 // =============================================================================
 // Text Pattern Phase Detection
 // =============================================================================
@@ -231,7 +245,7 @@ export class ProgressTracker {
     const filePath = this.extractFilePath(event.args);
     if (filePath) {
       for (const { pattern, phase, message } of TOOL_FILE_PHASE_PATTERNS) {
-        if (pattern.test(filePath)) {
+        if (pattern.test(filePath) && shouldDetectFilePatternPhase(this._currentPhase, phase)) {
           return this.tryTransition(phase, message, 'tool-call');
         }
       }

@@ -1,6 +1,7 @@
 import { ChildProcess } from 'child_process';
 import type { Worker } from 'worker_threads';
 import type { CompletablePhase, ExecutionPhase } from '../../shared/constants/phase-protocol';
+import type { TokenUsage } from '../../shared/types';
 import type { TaskEventPayload } from './task-event-schema';
 
 /**
@@ -26,6 +27,7 @@ export interface ExecutionProgressData {
   overallProgress: number;
   currentSubtask?: string;
   message?: string;
+  sequenceNumber?: number;
   // FIX (ACS-203): Track completed phases to prevent phase overlaps
   completedPhases?: CompletablePhase[];
 }
@@ -37,6 +39,7 @@ export interface AgentManagerEvents {
   error: (taskId: string, error: string, projectId?: string) => void;
   exit: (taskId: string, code: number | null, processType: ProcessType, projectId?: string) => void;
   'execution-progress': (taskId: string, progress: ExecutionProgressData, projectId?: string) => void;
+  'task-token-usage': (taskId: string, usage: TokenUsage, projectId?: string) => void;
   'task-event': (taskId: string, event: TaskEventPayload, projectId?: string) => void;
 }
 

@@ -1,5 +1,5 @@
+import { useTranslation } from 'react-i18next';
 import { TabsContent } from '../ui/tabs';
-import { IDEATION_TYPE_DESCRIPTIONS } from '../../../shared/constants';
 import { IdeationEmptyState } from './IdeationEmptyState';
 import { IdeationHeader } from './IdeationHeader';
 import { IdeationFilters } from './IdeationFilters';
@@ -10,6 +10,7 @@ import { IdeaDetailPanel } from './IdeaDetailPanel';
 import { useIdeation } from './hooks/useIdeation';
 import { useViewState } from '../../contexts/ViewStateContext';
 import { ALL_IDEATION_TYPES } from './constants';
+import { getIdeationTypeDescription } from '../../lib/i18n-labels';
 
 interface IdeationProps {
   projectId: string;
@@ -17,6 +18,7 @@ interface IdeationProps {
 }
 
 export function Ideation({ projectId, onGoToTask }: IdeationProps) {
+  const { t } = useTranslation('common');
   // Get showArchived from shared context for cross-page sync
   const { showArchived } = useViewState();
 
@@ -157,7 +159,7 @@ export function Ideation({ projectId, onGoToTask }: IdeationProps) {
               ))}
               {activeIdeas.length === 0 && (
                 <div className="text-center py-8 text-muted-foreground">
-                  No ideas to display
+                  {t('ideation.empty.noVisibleIdeas', { defaultValue: 'No ideas to display' })}
                 </div>
               )}
             </div>
@@ -174,7 +176,7 @@ export function Ideation({ projectId, onGoToTask }: IdeationProps) {
               <TabsContent key={type} value={type} className="flex-1 overflow-auto p-4">
                 <div className="mb-4 p-3 bg-muted/50 rounded-lg">
                   <p className="text-sm text-muted-foreground">
-                    {IDEATION_TYPE_DESCRIPTIONS[type]}
+                    {getIdeationTypeDescription(t, type)}
                   </p>
                 </div>
                 <div className="grid gap-3">

@@ -20,7 +20,7 @@
 import path from 'path';
 import { readFileSync, mkdirSync } from 'fs';
 import { AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
-import type { TaskStatus, Project, Task } from '../../../shared/types';
+import type { TaskStatus, Project, Task, TokenUsage } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
 import { writeFileAtomicSync } from '../../utils/atomic-file';
@@ -360,6 +360,53 @@ export function persistPlanPhaseSync(
     return true;
   } catch (err) {
     console.warn(`[plan-file-utils] Could not persist phase to ${planPath}:`, err);
+    return false;
+  }
+}
+
+/**
+ * Persist token usage to the plan file synchronously for refresh-time restoration.
+ */
+export function persistPlanTokenUsageSync(
+  planPath: string,
+  usage: TokenUsage,
+  projectId?: string
+): boolean {
+  try {
+    let plan: Record<string, unknown>;
+
+    try {
+      const planContent = readFileSync(planPath, 'utf-8');
+      const parsed = safeParseJson<Record<string, unknown>>(planContent);
+      if (!parsed) {
+        console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - token usage not persisted`);
+        return false;
+      }
+      plan = parsed;
+    } catch (readErr) {
+      if (!isFileNotFoundError(readErr)) {
+        throw readErr;
+      }
+      const planDir = path.dirname(planPath);
+      mkdirSync(planDir, { recursive: true });
+      plan = {
+        created_at: new Date().toISOString(),
+        phases: []
+      };
+    }
+
+    plan.tokenUsage = usage;
+    plan.updated_at = new Date().toISOString();
+
+    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+
+    if (projectId) {
+      projectStore.invalidateTasksCache(projectId);
+    }
+
+    return true;
+  } catch (err) {
+    console.warn(`[plan-file-utils] Could not persist token usage to ${planPath}:`, err);
     return false;
   }
 }

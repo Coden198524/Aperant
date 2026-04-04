@@ -39,6 +39,32 @@ export function formatRelativeTime(date: Date): string {
 }
 
 /**
+ * Format token counts compactly for task UI.
+ */
+export function formatTokenCount(count: number): string {
+  if (!Number.isFinite(count)) return '0';
+
+  if (typeof Intl !== 'undefined' && Intl.NumberFormat) {
+    try {
+      return new Intl.NumberFormat(undefined, {
+        notation: 'compact',
+        maximumFractionDigits: count >= 1000 ? 1 : 0
+      }).format(count);
+    } catch {
+      // Fall through to manual formatting
+    }
+  }
+
+  if (count >= 1_000_000) {
+    return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
+  }
+  if (count >= 1_000) {
+    return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
+  }
+  return String(Math.round(count));
+}
+
+/**
  * Sanitize and extract plain text from markdown content.
  * Strips markdown formatting and collapses whitespace for clean display in UI.
  * @param text The text that might contain markdown

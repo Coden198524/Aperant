@@ -3,6 +3,7 @@ import {
   getProviderPreset,
   getProviderPresetOrFallback,
   PROVIDER_PRESET_DEFINITIONS,
+  resolveModelEquivalent,
 } from '../models';
 
 describe('getProviderPreset', () => {
@@ -23,7 +24,7 @@ describe('getProviderPreset', () => {
   it('returns correct preset for openai provider', () => {
     const result = getProviderPreset('openai', 'auto');
     expect(result).not.toBeNull();
-    expect(result?.primaryModel).toBe('gpt-5.3-codex');
+    expect(result?.primaryModel).toBe('gpt-5.4');
   });
 
   it('returns null for unknown presetId', () => {
@@ -53,7 +54,7 @@ describe('getProviderPresetOrFallback', () => {
 
   it('returns openai balanced preset exactly when available', () => {
     const result = getProviderPresetOrFallback('openai', 'balanced');
-    expect(result.primaryModel).toBe('gpt-5.2-codex');
+    expect(result.primaryModel).toBe('gpt-5.4');
     expect(result.primaryThinking).toBe('medium');
   });
 
@@ -117,5 +118,23 @@ describe('getProviderPresetOrFallback', () => {
       expect(result.phaseModels[key]).toBeTruthy();
       expect(result.phaseThinking[key]).toBeTruthy();
     }
+  });
+});
+
+describe('resolveModelEquivalent', () => {
+  it('prefers gpt-5.4 for openai shorthand equivalence mappings', () => {
+    const result = resolveModelEquivalent('opus', 'openai');
+    expect(result).toEqual({
+      modelId: 'gpt-5.4',
+      reasoning: { type: 'reasoning_effort', level: 'high' },
+    });
+  });
+
+  it('reuses the openai gpt-5.4 mapping for openai-compatible providers', () => {
+    const result = resolveModelEquivalent('haiku', 'openai-compatible');
+    expect(result).toEqual({
+      modelId: 'gpt-5.4',
+      reasoning: { type: 'reasoning_effort', level: 'low' },
+    });
   });
 });

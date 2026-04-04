@@ -1,4 +1,5 @@
 import { useState, useEffect, useCallback } from 'react';
+import { useTranslation } from 'react-i18next';
 import {
   Layers,
   CheckCircle2,
@@ -49,7 +50,6 @@ interface BatchReviewWizardProps {
 export function BatchReviewWizard({
   isOpen,
   onClose,
-  projectId,
   onStartAnalysis,
   onApproveBatches,
   analysisProgress,
@@ -58,16 +58,12 @@ export function BatchReviewWizard({
   isAnalyzing,
   isApproving,
 }: BatchReviewWizardProps) {
-  // Track which batches are selected for approval
+  const { t } = useTranslation('common');
   const [selectedBatchIds, setSelectedBatchIds] = useState<Set<number>>(new Set());
-  // Track which single issues are selected for approval
   const [selectedSingleIssueNumbers, setSelectedSingleIssueNumbers] = useState<Set<number>>(new Set());
-  // Track which batches are expanded
   const [expandedBatchIds, setExpandedBatchIds] = useState<Set<number>>(new Set());
-  // Current wizard step
   const [step, setStep] = useState<'intro' | 'analyzing' | 'review' | 'approving' | 'done'>('intro');
 
-  // Reset state when dialog opens
   useEffect(() => {
     if (isOpen) {
       setSelectedBatchIds(new Set());
@@ -77,20 +73,18 @@ export function BatchReviewWizard({
     }
   }, [isOpen]);
 
-  // Update step based on analysis state
   useEffect(() => {
     if (isAnalyzing) {
       setStep('analyzing');
     } else if (analysisResult) {
       setStep('review');
-      // Select all validated batches by default
       const validatedIds = new Set(
         analysisResult.proposedBatches
           .filter(b => b.validated)
           .map((_, idx) => idx)
       );
       setSelectedBatchIds(validatedIds);
-      // If no batches, auto-select all single issues
+
       if (analysisResult.proposedBatches.length === 0 && analysisResult.singleIssues.length > 0) {
         const singleIssueNumbers = new Set(
           analysisResult.singleIssues.map(issue => issue.issueNumber)
@@ -102,7 +96,6 @@ export function BatchReviewWizard({
     }
   }, [isAnalyzing, analysisResult, analysisError]);
 
-  // Update step when approving
   useEffect(() => {
     if (isApproving) {
       setStep('approving');
@@ -161,12 +154,10 @@ export function BatchReviewWizard({
   const handleApprove = useCallback(async () => {
     if (!analysisResult) return;
 
-    // Get selected batches
     const selectedBatches = analysisResult.proposedBatches.filter(
       (_, idx) => selectedBatchIds.has(idx)
     );
 
-    // Convert selected single issues into batches (each single issue becomes a batch of 1)
     const selectedSingleIssueBatches: ProposedBatch[] = analysisResult.singleIssues
       .filter(issue => selectedSingleIssueNumbers.has(issue.issueNumber))
       .map(issue => ({
@@ -181,16 +172,17 @@ export function BatchReviewWizard({
         commonThemes: [],
         validated: true,
         confidence: 1.0,
-        reasoning: 'Single issue - not grouped with others',
+        reasoning: t('issues.taskGeneration.singleIssueReasoning', {
+          defaultValue: 'Single issue - not grouped with others'
+        }),
         theme: issue.title
       }));
 
-    // Combine batches and single issues
     const allBatches = [...selectedBatches, ...selectedSingleIssueBatches];
 
     await onApproveBatches(allBatches);
     setStep('done');
-  }, [analysisResult, selectedBatchIds, selectedSingleIssueNumbers, onApproveBatches]);
+  }, [analysisResult, onApproveBatches, selectedBatchIds, selectedSingleIssueNumbers, t]);
 
   const renderIntro = () => (
     <div className="flex flex-col items-center justify-center py-8 space-y-6">
@@ -198,10 +190,15 @@ export function BatchReviewWizard({
         <Layers className="h-12 w-12 text-primary" />
       </div>
       <div className="text-center space-y-2">
-        <h3 className="text-lg font-semibold">Analyze & Group Issues</h3>
+        <h3 className="text-lg font-semibold">
+          {t('issues.batchReview.introTitle', {
+            defaultValue: 'Analyze & Group Issues'
+          })}
+        </h3>
         <p className="text-sm text-muted-foreground max-w-md">
-          This will analyze up to 200 open issues, group similar ones together,
-          and let you review the proposed batches before creating any tasks.
+          {t('issues.batchReview.introDescription', {
+            defaultValue: 'This will analyze up to 200 open issues, group similar ones together, and let you review the proposed batches before creating any tasks.'
+          })}
         </p>
       </div>
       {analysisError && (
@@ -212,7 +209,9 @@ export function BatchReviewWizard({
       )}
       <Button onClick={onStartAnalysis} size="lg">
         <Layers className="h-4 w-4 mr-2" />
-        Start Analysis
+        {t('issues.batchReview.startAnalysis', {
+          defaultValue: 'Start Analysis'
+        })}
       </Button>
     </div>
   );
@@ -221,15 +220,24 @@ export function BatchReviewWizard({
     <div className="flex flex-col items-center justify-center py-8 space-y-6">
       <Loader2 className="h-12 w-12 text-primary animate-spin" />
       <div className="text-center space-y-2">
-        <h3 className="text-lg font-semibold">Analyzing Issues...</h3>
+        <h3 className="text-lg font-semibold">
+          {t('issues.batchReview.analyzingTitle', {
+            defaultValue: 'Analyzing Issues...'
+          })}
+        </h3>
         <p className="text-sm text-muted-foreground">
-          {analysisProgress?.message || 'Computing similarity and validating batches...'}
+          {analysisProgress?.message || t('issues.batchReview.analyzingFallback', {
+            defaultValue: 'Computing similarity and validating batches...'
+          })}
         </p>
       </div>
       <div className="w-full max-w-md">
         <Progress value={analysisProgress?.progress ?? 0} />
         <p className="text-xs text-center text-muted-foreground mt-2">
-          {analysisProgress?.progress ?? 0}% complete
+          {t('issues.batchReview.progressComplete', {
+            progress: analysisProgress?.progress ?? 0,
+            defaultValue: '{{progress}}% complete'
+          })}
         </p>
       </div>
     </div>
@@ -242,36 +250,47 @@ export function BatchReviewWizard({
     const selectedCount = selectedBatchIds.size;
     const totalIssuesInSelected = proposedBatches
       .filter((_, idx) => selectedBatchIds.has(idx))
-      .reduce((sum, b) => sum + b.issueCount, 0);
+      .reduce((sum, batch) => sum + batch.issueCount, 0);
 
     return (
       <div className="flex flex-col h-[60vh]">
-        {/* Stats Bar */}
         <div className="flex items-center justify-between p-3 bg-muted/50 rounded-lg mb-4">
           <div className="flex items-center gap-4 text-sm">
             <span>
-              <strong>{totalIssues}</strong> issues analyzed
+              <strong>{totalIssues}</strong>{' '}
+              {t('issues.batchReview.stats.issuesAnalyzed', {
+                defaultValue: 'issues analyzed'
+              })}
             </span>
             <span className="text-muted-foreground">|</span>
             <span>
-              <strong>{proposedBatches.length}</strong> batches proposed
+              <strong>{proposedBatches.length}</strong>{' '}
+              {t('issues.batchReview.stats.batchesProposed', {
+                defaultValue: 'batches proposed'
+              })}
             </span>
             <span className="text-muted-foreground">|</span>
             <span>
-              <strong>{singleIssues.length}</strong> single issues
+              <strong>{singleIssues.length}</strong>{' '}
+              {t('issues.batchReview.stats.singleIssues', {
+                defaultValue: 'single issues'
+              })}
             </span>
           </div>
           <div className="flex items-center gap-2">
             <Button variant="ghost" size="sm" onClick={selectAllBatches}>
-              Select All
+              {t('issues.batchReview.selectAll', {
+                defaultValue: 'Select All'
+              })}
             </Button>
             <Button variant="ghost" size="sm" onClick={deselectAllBatches}>
-              Deselect All
+              {t('issues.batchReview.deselectAll', {
+                defaultValue: 'Deselect All'
+              })}
             </Button>
           </div>
         </div>
 
-        {/* Batches List */}
         <ScrollArea className="flex-1 -mx-6 px-6">
           <div className="space-y-3">
             {proposedBatches.map((batch, idx) => (
@@ -287,11 +306,12 @@ export function BatchReviewWizard({
             ))}
           </div>
 
-          {/* Single Issues Section */}
           {singleIssues.length > 0 && (
             <div className="mt-6">
               <h4 className="text-sm font-medium text-muted-foreground mb-2">
-                Single Issues (not grouped)
+                {t('issues.batchReview.singleIssuesTitle', {
+                  defaultValue: 'Single Issues (not grouped)'
+                })}
               </h4>
               <div className="grid grid-cols-2 gap-2">
                 {singleIssues.slice(0, 10).map((issue) => (
@@ -316,7 +336,10 @@ export function BatchReviewWizard({
                 ))}
                 {singleIssues.length > 10 && (
                   <div className="p-2 text-sm text-muted-foreground">
-                    ...and {singleIssues.length - 10} more
+                    {t('issues.batchReview.andMore', {
+                      count: singleIssues.length - 10,
+                      defaultValue: '...and {{count}} more'
+                    })}
                   </div>
                 )}
               </div>
@@ -324,12 +347,34 @@ export function BatchReviewWizard({
           )}
         </ScrollArea>
 
-        {/* Selection Summary */}
         <div className="flex items-center justify-between pt-4 mt-4 border-t border-border">
           <div className="text-sm text-muted-foreground">
-            {selectedCount} batch{selectedCount !== 1 ? 'es' : ''} selected ({totalIssuesInSelected} issues)
+            {t(
+              selectedCount === 1
+                ? 'issues.batchReview.selectionSummary'
+                : 'issues.batchReview.selectionSummary_plural',
+              {
+                count: selectedCount,
+                issueCount: totalIssuesInSelected,
+                defaultValue:
+                  selectedCount === 1
+                    ? '{{count}} batch selected ({{issueCount}} issues)'
+                    : '{{count}} batches selected ({{issueCount}} issues)'
+              }
+            )}
             {selectedSingleIssueNumbers.size > 0 && (
-              <> + {selectedSingleIssueNumbers.size} single issue{selectedSingleIssueNumbers.size !== 1 ? 's' : ''}</>
+              <> {t(
+                selectedSingleIssueNumbers.size === 1
+                  ? 'issues.batchReview.selectedSingleIssues'
+                  : 'issues.batchReview.selectedSingleIssues_plural',
+                {
+                  count: selectedSingleIssueNumbers.size,
+                  defaultValue:
+                    selectedSingleIssueNumbers.size === 1
+                      ? '+ {{count}} single issue'
+                      : '+ {{count}} single issues'
+                }
+              )}</>
             )}
           </div>
         </div>
@@ -341,9 +386,15 @@ export function BatchReviewWizard({
     <div className="flex flex-col items-center justify-center py-8 space-y-6">
       <Loader2 className="h-12 w-12 text-primary animate-spin" />
       <div className="text-center space-y-2">
-        <h3 className="text-lg font-semibold">Creating Batches...</h3>
+        <h3 className="text-lg font-semibold">
+          {t('issues.batchReview.approvingTitle', {
+            defaultValue: 'Creating Batches...'
+          })}
+        </h3>
         <p className="text-sm text-muted-foreground">
-          Setting up the approved issue batches for processing.
+          {t('issues.batchReview.approvingDescription', {
+            defaultValue: 'Setting up the approved issue batches for processing.'
+          })}
         </p>
       </div>
     </div>
@@ -355,16 +406,56 @@ export function BatchReviewWizard({
         <CheckCircle2 className="h-12 w-12 text-green-500" />
       </div>
       <div className="text-center space-y-2">
-        <h3 className="text-lg font-semibold">Batches Created</h3>
+        <h3 className="text-lg font-semibold">
+          {t('issues.batchReview.doneTitle', {
+            defaultValue: 'Batches Created'
+          })}
+        </h3>
         <p className="text-sm text-muted-foreground">
-          Your selected issue batches are ready for processing.
+          {t('issues.batchReview.doneDescription', {
+            defaultValue: 'Your selected issue batches are ready for processing.'
+          })}
         </p>
       </div>
       <Button onClick={onClose}>
-        Close
+        {t('issues.batchReview.close', {
+          defaultValue: 'Close'
+        })}
       </Button>
     </div>
   );
+
+  const renderDescription = () => {
+    if (step === 'intro') {
+      return t('issues.batchReview.descriptions.intro', {
+        defaultValue: 'Analyze open issues and group similar ones for batch processing.'
+      });
+    }
+
+    if (step === 'analyzing') {
+      return t('issues.batchReview.descriptions.analyzing', {
+        defaultValue: 'Analyzing issues for semantic similarity...'
+      });
+    }
+
+    if (step === 'review') {
+      return t('issues.batchReview.descriptions.review', {
+        defaultValue: 'Review and approve the proposed issue batches.'
+      });
+    }
+
+    if (step === 'approving') {
+      return t('issues.batchReview.descriptions.approving', {
+        defaultValue: 'Creating the approved batches...'
+      });
+    }
+
+    return t('issues.batchReview.descriptions.done', {
+      defaultValue: 'Batches have been created successfully.'
+    });
+  };
+
+  const totalSelectedBatchCount = selectedBatchIds.size + selectedSingleIssueNumbers.size;
 
   return (
     <Dialog open={isOpen} onOpenChange={(open) => !open && onClose()}>
@@ -372,14 +463,12 @@ export function BatchReviewWizard({
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
             <Layers className="h-5 w-5" />
-            Analyze & Group Issues
+            {t('issues.batchReview.title', {
+              defaultValue: 'Analyze & Group Issues'
+            })}
           </DialogTitle>
           <DialogDescription>
-            {step === 'intro' && 'Analyze open issues and group similar ones for batch processing.'}
-            {step === 'analyzing' && 'Analyzing issues for semantic similarity...'}
-            {step === 'review' && 'Review and approve the proposed issue batches.'}
-            {step === 'approving' && 'Creating the approved batches...'}
-            {step === 'done' && 'Batches have been created successfully.'}
+            {renderDescription()}
           </DialogDescription>
         </DialogHeader>
 
@@ -394,7 +483,9 @@ export function BatchReviewWizard({
         {step === 'review' && (
           <DialogFooter>
             <Button variant="outline" onClick={onClose}>
-              Cancel
+              {t('issues.batchReview.cancel', {
+                defaultValue: 'Cancel'
+              })}
             </Button>
             <Button
               onClick={handleApprove}
@@ -403,12 +494,25 @@ export function BatchReviewWizard({
               {isApproving ? (
                 <>
                   <Loader2 className="h-4 w-4 mr-2 animate-spin" />
-                  Creating...
+                  {t('issues.batchReview.creating', {
+                    defaultValue: 'Creating...'
+                  })}
                 </>
               ) : (
                 <>
                   <Play className="h-4 w-4 mr-2" />
-                  Approve & Create ({selectedBatchIds.size + selectedSingleIssueNumbers.size} {selectedBatchIds.size + selectedSingleIssueNumbers.size === 1 ? 'batch' : 'batches'})
+                  {t(
+                    totalSelectedBatchCount === 1
+                      ? 'issues.batchReview.approveCreate'
+                      : 'issues.batchReview.approveCreate_plural',
+                    {
+                      count: totalSelectedBatchCount,
+                      defaultValue:
+                        totalSelectedBatchCount === 1
+                          ? 'Approve & Create ({{count}} batch)'
+                          : 'Approve & Create ({{count}} batches)'
+                    }
+                  )}
                 </>
               )}
             </Button>
@@ -436,6 +540,7 @@ function BatchCard({
   onToggleSelect,
   onToggleExpand,
 }: BatchCardProps) {
+  const { t } = useTranslation('common');
   const confidenceColor = batch.confidence >= 0.8
     ? 'text-green-500'
     : batch.confidence >= 0.6
@@ -465,14 +570,26 @@ function BatchCard({
                 <ChevronRight className="h-4 w-4" />
               )}
               <span className="font-medium text-sm">
-                {batch.theme || `Batch ${index + 1}`}
+                {batch.theme || t('issues.batchReview.batchTitle', {
+                  number: index + 1,
+                  defaultValue: 'Batch {{number}}'
+                })}
               </span>
             </CollapsibleTrigger>
 
             <div className="flex items-center gap-2">
               <Badge variant="outline" className="text-xs">
                 <Users className="h-3 w-3 mr-1" />
-                {batch.issueCount} issues
+                {t(
+                  batch.issueCount === 1
+                    ? 'issues.batchReview.issueCount'
+                    : 'issues.batchReview.issueCount_plural',
+                  {
+                    count: batch.issueCount,
+                    defaultValue:
+                      batch.issueCount === 1 ? '{{count}} issue' : '{{count}} issues'
+                  }
+                )}
               </Badge>
               <Badge
                 variant={batch.validated ? 'default' : 'secondary'}
@@ -491,12 +608,10 @@ function BatchCard({
           </div>
 
           <CollapsibleContent className="mt-3 space-y-2">
-            {/* Reasoning */}
             <p className="text-xs text-muted-foreground px-6">
               {batch.reasoning}
             </p>
 
-            {/* Issues List */}
             <div className="space-y-1 px-6">
               {batch.issues.map((issue) => (
                 <div
@@ -510,13 +625,15 @@ function BatchCard({
                     <span className="truncate">{issue.title}</span>
                   </div>
                   <span className="text-xs text-muted-foreground">
-                    {Math.round(issue.similarityToPrimary * 100)}% similar
+                    {t('issues.batchReview.similarity', {
+                      percent: Math.round(issue.similarityToPrimary * 100),
+                      defaultValue: '{{percent}}% similar'
+                    })}
                   </span>
                 </div>
               ))}
             </div>
 
-            {/* Themes */}
             {batch.commonThemes.length > 0 && (
               <div className="flex flex-wrap gap-1 px-6 pt-2">
                 {batch.commonThemes.map((theme, i) => (

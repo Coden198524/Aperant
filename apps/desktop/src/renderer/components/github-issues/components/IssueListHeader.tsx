@@ -47,7 +47,7 @@ export function IssueListHeader({
           </div>
           <div>
             <h2 className="text-lg font-semibold text-foreground">
-              GitHub Issues
+              {t('issues.title', { defaultValue: 'GitHub Issues' })}
             </h2>
             <p className="text-xs text-muted-foreground">
               {repoFullName}
@@ -56,7 +56,10 @@ export function IssueListHeader({
         </div>
         <div className="flex items-center gap-2">
           <Badge variant="outline" className="text-xs">
-            {openIssuesCount} open
+            {t('issues.header.openCount', {
+              count: openIssuesCount,
+              defaultValue: '{{count}} open'
+            })}
           </Badge>
           <Button
             variant="ghost"
@@ -89,11 +92,17 @@ export function IssueListHeader({
                   ) : (
                     <Layers className="h-4 w-4 mr-2" />
                   )}
-                  Analyze & Group Issues
+                  {t('issues.header.analyzeAndGroup', {
+                    defaultValue: 'Analyze & Group Issues'
+                  })}
                 </Button>
               </TooltipTrigger>
               <TooltipContent side="bottom" className="max-w-xs">
-                <p>Analyze up to 200 open issues, group similar ones, and review proposed batches before creating tasks.</p>
+                <p>
+                  {t('issues.header.analyzeAndGroupTooltip', {
+                    defaultValue: 'Analyze up to 200 open issues, group similar ones, and review proposed batches before creating tasks.'
+                  })}
+                </p>
               </TooltipContent>
             </Tooltip>
           </TooltipProvider>
@@ -112,7 +121,9 @@ export function IssueListHeader({
                       <Wand2 className="h-4 w-4 text-muted-foreground" />
                     )}
                     <Label htmlFor="auto-fix-toggle" className="text-sm cursor-pointer whitespace-nowrap">
-                      Auto-Fix New
+                      {t('issues.header.autoFixNew', {
+                        defaultValue: 'Auto-Fix New'
+                      })}
                     </Label>
                     <Switch
                       id="auto-fix-toggle"
@@ -123,9 +134,26 @@ export function IssueListHeader({
                   </div>
                 </TooltipTrigger>
                 <TooltipContent side="bottom" className="max-w-xs">
-                  <p>Automatically fix new issues as they come in.</p>
+                  <p>
+                    {t('issues.header.autoFixTooltip', {
+                      defaultValue: 'Automatically fix new issues as they come in.'
+                    })}
+                  </p>
                   {autoFixRunning && autoFixProcessing !== undefined && autoFixProcessing > 0 && (
-                    <p className="mt-1 text-primary">Processing {autoFixProcessing} issue{autoFixProcessing > 1 ? 's' : ''}...</p>
+                    <p className="mt-1 text-primary">
+                      {t(
+                        autoFixProcessing > 1
+                          ? 'issues.header.processingCount_plural'
+                          : 'issues.header.processingCount',
+                        {
+                          count: autoFixProcessing,
+                          defaultValue:
+                            autoFixProcessing > 1
+                              ? 'Processing {{count}} issues...'
+                              : 'Processing {{count}} issue...'
+                        }
+                      )}
+                    </p>
                   )}
                 </TooltipContent>
               </Tooltip>
@@ -139,7 +167,9 @@ export function IssueListHeader({
         <div className="relative flex-1">
           <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
           <Input
-            placeholder="Search issues..."
+            placeholder={t('issues.header.searchPlaceholder', {
+              defaultValue: 'Search issues...'
+            })}
             value={searchQuery}
             onChange={(e) => onSearchChange(e.target.value)}
             className="pl-9"
@@ -151,9 +181,15 @@ export function IssueListHeader({
             <SelectValue />
           </SelectTrigger>
           <SelectContent>
-            <SelectItem value="open">Open</SelectItem>
-            <SelectItem value="closed">Closed</SelectItem>
-            <SelectItem value="all">All</SelectItem>
+            <SelectItem value="open">
+              {t('issues.filters.open', { defaultValue: 'Open' })}
+            </SelectItem>
+            <SelectItem value="closed">
+              {t('issues.filters.closed', { defaultValue: 'Closed' })}
+            </SelectItem>
+            <SelectItem value="all">
+              {t('issues.filters.all', { defaultValue: 'All' })}
+            </SelectItem>
           </SelectContent>
         </Select>
       </div>

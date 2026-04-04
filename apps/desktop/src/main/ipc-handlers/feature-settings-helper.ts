@@ -17,6 +17,8 @@ import { readSettingsFile } from '../settings-utils';
 import {
   DEFAULT_FEATURE_MODELS,
   DEFAULT_FEATURE_THINKING,
+  getProviderDefaultFeatureModels,
+  getProviderDefaultFeatureThinking,
   resolveModelEquivalent,
 } from '../../shared/constants/models';
 import type { FeatureModelConfig, FeatureThinkingConfig } from '../../shared/types/settings';
@@ -70,6 +72,8 @@ export function getActiveProviderFeatureSettings(featureKey: FeatureKey): Featur
 
   // Try per-provider config first
   const activeProvider = resolveActiveProvider(settings);
+  const providerDefaultModels = getProviderDefaultFeatureModels(activeProvider);
+  const providerDefaultThinking = getProviderDefaultFeatureThinking(activeProvider);
   if (activeProvider) {
     const providerConfig = (settings.providerAgentConfig as Record<string, Record<string, unknown>> | undefined)?.[activeProvider];
     if (providerConfig) {
@@ -82,7 +86,7 @@ export function getActiveProviderFeatureSettings(featureKey: FeatureKey): Featur
       if (model) {
         return {
           model,
-          thinkingLevel: thinking ?? DEFAULT_FEATURE_THINKING[featureKey],
+          thinkingLevel: thinking ?? providerDefaultThinking[featureKey],
         };
       }
     }
@@ -92,8 +96,8 @@ export function getActiveProviderFeatureSettings(featureKey: FeatureKey): Featur
   const globalModels = settings.featureModels as FeatureModelConfig | undefined;
   const globalThinking = settings.featureThinking as FeatureThinkingConfig | undefined;
 
-  const model = globalModels?.[featureKey] ?? DEFAULT_FEATURE_MODELS[featureKey];
-  const thinkingLevel = globalThinking?.[featureKey] ?? DEFAULT_FEATURE_THINKING[featureKey];
+  const model = providerDefaultModels[featureKey] ?? globalModels?.[featureKey] ?? DEFAULT_FEATURE_MODELS[featureKey];
+  const thinkingLevel = providerDefaultThinking[featureKey] ?? globalThinking?.[featureKey] ?? DEFAULT_FEATURE_THINKING[featureKey];
 
   // If the resolved model is an Anthropic shorthand (e.g. 'haiku') but the active
   // provider is non-Anthropic, resolve to the provider's equivalent model so we

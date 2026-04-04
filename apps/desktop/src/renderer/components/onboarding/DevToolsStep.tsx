@@ -54,8 +54,7 @@ const IDE_NAMES: Partial<Record<SupportedIDE, string>> = {
   webstorm: 'WebStorm',
   windsurf: 'Windsurf',
   xcode: 'Xcode',
-  zed: 'Zed',
-  custom: 'Custom...'  // Always last
+  zed: 'Zed'
 };
 
 // Terminal display names - alphabetically sorted
@@ -77,8 +76,7 @@ const TERMINAL_NAMES: Partial<Record<SupportedTerminal, string>> = {
   warp: 'Warp',
   wezterm: 'WezTerm',
   windowsterminal: 'Windows Terminal',
-  zellij: 'Zellij',
-  custom: 'Custom...'  // Always last
+  zellij: 'Zellij'
 };
 
 // CLI display names
@@ -87,8 +85,7 @@ const CLI_NAMES: Partial<Record<SupportedCLI, string>> = {
   gemini: 'Gemini CLI',
   opencode: 'OpenCode',
   kilocode: 'Kilo Code CLI',
-  codex: 'Codex CLI',
-  custom: 'Custom...'
+  codex: 'Codex CLI'
 };
 
 /**
@@ -98,7 +95,7 @@ const CLI_NAMES: Partial<Record<SupportedCLI, string>> = {
  * their preferred tools for opening worktrees.
  */
 export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
-  const { t } = useTranslation('onboarding');
+  const { t } = useTranslation(['onboarding', 'settings', 'common']);
   const { settings, updateSettings } = useSettingsStore();
   const [preferredIDE, setPreferredIDE] = useState<SupportedIDE>(settings.preferredIDE || 'vscode');
   const [preferredTerminal, setPreferredTerminal] = useState<SupportedTerminal>(settings.preferredTerminal || 'system');
@@ -163,10 +160,10 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
         updateSettings(settingsToSave);
         onNext();
       } else {
-        setError(result?.error || 'Failed to save settings');
+        setError(result?.error || t('common:errors.unknownError'));
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Unknown error occurred');
+      setError(err instanceof Error ? err.message : t('common:errors.unknownError'));
     } finally {
       setIsSaving(false);
     }
@@ -199,7 +196,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
   }
 
   // Add custom option last
-  ideOptions.push({ value: 'custom', label: 'Custom...', detected: false });
+  ideOptions.push({ value: 'custom', label: t('devtools.custom'), detected: false });
 
   // Build Terminal options with detection status
   const terminalOptions: Array<{ value: SupportedTerminal; label: string; detected: boolean }> = [];
@@ -238,7 +235,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
   }
 
   // Add custom option last
-  terminalOptions.push({ value: 'custom', label: 'Custom...', detected: false });
+  terminalOptions.push({ value: 'custom', label: t('devtools.custom'), detected: false });
 
   // Build CLI options with detection status
   const cliOptions: Array<{ value: SupportedCLI; label: string; detected: boolean }> = [];
@@ -267,7 +264,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
   }
 
   // Add custom option last
-  cliOptions.push({ value: 'custom', label: 'Custom...', detected: false });
+  cliOptions.push({ value: 'custom', label: t('devtools.custom'), detected: false });
 
   return (
     <div className="flex h-full flex-col items-center justify-center px-8 py-6">
@@ -349,7 +346,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                 disabled={isSaving}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select IDE..." />
+                  <SelectValue placeholder={t('settings:devtools.ide.placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {ideOptions.map((option) => (
@@ -378,7 +375,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                     id="custom-ide-path"
                     value={customIDEPath}
                     onChange={(e) => setCustomIDEPath(e.target.value)}
-                    placeholder="/path/to/your/ide"
+                    placeholder={t('settings:devtools.ide.customPathPlaceholder')}
                     className="mt-1"
                     disabled={isSaving}
                   />
@@ -398,7 +395,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                 disabled={isSaving}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select terminal..." />
+                  <SelectValue placeholder={t('settings:devtools.terminal.placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {terminalOptions.map((option) => (
@@ -427,7 +424,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                     id="custom-terminal-path"
                     value={customTerminalPath}
                     onChange={(e) => setCustomTerminalPath(e.target.value)}
-                    placeholder="/path/to/your/terminal"
+                    placeholder={t('settings:devtools.terminal.customPathPlaceholder')}
                     className="mt-1"
                     disabled={isSaving}
                   />
@@ -447,7 +444,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                 disabled={isSaving}
               >
                 <SelectTrigger>
-                  <SelectValue placeholder="Select CLI..." />
+                  <SelectValue placeholder={t('settings:devtools.cli.placeholder')} />
                 </SelectTrigger>
                 <SelectContent>
                   {cliOptions.map((option) => (
@@ -476,7 +473,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
                     id="custom-cli-path"
                     value={customCLIPath}
                     onChange={(e) => setCustomCLIPath(e.target.value)}
-                    placeholder="/path/to/your/cli"
+                    placeholder={t('settings:devtools.cli.customPathPlaceholder')}
                     className="mt-1"
                     disabled={isSaving}
                   />
@@ -523,7 +520,7 @@ export function DevToolsStep({ onNext, onBack }: DevToolsStepProps) {
             {isSaving ? (
               <>
                 <Loader2 className="h-4 w-4 animate-spin mr-2" />
-                Saving...
+                {t('common:buttons.saving')}
               </>
             ) : (
               t('devtools.saveAndContinue')

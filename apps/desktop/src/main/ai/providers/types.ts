@@ -12,6 +12,7 @@
 export const SupportedProvider = {
   Anthropic: 'anthropic',
   OpenAI: 'openai',
+  OpenAICompatible: 'openai-compatible',
   Google: 'google',
   Bedrock: 'bedrock',
   Azure: 'azure',

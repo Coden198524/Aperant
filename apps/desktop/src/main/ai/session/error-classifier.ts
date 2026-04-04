@@ -27,6 +27,7 @@ export const ErrorCode = {
   TOOL_ERROR: 'tool_execution_error',
   ABORTED: 'aborted',
   MAX_STEPS: 'max_steps_reached',
+  MODEL_NOT_FOUND: 'model_not_found',
   GENERIC: 'generic_error',
 } as const;
 
@@ -55,6 +56,8 @@ const BILLING_ERROR_PATTERNS = [
   'credits exhausted',
   'subscription expired',
   'billing error',
+  'no_available_channel',
+  'distributor.no_available_channel',
 ] as const;
 
 const RATE_LIMIT_PATTERNS = [
@@ -78,6 +81,19 @@ const AUTH_PATTERNS = [
   'http 401',
   'does not have access to claude',
   'please login again',
+] as const;
+
+const MODEL_NOT_FOUND_PATTERNS = [
+  'model not found',
+  'model does not exist',
+  'invalid model',
+  'unknown model',
+  'model_not_found',
+  'cannot post',
+  'not found',
+  'http 404',
+  'endpoint not supported',
+  'codex channel',
 ] as const;
 
 /**
@@ -124,6 +140,15 @@ export function isToolConcurrencyError(error: unknown): boolean {
 }
 
 /**
+ * Check if an error is a model not found error (404 or similar).
+ */
+export function isModelNotFoundError(error: unknown): boolean {
+  const errorStr = errorToString(error);
+  if (/\b404\b/.test(errorStr)) return true;
+  return MODEL_NOT_FOUND_PATTERNS.some((p) => errorStr.includes(p));
+}
+
+/**
  * Check if an error is from an aborted request.
  */
 export function isAbortError(error: unknown): boolean {
@@ -151,9 +176,10 @@ export interface ClassifiedError {
  * 2. Billing/balance error (not retryable — needs user action)
  * 3. Rate limit (retryable after backoff)
  * 4. Auth failure (not retryable without re-auth)
- * 5. Concurrency (retryable)
- * 6. Tool error (retryable)
- * 7. Generic (not retryable)
+ * 5. Model not found (retryable with different account)
+ * 6. Concurrency (retryable)
+ * 7. Tool error (retryable)
+ * 8. Generic (not retryable)
  */
 export function classifyError(error: unknown): ClassifiedError {
   const message = sanitizeErrorMessage(errorToString(error));
@@ -205,6 +231,18 @@ export function classifyError(error: unknown): ClassifiedError {
         cause: error,
       },
       outcome: 'auth_failure',
+    };
+  }
+
+  if (isModelNotFoundError(error)) {
+    return {
+      sessionError: {
+        code: ErrorCode.MODEL_NOT_FOUND,
+        message: `Model not found: ${message}`,
+        retryable: true,
+        cause: error,
+      },
+      outcome: 'error',
     };
   }
 

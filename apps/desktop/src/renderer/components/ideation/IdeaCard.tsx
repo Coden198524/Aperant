@@ -6,14 +6,11 @@ import { Card } from '../ui/card';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { Checkbox } from '../ui/checkbox';
 import {
-  IDEATION_TYPE_LABELS,
   IDEATION_TYPE_COLORS,
   IDEATION_STATUS_COLORS,
   IDEATION_EFFORT_COLORS,
   IDEATION_IMPACT_COLORS,
   SECURITY_SEVERITY_COLORS,
-  UIUX_CATEGORY_LABELS,
-  DOCUMENTATION_CATEGORY_LABELS,
   CODE_QUALITY_SEVERITY_COLORS
 } from '../../../shared/constants';
 import type {
@@ -34,6 +31,16 @@ import {
   isPerformanceOptimizationIdea,
   isCodeQualityIdea
 } from './type-guards';
+import {
+  getCodeQualitySeverityLabel,
+  getDocumentationCategoryLabel,
+  getIdeationEffortLabel,
+  getIdeationImpactLabel,
+  getIdeationStatusLabel,
+  getIdeationTypeLabel,
+  getSecuritySeverityLabel,
+  getUIUXCategoryLabel
+} from '../../lib/i18n-labels';
 
 interface IdeaCardProps {
   idea: Idea;
@@ -81,41 +88,44 @@ export function IdeaCard({ idea, isSelected, onClick, onConvert, onGoToTask, onD
           <div className="flex items-center gap-2 mb-1">
             <Badge variant="outline" className={IDEATION_TYPE_COLORS[idea.type]}>
               <TypeIcon type={idea.type} />
-              <span className="ml-1">{IDEATION_TYPE_LABELS[idea.type]}</span>
+              <span className="ml-1">{getIdeationTypeLabel(t, idea.type)}</span>
             </Badge>
             {idea.status !== 'draft' && (
               <Badge variant="outline" className={IDEATION_STATUS_COLORS[idea.status]}>
-                {idea.status}
+                {getIdeationStatusLabel(t, idea.status)}
               </Badge>
             )}
             {isCodeImprovementIdea(idea) && typeof (idea as CodeImprovementIdea).estimatedEffort === 'string' && (
               <Badge variant="outline" className={IDEATION_EFFORT_COLORS[(idea as CodeImprovementIdea).estimatedEffort]}>
-                {(idea as CodeImprovementIdea).estimatedEffort}
+                {getIdeationEffortLabel(t, (idea as CodeImprovementIdea).estimatedEffort)}
               </Badge>
             )}
             {isUIUXIdea(idea) && typeof (idea as UIUXImprovementIdea).category === 'string' && (
               <Badge variant="outline">
-                {UIUX_CATEGORY_LABELS[(idea as UIUXImprovementIdea).category]}
+                {getUIUXCategoryLabel(t, (idea as UIUXImprovementIdea).category)}
               </Badge>
             )}
             {isDocumentationGapIdea(idea) && typeof (idea as DocumentationGapIdea).category === 'string' && (
               <Badge variant="outline">
-                {DOCUMENTATION_CATEGORY_LABELS[(idea as DocumentationGapIdea).category]}
+                {getDocumentationCategoryLabel(t, (idea as DocumentationGapIdea).category)}
               </Badge>
             )}
             {isSecurityHardeningIdea(idea) && typeof (idea as SecurityHardeningIdea).severity === 'string' && (
               <Badge variant="outline" className={SECURITY_SEVERITY_COLORS[(idea as SecurityHardeningIdea).severity]}>
-                {(idea as SecurityHardeningIdea).severity}
+                {getSecuritySeverityLabel(t, (idea as SecurityHardeningIdea).severity)}
               </Badge>
             )}
             {isPerformanceOptimizationIdea(idea) && typeof (idea as PerformanceOptimizationIdea).impact === 'string' && (
               <Badge variant="outline" className={IDEATION_IMPACT_COLORS[(idea as PerformanceOptimizationIdea).impact]}>
-                {(idea as PerformanceOptimizationIdea).impact} impact
+                {t('ideation.detail.impactValue', {
+                  value: getIdeationImpactLabel(t, (idea as PerformanceOptimizationIdea).impact),
+                  defaultValue: '{{value}} impact'
+                })}
               </Badge>
             )}
             {isCodeQualityIdea(idea) && typeof (idea as CodeQualityIdea).severity === 'string' && (
               <Badge variant="outline" className={CODE_QUALITY_SEVERITY_COLORS[(idea as CodeQualityIdea).severity]}>
-                {(idea as CodeQualityIdea).severity}
+                {getCodeQualitySeverityLabel(t, (idea as CodeQualityIdea).severity)}
               </Badge>
             )}
           </div>

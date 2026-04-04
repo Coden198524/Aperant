@@ -5,6 +5,7 @@
  */
 
 import { Download, Loader2 } from 'lucide-react';
+import { useTranslation } from 'react-i18next';
 import {
   Dialog,
   DialogContent,
@@ -31,6 +32,8 @@ export function LinearTaskImportModalRefactored({
   onOpenChange,
   onImportComplete
 }: LinearTaskImportModalProps) {
+  const { t } = useTranslation('common');
+
   // Use the orchestration hook to manage all state and handlers
   const {
     teams,
@@ -72,10 +75,12 @@ export function LinearTaskImportModalRefactored({
         <DialogHeader className="shrink-0">
           <DialogTitle className="flex items-center gap-2 text-foreground">
             <Download className="h-5 w-5" />
-            Import Linear Tasks
+            {t('linearImport.title', { defaultValue: 'Import Linear Tasks' })}
           </DialogTitle>
           <DialogDescription>
-            Select tasks from Linear to import into AutoBuild
+            {t('linearImport.description', {
+              defaultValue: 'Select tasks from Linear to import into AutoBuild'
+            })}
           </DialogDescription>
         </DialogHeader>
 
@@ -143,7 +148,7 @@ export function LinearTaskImportModalRefactored({
 
         <DialogFooter className="shrink-0">
           <Button variant="outline" onClick={() => handleOpenChange(false)}>
-            {importResult?.success ? 'Done' : 'Cancel'}
+            {importResult?.success ? t('selection.done') : t('buttons.cancel')}
           </Button>
           {!importResult?.success && (
             <Button
@@ -153,13 +158,18 @@ export function LinearTaskImportModalRefactored({
               {isImporting ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                  Importing...
+                  {t('linearImport.importing', { defaultValue: 'Importing...' })}
                 </>
               ) : (
                 <>
                   <Download className="mr-2 h-4 w-4" />
-                  Import {selectedIssueIds.size} Task
-                  {selectedIssueIds.size !== 1 ? 's' : ''}
+                  {t('linearImport.importButton', {
+                    count: selectedIssueIds.size,
+                    defaultValue:
+                      selectedIssueIds.size === 1
+                        ? 'Import 1 Task'
+                        : 'Import {{count}} Tasks'
+                  })}
                 </>
               )}
             </Button>

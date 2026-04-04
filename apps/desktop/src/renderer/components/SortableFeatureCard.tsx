@@ -14,11 +14,15 @@ import { useTranslation } from 'react-i18next';
 import { TaskOutcomeBadge, getTaskOutcomeColorClass } from './roadmap/TaskOutcomeBadge';
 import {
   ROADMAP_PRIORITY_COLORS,
-  ROADMAP_PRIORITY_LABELS,
   ROADMAP_COMPLEXITY_COLORS,
   ROADMAP_IMPACT_COLORS
 } from '../../shared/constants';
 import type { RoadmapFeature, Roadmap } from '../../shared/types';
+import {
+  getRoadmapComplexityLabel,
+  getRoadmapImpactLabel,
+  getRoadmapPriorityLabel
+} from '../lib/i18n-labels';
 
 interface SortableFeatureCardProps {
   feature: RoadmapFeature;
@@ -88,7 +92,7 @@ export function SortableFeatureCard({
                 variant="outline"
                 className={cn('text-[10px] px-1.5 py-0', ROADMAP_PRIORITY_COLORS[feature.priority])}
               >
-                {ROADMAP_PRIORITY_LABELS[feature.priority]}
+                {getRoadmapPriorityLabel(t, feature.priority)}
               </Badge>
               {phaseName && (
                 <Tooltip>
@@ -102,7 +106,10 @@ export function SortableFeatureCard({
                     </Badge>
                   </TooltipTrigger>
                   <TooltipContent>
-                    Phase: {phaseName}
+                    {t('roadmap.detail.phaseName', {
+                      phase: phaseName,
+                      defaultValue: 'Phase: {{phase}}'
+                    })}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -117,7 +124,7 @@ export function SortableFeatureCard({
                     </Badge>
                   </TooltipTrigger>
                   <TooltipContent>
-                    This feature addresses competitor pain points
+                    {t('roadmap.tooltips.competitorInsight', { defaultValue: 'This feature addresses competitor pain points' })}
                   </TooltipContent>
                 </Tooltip>
               )}
@@ -191,13 +198,13 @@ export function SortableFeatureCard({
             variant="outline"
             className={cn('text-[10px] px-1.5 py-0', ROADMAP_COMPLEXITY_COLORS[feature.complexity])}
           >
-            {feature.complexity}
+            {getRoadmapComplexityLabel(t, feature.complexity)}
           </Badge>
           <Badge
             variant="outline"
             className={cn('text-[10px] px-1.5 py-0', ROADMAP_IMPACT_COLORS[feature.impact])}
           >
-            {feature.impact}
+            {getRoadmapImpactLabel(t, feature.impact)}
           </Badge>
           {/* Show vote count if from external source */}
           {feature.votes !== undefined && feature.votes > 0 && (
@@ -212,7 +219,10 @@ export function SortableFeatureCard({
                 </Badge>
               </TooltipTrigger>
               <TooltipContent>
-                {feature.votes} votes from user feedback
+                {t('roadmap.tooltips.votes', {
+                  count: feature.votes,
+                  defaultValue: '{{count}} votes from user feedback'
+                })}
               </TooltipContent>
             </Tooltip>
           )}
@@ -228,7 +238,10 @@ export function SortableFeatureCard({
                 </Badge>
               </TooltipTrigger>
               <TooltipContent>
-                Imported from {feature.source?.provider}
+                {t('roadmap.tooltips.importedFrom', {
+                  provider: feature.source?.provider,
+                  defaultValue: 'Imported from {{provider}}'
+                })}
               </TooltipContent>
             </Tooltip>
           )}
