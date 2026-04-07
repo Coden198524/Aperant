@@ -191,6 +191,19 @@ export function useIpcListeners(): void {
       (taskId: string, plan: ImplementationPlan, projectId?: string) => {
         // Filter by project to prevent multi-project interference
         if (!isTaskForCurrentProject(projectId)) return;
+
+        // Debug: log subtask status summary
+        if (window.DEBUG && plan.phases?.length) {
+          const statusCounts: Record<string, number> = {};
+          for (const phase of plan.phases) {
+            for (const st of phase.subtasks ?? []) {
+              const s = st.status || 'pending';
+              statusCounts[s] = (statusCounts[s] || 0) + 1;
+            }
+          }
+          console.log(`[useIpc] Received TASK_PROGRESS for ${taskId}:`, statusCounts);
+        }
+
         queueUpdate(taskId, { plan });
       }
     );
@@ -244,6 +257,15 @@ export function useIpcListeners(): void {
 
     const cleanupExecutionProgress = window.electronAPI.onTaskExecutionProgress(
       (taskId: string, progress: ExecutionProgress, projectId?: string) => {
+        // Debug: Log received execution progress
+        if (window.DEBUG) {
+          console.log(`[useIpc] Received TASK_EXECUTION_PROGRESS:`, {
+            taskId,
+            phase: progress.phase,
+            phaseProgress: progress.phaseProgress,
+            projectId
+          });
+        }
         // Filter by project to prevent multi-project interference
         // This is the critical fix for issue #723 - without this check,
         // execution progress from Project A's task could update Project B's UI

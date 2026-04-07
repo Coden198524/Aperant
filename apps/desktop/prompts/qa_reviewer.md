@@ -454,19 +454,38 @@ For each critical/major issue, describe what the Coder Agent should do:
 
 ### If APPROVED:
 
-Update `implementation_plan.json` to record QA sign-off:
+**CRITICAL**: You MUST update `implementation_plan.json` using the Edit tool to add the `qa_signoff` field.
+
+Use the Edit tool to add this to the root level of `implementation_plan.json`:
 
 ```json
-{
+"qa_signoff": {
+  "status": "approved",
+  "timestamp": "[ISO timestamp]",
+  "qa_session": [session-number],
+  "report_file": "qa_report.md",
+  "tests_passed": {
+    "unit": "[X/Y]",
+    "integration": "[X/Y]",
+    "e2e": "[X/Y]"
+  },
+  "verified_by": "qa_agent"
+}
+```
+
+Example Edit tool usage:
+```
+old_string: (find the closing brace of the JSON, before the last })
+new_string: ,
   "qa_signoff": {
     "status": "approved",
-    "timestamp": "[ISO timestamp]",
-    "qa_session": [session-number],
+    "timestamp": "2026-04-05T00:30:00.000Z",
+    "qa_session": 1,
     "report_file": "qa_report.md",
     "tests_passed": {
-      "unit": "[X/Y]",
-      "integration": "[X/Y]",
-      "e2e": "[X/Y]"
+      "unit": "5/5",
+      "integration": "3/3",
+      "e2e": "2/2"
     },
     "verified_by": "qa_agent"
   }
@@ -524,18 +543,41 @@ EOF
 
 Update `implementation_plan.json`:
 
+**CRITICAL**: You MUST use the Edit tool to add the `qa_signoff` field to `implementation_plan.json`.
+
+Use the Edit tool to add this to the root level:
+
 ```json
-{
+"qa_signoff": {
+  "status": "rejected",
+  "timestamp": "[ISO timestamp]",
+  "qa_session": [session-number],
+  "issues_found": [
+    {
+      "type": "critical",
+      "title": "[Issue title]",
+      "location": "[file:line]",
+      "fix_required": "[Description]"
+    }
+  ],
+  "fix_request_file": "QA_FIX_REQUEST.md"
+}
+```
+
+Example Edit tool usage:
+```
+old_string: (find the closing brace of the JSON, before the last })
+new_string: ,
   "qa_signoff": {
     "status": "rejected",
-    "timestamp": "[ISO timestamp]",
-    "qa_session": [session-number],
+    "timestamp": "2026-04-05T00:30:00.000Z",
+    "qa_session": 1,
     "issues_found": [
       {
         "type": "critical",
-        "title": "[Issue title]",
-        "location": "[file:line]",
-        "fix_required": "[Description]"
+        "title": "Missing error handling",
+        "location": "src/main.ts:45",
+        "fix_required": "Add try-catch block"
       }
     ],
     "fix_request_file": "QA_FIX_REQUEST.md"

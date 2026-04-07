@@ -106,7 +106,12 @@ const BILLING_FAILURE_PATTERNS = [
   /no_available_channel/i,
   // Endpoint not supported (wrong API configuration)
   /endpoint\s+not\s+supported/i,
-  /codex\s+channel/i
+  /codex\s+channel/i,
+  // Chinese error messages
+  /没有可用token/i,
+  /余额不足/i,
+  /配额已用尽/i,
+  /账户已暂停/i
 ];
 
 /**

@@ -148,6 +148,11 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
   }
 
   function processPart(part: FullStreamPart): void {
+    // Log all parts for debugging
+    if (part.type === 'finish-step' || part.type === 'error') {
+      console.log(`[StreamHandler] Processing part:`, part.type, part);
+    }
+
     switch (part.type) {
       case 'text-delta':
         handleTextDelta(part as TextDeltaPart);
@@ -242,10 +247,20 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
     const completionTokens = part.usage?.completionTokens ?? 0;
     const totalTokens = promptTokens + completionTokens;
 
+    console.log(`[StreamHandler] finish-step received:`, {
+      stepNumber: state.stepNumber,
+      usage: part.usage,
+      promptTokens,
+      completionTokens,
+      totalTokens
+    });
+
     // Accumulate usage
     state.cumulativeUsage.promptTokens += promptTokens;
     state.cumulativeUsage.completionTokens += completionTokens;
     state.cumulativeUsage.totalTokens += totalTokens;
+
+    console.log(`[StreamHandler] Cumulative usage after step ${state.stepNumber}:`, state.cumulativeUsage);
 
     const stepUsage: TokenUsage = {
       promptTokens,

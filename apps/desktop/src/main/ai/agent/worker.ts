@@ -661,7 +661,7 @@ async function runBuildOrchestrator(
     });
   });
 
-  orchestrator.on('session-complete', (_result: SessionResult, phase: string) => {
+  orchestrator.on('session-complete', (result: SessionResult, phase: string) => {
     // Notify the main process that a session (subtask) completed.
     // This triggers persistPlanPhaseSync → invalidateTasksCache so the frontend
     // sees updated subtask statuses in the implementation plan.
@@ -676,6 +676,20 @@ async function runBuildOrchestrator(
       },
       projectId: config.projectId,
     });
+
+    // Send token usage from this session
+    console.log(`[Worker] Session complete for ${config.taskId}, usage:`, result.usage);
+    if (result.usage && result.usage.totalTokens > 0) {
+      console.log(`[Worker] Sending task-token-usage for ${config.taskId}:`, result.usage);
+      postMessage({
+        type: 'task-token-usage',
+        taskId: config.taskId,
+        data: result.usage,
+        projectId: config.projectId,
+      });
+    } else {
+      console.warn(`[Worker] No token usage to send for ${config.taskId}:`, result.usage);
+    }
   });
 
   orchestrator.on('log', (message: string) => {

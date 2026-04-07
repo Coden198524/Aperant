@@ -343,6 +343,30 @@ export class TaskStateManager {
       projectId,
       reviewReason
     );
+
+    // Also emit execution progress to update the phase in the UI
+    // XState transitions (planning → coding → qa_review) need to update the phase badge
+    const actor = this.actors.get(taskId);
+    if (actor) {
+      const xstateState = String(actor.getSnapshot().value);
+      const executionPhase = this.mapStateToExecutionPhase(xstateState);
+
+      // Only emit if we have a meaningful phase (not idle)
+      if (executionPhase && executionPhase !== 'idle') {
+        console.debug(`[TaskStateManager] emitStatus: Also sending TASK_EXECUTION_PROGRESS for ${taskId}:`, { phase: executionPhase });
+        safeSendToRenderer(
+          this.getMainWindow,
+          IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
+          taskId,
+          {
+            phase: executionPhase,
+            phaseProgress: 0,
+            overallProgress: 0,
+          },
+          projectId
+        );
+      }
+    }
   }
 
   private isNewSequence(taskId: string, sequence: number): boolean {

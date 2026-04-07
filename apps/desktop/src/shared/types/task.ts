@@ -70,6 +70,7 @@ export interface TokenUsage {
   thinkingTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  stepsExecuted?: number;  // Number of AI model requests (steps)
 }
 
 // Task Log Types - for persistent, phase-based logging

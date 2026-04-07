@@ -652,18 +652,33 @@ async function executeStream(
   // Get total usage from AI SDK result
   // AI SDK v6 uses inputTokens/outputTokens naming
   let totalUsage: { inputTokens?: number; outputTokens?: number } | undefined;
+
+  // Debug: log all available fields on result object
+  console.log('[SessionRunner] Available result fields:', Object.keys(result));
+  console.log('[SessionRunner] result.usage:', (result as any).usage);
+  console.log('[SessionRunner] result.experimental_providerMetadata:', (result as any).experimental_providerMetadata);
+
   try {
     totalUsage = await withTimeout(result.totalUsage, POST_STREAM_TIMEOUT_MS, 'result.totalUsage');
-  } catch {
+    console.log('[SessionRunner] Got totalUsage from result:', totalUsage);
+  } catch (err) {
+    console.warn('[SessionRunner] Failed to get totalUsage from result:', err);
     // Fall through — use summary usage collected during stream iteration.
   }
+
+  // For models that don't return usage in finish-step (e.g., OpenAI Responses API),
+  // totalUsage will have the data while summary.usage will be all zeros.
+  // Prefer totalUsage when available.
   const usage: TokenUsage = {
     promptTokens: totalUsage?.inputTokens ?? summary.usage.promptTokens,
     completionTokens: totalUsage?.outputTokens ?? summary.usage.completionTokens,
     totalTokens:
       (totalUsage?.inputTokens ?? 0) + (totalUsage?.outputTokens ?? 0) ||
       summary.usage.totalTokens,
+    stepsExecuted: summary.stepsExecuted,  // Include number of AI requests
   };
+
+  console.log('[SessionRunner] Final usage:', usage);
 
   return {
     outcome,

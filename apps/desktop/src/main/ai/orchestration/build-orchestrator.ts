@@ -471,13 +471,33 @@ export class BuildOrchestrator extends EventEmitter {
       return { success: false, error: 'Build cancelled' };
     }
 
-    if (iteratorResult.stuckSubtasks.length > 0 && iteratorResult.completedSubtasks === 0) {
-      return {
-        success: false,
-        error: `All subtasks stuck: ${iteratorResult.stuckSubtasks.join(', ')}`,
-      };
+    // Check if all subtasks are completed
+    const allCompleted = iteratorResult.completedSubtasks === iteratorResult.totalSubtasks;
+    const hasStuckSubtasks = iteratorResult.stuckSubtasks.length > 0;
+
+    if (!allCompleted) {
+      if (hasStuckSubtasks && iteratorResult.completedSubtasks === 0) {
+        // All subtasks stuck, none completed
+        return {
+          success: false,
+          error: `All subtasks stuck: ${iteratorResult.stuckSubtasks.join(', ')}`,
+        };
+      } else if (hasStuckSubtasks) {
+        // Some subtasks stuck, some completed
+        return {
+          success: false,
+          error: `${iteratorResult.stuckSubtasks.length} subtask(s) stuck (${iteratorResult.completedSubtasks}/${iteratorResult.totalSubtasks} completed): ${iteratorResult.stuckSubtasks.join(', ')}`,
+        };
+      } else {
+        // Some subtasks not completed (shouldn't happen, but guard against it)
+        return {
+          success: false,
+          error: `Coding incomplete: ${iteratorResult.completedSubtasks}/${iteratorResult.totalSubtasks} subtasks completed`,
+        };
+      }
     }
 
+    // All subtasks completed successfully
     // Sync after coding
     if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
       await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);

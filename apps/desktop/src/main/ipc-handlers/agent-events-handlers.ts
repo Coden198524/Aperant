@@ -305,6 +305,7 @@ export function registerAgenteventsHandlers(
   });
 
   agentManager.on("task-token-usage", (taskId: string, usage: TokenUsage, projectId?: string) => {
+    console.log(`[agent-events-handlers] Received task-token-usage for ${taskId}:`, usage);
     const { task, project } = findTaskAndProject(taskId, projectId);
     const taskProjectId = project?.id || projectId;
 
@@ -317,6 +318,7 @@ export function registerAgenteventsHandlers(
     );
 
     if (!task || !project) {
+      console.warn(`[agent-events-handlers] Task or project not found for token usage: ${taskId}`);
       return;
     }
 

@@ -170,8 +170,9 @@
       "auth_failure_paused": "需要身份验证",
       "reviewing": "审核中",
       "fixing": "修复中",
-      "spec_writing": "正在编写规范",
       "qa_review": "QA 审核",
+      "qa_fixing": "修复问题",
+      "spec_writing": "正在编写规范",
       "error": "错误",
       "complete": "完成",
       "failed": "失败"
@@ -407,6 +408,13 @@
   },
   "card": {
     "subtasks": "{{completed}} / {{total}} 个子任务"
+  },
+  "logs": {
+    "phaseLabels": {
+      "planning": "生成计划",
+      "coding": "编写代码",
+      "validation": "验证"
+    }
   },
   "errors": {
     "failedToLoadTasks": "加载任务失败",

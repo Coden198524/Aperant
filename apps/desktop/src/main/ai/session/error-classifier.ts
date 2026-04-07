@@ -66,6 +66,9 @@ const RATE_LIMIT_PATTERNS = [
   'too many requests',
   'usage limit',
   'quota exceeded',
+  // Temporary routing errors from proxy services
+  'codex channel',
+  'endpoint not supported',
 ] as const;
 
 const AUTH_PATTERNS = [
@@ -92,8 +95,6 @@ const MODEL_NOT_FOUND_PATTERNS = [
   'cannot post',
   'not found',
   'http 404',
-  'endpoint not supported',
-  'codex channel',
 ] as const;
 
 /**

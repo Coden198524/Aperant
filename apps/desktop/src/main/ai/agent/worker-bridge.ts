@@ -222,7 +222,13 @@ export class WorkerBridge extends EventEmitter {
     // Map outcome to exit code
     const exitCode = result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window' ? 0 : 1;
 
-    this.emitTyped('task-token-usage', taskId, result.usage, projectId);
+    // Merge stepsExecuted into usage for frontend display
+    const usageWithSteps: TokenUsage = {
+      ...result.usage,
+      stepsExecuted: result.stepsExecuted,
+    };
+
+    this.emitTyped('task-token-usage', taskId, usageWithSteps, projectId);
 
     // Log the result summary
     const summary = `Session complete: outcome=${result.outcome}, steps=${result.stepsExecuted}, tools=${result.toolCallCount}, duration=${result.durationMs}ms`;

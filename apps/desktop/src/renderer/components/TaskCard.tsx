@@ -118,12 +118,8 @@ function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProp
     prevTask.metadata?.complexity === nextTask.metadata?.complexity &&
     prevTask.metadata?.archivedAt === nextTask.metadata?.archivedAt &&
     prevTask.metadata?.prUrl === nextTask.metadata?.prUrl &&
-    prevTask.tokenUsage?.promptTokens === nextTask.tokenUsage?.promptTokens &&
-    prevTask.tokenUsage?.completionTokens === nextTask.tokenUsage?.completionTokens &&
-    prevTask.tokenUsage?.thinkingTokens === nextTask.tokenUsage?.thinkingTokens &&
-    prevTask.tokenUsage?.cacheReadTokens === nextTask.tokenUsage?.cacheReadTokens &&
-    prevTask.tokenUsage?.cacheCreationTokens === nextTask.tokenUsage?.cacheCreationTokens &&
-    prevTask.tokenUsage?.totalTokens === nextTask.tokenUsage?.totalTokens &&
+    // Only compare stepsExecuted for re-render detection
+    prevTask.tokenUsage?.stepsExecuted === nextTask.tokenUsage?.stepsExecuted &&
     // Check if any subtask statuses changed (compare all subtasks)
     prevTask.subtasks.every((s, i) => s.status === nextTask.subtasks[i]?.status)
   );
@@ -200,35 +196,26 @@ export const TaskCard = memo(function TaskCard({
   );
 
   const tokenBadges = useMemo(() => {
-    if (!task.tokenUsage?.totalTokens) return [];
+    // Only show request count (stepsExecuted)
+    const hasStepsExecuted = task.tokenUsage?.stepsExecuted && task.tokenUsage.stepsExecuted > 0;
+
+    // For running tasks, show current usage even if 0
+    const isActiveTask = task.status === 'in_progress' || task.status === 'ai_review';
+
+    if (!hasStepsExecuted && !isActiveTask) return [];
 
     return [
       {
-        key: 'prompt',
-        label: t('detail.promptTokensShort', { defaultValue: 'In' }),
-        title: t('detail.promptTokens', { defaultValue: 'Prompt' }),
-        value: formatTokenCount(task.tokenUsage.promptTokens),
-        variant: 'outline' as const,
-      },
-      {
-        key: 'completion',
-        label: t('detail.completionTokensShort', { defaultValue: 'Out' }),
-        title: t('detail.completionTokens', { defaultValue: 'Completion' }),
-        value: formatTokenCount(task.tokenUsage.completionTokens),
-        variant: 'outline' as const,
-      },
-      {
-        key: 'total',
-        label: t('detail.totalTokensShort', { defaultValue: 'Total' }),
-        title: t('detail.totalTokens', { defaultValue: 'Total' }),
-        value: formatTokenCount(task.tokenUsage.totalTokens),
+        key: 'requests',
+        label: t('detail.requestsShort', { defaultValue: '请求' }),
+        title: t('detail.requests', { defaultValue: 'AI 请求次数' }),
+        value: String(task.tokenUsage?.stepsExecuted || 0),
         variant: 'secondary' as const,
       },
     ];
   }, [
-    task.tokenUsage?.promptTokens,
-    task.tokenUsage?.completionTokens,
-    task.tokenUsage?.totalTokens,
+    task.status,
+    task.tokenUsage?.stepsExecuted,
     t,
   ]);
 

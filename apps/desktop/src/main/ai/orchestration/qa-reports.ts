@@ -129,55 +129,55 @@ export function generateQAReport(
 
   const statusEmoji = finalStatus === 'approved' ? 'PASSED' : 'FAILED';
 
-  let report = `# QA Report
+  let report = `# QA 报告
 
-**Generated**: ${now}
-**Final Status**: ${statusLabel}
-**Result**: ${statusEmoji}
+**生成时间**: ${now}
+**最终状态**: ${statusLabel}
+**结果**: ${statusEmoji}
 
-## Summary
+## 摘要
 
-| Metric | Value |
+| 指标 | 值 |
 |--------|-------|
-| Total Iterations | ${totalIterations} |
-| Approved Iterations | ${approvedIterations} |
-| Rejected Iterations | ${rejectedIterations} |
-| Error Iterations | ${errorIterations} |
-| Total Issues Found | ${totalIssues} |
-| Total Duration | ${totalDurationSec}s |
+| 总迭代次数 | ${totalIterations} |
+| 通过迭代次数 | ${approvedIterations} |
+| 拒绝迭代次数 | ${rejectedIterations} |
+| 错误迭代次数 | ${errorIterations} |
+| 发现的问题总数 | ${totalIssues} |
+| 总耗时 | ${totalDurationSec}s |
 
 `;
 
   if (iterations.length === 0) {
-    report += `## No iterations recorded.\n`;
+    report += `## 未记录迭代。\n`;
     return report;
   }
 
-  report += `## Iteration History\n\n`;
+  report += `## 迭代历史\n\n`;
 
   for (const record of iterations) {
     const durationSec = (record.durationMs / 1000).toFixed(1);
-    const statusIcon = record.status === 'approved' ? 'PASS' : record.status === 'rejected' ? 'FAIL' : 'ERROR';
+    const statusIcon = record.status === 'approved' ? '通过' : record.status === 'rejected' ? '失败' : '错误';
 
-    report += `### Iteration ${record.iteration} — ${statusIcon}\n\n`;
-    report += `- **Status**: ${record.status}\n`;
-    report += `- **Duration**: ${durationSec}s\n`;
-    report += `- **Timestamp**: ${record.timestamp}\n`;
-    report += `- **Issues Found**: ${record.issues.length}\n`;
+    report += `### 迭代 ${record.iteration} — ${statusIcon}\n\n`;
+    report += `- **状态**: ${record.status}\n`;
+    report += `- **耗时**: ${durationSec}s\n`;
+    report += `- **时间戳**: ${record.timestamp}\n`;
+    report += `- **发现的问题**: ${record.issues.length}\n`;
 
     if (record.issues.length > 0) {
-      report += `\n#### Issues\n\n`;
+      report += `\n#### 问题\n\n`;
       for (const issue of record.issues) {
         const typeTag = issue.type ? ` \`[${issue.type.toUpperCase()}]\`` : '';
         report += `- **${issue.title}**${typeTag}\n`;
         if (issue.location) {
-          report += `  - Location: \`${issue.location}\`\n`;
+          report += `  - 位置: \`${issue.location}\`\n`;
         }
         if (issue.description) {
           report += `  - ${issue.description}\n`;
         }
         if (issue.fix_required) {
-          report += `  - Fix required: ${issue.fix_required}\n`;
+          report += `  - 需要修复: ${issue.fix_required}\n`;
         }
       }
     }
@@ -186,11 +186,11 @@ export function generateQAReport(
   }
 
   if (finalStatus === 'approved') {
-    report += `## Result\n\nQA validation passed successfully. The implementation meets all acceptance criteria.\n`;
+    report += `## 结果\n\nQA 验证成功通过。实现满足所有验收标准。\n`;
   } else if (finalStatus === 'max_iterations') {
-    report += `## Result\n\nQA validation reached the maximum of ${MAX_QA_ITERATIONS} iterations without approval. Human review required.\n`;
+    report += `## 结果\n\nQA 验证达到最大 ${MAX_QA_ITERATIONS} 次迭代但未通过。需要人工审核。\n`;
   } else {
-    report += `## Result\n\nQA validation was escalated to human review due to recurring issues. See QA_ESCALATION.md for details.\n`;
+    report += `## 结果\n\n由于反复出现问题，QA 验证已升级至人工审核。详情请参阅 QA_ESCALATION.md。\n`;
   }
 
   return report;
@@ -228,63 +228,63 @@ export function generateEscalationReport(
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
-  let report = `# QA Escalation — Human Intervention Required
+  let report = `# QA 升级 — 需要人工干预
 
-**Generated**: ${now}
-**Iteration**: ${totalIterations}/${MAX_QA_ITERATIONS}
-**Reason**: Recurring issues detected (${RECURRING_ISSUE_THRESHOLD}+ occurrences)
+**生成时间**: ${now}
+**迭代**: ${totalIterations}/${MAX_QA_ITERATIONS}
+**原因**: 检测到反复出现的问题（${RECURRING_ISSUE_THRESHOLD}+ 次）
 
-## Summary
+## 摘要
 
-- **Total QA Iterations**: ${totalIterations}
-- **Total Issues Found**: ${totalIssues}
-- **Unique Issues**: ${uniqueIssueTitles}
-- **Fix Success Rate**: ${fixSuccessRate}%
+- **QA 总迭代次数**: ${totalIterations}
+- **发现的问题总数**: ${totalIssues}
+- **唯一问题数**: ${uniqueIssueTitles}
+- **修复成功率**: ${fixSuccessRate}%
 
-## Recurring Issues
+## 反复出现的问题
 
-These issues have appeared ${RECURRING_ISSUE_THRESHOLD}+ times without being resolved:
+这些问题已出现 ${RECURRING_ISSUE_THRESHOLD}+ 次但未解决：
 
 `;
 
   for (let i = 0; i < recurringIssues.length; i++) {
     const issue = recurringIssues[i];
     report += `### ${i + 1}. ${issue.title}\n\n`;
-    report += `- **Location**: ${issue.location ?? 'N/A'}\n`;
-    report += `- **Type**: ${issue.type ?? 'N/A'}\n`;
+    report += `- **位置**: ${issue.location ?? '无'}\n`;
+    report += `- **类型**: ${issue.type ?? '无'}\n`;
     if (issue.description) {
-      report += `- **Description**: ${issue.description}\n`;
+      report += `- **描述**: ${issue.description}\n`;
     }
     if (issue.fix_required) {
-      report += `- **Fix Required**: ${issue.fix_required}\n`;
+      report += `- **需要修复**: ${issue.fix_required}\n`;
     }
     report += `\n`;
   }
 
   if (topIssues.length > 0) {
-    report += `## Most Common Issues (All Time)\n\n`;
+    report += `## 最常见的问题（全部）\n\n`;
     for (const [title, count] of topIssues) {
-      report += `- **${title}** (${count} occurrence${count === 1 ? '' : 's'})\n`;
+      report += `- **${title}** (${count} 次)\n`;
     }
     report += `\n`;
   }
 
-  report += `## Recommended Actions
+  report += `## 建议的操作
 
-1. Review the recurring issues manually
-2. Check if the issue stems from:
-   - Unclear specification
-   - Complex edge case
-   - Infrastructure/environment problem
-   - Test framework limitations
-3. Update the spec or acceptance criteria if needed
-4. Create a fix request in \`QA_FIX_REQUEST.md\` and re-run QA
+1. 手动审查反复出现的问题
+2. 检查问题是否源于：
+   - 规范不清晰
+   - 复杂的边缘情况
+   - 基础设施/环境问题
+   - 测试框架限制
+3. 如需要，更新规范或验收标准
+4. 在 \`QA_FIX_REQUEST.md\` 中创建修复请求并重新运行 QA
 
-## Related Files
+## 相关文件
 
-- \`QA_FIX_REQUEST.md\` — Write human fix instructions here
-- \`qa_report.md\` — Latest QA report
-- \`implementation_plan.json\` — Full iteration history
+- \`QA_FIX_REQUEST.md\` — 在此编写人工修复说明
+- \`qa_report.md\` — 最新的 QA 报告
+- \`implementation_plan.json\` — 完整的迭代历史
 `;
 
   return report;
@@ -330,26 +330,26 @@ export async function generateManualTestPlan(specDir: string, projectDir: string
   // Detect if this is a no-test project
   const noTest = isNoTestProject(specDir, projectDir);
 
-  let plan = `# Manual Test Plan — ${specName}
+  let plan = `# 手动测试计划 — ${specName}
 
-**Generated**: ${now}
-**Reason**: ${noTest ? 'No automated test framework detected' : 'Supplemental manual verification checklist'}
+**生成时间**: ${now}
+**原因**: ${noTest ? '未检测到自动化测试框架' : '补充手动验证清单'}
 
-## Overview
+## 概述
 
 ${
     noTest
-      ? 'This project does not have automated testing infrastructure. Please perform manual verification of the implementation using the checklist below.'
-      : 'Use this checklist as a supplement to automated tests for full verification.'
+      ? '此项目没有自动化测试基础设施。请使用下面的清单手动验证实现。'
+      : '使用此清单作为自动化测试的补充，以进行完整验证。'
   }
 
-## Pre-Test Setup
+## 测试前准备
 
-1. [ ] Ensure all dependencies are installed
-2. [ ] Start any required services
-3. [ ] Set up test environment variables
+1. [ ] 确保所有依赖项已安装
+2. [ ] 启动所有必需的服务
+3. [ ] 设置测试环境变量
 
-## Acceptance Criteria Verification
+## 验收标准验证
 
 `;
 
@@ -358,59 +358,59 @@ ${
       plan += `${i + 1}. [ ] ${acceptanceCriteria[i]}\n`;
     }
   } else {
-    plan += `1. [ ] Core functionality works as expected
-2. [ ] Edge cases are handled
-3. [ ] Error states are handled gracefully
-4. [ ] UI/UX meets requirements (if applicable)
+    plan += `1. [ ] 核心功能按预期工作
+2. [ ] 边缘情况得到处理
+3. [ ] 错误状态得到妥善处理
+4. [ ] UI/UX 符合要求（如适用）
 `;
   }
 
   plan += `
 
-## Functional Tests
+## 功能测试
 
-### Happy Path
-- [ ] Primary use case works correctly
-- [ ] Expected outputs are generated
-- [ ] No console errors
+### 正常路径
+- [ ] 主要用例正常工作
+- [ ] 生成预期的输出
+- [ ] 无控制台错误
 
-### Edge Cases
-- [ ] Empty input handling
-- [ ] Invalid input handling
-- [ ] Boundary conditions
+### 边缘情况
+- [ ] 空输入处理
+- [ ] 无效输入处理
+- [ ] 边界条件
 
-### Error Handling
-- [ ] Errors display appropriate messages
-- [ ] System recovers gracefully from errors
-- [ ] No data loss on failure
+### 错误处理
+- [ ] 错误显示适当的消息
+- [ ] 系统从错误中优雅恢复
+- [ ] 失败时无数据丢失
 
-## Non-Functional Tests
+## 非功能测试
 
-### Performance
-- [ ] Response time is acceptable
-- [ ] No memory leaks observed
-- [ ] No excessive resource usage
+### 性能
+- [ ] 响应时间可接受
+- [ ] 未观察到内存泄漏
+- [ ] 无过度资源使用
 
-### Security
-- [ ] Input is properly sanitized
-- [ ] No sensitive data exposed
-- [ ] Authentication works correctly (if applicable)
+### 安全性
+- [ ] 输入已正确清理
+- [ ] 无敏感数据暴露
+- [ ] 身份验证正常工作（如适用）
 
-## Browser/Environment Testing (if applicable)
+## 浏览器/环境测试（如适用）
 
 - [ ] Chrome
 - [ ] Firefox
 - [ ] Safari
-- [ ] Mobile viewport
+- [ ] 移动视口
 
-## Sign-off
+## 签署
 
-**Tester**: _______________
-**Date**: _______________
-**Result**: [ ] PASS  [ ] FAIL
+**测试人员**: _______________
+**日期**: _______________
+**结果**: [ ] 通过  [ ] 失败
 
-### Notes
-_Add any observations or issues found during testing_
+### 备注
+_添加测试期间发现的任何观察或问题_
 
 `;
 
