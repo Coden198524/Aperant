@@ -17,6 +17,12 @@ vi.mock('../../client/factory', () => ({
   createSimpleClient: (...args: unknown[]) => mockCreateSimpleClient(...args),
 }));
 
+const mockRunProjectIndexer = vi.fn();
+
+vi.mock('../../project/project-indexer', () => ({
+  runProjectIndexer: (...args: unknown[]) => mockRunProjectIndexer(...args),
+}));
+
 // Filesystem mocks
 const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
@@ -137,6 +143,7 @@ describe('runRoadmapGeneration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateSimpleClient.mockResolvedValue(makeMockClient());
+    mockRunProjectIndexer.mockReturnValue({});
     // Output dir exists by default (created by mkdirSync is a no-op)
     mockExistsSync.mockReturnValue(false);
     mockMkdirSync.mockReturnValue(undefined);
@@ -219,6 +226,102 @@ describe('runRoadmapGeneration', () => {
     expect(result.phases).toHaveLength(1);
   });
 
+  it('uses project-index fallback discovery when retries are exhausted', async () => {
+    let discoveryCreated = false;
+    let discoveryJson = '{}';
+
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      if (p.endsWith('project_index.json')) return true;
+      if (p.endsWith('roadmap_discovery.json')) return discoveryCreated;
+      if (p.endsWith('roadmap.json')) return true;
+      return false;
+    });
+
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p.endsWith('project_index.json')) {
+        return '{"project_type":"desktop-app","services":{"app":{"language":"TypeScript","framework":"Electron","dependencies":["react"]}}}';
+      }
+      if (p.endsWith('roadmap_discovery.json')) return discoveryJson;
+      if (p.endsWith('roadmap.json')) return VALID_ROADMAP_JSON;
+      return '{}';
+    });
+
+    mockWriteFileSync.mockImplementation((p: string, content: string) => {
+      if (p.endsWith('roadmap_discovery.json')) {
+        discoveryCreated = true;
+        discoveryJson = content;
+      }
+      return undefined;
+    });
+
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    const result = await runRoadmapGeneration(baseConfig());
+
+    expect(result.success).toBe(true);
+    expect(mockStreamText).toHaveBeenCalledTimes(3);
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('roadmap_discovery.json'),
+      expect.any(String),
+      'utf-8',
+    );
+  });
+
+  it('uses retry feedback that forces Write tool when discovery file is missing', async () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      return false;
+    });
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    const result = await runRoadmapGeneration(baseConfig());
+
+    expect(result.success).toBe(false);
+    expect(mockStreamText).toHaveBeenCalledTimes(3);
+    const secondAttemptArgs = mockStreamText.mock.calls[1][0];
+    expect(secondAttemptArgs.system).toContain('CRITICAL - TOOL USE REQUIRED');
+  });
+
+  it('falls back to streamed JSON text and writes discovery file when missing', async () => {
+    let discoveryCreated = false;
+    let discoveryJson = VALID_DISCOVERY_JSON;
+
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      if (p.endsWith('roadmap_discovery.json')) return discoveryCreated;
+      if (p.endsWith('roadmap.json')) return true;
+      return false;
+    });
+
+    mockWriteFileSync.mockImplementation((p: string, content: string) => {
+      if (p.endsWith('roadmap_discovery.json')) {
+        discoveryCreated = true;
+        discoveryJson = content;
+      }
+      return undefined;
+    });
+
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap_discovery.json')) return discoveryJson;
+      if (p.endsWith('roadmap.json')) return VALID_ROADMAP_JSON;
+      return '{}';
+    });
+
+    mockStreamText.mockImplementationOnce(() => makeStream([
+      { type: 'text-delta', text: `\`\`\`json\n${VALID_DISCOVERY_JSON}\n\`\`\`` },
+    ]));
+
+    const result = await runRoadmapGeneration(baseConfig());
+
+    expect(result.success).toBe(true);
+    expect(mockWriteFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('roadmap_discovery.json'),
+      expect.any(String),
+      'utf-8',
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // Features phase failure
   // ---------------------------------------------------------------------------
@@ -282,6 +385,24 @@ describe('runRoadmapGeneration', () => {
     expect(mockMkdirSync).toHaveBeenCalledWith(
       expect.stringContaining('roadmap'),
       expect.objectContaining({ recursive: true }),
+    );
+  });
+
+  it('generates project_index.json when missing', async () => {
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      if (p.endsWith('project_index.json')) return false;
+      if (p.endsWith('roadmap_discovery.json')) return true;
+      if (p.endsWith('roadmap.json')) return true;
+      return false;
+    });
+
+    const result = await runRoadmapGeneration(baseConfig({ refresh: false }));
+
+    expect(result.success).toBe(true);
+    expect(mockRunProjectIndexer).toHaveBeenCalledWith(
+      '/project',
+      expect.stringContaining('.auto-claude'),
     );
   });
 

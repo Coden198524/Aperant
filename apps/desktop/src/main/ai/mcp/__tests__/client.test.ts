@@ -238,7 +238,36 @@ describe('createMcpClientsForAgent', () => {
     const resolveOptions = { electronMcpEnabled: true };
     await createMcpClientsForAgent('qa_reviewer', resolveOptions as unknown as McpServerResolveOptions);
 
-    expect(mockGetRequiredMcpServers).toHaveBeenCalledWith('qa_reviewer', resolveOptions);
+    expect(mockGetRequiredMcpServers).toHaveBeenCalledWith(
+      'qa_reviewer',
+      expect.objectContaining(resolveOptions),
+    );
+  });
+
+  it('derives customServerIds from registryOptions.customServers', async () => {
+    mockGetRequiredMcpServers.mockReturnValueOnce(['custom-yunxiao']);
+    mockResolveMcpServers.mockReturnValueOnce([{ ...stdioConfig, id: 'custom-yunxiao' }]);
+    mockCreateMCPClient.mockResolvedValueOnce(makeMockMcpInstance() as unknown as MCPClient);
+
+    await createMcpClientsForAgent(
+      'coder',
+      {},
+      {
+        customServers: [
+          {
+            id: 'custom-yunxiao',
+            name: 'Yunxiao DevOps',
+            type: 'command',
+            command: 'npx',
+            args: ['-y', '@aliyun/devops-mcp-server'],
+          },
+        ],
+      },
+    );
+
+    expect(mockGetRequiredMcpServers).toHaveBeenCalledWith('coder', expect.objectContaining({
+      customServerIds: ['custom-yunxiao'],
+    }));
   });
 });
 

@@ -120,6 +120,10 @@ import type {
   LinearIssue,
   LinearImportResult,
   LinearSyncStatus,
+  YunxiaoProject,
+  YunxiaoWorkItem,
+  YunxiaoImportResult,
+  YunxiaoSyncStatus,
   GitHubRepository,
   GitHubIssue,
   GitHubSyncStatus,
@@ -201,12 +205,22 @@ export interface ElectronAPI {
   deleteTask: (taskId: string) => Promise<IPCResult>;
   updateTask: (taskId: string, updates: { title?: string; description?: string }) => Promise<IPCResult<Task>>;
   startTask: (taskId: string, options?: TaskStartOptions) => void;
-  stopTask: (taskId: string) => void;
-  submitReview: (taskId: string, approved: boolean, feedback?: string, images?: ImageAttachment[]) => Promise<IPCResult>;
-  updateTaskStatus: (taskId: string, status: TaskStatus, options?: { forceCleanup?: boolean }) => Promise<IPCResult & { worktreeExists?: boolean; worktreePath?: string }>;
+  stopTask: (taskId: string, projectId?: string) => void;
+  submitReview: (
+    taskId: string,
+    approved: boolean,
+    feedback?: string,
+    images?: ImageAttachment[],
+    projectId?: string
+  ) => Promise<IPCResult>;
+  updateTaskStatus: (
+    taskId: string,
+    status: TaskStatus,
+    options?: { forceCleanup?: boolean; keepWorktree?: boolean; projectId?: string }
+  ) => Promise<IPCResult & { worktreeExists?: boolean; worktreePath?: string }>;
   recoverStuckTask: (taskId: string, options?: TaskRecoveryOptions) => Promise<IPCResult<TaskRecoveryResult>>;
-  checkTaskRunning: (taskId: string) => Promise<IPCResult<boolean>>;
-  resumePausedTask: (taskId: string) => Promise<IPCResult>;
+  checkTaskRunning: (taskId: string, projectId?: string) => Promise<IPCResult<boolean>>;
+  resumePausedTask: (taskId: string, projectId?: string) => Promise<IPCResult>;
 
   // Image operations
   loadImageThumbnail: (projectPath: string, specId: string, imagePath: string) => Promise<IPCResult<string>>;
@@ -492,6 +506,21 @@ export interface ElectronAPI {
   getLinearIssues: (projectId: string, teamId?: string, projectId_?: string) => Promise<IPCResult<LinearIssue[]>>;
   importLinearIssues: (projectId: string, issueIds: string[]) => Promise<IPCResult<LinearImportResult>>;
   checkLinearConnection: (projectId: string) => Promise<IPCResult<LinearSyncStatus>>;
+
+  // Yunxiao integration operations
+  getYunxiaoProjects: (projectId: string, organizationId?: string) => Promise<IPCResult<YunxiaoProject[]>>;
+  getYunxiaoWorkItems: (
+    projectId: string,
+    organizationId?: string,
+    spaceId?: string,
+    category?: string
+  ) => Promise<IPCResult<YunxiaoWorkItem[]>>;
+  importYunxiaoWorkItems: (
+    projectId: string,
+    workItemIds: string[],
+    options?: { organizationId?: string; spaceId?: string; category?: string }
+  ) => Promise<IPCResult<YunxiaoImportResult>>;
+  checkYunxiaoConnection: (projectId: string) => Promise<IPCResult<YunxiaoSyncStatus>>;
 
   // GitHub integration operations
   getGitHubRepositories: (projectId: string) => Promise<IPCResult<GitHubRepository[]>>;

@@ -13,7 +13,7 @@ import {
   TaskExecutionOptions,
   RoadmapConfig
 } from './types';
-import type { IdeationConfig } from '../../shared/types';
+import type { CustomMcpServer, IdeationConfig, TaskWorkflowMode } from '../../shared/types';
 import { resetStuckSubtasks } from '../ipc-handlers/task/plan-file-utils';
 import { AUTO_BUILD_PATHS, getSpecsDir } from '../../shared/constants';
 import { projectStore } from '../project-store';
@@ -29,6 +29,14 @@ import { findTaskWorktree } from '../worktree-paths';
 import { readSettingsFile } from '../settings-utils';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
+
+const DEFAULT_SESSION_MAX_STEPS = 1000;
+const FAST_WORKFLOW_PHASE_STEP_BUDGETS = {
+  spec: 80,
+  planning: 80,
+  coding: 120,
+  qa: 40,
+} as const;
 
 /**
  * Main AgentManager - orchestrates agent process lifecycle
@@ -146,18 +154,18 @@ export class AgentManager extends EventEmitter {
     const accounts = (settings?.providerAccounts as ProviderAccount[] | undefined) ?? [];
     const priorityOrder = (settings?.globalPriorityOrder as string[] | undefined) ?? [];
 
-    if (accounts.length > 0 && priorityOrder.length > 0) {
-      // Sort accounts by priority order
-      const orderedQueue = priorityOrder
-        .map(id => accounts.find(a => a.id === id))
-        .filter((a): a is ProviderAccount => a != null);
-
-      // Add any accounts not in the priority order at the end
-      for (const account of accounts) {
-        if (!priorityOrder.includes(account.id)) {
-          orderedQueue.push(account);
-        }
-      }
+    if (accounts.length > 0) {
+      // Sort by global priority order when present, while keeping accounts not in the
+      // order list at the end in their original sequence.
+      const orderIndex = new Map<string, number>();
+      priorityOrder.forEach((id, idx) => orderIndex.set(id, idx));
+      const orderedQueue = [...accounts].sort((a, b) => {
+        const idxA = orderIndex.get(a.id);
+        const idxB = orderIndex.get(b.id);
+        const effA = idxA === undefined ? Number.MAX_SAFE_INTEGER : idxA;
+        const effB = idxB === undefined ? Number.MAX_SAFE_INTEGER : idxB;
+        return effA - effB;
+      });
 
       // If a preferred provider is specified, reorder queue to try that provider first
       if (preferredProvider) {
@@ -185,6 +193,43 @@ export class AgentManager extends EventEmitter {
           configDir: undefined, // Queue-based auth handles its own token refresh
         };
       }
+
+      // Compatibility fallback: if a task stored an Anthropic full model ID
+      // (e.g. claude-sonnet-4-6) but provider preference is not fixed, retry
+      // with shorthand so queue can cross-map to non-Anthropic providers.
+      if (!preferredProvider) {
+        const shorthandRequest = this.toCrossProviderModelRequest(requestedModel);
+        if (shorthandRequest !== requestedModel) {
+          const fallbackResolved = await resolveAuthFromQueue(shorthandRequest, orderedQueue, {
+            executionMode: 'agentic',
+          });
+          if (fallbackResolved) {
+            console.warn(`[AgentManager] Resolved auth from provider queue (compat retry): account=${fallbackResolved.accountId} provider=${fallbackResolved.resolvedProvider} model=${fallbackResolved.resolvedModelId}`);
+            return {
+              auth: fallbackResolved,
+              provider: fallbackResolved.resolvedProvider,
+              modelId: fallbackResolved.resolvedModelId,
+              configDir: undefined,
+            };
+          }
+        }
+      }
+
+      // Last-resort queue retry with provider-agnostic shorthand. This avoids
+      // hard fallback to Anthropic when imported tasks carry legacy/full model IDs.
+      const genericFallbackResolved = await resolveAuthFromQueue('sonnet', orderedQueue, {
+        executionMode: 'agentic',
+      });
+      if (genericFallbackResolved) {
+        console.warn(`[AgentManager] Resolved auth from provider queue (generic retry): account=${genericFallbackResolved.accountId} provider=${genericFallbackResolved.resolvedProvider} model=${genericFallbackResolved.resolvedModelId}`);
+        return {
+          auth: genericFallbackResolved,
+          provider: genericFallbackResolved.resolvedProvider,
+          modelId: genericFallbackResolved.resolvedModelId,
+          configDir: undefined,
+        };
+      }
+
       console.warn('[AgentManager] No available account in provider queue, falling back to legacy profile');
     }
 
@@ -194,7 +239,10 @@ export class AgentManager extends EventEmitter {
     const configDir = activeProfile?.configDir;
     const auth = await resolveAuth({ provider: 'anthropic', configDir });
     const provider = detectProviderFromModel(requestedModel) ?? 'anthropic';
-    return { auth, provider, modelId: requestedModel, configDir };
+    const modelId = provider === 'anthropic'
+      ? resolveModelId(requestedModel)
+      : requestedModel;
+    return { auth, provider, modelId, configDir };
   }
 
   /**
@@ -360,21 +408,30 @@ export class AgentManager extends EventEmitter {
       specDir ? this.resolveTaskPhaseProvider(specDir, 'spec') : null
     ) ?? (metadata?.provider as string | undefined) ?? null;
 
-    // Resolve the model ID, translating to the target provider's equivalent if needed
-    let specModelId: string;
+    // Resolve the model requested by queue. Keep shorthand when no preferred provider
+    // so the queue can map across providers (e.g. sonnet -> gpt-5.x).
+    let specModelRequest: string;
     if (preferredProvider && preferredProvider !== 'anthropic') {
       const equiv = resolveModelEquivalent(specModelShorthand, preferredProvider as BuiltinProvider)
         ?? resolveModelEquivalent(resolveModelId(specModelShorthand), preferredProvider as BuiltinProvider);
-      specModelId = equiv?.modelId ?? specModelShorthand;
+      specModelRequest = equiv?.modelId ?? specModelShorthand;
+    } else if (preferredProvider === 'anthropic') {
+      specModelRequest = resolveModelId(specModelShorthand);
     } else {
-      specModelId = resolveModelId(specModelShorthand);
+      specModelRequest = specModelShorthand;
     }
 
     // Load system prompt from prompts directory
     const systemPrompt = this.loadPrompt('spec_orchestrator') ?? this.buildDefaultSpecPrompt(taskDescription, specDir);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
-    const resolved = await this.resolveAuthFromProviderQueue(specModelId, preferredProvider);
+    const resolved = await this.resolveAuthFromProviderQueue(specModelRequest, preferredProvider);
+    if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
+      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`);
+      return;
+    }
+    const workflowMode = metadata?.workflowMode ?? 'safe';
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'spec_orchestrator');
 
     // Build the serializable session config for the worker
     const resolvedSpecDir = specDir ?? path.join(projectPath, '.auto-claude', 'specs', taskId);
@@ -388,7 +445,8 @@ export class AgentManager extends EventEmitter {
           content: `Task: ${taskDescription}\n\nProject directory: ${projectPath}${specDir ? `\nSpec directory: ${specDir}` : ''}${baseBranch ? `\nBase branch: ${baseBranch}` : ''}${metadata?.requireReviewBeforeCoding ? '\nRequire review before coding: true' : '\nAuto-approve: true'}`,
         },
       ],
-      maxSteps: 1000,
+      maxSteps: sessionRuntime.maxSteps,
+      phaseStepBudgets: sessionRuntime.phaseStepBudgets,
       specDir: resolvedSpecDir,
       projectDir: projectPath,
       provider: resolved.provider,
@@ -397,11 +455,9 @@ export class AgentManager extends EventEmitter {
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
-      mcpOptions: {
-        context7Enabled: true,
-        memoryEnabled: !!process.env.GRAPHITI_MCP_URL,
-        linearEnabled: !!process.env.LINEAR_API_KEY,
-      },
+      mcpOptions: sessionRuntime.mcpOptions,
+      workflowMode,
+      language: this.resolveAppLanguage(),
       toolContext: {
         cwd: projectPath,
         projectDir: projectPath,
@@ -464,18 +520,24 @@ export class AgentManager extends EventEmitter {
     // Load model configuration from task_metadata.json if available
     const modelId = await this.resolveTaskModelId(specDir, 'planning');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'planning');
+    const workflowMode = this.resolveTaskWorkflowMode(specDir);
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'build_orchestrator');
 
     // Load system prompt (planner prompt for build orchestrator entry point)
     const systemPrompt = this.loadPrompt('planner') ?? this.buildDefaultPlannerPrompt(specId, projectPath);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
     const resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
+      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
+      return;
+    }
 
     // Create or get existing git worktree for task isolation
     // This matches the Python backend's WorktreeManager.create_worktree() behavior
     let worktreePath: string | null = null;
     let worktreeSpecDir = specDir;
-    const useWorktree = options.useWorktree !== false; // Default to true (matching Python backend)
+    const useWorktree = workflowMode !== 'fast' && options.useWorktree !== false; // Fast workflow runs directly for lower startup latency
     if (useWorktree) {
       try {
         const baseBranch = options.baseBranch ?? project?.settings?.mainBranch ?? 'main';
@@ -509,7 +571,8 @@ export class AgentManager extends EventEmitter {
       agentType: 'build_orchestrator' as const,
       systemPrompt,
       initialMessages,
-      maxSteps: 1000,
+      maxSteps: sessionRuntime.maxSteps,
+      phaseStepBudgets: sessionRuntime.phaseStepBudgets,
       specDir: worktreeSpecDir,
       projectDir: effectiveProjectDir,
       sourceProjectDir: worktreePath ? projectPath : undefined,
@@ -522,11 +585,9 @@ export class AgentManager extends EventEmitter {
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
-      mcpOptions: {
-        context7Enabled: true,
-        memoryEnabled: !!process.env.GRAPHITI_MCP_URL,
-        linearEnabled: !!process.env.LINEAR_API_KEY,
-      },
+      mcpOptions: sessionRuntime.mcpOptions,
+      workflowMode,
+      language: this.resolveAppLanguage(),
       toolContext: {
         cwd: effectiveCwd,
         projectDir: effectiveProjectDir,
@@ -587,12 +648,18 @@ export class AgentManager extends EventEmitter {
     // Load model configuration from task_metadata.json if available
     const modelId = await this.resolveTaskModelId(specDir, 'qa');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'qa');
+    const workflowMode = this.resolveTaskWorkflowMode(specDir);
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'qa_reviewer');
 
     // Load system prompt for QA reviewer
     const systemPrompt = this.loadPrompt('qa_reviewer') ?? this.buildDefaultQAPrompt(specId, projectPath);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
     const resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
+      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
+      return;
+    }
 
     // Find existing worktree for QA (created during task execution)
     const worktreePath = findTaskWorktree(projectPath, specId);
@@ -616,7 +683,8 @@ export class AgentManager extends EventEmitter {
       agentType: 'qa_reviewer',
       systemPrompt,
       initialMessages: qaInitialMessages,
-      maxSteps: 1000,
+      maxSteps: sessionRuntime.maxSteps,
+      phaseStepBudgets: sessionRuntime.phaseStepBudgets,
       specDir: effectiveSpecDir,
       projectDir: effectiveProjectDir,
       sourceProjectDir: worktreePath ? projectPath : undefined,
@@ -626,11 +694,9 @@ export class AgentManager extends EventEmitter {
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
-      mcpOptions: {
-        context7Enabled: true,
-        memoryEnabled: !!process.env.GRAPHITI_MCP_URL,
-        linearEnabled: !!process.env.LINEAR_API_KEY,
-      },
+      mcpOptions: sessionRuntime.mcpOptions,
+      workflowMode,
+      language: this.resolveAppLanguage(),
       toolContext: {
         cwd: effectiveCwd,
         projectDir: effectiveProjectDir,
@@ -994,7 +1060,9 @@ export class AgentManager extends EventEmitter {
             return shorthand;
           }
 
-          return baseModelId;
+          // No target provider override: keep shorthand so queue can map across providers.
+          // Legacy Anthropic fallback later normalizes this via resolveModelId().
+          return shorthand;
         }
 
         // Still no model but have a target provider — resolve 'sonnet' equivalent
@@ -1007,8 +1075,8 @@ export class AgentManager extends EventEmitter {
       // Fall through to default
     }
 
-    // Default: resolve 'sonnet' (Anthropic fallback)
-    return resolveModelId('sonnet');
+    // Default: use shorthand so queue can choose provider-specific equivalent.
+    return 'sonnet';
   }
 
   /**
@@ -1032,6 +1100,164 @@ export class AgentManager extends EventEmitter {
       // Fall through
     }
     return null;
+  }
+
+  private resolveTaskWorkflowMode(specDir: string): TaskWorkflowMode {
+    try {
+      const metadataPath = path.join(specDir, 'task_metadata.json');
+      if (existsSync(metadataPath)) {
+        const raw = readFileSync(metadataPath, 'utf-8');
+        const metadata = JSON.parse(raw) as { workflowMode?: TaskWorkflowMode };
+        return metadata.workflowMode === 'fast' ? 'fast' : 'safe';
+      }
+    } catch {
+      // Fall through
+    }
+    return 'safe';
+  }
+
+  private resolveAppLanguage(): SerializableSessionConfig['language'] {
+    const language = readSettingsFile()?.language;
+    if (language === 'en' || language === 'fr' || language === 'zh-CN') {
+      return language;
+    }
+    return undefined;
+  }
+
+  private toCrossProviderModelRequest(model: string): string {
+    if (!model) return model;
+    if (model === resolveModelId('haiku')) return 'haiku';
+    if (model === resolveModelId('sonnet')) return 'sonnet';
+    if (model === resolveModelId('opus')) return 'opus';
+    if (model.startsWith('claude-haiku-')) return 'haiku';
+    if (model.startsWith('claude-sonnet-')) return 'sonnet';
+    if (model.startsWith('claude-opus-')) return 'opus';
+    return model;
+  }
+
+  private providerRequiresCredentials(provider: string): boolean {
+    return provider !== 'ollama';
+  }
+
+  private parseBooleanEnv(value: string | undefined, defaultValue: boolean): boolean {
+    if (value == null || value === '') return defaultValue;
+    return value.toLowerCase() === 'true';
+  }
+
+  private parseCustomMcpServers(raw: string | undefined): CustomMcpServer[] {
+    if (!raw) return [];
+
+    try {
+      const parsed = JSON.parse(raw);
+      if (!Array.isArray(parsed)) return [];
+
+      return parsed
+        .map((entry): CustomMcpServer | null => {
+          if (!entry || typeof entry !== 'object') return null;
+
+          const candidate = entry as Partial<CustomMcpServer>;
+          if (!candidate.id || !candidate.name || !candidate.type) return null;
+
+          if (candidate.type === 'command') {
+            if (!candidate.command) return null;
+            return {
+              id: String(candidate.id),
+              name: String(candidate.name),
+              type: 'command',
+              command: String(candidate.command),
+              args: Array.isArray(candidate.args) ? candidate.args.map(String) : [],
+              description: candidate.description ? String(candidate.description) : undefined,
+            };
+          }
+
+          if (candidate.type === 'http') {
+            if (!candidate.url) return null;
+            return {
+              id: String(candidate.id),
+              name: String(candidate.name),
+              type: 'http',
+              url: String(candidate.url),
+              headers: candidate.headers && typeof candidate.headers === 'object'
+                ? Object.fromEntries(
+                    Object.entries(candidate.headers).map(([key, value]) => [String(key), String(value)]),
+                  )
+                : undefined,
+              description: candidate.description ? String(candidate.description) : undefined,
+            };
+          }
+
+          return null;
+        })
+        .filter((server): server is CustomMcpServer => server !== null);
+    } catch {
+      return [];
+    }
+  }
+
+  private buildSessionRuntimeOptions(
+    workflowMode: TaskWorkflowMode,
+    projectPath: string,
+    agentType: SerializableSessionConfig['agentType'],
+  ): {
+    maxSteps: number;
+    phaseStepBudgets?: SerializableSessionConfig['phaseStepBudgets'];
+    mcpOptions: NonNullable<SerializableSessionConfig['mcpOptions']>;
+  } {
+    const combinedEnv = this.processManager.getCombinedEnv(projectPath);
+
+    const context7Enabled = this.parseBooleanEnv(combinedEnv.CONTEXT7_ENABLED, true);
+    const linearMcpEnabled = this.parseBooleanEnv(combinedEnv.LINEAR_MCP_ENABLED, true);
+    const linearEnabled = Boolean(combinedEnv.LINEAR_API_KEY) && linearMcpEnabled;
+    const yunxiaoMcpEnabled = this.parseBooleanEnv(combinedEnv.YUNXIAO_MCP_ENABLED, true);
+    const yunxiaoIntegrationEnabled = this.parseBooleanEnv(
+      combinedEnv.YUNXIAO_ENABLED,
+      Boolean(combinedEnv.YUNXIAO_ACCESS_TOKEN),
+    );
+    const yunxiaoEnabled = Boolean(combinedEnv.YUNXIAO_ACCESS_TOKEN)
+      && yunxiaoIntegrationEnabled
+      && yunxiaoMcpEnabled;
+    const memoryToggleEnabled = this.parseBooleanEnv(combinedEnv.GRAPHITI_ENABLED, true);
+    const memoryEnabled = memoryToggleEnabled && Boolean(combinedEnv.GRAPHITI_MCP_URL);
+    const electronMcpEnabled = this.parseBooleanEnv(combinedEnv.ELECTRON_MCP_ENABLED, false);
+    const puppeteerMcpEnabled = this.parseBooleanEnv(combinedEnv.PUPPETEER_MCP_ENABLED, false);
+    const agentMcpAdd = combinedEnv[`AGENT_MCP_${agentType}_ADD`];
+    const agentMcpRemove = combinedEnv[`AGENT_MCP_${agentType}_REMOVE`];
+    const customMcpServers = this.parseCustomMcpServers(combinedEnv.CUSTOM_MCP_SERVERS);
+
+    if (workflowMode === 'fast') {
+      return {
+        maxSteps: FAST_WORKFLOW_PHASE_STEP_BUDGETS.coding,
+        phaseStepBudgets: FAST_WORKFLOW_PHASE_STEP_BUDGETS,
+        mcpOptions: {
+          context7Enabled: false,
+          memoryEnabled: false,
+          linearEnabled: false,
+          yunxiaoEnabled: false,
+          electronMcpEnabled: false,
+          puppeteerMcpEnabled: false,
+          agentMcpAdd,
+          agentMcpRemove,
+          customMcpServers,
+          mcpEnv: combinedEnv,
+        },
+      };
+    }
+
+    return {
+      maxSteps: DEFAULT_SESSION_MAX_STEPS,
+      mcpOptions: {
+        context7Enabled,
+        memoryEnabled,
+        linearEnabled,
+        yunxiaoEnabled,
+        electronMcpEnabled,
+        puppeteerMcpEnabled,
+        agentMcpAdd,
+        agentMcpRemove,
+        customMcpServers,
+        mcpEnv: combinedEnv,
+      },
+    };
   }
 
   /**

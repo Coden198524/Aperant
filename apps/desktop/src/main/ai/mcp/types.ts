@@ -46,6 +46,7 @@ export type McpTransportConfig = StdioTransportConfig | StreamableHttpTransportC
 export type McpServerId =
   | 'context7'
   | 'linear'
+  | 'yunxiao'
   | 'memory'
   | 'electron'
   | 'puppeteer'

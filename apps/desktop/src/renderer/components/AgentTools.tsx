@@ -168,7 +168,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     category: 'build',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'WebFetch', 'WebSearch'],
     mcp_servers: ['context7', 'memory', 'auto-claude'],
-    mcp_optional: ['linear'],
+    mcp_optional: ['linear', 'yunxiao'],
     settingsSource: { type: 'phase', phase: 'planning' },
   },
   coder: {
@@ -177,7 +177,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     category: 'build',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'WebFetch', 'WebSearch'],
     mcp_servers: ['context7', 'memory', 'auto-claude'],
-    mcp_optional: ['linear'],
+    mcp_optional: ['linear', 'yunxiao'],
     settingsSource: { type: 'phase', phase: 'coding' },
   },
 
@@ -188,7 +188,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     category: 'qa',
     tools: ['Read', 'Glob', 'Grep', 'Bash', 'WebFetch', 'WebSearch'],
     mcp_servers: ['context7', 'memory', 'auto-claude'],
-    mcp_optional: ['linear', 'electron', 'puppeteer'],
+    mcp_optional: ['linear', 'yunxiao', 'electron', 'puppeteer'],
     settingsSource: { type: 'phase', phase: 'qa' },
   },
   qa_fixer: {
@@ -197,7 +197,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     category: 'qa',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash', 'WebFetch', 'WebSearch'],
     mcp_servers: ['context7', 'memory', 'auto-claude'],
-    mcp_optional: ['linear', 'electron', 'puppeteer'],
+    mcp_optional: ['linear', 'yunxiao', 'electron', 'puppeteer'],
     settingsSource: { type: 'phase', phase: 'qa' },
   },
 
@@ -327,6 +327,18 @@ const MCP_SERVERS: Record<string, { name: string; description: string; icon: Rea
       // ... and more
     ],
   },
+  yunxiao: {
+    name: 'Yunxiao',
+    description: 'Alibaba Cloud DevOps project management. Requires YUNXIAO_ACCESS_TOKEN env var.',
+    icon: Globe,
+    tools: [
+      'mcp__yunxiao__list_work_items',
+      'mcp__yunxiao__get_work_item',
+      'mcp__yunxiao__create_work_item',
+      'mcp__yunxiao__update_work_item',
+      // ... and more
+    ],
+  },
   electron: {
     name: 'Electron MCP',
     description: 'Desktop app automation via Chrome DevTools Protocol. Requires ELECTRON_MCP_ENABLED=true.',
@@ -360,10 +372,12 @@ const ALL_MCP_SERVERS = [
   'context7',
   'memory',
   'linear',
+  'yunxiao',
   'electron',
   'puppeteer',
   'auto-claude'
 ] as const;
+const BUILTIN_MCP_SERVER_SET = new Set<string>(ALL_MCP_SERVERS);
 
 // Category metadata - neutral styling per design.json
 const CATEGORIES = {
@@ -412,6 +426,7 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
   const allMcpServers = useMemo(() => {
     const servers = { ...MCP_SERVERS };
     for (const custom of customServers) {
+      if (BUILTIN_MCP_SERVER_SET.has(custom.id)) continue;
       servers[custom.id] = {
         name: custom.name,
         description: custom.description || (custom.type === 'command' ? `${custom.command} ${custom.args?.join(' ') || ''}` : custom.url || ''),
@@ -432,11 +447,12 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
     return combinedMcps.filter(mcp => {
       if (!mcpServerStates) return true; // No project config, show all
       // Custom servers are always available if they exist
-      if (customServers.some(s => s.id === mcp)) return true;
+      if (!BUILTIN_MCP_SERVER_SET.has(mcp) && customServers.some(s => s.id === mcp)) return true;
       switch (mcp) {
         case 'context7': return mcpServerStates.context7Enabled !== false;
         case 'memory': return mcpServerStates.memoryEnabled !== false;
         case 'linear': return mcpServerStates.linearMcpEnabled !== false;
+        case 'yunxiao': return mcpServerStates.yunxiaoMcpEnabled !== false;
         case 'electron': return mcpServerStates.electronEnabled !== false;
         case 'puppeteer': return mcpServerStates.puppeteerEnabled !== false;
         default: return true;
@@ -457,8 +473,10 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
   }, [config, overrides]);
 
   // Get MCPs that can be added (not already in effective list) - includes custom servers
-  const customServerIds = customServers.map(s => s.id);
-  const allAvailableMcpIds = [...ALL_MCP_SERVERS, ...customServerIds];
+  const customServerIds = customServers
+    .map(s => s.id)
+    .filter(id => !BUILTIN_MCP_SERVER_SET.has(id));
+  const allAvailableMcpIds = [...new Set([...ALL_MCP_SERVERS, ...customServerIds])];
   const availableMcps = allAvailableMcpIds.filter(
     mcp => !effectiveMcps.includes(mcp) && !removedMcps.includes(mcp) && mcp !== 'auto-claude'
   );
@@ -986,6 +1004,7 @@ export function AgentTools() {
     if (servers.length === 0) return;
 
     for (const server of servers) {
+      if (BUILTIN_MCP_SERVER_SET.has(server.id)) continue;
       // Set checking status
       setServerHealthStatus(prev => ({
         ...prev,
@@ -1020,7 +1039,7 @@ export function AgentTools() {
 
   // Check health when custom servers change
   useEffect(() => {
-    if (envConfig?.customMcpServers && envConfig.customMcpServers.length > 0) {
+    if (envConfig?.customMcpServers?.some((server) => !BUILTIN_MCP_SERVER_SET.has(server.id))) {
       checkAllServersHealth();
     }
   }, [envConfig?.customMcpServers, checkAllServersHealth]);
@@ -1070,12 +1089,15 @@ export function AgentTools() {
 
   // Get MCP server states for display
   const mcpServers = envConfig?.mcpServers || {};
+  const projectCustomServers = (envConfig?.customMcpServers || [])
+    .filter((server) => !BUILTIN_MCP_SERVER_SET.has(server.id));
 
   // Count enabled MCP servers
   const enabledCount = [
     mcpServers.context7Enabled !== false,
     mcpServers.memoryEnabled && envConfig?.memoryProviderConfig,
     mcpServers.linearMcpEnabled !== false && envConfig?.linearEnabled,
+    mcpServers.yunxiaoMcpEnabled !== false && envConfig?.yunxiaoEnabled,
     mcpServers.electronEnabled,
     mcpServers.puppeteerEnabled,
     true, // auto-claude always enabled
@@ -1234,6 +1256,26 @@ export function AgentTools() {
                   />
                 </div>
 
+                {/* Yunxiao */}
+                <div className="flex items-center justify-between py-2 border-b border-border last:border-0">
+                  <div className="flex items-center gap-3">
+                    <Globe className="h-4 w-4 text-muted-foreground" />
+                    <div>
+                      <span className="text-sm font-medium">{t('settings:mcp.servers.yunxiao.name')}</span>
+                      <p className="text-xs text-muted-foreground">
+                        {envConfig.yunxiaoEnabled
+                          ? t('settings:mcp.servers.yunxiao.description')
+                          : t('settings:mcp.servers.yunxiao.notConfigured')}
+                      </p>
+                    </div>
+                  </div>
+                  <Switch
+                    checked={mcpServers.yunxiaoMcpEnabled !== false && !!envConfig.yunxiaoEnabled}
+                    onCheckedChange={(checked) => updateMcpServer('yunxiaoMcpEnabled', checked)}
+                    disabled={!envConfig.yunxiaoEnabled}
+                  />
+                </div>
+
                 {/* Browser Automation Section */}
                 <div className="pt-2">
                   <div className="flex items-center gap-2 mb-3">
@@ -1305,9 +1347,9 @@ export function AgentTools() {
                     </button>
                   </div>
 
-                  {(envConfig.customMcpServers?.length ?? 0) > 0 ? (
+                  {projectCustomServers.length > 0 ? (
                     <div className="space-y-2">
-                      {envConfig.customMcpServers?.map((server) => {
+                      {projectCustomServers.map((server) => {
                         const health = serverHealthStatus[server.id];
                         const isTesting = testingServers.has(server.id);
                         const isChecking = health?.status === 'checking';
@@ -1453,7 +1495,7 @@ export function AgentTools() {
                           thinkingLabel={getThinkingLabel(thinking)}
                           overrides={envConfig?.agentMcpOverrides?.[id]}
                           mcpServerStates={envConfig?.mcpServers}
-                          customServers={envConfig?.customMcpServers || []}
+                          customServers={projectCustomServers}
                           onAddMcp={handleAddMcp}
                           onRemoveMcp={handleRemoveMcp}
                         />

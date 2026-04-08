@@ -123,8 +123,9 @@ export function registerTaskExecutionHandlers(
    */
   ipcMain.on(
     IPC_CHANNELS.TASK_START,
-    async (_, taskId: string, _options?: TaskStartOptions) => {
+    async (_, taskId: string, options?: TaskStartOptions) => {
       console.warn('[TASK_START] Received request for taskId:', taskId);
+      const requestedProjectId = options?.projectId;
 
       // Cancel any pending fallback timer from previous process exit
       // This prevents the stale timer from incorrectly stopping the newly restarted task
@@ -143,24 +144,24 @@ export function registerTaskExecutionHandlers(
         mainWindow.webContents.send(
           IPC_CHANNELS.TASK_ERROR,
           taskId,
-          initResult.error
+          initResult.error,
+          requestedProjectId
         );
         return;
       }
       const profileManager = initResult.profileManager;
 
-      // Find task and project
-      // First search all projects to find the task, then verify the project matches
-      // task.projectId to prevent cross-project contamination when multiple projects
-      // have tasks with overlapping specIds (e.g., after delete/recreate).
-      const { task, project: foundProject } = findTaskAndProject(taskId);
+      // Scope task lookup to the renderer's project when available.
+      // Task IDs are spec directory names and can overlap across projects.
+      const { task, project: foundProject } = findTaskAndProject(taskId, requestedProjectId);
 
       if (!task || !foundProject) {
         console.warn('[TASK_START] Task or project not found for taskId:', taskId);
         mainWindow.webContents.send(
           IPC_CHANNELS.TASK_ERROR,
           taskId,
-          'Task or project not found'
+          'Task or project not found',
+          requestedProjectId
         );
         return;
       }
@@ -177,7 +178,8 @@ export function registerTaskExecutionHandlers(
         mainWindow.webContents.send(
           IPC_CHANNELS.TASK_ERROR,
           taskId,
-          'Git repository required. Please run "git init" in your project directory. Aperant uses git worktrees for isolated builds.'
+          'Git repository required. Please run "git init" in your project directory. Aperant uses git worktrees for isolated builds.',
+          project.id
         );
         return;
       }
@@ -186,7 +188,8 @@ export function registerTaskExecutionHandlers(
         mainWindow.webContents.send(
           IPC_CHANNELS.TASK_ERROR,
           taskId,
-          'Git repository has no commits. Please make an initial commit first (git add . && git commit -m "Initial commit").'
+          'Git repository has no commits. Please make an initial commit first (git add . && git commit -m "Initial commit").',
+          project.id
         );
         return;
       }
@@ -197,7 +200,8 @@ export function registerTaskExecutionHandlers(
         mainWindow.webContents.send(
           IPC_CHANNELS.TASK_ERROR,
           taskId,
-          'Authentication required. Please add an account in Settings > Accounts before starting tasks.'
+          'Authentication required. Please add an account in Settings > Accounts before starting tasks.',
+          project.id
         );
         return;
       }
@@ -364,14 +368,14 @@ export function registerTaskExecutionHandlers(
   /**
    * Stop a task
    */
-  ipcMain.on(IPC_CHANNELS.TASK_STOP, (_, taskId: string) => {
+  ipcMain.on(IPC_CHANNELS.TASK_STOP, (_, taskId: string, projectId?: string) => {
     agentManager.killTask(taskId);
     fileWatcher.unwatch(taskId).catch((err) => {
       console.error('[TASK_STOP] Failed to unwatch:', err);
     });
 
     // Find task and project to emit USER_STOPPED with plan context
-    const { task, project } = findTaskAndProject(taskId);
+    const { task, project } = findTaskAndProject(taskId, projectId);
 
     if (!task || !project) return;
 
@@ -399,10 +403,11 @@ export function registerTaskExecutionHandlers(
       taskId: string,
       approved: boolean,
       feedback?: string,
-      images?: ImageAttachment[]
+      images?: ImageAttachment[],
+      projectId?: string
     ): Promise<IPCResult> => {
       // Find task and project
-      const { task, project } = findTaskAndProject(taskId);
+      const { task, project } = findTaskAndProject(taskId, projectId);
 
       if (!task || !project) {
         return { success: false, error: 'Task not found' };
@@ -588,10 +593,11 @@ export function registerTaskExecutionHandlers(
       _,
       taskId: string,
       status: TaskStatus,
-      options?: { forceCleanup?: boolean; keepWorktree?: boolean }
+      options?: { forceCleanup?: boolean; keepWorktree?: boolean; projectId?: string }
     ): Promise<IPCResult & { worktreeExists?: boolean; worktreePath?: string }> => {
+      const requestedProjectId = options?.projectId;
       // Find task and project first (needed for worktree check)
-      const { task, project } = findTaskAndProject(taskId);
+      const { task, project } = findTaskAndProject(taskId, requestedProjectId);
 
       if (!task || !project) {
         return { success: false, error: 'Task not found' };
@@ -749,7 +755,8 @@ export function registerTaskExecutionHandlers(
               mainWindow.webContents.send(
                 IPC_CHANNELS.TASK_ERROR,
                 taskId,
-                gitStatusCheck.error || 'Git repository with commits required to run tasks.'
+                gitStatusCheck.error || 'Git repository with commits required to run tasks.',
+                project.id
               );
             }
             return { success: false, error: gitStatusCheck.error || 'Git repository required' };
@@ -763,7 +770,8 @@ export function registerTaskExecutionHandlers(
               mainWindow.webContents.send(
                 IPC_CHANNELS.TASK_ERROR,
                 taskId,
-                initResult.error
+                initResult.error,
+                project.id
               );
             }
             return { success: false, error: initResult.error };
@@ -775,7 +783,8 @@ export function registerTaskExecutionHandlers(
               mainWindow.webContents.send(
                 IPC_CHANNELS.TASK_ERROR,
                 taskId,
-                'Authentication required. Please add an account in Settings > Accounts before starting tasks.'
+                'Authentication required. Please add an account in Settings > Accounts before starting tasks.',
+                project.id
               );
             }
             return { success: false, error: 'Authentication required' };
@@ -893,7 +902,7 @@ export function registerTaskExecutionHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_CHECK_RUNNING,
-    async (_, taskId: string): Promise<IPCResult<boolean>> => {
+    async (_, taskId: string, _projectId?: string): Promise<IPCResult<boolean>> => {
       const isRunning = agentManager.isRunning(taskId);
       return { success: true, data: isRunning };
     }
@@ -905,9 +914,9 @@ export function registerTaskExecutionHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_RESUME_PAUSED,
-    async (_, taskId: string): Promise<IPCResult> => {
+    async (_, taskId: string, projectId?: string): Promise<IPCResult> => {
       // Find task and project
-      const { task, project } = findTaskAndProject(taskId);
+      const { task, project } = findTaskAndProject(taskId, projectId);
 
       if (!task || !project) {
         return { success: false, error: 'Task not found' };
@@ -974,8 +983,9 @@ export function registerTaskExecutionHandlers(
     async (
       _,
       taskId: string,
-      options?: { targetStatus?: TaskStatus; autoRestart?: boolean }
+      options?: { targetStatus?: TaskStatus; autoRestart?: boolean; projectId?: string }
     ): Promise<IPCResult<{ taskId: string; recovered: boolean; newStatus: TaskStatus; message: string; autoRestarted?: boolean }>> => {
+      const requestedProjectId = options?.projectId;
       const targetStatus = options?.targetStatus;
       const autoRestart = options?.autoRestart ?? false;
       // Check if task is actually running
@@ -995,7 +1005,7 @@ export function registerTaskExecutionHandlers(
       }
 
       // Find task and project
-      const { task, project } = findTaskAndProject(taskId);
+      const { task, project } = findTaskAndProject(taskId, requestedProjectId);
 
       if (!task || !project) {
         return { success: false, error: 'Task not found' };

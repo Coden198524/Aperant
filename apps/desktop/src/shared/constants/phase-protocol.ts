@@ -117,6 +117,31 @@ export function wouldPhaseRegress(currentPhase: ExecutionPhase, newPhase: Execut
 }
 
 /**
+ * Allow tightly-scoped recovery transitions that intentionally move backwards.
+ *
+ * These are explicit orchestration decisions, not generic fallback regressions:
+ * - qa_fixing -> qa_review: re-run QA after fixes
+ * - qa_review/qa_fixing -> coding: QA detected incomplete implementation
+ */
+export function isAllowedPhaseRegression(
+  currentPhase: ExecutionPhase,
+  newPhase: ExecutionPhase,
+): boolean {
+  if (currentPhase === 'qa_fixing' && newPhase === 'qa_review') {
+    return true;
+  }
+
+  if (
+    (currentPhase === 'qa_review' || currentPhase === 'qa_fixing') &&
+    newPhase === 'coding'
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
  * Check if a phase is a terminal state.
  *
  * @param phase - The phase to check
@@ -154,8 +179,8 @@ export function isValidExecutionPhase(value: string): value is ExecutionPhase {
  * - 'idle' can transition to any phase
  * - 'planning' can transition to 'coding' (once planning is in completedPhases)
  * - 'coding' can transition to 'qa_review' (once coding is in completedPhases)
- * - 'qa_review' can transition to 'qa_fixing' or 'complete'
- * - 'qa_fixing' can transition to 'qa_review' or 'complete'
+ * - 'qa_review' can transition to 'qa_fixing', 'coding' (recovery), or 'complete'
+ * - 'qa_fixing' can transition to 'qa_review', 'coding' (recovery), or 'complete'
  * - 'complete' and 'failed' are terminal (no transitions out)
  *
  * @param currentPhase - The current phase
@@ -201,14 +226,14 @@ export function isValidPhaseTransition(
 
   // Special cases that don't require prerequisites:
   // - Can go to failed from any phase (error handling)
-  // - Can go from qa_fixing back to qa_review (re-running QA after fixes)
+  // - Can use explicit recovery transitions (re-review after fixes, QA -> coding)
   // - Can go from coding to pause phases (rate limit or auth failure)
   // - Can go from pause phases back to coding (resuming after pause)
   if (newPhase === 'failed') {
     return true;
   }
-  if (currentPhase === 'qa_fixing' && newPhase === 'qa_review') {
-    return true; // Re-running QA after fixes
+  if (isAllowedPhaseRegression(currentPhase, newPhase)) {
+    return true;
   }
   if (currentPhase === 'coding' && isPausePhase(newPhase)) {
     return true; // Pausing during coding

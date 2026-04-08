@@ -78,6 +78,7 @@ export interface CreatePRResult {
   success: boolean;
   prUrl?: string;
   alreadyExists?: boolean;
+  message?: string;
   error?: string;
 }
 

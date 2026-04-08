@@ -44,15 +44,17 @@ vi.mock('url', () => ({
 
 // Mock ProgressTracker
 const mockProcessEvent = vi.fn();
+const mockForcePhase = vi.fn();
 vi.mock('../../session/progress-tracker', () => ({
   ProgressTracker: class {
-    processEvent = mockProcessEvent;
     state = {
       currentPhase: 'initializing' as const,
       currentSubtask: null,
       currentMessage: 'Starting...',
       completedPhases: [],
     };
+    processEvent = mockProcessEvent;
+    forcePhase = mockForcePhase;
   },
 }));
 
@@ -165,6 +167,26 @@ describe('WorkerBridge', () => {
         ...progressData,
         sequenceNumber: 1,
       }, 'proj-456');
+    });
+
+    it('syncs the progress tracker from authoritative execution-progress messages', () => {
+      bridge.spawn(createConfig());
+
+      const msg: WorkerMessage = {
+        type: 'execution-progress',
+        taskId: 'task-123',
+        data: {
+          phase: 'qa_review' as never,
+          phaseProgress: 50,
+          overallProgress: 80,
+          message: 'Running QA review...',
+          currentSubtask: 'qa-1',
+        },
+        projectId: 'proj-456',
+      };
+      getWorker().emit('message', msg);
+
+      expect(mockForcePhase).toHaveBeenCalledWith('qa_review', 'Running QA review...', 'qa-1');
     });
 
     it('feeds stream-events to progress tracker and emits progress', () => {
@@ -309,7 +331,48 @@ describe('WorkerBridge', () => {
       });
       getWorker().emit('message', { type: 'result', taskId: 'task-123', data: result, projectId: 'proj-456' });
 
-      expect(usageHandler).toHaveBeenCalledWith('task-123', result.usage, 'proj-456');
+      expect(usageHandler).toHaveBeenCalledWith('task-123', {
+        ...result.usage,
+        stepsExecuted: result.stepsExecuted,
+      }, 'proj-456');
+    });
+
+    it('does not regress token usage when final result usage is zero', () => {
+      const usageHandler = vi.fn();
+      bridge.on('error', vi.fn());
+      bridge.on('task-token-usage', usageHandler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: {
+          type: 'usage-update',
+          usage: { promptTokens: 2462, completionTokens: 53, totalTokens: 2515 },
+        },
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      const result = createSessionResult({
+        outcome: 'error',
+        stepsExecuted: 9,
+        usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+        error: { message: 'failed', code: 'generic_error', retryable: false },
+      });
+
+      getWorker().emit('message', {
+        type: 'result',
+        taskId: 'task-123',
+        data: result,
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      expect(usageHandler).toHaveBeenLastCalledWith('task-123', {
+        promptTokens: 2462,
+        completionTokens: 53,
+        totalTokens: 2515,
+        stepsExecuted: 9,
+      }, 'proj-456');
     });
   });
 

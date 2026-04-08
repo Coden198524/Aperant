@@ -255,6 +255,12 @@ export const IPC_CHANNELS = {
   LINEAR_IMPORT_ISSUES: 'linear:importIssues',
   LINEAR_CHECK_CONNECTION: 'linear:checkConnection',
 
+  // Yunxiao integration
+  YUNXIAO_GET_PROJECTS: 'yunxiao:getProjects',
+  YUNXIAO_GET_WORK_ITEMS: 'yunxiao:getWorkItems',
+  YUNXIAO_IMPORT_WORK_ITEMS: 'yunxiao:importWorkItems',
+  YUNXIAO_CHECK_CONNECTION: 'yunxiao:checkConnection',
+
   // GitHub integration
   GITHUB_GET_REPOSITORIES: 'github:getRepositories',
   GITHUB_GET_ISSUES: 'github:getIssues',

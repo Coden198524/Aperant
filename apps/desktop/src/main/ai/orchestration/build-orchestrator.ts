@@ -278,15 +278,29 @@ export class BuildOrchestrator extends EventEmitter {
         return this.buildOutcome(true, Date.now() - startTime);
       }
 
-      // Coding phase
-      const codingResult = await this.runCodingPhase();
-      if (!codingResult.success) {
-        return this.buildOutcome(false, Date.now() - startTime, codingResult.error);
-      }
+      while (true) {
+        // Coding phase
+        const codingResult = await this.runCodingPhase();
+        if (!codingResult.success) {
+          return this.buildOutcome(false, Date.now() - startTime, codingResult.error);
+        }
 
-      // QA review phase
-      const qaResult = await this.runQAPhase();
-      return this.buildOutcome(qaResult.success, Date.now() - startTime, qaResult.error);
+        // Safety gate: never enter QA if any subtask is still not completed.
+        // Keep the task in coding instead of deadlocking in QA.
+        const codingActuallyComplete = await this.isBuildComplete();
+        if (!codingActuallyComplete) {
+          this.emitTyped('log', 'Detected incomplete subtasks after coding phase - continuing coding');
+          continue;
+        }
+
+        // QA review phase
+        const qaResult = await this.runQAPhase();
+        if (qaResult.resumeCoding) {
+          continue;
+        }
+
+        return this.buildOutcome(qaResult.success, Date.now() - startTime, qaResult.error);
+      }
 
     } catch (error: unknown) {
       const message = error instanceof Error ? error.message : String(error);
@@ -510,11 +524,15 @@ export class BuildOrchestrator extends EventEmitter {
   /**
    * Run QA review and optional QA fixing loop.
    */
-  private async runQAPhase(): Promise<{ success: boolean; error?: string }> {
+  private async runQAPhase(): Promise<{ success: boolean; error?: string; resumeCoding?: boolean }> {
+    if (!(await this.isBuildComplete())) {
+      return this.resumeCodingFromQA('Detected incomplete subtasks before QA review - returning to coding');
+    }
+
     // QA review
     this.transitionPhase('qa_review', 'Running QA review');
 
-    const maxQACycles = 3;
+    const maxQACycles = this.config.maxIterations ?? 3;
     for (let cycle = 0; cycle < maxQACycles; cycle++) {
       if (this.aborted) {
         return { success: false, error: 'Build cancelled' };
@@ -544,6 +562,10 @@ export class BuildOrchestrator extends EventEmitter {
 
       if (reviewResult.outcome === 'cancelled') {
         return { success: false, error: 'Build cancelled' };
+      }
+
+      if (!(await this.isBuildComplete())) {
+        return this.resumeCodingFromQA('Detected incomplete subtasks during QA review - returning to coding');
       }
 
       // Check QA result
@@ -582,6 +604,11 @@ export class BuildOrchestrator extends EventEmitter {
         });
 
         this.emitTyped('session-complete', fixResult, 'qa_fixing');
+
+        if (!(await this.isBuildComplete())) {
+          return this.resumeCodingFromQA('Detected incomplete subtasks after QA fixes - returning to coding');
+        }
+
         this.markPhaseCompleted('qa_fixing');
 
         // Delete qa_report.md before re-review so the reviewer writes a clean verdict.
@@ -772,6 +799,22 @@ export class BuildOrchestrator extends EventEmitter {
     } catch {
       // File may not exist — that's fine
     }
+  }
+
+  /**
+   * Return control from QA back to coding when QA detects unfinished work.
+   */
+  private async resumeCodingFromQA(
+    message: string,
+  ): Promise<{ success: false; resumeCoding: true }> {
+    this.emitTyped('log', message);
+    await this.resetQAReport();
+
+    if (this.currentPhase !== 'coding') {
+      this.transitionPhase('coding', message);
+    }
+
+    return { success: false, resumeCoding: true };
   }
 
   // ===========================================================================

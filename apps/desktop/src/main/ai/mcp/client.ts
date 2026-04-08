@@ -103,8 +103,16 @@ export async function createMcpClientsForAgent(
   resolveOptions: McpServerResolveOptions = {},
   registryOptions: McpRegistryOptions = {},
 ): Promise<McpClientResult[]> {
+  const customServerIds = (
+    resolveOptions.customServerIds
+    ?? registryOptions.customServers?.map((server) => server.id).filter(Boolean)
+  );
+
   // Determine which servers this agent needs
-  const serverIds = getRequiredMcpServers(agentType, resolveOptions);
+  const serverIds = getRequiredMcpServers(agentType, {
+    ...resolveOptions,
+    customServerIds,
+  });
 
   // Resolve server configurations
   const serverConfigs = resolveMcpServers(serverIds, registryOptions);

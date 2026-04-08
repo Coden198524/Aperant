@@ -9,7 +9,103 @@
  * and whether it's enabled by default.
  */
 
+import type { CustomMcpServer } from '../../../shared/types/project';
 import type { McpServerConfig, McpServerId } from './types';
+import path from 'path';
+
+// =============================================================================
+// Custom Server Validation
+// =============================================================================
+
+/**
+ * Defense-in-depth: command allowlist for command-based custom MCP servers.
+ * Mirrors the MCP health-check allowlist.
+ */
+const SAFE_COMMANDS = new Set(['npx', 'npm', 'node', 'python', 'python3', 'uv', 'uvx']);
+
+/**
+ * Defense-in-depth: dangerous interpreter flags that can execute arbitrary code.
+ * Mirrors the MCP health-check denylist.
+ */
+const DANGEROUS_FLAGS = new Set([
+  '--eval', '-e', '-c', '--exec',
+  '-m', '-p', '--print',
+  '--input-type=module', '--experimental-loader',
+  '--require', '-r',
+]);
+
+function isBuiltinServerId(serverId: string): serverId is McpServerId {
+  return (
+    serverId === 'context7'
+    || serverId === 'linear'
+    || serverId === 'yunxiao'
+    || serverId === 'memory'
+    || serverId === 'electron'
+    || serverId === 'puppeteer'
+    || serverId === 'auto-claude'
+  );
+}
+
+function isCommandSafe(command: string | undefined): boolean {
+  if (!command) return false;
+  // Reject path-like commands as defense-in-depth.
+  if (command.includes('/') || command.includes('\\')) return false;
+  return SAFE_COMMANDS.has(command);
+}
+
+function areArgsSafe(args: string[] | undefined): boolean {
+  if (!args || args.length === 0) return true;
+  return !args.some((arg) => DANGEROUS_FLAGS.has(arg));
+}
+
+function createCustomServer(
+  server: CustomMcpServer,
+  env?: Record<string, string>,
+): McpServerConfig | null {
+  const id = server.id?.trim();
+  if (!id) return null;
+
+  // Never allow custom configs to shadow built-ins.
+  if (isBuiltinServerId(id)) return null;
+
+  const name = server.name?.trim() || id;
+
+  if (server.type === 'command') {
+    const command = server.command?.trim();
+    const args = server.args ?? [];
+    if (!command || !isCommandSafe(command) || !areArgsSafe(args)) {
+      return null;
+    }
+
+    return {
+      id,
+      name,
+      description: server.description,
+      enabledByDefault: false,
+      transport: {
+        type: 'stdio',
+        command,
+        args,
+        env: env && Object.keys(env).length > 0 ? env : undefined,
+      },
+    };
+  }
+
+  const url = server.url?.trim();
+  if (!url) return null;
+
+  return {
+    id,
+    name,
+    description: server.description,
+    enabledByDefault: false,
+    transport: {
+      type: 'streamable-http',
+      url,
+      headers: server.headers,
+    },
+  };
+}
 
 // =============================================================================
 // Server Configuration Definitions
@@ -47,6 +143,45 @@ const LINEAR_SERVER: McpServerConfig = {
     args: ['-y', '@linear/mcp-server'],
   },
 };
+
+/**
+ * Yunxiao MCP server - Alibaba Cloud DevOps integration.
+ * Conditionally enabled when project has Yunxiao access token configured.
+ * Requires YUNXIAO_ACCESS_TOKEN environment variable.
+ */
+const YUNXIAO_SERVER: McpServerConfig = {
+  id: 'yunxiao',
+  name: 'Yunxiao',
+  description: 'Alibaba Cloud DevOps work item and project integration',
+  enabledByDefault: false,
+  transport: {
+    type: 'stdio',
+    command: 'npx',
+    args: ['-y', 'alibabacloud-devops-mcp-server'],
+  },
+};
+
+const DEFAULT_YUNXIAO_MCP_ARGS = ['-y', 'alibabacloud-devops-mcp-server'];
+
+function parseYunxiaoMcpArgs(raw?: string): string[] {
+  const trimmed = raw?.trim();
+  if (!trimmed) return [...DEFAULT_YUNXIAO_MCP_ARGS];
+
+  if (trimmed.startsWith('[')) {
+    try {
+      const parsed = JSON.parse(trimmed);
+      if (Array.isArray(parsed)) {
+        const args = parsed.map(item => String(item).trim()).filter(Boolean);
+        if (args.length > 0) return args;
+      }
+    } catch {
+      // Fallback to whitespace splitting.
+    }
+  }
+
+  const args = trimmed.split(/\s+/).filter(Boolean);
+  return args.length > 0 ? args : [...DEFAULT_YUNXIAO_MCP_ARGS];
+}
 
 /**
  * Memory MCP server - knowledge graph memory.
@@ -130,8 +265,12 @@ export interface McpRegistryOptions {
   memoryMcpUrl?: string;
   /** Linear API key (if available) */
   linearApiKey?: string;
+  /** Yunxiao access token (if available) */
+  yunxiaoAccessToken?: string;
   /** Environment variables for server processes */
   env?: Record<string, string>;
+  /** User-defined custom MCP servers from project settings */
+  customServers?: CustomMcpServer[];
 }
 
 /**
@@ -145,6 +284,14 @@ export function getMcpServerConfig(
   serverId: McpServerId | string,
   options: McpRegistryOptions = {},
 ): McpServerConfig | null {
+  // Custom server IDs are resolved first, except built-ins.
+  if (typeof serverId === 'string' && !isBuiltinServerId(serverId)) {
+    const custom = options.customServers?.find((server) => server.id === serverId);
+    if (custom) {
+      return createCustomServer(custom, options.env);
+    }
+  }
+
   switch (serverId) {
     case 'context7':
       return CONTEXT7_SERVER;
@@ -158,6 +305,47 @@ export function getMcpServerConfig(
         server.transport = {
           ...server.transport,
           env: { ...server.transport.env, LINEAR_API_KEY: apiKey },
+        };
+      }
+      return server;
+    }
+
+    case 'yunxiao': {
+      if (!options.yunxiaoAccessToken && !options.env?.YUNXIAO_ACCESS_TOKEN) return null;
+      const server = { ...YUNXIAO_SERVER };
+      const accessToken = options.yunxiaoAccessToken ?? options.env?.YUNXIAO_ACCESS_TOKEN;
+      if (accessToken && server.transport.type === 'stdio') {
+        const command = options.env?.YUNXIAO_MCP_COMMAND?.trim()
+          || server.transport.command;
+        const args = parseYunxiaoMcpArgs(options.env?.YUNXIAO_MCP_ARGS);
+        const npmCache = options.env?.YUNXIAO_MCP_NPM_CACHE
+          || path.join(process.env.LOCALAPPDATA || process.env.TEMP || process.cwd(), 'Aperant', 'mcp-cache', 'yunxiao-npm');
+
+        const injectedEnv: Record<string, string> = {
+          ...server.transport.env,
+          YUNXIAO_ACCESS_TOKEN: accessToken,
+          npm_config_cache: npmCache,
+          NPM_CONFIG_CACHE: npmCache,
+        };
+
+        if (options.env?.DEVOPS_TOOLSETS) {
+          injectedEnv.DEVOPS_TOOLSETS = options.env.DEVOPS_TOOLSETS;
+        }
+        if (options.env?.YUNXIAO_ORGANIZATION_ID) {
+          injectedEnv.YUNXIAO_ORGANIZATION_ID = options.env.YUNXIAO_ORGANIZATION_ID;
+        }
+        if (options.env?.YUNXIAO_PROJECT_ID) {
+          injectedEnv.YUNXIAO_PROJECT_ID = options.env.YUNXIAO_PROJECT_ID;
+        }
+        if (options.env?.YUNXIAO_WORKITEM_CATEGORY) {
+          injectedEnv.YUNXIAO_WORKITEM_CATEGORY = options.env.YUNXIAO_WORKITEM_CATEGORY;
+        }
+
+        server.transport = {
+          ...server.transport,
+          command,
+          args,
+          env: injectedEnv,
         };
       }
       return server;

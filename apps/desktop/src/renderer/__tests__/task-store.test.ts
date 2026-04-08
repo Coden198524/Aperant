@@ -417,6 +417,34 @@ describe('Task Store', () => {
 
       expect(useTaskStore.getState().tasks[0].tokenUsage?.promptTokens).toBe(222);
     });
+
+    it('should preserve stepsExecuted when incoming usage omits it', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          tokenUsage: createTokenUsage({ stepsExecuted: 7 }),
+        })]
+      });
+
+      useTaskStore.getState().updateTaskTokenUsage('task-1', createTokenUsage({
+        promptTokens: 300,
+        completionTokens: 80,
+        totalTokens: 380,
+      }));
+
+      expect(useTaskStore.getState().tasks[0].tokenUsage?.stepsExecuted).toBe(7);
+    });
+
+    it('should keep the maximum stepsExecuted across updates', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({ id: 'task-1' })]
+      });
+
+      useTaskStore.getState().updateTaskTokenUsage('task-1', createTokenUsage({ stepsExecuted: 5 }));
+      useTaskStore.getState().updateTaskTokenUsage('task-1', createTokenUsage({ stepsExecuted: 2 }));
+
+      expect(useTaskStore.getState().tasks[0].tokenUsage?.stepsExecuted).toBe(5);
+    });
   });
 
   describe('selectTask', () => {

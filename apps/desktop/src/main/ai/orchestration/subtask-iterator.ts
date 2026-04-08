@@ -229,10 +229,10 @@ export async function iterateSubtasks(
       continue;
     }
 
-    // Post-session: if the session completed or hit max_steps (not error), ensure the
-    // subtask is marked as completed. The coder agent is instructed to update
-    // implementation_plan.json itself, but it doesn't always do so reliably.
-    if (result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window') {
+    // Post-session: only auto-mark as completed when the session actually
+    // completed. `max_steps`/`context_window` can indicate partial progress.
+    // Auto-completing in those cases can prematurely advance to QA.
+    if (result.outcome === 'completed') {
       await ensureSubtaskMarkedCompleted(config.specDir, subtask.id);
 
       // Re-stamp executionPhase on the worktree plan after the coder session.
@@ -487,7 +487,7 @@ async function extractInsightsAfterSession(
       subtaskId: subtask.id,
       subtaskDescription: subtask.description,
       sessionNum: 1,
-      success: result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window',
+      success: result.outcome === 'completed',
       diff: '',           // Diff gathering requires git; left empty for now
       changedFiles: [],   // Populated by future git integration
       commitMessages: '',

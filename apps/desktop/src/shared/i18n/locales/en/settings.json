@@ -368,6 +368,13 @@
       "integrationDescription": "Connect to Linear for issue tracking and task import",
       "syncDescription": "Sync with Linear for issue tracking"
     },
+    "yunxiao": {
+      "title": "Yunxiao",
+      "description": "Yunxiao integration",
+      "integrationTitle": "Yunxiao Integration",
+      "integrationDescription": "Connect to Yunxiao for project and work item import",
+      "syncDescription": "Sync with Yunxiao work items"
+    },
     "github": {
       "title": "GitHub",
       "description": "GitHub issues sync",
@@ -393,6 +400,31 @@
       "integrationTitle": "GitLab Integration",
       "integrationDescription": "Connect to GitLab for issue tracking",
       "syncDescription": "Sync with GitLab Issues"
+    },
+    "gitblit": {
+      "title": "GitBlit",
+      "description": "GitBlit ticket workflow",
+      "integrationTitle": "GitBlit Workflow",
+      "integrationDescription": "Submit worktree changes to GitBlit tickets and patchsets",
+      "syncDescription": "Configure GitBlit ticket-based review requests",
+      "enable": {
+        "label": "Enable GitBlit Workflow",
+        "description": "Use GitBlit ticket submissions for task review requests"
+      },
+      "baseUrl": {
+        "label": "GitBlit Base URL",
+        "description": "Optional. Used when resolving GitBlit ticket links and messages."
+      },
+      "repo": {
+        "label": "Repository Path",
+        "description": "Optional. Example: team/repository.git"
+      },
+      "workflow": {
+        "title": "How it works",
+        "description": "GitBlit review requests are ticket-based. Aperant creates the first proposal as a GitBlit ticket and updates later patchsets when a ticket id is known.",
+        "create": "New review requests are submitted to refs/for/<branch>.",
+        "update": "Later submissions reuse refs/for/<ticket> when the task is already linked to a GitBlit ticket."
+      }
     },
     "memory": {
       "title": "Memory",
@@ -912,6 +944,11 @@
         "name": "Linear",
         "description": "Project management integration",
         "notConfigured": "Requires Linear integration (see Linear settings)"
+      },
+      "yunxiao": {
+        "name": "Yunxiao",
+        "description": "Alibaba Cloud DevOps integration",
+        "notConfigured": "Requires Yunxiao integration (see Yunxiao settings)"
       },
       "electron": {
         "name": "Electron",

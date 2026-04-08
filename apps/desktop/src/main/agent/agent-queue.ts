@@ -20,6 +20,7 @@ import { runRoadmapGeneration } from '../ai/runners/roadmap';
 import type { RoadmapStreamEvent } from '../ai/runners/roadmap';
 import type { ModelShorthand, ThinkingLevel } from '../ai/config/types';
 import { resolvePromptsDir } from '../ai/prompts/prompt-loader';
+import { getActiveProviderFeatureSettings } from '../ipc-handlers/feature-settings-helper';
 
 /**
  * Queue management for ideation and roadmap generation
@@ -405,12 +406,22 @@ export class AgentQueueManager {
       message: 'Starting roadmap generation...'
     });
 
+    const roadmapFeatureDefaults = getActiveProviderFeatureSettings('roadmap');
+    const resolvedRoadmapModel = config?.model ?? roadmapFeatureDefaults.model;
+    const resolvedRoadmapThinking = (config?.thinkingLevel ?? roadmapFeatureDefaults.thinkingLevel) as ThinkingLevel;
+    debugLog('[Agent Queue] Resolved roadmap model settings:', {
+      configuredModel: config?.model,
+      configuredThinkingLevel: config?.thinkingLevel,
+      resolvedRoadmapModel,
+      resolvedRoadmapThinking,
+    });
+
     try {
       const result = await runRoadmapGeneration(
         {
           projectDir: projectPath,
-          modelShorthand: (config?.model || 'sonnet') as ModelShorthand,
-          thinkingLevel: (config?.thinkingLevel || 'medium') as ThinkingLevel,
+          modelShorthand: resolvedRoadmapModel,
+          thinkingLevel: resolvedRoadmapThinking,
           refresh,
           enableCompetitorAnalysis,
           abortSignal: abortController.signal,

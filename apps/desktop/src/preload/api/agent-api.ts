@@ -16,6 +16,7 @@ import { createIdeationAPI, IdeationAPI } from './modules/ideation-api';
 import { createInsightsAPI, InsightsAPI } from './modules/insights-api';
 import { createChangelogAPI, ChangelogAPI } from './modules/changelog-api';
 import { createLinearAPI, LinearAPI } from './modules/linear-api';
+import { createYunxiaoAPI, YunxiaoAPI } from './modules/yunxiao-api';
 import { createGitHubAPI, GitHubAPI } from './modules/github-api';
 import { createGitLabAPI, GitLabAPI } from './modules/gitlab-api';
 import { createShellAPI, ShellAPI } from './modules/shell-api';
@@ -30,6 +31,7 @@ export interface AgentAPI extends
   InsightsAPI,
   ChangelogAPI,
   LinearAPI,
+  YunxiaoAPI,
   GitHubAPI,
   GitLabAPI,
   ShellAPI {}
@@ -45,6 +47,7 @@ export const createAgentAPI = (): AgentAPI => {
   const insightsAPI = createInsightsAPI();
   const changelogAPI = createChangelogAPI();
   const linearAPI = createLinearAPI();
+  const yunxiaoAPI = createYunxiaoAPI();
   const githubAPI = createGitHubAPI();
   const gitlabAPI = createGitLabAPI();
   const shellAPI = createShellAPI();
@@ -65,6 +68,9 @@ export const createAgentAPI = (): AgentAPI => {
     // Linear Integration API
     ...linearAPI,
 
+    // Yunxiao Integration API
+    ...yunxiaoAPI,
+
     // GitHub Integration API
     ...githubAPI,
 
@@ -83,6 +89,7 @@ export type {
   InsightsAPI,
   ChangelogAPI,
   LinearAPI,
+  YunxiaoAPI,
   GitHubAPI,
   GitLabAPI,
   ShellAPI

@@ -406,4 +406,29 @@ describe('CreatePRDialog', () => {
       expect(screen.queryByTestId('pr-link-button')).not.toBeInTheDocument();
     });
   });
+
+  it('should render a custom success message without a link', async () => {
+    mockOnCreatePR.mockResolvedValue({
+      success: true,
+      message: 'Created GitBlit ticket #42.'
+    });
+
+    render(
+      <CreatePRDialog
+        open={true}
+        task={mockTask}
+        worktreeStatus={mockWorktreeStatus}
+        onOpenChange={mockOnOpenChange}
+        onCreatePR={mockOnCreatePR}
+      />
+    );
+
+    const createButton = screen.getByRole('button', { name: /create pull request/i });
+    fireEvent.click(createButton);
+
+    await waitFor(() => {
+      expect(screen.getByText('Created GitBlit ticket #42.')).toBeInTheDocument();
+      expect(screen.queryByTestId('pr-link-button')).not.toBeInTheDocument();
+    });
+  });
 });

@@ -101,6 +101,13 @@ export class TaskStateManager {
   }
 
   handleManualStatusChange(taskId: string, status: TaskStatus, task: Task, project: Project): boolean {
+    const currentState = this.getCurrentState(taskId);
+    const isTerminalDoneLike = (
+      currentState === 'done' ||
+      currentState === 'pr_created' ||
+      (!currentState && (task.status === 'done' || task.status === 'pr_created'))
+    );
+
     switch (status) {
       case 'done':
         this.handleUiEvent(taskId, { type: 'MARK_DONE' }, task, project);
@@ -114,8 +121,18 @@ export class TaskStateManager {
         );
         return true;
       case 'in_progress': {
+        // Re-open tasks that were already completed/PR-created.
+        // In terminal states, USER_RESUMED cannot transition, so recreate actor from target status.
+        if (isTerminalDoneLike) {
+          this.reinitializeActorForTask(taskId, {
+            ...task,
+            status: 'in_progress',
+            reviewReason: undefined,
+          }, project);
+          return true;
+        }
+
         // Use XState as source of truth for determining correct event
-        const currentState = this.getCurrentState(taskId);
         if (currentState === 'plan_review') {
           this.handleUiEvent(taskId, { type: 'PLAN_APPROVED' }, task, project);
         } else if (currentState === 'human_review' || currentState === 'error') {
@@ -129,12 +146,25 @@ export class TaskStateManager {
         return true;
       }
       case 'backlog':
+        // Re-open completed tasks back to backlog by rebuilding actor from backlog snapshot.
+        if (isTerminalDoneLike) {
+          this.reinitializeActorForTask(taskId, {
+            ...task,
+            status: 'backlog',
+            reviewReason: undefined,
+          }, project);
+          return true;
+        }
         this.handleUiEvent(taskId, { type: 'USER_STOPPED', hasPlan: false }, task, project);
         return true;
       case 'human_review':
-        // Already in human_review (e.g., stage-only merge keeps task in review).
-        // Emit status directly since there's no XState transition needed.
-        this.emitStatus(taskId, 'human_review', task.reviewReason ?? 'completed', project.id);
+        // Manual move to human_review should always sync actor snapshot.
+        // This supports dragging completed tasks back to review before Request Changes.
+        this.reinitializeActorForTask(taskId, {
+          ...task,
+          status: 'human_review',
+          reviewReason: task.reviewReason ?? 'completed',
+        }, project);
         return true;
       default:
         return false;
@@ -217,6 +247,12 @@ export class TaskStateManager {
 
   private setTaskContext(taskId: string, task: Task, project: Project): void {
     this.taskContextById.set(taskId, { task, project });
+  }
+
+  private reinitializeActorForTask(taskId: string, task: Task, project: Project): void {
+    this.clearTask(taskId);
+    this.setTaskContext(taskId, task, project);
+    this.getOrCreateActor(taskId);
   }
 
   private getOrCreateActor(taskId: string): TaskActor {

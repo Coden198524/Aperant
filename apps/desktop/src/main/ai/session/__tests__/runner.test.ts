@@ -203,6 +203,25 @@ describe('runAgentSession', () => {
     expect(result.error!.code).toBe('generic_error');
   });
 
+  it('should treat stream error parts as fatal session errors', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [
+          {
+            type: 'error',
+            error: Object.assign(new Error('openai_error'), { statusCode: 404 }),
+          },
+        ],
+        { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } },
+      ),
+    );
+
+    const result = await runAgentSession(createMockConfig());
+
+    expect(result.outcome).toBe('error');
+    expect(result.error!.code).toBe('model_not_found');
+  });
+
   // ===========================================================================
   // Auth retry
   // ===========================================================================
@@ -369,6 +388,26 @@ describe('runAgentSession', () => {
     expect(callArgs.system).toBeUndefined();
     expect(callArgs.providerOptions?.openai).toMatchObject({
       instructions: 'Spec prompt',
+      store: true,
+    });
+  });
+
+  it('should enable instructions/store for generic openai provider ids with responses models', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Spec prompt',
+      model: {
+        modelId: 'gpt-5.4',
+        provider: 'openai',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.system).toBe('Spec prompt');
+    expect(callArgs.providerOptions?.openai).toMatchObject({
       store: true,
     });
   });

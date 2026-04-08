@@ -10,6 +10,8 @@
 import type { ExecutionProgressData, ProcessType } from '../../../main/agent/types';
 import type { SessionConfig, SessionResult, StreamEvent } from '../session/types';
 import type { RunnerOptions } from '../session/runner';
+import type { CustomMcpServer, TaskWorkflowMode, TokenUsage } from '../../../shared/types';
+import type { SupportedLanguage } from '../../../shared/constants/i18n';
 
 // =============================================================================
 // Worker Configuration
@@ -40,6 +42,7 @@ export interface SerializableSessionConfig {
   systemPrompt: string;
   initialMessages: SessionConfig['initialMessages'];
   maxSteps: number;
+  phaseStepBudgets?: Partial<Record<'spec' | 'planning' | 'coding' | 'qa', number>>;
   specDir: string;
   projectDir: string;
   /** Source project dir in main project (for worktree read/search access) */
@@ -68,17 +71,29 @@ export interface SerializableSessionConfig {
     context7Enabled?: boolean;
     memoryEnabled?: boolean;
     linearEnabled?: boolean;
+    yunxiaoEnabled?: boolean;
     electronMcpEnabled?: boolean;
     puppeteerMcpEnabled?: boolean;
+    /** Project capabilities used to resolve dynamic browser MCP routing */
     projectCapabilities?: {
       is_electron?: boolean;
       is_web_frontend?: boolean;
     };
+    /** Per-agent override additions (AGENT_MCP_<agent>_ADD) */
     agentMcpAdd?: string;
+    /** Per-agent override removals (AGENT_MCP_<agent>_REMOVE) */
     agentMcpRemove?: string;
+    /** User-defined custom MCP servers from CUSTOM_MCP_SERVERS */
+    customMcpServers?: CustomMcpServer[];
+    /** Project-level MCP env vars from .auto-claude/.env */
+    mcpEnv?: Record<string, string>;
   };
   /** Enable agentic orchestration mode where the AI drives the pipeline via SpawnSubagent tool */
   useAgenticOrchestration?: boolean;
+  /** Workflow execution mode controlling orchestration tradeoffs */
+  workflowMode?: TaskWorkflowMode;
+  /** Preferred UI language from app settings */
+  language?: SupportedLanguage;
   /** Tool context serialized fields */
   toolContext: {
     cwd: string;
@@ -102,6 +117,7 @@ export type WorkerMessage =
   | WorkerErrorMessage
   | WorkerProgressMessage
   | WorkerStreamEventMessage
+  | WorkerTokenUsageMessage
   | WorkerResultMessage
   | WorkerTaskEventMessage;
 
@@ -130,6 +146,13 @@ export interface WorkerStreamEventMessage {
   type: 'stream-event';
   taskId: string;
   data: StreamEvent;
+  projectId?: string;
+}
+
+export interface WorkerTokenUsageMessage {
+  type: 'task-token-usage';
+  taskId: string;
+  data: TokenUsage;
   projectId?: string;
 }
 

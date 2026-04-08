@@ -12,6 +12,7 @@ import type {
   AutoBuildVersionInfo,
   ProjectEnvConfig,
   LinearSyncStatus,
+  YunxiaoSyncStatus,
   GitHubSyncStatus,
   GitLabSyncStatus
 } from '../../../../shared/types';
@@ -42,6 +43,8 @@ export interface UseProjectSettingsReturn {
   setShowClaudeToken: React.Dispatch<React.SetStateAction<boolean>>;
   showLinearKey: boolean;
   setShowLinearKey: React.Dispatch<React.SetStateAction<boolean>>;
+  showYunxiaoToken: boolean;
+  setShowYunxiaoToken: React.Dispatch<React.SetStateAction<boolean>>;
   showOpenAIKey: boolean;
   setShowOpenAIKey: React.Dispatch<React.SetStateAction<boolean>>;
   showGitHubToken: boolean;
@@ -66,6 +69,10 @@ export interface UseProjectSettingsReturn {
   setShowLinearImportModal: React.Dispatch<React.SetStateAction<boolean>>;
   linearConnectionStatus: LinearSyncStatus | null;
   isCheckingLinear: boolean;
+  showYunxiaoImportModal: boolean;
+  setShowYunxiaoImportModal: React.Dispatch<React.SetStateAction<boolean>>;
+  yunxiaoConnectionStatus: YunxiaoSyncStatus | null;
+  isCheckingYunxiao: boolean;
 
   // Actions
   handleInitialize: () => Promise<void>;
@@ -99,6 +106,7 @@ export function useProjectSettings(
   // Password visibility toggles
   const [showClaudeToken, setShowClaudeToken] = useState(false);
   const [showLinearKey, setShowLinearKey] = useState(false);
+  const [showYunxiaoToken, setShowYunxiaoToken] = useState(false);
   const [showOpenAIKey, setShowOpenAIKey] = useState(false);
 
   // Collapsible sections
@@ -123,6 +131,9 @@ export function useProjectSettings(
   const [showLinearImportModal, setShowLinearImportModal] = useState(false);
   const [linearConnectionStatus, setLinearConnectionStatus] = useState<LinearSyncStatus | null>(null);
   const [isCheckingLinear, setIsCheckingLinear] = useState(false);
+  const [showYunxiaoImportModal, setShowYunxiaoImportModal] = useState(false);
+  const [yunxiaoConnectionStatus, setYunxiaoConnectionStatus] = useState<YunxiaoSyncStatus | null>(null);
+  const [isCheckingYunxiao, setIsCheckingYunxiao] = useState(false);
 
   // Reset settings when project changes
   useEffect(() => {
@@ -193,6 +204,32 @@ export function useProjectSettings(
       checkLinearConnection();
     }
   }, [envConfig?.linearEnabled, envConfig?.linearApiKey, project.id]);
+
+  // Check Yunxiao connection when token changes
+  useEffect(() => {
+    const checkYunxiaoConnection = async () => {
+      if (!envConfig?.yunxiaoEnabled || !envConfig.yunxiaoAccessToken) {
+        setYunxiaoConnectionStatus(null);
+        return;
+      }
+
+      setIsCheckingYunxiao(true);
+      try {
+        const result = await window.electronAPI.checkYunxiaoConnection(project.id);
+        if (result.success && result.data) {
+          setYunxiaoConnectionStatus(result.data);
+        }
+      } catch {
+        setYunxiaoConnectionStatus({ connected: false, error: 'Failed to check connection' });
+      } finally {
+        setIsCheckingYunxiao(false);
+      }
+    };
+
+    if (envConfig?.yunxiaoEnabled && envConfig.yunxiaoAccessToken) {
+      checkYunxiaoConnection();
+    }
+  }, [envConfig?.yunxiaoEnabled, envConfig?.yunxiaoAccessToken, project.id]);
 
   // Check GitHub connection when token/repo changes
   // Also updates the global GitHub store so other components (like GitHub Issues) see the change
@@ -363,6 +400,8 @@ export function useProjectSettings(
     setShowClaudeToken,
     showLinearKey,
     setShowLinearKey,
+    showYunxiaoToken,
+    setShowYunxiaoToken,
     showOpenAIKey,
     setShowOpenAIKey,
     showGitHubToken,
@@ -379,6 +418,10 @@ export function useProjectSettings(
     setShowLinearImportModal,
     linearConnectionStatus,
     isCheckingLinear,
+    showYunxiaoImportModal,
+    setShowYunxiaoImportModal,
+    yunxiaoConnectionStatus,
+    isCheckingYunxiao,
     handleInitialize,
     handleSave
   };

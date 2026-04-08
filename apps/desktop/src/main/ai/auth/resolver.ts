@@ -357,6 +357,7 @@ export async function resolveAuthFromQueue(
   }
 ): Promise<QueueResolvedAuth | null> {
   const excludeSet = new Set(options?.excludeAccountIds ?? []);
+  const requestedProvider = detectProviderFromModel(requestedModel);
   const defaultSettings: ClaudeAutoSwitchSettings = {
     enabled: true,
     proactiveSwapEnabled: false,
@@ -382,31 +383,41 @@ export async function resolveAuthFromQueue(
 
     // Use modelEquivalenceProvider if specified, otherwise use the account's provider
     const equivalenceProvider = account.modelEquivalenceProvider ?? account.provider;
+    const isOpenAIProviderPair = (
+      (requestedProvider === 'openai' && supportedProvider === 'openai-compatible') ||
+      (requestedProvider === 'openai-compatible' && supportedProvider === 'openai')
+    );
+    const canUseCrossProviderEquivalence = requestedProvider === undefined;
+    const canUseSameProviderEquivalence = requestedProvider === supportedProvider || isOpenAIProviderPair;
 
     // Resolve which model to use on this account.
-    // First try the equivalence table (maps shorthands like 'sonnet' across providers).
-    // If no equivalence exists, check if the model is native to this provider
-    // (e.g., 'llama3.1:8b' on Ollama). If the model belongs to a different provider,
-    // skip this account to avoid sending provider-mismatched requests (e.g., sending
-    // an Anthropic model ID to an OpenAI endpoint → 400 Bad Request).
-    const modelSpec = resolveModelEquivalent(
-      requestedModel,
-      equivalenceProvider,
-      options?.userModelOverrides,
-    );
+    // Only shorthand models should cross-map between providers. Fully-qualified
+    // model IDs (e.g. gpt-5.4) remain provider-strict.
+    const modelSpec = (canUseCrossProviderEquivalence || canUseSameProviderEquivalence)
+      ? resolveModelEquivalent(
+        requestedModel,
+        equivalenceProvider,
+        options?.userModelOverrides,
+      )
+      : null;
 
     if (!modelSpec) {
-      // No cross-provider equivalent found. Only proceed if the model is
-      // native to this provider's API (detected via model ID prefix).
-      // Ollama is a special case: it runs arbitrary user-installed models with
-      // no predictable prefix (e.g., 'llama3.1:8b', 'mistral:7b', 'phi3:mini').
-      // When the account IS Ollama, allow any unrecognized model through since
-      // the user explicitly configured it. When the account is NOT Ollama, skip
-      // if the model can't be identified as native.
-      const nativeProvider = detectProviderFromModel(requestedModel);
-      if (nativeProvider !== supportedProvider && supportedProvider !== 'ollama') continue;
-      // If nativeProvider is defined but doesn't match Ollama, skip (e.g., 'claude-*' on Ollama)
-      if (supportedProvider === 'ollama' && nativeProvider && nativeProvider !== 'ollama') continue;
+      if (requestedProvider) {
+        // For full model IDs, require provider match (OpenAI and OpenAI-compatible
+        // are treated as compatible for custom endpoints).
+        if (supportedProvider === 'ollama' && requestedProvider !== 'ollama') continue;
+        if (
+          supportedProvider !== requestedProvider &&
+          !isOpenAIProviderPair &&
+          supportedProvider !== 'ollama'
+        ) {
+          continue;
+        }
+      } else {
+        // For shorthand/unknown models, if no equivalence is available then only
+        // Ollama can still accept arbitrary local model names.
+        if (supportedProvider !== 'ollama') continue;
+      }
     }
 
     const resolvedModelId = modelSpec?.modelId ?? requestedModel;

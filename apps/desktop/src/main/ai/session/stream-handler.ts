@@ -75,8 +75,10 @@ export interface FinishStepPart {
   type: 'finish-step';
   finishReason?: string;
   usage?: {
-    promptTokens: number;
-    completionTokens: number;
+    promptTokens?: number;
+    completionTokens?: number;
+    inputTokens?: number;
+    outputTokens?: number;
   };
 }
 
@@ -242,9 +244,11 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
   function handleFinishStep(part: FinishStepPart): void {
     state.stepNumber++;
 
-    // AI SDK v6 finish-step usage: promptTokens/completionTokens
-    const promptTokens = part.usage?.promptTokens ?? 0;
-    const completionTokens = part.usage?.completionTokens ?? 0;
+    // AI SDK usage field names differ by provider/transport:
+    // - promptTokens/completionTokens (legacy)
+    // - inputTokens/outputTokens (OpenAI Responses)
+    const promptTokens = part.usage?.promptTokens ?? part.usage?.inputTokens ?? 0;
+    const completionTokens = part.usage?.completionTokens ?? part.usage?.outputTokens ?? 0;
     const totalTokens = promptTokens + completionTokens;
 
     console.log(`[StreamHandler] finish-step received:`, {
@@ -276,13 +280,15 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
 
     emit({
       type: 'usage-update',
-      usage: { ...state.cumulativeUsage },
+      usage: {
+        ...state.cumulativeUsage,
+        stepsExecuted: state.stepNumber,
+      },
     });
   }
 
   function handleError(part: ErrorPart): void {
-    const errorMessage = part.error instanceof Error ? part.error.message : String(part.error ?? 'Stream error');
-    const { sessionError } = classifyError(errorMessage);
+    const { sessionError } = classifyError(part.error ?? 'Stream error');
     emit({ type: 'error', error: sessionError });
   }
 

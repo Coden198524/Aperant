@@ -1,7 +1,7 @@
 import { ChildProcess } from 'child_process';
 import type { Worker } from 'worker_threads';
 import type { CompletablePhase, ExecutionPhase } from '../../shared/constants/phase-protocol';
-import type { TokenUsage } from '../../shared/types';
+import type { TaskWorkflowMode, TokenUsage } from '../../shared/types';
 import type { TaskEventPayload } from './task-event-schema';
 
 /**
@@ -46,7 +46,7 @@ export interface AgentManagerEvents {
 // IdeationConfig now imported from shared types to maintain consistency
 
 export interface RoadmapConfig {
-  model?: string;          // Model shorthand (opus, sonnet, haiku)
+  model?: string;          // Model shorthand or full model ID (e.g., gpt-5.4)
   thinkingLevel?: string;  // Thinking level (low, medium, high)
 }
 
@@ -82,6 +82,7 @@ export interface SpecCreationMetadata {
   // Non-auto profile - single model and thinking level
   model?: string;
   thinkingLevel?: string;
+  workflowMode?: TaskWorkflowMode;
   // Workspace mode - whether to use worktree isolation
   useWorktree?: boolean; // If false, use --direct mode (no worktree isolation)
   useLocalBranch?: boolean; // If true, use local branch directly instead of preferring origin/branch

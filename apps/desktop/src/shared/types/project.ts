@@ -314,6 +314,18 @@ export interface ProjectEnvConfig {
   linearProjectId?: string;
   linearRealtimeSync?: boolean; // Enable real-time sync of new Linear tasks
 
+  // Yunxiao Integration
+  yunxiaoEnabled?: boolean;
+  yunxiaoAccessToken?: string;
+  yunxiaoOrganizationId?: string;
+  yunxiaoProjectId?: string; // Yunxiao space/project ID
+  yunxiaoWorkitemCategory?: string; // Req | Task | Bug
+  yunxiaoAutoSync?: boolean;
+  yunxiaoDevopsToolsets?: string; // e.g. organization-management,project-management
+  yunxiaoMcpCommand?: string; // default: npx(.cmd on Windows)
+  yunxiaoMcpArgs?: string; // default: -y alibabacloud-devops-mcp-server
+  yunxiaoMcpNpmCache?: string; // optional npm cache directory for MCP startup
+
   // GitHub Integration
   githubEnabled: boolean;
   githubToken?: string;
@@ -327,6 +339,11 @@ export interface ProjectEnvConfig {
   gitlabToken?: string;
   gitlabProject?: string; // Format: group/project or numeric ID
   gitlabAutoSync?: boolean; // Auto-sync issues on project load
+
+  // GitBlit Integration
+  gitblitEnabled: boolean;
+  gitblitBaseUrl?: string;
+  gitblitRepo?: string;
 
   // Git/Worktree Settings
   defaultBranch?: string; // Base branch for worktree creation (e.g., 'main', 'develop')
@@ -353,6 +370,8 @@ export interface ProjectEnvConfig {
     memoryEnabled?: boolean;
     /** Linear MCP integration - default: follows linearEnabled */
     linearMcpEnabled?: boolean;
+    /** Yunxiao MCP integration - default: follows yunxiaoEnabled/token */
+    yunxiaoMcpEnabled?: boolean;
     /** Electron desktop automation (QA only) - default: false */
     electronEnabled?: boolean;
     /** Puppeteer browser automation (QA only) - default: false */

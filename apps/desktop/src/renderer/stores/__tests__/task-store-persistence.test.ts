@@ -13,6 +13,7 @@ import type { Task, TaskStatus } from '../../../shared/types';
 // Mock the electronAPI for IPC communication
 const mockGetTasks = vi.fn();
 const mockCreateTask = vi.fn();
+const mockDeleteTask = vi.fn();
 
 vi.stubGlobal('window', {
   electronAPI: {
@@ -25,7 +26,7 @@ vi.stubGlobal('window', {
     updateTask: vi.fn(),
     checkTaskRunning: vi.fn(),
     recoverStuckTask: vi.fn(),
-    deleteTask: vi.fn(),
+    deleteTask: mockDeleteTask,
     archiveTasks: vi.fn()
   }
 });
@@ -34,6 +35,7 @@ describe('task-store-persistence', () => {
   let useTaskStore: typeof import('../task-store').useTaskStore;
   let loadTasks: typeof import('../task-store').loadTasks;
   let createTask: typeof import('../task-store').createTask;
+  let deleteTask: typeof import('../task-store').deleteTask;
 
 
   beforeEach(async () => {
@@ -45,6 +47,7 @@ describe('task-store-persistence', () => {
     useTaskStore = storeModule.useTaskStore;
     loadTasks = storeModule.loadTasks;
     createTask = storeModule.createTask;
+    deleteTask = storeModule.deleteTask;
   });
 
   afterEach(() => {
@@ -380,6 +383,34 @@ describe('task-store-persistence', () => {
       await loadTasks('test-project', { forceRefresh: true });
 
       expect(mockGetTasks).toHaveBeenCalledWith('test-project', { forceRefresh: true });
+    });
+  });
+
+  describe('Delete Task Recovery', () => {
+    it('should remove local task when backend reports not found', async () => {
+      const task: Task = {
+        id: 'task-1',
+        specId: '001-test-task',
+        projectId: 'test-project',
+        title: 'Task 1',
+        description: 'Description 1',
+        status: 'backlog' as TaskStatus,
+        logs: [],
+        subtasks: [],
+        createdAt: new Date(),
+        updatedAt: new Date()
+      };
+      useTaskStore.getState().setTasks([task]);
+
+      mockDeleteTask.mockResolvedValueOnce({
+        success: false,
+        error: 'Task or project not found'
+      });
+
+      const result = await deleteTask(task.id);
+
+      expect(result.success).toBe(true);
+      expect(useTaskStore.getState().tasks).toHaveLength(0);
     });
   });
 

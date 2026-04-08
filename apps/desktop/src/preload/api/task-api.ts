@@ -35,24 +35,25 @@ export interface TaskAPI {
     updates: { title?: string; description?: string }
   ) => Promise<IPCResult<Task>>;
   startTask: (taskId: string, options?: TaskStartOptions) => void;
-  stopTask: (taskId: string) => void;
+  stopTask: (taskId: string, projectId?: string) => void;
   submitReview: (
     taskId: string,
     approved: boolean,
     feedback?: string,
-    images?: ImageAttachment[]
+    images?: ImageAttachment[],
+    projectId?: string
   ) => Promise<IPCResult>;
   updateTaskStatus: (
     taskId: string,
     status: TaskStatus,
-    options?: { forceCleanup?: boolean; keepWorktree?: boolean }
+    options?: { forceCleanup?: boolean; keepWorktree?: boolean; projectId?: string }
   ) => Promise<IPCResult & { worktreeExists?: boolean; worktreePath?: string }>;
   recoverStuckTask: (
     taskId: string,
     options?: import('../../shared/types').TaskRecoveryOptions
   ) => Promise<IPCResult<TaskRecoveryResult>>;
-  checkTaskRunning: (taskId: string) => Promise<IPCResult<boolean>>;
-  resumePausedTask: (taskId: string) => Promise<IPCResult>;
+  checkTaskRunning: (taskId: string, projectId?: string) => Promise<IPCResult<boolean>>;
+  resumePausedTask: (taskId: string, projectId?: string) => Promise<IPCResult>;
 
   // Worktree Change Detection
   checkWorktreeChanges: (taskId: string) => Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>>;
@@ -123,21 +124,22 @@ export const createTaskAPI = (): TaskAPI => ({
   startTask: (taskId: string, options?: TaskStartOptions): void =>
     ipcRenderer.send(IPC_CHANNELS.TASK_START, taskId, options),
 
-  stopTask: (taskId: string): void =>
-    ipcRenderer.send(IPC_CHANNELS.TASK_STOP, taskId),
+  stopTask: (taskId: string, projectId?: string): void =>
+    ipcRenderer.send(IPC_CHANNELS.TASK_STOP, taskId, projectId),
 
   submitReview: (
     taskId: string,
     approved: boolean,
     feedback?: string,
-    images?: ImageAttachment[]
+    images?: ImageAttachment[],
+    projectId?: string
   ): Promise<IPCResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_REVIEW, taskId, approved, feedback, images),
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_REVIEW, taskId, approved, feedback, images, projectId),
 
   updateTaskStatus: (
     taskId: string,
     status: TaskStatus,
-    options?: { forceCleanup?: boolean; keepWorktree?: boolean }
+    options?: { forceCleanup?: boolean; keepWorktree?: boolean; projectId?: string }
   ): Promise<IPCResult & { worktreeExists?: boolean; worktreePath?: string }> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_UPDATE_STATUS, taskId, status, options),
 
@@ -147,11 +149,11 @@ export const createTaskAPI = (): TaskAPI => ({
   ): Promise<IPCResult<TaskRecoveryResult>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_RECOVER_STUCK, taskId, options),
 
-  checkTaskRunning: (taskId: string): Promise<IPCResult<boolean>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_CHECK_RUNNING, taskId),
+  checkTaskRunning: (taskId: string, projectId?: string): Promise<IPCResult<boolean>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_CHECK_RUNNING, taskId, projectId),
 
-  resumePausedTask: (taskId: string): Promise<IPCResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME_PAUSED, taskId),
+  resumePausedTask: (taskId: string, projectId?: string): Promise<IPCResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME_PAUSED, taskId, projectId),
 
   // Worktree Change Detection
   checkWorktreeChanges: (taskId: string): Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>> =>

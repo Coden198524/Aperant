@@ -361,7 +361,7 @@ export function getTaskSeverityLabel(
 
 export function getTaskSourceTypeLabel(
   t: TFunction,
-  sourceType: 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'github' | 'gitlab'
+  sourceType: 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab'
 ): string {
   return t(`tasks:metadata.sourceTypes.${sourceType}`, {
     defaultValue: {
@@ -370,6 +370,7 @@ export function getTaskSourceTypeLabel(
       insights: 'Insights',
       roadmap: 'Roadmap',
       linear: 'Linear',
+      yunxiao: 'Yunxiao',
       github: 'GitHub',
       gitlab: 'GitLab'
     }[sourceType]

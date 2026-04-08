@@ -135,6 +135,8 @@ export interface TokenUsage {
   promptTokens: number;
   completionTokens: number;
   totalTokens: number;
+  /** Number of AI model requests (steps) executed so far */
+  stepsExecuted?: number;
   /** Thinking/reasoning tokens (provider-specific) */
   thinkingTokens?: number;
   /** Cache read tokens (Anthropic prompt caching) */

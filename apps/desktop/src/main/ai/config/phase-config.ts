@@ -8,6 +8,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import type { TaskWorkflowMode } from '../../../shared/types';
 
 import {
   type Phase,
@@ -140,6 +141,7 @@ export interface TaskMetadataConfig {
   phaseThinking?: Partial<Record<Phase, string>>;
   model?: string;
   thinkingLevel?: string;
+  workflowMode?: TaskWorkflowMode;
   fastMode?: boolean;
   /** Per-phase provider override for cross-provider (Custom) profile */
   phaseProviders?: Partial<Record<Phase, string>>;

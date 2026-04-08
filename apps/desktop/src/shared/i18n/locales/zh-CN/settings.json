@@ -1098,6 +1098,11 @@
         "description": "项目管理集成",
         "notConfigured": "需要先配置 Linear 集成（见“Linear”设置）"
       },
+      "yunxiao": {
+        "name": "云效",
+        "description": "阿里云效项目管理集成",
+        "notConfigured": "需要先配置云效集成（见“云效”设置）"
+      },
       "electron": {
         "name": "Electron",
         "description": "通过 Chrome DevTools 自动化桌面应用"

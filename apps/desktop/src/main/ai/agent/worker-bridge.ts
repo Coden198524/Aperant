@@ -18,6 +18,7 @@ import { app } from 'electron';
 
 import type { AgentManagerEvents, ExecutionProgressData, ProcessType } from '../../agent/types';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
+import type { TokenUsage } from '../../../shared/types';
 import type {
   WorkerConfig,
   WorkerMessage,
@@ -71,6 +72,7 @@ export class WorkerBridge extends EventEmitter {
   private projectId: string | undefined;
   private processType: ProcessType = 'task-execution';
   private executionProgressSequence = 0;
+  private lastTokenUsage: TokenUsage | null = null;
 
   /**
    * Spawn a worker thread with the given configuration.
@@ -88,6 +90,7 @@ export class WorkerBridge extends EventEmitter {
     this.processType = config.processType;
     this.progressTracker = new ProgressTracker();
     this.executionProgressSequence = 0;
+    this.lastTokenUsage = null;
 
     const workerConfig: WorkerConfig = {
       taskId: config.taskId,
@@ -179,7 +182,8 @@ export class WorkerBridge extends EventEmitter {
         this.progressTracker.processEvent(message.data);
         this.emitProgressFromTracker(message.taskId, message.projectId);
         if (message.data.type === 'usage-update') {
-          this.emitTyped('task-token-usage', message.taskId, message.data.usage, message.projectId);
+          this.lastTokenUsage = mergeTokenUsage(this.lastTokenUsage, message.data.usage);
+          this.emitTyped('task-token-usage', message.taskId, this.lastTokenUsage, message.projectId);
         }
         // Also forward raw log for text events
         if (message.data.type === 'text-delta') {
@@ -189,6 +193,11 @@ export class WorkerBridge extends EventEmitter {
 
       case 'task-event':
         this.emitTyped('task-event', message.taskId, message.data as TaskEventPayload, message.projectId);
+        break;
+
+      case 'task-token-usage':
+        this.lastTokenUsage = mergeTokenUsage(this.lastTokenUsage, message.data);
+        this.emitTyped('task-token-usage', message.taskId, this.lastTokenUsage, message.projectId);
         break;
 
       case 'result':
@@ -223,10 +232,11 @@ export class WorkerBridge extends EventEmitter {
     const exitCode = result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window' ? 0 : 1;
 
     // Merge stepsExecuted into usage for frontend display
-    const usageWithSteps: TokenUsage = {
+    const usageWithSteps: TokenUsage = mergeTokenUsage(this.lastTokenUsage, {
       ...result.usage,
       stepsExecuted: result.stepsExecuted,
-    };
+    });
+    this.lastTokenUsage = usageWithSteps;
 
     this.emitTyped('task-token-usage', taskId, usageWithSteps, projectId);
 
@@ -244,6 +254,14 @@ export class WorkerBridge extends EventEmitter {
   }
 
   private emitExecutionProgress(taskId: string, progress: ExecutionProgressData, projectId?: string): void {
+    if (progress.phase) {
+      this.progressTracker.forcePhase(
+        progress.phase,
+        progress.message ?? this.progressTracker.state.currentMessage,
+        progress.currentSubtask,
+      );
+    }
+
     const nextSequence =
       progress.sequenceNumber && progress.sequenceNumber > 0
         ? progress.sequenceNumber
@@ -272,5 +290,21 @@ export class WorkerBridge extends EventEmitter {
 
   private cleanup(): void {
     this.worker = null;
+    this.lastTokenUsage = null;
   }
+}
+
+function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): TokenUsage {
+  if (!previous) return incoming;
+
+  // Never regress aggregate counters in UI due to late zero/partial payloads.
+  return {
+    promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
+    completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
+    totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
+    thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
+    cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
+    cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
+    stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+  };
 }

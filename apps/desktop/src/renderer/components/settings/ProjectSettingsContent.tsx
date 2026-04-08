@@ -1,6 +1,7 @@
 import { useEffect, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import { LinearTaskImportModal } from '../LinearTaskImportModal';
+import { YunxiaoTaskImportModal } from '../YunxiaoTaskImportModal';
 import { SettingsSection } from './SettingsSection';
 import { useProjectSettings, UseProjectSettingsReturn } from '../project-settings/hooks/useProjectSettings';
 import { loadTasks } from '../../stores/task-store';
@@ -10,7 +11,7 @@ import { SectionRouter } from './sections/SectionRouter';
 import { createHookProxy } from './utils/hookProxyFactory';
 import type { Project } from '../../../shared/types';
 
-export type ProjectSettingsSection = 'general' | 'linear' | 'github' | 'gitlab' | 'memory';
+export type ProjectSettingsSection = 'general' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'gitblit' | 'memory';
 
 interface ProjectSettingsContentProps {
   project: Project | undefined;
@@ -86,6 +87,8 @@ function ProjectSettingsContentInner({
     updateEnvConfig,
     showLinearKey,
     setShowLinearKey,
+    showYunxiaoToken,
+    setShowYunxiaoToken,
     showOpenAIKey,
     setShowOpenAIKey,
     showGitHubToken,
@@ -102,6 +105,10 @@ function ProjectSettingsContentInner({
     setShowLinearImportModal,
     linearConnectionStatus,
     isCheckingLinear,
+    showYunxiaoImportModal,
+    setShowYunxiaoImportModal,
+    yunxiaoConnectionStatus,
+    isCheckingYunxiao,
     handleInitialize,
     error
   } = hook;
@@ -134,6 +141,8 @@ function ProjectSettingsContentInner({
         updateEnvConfig={updateEnvConfig}
         showLinearKey={showLinearKey}
         setShowLinearKey={setShowLinearKey}
+        showYunxiaoToken={showYunxiaoToken}
+        setShowYunxiaoToken={setShowYunxiaoToken}
         showOpenAIKey={showOpenAIKey}
         setShowOpenAIKey={setShowOpenAIKey}
         showGitHubToken={showGitHubToken}
@@ -146,8 +155,11 @@ function ProjectSettingsContentInner({
         isCheckingGitLab={isCheckingGitLab}
         linearConnectionStatus={linearConnectionStatus}
         isCheckingLinear={isCheckingLinear}
+        yunxiaoConnectionStatus={yunxiaoConnectionStatus}
+        isCheckingYunxiao={isCheckingYunxiao}
         handleInitialize={handleInitialize}
         onOpenLinearImport={() => setShowLinearImportModal(true)}
+        onOpenYunxiaoImport={() => setShowYunxiaoImportModal(true)}
       />
 
       <ErrorDisplay error={error} envError={envError} />
@@ -159,6 +171,17 @@ function ProjectSettingsContentInner({
         onOpenChange={setShowLinearImportModal}
         onImportComplete={async (result) => {
           // Refresh task list to show imported tasks (even on partial success)
+          if (result.imported > 0) {
+            await loadTasks(project.id);
+          }
+        }}
+      />
+
+      <YunxiaoTaskImportModal
+        projectId={project.id}
+        open={showYunxiaoImportModal}
+        onOpenChange={setShowYunxiaoImportModal}
+        onImportComplete={async (result) => {
           if (result.imported > 0) {
             await loadTasks(project.id);
           }

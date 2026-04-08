@@ -247,7 +247,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   build_orchestrator: {
     tools: [...ALL_BUILTIN_TOOLS, 'SpawnSubagent'],
     mcpServers: ['context7', 'memory', 'auto-claude'],
-    mcpServersOptional: ['linear'],
+    mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_GET_BUILD_PROGRESS,
       TOOL_GET_SESSION_CONTEXT,
@@ -259,12 +259,12 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
 
   // ═══════════════════════════════════════════════════════════════════════
   // BUILD PHASES (Full tools + memory)
-  // Note: "linear" is conditional on project setting "update_linear_with_tasks"
+  // Note: "linear"/"yunxiao" are conditional on project integration + MCP toggle settings
   // ═══════════════════════════════════════════════════════════════════════
   planner: {
     tools: [...ALL_BUILTIN_TOOLS],
     mcpServers: ['context7', 'memory', 'auto-claude'],
-    mcpServersOptional: ['linear'],
+    mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_GET_BUILD_PROGRESS,
       TOOL_GET_SESSION_CONTEXT,
@@ -275,7 +275,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   coder: {
     tools: [...ALL_BUILTIN_TOOLS],
     mcpServers: ['context7', 'memory', 'auto-claude'],
-    mcpServersOptional: ['linear'],
+    mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_UPDATE_SUBTASK_STATUS,
       TOOL_GET_BUILD_PROGRESS,
@@ -292,7 +292,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   qa_reviewer: {
     tools: [...ALL_BUILTIN_TOOLS],
     mcpServers: ['context7', 'memory', 'auto-claude', 'browser'],
-    mcpServersOptional: ['linear'],
+    mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_GET_BUILD_PROGRESS,
       TOOL_UPDATE_QA_STATUS,
@@ -303,7 +303,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   qa_fixer: {
     tools: [...ALL_BUILTIN_TOOLS],
     mcpServers: ['context7', 'memory', 'auto-claude', 'browser'],
-    mcpServersOptional: ['linear'],
+    mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_UPDATE_SUBTASK_STATUS,
       TOOL_GET_BUILD_PROGRESS,
@@ -480,6 +480,7 @@ const MCP_SERVER_NAME_MAP: Record<string, string> = {
   graphiti: 'memory',
   memory: 'memory',
   linear: 'linear',
+  yunxiao: 'yunxiao',
   electron: 'electron',
   puppeteer: 'puppeteer',
   'auto-claude': 'auto-claude',
@@ -515,6 +516,8 @@ export interface McpServerResolveOptions {
   };
   /** Whether Linear integration is enabled for this project */
   linearEnabled?: boolean;
+  /** Whether Yunxiao integration is enabled for this project */
+  yunxiaoEnabled?: boolean;
   /** Whether memory MCP is available (GRAPHITI_MCP_URL is set) */
   memoryEnabled?: boolean;
   /** Whether Electron MCP is enabled */
@@ -536,7 +539,7 @@ export interface McpServerResolveOptions {
  *
  * Handles dynamic server selection:
  * - "browser" → electron (if is_electron) or puppeteer (if is_web_frontend)
- * - "linear" → only if in mcpServersOptional AND linearEnabled is true
+ * - "linear"/"yunxiao" → only if in mcpServersOptional AND corresponding flag is true
  * - "memory" → only if memoryEnabled is true
  * - Applies per-agent ADD/REMOVE overrides
  *
@@ -561,6 +564,9 @@ export function getRequiredMcpServers(
   const optional = config.mcpServersOptional ?? [];
   if (optional.includes('linear') && options.linearEnabled) {
     servers.push('linear');
+  }
+  if (optional.includes('yunxiao') && options.yunxiaoEnabled) {
+    servers.push('yunxiao');
   }
 
   // Handle dynamic "browser" → electron/puppeteer

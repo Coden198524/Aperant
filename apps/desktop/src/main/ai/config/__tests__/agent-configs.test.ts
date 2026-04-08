@@ -93,6 +93,7 @@ describe('AGENT_CONFIGS', () => {
     expect(config.mcpServers).toContain('memory');
     expect(config.mcpServers).toContain('auto-claude');
     expect(config.mcpServersOptional).toContain('linear');
+    expect(config.mcpServersOptional).toContain('yunxiao');
     expect(config.thinkingDefault).toBe('high');
   });
 
@@ -197,6 +198,7 @@ describe('mapMcpServerName', () => {
     expect(mapMcpServerName('graphiti')).toBe('memory');
     expect(mapMcpServerName('graphiti-memory')).toBe('memory');
     expect(mapMcpServerName('linear')).toBe('linear');
+    expect(mapMcpServerName('yunxiao')).toBe('yunxiao');
     expect(mapMcpServerName('auto-claude')).toBe('auto-claude');
   });
 
@@ -249,12 +251,28 @@ describe('getRequiredMcpServers', () => {
     expect(servers).toContain('linear');
   });
 
+  it('should add yunxiao when optional and enabled', () => {
+    const servers = getRequiredMcpServers('planner', {
+      yunxiaoEnabled: true,
+      memoryEnabled: true,
+    });
+    expect(servers).toContain('yunxiao');
+  });
+
   it('should not add linear when not enabled', () => {
     const servers = getRequiredMcpServers('planner', {
       linearEnabled: false,
       memoryEnabled: true,
     });
     expect(servers).not.toContain('linear');
+  });
+
+  it('should not add yunxiao when not enabled', () => {
+    const servers = getRequiredMcpServers('planner', {
+      yunxiaoEnabled: false,
+      memoryEnabled: true,
+    });
+    expect(servers).not.toContain('yunxiao');
   });
 
   it('should resolve browser to electron for electron projects', () => {
@@ -289,6 +307,14 @@ describe('getRequiredMcpServers', () => {
       agentMcpAdd: 'context7',
     });
     expect(servers).toContain('context7');
+  });
+
+  it('should support custom MCP additions when customServerIds are provided', () => {
+    const servers = getRequiredMcpServers('insights', {
+      agentMcpAdd: 'yunxiao',
+      customServerIds: ['yunxiao'],
+    });
+    expect(servers).toContain('yunxiao');
   });
 
   it('should not expose auto-claude as an external MCP server anymore', () => {

@@ -140,9 +140,9 @@ export function CreatePRDialog({
           <div className="space-y-4">
             <div className="bg-success/10 border border-success/30 rounded-lg p-4">
               <p className="text-sm text-success font-medium mb-2">
-                {result.alreadyExists
+                {result.message || (result.alreadyExists
                   ? t('taskReview:pr.success.alreadyExists')
-                  : t('taskReview:pr.success.created')}
+                  : t('taskReview:pr.success.created'))}
               </p>
               {result.prUrl && (
                 <button

@@ -106,6 +106,7 @@ export const taskMachine = createMachine(
       },
       qa_review: {
         on: {
+          CODING_STARTED: { target: 'coding', actions: 'clearReviewReason' },
           QA_FAILED: 'qa_fixing',
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           QA_MAX_ITERATIONS: { target: 'error', actions: 'setReviewReasonErrors' },
@@ -116,6 +117,7 @@ export const taskMachine = createMachine(
       },
       qa_fixing: {
         on: {
+          CODING_STARTED: { target: 'coding', actions: 'clearReviewReason' },
           QA_FIXING_COMPLETE: 'qa_review',
           QA_FAILED: { target: 'human_review', actions: 'setReviewReasonQaRejected' },
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },

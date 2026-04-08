@@ -66,9 +66,6 @@ const RATE_LIMIT_PATTERNS = [
   'too many requests',
   'usage limit',
   'quota exceeded',
-  // Temporary routing errors from proxy services
-  'codex channel',
-  'endpoint not supported',
 ] as const;
 
 const AUTH_PATTERNS = [
@@ -92,6 +89,11 @@ const MODEL_NOT_FOUND_PATTERNS = [
   'invalid model',
   'unknown model',
   'model_not_found',
+  // Endpoint/model transport mismatches on OpenAI-compatible gateways
+  'endpoint not supported',
+  'codex channel',
+  // Responses continuation item persistence mismatch
+  'items are not persisted when `store` is set to false',
   'cannot post',
   'not found',
   'http 404',
@@ -113,6 +115,8 @@ export function isBillingError(error: unknown): boolean {
  */
 export function isRateLimitError(error: unknown): boolean {
   if (isBillingError(error)) return false;
+  const statusCode = getHttpStatusCode(error);
+  if (statusCode === 429) return true;
   const errorStr = errorToString(error);
   if (WORD_BOUNDARY_429.test(errorStr)) return true;
   return RATE_LIMIT_PATTERNS.some((p) => errorStr.includes(p));
@@ -122,6 +126,8 @@ export function isRateLimitError(error: unknown): boolean {
  * Check if an error is an authentication error (401 or similar).
  */
 export function isAuthenticationError(error: unknown): boolean {
+  const statusCode = getHttpStatusCode(error);
+  if (statusCode === 401) return true;
   const errorStr = errorToString(error);
   if (WORD_BOUNDARY_401.test(errorStr)) return true;
   return AUTH_PATTERNS.some((p) => errorStr.includes(p));
@@ -144,6 +150,8 @@ export function isToolConcurrencyError(error: unknown): boolean {
  * Check if an error is a model not found error (404 or similar).
  */
 export function isModelNotFoundError(error: unknown): boolean {
+  const statusCode = getHttpStatusCode(error);
+  if (statusCode === 404) return true;
   const errorStr = errorToString(error);
   if (/\b404\b/.test(errorStr)) return true;
   return MODEL_NOT_FOUND_PATTERNS.some((p) => errorStr.includes(p));
@@ -294,9 +302,87 @@ export function classifyToolError(
  * Convert any error to a lowercase string for pattern matching.
  */
 function errorToString(error: unknown): string {
-  if (error instanceof Error) return error.message.toLowerCase();
+  if (error instanceof Error) {
+    return buildErrorText(error.message, error as unknown as Record<string, unknown>).toLowerCase();
+  }
   if (typeof error === 'string') return error.toLowerCase();
+  if (error && typeof error === 'object') {
+    return buildErrorText(undefined, error as Record<string, unknown>).toLowerCase();
+  }
   return String(error).toLowerCase();
+}
+
+function buildErrorText(primaryMessage: string | undefined, errorObject: Record<string, unknown>): string {
+  const parts: string[] = [];
+  if (primaryMessage?.trim()) {
+    parts.push(primaryMessage.trim());
+  }
+
+  const statusCode = getHttpStatusCode(errorObject);
+  if (statusCode !== undefined) {
+    parts.push(`http ${statusCode}`);
+  }
+
+  const maybeCode = safeString(errorObject.code);
+  if (maybeCode) parts.push(maybeCode);
+
+  const maybeType = safeString(errorObject.type);
+  if (maybeType) parts.push(maybeType);
+
+  const maybeUrl = safeString(errorObject.url);
+  if (maybeUrl) parts.push(maybeUrl);
+
+  const responseBody = safeString(errorObject.responseBody);
+  if (responseBody) parts.push(responseBody);
+
+  const dataString = serializeUnknown(errorObject.data);
+  if (dataString) parts.push(dataString);
+
+  const causeString = serializeUnknown(errorObject.cause);
+  if (causeString) parts.push(causeString);
+
+  return parts.length > 0 ? parts.join(' ') : String(errorObject);
+}
+
+function safeString(value: unknown): string | undefined {
+  if (typeof value !== 'string') return undefined;
+  const trimmed = value.trim();
+  return trimmed.length > 0 ? trimmed : undefined;
+}
+
+function serializeUnknown(value: unknown): string | undefined {
+  if (value == null) return undefined;
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return undefined;
+  }
+}
+
+function getHttpStatusCode(error: unknown): number | undefined {
+  if (!error || typeof error !== 'object') return undefined;
+  const e = error as Record<string, unknown>;
+
+  const directStatus = e.statusCode ?? e.status;
+  if (typeof directStatus === 'number') return directStatus;
+  if (typeof directStatus === 'string') {
+    const parsed = Number.parseInt(directStatus, 10);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+
+  const response = e.response;
+  if (response && typeof response === 'object') {
+    const responseStatus = (response as Record<string, unknown>).status;
+    if (typeof responseStatus === 'number') return responseStatus;
+    if (typeof responseStatus === 'string') {
+      const parsed = Number.parseInt(responseStatus, 10);
+      if (Number.isFinite(parsed)) return parsed;
+    }
+  }
+
+  return undefined;
 }
 
 /**

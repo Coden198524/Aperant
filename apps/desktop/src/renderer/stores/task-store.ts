@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { arrayMove } from '@dnd-kit/sortable';
-import type { Task, TaskStatus, SubtaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft, ImageAttachment, TaskOrderState, TokenUsage } from '../../shared/types';
+import type { Task, TaskStatus, SubtaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft, ImageAttachment, TaskOrderState, TokenUsage, TaskStartOptions } from '../../shared/types';
 import { wouldPhaseRegress } from '../../shared/constants/phase-protocol';
 import { debugLog, debugWarn } from '../../shared/utils/debug-logger';
 import { useProjectStore } from './project-store';
@@ -134,6 +134,25 @@ function isAllowedPhaseRegression(currentPhase: ExecutionPhase, nextPhase: Execu
   return currentPhase === 'qa_fixing' && nextPhase === 'qa_review';
 }
 
+function mergeTokenUsageForTask(
+  previous: TokenUsage | undefined,
+  incoming: TokenUsage,
+): TokenUsage {
+  if (!previous) {
+    return incoming;
+  }
+
+  return {
+    promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
+    completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
+    totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
+    thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
+    cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
+    cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
+    stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+  };
+}
+
 /**
  * Validates implementation plan data structure before processing.
  * Returns true if valid, false if invalid/incomplete.
@@ -182,6 +201,27 @@ const TASK_ORDER_KEY_PREFIX = 'task-order-state';
  */
 function getTaskOrderKey(projectId: string): string {
   return `${TASK_ORDER_KEY_PREFIX}-${projectId}`;
+}
+
+function isTaskAlreadyMissingError(error?: string): boolean {
+  if (!error) return false;
+  const normalized = error.toLowerCase();
+  return normalized.includes('not found') || normalized.includes('already removed');
+}
+
+function removeTaskFromLocalState(taskId: string): void {
+  useTaskStore.setState((state) => {
+    const nextTasks = state.tasks.filter((t) => t.id !== taskId && t.specId !== taskId);
+    const selectedTask = state.tasks.find((t) => t.id === state.selectedTaskId);
+    const shouldClearSelection = selectedTask
+      ? (selectedTask.id === taskId || selectedTask.specId === taskId)
+      : false;
+
+    return {
+      tasks: nextTasks,
+      ...(shouldClearSelection ? { selectedTaskId: null } : {})
+    };
+  });
 }
 
 /**
@@ -506,7 +546,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       return {
         tasks: updateTaskAtIndex(state.tasks, index, (t) => ({
           ...t,
-          tokenUsage: usage
+          tokenUsage: mergeTokenUsageForTask(t.tokenUsage, usage)
         }))
       };
     });
@@ -797,15 +837,22 @@ export async function createTask(
 /**
  * Start a task
  */
-export function startTask(taskId: string, options?: { parallel?: boolean; workers?: number }): void {
-  window.electronAPI.startTask(taskId, options);
+export function startTask(taskId: string, options?: TaskStartOptions): void {
+  const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+  const projectId = options?.projectId ?? task?.projectId;
+
+  window.electronAPI.startTask(
+    taskId,
+    projectId ? { ...options, projectId } : options
+  );
 }
 
 /**
  * Stop a task
  */
 export function stopTask(taskId: string): void {
-  window.electronAPI.stopTask(taskId);
+  const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+  window.electronAPI.stopTask(taskId, task?.projectId);
 }
 
 /**
@@ -818,7 +865,8 @@ export async function submitReview(
   images?: ImageAttachment[]
 ): Promise<boolean> {
   try {
-    const result = await window.electronAPI.submitReview(taskId, approved, feedback, images);
+    const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+    const result = await window.electronAPI.submitReview(taskId, approved, feedback, images, task?.projectId);
     if (result.success) {
       return true;
     }
@@ -845,13 +893,19 @@ export interface PersistStatusResult {
 export async function persistTaskStatus(
   taskId: string,
   status: TaskStatus,
-  options?: { forceCleanup?: boolean; keepWorktree?: boolean }
+  options?: { forceCleanup?: boolean; keepWorktree?: boolean; projectId?: string }
 ): Promise<PersistStatusResult> {
   const store = useTaskStore.getState();
+  const task = store.tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+  const projectId = options?.projectId ?? task?.projectId;
 
   try {
     // Persist to file first (don't optimistically update for 'done' status)
-    const result = await window.electronAPI.updateTaskStatus(taskId, status, options);
+    const result = await window.electronAPI.updateTaskStatus(
+      taskId,
+      status,
+      projectId ? { ...options, projectId } : options
+    );
 
     if (!result.success) {
       // Check if this is a worktree exists case
@@ -971,7 +1025,8 @@ export async function persistUpdateTask(
  */
 export async function checkTaskRunning(taskId: string): Promise<boolean> {
   try {
-    const result = await window.electronAPI.checkTaskRunning(taskId);
+    const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+    const result = await window.electronAPI.checkTaskRunning(taskId, task?.projectId);
     return result.success && result.data === true;
   } catch (error) {
     console.error('Error checking task running status:', error);
@@ -989,7 +1044,11 @@ export async function recoverStuckTask(
   options: { targetStatus?: TaskStatus; autoRestart?: boolean } = { autoRestart: true }
 ): Promise<{ success: boolean; message: string; autoRestarted?: boolean }> {
   try {
-    const result = await window.electronAPI.recoverStuckTask(taskId, options);
+    const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+    const result = await window.electronAPI.recoverStuckTask(
+      taskId,
+      task?.projectId ? { ...options, projectId: task.projectId } : options
+    );
 
     if (result.success && result.data) {
       return {
@@ -1018,19 +1077,13 @@ export async function recoverStuckTask(
 export async function deleteTask(
   taskId: string
 ): Promise<{ success: boolean; error?: string }> {
-  const store = useTaskStore.getState();
-
   try {
     const result = await window.electronAPI.deleteTask(taskId);
+    const missingOnBackend = isTaskAlreadyMissingError(result.error);
 
-    if (result.success) {
+    if (result.success || missingOnBackend) {
       clearTaskActivity(taskId);
-      // Remove from local state
-      store.setTasks(store.tasks.filter(t => t.id !== taskId && t.specId !== taskId));
-      // Clear selection if this task was selected
-      if (store.selectedTaskId === taskId) {
-        store.selectTask(null);
-      }
+      removeTaskFromLocalState(taskId);
       return { success: true };
     }
 
@@ -1054,14 +1107,13 @@ export async function deleteTask(
 export async function deleteTasks(
   taskIds: string[]
 ): Promise<{ success: boolean; error?: string; failedIds?: string[] }> {
-  const store = useTaskStore.getState();
   const failedIds: string[] = [];
 
   try {
     // Delete tasks one by one (API only supports single delete)
     for (const taskId of taskIds) {
       const result = await window.electronAPI.deleteTask(taskId);
-      if (!result.success) {
+      if (!result.success && !isTaskAlreadyMissingError(result.error)) {
         failedIds.push(taskId);
       }
     }
@@ -1069,12 +1121,17 @@ export async function deleteTasks(
     // Remove successfully deleted tasks from local state
     const deletedIds = new Set(taskIds.filter(id => !failedIds.includes(id)));
     deletedIds.forEach((taskId) => clearTaskActivity(taskId));
-    store.setTasks(store.tasks.filter(t => !deletedIds.has(t.id) && !deletedIds.has(t.specId || '')));
-
-    // Clear selection if selected task was deleted
-    if (store.selectedTaskId && deletedIds.has(store.selectedTaskId)) {
-      store.selectTask(null);
-    }
+    useTaskStore.setState((state) => {
+      const nextTasks = state.tasks.filter(t => !deletedIds.has(t.id) && !deletedIds.has(t.specId || ''));
+      const selectedTask = state.tasks.find((t) => t.id === state.selectedTaskId);
+      const shouldClearSelection = selectedTask
+        ? deletedIds.has(selectedTask.id) || deletedIds.has(selectedTask.specId)
+        : false;
+      return {
+        tasks: nextTasks,
+        ...(shouldClearSelection ? { selectedTaskId: null } : {})
+      };
+    });
 
     if (failedIds.length > 0) {
       return {

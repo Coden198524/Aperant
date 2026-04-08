@@ -244,6 +244,15 @@ describe('getRequiredMcpServers (registry)', () => {
     expect(servers).not.toContain('context7');
   });
 
+  it('should include yunxiao when optional and enabled', () => {
+    const servers = getRequiredMcpServers('planner', {
+      memoryEnabled: true,
+      yunxiaoEnabled: true,
+      mcpConfig: { YUNXIAO_MCP_ENABLED: 'true' },
+    });
+    expect(servers).toContain('yunxiao');
+  });
+
   it('should support per-agent MCP ADD overrides', () => {
     const servers = getRequiredMcpServers('insights', {
       mcpConfig: { AGENT_MCP_insights_ADD: 'context7' },

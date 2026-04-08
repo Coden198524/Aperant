@@ -151,6 +151,33 @@ describe('taskMachine', () => {
       expect(snapshot.value).toBe('human_review');
       expect(snapshot.context.reviewReason).toBe('completed');
     });
+
+    it('should return to coding when CODING_STARTED arrives during qa_review', () => {
+      const events: TaskEvent[] = [
+        { type: 'PLANNING_STARTED' },
+        { type: 'PLANNING_COMPLETE', hasSubtasks: true, subtaskCount: 1, requireReviewBeforeCoding: false },
+        { type: 'QA_STARTED', iteration: 1, maxIterations: 3 },
+        { type: 'CODING_STARTED', subtaskId: 'sub1', subtaskDescription: 'Resume implementation' }
+      ];
+
+      const snapshot = runEvents(events);
+      expect(snapshot.value).toBe('coding');
+      expect(snapshot.context.reviewReason).toBeUndefined();
+    });
+
+    it('should return to coding when CODING_STARTED arrives during qa_fixing', () => {
+      const events: TaskEvent[] = [
+        { type: 'PLANNING_STARTED' },
+        { type: 'PLANNING_COMPLETE', hasSubtasks: true, subtaskCount: 1, requireReviewBeforeCoding: false },
+        { type: 'QA_STARTED', iteration: 1, maxIterations: 3 },
+        { type: 'QA_FAILED', iteration: 1, issueCount: 1, issues: ['issue1'] },
+        { type: 'CODING_STARTED', subtaskId: 'sub1', subtaskDescription: 'Resume implementation' }
+      ];
+
+      const snapshot = runEvents(events);
+      expect(snapshot.value).toBe('coding');
+      expect(snapshot.context.reviewReason).toBeUndefined();
+    });
   });
 
   describe('error states', () => {

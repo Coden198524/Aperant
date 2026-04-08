@@ -473,6 +473,34 @@ describe('resolveAuthFromQueue', () => {
     expect(result?.resolvedModelId).toBe('gpt-5.4');
     expect(result?.reasoningConfig).toEqual({ type: 'reasoning_effort', level: 'high' });
   });
+
+  it('does not cross-map full model IDs to different providers', async () => {
+    const anthropicAccount = { ...baseAccount, id: 'acc-anthropic', provider: 'anthropic' as const };
+    const openaiAccount = { ...baseAccount, id: 'acc-openai', provider: 'openai' as const };
+
+    _mockDetectProviderFromModel.mockReturnValue('openai');
+    mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
+      if (modelValue === 'gpt-5.4' && targetProvider === 'openai') {
+        return {
+          modelId: 'gpt-5.4',
+          reasoning: { type: 'reasoning_effort', level: 'high' },
+        };
+      }
+      if (modelValue === 'gpt-5.4' && targetProvider === 'anthropic') {
+        return {
+          modelId: 'claude-sonnet-4-5-20250929',
+          reasoning: { type: 'none' },
+        };
+      }
+      return null;
+    });
+
+    const result = await resolveAuthFromQueue('gpt-5.4', [anthropicAccount, openaiAccount]);
+
+    expect(result?.accountId).toBe('acc-openai');
+    expect(result?.resolvedProvider).toBe('openai');
+    expect(result?.resolvedModelId).toBe('gpt-5.4');
+  });
 });
 
 // =============================================================================

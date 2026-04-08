@@ -66,6 +66,11 @@ describe('isRateLimitError', () => {
     expect(isRateLimitError(new Error('timeout'))).toBe(false);
   });
 
+  it('should detect 429 from structured API errors', () => {
+    const err = Object.assign(new Error('openai_error'), { statusCode: 429 });
+    expect(isRateLimitError(err)).toBe(true);
+  });
+
   it('should not match 429 embedded in other numbers', () => {
     // \b429\b should not match 4290 or 1429
     expect(isRateLimitError('error code 4290')).toBe(false);
@@ -93,6 +98,11 @@ describe('isAuthenticationError', () => {
 
   it('should not match non-auth errors', () => {
     expect(isAuthenticationError('connection timeout')).toBe(false);
+  });
+
+  it('should detect 401 from structured API errors', () => {
+    const err = Object.assign(new Error('openai_error'), { statusCode: 401 });
+    expect(isAuthenticationError(err)).toBe(true);
   });
 });
 
@@ -167,6 +177,32 @@ describe('classifyError', () => {
     expect(result.sessionError.code).toBe(ErrorCode.AUTH_FAILURE);
     expect(result.outcome).toBe('auth_failure');
     expect(result.sessionError.retryable).toBe(false);
+  });
+
+  it('should classify endpoint mismatch errors as model_not_found', () => {
+    const result = classifyError(new Error('codex channel: /v1/chat/completions endpoint not supported'));
+    expect(result.sessionError.code).toBe(ErrorCode.MODEL_NOT_FOUND);
+    expect(result.outcome).toBe('error');
+    expect(result.sessionError.retryable).toBe(true);
+  });
+
+  it('should classify structured 404 API errors as model_not_found', () => {
+    const err = Object.assign(new Error('openai_error'), {
+      statusCode: 404,
+      responseBody: '{"error":{"message":"openai_error","code":"bad_response_status_code"}}',
+      data: {
+        error: {
+          message: 'openai_error',
+          type: 'bad_response_status_code',
+          code: 'bad_response_status_code',
+        },
+      },
+    });
+    const result = classifyError(err);
+    expect(result.sessionError.code).toBe(ErrorCode.MODEL_NOT_FOUND);
+    expect(result.outcome).toBe('error');
+    expect(result.sessionError.retryable).toBe(true);
+    expect(result.sessionError.message).toContain('http 404');
   });
 
   it('should classify 400 concurrency as retryable error', () => {

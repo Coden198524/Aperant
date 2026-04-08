@@ -267,6 +267,36 @@ describe('TaskStateManager', () => {
       expect(result).toBe(true);
     });
 
+    it('should reopen done task to human_review state', () => {
+      const doneTask = createMockTask({
+        id: 'done-to-review',
+        status: 'done',
+        reviewReason: 'completed'
+      });
+      manager.handleUiEvent(doneTask.id, { type: 'MARK_DONE' }, doneTask, mockProject);
+      expect(manager.getCurrentState(doneTask.id)).toBe('done');
+
+      const result = manager.handleManualStatusChange(doneTask.id, 'human_review', doneTask, mockProject);
+
+      expect(result).toBe(true);
+      expect(manager.getCurrentState(doneTask.id)).toBe('human_review');
+    });
+
+    it('should reopen done task to in_progress state', () => {
+      const doneTask = createMockTask({
+        id: 'done-to-progress',
+        status: 'done',
+        reviewReason: 'completed'
+      });
+      manager.handleUiEvent(doneTask.id, { type: 'MARK_DONE' }, doneTask, mockProject);
+      expect(manager.getCurrentState(doneTask.id)).toBe('done');
+
+      const result = manager.handleManualStatusChange(doneTask.id, 'in_progress', doneTask, mockProject);
+
+      expect(result).toBe(true);
+      expect(manager.getCurrentState(doneTask.id)).toBe('coding');
+    });
+
     it('should return false for unhandled status', () => {
       const result = manager.handleManualStatusChange(mockTask.id, 'ai_review', mockTask, mockProject);
       expect(result).toBe(false);

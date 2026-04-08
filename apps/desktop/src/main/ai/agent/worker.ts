@@ -18,6 +18,7 @@ import { join, basename } from 'node:path';
 import { runAgentSession } from '../session/runner';
 import { runContinuableSession } from '../session/continuation';
 import { createProvider } from '../providers/factory';
+import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { SupportedProvider } from '../providers/types';
 import { getModelContextWindow } from '../../../shared/constants/models';
 import { refreshOAuthTokenReactive } from '../auth/resolver';
@@ -33,7 +34,7 @@ import type {
   SerializableSessionConfig,
   WorkerTaskEventMessage,
 } from './types';
-import type { Tool as AITool } from 'ai';
+import type { LanguageModel, Tool as AITool } from 'ai';
 import type { SessionConfig, StreamEvent, SessionResult } from '../session/types';
 import { BuildOrchestrator } from '../orchestration/build-orchestrator';
 import { QALoop } from '../orchestration/qa-loop';
@@ -48,6 +49,7 @@ import { loadProjectInstructions, injectContext } from '../prompts/prompt-loader
 import { createMcpClientsForAgent, mergeMcpTools, closeAllMcpClients } from '../mcp/client';
 import type { McpClientResult } from '../mcp/types';
 import { runProjectIndexer } from '../project/project-indexer';
+import type { TaskWorkflowMode } from '../../../shared/types';
 
 // =============================================================================
 // Validation
@@ -60,6 +62,27 @@ if (!parentPort) {
 const config = workerData as WorkerConfig;
 if (!config?.taskId || !config?.session) {
   throw new Error('worker.ts requires valid WorkerConfig via workerData');
+}
+
+function resolvePhaseStepBudget(
+  session: SerializableSessionConfig,
+  phase: Phase | 'spec' | undefined,
+): number {
+  const fallback = session.maxSteps;
+  const budgets = session.phaseStepBudgets;
+
+  if (!budgets || !phase) {
+    return fallback;
+  }
+
+  const budget = budgets[phase as keyof typeof budgets];
+  return typeof budget === 'number' ? budget : fallback;
+}
+
+function isFastWorkflow(
+  session: SerializableSessionConfig,
+): session is SerializableSessionConfig & { workflowMode: TaskWorkflowMode } {
+  return session.workflowMode === 'fast';
 }
 
 // =============================================================================
@@ -209,6 +232,119 @@ function loadPrompt(promptName: string): string | null {
 // =============================================================================
 
 let mcpClients: McpClientResult[] = [];
+const RESPONSES_PERSISTENCE_BROKEN_BASE_URLS = new Set<string>();
+
+function normalizeBaseUrl(baseURL: string | undefined): string | null {
+  if (!baseURL) return null;
+  try {
+    const parsed = new URL(baseURL);
+    return `${parsed.protocol}//${parsed.host}${parsed.pathname.replace(/\/+$/, '')}`.toLowerCase();
+  } catch {
+    return baseURL.trim().toLowerCase();
+  }
+}
+
+function isOfficialOpenAIBaseUrl(baseURL: string | undefined): boolean {
+  if (!baseURL) return true;
+  try {
+    const { hostname } = new URL(baseURL);
+    return (
+      hostname === 'openai.com' ||
+      hostname.endsWith('.openai.com') ||
+      hostname === 'chatgpt.com' ||
+      hostname.endsWith('.chatgpt.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+function supportsChatFallbackTransport(session: SerializableSessionConfig): boolean {
+  const provider = session.provider.toLowerCase();
+  return (
+    (provider === 'openai' || provider === 'openai-compatible') &&
+    !isOfficialOpenAIBaseUrl(session.baseURL)
+  );
+}
+
+function shouldFallbackForResponsesPersistenceError(result: SessionResult): boolean {
+  if (result.outcome !== 'error') return false;
+  const message = result.error?.message?.toLowerCase() ?? '';
+  const hasMissingFcItem =
+    message.includes('item with id') &&
+    message.includes('fc_') &&
+    message.includes('not found');
+  const mentionsResponsesEndpoint = message.includes('/responses') || message.includes('responses');
+  const hasStorePersistenceMismatch =
+    message.includes('items are not persisted') &&
+    message.includes('store') &&
+    message.includes('false');
+
+  return (
+    hasStorePersistenceMismatch ||
+    (hasMissingFcItem && mentionsResponsesEndpoint)
+  );
+}
+
+function createForcedChatModel(session: SerializableSessionConfig, modelId: string): LanguageModel {
+  const provider = createOpenAICompatible({
+    name: 'openai-compatible',
+    apiKey: session.apiKey ?? 'custom-endpoint',
+    baseURL: session.baseURL ?? 'https://api.openai.com/v1',
+  });
+  return provider.chatModel(modelId);
+}
+
+function createSessionModel(session: SerializableSessionConfig, modelId: string): LanguageModel {
+  const normalizedBaseUrl = normalizeBaseUrl(session.baseURL);
+  if (
+    normalizedBaseUrl &&
+    RESPONSES_PERSISTENCE_BROKEN_BASE_URLS.has(normalizedBaseUrl) &&
+    supportsChatFallbackTransport(session)
+  ) {
+    return createForcedChatModel(session, modelId);
+  }
+
+  return createProvider({
+    config: {
+      provider: session.provider as SupportedProvider,
+      apiKey: session.apiKey,
+      baseURL: session.baseURL,
+      oauthTokenFilePath: session.oauthTokenFilePath,
+    },
+    modelId,
+  });
+}
+
+async function runContinuableSessionWithGatewayFallback(
+  sessionConfig: SessionConfig,
+  runnerOptions: Parameters<typeof runContinuableSession>[1],
+  continuationOptions: Parameters<typeof runContinuableSession>[2],
+  session: SerializableSessionConfig,
+  modelId: string,
+): Promise<SessionResult> {
+  const firstResult = await runContinuableSession(sessionConfig, runnerOptions, continuationOptions);
+
+  if (!supportsChatFallbackTransport(session) || !shouldFallbackForResponsesPersistenceError(firstResult)) {
+    return firstResult;
+  }
+
+  const normalizedBaseUrl = normalizeBaseUrl(session.baseURL);
+  if (normalizedBaseUrl) {
+    RESPONSES_PERSISTENCE_BROKEN_BASE_URLS.add(normalizedBaseUrl);
+  }
+
+  postLog(
+    `[GatewayFallback] Responses item persistence error detected for provider=${session.provider}, baseURL=${session.baseURL ?? 'unknown baseURL'}; retrying with chat transport.`,
+  );
+
+  const fallbackConfig: SessionConfig = {
+    ...sessionConfig,
+    model: createForcedChatModel(session, modelId),
+  };
+
+  return runContinuableSession(fallbackConfig, runnerOptions, continuationOptions);
+}
 
 // =============================================================================
 // Prompt Assembly (provider-agnostic context injection)
@@ -216,6 +352,28 @@ let mcpClients: McpClientResult[] = [];
 
 let cachedProjectInstructions: string | null | undefined;
 let cachedProjectInstructionsSource: string | null = null;
+
+function getLanguageRequirement(language: SerializableSessionConfig['language']): string | null {
+  switch (language) {
+    case 'zh-CN':
+      return 'IMPORTANT: The app language is Simplified Chinese. All user-facing outputs, QA reports, summaries, and markdown documents must be written in Simplified Chinese (简体中文), unless the user explicitly requests another language.';
+    case 'fr':
+      return 'IMPORTANT: The app language is French. All user-facing outputs, QA reports, summaries, and markdown documents must be written in French unless the user explicitly requests another language.';
+    default:
+      return null;
+  }
+}
+
+function appendLanguageRequirement(
+  content: string,
+  language: SerializableSessionConfig['language'],
+): string {
+  const requirement = getLanguageRequirement(language);
+  if (!requirement) {
+    return content;
+  }
+  return `${content}\n\n## OUTPUT LANGUAGE REQUIREMENT\n${requirement}`;
+}
 
 /**
  * Assemble a full system prompt by loading the base prompt and injecting
@@ -241,11 +399,13 @@ async function assemblePrompt(
     }
   }
 
-  return injectContext(basePrompt, {
+  const promptWithContext = injectContext(basePrompt, {
     specDir: session.specDir,
     projectDir: session.projectDir,
     projectInstructions: cachedProjectInstructions,
   });
+
+  return appendLanguageRequirement(promptWithContext, session.language);
 }
 
 // =============================================================================
@@ -278,15 +438,7 @@ async function runSingleSession(
   const phaseModelId = baseSession.modelId;
   const phaseThinking = await getPhaseThinking(specDir, phase);
 
-  const model = createProvider({
-    config: {
-      provider: baseSession.provider as SupportedProvider,
-      apiKey: baseSession.apiKey,
-      baseURL: baseSession.baseURL,
-      oauthTokenFilePath: baseSession.oauthTokenFilePath,
-    },
-    modelId: phaseModelId,
-  });
+  const model = createSessionModel(baseSession, phaseModelId);
 
   const tools: Record<string, AITool> = {
     ...registry.getToolsForAgent(agentType, toolContext),
@@ -307,7 +459,7 @@ async function runSingleSession(
     systemPrompt,
     initialMessages,
     toolContext,
-    maxSteps: baseSession.maxSteps,
+    maxSteps: resolvePhaseStepBudget(baseSession, phase),
     thinkingLevel: phaseThinking as SessionConfig['thinkingLevel'],
     abortSignal: abortController.signal,
     specDir,
@@ -360,12 +512,12 @@ async function runSingleSession(
 
   let sessionResult: SessionResult;
   try {
-    sessionResult = await runContinuableSession(sessionConfig, runnerOptions, {
+    sessionResult = await runContinuableSessionWithGatewayFallback(sessionConfig, runnerOptions, {
       contextWindowLimit,
       apiKey: baseSession.apiKey,
       baseURL: baseSession.baseURL,
       oauthTokenFilePath: baseSession.oauthTokenFilePath,
-    });
+    }, baseSession, phaseModelId);
   } catch (error) {
     // Ensure log cleanup happens on failure
     if (logWriter && !skipPhaseLogging) logWriter.endPhase(phase, false);
@@ -401,15 +553,26 @@ async function run(): Promise<void> {
 
     // Initialize MCP clients from session config
     try {
+      const customMcpServers = session.mcpOptions?.customMcpServers ?? [];
+      const customServerIds = customMcpServers
+        .map((server) => server.id)
+        .filter((id): id is string => Boolean(id));
+
       mcpClients = await createMcpClientsForAgent(session.agentType, {
         context7Enabled: session.mcpOptions?.context7Enabled ?? true,
         memoryEnabled: session.mcpOptions?.memoryEnabled ?? false,
         linearEnabled: session.mcpOptions?.linearEnabled ?? false,
+        yunxiaoEnabled: session.mcpOptions?.yunxiaoEnabled ?? false,
         electronMcpEnabled: session.mcpOptions?.electronMcpEnabled ?? false,
         puppeteerMcpEnabled: session.mcpOptions?.puppeteerMcpEnabled ?? false,
         projectCapabilities: session.mcpOptions?.projectCapabilities,
         agentMcpAdd: session.mcpOptions?.agentMcpAdd,
         agentMcpRemove: session.mcpOptions?.agentMcpRemove,
+        customServerIds,
+      }, {
+        specDir: session.specDir,
+        env: session.mcpOptions?.mcpEnv,
+        customServers: customMcpServers,
       });
       if (mcpClients.length > 0) {
         postLog(`MCP initialized: ${mcpClients.map(c => c.serverId).join(', ')}`);
@@ -461,15 +624,7 @@ async function runDefaultSession(
   toolContext: ToolContext,
   registry: ToolRegistry,
 ): Promise<void> {
-  const model = createProvider({
-    config: {
-      provider: session.provider as SupportedProvider,
-      apiKey: session.apiKey,
-      baseURL: session.baseURL,
-      oauthTokenFilePath: session.oauthTokenFilePath,
-    },
-    modelId: session.modelId,
-  });
+  const model = createSessionModel(session, session.modelId);
 
   const tools: Record<string, AITool> = {
     ...registry.getToolsForAgent(session.agentType, toolContext),
@@ -485,7 +640,7 @@ async function runDefaultSession(
     systemPrompt: session.systemPrompt,
     initialMessages: session.initialMessages,
     toolContext,
-    maxSteps: session.maxSteps,
+    maxSteps: resolvePhaseStepBudget(session, session.phase),
     thinkingLevel: session.thinkingLevel,
     abortSignal: abortController.signal,
     specDir: session.specDir,
@@ -505,7 +660,7 @@ async function runDefaultSession(
 
   let result: SessionResult | undefined;
   try {
-    result = await runContinuableSession(sessionConfig, {
+    result = await runContinuableSessionWithGatewayFallback(sessionConfig, {
       tools,
       onEvent: (event: StreamEvent) => {
         // Write stream events to task_logs.json for UI log display
@@ -537,7 +692,7 @@ async function runDefaultSession(
       apiKey: session.apiKey,
       baseURL: session.baseURL,
       oauthTokenFilePath: session.oauthTokenFilePath,
-    });
+    }, session, session.modelId);
   } finally {
     if (logWriter) {
       const success = result?.outcome === 'completed' || result?.outcome === 'max_steps' || result?.outcome === 'context_window';
@@ -579,6 +734,7 @@ async function runBuildOrchestrator(
     specDir: session.specDir,
     projectDir: session.projectDir,
     sourceSpecDir: session.sourceSpecDir,
+    maxIterations: isFastWorkflow(session) ? 1 : undefined,
     abortSignal: abortController.signal,
 
     generatePrompt: async (agentType, _phase, context) => {
@@ -596,7 +752,12 @@ async function runBuildOrchestrator(
     runSession: async (runConfig) => {
       postLog(`Running ${runConfig.agentType} session (phase=${runConfig.phase}, session=${runConfig.sessionNumber})`);
       // Build a kickoff message for the agent so it has a task to act on
-      const kickoffMessage = buildKickoffMessage(runConfig.agentType, runConfig.specDir, runConfig.projectDir);
+      const kickoffMessage = buildKickoffMessage(
+        runConfig.agentType,
+        runConfig.specDir,
+        runConfig.projectDir,
+        session.language,
+      );
       return runSingleSession(
         runConfig.agentType,
         runConfig.phase,
@@ -776,6 +937,7 @@ async function runQALoop(
   const qaLoop = new QALoop({
     specDir: session.specDir,
     projectDir: session.projectDir,
+    maxIterations: isFastWorkflow(session) ? 1 : undefined,
     abortSignal: abortController.signal,
 
     generatePrompt: async (agentType, _context) => {
@@ -785,7 +947,12 @@ async function runQALoop(
 
     runSession: async (runConfig) => {
       postLog(`Running ${runConfig.agentType} session (session=${runConfig.sessionNumber})`);
-      const kickoffMessage = buildKickoffMessage(runConfig.agentType, runConfig.specDir, runConfig.projectDir);
+      const kickoffMessage = buildKickoffMessage(
+        runConfig.agentType,
+        runConfig.specDir,
+        runConfig.projectDir,
+        session.language,
+      );
       return runSingleSession(
         runConfig.agentType,
         runConfig.phase,
@@ -866,22 +1033,28 @@ async function runSpecOrchestrator(
 
   postLog(`Starting SpecOrchestrator pipeline (complexity-first phase routing)`);
 
-  // Generate project index BEFORE any agent runs — gives all phases project context
+  // Generate project index BEFORE any agent runs – gives all phases project context
   let projectIndexContent: string | undefined;
-  try {
-    const indexOutputPath = join(session.specDir, 'project_index.json');
-    postLog('Generating project index...');
-    runProjectIndexer(session.projectDir, indexOutputPath);
-    projectIndexContent = readFileSync(indexOutputPath, 'utf-8');
-    postLog(`Project index generated (${(projectIndexContent.length / 1024).toFixed(1)}KB)`);
-  } catch (error) {
-    postLog(`Project index generation failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+  if (isFastWorkflow(session)) {
+    postLog('Fast workflow enabled: skipping project index generation');
+  } else {
+    try {
+      const indexOutputPath = join(session.specDir, 'project_index.json');
+      postLog('Generating project index...');
+      runProjectIndexer(session.projectDir, indexOutputPath);
+      projectIndexContent = readFileSync(indexOutputPath, 'utf-8');
+      postLog(`Project index generated (${(projectIndexContent.length / 1024).toFixed(1)}KB)`);
+    } catch (error) {
+      postLog(`Project index generation failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+    }
   }
 
   const orchestrator = new SpecOrchestrator({
     specDir: session.specDir,
     projectDir: session.projectDir,
     taskDescription,
+    complexityOverride: isFastWorkflow(session) ? 'simple' : undefined,
+    useAiAssessment: !isFastWorkflow(session),
     projectIndex: projectIndexContent,
     abortSignal: abortController.signal,
 
@@ -907,6 +1080,7 @@ async function runSpecOrchestrator(
         runConfig.priorPhaseOutputs,
         runConfig.projectIndex,
         runConfig.specPhase,
+        session.language,
       );
       // Spec agents can only write to the spec directory
       const specToolContext: ToolContext = {
@@ -1036,15 +1210,7 @@ async function runAgenticSpecOrchestrator(
   }
 
   // Create the SubagentExecutor
-  const model = createProvider({
-    config: {
-      provider: session.provider as SupportedProvider,
-      apiKey: session.apiKey,
-      baseURL: session.baseURL,
-      oauthTokenFilePath: session.oauthTokenFilePath,
-    },
-    modelId: session.modelId,
-  });
+  const model = createSessionModel(session, session.modelId);
 
   const executor = new SubagentExecutorImpl({
     model,
@@ -1099,7 +1265,7 @@ async function runAgenticSpecOrchestrator(
     systemPrompt,
     initialMessages: [{ role: 'user' as const, content: kickoffMessage }],
     toolContext: orchestratorToolContext,
-    maxSteps: session.maxSteps,
+    maxSteps: resolvePhaseStepBudget(session, 'spec'),
     thinkingLevel: phaseThinking as SessionConfig['thinkingLevel'],
     abortSignal: abortController.signal,
     specDir: session.specDir,
@@ -1116,7 +1282,7 @@ async function runAgenticSpecOrchestrator(
 
   let result: SessionResult | undefined;
   try {
-    result = await runContinuableSession(sessionConfig, {
+    result = await runContinuableSessionWithGatewayFallback(sessionConfig, {
       tools,
       onEvent: (event: StreamEvent) => {
         if (logWriter) {
@@ -1147,7 +1313,7 @@ async function runAgenticSpecOrchestrator(
       apiKey: session.apiKey,
       baseURL: session.baseURL,
       oauthTokenFilePath: session.oauthTokenFilePath,
-    });
+    }, session, session.modelId);
   } finally {
     if (logWriter) {
       const success = result?.outcome === 'completed' || result?.outcome === 'max_steps' || result?.outcome === 'context_window';
@@ -1197,6 +1363,7 @@ function buildSpecKickoffMessage(
   priorPhaseOutputs?: Record<string, string>,
   projectIndex?: string,
   specPhase?: string,
+  language?: SerializableSessionConfig['language'],
 ): string {
   // Build the base task-specific message
   let baseMessage: string;
@@ -1250,26 +1417,39 @@ function buildSpecKickoffMessage(
     contextSections.push('\nUse these outputs as your primary source of context. Only read additional project files if you need specific code patterns not covered above.');
   }
 
-  return contextSections.join('');
+  return appendLanguageRequirement(contextSections.join(''), language);
 }
 
 /**
  * Build a kickoff user message for an agent session.
  * The AI SDK requires at least one user message; this provides a concrete task directive.
  */
-function buildKickoffMessage(agentType: AgentType, specDir: string, projectDir: string): string {
+function buildKickoffMessage(
+  agentType: AgentType,
+  specDir: string,
+  projectDir: string,
+  language?: SerializableSessionConfig['language'],
+): string {
+  let baseMessage: string;
   switch (agentType) {
     case 'planner':
-      return `Read the spec at ${specDir}/spec.md and create a detailed implementation plan at ${specDir}/implementation_plan.json. Project root: ${projectDir}`;
+      baseMessage = `Read the spec at ${specDir}/spec.md and create a detailed implementation plan at ${specDir}/implementation_plan.json. Project root: ${projectDir}`;
+      break;
     case 'coder':
-      return `Read ${specDir}/implementation_plan.json and implement the next pending subtask. Project root: ${projectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+      baseMessage = `Read ${specDir}/implementation_plan.json and implement the next pending subtask. Project root: ${projectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+      break;
     case 'qa_reviewer':
-      return `Review the implementation in ${projectDir} against the specification in ${specDir}/spec.md. Write your findings to ${specDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+      baseMessage = `Review the implementation in ${projectDir} against the specification in ${specDir}/spec.md. Write your findings to ${specDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+      break;
     case 'qa_fixer':
-      return `Read ${specDir}/qa_report.md for the issues found by QA review. Fix all issues in ${projectDir}. After fixing, update ${specDir}/qa_report.md to indicate fixes have been applied.`;
+      baseMessage = `Read ${specDir}/qa_report.md for the issues found by QA review. Fix all issues in ${projectDir}. After fixing, update ${specDir}/qa_report.md to indicate fixes have been applied.`;
+      break;
     default:
-      return `Complete the task described in your system prompt. Spec directory: ${specDir}. Project directory: ${projectDir}`;
+      baseMessage = `Complete the task described in your system prompt. Spec directory: ${specDir}. Project directory: ${projectDir}`;
+      break;
   }
+
+  return appendLanguageRequirement(baseMessage, language);
 }
 
 /**

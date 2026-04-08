@@ -11,7 +11,7 @@
 
 import { streamText, stepCountIs } from 'ai';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync } from 'node:fs';
-import { join } from 'node:path';
+import { basename, join } from 'node:path';
 
 import { createSimpleClient } from '../client/factory';
 import type { SimpleClientResult } from '../client/types';
@@ -19,6 +19,7 @@ import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
 import type { ModelShorthand, ThinkingLevel } from '../config/types';
 import type { SecurityProfile } from '../security/bash-validator';
+import { runProjectIndexer } from '../project/project-indexer';
 import { safeParseJson } from '../../utils/json-repair';
 import { tryLoadPrompt } from '../prompts/prompt-loader';
 
@@ -30,6 +31,8 @@ const MAX_RETRIES = 3;
 
 /** Maximum agentic steps per phase */
 const MAX_STEPS_PER_PHASE = 30;
+
+const DISCOVERY_REQUIRED_FIELDS = ['project_name', 'target_audience', 'product_vision'] as const;
 
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
@@ -43,6 +46,114 @@ function isResponsesApiModel(modelId: string | undefined): boolean {
   );
 }
 
+function extractJsonObjectFromText(text: string): Record<string, unknown> | null {
+  const trimmed = text.trim();
+  if (!trimmed) return null;
+
+  const direct = safeParseJson<Record<string, unknown>>(trimmed);
+  if (direct) return direct;
+
+  const codeBlockRegex = /```(?:json)?\s*([\s\S]*?)```/gi;
+  let codeBlockMatch: RegExpExecArray | null = codeBlockRegex.exec(text);
+  while (codeBlockMatch) {
+    const parsed = safeParseJson<Record<string, unknown>>(codeBlockMatch[1].trim());
+    if (parsed) return parsed;
+    codeBlockMatch = codeBlockRegex.exec(text);
+  }
+
+  const firstBrace = text.indexOf('{');
+  const lastBrace = text.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    return safeParseJson<Record<string, unknown>>(text.slice(firstBrace, lastBrace + 1));
+  }
+
+  return null;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
+}
+
+function buildFallbackDiscovery(
+  projectDir: string,
+  projectIndexFile: string,
+): Record<string, unknown> | null {
+  const projectName = basename(projectDir) || 'Project';
+  let projectType = 'other';
+  let primaryLanguage = 'Unknown';
+  const frameworks = new Set<string>();
+  const keyDependencies = new Set<string>();
+
+  if (!existsSync(projectIndexFile)) {
+    return null;
+  }
+
+  const parsed = safeParseJson<Record<string, unknown>>(readFileSync(projectIndexFile, 'utf-8'));
+  if (!parsed) {
+    return null;
+  }
+
+  if (typeof parsed.project_type === 'string' && parsed.project_type.trim()) {
+    projectType = parsed.project_type;
+  }
+  const services = (parsed.services ?? {}) as Record<string, unknown>;
+  for (const service of Object.values(services)) {
+    const s = service as Record<string, unknown>;
+    if (primaryLanguage === 'Unknown' && typeof s.language === 'string' && s.language.trim()) {
+      primaryLanguage = s.language;
+    }
+    if (typeof s.framework === 'string' && s.framework.trim()) {
+      frameworks.add(s.framework);
+    }
+    for (const dep of asStringArray(s.dependencies)) {
+      keyDependencies.add(dep);
+    }
+  }
+
+  return {
+    project_name: projectName,
+    project_type: projectType,
+    tech_stack: {
+      primary_language: primaryLanguage,
+      frameworks: Array.from(frameworks).slice(0, 8),
+      key_dependencies: Array.from(keyDependencies).slice(0, 15),
+    },
+    target_audience: {
+      primary_persona: 'Developers maintaining and extending this project',
+      secondary_personas: ['Technical stakeholders reviewing progress'],
+      pain_points: ['Manual workflows', 'Lack of clear implementation priorities'],
+      goals: ['Ship features faster', 'Improve reliability and maintainability'],
+      usage_context: 'Used during active software development and delivery workflows',
+    },
+    product_vision: {
+      one_liner: `${projectName} helps users complete core workflows with higher efficiency and quality.`,
+      problem_statement: 'The current workflow lacks a clear, prioritized roadmap tied to user outcomes.',
+      value_proposition: 'Provides a focused plan for incremental delivery based on the existing codebase.',
+      success_metrics: ['Feature throughput', 'Defect reduction', 'User satisfaction'],
+    },
+    current_state: {
+      maturity: 'prototype',
+      existing_features: [],
+      known_gaps: ['Roadmap details were inferred from local project metadata due AI generation failure'],
+      technical_debt: [],
+    },
+    competitive_context: {
+      alternatives: [],
+      differentiators: [],
+      market_position: 'Niche or evolving product area; precise positioning requires deeper analysis',
+      competitor_pain_points: [],
+      competitor_analysis_available: false,
+    },
+    constraints: {
+      technical: [],
+      resources: [],
+      dependencies: [],
+    },
+    created_at: new Date().toISOString(),
+  };
+}
+
 // =============================================================================
 // Types
 // =============================================================================
@@ -53,8 +164,8 @@ export interface RoadmapConfig {
   projectDir: string;
   /** Output directory for roadmap files (defaults to .auto-claude/roadmap/) */
   outputDir?: string;
-  /** Model shorthand (defaults to 'sonnet') */
-  modelShorthand?: ModelShorthand;
+  /** Model shorthand or full model ID (defaults to 'sonnet') */
+  modelShorthand?: ModelShorthand | string;
   /** Thinking level (defaults to 'medium') */
   thinkingLevel?: ThinkingLevel;
   /** Whether to refresh existing data */
@@ -111,13 +222,13 @@ export type RoadmapStreamEvent =
 async function runDiscoveryPhase(
   projectDir: string,
   outputDir: string,
+  projectIndexFile: string,
   refresh: boolean,
   client: SimpleClientResult,
   abortSignal?: AbortSignal,
   onStream?: RoadmapStreamCallback,
 ): Promise<RoadmapPhaseResult> {
   const discoveryFile = join(outputDir, 'roadmap_discovery.json');
-  const projectIndexFile = join(outputDir, 'project_index.json');
 
   if (existsSync(discoveryFile) && !refresh) {
     return { phase: 'discovery', success: true, outputs: [discoveryFile], errors: [] };
@@ -132,11 +243,12 @@ async function runDiscoveryPhase(
 
   // Load the full prompt file with JSON schema; fall back to inline prompt
   const loadedDiscoveryPrompt = tryLoadPrompt('roadmap_discovery');
+  let retryContext: string | undefined;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const contextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Project Directory**: ${projectDir}\n**Project Index**: ${projectIndexFile}\n**Output Directory**: ${outputDir}\n**Output File**: ${discoveryFile}\n\nUse the paths above when reading input files and writing output.`;
 
-    const prompt = loadedDiscoveryPrompt
+    const basePrompt = loadedDiscoveryPrompt
       ? loadedDiscoveryPrompt + contextBlock
       : `You are a project analyst. Analyze the project and create a discovery document.
 
@@ -154,8 +266,14 @@ Your task:
 The JSON must contain at minimum: project_name, target_audience, product_vision, key_features, technical_stack, and constraints.
 
 Do NOT ask questions. Make educated inferences and create the file.`;
+    const prompt = retryContext
+      ? `${basePrompt}\n\n---\n\n## RETRY FEEDBACK (HIGHEST PRIORITY)\n\n${retryContext}`
+      : basePrompt;
 
     const discoveryUserPrompt = 'Analyze the project and create the discovery document. Use the available tools to explore the codebase, then write your findings as JSON to the output file specified in the context above.';
+    let streamedText = '';
+    let toolCallCount = 0;
+    let streamError: string | undefined;
 
     try {
       const result = streamText({
@@ -178,9 +296,11 @@ Do NOT ask questions. Make educated inferences and create the file.`;
       for await (const part of result.fullStream) {
         switch (part.type) {
           case 'text-delta':
+            streamedText += part.text;
             onStream?.({ type: 'text-delta', text: part.text });
             break;
           case 'tool-call':
+            toolCallCount += 1;
             onStream?.({ type: 'tool-use', name: part.toolName });
             break;
           case 'error': {
@@ -190,26 +310,63 @@ Do NOT ask questions. Make educated inferences and create the file.`;
           }
         }
       }
-
-      // Validate output
-      if (existsSync(discoveryFile)) {
-        const data = safeParseJson<Record<string, unknown>>(readFileSync(discoveryFile, 'utf-8'));
-        if (data) {
-          const required = ['project_name', 'target_audience', 'product_vision'];
-          const missing = required.filter((k) => !(k in data));
-          if (missing.length === 0) {
-            return { phase: 'discovery', success: true, outputs: [discoveryFile], errors: [] };
-          }
-          errors.push(`Attempt ${attempt + 1}: Missing fields: ${missing.join(', ')}`);
-        } else {
-          errors.push(`Attempt ${attempt + 1}: Invalid JSON in discovery file`);
-        }
-      } else {
-        errors.push(`Attempt ${attempt + 1}: Discovery file not created`);
-      }
     } catch (error) {
-      errors.push(`Attempt ${attempt + 1}: ${error instanceof Error ? error.message : String(error)}`);
+      streamError = error instanceof Error ? error.message : String(error);
     }
+
+    if (!existsSync(discoveryFile) && streamedText.trim().length > 0) {
+      const extracted = extractJsonObjectFromText(streamedText);
+      if (extracted) {
+        writeFileSync(discoveryFile, JSON.stringify(extracted, null, 2), 'utf-8');
+      }
+    }
+
+    if (existsSync(discoveryFile)) {
+      const data = safeParseJson<Record<string, unknown>>(readFileSync(discoveryFile, 'utf-8'));
+      if (data) {
+        const missing = DISCOVERY_REQUIRED_FIELDS.filter((k) => !(k in data));
+        if (missing.length === 0) {
+          return { phase: 'discovery', success: true, outputs: [discoveryFile], errors: [] };
+        }
+        const detail = `Missing fields: ${missing.join(', ')}`;
+        errors.push(`Attempt ${attempt + 1}: ${streamError ? `${streamError}; ` : ''}${detail}`);
+      } else {
+        const detail = 'Invalid JSON in discovery file';
+        errors.push(`Attempt ${attempt + 1}: ${streamError ? `${streamError}; ` : ''}${detail}`);
+      }
+    } else {
+      const noToolCalls = toolCallCount === 0;
+      const detail = noToolCalls
+        ? 'Discovery file not created and no tool calls were made'
+        : 'Discovery file not created';
+      errors.push(`Attempt ${attempt + 1}: ${streamError ? `${streamError}; ` : ''}${detail}`);
+      retryContext = [
+        'CRITICAL - TOOL USE REQUIRED',
+        '',
+        noToolCalls
+          ? 'Your previous attempt failed because you did not call any tools.'
+          : 'Your previous attempt failed because the required output file was not created.',
+        `You MUST use the Write tool to create this file: ${discoveryFile}`,
+        'Do NOT return analysis-only text.',
+        'Do NOT ask questions.',
+        'After writing the file, continue without additional tool calls unless strictly necessary.',
+      ].join('\n');
+    }
+  }
+
+  try {
+    const fallback = buildFallbackDiscovery(projectDir, projectIndexFile);
+    if (!fallback) {
+      return { phase: 'discovery', success: false, outputs: [], errors };
+    }
+    writeFileSync(discoveryFile, JSON.stringify(fallback, null, 2), 'utf-8');
+    onStream?.({
+      type: 'error',
+      error: 'Discovery fallback used: generated roadmap_discovery.json from local project index',
+    });
+    return { phase: 'discovery', success: true, outputs: [discoveryFile], errors };
+  } catch (error) {
+    errors.push(`Fallback failed: ${error instanceof Error ? error.message : String(error)}`);
   }
 
   return { phase: 'discovery', success: false, outputs: [], errors };
@@ -226,6 +383,7 @@ Do NOT ask questions. Make educated inferences and create the file.`;
 async function runFeaturesPhase(
   projectDir: string,
   outputDir: string,
+  projectIndexFile: string,
   refresh: boolean,
   client: SimpleClientResult,
   abortSignal?: AbortSignal,
@@ -233,7 +391,6 @@ async function runFeaturesPhase(
 ): Promise<RoadmapPhaseResult> {
   const roadmapFile = join(outputDir, 'roadmap.json');
   const discoveryFile = join(outputDir, 'roadmap_discovery.json');
-  const projectIndexFile = join(outputDir, 'project_index.json');
 
   if (!existsSync(discoveryFile)) {
     return { phase: 'features', success: false, outputs: [], errors: ['Discovery file not found'] };
@@ -458,10 +615,21 @@ export async function runRoadmapGeneration(
   } = config;
 
   const outputDir = config.outputDir ?? join(projectDir, '.auto-claude', 'roadmap');
+  const projectIndexFile = join(projectDir, '.auto-claude', 'project_index.json');
 
   // Ensure output directory exists
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
+  }
+  if (refresh || !existsSync(projectIndexFile)) {
+    try {
+      runProjectIndexer(projectDir, projectIndexFile);
+    } catch (error) {
+      onStream?.({
+        type: 'error',
+        error: `Project index generation failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`,
+      });
+    }
   }
 
   // Create tool context for read-only tools + Write
@@ -489,7 +657,7 @@ export async function runRoadmapGeneration(
   // Phase 1: Discovery
   onStream?.({ type: 'phase-start', phase: 'discovery' });
   const discoveryResult = await runDiscoveryPhase(
-    projectDir, outputDir, refresh, client, abortSignal, onStream,
+    projectDir, outputDir, projectIndexFile, refresh, client, abortSignal, onStream,
   );
   phases.push(discoveryResult);
   onStream?.({ type: 'phase-complete', phase: 'discovery', success: discoveryResult.success });
@@ -505,7 +673,7 @@ export async function runRoadmapGeneration(
   // Phase 2: Feature Generation
   onStream?.({ type: 'phase-start', phase: 'features' });
   const featuresResult = await runFeaturesPhase(
-    projectDir, outputDir, refresh, client, abortSignal, onStream,
+    projectDir, outputDir, projectIndexFile, refresh, client, abortSignal, onStream,
   );
   phases.push(featuresResult);
   onStream?.({ type: 'phase-complete', phase: 'features', success: featuresResult.success });

@@ -164,6 +164,7 @@ export interface TaskDraft {
   images: ImageAttachment[];
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
+  workflowMode?: TaskWorkflowMode;
   fastMode?: boolean;
   pushNewBranches?: boolean;
   savedAt: Date;
@@ -173,6 +174,7 @@ export interface TaskDraft {
 export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex';
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+export type TaskWorkflowMode = 'safe' | 'fast';
 // Re-export ThinkingLevel (defined in settings.ts) for convenience
 export type { ThinkingLevel };
 /** Model identifier — Claude shorthands or concrete model IDs from any provider */
@@ -190,13 +192,16 @@ export type TaskCategory =
 
 export interface TaskMetadata {
   // Origin tracking
-  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'github' | 'gitlab';
+  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab';
   ideationType?: string;  // e.g., 'code_improvements', 'security_hardening'
   ideaId?: string;  // Reference to original idea if converted
   featureId?: string;  // Reference to roadmap feature if from roadmap
   linearIssueId?: string;  // Reference to Linear issue if from Linear
   linearIdentifier?: string;  // Linear issue identifier (e.g., 'ABC-123')
   linearUrl?: string;  // Linear issue URL
+  yunxiaoWorkItemId?: string;  // Reference to Yunxiao work item ID
+  yunxiaoIdentifier?: string;  // Yunxiao work item identifier
+  yunxiaoUrl?: string;  // Yunxiao work item URL (if available)
   githubIssueNumber?: number;  // Reference to GitHub issue number if from GitHub (single issue)
   githubIssueNumbers?: number[];  // Reference to multiple GitHub issues if from a batch
   githubUrl?: string;  // GitHub issue URL
@@ -247,11 +252,13 @@ export interface TaskMetadata {
   phaseModels?: PhaseModelConfig;  // Per-phase model configuration
   phaseThinking?: PhaseThinkingConfig;  // Per-phase thinking configuration
   phaseProviders?: Record<string, string>;  // Per-phase provider preference (cross-provider mode)
+  workflowMode?: TaskWorkflowMode;  // 'fast' uses a lighter-weight execution workflow
   fastMode?: boolean;  // Fast Mode — faster Opus 4.6 output, higher cost per token
 
   // Git/Worktree configuration
   baseBranch?: string;  // Override base branch for this task's worktree
   prUrl?: string;  // GitHub PR URL if task has been submitted as a PR
+  gitblitTicketId?: number;  // GitBlit ticket id for patchset updates
   useWorktree?: boolean;  // If false, use direct mode (no worktree isolation) - default is true for safety
   useLocalBranch?: boolean;  // If true, use the local branch directly instead of preferring origin/branch (preserves gitignored files)
   pushNewBranches?: boolean;  // If false, keep the task branch local-only instead of auto-pushing to origin
@@ -546,6 +553,7 @@ export interface TaskRecoveryResult {
 export interface TaskRecoveryOptions {
   targetStatus?: TaskStatus;
   autoRestart?: boolean;
+  projectId?: string; // Scope recovery to the active project when task IDs overlap
 }
 
 export interface TaskProgressUpdate {
@@ -559,4 +567,5 @@ export interface TaskStartOptions {
   workers?: number;
   model?: string;
   baseBranch?: string; // Override base branch for worktree creation
+  projectId?: string; // Scope task lookup to a specific project to avoid cross-project collisions
 }

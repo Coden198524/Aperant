@@ -62,6 +62,68 @@ export interface LinearSyncStatus {
 }
 
 // ============================================
+// Yunxiao Integration Types
+// ============================================
+
+export interface YunxiaoProject {
+  id: string;
+  name: string;
+  description?: string;
+  status?: string;
+}
+
+export interface YunxiaoWorkItem {
+  id: string;
+  identifier?: string;
+  subject: string;
+  description?: string;
+  categoryId?: string;
+  status?: {
+    id?: string;
+    name?: string;
+    displayName?: string;
+  };
+  priority?: string;
+  workitemType?: {
+    id?: string;
+    name?: string;
+    categoryId?: string;
+  };
+  assignedTo?: {
+    id?: string;
+    name?: string;
+  };
+  creator?: {
+    id?: string;
+    name?: string;
+  };
+  space?: {
+    id?: string;
+    name?: string;
+  };
+  gmtCreate?: number;
+  gmtModified?: number;
+  url?: string;
+}
+
+export interface YunxiaoImportResult {
+  success: boolean;
+  imported: number;
+  failed: number;
+  errors?: string[];
+}
+
+export interface YunxiaoSyncStatus {
+  connected: boolean;
+  organizationId?: string;
+  organizationName?: string;
+  projectCount?: number;
+  workItemCount?: number;
+  lastSyncedAt?: string;
+  error?: string;
+}
+
+// ============================================
 // GitHub Integration Types
 // ============================================
 

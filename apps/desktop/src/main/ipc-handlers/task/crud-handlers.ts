@@ -369,7 +369,9 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       const { task, project } = findTaskAndProject(taskId);
 
       if (!task || !project) {
-        return { success: false, error: 'Task or project not found' };
+        // Make delete idempotent: if the task no longer exists, treat as already deleted.
+        taskStateManager.clearTask(taskId);
+        return { success: true };
       }
 
       // Check if task is currently running
@@ -441,6 +443,19 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       projectStore.invalidateTasksCache(project.id);
 
       if (hasErrors) {
+        // If we had cleanup errors but the task no longer exists in discovered specs,
+        // treat delete as successful to avoid ghost cards in the UI.
+        const taskStillExists = projectStore
+          .getTasks(project.id)
+          .some((candidate) => candidate.id === task.id || candidate.specId === task.specId);
+        if (!taskStillExists) {
+          console.warn('[TASK_DELETE] Cleanup had warnings/errors, but task is gone. Treating delete as success.', {
+            taskId: task.id,
+            errors,
+          });
+          return { success: true };
+        }
+
         return {
           success: false,
           error: `Failed to delete some task files: ${errors.join('; ')}`

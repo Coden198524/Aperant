@@ -133,6 +133,101 @@ describe('getMcpServerConfig', () => {
       expect(config).toBeNull();
     });
   });
+
+  describe('yunxiao', () => {
+    it('returns null when no access token provided', () => {
+      const config = getMcpServerConfig('yunxiao', {});
+      expect(config).toBeNull();
+    });
+
+    it('returns config when YUNXIAO_ACCESS_TOKEN is provided', () => {
+      const config = getMcpServerConfig('yunxiao', { env: { YUNXIAO_ACCESS_TOKEN: 'yx_token_123' } });
+      expect(config).not.toBeNull();
+      expect(config?.id).toBe('yunxiao');
+    });
+
+    it('injects YUNXIAO_ACCESS_TOKEN into transport env', () => {
+      const config = getMcpServerConfig('yunxiao', { yunxiaoAccessToken: 'yx_inject' });
+      expect(config?.transport.type).toBe('stdio');
+      if (config?.transport.type === 'stdio') {
+        expect(config.transport.env?.YUNXIAO_ACCESS_TOKEN).toBe('yx_inject');
+      }
+    });
+
+    it('supports overriding MCP command and args from env', () => {
+      const config = getMcpServerConfig('yunxiao', {
+        env: {
+          YUNXIAO_ACCESS_TOKEN: 'yx_token_123',
+          YUNXIAO_MCP_COMMAND: 'node',
+          YUNXIAO_MCP_ARGS: 'custom-yunxiao-mcp.js --stdio'
+        }
+      });
+      expect(config?.transport.type).toBe('stdio');
+      if (config?.transport.type === 'stdio') {
+        expect(config.transport.command).toBe('node');
+        expect(config.transport.args).toEqual(['custom-yunxiao-mcp.js', '--stdio']);
+      }
+    });
+  });
+
+  describe('custom server', () => {
+    it('resolves command custom server from options.customServers', () => {
+      const config = getMcpServerConfig('custom-yunxiao', {
+        customServers: [
+          {
+            id: 'custom-yunxiao',
+            name: 'Yunxiao DevOps',
+            type: 'command',
+            command: 'npx',
+            args: ['-y', '@aliyun/devops-mcp-server'],
+          },
+        ],
+      });
+
+      expect(config).not.toBeNull();
+      expect(config?.id).toBe('custom-yunxiao');
+      expect(config?.transport.type).toBe('stdio');
+      if (config?.transport.type === 'stdio') {
+        expect(config.transport.command).toBe('npx');
+      }
+    });
+
+    it('resolves http custom server from options.customServers', () => {
+      const config = getMcpServerConfig('custom-http', {
+        customServers: [
+          {
+            id: 'custom-http',
+            name: 'Custom HTTP',
+            type: 'http',
+            url: 'https://mcp.example.com/mcp',
+            headers: { Authorization: 'Bearer test' },
+          },
+        ],
+      });
+
+      expect(config).not.toBeNull();
+      expect(config?.transport.type).toBe('streamable-http');
+      if (config?.transport.type === 'streamable-http') {
+        expect(config.transport.url).toBe('https://mcp.example.com/mcp');
+      }
+    });
+
+    it('rejects unsafe command-based custom server', () => {
+      const config = getMcpServerConfig('unsafe-custom', {
+        customServers: [
+          {
+            id: 'unsafe-custom',
+            name: 'Unsafe',
+            type: 'command',
+            command: 'powershell',
+            args: ['-Command', 'Write-Output hi'],
+          },
+        ],
+      });
+
+      expect(config).toBeNull();
+    });
+  });
 });
 
 // =============================================================================
@@ -181,5 +276,22 @@ describe('resolveMcpServers', () => {
     if (configs[0].transport.type === 'stdio') {
       expect(configs[0].transport.env?.SPEC_DIR).toBe(specDir);
     }
+  });
+
+  it('resolves custom MCP servers referenced by agent overrides', () => {
+    const configs = resolveMcpServers(['context7', 'custom-yunxiao'], {
+      customServers: [
+        {
+          id: 'custom-yunxiao',
+          name: 'Yunxiao DevOps',
+          type: 'command',
+          command: 'npx',
+          args: ['-y', '@aliyun/devops-mcp-server'],
+        },
+      ],
+    });
+
+    expect(configs).toHaveLength(2);
+    expect(configs.map((c) => c.id)).toEqual(['context7', 'custom-yunxiao']);
   });
 });

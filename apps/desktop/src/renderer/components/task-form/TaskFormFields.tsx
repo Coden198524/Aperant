@@ -11,7 +11,7 @@
  */
 import { useRef, useState, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, Zap, Info } from 'lucide-react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, Zap, Info, Gauge } from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
@@ -33,7 +33,8 @@ import type {
   TaskImpact,
   ImageAttachment,
   ModelType,
-  ThinkingLevel
+  ThinkingLevel,
+  TaskWorkflowMode
 } from '../../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../../shared/types/settings';
 
@@ -86,6 +87,10 @@ interface TaskFormFieldsProps {
   // Review requirement
   requireReviewBeforeCoding: boolean;
   onRequireReviewChange: (require: boolean) => void;
+
+  // Workflow mode
+  workflowMode?: TaskWorkflowMode;
+  onWorkflowModeChange?: (value: TaskWorkflowMode) => void;
 
   // Fast mode
   fastMode?: boolean;
@@ -141,6 +146,8 @@ export function TaskFormFields({
   onImagesChange,
   requireReviewBeforeCoding,
   onRequireReviewChange,
+  workflowMode = 'safe',
+  onWorkflowModeChange,
   fastMode = false,
   onFastModeChange,
   showFastModeToggle = false,
@@ -541,6 +548,37 @@ export function TaskFormFields({
             </p>
           </div>
         </div>
+
+        {onWorkflowModeChange && (
+          <div className="rounded-lg border border-border bg-card p-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-start gap-3">
+                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/10 shrink-0">
+                  <Gauge className="h-5 w-5 text-sky-500" />
+                </div>
+                <div>
+                  <Label className="text-sm font-medium text-foreground">
+                    {t('tasks:form.workflowModeLabel')}
+                  </Label>
+                  <p className="text-xs text-muted-foreground mt-0.5">
+                    {t('tasks:form.workflowModeDescription')}
+                  </p>
+                </div>
+              </div>
+              <Switch
+                checked={workflowMode === 'fast'}
+                onCheckedChange={(checked) => onWorkflowModeChange(checked ? 'fast' : 'safe')}
+                disabled={disabled}
+              />
+            </div>
+            <div className="mt-3 flex items-start gap-2 rounded-md bg-sky-500/5 border border-sky-500/20 p-2.5">
+              <Info className="h-3.5 w-3.5 text-sky-500 shrink-0 mt-0.5" />
+              <p className="text-[10px] text-sky-700 dark:text-sky-300">
+                {t('tasks:form.workflowModeNotice')}
+              </p>
+            </div>
+          </div>
+        )}
 
         {/* Fast Mode Toggle - shown when any phase uses an Opus model */}
         {showFastModeToggle && onFastModeChange && (

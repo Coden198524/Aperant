@@ -4,4 +4,7 @@
  */
 
 export { LinearIntegration } from './LinearIntegration';
+export { YunxiaoIntegration } from './YunxiaoIntegration';
 export { GitHubIntegration } from './GitHubIntegration';
+export { GitLabIntegration } from './GitLabIntegration';
+export { GitBlitIntegration } from './GitBlitIntegration';

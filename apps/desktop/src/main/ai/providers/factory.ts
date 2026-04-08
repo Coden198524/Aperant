@@ -62,6 +62,21 @@ function shouldUseOpenAICompatibleChat(config: ProviderConfig): boolean {
   );
 }
 
+function createOpenAICompatibleChatModel(
+  config: ProviderConfig,
+  modelId: string,
+  fetchImpl?: typeof fetch,
+): LanguageModel {
+  const provider = createOpenAICompatible({
+    name: 'openai-compatible',
+    apiKey: config.apiKey ?? 'custom-endpoint',
+    baseURL: config.baseURL ?? 'https://api.openai.com/v1',
+    headers: config.headers,
+    ...(fetchImpl ? { fetch: fetchImpl } : {}),
+  });
+  return provider.chatModel(modelId);
+}
+
 // =============================================================================
 // Provider Instance Creators
 // =============================================================================
@@ -95,15 +110,6 @@ function createProviderInstance(config: ProviderConfig) {
     }
 
     case SupportedProvider.OpenAI: {
-      if (shouldUseOpenAICompatibleChat(config)) {
-        return createOpenAICompatible({
-          name: 'openai-compatible',
-          apiKey: apiKey ?? 'custom-endpoint',
-          baseURL: baseURL ?? 'https://api.openai.com/v1',
-          headers,
-        });
-      }
-
       // File-based OAuth: use generic fetch interceptor for token injection + URL rewriting
       if (config.oauthTokenFilePath) {
         return createOpenAI({
@@ -272,17 +278,42 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
   // format sent to Responses endpoint → 400). Regular API-key accounts use
   // `.responses()` for Codex models and `.chat()` for everything else.
   if (config.provider === SupportedProvider.OpenAI) {
-    if (shouldUseOpenAICompatibleChat(config)) {
-      return (instance as ReturnType<typeof createOpenAICompatible>).chatModel(modelId);
+    const isOfficialBaseUrl = isOfficialOpenAIBaseUrl(config.baseURL);
+
+    if (config.oauthTokenFilePath && !isOfficialBaseUrl) {
+      return createOpenAICompatibleChatModel(
+        config,
+        modelId,
+        createOAuthProviderFetch(config.oauthTokenFilePath, 'openai'),
+      );
     }
 
-    if (config.oauthTokenFilePath || isResponsesApiModel(modelId)) {
+    if (config.oauthTokenFilePath || (isResponsesApiModel(modelId) && isOfficialBaseUrl)) {
       return (instance as ReturnType<typeof createOpenAI>).responses(modelId);
     }
+
+    if (shouldUseOpenAICompatibleChat(config)) {
+      return createOpenAICompatibleChatModel(config, modelId);
+    }
+
     return (instance as ReturnType<typeof createOpenAI>).chat(modelId);
   }
 
   if (config.provider === SupportedProvider.OpenAICompatible) {
+    if (isResponsesApiModel(modelId)) {
+      if (!isOfficialOpenAIBaseUrl(config.baseURL)) {
+        const provider = instance as ReturnType<typeof createOpenAICompatible>;
+        return provider.chatModel(modelId);
+      }
+
+      const responsesProvider = createOpenAI({
+        apiKey: config.apiKey ?? 'custom-endpoint',
+        baseURL: config.baseURL ?? 'https://api.openai.com/v1',
+        headers: config.headers,
+      });
+      return responsesProvider.responses(modelId);
+    }
+
     const provider = instance as ReturnType<typeof createOpenAICompatible>;
     return provider.chatModel(modelId);
   }

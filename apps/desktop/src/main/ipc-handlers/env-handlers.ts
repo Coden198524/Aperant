@@ -17,6 +17,25 @@ const GITLAB_ENV_KEYS = {
   AUTO_SYNC: 'GITLAB_AUTO_SYNC'
 } as const;
 
+const GITBLIT_ENV_KEYS = {
+  ENABLED: 'GITBLIT_ENABLED',
+  BASE_URL: 'GITBLIT_BASE_URL',
+  REPO: 'GITBLIT_REPO'
+} as const;
+
+const YUNXIAO_ENV_KEYS = {
+  ENABLED: 'YUNXIAO_ENABLED',
+  ACCESS_TOKEN: 'YUNXIAO_ACCESS_TOKEN',
+  ORGANIZATION_ID: 'YUNXIAO_ORGANIZATION_ID',
+  PROJECT_ID: 'YUNXIAO_PROJECT_ID',
+  WORKITEM_CATEGORY: 'YUNXIAO_WORKITEM_CATEGORY',
+  AUTO_SYNC: 'YUNXIAO_AUTO_SYNC',
+  DEVOPS_TOOLSETS: 'DEVOPS_TOOLSETS',
+  MCP_COMMAND: 'YUNXIAO_MCP_COMMAND',
+  MCP_ARGS: 'YUNXIAO_MCP_ARGS',
+  MCP_NPM_CACHE: 'YUNXIAO_MCP_NPM_CACHE'
+} as const;
+
 /**
  * Helper to generate .env line (DRY)
  */
@@ -63,6 +82,37 @@ export function registerEnvHandlers(
     if (config.linearRealtimeSync !== undefined) {
       existingVars['LINEAR_REALTIME_SYNC'] = config.linearRealtimeSync ? 'true' : 'false';
     }
+    // Yunxiao Integration
+    if (config.yunxiaoEnabled !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.ENABLED] = config.yunxiaoEnabled ? 'true' : 'false';
+    }
+    if (config.yunxiaoAccessToken !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.ACCESS_TOKEN] = config.yunxiaoAccessToken;
+    }
+    if (config.yunxiaoOrganizationId !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.ORGANIZATION_ID] = config.yunxiaoOrganizationId;
+    }
+    if (config.yunxiaoProjectId !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.PROJECT_ID] = config.yunxiaoProjectId;
+    }
+    if (config.yunxiaoWorkitemCategory !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.WORKITEM_CATEGORY] = config.yunxiaoWorkitemCategory;
+    }
+    if (config.yunxiaoAutoSync !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.AUTO_SYNC] = config.yunxiaoAutoSync ? 'true' : 'false';
+    }
+    if (config.yunxiaoDevopsToolsets !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.DEVOPS_TOOLSETS] = config.yunxiaoDevopsToolsets;
+    }
+    if (config.yunxiaoMcpCommand !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.MCP_COMMAND] = config.yunxiaoMcpCommand;
+    }
+    if (config.yunxiaoMcpArgs !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.MCP_ARGS] = config.yunxiaoMcpArgs;
+    }
+    if (config.yunxiaoMcpNpmCache !== undefined) {
+      existingVars[YUNXIAO_ENV_KEYS.MCP_NPM_CACHE] = config.yunxiaoMcpNpmCache;
+    }
     // GitHub Integration
     if (config.githubToken !== undefined) {
       existingVars['GITHUB_TOKEN'] = config.githubToken;
@@ -88,6 +138,16 @@ export function registerEnvHandlers(
     }
     if (config.gitlabAutoSync !== undefined) {
       existingVars[GITLAB_ENV_KEYS.AUTO_SYNC] = config.gitlabAutoSync ? 'true' : 'false';
+    }
+    // GitBlit Integration
+    if (config.gitblitEnabled !== undefined) {
+      existingVars[GITBLIT_ENV_KEYS.ENABLED] = config.gitblitEnabled ? 'true' : 'false';
+    }
+    if (config.gitblitBaseUrl !== undefined) {
+      existingVars[GITBLIT_ENV_KEYS.BASE_URL] = config.gitblitBaseUrl;
+    }
+    if (config.gitblitRepo !== undefined) {
+      existingVars[GITBLIT_ENV_KEYS.REPO] = config.gitblitRepo;
     }
     // Git/Worktree Settings
     if (config.defaultBranch !== undefined) {
@@ -144,6 +204,9 @@ export function registerEnvHandlers(
       if (config.mcpServers.linearMcpEnabled !== undefined) {
         existingVars['LINEAR_MCP_ENABLED'] = config.mcpServers.linearMcpEnabled ? 'true' : 'false';
       }
+      if (config.mcpServers.yunxiaoMcpEnabled !== undefined) {
+        existingVars['YUNXIAO_MCP_ENABLED'] = config.mcpServers.yunxiaoMcpEnabled ? 'true' : 'false';
+      }
       if (config.mcpServers.electronEnabled !== undefined) {
         existingVars['ELECTRON_MCP_ENABLED'] = config.mcpServers.electronEnabled ? 'true' : 'false';
       }
@@ -198,6 +261,21 @@ ${existingVars['LINEAR_PROJECT_ID'] ? `LINEAR_PROJECT_ID=${existingVars['LINEAR_
 ${existingVars['LINEAR_REALTIME_SYNC'] !== undefined ? `LINEAR_REALTIME_SYNC=${existingVars['LINEAR_REALTIME_SYNC']}` : '# LINEAR_REALTIME_SYNC=false'}
 
 # =============================================================================
+# YUNXIAO INTEGRATION (OPTIONAL)
+# =============================================================================
+${existingVars[YUNXIAO_ENV_KEYS.ENABLED] !== undefined ? `${YUNXIAO_ENV_KEYS.ENABLED}=${existingVars[YUNXIAO_ENV_KEYS.ENABLED]}` : `# ${YUNXIAO_ENV_KEYS.ENABLED}=false`}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.ACCESS_TOKEN)}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.ORGANIZATION_ID)}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.PROJECT_ID)}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.WORKITEM_CATEGORY, 'Task')}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.AUTO_SYNC, 'false')}
+# Optional: MCP startup configuration for Yunxiao
+${envLine(existingVars, YUNXIAO_ENV_KEYS.DEVOPS_TOOLSETS, 'organization-management,project-management')}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.MCP_COMMAND, process.platform === 'win32' ? 'npx.cmd' : 'npx')}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.MCP_ARGS, '-y alibabacloud-devops-mcp-server')}
+${envLine(existingVars, YUNXIAO_ENV_KEYS.MCP_NPM_CACHE)}
+
+# =============================================================================
 # GITHUB INTEGRATION (OPTIONAL)
 # =============================================================================
 ${existingVars['GITHUB_TOKEN'] ? `GITHUB_TOKEN=${existingVars['GITHUB_TOKEN']}` : '# GITHUB_TOKEN='}
@@ -212,6 +290,13 @@ ${envLine(existingVars, GITLAB_ENV_KEYS.INSTANCE_URL, 'https://gitlab.com')}
 ${envLine(existingVars, GITLAB_ENV_KEYS.TOKEN)}
 ${envLine(existingVars, GITLAB_ENV_KEYS.PROJECT, 'group/project')}
 ${envLine(existingVars, GITLAB_ENV_KEYS.AUTO_SYNC, 'false')}
+
+# =============================================================================
+# GITBLIT INTEGRATION (OPTIONAL)
+# =============================================================================
+${existingVars[GITBLIT_ENV_KEYS.ENABLED] !== undefined ? `${GITBLIT_ENV_KEYS.ENABLED}=${existingVars[GITBLIT_ENV_KEYS.ENABLED]}` : `# ${GITBLIT_ENV_KEYS.ENABLED}=false`}
+${envLine(existingVars, GITBLIT_ENV_KEYS.BASE_URL, 'https://gitblit.example.com')}
+${envLine(existingVars, GITBLIT_ENV_KEYS.REPO, 'team/repository.git')}
 
 # =============================================================================
 # GIT/WORKTREE SETTINGS (OPTIONAL)
@@ -232,6 +317,8 @@ ${existingVars['ENABLE_FANCY_UI'] !== undefined ? `ENABLE_FANCY_UI=${existingVar
 ${existingVars['CONTEXT7_ENABLED'] !== undefined ? `CONTEXT7_ENABLED=${existingVars['CONTEXT7_ENABLED']}` : '# CONTEXT7_ENABLED=true'}
 # Linear MCP integration (default: follows LINEAR_API_KEY)
 ${existingVars['LINEAR_MCP_ENABLED'] !== undefined ? `LINEAR_MCP_ENABLED=${existingVars['LINEAR_MCP_ENABLED']}` : '# LINEAR_MCP_ENABLED=true'}
+# Yunxiao MCP integration (default: follows YUNXIAO_ACCESS_TOKEN)
+${existingVars['YUNXIAO_MCP_ENABLED'] !== undefined ? `YUNXIAO_MCP_ENABLED=${existingVars['YUNXIAO_MCP_ENABLED']}` : '# YUNXIAO_MCP_ENABLED=true'}
 # Electron desktop automation - QA agents only (default: disabled)
 ${existingVars['ELECTRON_MCP_ENABLED'] !== undefined ? `ELECTRON_MCP_ENABLED=${existingVars['ELECTRON_MCP_ENABLED']}` : '# ELECTRON_MCP_ENABLED=false'}
 # Puppeteer browser automation - QA agents only (default: disabled)
@@ -322,8 +409,10 @@ ${existingVars['GRAPHITI_DB_PATH'] ? `GRAPHITI_DB_PATH=${existingVars['GRAPHITI_
       // Default config
       const config: ProjectEnvConfig = {
         linearEnabled: false,
+        yunxiaoEnabled: false,
         githubEnabled: false,
         gitlabEnabled: false,
+        gitblitEnabled: false,
         memoryEnabled: false,
         enableFancyUi: true,
         openaiKeyIsGlobal: false
@@ -358,6 +447,37 @@ ${existingVars['GRAPHITI_DB_PATH'] ? `GRAPHITI_DB_PATH=${existingVars['GRAPHITI_
         config.linearRealtimeSync = true;
       }
 
+      // Yunxiao config
+      if (vars[YUNXIAO_ENV_KEYS.ACCESS_TOKEN]) {
+        config.yunxiaoAccessToken = vars[YUNXIAO_ENV_KEYS.ACCESS_TOKEN];
+        // Enable by default if token exists and YUNXIAO_ENABLED is not explicitly false
+        config.yunxiaoEnabled = vars[YUNXIAO_ENV_KEYS.ENABLED]?.toLowerCase() !== 'false';
+      }
+      if (vars[YUNXIAO_ENV_KEYS.ORGANIZATION_ID]) {
+        config.yunxiaoOrganizationId = vars[YUNXIAO_ENV_KEYS.ORGANIZATION_ID];
+      }
+      if (vars[YUNXIAO_ENV_KEYS.PROJECT_ID]) {
+        config.yunxiaoProjectId = vars[YUNXIAO_ENV_KEYS.PROJECT_ID];
+      }
+      if (vars[YUNXIAO_ENV_KEYS.WORKITEM_CATEGORY]) {
+        config.yunxiaoWorkitemCategory = vars[YUNXIAO_ENV_KEYS.WORKITEM_CATEGORY];
+      }
+      if (vars[YUNXIAO_ENV_KEYS.AUTO_SYNC]?.toLowerCase() === 'true') {
+        config.yunxiaoAutoSync = true;
+      }
+      if (vars[YUNXIAO_ENV_KEYS.DEVOPS_TOOLSETS]) {
+        config.yunxiaoDevopsToolsets = vars[YUNXIAO_ENV_KEYS.DEVOPS_TOOLSETS];
+      }
+      if (vars[YUNXIAO_ENV_KEYS.MCP_COMMAND]) {
+        config.yunxiaoMcpCommand = vars[YUNXIAO_ENV_KEYS.MCP_COMMAND];
+      }
+      if (vars[YUNXIAO_ENV_KEYS.MCP_ARGS]) {
+        config.yunxiaoMcpArgs = vars[YUNXIAO_ENV_KEYS.MCP_ARGS];
+      }
+      if (vars[YUNXIAO_ENV_KEYS.MCP_NPM_CACHE]) {
+        config.yunxiaoMcpNpmCache = vars[YUNXIAO_ENV_KEYS.MCP_NPM_CACHE];
+      }
+
       // GitHub config
       if (vars['GITHUB_TOKEN']) {
         config.githubEnabled = true;
@@ -384,6 +504,17 @@ ${existingVars['GRAPHITI_DB_PATH'] ? `GRAPHITI_DB_PATH=${existingVars['GRAPHITI_
       }
       if (vars[GITLAB_ENV_KEYS.AUTO_SYNC]?.toLowerCase() === 'true') {
         config.gitlabAutoSync = true;
+      }
+
+      // GitBlit config
+      if (vars[GITBLIT_ENV_KEYS.ENABLED]?.toLowerCase() === 'true') {
+        config.gitblitEnabled = true;
+      }
+      if (vars[GITBLIT_ENV_KEYS.BASE_URL]) {
+        config.gitblitBaseUrl = vars[GITBLIT_ENV_KEYS.BASE_URL];
+      }
+      if (vars[GITBLIT_ENV_KEYS.REPO]) {
+        config.gitblitRepo = vars[GITBLIT_ENV_KEYS.REPO];
       }
 
       // Git/Worktree config
@@ -450,6 +581,7 @@ ${existingVars['GRAPHITI_DB_PATH'] ? `GRAPHITI_DB_PATH=${existingVars['GRAPHITI_
         context7Enabled: vars['CONTEXT7_ENABLED']?.toLowerCase() !== 'false', // default true
         memoryEnabled: config.memoryEnabled, // follows GRAPHITI_ENABLED
         linearMcpEnabled: vars['LINEAR_MCP_ENABLED']?.toLowerCase() !== 'false', // default true
+        yunxiaoMcpEnabled: vars['YUNXIAO_MCP_ENABLED']?.toLowerCase() !== 'false', // default true
         electronEnabled: vars['ELECTRON_MCP_ENABLED']?.toLowerCase() === 'true', // default false
         puppeteerEnabled: vars['PUPPETEER_MCP_ENABLED']?.toLowerCase() === 'true', // default false
       };

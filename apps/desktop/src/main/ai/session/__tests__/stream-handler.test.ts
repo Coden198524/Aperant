@@ -174,7 +174,7 @@ describe('createStreamHandler', () => {
       expect(events[0]).toMatchObject({ type: 'step-finish', stepNumber: 1 });
       expect(events[1]).toMatchObject({
         type: 'usage-update',
-        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150, stepsExecuted: 1 },
       });
       expect(handler.getSummary().stepsExecuted).toBe(1);
     });
@@ -211,6 +211,20 @@ describe('createStreamHandler', () => {
         totalTokens: 0,
       });
     });
+
+    it('should map inputTokens/outputTokens from responses usage', () => {
+      const handler = createStreamHandler(onEvent);
+      handler.processPart({
+        type: 'finish-step',
+        usage: { inputTokens: 2462, outputTokens: 53 },
+      });
+
+      expect(handler.getSummary().usage).toEqual({
+        promptTokens: 2462,
+        completionTokens: 53,
+        totalTokens: 2515,
+      });
+    });
   });
 
   // ===========================================================================
@@ -225,6 +239,16 @@ describe('createStreamHandler', () => {
       expect(events).toHaveLength(1);
       expect(events[0]).toMatchObject({ type: 'error' });
       expect((events[0] as { type: 'error'; error: { code: string } }).error.code).toBe('rate_limited');
+    });
+
+    it('should classify structured 404 API errors as model_not_found', () => {
+      const handler = createStreamHandler(onEvent);
+      const err = Object.assign(new Error('openai_error'), { statusCode: 404 });
+      handler.processPart({ type: 'error', error: err });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({ type: 'error' });
+      expect((events[0] as { type: 'error'; error: { code: string } }).error.code).toBe('model_not_found');
     });
   });
 

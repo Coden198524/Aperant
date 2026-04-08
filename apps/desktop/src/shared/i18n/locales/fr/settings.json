@@ -368,6 +368,13 @@
       "integrationDescription": "Se connecter à Linear pour le suivi des issues et l'import de tâches",
       "syncDescription": "Synchroniser avec Linear pour le suivi des issues"
     },
+    "yunxiao": {
+      "title": "Yunxiao",
+      "description": "Integration Yunxiao",
+      "integrationTitle": "Integration Yunxiao",
+      "integrationDescription": "Se connecter a Yunxiao pour importer des projets et work items",
+      "syncDescription": "Synchroniser les work items Yunxiao"
+    },
     "github": {
       "title": "GitHub",
       "description": "Synchronisation issues GitHub",
@@ -393,6 +400,31 @@
       "integrationTitle": "Intégration GitLab",
       "integrationDescription": "Se connecter à GitLab pour le suivi des issues",
       "syncDescription": "Synchroniser avec GitLab Issues"
+    },
+    "gitblit": {
+      "title": "GitBlit",
+      "description": "Workflow de tickets GitBlit",
+      "integrationTitle": "Workflow GitBlit",
+      "integrationDescription": "Soumettre les changements du worktree vers les tickets et patchsets GitBlit",
+      "syncDescription": "Configurer les demandes de revue bas\u00e9es sur les tickets GitBlit",
+      "enable": {
+        "label": "Activer le workflow GitBlit",
+        "description": "Utiliser les soumissions de tickets GitBlit pour les demandes de revue"
+      },
+      "baseUrl": {
+        "label": "URL de base GitBlit",
+        "description": "Optionnel. Utilis\u00e9 pour r\u00e9soudre les liens et messages de tickets GitBlit."
+      },
+      "repo": {
+        "label": "Chemin du d\u00e9p\u00f4t",
+        "description": "Optionnel. Exemple : team/repository.git"
+      },
+      "workflow": {
+        "title": "Fonctionnement",
+        "description": "Les demandes de revue GitBlit sont bas\u00e9es sur des tickets. Aperant cr\u00e9e la premi\u00e8re proposition comme ticket GitBlit et met \u00e0 jour les patchsets suivants lorsqu'un identifiant de ticket est connu.",
+        "create": "Les nouvelles demandes de revue sont envoy\u00e9es vers refs/for/<branch>.",
+        "update": "Les soumissions suivantes r\u00e9utilisent refs/for/<ticket> lorsque la t\u00e2che est d\u00e9j\u00e0 li\u00e9e \u00e0 un ticket GitBlit."
+      }
     },
     "memory": {
       "title": "Mémoire",
@@ -912,6 +944,11 @@
         "name": "Linear",
         "description": "Intégration gestion de projet",
         "notConfigured": "Nécessite l'intégration Linear (voir paramètres Linear)"
+      },
+      "yunxiao": {
+        "name": "Yunxiao",
+        "description": "Intégration Alibaba Cloud DevOps",
+        "notConfigured": "Nécessite l'intégration Yunxiao (voir paramètres Yunxiao)"
       },
       "electron": {
         "name": "Electron",

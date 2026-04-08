@@ -10,6 +10,7 @@ export const integrationMock = {
       linearEnabled: false,
       githubEnabled: false,
       gitlabEnabled: false,
+      gitblitEnabled: false,
       memoryEnabled: false,
       enableFancyUi: true
     }
@@ -41,6 +42,30 @@ export const integrationMock = {
   }),
 
   checkLinearConnection: async () => ({
+    success: true,
+    data: {
+      connected: false,
+      error: 'Not available in browser mock'
+    }
+  }),
+
+  // Yunxiao Integration Operations
+  getYunxiaoProjects: async () => ({
+    success: true,
+    data: []
+  }),
+
+  getYunxiaoWorkItems: async () => ({
+    success: true,
+    data: []
+  }),
+
+  importYunxiaoWorkItems: async () => ({
+    success: false,
+    error: 'Not available in browser mock'
+  }),
+
+  checkYunxiaoConnection: async () => ({
     success: true,
     data: {
       connected: false,

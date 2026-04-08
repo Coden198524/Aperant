@@ -59,6 +59,7 @@ export const TOOL_UPDATE_QA_STATUS = 'mcp__auto-claude__update_qa_status';
 export interface McpConfig {
   CONTEXT7_ENABLED?: string;
   LINEAR_MCP_ENABLED?: string;
+  YUNXIAO_MCP_ENABLED?: string;
   ELECTRON_MCP_ENABLED?: string;
   PUPPETEER_MCP_ENABLED?: string;
   CUSTOM_MCP_SERVERS?: Array<{ id: string }>;
@@ -134,7 +135,7 @@ export class ToolRegistry {
  *
  * Handles dynamic server selection:
  * - "browser" → electron (if is_electron) or puppeteer (if is_web_frontend)
- * - "linear" → only if in mcpServersOptional AND linearEnabled is true
+ * - "linear"/"yunxiao" → only if in mcpServersOptional AND corresponding flag is true
  * - "memory" → only if memoryEnabled is true
  * - Applies per-agent ADD/REMOVE overrides from mcpConfig
  */
@@ -143,6 +144,7 @@ export function getRequiredMcpServers(
   options: {
     projectCapabilities?: ProjectCapabilities;
     linearEnabled?: boolean;
+    yunxiaoEnabled?: boolean;
     memoryEnabled?: boolean;
     /** @deprecated Use memoryEnabled instead */
     graphitiEnabled?: boolean;
@@ -152,6 +154,7 @@ export function getRequiredMcpServers(
   const {
     projectCapabilities,
     linearEnabled = false,
+    yunxiaoEnabled = false,
     memoryEnabled = options.graphitiEnabled ?? false,
     mcpConfig = {},
   } = options;
@@ -177,6 +180,12 @@ export function getRequiredMcpServers(
     const linearMcpEnabled = mcpConfig.LINEAR_MCP_ENABLED ?? 'true';
     if (String(linearMcpEnabled).toLowerCase() !== 'false') {
       servers.push('linear');
+    }
+  }
+  if (optional.includes('yunxiao') && yunxiaoEnabled) {
+    const yunxiaoMcpEnabled = mcpConfig.YUNXIAO_MCP_ENABLED ?? 'true';
+    if (String(yunxiaoMcpEnabled).toLowerCase() !== 'false') {
+      servers.push('yunxiao');
     }
   }
 

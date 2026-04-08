@@ -65,6 +65,22 @@ function isFileNotFoundError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
+function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage): TokenUsage {
+  if (!previous) {
+    return incoming;
+  }
+
+  return {
+    promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
+    completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
+    totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
+    thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
+    cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
+    cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
+    stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+  };
+}
+
 /**
  * Get the plan file path for a task
  */
@@ -395,7 +411,10 @@ export function persistPlanTokenUsageSync(
       };
     }
 
-    plan.tokenUsage = usage;
+    const previousTokenUsage = (plan.tokenUsage && typeof plan.tokenUsage === 'object')
+      ? (plan.tokenUsage as TokenUsage)
+      : undefined;
+    plan.tokenUsage = mergeTokenUsage(previousTokenUsage, usage);
     plan.updated_at = new Date().toISOString();
 
     writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
@@ -587,7 +606,10 @@ export async function resetStuckSubtasks(planPath: string, projectId?: string): 
  * @param prUrl - The PR URL to add to metadata
  * @returns true if metadata was updated, false if file doesn't exist or failed
  */
-export function updateTaskMetadataPrUrl(metadataPath: string, prUrl: string): boolean {
+export function updateTaskMetadataReviewRequest(
+  metadataPath: string,
+  updates: { prUrl?: string; gitblitTicketId?: number },
+): boolean {
   try {
     let metadata: Record<string, unknown> = {};
 
@@ -602,8 +624,12 @@ export function updateTaskMetadataPrUrl(metadataPath: string, prUrl: string): bo
       // File doesn't exist, will create new one
     }
 
-    // Update with prUrl
-    metadata.prUrl = prUrl;
+    if (updates.prUrl !== undefined) {
+      metadata.prUrl = updates.prUrl;
+    }
+    if (updates.gitblitTicketId !== undefined) {
+      metadata.gitblitTicketId = updates.gitblitTicketId;
+    }
 
     // Ensure parent directory exists before writing
     mkdirSync(path.dirname(metadataPath), { recursive: true });
@@ -615,6 +641,10 @@ export function updateTaskMetadataPrUrl(metadataPath: string, prUrl: string): bo
     console.warn(`[plan-file-utils] Could not update metadata at ${metadataPath}:`, err);
     return false;
   }
+}
+
+export function updateTaskMetadataPrUrl(metadataPath: string, prUrl: string): boolean {
+  return updateTaskMetadataReviewRequest(metadataPath, { prUrl });
 }
 
 /**

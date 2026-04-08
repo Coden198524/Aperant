@@ -1,11 +1,13 @@
 import { useTranslation } from 'react-i18next';
-import type { Project, ProjectSettings as ProjectSettingsType, AutoBuildVersionInfo, ProjectEnvConfig, LinearSyncStatus, GitHubSyncStatus, GitLabSyncStatus } from '../../../../shared/types';
+import type { Project, ProjectSettings as ProjectSettingsType, AutoBuildVersionInfo, ProjectEnvConfig, LinearSyncStatus, YunxiaoSyncStatus, GitHubSyncStatus, GitLabSyncStatus } from '../../../../shared/types';
 import { SettingsSection } from '../SettingsSection';
 import { GeneralSettings } from '../../project-settings/GeneralSettings';
 import { SecuritySettings } from '../../project-settings/SecuritySettings';
 import { LinearIntegration } from '../integrations/LinearIntegration';
+import { YunxiaoIntegration } from '../integrations/YunxiaoIntegration';
 import { GitHubIntegration } from '../integrations/GitHubIntegration';
 import { GitLabIntegration } from '../integrations/GitLabIntegration';
+import { GitBlitIntegration } from '../integrations/GitBlitIntegration';
 import { InitializationGuard } from '../common/InitializationGuard';
 import type { ProjectSettingsSection } from '../ProjectSettingsContent';
 
@@ -23,6 +25,8 @@ interface SectionRouterProps {
   updateEnvConfig: (updates: Partial<ProjectEnvConfig>) => void;
   showLinearKey: boolean;
   setShowLinearKey: React.Dispatch<React.SetStateAction<boolean>>;
+  showYunxiaoToken: boolean;
+  setShowYunxiaoToken: React.Dispatch<React.SetStateAction<boolean>>;
   showOpenAIKey: boolean;
   setShowOpenAIKey: React.Dispatch<React.SetStateAction<boolean>>;
   showGitHubToken: boolean;
@@ -35,8 +39,11 @@ interface SectionRouterProps {
   isCheckingGitLab: boolean;
   linearConnectionStatus: LinearSyncStatus | null;
   isCheckingLinear: boolean;
+  yunxiaoConnectionStatus: YunxiaoSyncStatus | null;
+  isCheckingYunxiao: boolean;
   handleInitialize: () => Promise<void>;
   onOpenLinearImport: () => void;
+  onOpenYunxiaoImport: () => void;
 }
 
 /**
@@ -57,6 +64,8 @@ export function SectionRouter({
   updateEnvConfig,
   showLinearKey,
   setShowLinearKey,
+  showYunxiaoToken,
+  setShowYunxiaoToken,
   showOpenAIKey,
   setShowOpenAIKey,
   showGitHubToken,
@@ -69,8 +78,11 @@ export function SectionRouter({
   isCheckingGitLab,
   linearConnectionStatus,
   isCheckingLinear,
+  yunxiaoConnectionStatus,
+  isCheckingYunxiao,
   handleInitialize,
-  onOpenLinearImport
+  onOpenLinearImport,
+  onOpenYunxiaoImport
 }: SectionRouterProps) {
   const { t } = useTranslation('settings');
 
@@ -112,6 +124,30 @@ export function SectionRouter({
               linearConnectionStatus={linearConnectionStatus}
               isCheckingLinear={isCheckingLinear}
               onOpenLinearImport={onOpenLinearImport}
+            />
+          </InitializationGuard>
+        </SettingsSection>
+      );
+
+    case 'yunxiao':
+      return (
+        <SettingsSection
+          title={t('projectSections.yunxiao.integrationTitle')}
+          description={t('projectSections.yunxiao.integrationDescription')}
+        >
+          <InitializationGuard
+            initialized={!!project.autoBuildPath}
+            title={t('projectSections.yunxiao.integrationTitle')}
+            description={t('projectSections.yunxiao.syncDescription')}
+          >
+            <YunxiaoIntegration
+              envConfig={envConfig}
+              updateEnvConfig={updateEnvConfig}
+              showYunxiaoToken={showYunxiaoToken}
+              setShowYunxiaoToken={setShowYunxiaoToken}
+              yunxiaoConnectionStatus={yunxiaoConnectionStatus}
+              isCheckingYunxiao={isCheckingYunxiao}
+              onOpenYunxiaoImport={onOpenYunxiaoImport}
             />
           </InitializationGuard>
         </SettingsSection>
@@ -164,6 +200,25 @@ export function SectionRouter({
               projectPath={project.path}
               settings={settings}
               setSettings={setSettings}
+            />
+          </InitializationGuard>
+        </SettingsSection>
+      );
+
+    case 'gitblit':
+      return (
+        <SettingsSection
+          title={t('projectSections.gitblit.integrationTitle')}
+          description={t('projectSections.gitblit.integrationDescription')}
+        >
+          <InitializationGuard
+            initialized={!!project.autoBuildPath}
+            title={t('projectSections.gitblit.integrationTitle')}
+            description={t('projectSections.gitblit.syncDescription')}
+          >
+            <GitBlitIntegration
+              envConfig={envConfig}
+              updateEnvConfig={updateEnvConfig}
             />
           </InitializationGuard>
         </SettingsSection>

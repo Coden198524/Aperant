@@ -96,9 +96,21 @@ function isOpenAIResponsesTransport(
 ): boolean {
   if (modelProviderId) {
     const normalizedProviderId = modelProviderId.toLowerCase();
-    return normalizedProviderId === 'openai-responses' ||
+    const isResponsesProvider = normalizedProviderId === 'openai-responses' ||
       normalizedProviderId.endsWith('.responses') ||
       normalizedProviderId.endsWith('-responses');
+    if (isResponsesProvider) return true;
+
+    const isChatProvider = normalizedProviderId === 'openai-chat' ||
+      normalizedProviderId.endsWith('.chat') ||
+      normalizedProviderId.endsWith('-chat') ||
+      normalizedProviderId.includes('chatmodel');
+    if (isChatProvider) return false;
+
+    // Some OpenAI-compatible gateways expose responses models with a generic
+    // provider id (e.g. "openai"), so fall back to model-id based detection
+    // when the provider is not explicitly marked as chat transport.
+    return isResponsesApiModel(modelId);
   }
 
   // Fallback for tests or provider implementations that only expose model IDs.
@@ -527,6 +539,14 @@ async function executeStream(
     for await (const part of result.fullStream) {
       resetStreamInactivityTimer(); // Reset on each part
       streamHandler.processPart(part as FullStreamPart);
+
+      // Some providers surface request failures as `error` parts instead of
+      // throwing from the async iterator. Treat these as fatal for the current
+      // session so retry/account-switch logic can run in the outer catch.
+      if ((part as { type?: string }).type === 'error') {
+        const streamError = (part as { error?: unknown }).error;
+        throw streamError ?? new Error('Stream error');
+      }
     }
   } catch (error: unknown) {
     // Stream-level errors (network, abort, etc.)
@@ -675,7 +695,6 @@ async function executeStream(
     totalTokens:
       (totalUsage?.inputTokens ?? 0) + (totalUsage?.outputTokens ?? 0) ||
       summary.usage.totalTokens,
-    stepsExecuted: summary.stepsExecuted,  // Include number of AI requests
   };
 
   console.log('[SessionRunner] Final usage:', usage);

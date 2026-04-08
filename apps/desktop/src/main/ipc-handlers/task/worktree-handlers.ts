@@ -11,6 +11,7 @@ import { projectStore } from '../../project-store';
 import { MergeOrchestrator } from '../../ai/merge/orchestrator';
 import { createMergeResolverFn } from '../../ai/runners/merge-resolver';
 import { createPR } from '../../ai/runners/github/pr-creator';
+import { createGitBlitReviewRequest, parseGitBlitTicketId } from '../../ai/runners/gitblit/review-request-creator';
 import type { ModelShorthand } from '../../ai/config/types';
 import { findTaskAndProject } from './shared';
 import { updateRoadmapFeatureOutcome } from '../../utils/roadmap-utils';
@@ -20,12 +21,13 @@ import {
   getTaskWorktreeDir,
   findTaskWorktree,
 } from '../../worktree-paths';
-import { persistPlanStatus, updateTaskMetadataPrUrl } from './plan-file-utils';
+import { persistPlanStatus, updateTaskMetadataReviewRequest } from './plan-file-utils';
 import { getIsolatedGitEnv, refreshGitIndex } from '../../utils/git-isolation';
 import { cleanupWorktree } from '../../utils/worktree-cleanup';
 import { killProcessGracefully } from '../../platform';
 import { stripAnsiCodes } from '../../../shared/utils/ansi-sanitizer';
 import { taskStateManager } from '../../task-state-manager';
+import { parseEnvFile } from '../utils';
 
 // Regex pattern for validating git branch names
 export const GIT_BRANCH_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
@@ -1509,6 +1511,31 @@ function getEffectiveBaseBranch(projectPath: string, specId: string, projectMain
   return 'main';
 }
 
+interface GitBlitProjectConfig {
+  enabled: boolean;
+  baseUrl?: string;
+  repo?: string;
+}
+
+function getGitBlitProjectConfig(projectPath: string, autoBuildPath?: string): GitBlitProjectConfig {
+  const envPath = path.join(projectPath, autoBuildPath || '.auto-claude', '.env');
+  if (!existsSync(envPath)) {
+    return { enabled: false };
+  }
+
+  try {
+    const vars = parseEnvFile(readFileSync(envPath, 'utf-8'));
+    return {
+      enabled: vars['GITBLIT_ENABLED']?.toLowerCase() === 'true',
+      baseUrl: vars['GITBLIT_BASE_URL'],
+      repo: vars['GITBLIT_REPO'],
+    };
+  } catch (error) {
+    console.warn('[getGitBlitProjectConfig] Failed to read project .env:', error);
+    return { enabled: false };
+  }
+}
+
 // ============================================
 // Helper functions for TASK_WORKTREE_CREATE_PR
 // ============================================
@@ -1602,7 +1629,7 @@ interface TaskStatusUpdateResult {
 async function updateTaskStatusAfterPRCreation(
   specDir: string,
   worktreePath: string | null,
-  prUrl: string,
+  reviewRequest: { prUrl?: string; gitblitTicketId?: number },
   autoBuildPath: string | undefined,
   specId: string,
   debug: (...args: unknown[]) => void
@@ -1626,9 +1653,11 @@ async function updateTaskStatusAfterPRCreation(
     debug('Failed to persist main project status:', err);
   }
 
-  // Update metadata with prUrl in main project
-  result.mainProjectMetadata = updateTaskMetadataPrUrl(metadataPath, prUrl);
-  debug('Main project metadata updated with prUrl:', result.mainProjectMetadata);
+  // Update metadata with review request details in main project
+  if (reviewRequest.prUrl !== undefined || reviewRequest.gitblitTicketId !== undefined) {
+    result.mainProjectMetadata = updateTaskMetadataReviewRequest(metadataPath, reviewRequest);
+    debug('Main project metadata updated with review request:', result.mainProjectMetadata);
+  }
 
   // Also persist to WORKTREE location (worktree takes priority when loading tasks)
   // This ensures the status persists after refresh since getTasks() prefers worktree version
@@ -1645,8 +1674,10 @@ async function updateTaskStatusAfterPRCreation(
       debug('Failed to persist worktree status:', err);
     }
 
-    result.worktreeMetadata = updateTaskMetadataPrUrl(worktreeMetadataPath, prUrl);
-    debug('Worktree metadata updated with prUrl:', result.worktreeMetadata);
+    if (reviewRequest.prUrl !== undefined || reviewRequest.gitblitTicketId !== undefined) {
+      result.worktreeMetadata = updateTaskMetadataReviewRequest(worktreeMetadataPath, reviewRequest);
+      debug('Worktree metadata updated with review request:', result.worktreeMetadata);
+    }
   }
 
   return result;
@@ -3041,33 +3072,52 @@ export function registerWorktreeHandlers(
           debug('Using stored base branch:', taskBaseBranch);
         }
 
-        // Get tool paths
-        const ghPath = getToolPath('gh');
+        const gitblitConfig = getGitBlitProjectConfig(project.path, project.autoBuildPath);
         const gitPath = getToolPath('git');
+        const ghPath = gitblitConfig.enabled ? undefined : getToolPath('gh');
 
-        debug('Creating PR via TypeScript runner:', { branchName, baseBranch, prTitle });
-
-        // Run the TypeScript PR creator
-        const result = await createPR({
-          projectDir: project.path,
-          worktreePath,
-          specId: task.specId,
+        debug('Creating review request via TypeScript runner:', {
           branchName,
           baseBranch,
-          title: prTitle,
-          draft: options?.draft,
-          ghPath,
-          gitPath,
+          prTitle,
+          provider: gitblitConfig.enabled ? 'gitblit' : 'github',
         });
 
-        debug('PR creation result:', result);
+        const result = gitblitConfig.enabled
+          ? await createGitBlitReviewRequest({
+            projectDir: project.path,
+            worktreePath,
+            specId: task.specId,
+            branchName,
+            baseBranch,
+            title: prTitle,
+            gitPath,
+            existingTicketId: task.metadata?.gitblitTicketId ?? parseGitBlitTicketId(task.metadata?.prUrl),
+            existingReviewUrl: task.metadata?.prUrl,
+          })
+          : await createPR({
+            projectDir: project.path,
+            worktreePath,
+            specId: task.specId,
+            branchName,
+            baseBranch,
+            title: prTitle,
+            draft: options?.draft,
+            ghPath: ghPath!,
+            gitPath,
+          });
 
-        if (result.success && result.prUrl && !result.alreadyExists) {
-          // Update task status after successful PR creation
+        debug('Review request creation result:', result);
+
+        if (result.success && !result.alreadyExists) {
+          // Update task status after successful review request creation
           await updateTaskStatusAfterPRCreation(
             specDir,
             worktreePath,
-            result.prUrl,
+            {
+              prUrl: result.prUrl,
+              gitblitTicketId: (result as { ticketId?: number }).ticketId,
+            },
             project.autoBuildPath,
             task.specId,
             debug
@@ -3077,7 +3127,7 @@ export function registerWorktreeHandlers(
           if (project.path && task.specId) {
             const roadmapFile = path.join(project.path, AUTO_BUILD_PATHS.ROADMAP_DIR, AUTO_BUILD_PATHS.ROADMAP_FILE);
             updateRoadmapFeatureOutcome(roadmapFile, [task.specId], 'completed', '[PR_CREATE]').catch((err) => {
-              debug('Failed to update roadmap feature after PR creation:', err);
+              debug('Failed to update roadmap feature after review request creation:', err);
             });
           }
         } else if (result.alreadyExists) {
@@ -3090,7 +3140,8 @@ export function registerWorktreeHandlers(
             data: {
               success: true,
               prUrl: result.prUrl,
-              alreadyExists: result.alreadyExists
+              alreadyExists: result.alreadyExists,
+              message: result.message
             }
           };
         }
