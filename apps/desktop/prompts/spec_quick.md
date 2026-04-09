@@ -42,8 +42,23 @@ Use the **Write tool** to create `spec.md` in the spec directory:
 ```markdown
 # Quick Spec: [Task Name]
 
-## Task
-[One sentence description]
+## Overview
+[One paragraph description of the change]
+
+## Workflow Type
+
+**Type**: simple
+
+**Rationale**: [Why this task is simple and low-risk]
+
+## Task Scope
+
+### This Task Will:
+- [ ] [Specific change 1]
+- [ ] [Specific change 2]
+
+### Out of Scope:
+- [Anything intentionally not included]
 
 ## Files to Modify
 - `[path/to/file]` - [what to change]
@@ -51,7 +66,11 @@ Use the **Write tool** to create `spec.md` in the spec directory:
 ## Change Details
 [Brief description of the change - a few sentences max]
 
-## Verification
+## Estimated Manual Effort
+- **Likely effort (human)**: [X-Y hours]
+- **Assumptions**: [what this estimate assumes]
+
+## Success Criteria
 - [ ] [How to verify the change works]
 
 ## Notes
@@ -148,8 +167,22 @@ Ready for implementation.
 ```markdown
 # Quick Spec: Button Color Change
 
-## Task
+## Overview
 Update primary button color from blue (#3B82F6) to green (#22C55E).
+
+## Workflow Type
+
+**Type**: simple
+
+**Rationale**: Single-file visual tweak with no cross-service impact.
+
+## Task Scope
+
+### This Task Will:
+- [ ] Update the primary color token in the button component
+
+### Out of Scope:
+- Any redesign of button styles or variants
 
 ## Files to Modify
 - `src/components/Button.tsx` - Update color constant
@@ -157,7 +190,11 @@ Update primary button color from blue (#3B82F6) to green (#22C55E).
 ## Change Details
 Change the `primaryColor` variable from `#3B82F6` to `#22C55E`.
 
-## Verification
+## Estimated Manual Effort
+- **Likely effort (human)**: 0.5-1 hour
+- **Assumptions**: Existing color token and styling pipeline already in place
+
+## Success Criteria
 - [ ] Buttons appear green in the UI
 - [ ] No console errors
 ```

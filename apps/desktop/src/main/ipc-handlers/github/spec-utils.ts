@@ -10,23 +10,13 @@ import { withSpecNumberLock } from '../../utils/spec-number-lock';
 import { debugLog } from './utils/logger';
 import { labelMatchesWholeWord } from '../shared/label-utils';
 import { sanitizeText, sanitizeStringArray, sanitizeUrl } from '../shared/sanitize';
+import { buildSpecId } from '../shared/spec-id';
 
 export interface SpecCreationData {
   specId: string;
   specDir: string;
   taskDescription: string;
   metadata: TaskMetadata;
-}
-
-/**
- * Create a slug from a title
- */
-function slugifyTitle(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .substring(0, 50);
 }
 
 /**
@@ -118,8 +108,7 @@ export async function createSpecForIssue(
   return await withSpecNumberLock(project.path, async (lock) => {
     // Get next spec number from global scan (main + all worktrees)
     const specNumber = lock.getNextSpecNumber(project.autoBuildPath);
-    const slugifiedTitle = slugifyTitle(safeTitle);
-    const specId = `${String(specNumber).padStart(3, '0')}-${slugifiedTitle}`;
+    const specId = buildSpecId(specNumber, safeTitle);
 
     // Create spec directory (inside lock to ensure atomicity)
     const specDir = path.join(specsDir, specId);

@@ -41,6 +41,7 @@ import { Insights } from './components/Insights';
 import { ErrorBoundary } from './components/ui/error-boundary';
 import { GitHubIssues } from './components/GitHubIssues';
 import { GitLabIssues } from './components/GitLabIssues';
+import { YunxiaoIssues } from './components/YunxiaoIssues';
 import { GitHubPRs } from './components/github-prs';
 import { GitLabMergeRequests } from './components/gitlab-merge-requests';
 import { Changelog } from './components/Changelog';
@@ -920,6 +921,15 @@ export function App() {
                   <GitLabIssues
                     onOpenSettings={() => {
                       setSettingsInitialProjectSection('gitlab');
+                      setIsSettingsDialogOpen(true);
+                    }}
+                    onNavigateToTask={handleGoToTask}
+                  />
+                )}
+                {activeView === 'yunxiao-issues' && (activeProjectId || selectedProjectId) && (
+                  <YunxiaoIssues
+                    onOpenSettings={() => {
+                      setSettingsInitialProjectSection('yunxiao');
                       setIsSettingsDialogOpen(true);
                     }}
                     onNavigateToTask={handleGoToTask}

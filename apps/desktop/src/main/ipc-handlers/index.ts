@@ -21,6 +21,7 @@ import { registerContextHandlers } from './context-handlers';
 import { registerEnvHandlers } from './env-handlers';
 import { registerLinearHandlers } from './linear-handlers';
 import { registerYunxiaoHandlers } from './yunxiao-handlers';
+import { registerYunxiaoAutoFixHandlers } from './yunxiao-autofix-handlers';
 import { registerGithubHandlers } from './github-handlers';
 import { registerGitlabHandlers } from './gitlab-handlers';
 import { registerIdeationHandlers } from './ideation-handlers';
@@ -91,6 +92,7 @@ export function setupIpcHandlers(
 
   // Yunxiao integration handlers
   registerYunxiaoHandlers(agentManager, getMainWindow);
+  registerYunxiaoAutoFixHandlers(agentManager, getMainWindow);
 
   // GitHub integration handlers
   registerGithubHandlers(agentManager, getMainWindow);
@@ -148,6 +150,7 @@ export {
   registerEnvHandlers,
   registerLinearHandlers,
   registerYunxiaoHandlers,
+  registerYunxiaoAutoFixHandlers,
   registerGithubHandlers,
   registerGitlabHandlers,
   registerIdeationHandlers,

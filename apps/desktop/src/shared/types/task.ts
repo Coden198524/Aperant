@@ -200,8 +200,10 @@ export interface TaskMetadata {
   linearIdentifier?: string;  // Linear issue identifier (e.g., 'ABC-123')
   linearUrl?: string;  // Linear issue URL
   yunxiaoWorkItemId?: string;  // Reference to Yunxiao work item ID
+  yunxiaoWorkItemIds?: string[];  // Reference to multiple Yunxiao work item IDs if from a batch
   yunxiaoIdentifier?: string;  // Yunxiao work item identifier
   yunxiaoUrl?: string;  // Yunxiao work item URL (if available)
+  yunxiaoBatchTheme?: string;  // Theme/title of the Yunxiao issue batch
   githubIssueNumber?: number;  // Reference to GitHub issue number if from GitHub (single issue)
   githubIssueNumbers?: number[];  // Reference to multiple GitHub issues if from a batch
   githubUrl?: string;  // GitHub issue URL

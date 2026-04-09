@@ -954,5 +954,75 @@
       "blockedTooltip": "Cette PR ne peut pas être fusionnée en raison de conditions bloquantes",
       "conflictTooltip": "Cette PR a des conflits de fusion qui doivent être résolus"
     }
+  },
+  "yunxiaoIssues": {
+    "title": "Issues Yunxiao",
+    "openBugsCount": "{{count}} bugs ouverts",
+    "searchPlaceholder": "Rechercher par titre / identifiant du bug",
+    "filters": {
+      "allCategories": "Toutes les catégories"
+    },
+    "categories": {
+      "unclassified": "Non classé",
+      "gameplay": "Gameplay",
+      "balance": "Équilibrage",
+      "economy": "Économie",
+      "ui": "Interface",
+      "performance": "Performance",
+      "network": "Réseau",
+      "backend": "Backend",
+      "pipeline": "Pipeline"
+    },
+    "severity": {
+      "all": "Toutes les sévérités",
+      "critical": "Critique",
+      "high": "Élevée",
+      "medium": "Moyenne",
+      "low": "Faible"
+    },
+    "fields": {
+      "category": "Catégorie",
+      "severity": "Sévérité",
+      "newCategoryPlaceholder": "Saisir une catégorie personnalisée",
+      "analysis": "Analyse du bug",
+      "analysisPlaceholder": "Cause racine / reproduction / contournement / risque..."
+    },
+    "badges": {
+      "inKanban": "dans le kanban"
+    },
+    "actions": {
+      "openProjectSettings": "Ouvrir les paramètres du projet",
+      "addCategory": "Ajouter catégorie",
+      "deleteCategory": "Supprimer catégorie",
+      "generateAnalysis": "Analyse IA",
+      "generatingAnalysis": "Génération...",
+      "saveAnalysis": "Enregistrer l'analyse",
+      "viewTask": "Voir la tâche",
+      "addToKanban": "Ajouter au kanban"
+    },
+    "messages": {
+      "notConnected": "Yunxiao n'est pas connecté pour ce projet.",
+      "noBugs": "Aucun bug Yunxiao trouvé",
+      "selectIssue": "Sélectionnez une issue Yunxiao pour voir les détails",
+      "noDescription": "Aucune description",
+      "syncSummary": "Synchronisation Yunxiao : +{{created}} / ~{{updated}} / -{{removed}}",
+      "categoryAdded": "Catégorie mise à jour",
+      "categoryDeleted": "Catégorie supprimée et {{count}} issue(s) réinitialisée(s) en non classé",
+      "categoryDeleteFailedTitle": "Échec de suppression",
+      "categoryDeletePartial": "Seulement {{success}}/{{total}} issues ont été mises à jour",
+      "categoryNotFound": "Catégorie introuvable",
+      "cannotDeleteBuiltinCategory": "Les catégories intégrées ne peuvent pas être supprimées",
+      "categoryEmpty": "La catégorie ne peut pas être vide",
+      "categoryTooLong": "La catégorie doit contenir 50 caractères maximum",
+      "analysisGenerated": "Brouillon d'analyse IA généré",
+      "analysisSaved": "Analyse de l'issue Yunxiao enregistrée",
+      "analysisGenerateFailedTitle": "Échec de génération",
+      "analysisGenerateFailed": "Échec de génération de l'analyse de l'issue Yunxiao",
+      "importFailedTitle": "Import échoué",
+      "importFailed": "Échec de l'import de l'issue Yunxiao",
+      "addedToKanban": "Issue Yunxiao ajoutée au kanban",
+      "imageLoadFailed": "Échec du chargement de l'image",
+      "open": "ouvert"
+    }
   }
 }

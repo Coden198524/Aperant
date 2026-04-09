@@ -218,6 +218,34 @@ export function useProjectSettings(
         const result = await window.electronAPI.checkYunxiaoConnection(project.id);
         if (result.success && result.data) {
           setYunxiaoConnectionStatus(result.data);
+
+          if (result.data.connected) {
+            const autoUpdates: Partial<ProjectEnvConfig> = {};
+            const detectedOrganizationId = result.data.organizationId?.trim();
+
+            if (detectedOrganizationId && !envConfig.yunxiaoOrganizationId?.trim()) {
+              autoUpdates.yunxiaoOrganizationId = detectedOrganizationId;
+            }
+
+            const shouldAutoFillProjectId = !envConfig.yunxiaoProjectId?.trim();
+            if (shouldAutoFillProjectId) {
+              const projectsResult = await window.electronAPI.getYunxiaoProjects(
+                project.id,
+                detectedOrganizationId || envConfig.yunxiaoOrganizationId
+              );
+
+              if (projectsResult.success && Array.isArray(projectsResult.data) && projectsResult.data.length > 0) {
+                const firstProjectId = projectsResult.data[0]?.id?.trim();
+                if (firstProjectId) {
+                  autoUpdates.yunxiaoProjectId = firstProjectId;
+                }
+              }
+            }
+
+            if (Object.keys(autoUpdates).length > 0) {
+              void updateEnvConfig(autoUpdates);
+            }
+          }
         }
       } catch {
         setYunxiaoConnectionStatus({ connected: false, error: 'Failed to check connection' });

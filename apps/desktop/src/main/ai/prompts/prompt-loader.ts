@@ -243,10 +243,43 @@ export function injectContext(promptTemplate: string, context: PromptContext): s
     );
   }
 
-  // 5. Base prompt
+  // 5. Domain-specific guidance (defaults to game development for this product)
+  const domainGuidance = buildDomainGuidanceHeader();
+  if (domainGuidance) {
+    sections.push(domainGuidance);
+  }
+
+  // 6. Base prompt
   sections.push(promptTemplate);
 
   return sections.join('');
+}
+
+/**
+ * Build optional domain guidance header.
+ *
+ * Defaults to game-development guidance since this product primarily targets
+ * game teams. Can be disabled or switched by setting APERANT_AGENT_DOMAIN.
+ */
+function buildDomainGuidanceHeader(): string {
+  const domain = (process.env.APERANT_AGENT_DOMAIN ?? 'game').trim().toLowerCase();
+  if (!domain || domain === 'none' || domain === 'general') return '';
+  if (domain !== 'game' && domain !== 'gaming') return '';
+
+  return (
+    `## DOMAIN FOCUS: GAME DEVELOPMENT (DEFAULT)\n\n` +
+    `Treat this as a game-production project unless the task clearly indicates otherwise.\n\n` +
+    `Prioritize:\n` +
+    `- Runtime performance and frame-time stability (CPU/GPU spikes, frame pacing, hitches)\n` +
+    `- Memory and asset budgets (VRAM/RAM pressure, texture/audio/mesh footprint)\n` +
+    `- Load-time and streaming behavior (scene transitions, async loading, stutter risk)\n` +
+    `- Input feel and responsiveness (latency, buffering, control consistency)\n` +
+    `- Determinism/sync safety for online gameplay (state drift, tick/order sensitivity)\n` +
+    `- Cross-platform behavior (PC/mobile/console differences, device constraints)\n` +
+    `- Telemetry/crash diagnostics and safe rollback paths for live operations\n\n` +
+    `When proposing plans or verification, include concrete checks for these areas where relevant.\n\n` +
+    `---\n\n`
+  );
 }
 
 /**

@@ -106,6 +106,94 @@ export interface YunxiaoWorkItem {
   url?: string;
 }
 
+export interface YunxiaoIssue {
+  id: string;
+  workItemId: string;
+  identifier?: string;
+  title: string;
+  description?: string;
+  statusName?: string;
+  priority?: string;
+  assigneeName?: string;
+  creatorName?: string;
+  spaceId?: string;
+  spaceName?: string;
+  url?: string;
+  gmtCreate?: number;
+  gmtModified?: number;
+  syncedAt: string;
+  localCategory?: string;
+  localSeverity?: 'low' | 'medium' | 'high' | 'critical';
+  localTags?: string[];
+  localAnalysis?: string;
+}
+
+export interface YunxiaoAutoFixConfig {
+  enabled: boolean;
+  requireHumanApproval: boolean;
+  model: string;
+  thinkingLevel: string;
+}
+
+export interface YunxiaoAutoFixQueueItem {
+  workItemId: string;
+  identifier?: string;
+  title: string;
+  status: 'pending' | 'creating_spec' | 'completed' | 'failed';
+  specId?: string;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface YunxiaoAnalyzePreviewProgress {
+  phase: 'analyzing' | 'complete';
+  progress: number;
+  message: string;
+}
+
+export interface YunxiaoProposedBatch {
+  batchId?: string;
+  primaryWorkItemId: string;
+  theme: string;
+  reasoning: string;
+  confidence: number;
+  validated: boolean;
+  issueCount: number;
+  commonThemes: string[];
+  issues: Array<{
+    workItemId: string;
+    identifier?: string;
+    title: string;
+    labels: string[];
+    similarityToPrimary: number;
+  }>;
+}
+
+export interface YunxiaoAnalyzePreviewResult {
+  success: boolean;
+  totalIssues: number;
+  analyzedIssues: number;
+  alreadyTracked: number;
+  proposedBatches: YunxiaoProposedBatch[];
+  singleIssues: Array<{
+    workItemId: string;
+    identifier?: string;
+    title: string;
+    labels: string[];
+  }>;
+  message: string;
+  error?: string;
+}
+
+export interface YunxiaoIssueSyncResult {
+  issues: YunxiaoIssue[];
+  created: number;
+  updated: number;
+  removed: number;
+  skipped: number;
+}
+
 export interface YunxiaoImportResult {
   success: boolean;
   imported: number;

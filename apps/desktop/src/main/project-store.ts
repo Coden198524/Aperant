@@ -347,15 +347,55 @@ export class ProjectStore {
         // First occurrence wins
         taskMap.set(task.id, task);
       } else {
+        const mergeMissingFields = (preferred: Task, fallback: Task): Task => {
+          let merged = preferred;
+
+          // Preserve full user description if preferred record lost it.
+          const preferredDescription = preferred.description?.trim() ?? '';
+          const fallbackDescription = fallback.description?.trim() ?? '';
+          if (!preferredDescription && fallbackDescription) {
+            merged = { ...merged, description: fallback.description };
+          }
+
+          // Preserve metadata richness across main/worktree copies.
+          // This avoids losing sourceType (e.g., yunxiao/linear/github) when one side is stale.
+          const preferredMetadata = preferred.metadata;
+          const fallbackMetadata = fallback.metadata;
+
+          if (!preferredMetadata && fallbackMetadata) {
+            merged = { ...merged, metadata: fallbackMetadata };
+          } else if (preferredMetadata && fallbackMetadata) {
+            const mergedMetadata: TaskMetadata = {
+              ...fallbackMetadata,
+              ...preferredMetadata
+            };
+
+            const preferredSource = preferredMetadata.sourceType;
+            const fallbackSource = fallbackMetadata.sourceType;
+            const shouldRestoreSourceType =
+              (!preferredSource && !!fallbackSource) ||
+              (preferredSource === 'manual' && !!fallbackSource && fallbackSource !== 'manual');
+
+            if (shouldRestoreSourceType) {
+              mergedMetadata.sourceType = fallbackSource;
+            }
+
+            merged = { ...merged, metadata: mergedMetadata };
+          }
+
+          return merged;
+        };
+
         // PREFER MAIN PROJECT over worktree - main has current user changes
         // Only use status priority when both are from same location
         const existingIsMain = existing.location === 'main';
         const newIsMain = task.location === 'main';
 
         if (existingIsMain && !newIsMain) {
+          taskMap.set(task.id, mergeMissingFields(existing, task));
         } else if (!existingIsMain && newIsMain) {
           // New is main, replace existing worktree
-          taskMap.set(task.id, task);
+          taskMap.set(task.id, mergeMissingFields(task, existing));
         } else {
           // Same location - use status priority to determine which is more complete
           const existingPriority = TASK_STATUS_PRIORITY[existing.status] || 0;
@@ -363,9 +403,10 @@ export class ProjectStore {
 
           if (newPriority > existingPriority) {
             // New version has higher priority (more complete status)
-            taskMap.set(task.id, task);
+            taskMap.set(task.id, mergeMissingFields(task, existing));
+          } else {
+            taskMap.set(task.id, mergeMissingFields(existing, task));
           }
-          // Otherwise keep existing version
         }
       }
     }
@@ -507,16 +548,19 @@ export class ProjectStore {
           : this.determineTaskStatusAndReason(plan);
 
         // Extract subtasks from plan (handle both 'subtasks' and 'chunks' naming)
-        const subtasks = plan?.phases?.flatMap((phase) => {
+        const subtasks = plan?.phases?.flatMap((phase, phaseIndex) => {
           const items = phase.subtasks || (phase as { chunks?: PlanSubtask[] }).chunks || [];
-          return items.map((subtask) => {
-            const title = subtask.title;
-            const description = subtask.description;
+          return items.map((subtask, subtaskIndex) => {
+            const normalizedTitle = typeof subtask.title === 'string' ? subtask.title.trim() : '';
+            const normalizedDescription = typeof subtask.description === 'string' ? subtask.description.trim() : '';
+            const fallbackLabel = subtask.id || `${phaseIndex + 1}.${subtaskIndex + 1}`;
+            const title = normalizedTitle || normalizedDescription || `Subtask ${fallbackLabel}`;
+            const description = normalizedDescription || normalizedTitle || title;
             return {
-              id: subtask.id,
+              id: subtask.id || `subtask-${phaseIndex + 1}-${subtaskIndex + 1}`,
               title,
               description,
-              status: subtask.status,
+              status: subtask.status || 'pending',
               files: []
             };
           });

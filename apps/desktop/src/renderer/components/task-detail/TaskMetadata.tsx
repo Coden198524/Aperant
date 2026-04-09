@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect, useId, useMemo } from 'react';
+import { useState, useRef, useLayoutEffect, useId, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Target,
@@ -18,12 +18,12 @@ import {
   ChevronDown,
   ChevronUp
 } from 'lucide-react';
-import ReactMarkdown from 'react-markdown';
+import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
-import { cn, formatRelativeTime, formatTokenCount } from '../../lib/utils';
+import { buildTokenHoverTitle, cn, formatRelativeTime, formatTokenCount } from '../../lib/utils';
 import {
   TASK_CATEGORY_COLORS,
   TASK_COMPLEXITY_COLORS,
@@ -60,6 +60,96 @@ interface TaskMetadataProps {
 }
 
 const COLLAPSED_HEIGHT = 200;
+const yunxiaoImageCache = new Map<string, string>();
+
+function isYunxiaoProtectedImageUrl(url: string): boolean {
+  try {
+    const parsed = new URL(url);
+    if (parsed.protocol !== 'https:') return false;
+    return parsed.hostname === 'devops.aliyun.com'
+      && parsed.pathname.includes('/projex/api/workitem/file/url');
+  } catch {
+    return false;
+  }
+}
+
+interface TaskDescriptionImageProps {
+  src: string;
+  alt: string;
+  task: Task;
+}
+
+function TaskDescriptionImage({ src, alt, task }: TaskDescriptionImageProps) {
+  const [resolvedSrc, setResolvedSrc] = useState(src);
+  const [loadError, setLoadError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+    setLoadError(null);
+    setResolvedSrc(src);
+
+    if (!src) return () => { cancelled = true; };
+    if (task.metadata?.sourceType !== 'yunxiao') return () => { cancelled = true; };
+    if (!isYunxiaoProtectedImageUrl(src)) return () => { cancelled = true; };
+
+    const cacheKey = `${task.projectId}:${src}`;
+    const cached = yunxiaoImageCache.get(cacheKey);
+    if (cached) {
+      setResolvedSrc(cached);
+      return () => { cancelled = true; };
+    }
+
+    const load = async () => {
+      try {
+        const result = await window.electronAPI.loadYunxiaoImage(
+          task.projectId,
+          src,
+          task.metadata?.yunxiaoWorkItemId
+        );
+        if (cancelled) return;
+        if (result.success && result.data) {
+          yunxiaoImageCache.set(cacheKey, result.data);
+          setResolvedSrc(result.data);
+          setLoadError(null);
+        } else {
+          setLoadError(result.error || 'Failed to load image');
+        }
+      } catch (error) {
+        if (cancelled) return;
+        setLoadError(error instanceof Error ? error.message : 'Failed to load image');
+      }
+    };
+
+    void load();
+    return () => {
+      cancelled = true;
+    };
+  }, [src, task.projectId, task.metadata?.sourceType]);
+
+  return (
+    <div className="my-2">
+      <img
+        src={resolvedSrc}
+        alt={alt}
+        className="max-w-full h-auto rounded border border-border/50"
+        onError={() => {
+          if (!loadError) {
+            setLoadError('Failed to load image');
+          }
+        }}
+      />
+      {loadError ? (
+        <button
+          type="button"
+          onClick={() => window.electronAPI.openExternal(src)}
+          className="mt-1 text-xs text-info hover:underline"
+        >
+          {loadError}
+        </button>
+      ) : null}
+    </div>
+  );
+}
 
 export function TaskMetadata({ task }: TaskMetadataProps) {
   const { t } = useTranslation(['tasks', 'errors']);
@@ -152,6 +242,13 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
     t,
   ]);
 
+  const markdownComponents = useMemo<Components>(() => ({
+    img: ({ src, alt }) => {
+      if (!src) return null;
+      return <TaskDescriptionImage src={src} alt={alt || ''} task={task} />;
+    }
+  }), [task]);
+
   return (
     <div className="space-y-5">
       <div className="flex flex-wrap items-center justify-between gap-3 pb-4 border-b border-border">
@@ -217,7 +314,13 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
 
         <div className="flex items-center gap-4 text-xs text-muted-foreground">
           {task.tokenUsage?.totalTokens ? (
-            <span className="flex items-center gap-1.5">
+            <span
+              className="flex items-center gap-1.5"
+              title={buildTokenHoverTitle(
+                t('tasks:detail.totalTokens', { defaultValue: 'Total Tokens' }),
+                task.tokenUsage.totalTokens
+              )}
+            >
               <Gauge className="h-3 w-3" />
               {t('tasks:detail.tokensLabel', { defaultValue: 'Tokens' })} {formatTokenCount(task.tokenUsage.totalTokens)}
             </span>
@@ -234,7 +337,11 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
       {tokenStatItems.length > 0 ? (
         <div className="grid gap-2 md:grid-cols-3">
           {tokenStatItems.map((stat) => (
-            <div key={stat.key} className="rounded-lg border border-border bg-muted/20 px-3 py-2">
+            <div
+              key={stat.key}
+              className="rounded-lg border border-border bg-muted/20 px-3 py-2"
+              title={buildTokenHoverTitle(stat.label, stat.value)}
+            >
               <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
                 {stat.label}
               </div>
@@ -258,7 +365,7 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
               )}
               style={{ wordBreak: 'break-word', overflowWrap: 'anywhere' }}
             >
-              <ReactMarkdown remarkPlugins={[remarkGfm]}>
+              <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                 {displayDescription}
               </ReactMarkdown>
             </div>

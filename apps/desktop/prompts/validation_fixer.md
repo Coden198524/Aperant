@@ -66,6 +66,7 @@ Must have these markdown sections (## headers):
 - Overview
 - Workflow Type
 - Task Scope
+- Estimated Manual Effort
 - Success Criteria
 
 ---

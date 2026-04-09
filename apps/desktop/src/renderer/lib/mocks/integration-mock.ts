@@ -65,6 +65,32 @@ export const integrationMock = {
     error: 'Not available in browser mock'
   }),
 
+  getYunxiaoIssues: async () => ({
+    success: true,
+    data: []
+  }),
+
+  syncYunxiaoIssues: async () => ({
+    success: true,
+    data: {
+      issues: [],
+      created: 0,
+      updated: 0,
+      removed: 0,
+      skipped: 0
+    }
+  }),
+
+  updateYunxiaoIssue: async () => ({
+    success: false,
+    error: 'Not available in browser mock'
+  }),
+
+  analyzeYunxiaoIssue: async () => ({
+    success: false,
+    error: 'Not available in browser mock'
+  }),
+
   checkYunxiaoConnection: async () => ({
     success: true,
     data: {
@@ -72,6 +98,44 @@ export const integrationMock = {
       error: 'Not available in browser mock'
     }
   }),
+
+  loadYunxiaoImage: async (_projectId?: string, _imageUrl?: string, _workItemId?: string) => ({
+    success: false,
+    error: 'Not available in browser mock'
+  }),
+
+  getYunxiaoAutoFixConfig: async () => ({
+    enabled: false,
+    requireHumanApproval: true,
+    model: 'gpt-5.4',
+    thinkingLevel: 'medium'
+  }),
+
+  saveYunxiaoAutoFixConfig: async () => true,
+
+  getYunxiaoAutoFixQueue: async () => [],
+
+  checkNewYunxiaoIssues: async () => [],
+
+  startYunxiaoAutoFix: () => {
+    console.warn('[Browser Mock] startYunxiaoAutoFix called');
+  },
+
+  analyzeYunxiaoIssuesPreview: () => {
+    console.warn('[Browser Mock] analyzeYunxiaoIssuesPreview called');
+  },
+
+  approveYunxiaoIssueBatches: async () => ({
+    success: false,
+    error: 'Not available in browser mock'
+  }),
+
+  onYunxiaoAutoFixProgress: () => () => {},
+  onYunxiaoAutoFixComplete: () => () => {},
+  onYunxiaoAutoFixError: () => () => {},
+  onYunxiaoAnalyzePreviewProgress: () => () => {},
+  onYunxiaoAnalyzePreviewComplete: () => () => {},
+  onYunxiaoAnalyzePreviewError: () => () => {},
 
   // GitHub Integration Operations
   getGitHubRepositories: async () => ({

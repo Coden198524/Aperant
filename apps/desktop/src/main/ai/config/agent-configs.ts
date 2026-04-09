@@ -283,7 +283,9 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
       TOOL_RECORD_GOTCHA,
       TOOL_GET_SESSION_CONTEXT,
     ],
-    thinkingDefault: 'low',
+    // Game-focused projects frequently involve stateful/runtime-sensitive changes.
+    // Medium reasoning reduces regressions in performance/input/network behaviors.
+    thinkingDefault: 'medium',
   },
 
   // ═══════════════════════════════════════════════════════════════════════
@@ -310,7 +312,8 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
       TOOL_UPDATE_QA_STATUS,
       TOOL_RECORD_GOTCHA,
     ],
-    thinkingDefault: 'medium',
+    // Keep QA remediation thorough for runtime and cross-platform stability issues.
+    thinkingDefault: 'high',
   },
 
   // ═══════════════════════════════════════════════════════════════════════

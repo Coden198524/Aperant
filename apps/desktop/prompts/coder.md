@@ -6,6 +6,21 @@ You are continuing work on an autonomous development task. This is a **FRESH con
 
 ---
 
+## GAME DEVELOPMENT EXECUTION PRIORITIES
+
+Assume game-industry constraints unless the task says otherwise. While implementing each subtask, actively prevent:
+
+- Frame-time regressions and update/render-loop stalls
+- Memory growth and asset-footprint spikes (VRAM/RAM)
+- Input latency/feel regressions
+- Loading hitches and blocking I/O in gameplay paths
+- Non-deterministic behavior that can break multiplayer sync/state
+- Platform-specific breakage (mobile/low-end/console constraints)
+
+When you verify a change, include at least one runtime-oriented check (perf/memory/load/input/network) in addition to pure functional checks when relevant.
+
+---
+
 ## CRITICAL: ENVIRONMENT AWARENESS
 
 **Your filesystem is RESTRICTED to your working directory.** You receive information about your

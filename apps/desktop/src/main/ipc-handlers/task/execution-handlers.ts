@@ -1,6 +1,6 @@
 import { ipcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
-import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment } from '../../../shared/types';
+import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
 import path from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { spawnSync, execFileSync } from 'child_process';
@@ -112,12 +112,91 @@ function getSpecDirForWatcher(projectPath: string, specsBaseDir: string, specId:
 }
 
 /**
+ * Check whether implementation_plan.json contains at least one subtask.
+ */
+function hasPlanSubtasks(planFilePath: string): boolean {
+  const planContent = safeReadFileSync(planFilePath);
+  if (!planContent) {
+    return false;
+  }
+
+  try {
+    const plan = JSON.parse(planContent);
+    return checkSubtasksCompletion(plan).totalCount > 0;
+  } catch {
+    return false;
+  }
+}
+
+/**
  * Register task execution handlers (start, stop, review, status management, recovery)
  */
 export function registerTaskExecutionHandlers(
   agentManager: AgentManager,
   getMainWindow: () => BrowserWindow | null
 ): void {
+  const startTaskExecutionFromCurrentPlan = async (
+    taskId: string,
+    task: Task,
+    project: Project,
+    logPrefix: string
+  ): Promise<void> => {
+    const specsBaseDir = getSpecsDir(project.autoBuildPath);
+    const specDir = path.join(project.path, specsBaseDir, task.specId);
+    const planPath = getPlanPath(project, task);
+
+    const resetResult = await resetStuckSubtasks(planPath, project.id);
+    if (resetResult.success && resetResult.resetCount > 0) {
+      console.warn(`${logPrefix} Reset ${resetResult.resetCount} stuck subtask(s) before starting`);
+    }
+
+    const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
+    fileWatcher.watch(taskId, watchSpecDir).catch((err) => {
+      console.error(`${logPrefix} Failed to watch spec dir for ${taskId}:`, err);
+    });
+
+    const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+    const hasSpec = existsSync(specFilePath);
+    const planHasSubtasks = hasPlanSubtasks(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+    const needsSpecCreation = !hasSpec;
+    const needsImplementation = hasSpec && !planHasSubtasks;
+    const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
+
+    console.warn(
+      `${logPrefix} hasSpec:`,
+      hasSpec,
+      'planHasSubtasks:',
+      planHasSubtasks,
+      'needsSpecCreation:',
+      needsSpecCreation,
+      'needsImplementation:',
+      needsImplementation
+    );
+
+    if (needsSpecCreation) {
+      const taskDescription = task.description || task.title;
+      console.warn(`${logPrefix} Starting spec creation for:`, task.specId);
+      agentManager.startSpecCreation(taskId, project.path, taskDescription, specDir, task.metadata, baseBranch, project.id);
+      return;
+    }
+
+    console.warn(`${logPrefix} Starting task execution for:`, task.specId);
+    agentManager.startTaskExecution(
+      taskId,
+      project.path,
+      task.specId,
+      {
+        parallel: false,
+        workers: 1,
+        baseBranch,
+        useWorktree: task.metadata?.useWorktree,
+        useLocalBranch: task.metadata?.useLocalBranch,
+        pushNewBranches: task.metadata?.pushNewBranches
+      },
+      project.id
+    );
+  };
+
   /**
    * Start a task
    */
@@ -447,6 +526,55 @@ export function registerTaskExecutionHandlers(
           project
         );
       } else {
+        const currentXState = taskStateManager.getCurrentState(taskId);
+        const isPlanReview = currentXState === 'plan_review' || task.reviewReason === 'plan_review';
+        const isErrorRecovery = currentXState === 'error' || task.reviewReason === 'errors';
+
+        // For plan review and error recovery, restart normal execution instead of QA fixing.
+        // QA fixer requires completed implementation context and can dead-end plan_review/errors.
+        if (isPlanReview || isErrorRecovery) {
+          const specsBaseDir = getSpecsDir(project.autoBuildPath);
+          const specDirForState = path.join(project.path, specsBaseDir, task.specId);
+          const planHasSubtasks = hasPlanSubtasks(path.join(specDirForState, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+
+          taskStateManager.prepareForRestart(taskId);
+
+          if (isPlanReview) {
+            taskStateManager.handleUiEvent(
+              taskId,
+              { type: 'PLAN_APPROVED' },
+              task,
+              project
+            );
+          } else if (!planHasSubtasks) {
+            taskStateManager.handleUiEvent(
+              taskId,
+              { type: 'PLANNING_STARTED' },
+              task,
+              project
+            );
+          } else {
+            taskStateManager.handleUiEvent(
+              taskId,
+              { type: 'USER_RESUMED' },
+              task,
+              project
+            );
+          }
+
+          try {
+            await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]');
+          } catch (error) {
+            console.error('[TASK_REVIEW] Failed to restart execution after rejection:', error);
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to restart task execution'
+            };
+          }
+
+          return { success: true };
+        }
+
         // Reset and discard all changes from worktree merge in main
         // The worktree still has all changes, so nothing is lost
         if (hasWorktree) {

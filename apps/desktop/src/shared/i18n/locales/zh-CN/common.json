@@ -1163,5 +1163,75 @@
       "unpin": "取消置顶",
       "deprecate": "移除"
     }
+  },
+  "yunxiaoIssues": {
+    "title": "云效问题",
+    "openBugsCount": "{{count}} 个开放缺陷",
+    "searchPlaceholder": "搜索缺陷标题 / 编号",
+    "filters": {
+      "allCategories": "全部分类"
+    },
+    "categories": {
+      "unclassified": "未分类",
+      "gameplay": "玩法",
+      "balance": "数值平衡",
+      "economy": "经济系统",
+      "ui": "界面",
+      "performance": "性能",
+      "network": "网络",
+      "backend": "后端",
+      "pipeline": "流程"
+    },
+    "severity": {
+      "all": "全部严重级别",
+      "critical": "致命",
+      "high": "高",
+      "medium": "中",
+      "low": "低"
+    },
+    "fields": {
+      "category": "分类",
+      "severity": "严重级别",
+      "newCategoryPlaceholder": "输入自定义分类",
+      "analysis": "缺陷分析",
+      "analysisPlaceholder": "根因 / 复现路径 / 规避方案 / 风险..."
+    },
+    "badges": {
+      "inKanban": "已在看板"
+    },
+    "actions": {
+      "openProjectSettings": "打开项目设置",
+      "addCategory": "添加分类",
+      "deleteCategory": "删除分类",
+      "generateAnalysis": "AI分析",
+      "generatingAnalysis": "生成中...",
+      "saveAnalysis": "保存分析",
+      "viewTask": "查看任务",
+      "addToKanban": "加入看板"
+    },
+    "messages": {
+      "notConnected": "当前项目未连接云效。",
+      "noBugs": "未找到云效缺陷",
+      "selectIssue": "选择一个云效问题查看详情",
+      "noDescription": "暂无描述",
+      "syncSummary": "云效同步：新增 {{created}} / 更新 {{updated}} / 移除 {{removed}}",
+      "categoryAdded": "分类已更新",
+      "categoryDeleted": "分类已删除，并将 {{count}} 条缺陷重置为未分类",
+      "categoryDeleteFailedTitle": "删除失败",
+      "categoryDeletePartial": "仅更新了 {{success}}/{{total}} 条缺陷",
+      "categoryNotFound": "未找到该分类",
+      "cannotDeleteBuiltinCategory": "内置分类不支持删除",
+      "categoryEmpty": "分类不能为空",
+      "categoryTooLong": "分类长度不能超过50个字符",
+      "analysisGenerated": "已生成 AI 分析草稿",
+      "analysisSaved": "已保存云效问题分析",
+      "analysisGenerateFailedTitle": "生成失败",
+      "analysisGenerateFailed": "云效问题 AI 分析生成失败",
+      "importFailedTitle": "导入失败",
+      "importFailed": "导入云效问题失败",
+      "addedToKanban": "已将云效问题加入看板",
+      "imageLoadFailed": "图片加载失败",
+      "open": "开放"
+    }
   }
 }

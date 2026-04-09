@@ -2,6 +2,7 @@ import { motion, AnimatePresence } from 'motion/react';
 import { useTranslation } from 'react-i18next';
 import { memo, useRef, useState, useEffect } from 'react';
 import { cn } from '../lib/utils';
+import { resolveActiveSubtaskIndex } from '../lib/subtask-progress';
 import type { ExecutionPhase, TaskLogs, Subtask } from '../../shared/types';
 
 interface PhaseProgressIndicatorProps {
@@ -10,6 +11,7 @@ interface PhaseProgressIndicatorProps {
   phaseLogs?: TaskLogs | null;
   /** Fallback progress percentage (0-100) when phaseLogs unavailable */
   phaseProgress?: number;
+  currentSubtask?: string;
   isStuck?: boolean;
   isRunning?: boolean;
   className?: string;
@@ -54,6 +56,7 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
   subtasks,
   phaseLogs,
   phaseProgress,
+  currentSubtask,
   isStuck = false,
   isRunning = false,
   className,
@@ -94,6 +97,12 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
   const completedSubtasks = subtasks.filter((c) => c.status === 'completed').length;
   const totalSubtasks = subtasks.length;
   const subtaskProgress = totalSubtasks > 0 ? Math.round((completedSubtasks / totalSubtasks) * 100) : 0;
+  const activeSubtaskIndex = resolveActiveSubtaskIndex({
+    subtasks,
+    currentSubtask,
+    isRunning,
+    phase,
+  });
 
   // Get log entry counts for activity indication
   const planningEntries = phaseLogs?.phases?.planning?.entries?.length || 0;
@@ -209,7 +218,11 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
       {totalSubtasks > 0 && (
         <div className="flex flex-wrap gap-1.5 mt-2">
           {subtasks.slice(0, 10).map((subtask, index) => {
-            const isInProgress = subtask.status === 'in_progress';
+            const isDerivedInProgress =
+              activeSubtaskIndex === index &&
+              subtask.status !== 'completed' &&
+              subtask.status !== 'failed';
+            const isInProgress = subtask.status === 'in_progress' || isDerivedInProgress;
             const shouldPulse = isInProgress && isVisible;
 
             return (
@@ -242,7 +255,7 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
                     ? { duration: 1, repeat: Infinity, ease: 'easeOut' }
                     : undefined,
                 }}
-                title={`${subtask.title || subtask.id}: ${subtask.status}`}
+                title={`${subtask.title || subtask.id}: ${isInProgress ? 'in_progress' : subtask.status}`}
               />
             );
           })}

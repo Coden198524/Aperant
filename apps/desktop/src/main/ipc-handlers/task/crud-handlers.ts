@@ -9,6 +9,7 @@ import { projectStore } from '../../project-store';
 import { titleGenerator } from '../../title-generator';
 import { AgentManager } from '../../agent';
 import { findTaskAndProject } from './shared';
+import { buildSpecId } from '../shared/spec-id';
 import { findAllSpecPaths, isValidTaskId } from '../../utils/spec-path-helpers';
 import { isPathWithinBase, findTaskWorktree } from '../../worktree-paths';
 import { cleanupWorktree } from '../../utils/worktree-cleanup';
@@ -209,13 +210,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         }
       }
 
-      // Create spec ID with zero-padded number and slugified title
-      const slugifiedTitle = finalTitle
-        .toLowerCase()
-        .replace(/[^a-z0-9]+/g, '-')
-        .replace(/^-|-$/g, '')
-        .substring(0, 50);
-      const specId = `${String(specNumber).padStart(3, '0')}-${slugifiedTitle}`;
+      const specId = buildSpecId(specNumber, finalTitle);
 
       // Create spec directory
       const specDir = path.join(specsDir, specId);

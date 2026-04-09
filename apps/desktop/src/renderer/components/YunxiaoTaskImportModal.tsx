@@ -21,19 +21,74 @@ interface YunxiaoTaskImportModalProps {
   open: boolean;
   onOpenChange: (open: boolean) => void;
   onImportComplete?: (result: YunxiaoImportResult) => void;
+  defaultCategory?: string;
+}
+
+type YunxiaoCategoryFilter = 'Task' | 'Req' | 'Bug' | 'ALL';
+
+function normalizeToken(value?: string): string {
+  return (value || '').trim().toLowerCase();
+}
+
+function isBugLike(value?: string): boolean {
+  const token = normalizeToken(value);
+  if (!token) return false;
+  return token.includes('bug')
+    || token.includes('defect')
+    || token.includes('issue')
+    || token.includes('缺陷')
+    || token.includes('问题')
+    || token.includes('故障');
+}
+
+function isClosedLike(value?: string): boolean {
+  const token = normalizeToken(value);
+  if (!token) return false;
+  return token.includes('closed')
+    || token.includes('close')
+    || token.includes('resolved')
+    || token.includes('done')
+    || token.includes('completed')
+    || token.includes('已关闭')
+    || token.includes('关闭')
+    || token.includes('已解决')
+    || token.includes('解决')
+    || token.includes('已完成')
+    || token.includes('完成');
+}
+
+function isClosedDefect(item: YunxiaoWorkItem): boolean {
+  const isBug = isBugLike(item.workitemType?.name)
+    || isBugLike(item.workitemType?.categoryId)
+    || isBugLike(item.categoryId);
+  if (!isBug) return false;
+
+  return isClosedLike(item.status?.displayName)
+    || isClosedLike(item.status?.name);
+}
+
+function normalizeCategory(value?: string): YunxiaoCategoryFilter {
+  const normalized = value?.trim().toLowerCase();
+  if (!normalized) return 'Task';
+  if (['all', '*', '全部', 'all-categories', 'all_categories'].includes(normalized)) return 'ALL';
+  if (normalized === 'task' || normalized.includes('task') || normalized.includes('任务')) return 'Task';
+  if (normalized === 'req' || normalized.includes('requirement') || normalized.includes('story') || normalized.includes('需求')) return 'Req';
+  if (normalized.includes('bug') || normalized.includes('defect') || normalized.includes('issue') || normalized.includes('缺陷') || normalized.includes('问题') || normalized.includes('故障')) return 'Bug';
+  return 'Task';
 }
 
 export function YunxiaoTaskImportModal({
   projectId,
   open,
   onOpenChange,
-  onImportComplete
+  onImportComplete,
+  defaultCategory
 }: YunxiaoTaskImportModalProps) {
   const { t } = useTranslation('settings');
   const [projects, setProjects] = useState<YunxiaoProject[]>([]);
   const [workItems, setWorkItems] = useState<YunxiaoWorkItem[]>([]);
   const [selectedProjectId, setSelectedProjectId] = useState('');
-  const [category, setCategory] = useState('Task');
+  const [category, setCategory] = useState<YunxiaoCategoryFilter>(() => normalizeCategory(defaultCategory));
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedIds, setSelectedIds] = useState<Set<string>>(new Set());
   const [isLoadingProjects, setIsLoadingProjects] = useState(false);
@@ -44,8 +99,9 @@ export function YunxiaoTaskImportModal({
 
   const filteredItems = useMemo(() => {
     const query = searchQuery.trim().toLowerCase();
-    if (!query) return workItems;
-    return workItems.filter(item =>
+    const visibleItems = workItems.filter((item) => !isClosedDefect(item));
+    if (!query) return visibleItems;
+    return visibleItems.filter(item =>
       (item.subject || '').toLowerCase().includes(query)
       || (item.identifier || '').toLowerCase().includes(query)
     );
@@ -55,7 +111,7 @@ export function YunxiaoTaskImportModal({
     setProjects([]);
     setWorkItems([]);
     setSelectedProjectId('');
-    setCategory('Task');
+    setCategory(normalizeCategory(defaultCategory));
     setSearchQuery('');
     setSelectedIds(new Set());
     setError(null);
@@ -115,9 +171,14 @@ export function YunxiaoTaskImportModal({
   }, [open]);
 
   useEffect(() => {
+    if (!open) return;
+    setCategory(normalizeCategory(defaultCategory));
+  }, [open, defaultCategory]);
+
+  useEffect(() => {
     if (!open || !selectedProjectId) return;
     void loadWorkItems(selectedProjectId, category);
-  }, [open, selectedProjectId]);
+  }, [open, selectedProjectId, category]);
 
   const toggleSelection = (workItemId: string) => {
     setSelectedIds(prev => {
@@ -149,7 +210,7 @@ export function YunxiaoTaskImportModal({
     try {
       const result = await window.electronAPI.importYunxiaoWorkItems(projectId, workItemIds, {
         spaceId: selectedProjectId || undefined,
-        category: category || undefined
+        category: category === 'ALL' ? 'all' : category
       });
       if (!result.success || !result.data) {
         setError(result.error || 'Failed to import work items');
@@ -241,7 +302,24 @@ export function YunxiaoTaskImportModal({
                 defaultValue: 'Category'
               })}
             </Label>
-            <Input value={category} onChange={(event) => setCategory(event.target.value)} placeholder="Task" />
+            <select
+              className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm"
+              value={category}
+              onChange={(event) => setCategory(event.target.value as YunxiaoCategoryFilter)}
+            >
+              <option value="Task">
+                {t('projectSections.yunxiao.importModal.categoryTask', { defaultValue: 'Task (任务)' })}
+              </option>
+              <option value="Req">
+                {t('projectSections.yunxiao.importModal.categoryReq', { defaultValue: 'Req (需求)' })}
+              </option>
+              <option value="Bug">
+                {t('projectSections.yunxiao.importModal.categoryBug', { defaultValue: 'Bug (缺陷)' })}
+              </option>
+              <option value="ALL">
+                {t('projectSections.yunxiao.importModal.categoryAll', { defaultValue: 'All (Task/Req/Bug)' })}
+              </option>
+            </select>
           </div>
         </div>
 
@@ -356,4 +434,3 @@ export function YunxiaoTaskImportModal({
     </Dialog>
   );
 }
-

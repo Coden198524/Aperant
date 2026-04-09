@@ -509,6 +509,32 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       const task = (result as { data: { status: string } }).data;
       expect(task.status).toBe("backlog");
     });
+
+    it("should create specId with non-empty suffix for non-latin titles", async () => {
+      const { setupIpcHandlers } = await import("../ipc-handlers");
+      setupIpcHandlers(
+        mockAgentManager as never,
+        mockTerminalManager as never,
+        () => mockMainWindow as never
+      );
+
+      mkdirSync(path.join(TEST_PROJECT_PATH, ".auto-claude", "specs"), { recursive: true });
+      const addResult = await ipcMain.invokeHandler("project:add", {}, TEST_PROJECT_PATH);
+      const projectId = (addResult as { data: { id: string } }).data.id;
+
+      const result = await ipcMain.invokeHandler(
+        "task:create",
+        {},
+        projectId,
+        "中文任务",
+        "测试描述"
+      );
+
+      expect(result).toHaveProperty("success", true);
+      const task = (result as { data: { specId: string } }).data;
+      expect(task.specId).toBe("001-task");
+      expect(task.specId.endsWith("-")).toBe(false);
+    });
   });
 
   describe("settings:get handler", () => {
@@ -645,6 +671,156 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
         "human_review",
         expect.any(String), // projectId for multi-project filtering
         "errors"
+      );
+    });
+
+    it("should require manual plan review before coding when requireReviewBeforeCoding is enabled", async () => {
+      const { setupIpcHandlers } = await import("../ipc-handlers");
+      const { projectStore } = await import("../project-store");
+      const { taskStateManager } = await import("../task-state-manager");
+      setupIpcHandlers(
+        mockAgentManager as never,
+        mockTerminalManager as never,
+        () => mockMainWindow as never
+      );
+
+      mkdirSync(path.join(TEST_PROJECT_PATH, ".auto-claude", "specs"), { recursive: true });
+      const addResult = await ipcMain.invokeHandler("project:add", {}, TEST_PROJECT_PATH);
+      const projectId = (addResult as { data: { id: string } }).data.id;
+
+      const createResult = await ipcMain.invokeHandler(
+        "task:create",
+        {},
+        projectId,
+        "Require review task",
+        "Task description",
+        { requireReviewBeforeCoding: true }
+      );
+      expect(createResult).toHaveProperty("success", true);
+      const createdTask = (createResult as { data: { id: string; specId: string } }).data;
+
+      const specDir = path.join(TEST_PROJECT_PATH, ".auto-claude", "specs", createdTask.specId);
+      writeFileSync(path.join(specDir, "spec.md"), "# Spec\n");
+      writeFileSync(
+        path.join(specDir, "implementation_plan.json"),
+        JSON.stringify(
+          {
+            feature: "Require review task",
+            workflow_type: "feature",
+            services_involved: [],
+            phases: [
+              {
+                phase: 1,
+                name: "Implementation",
+                type: "implementation",
+                subtasks: [
+                  {
+                    id: "1.1",
+                    title: "Build feature",
+                    description: "Implement core behavior",
+                    status: "pending",
+                    files: [],
+                  },
+                ],
+              },
+            ],
+            final_acceptance: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            spec_file: "spec.md",
+          },
+          null,
+          2
+        ),
+        "utf-8"
+      );
+
+      const task = projectStore.getTasks(projectId).find((item) => item.id === createdTask.id);
+      const project = projectStore.getProject(projectId);
+      expect(task).toBeDefined();
+      expect(project).toBeDefined();
+
+      taskStateManager.handleUiEvent(createdTask.id, { type: "PLANNING_STARTED" }, task!, project!);
+      mockAgentManager.emit("exit", createdTask.id, 0, "spec-creation", projectId);
+
+      expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+      expect(taskStateManager.getCurrentState(createdTask.id)).toBe("plan_review");
+      expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+        "task:statusChange",
+        createdTask.id,
+        "human_review",
+        projectId,
+        "plan_review"
+      );
+    });
+
+    it("should fail planning instead of entering plan review when spec or subtasks are missing", async () => {
+      const { setupIpcHandlers } = await import("../ipc-handlers");
+      const { projectStore } = await import("../project-store");
+      const { taskStateManager } = await import("../task-state-manager");
+      setupIpcHandlers(
+        mockAgentManager as never,
+        mockTerminalManager as never,
+        () => mockMainWindow as never
+      );
+
+      mkdirSync(path.join(TEST_PROJECT_PATH, ".auto-claude", "specs"), { recursive: true });
+      const addResult = await ipcMain.invokeHandler("project:add", {}, TEST_PROJECT_PATH);
+      const projectId = (addResult as { data: { id: string } }).data.id;
+
+      const createResult = await ipcMain.invokeHandler(
+        "task:create",
+        {},
+        projectId,
+        "Incomplete review task",
+        "Task description",
+        { requireReviewBeforeCoding: true }
+      );
+      expect(createResult).toHaveProperty("success", true);
+      const createdTask = (createResult as { data: { id: string; specId: string } }).data;
+
+      const specDir = path.join(TEST_PROJECT_PATH, ".auto-claude", "specs", createdTask.specId);
+      writeFileSync(
+        path.join(specDir, "implementation_plan.json"),
+        JSON.stringify(
+          {
+            feature: "Incomplete review task",
+            workflow_type: "feature",
+            services_involved: [],
+            phases: [],
+            final_acceptance: [],
+            created_at: new Date().toISOString(),
+            updated_at: new Date().toISOString(),
+            spec_file: "spec.md",
+          },
+          null,
+          2
+        ),
+        "utf-8"
+      );
+
+      const task = projectStore.getTasks(projectId).find((item) => item.id === createdTask.id);
+      const project = projectStore.getProject(projectId);
+      expect(task).toBeDefined();
+      expect(project).toBeDefined();
+
+      taskStateManager.handleUiEvent(createdTask.id, { type: "PLANNING_STARTED" }, task!, project!);
+      mockAgentManager.emit("exit", createdTask.id, 0, "spec-creation", projectId);
+
+      expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
+      expect(taskStateManager.getCurrentState(createdTask.id)).toBe("error");
+      expect(mockMainWindow.webContents.send).toHaveBeenCalledWith(
+        "task:error",
+        createdTask.id,
+        expect.stringContaining("Plan review unavailable"),
+        projectId
+      );
+      expect(mockMainWindow.webContents.send).not.toHaveBeenCalledWith(
+        "task:statusChange",
+        createdTask.id,
+        "human_review",
+        projectId,
+        "plan_review"
       );
     });
   });

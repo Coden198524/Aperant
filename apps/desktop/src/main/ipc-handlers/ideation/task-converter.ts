@@ -20,17 +20,7 @@ import { projectStore } from '../../project-store';
 import { readIdeationFile, writeIdeationFile, updateIdeationTimestamp } from './file-utils';
 import type { RawIdea } from './types';
 import { withSpecNumberLock } from '../../utils/spec-number-lock';
-
-/**
- * Create a slugified version of a title for use in directory names
- */
-function slugifyTitle(title: string): string {
-  return title
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, '-')
-    .replace(/^-|-$/g, '')
-    .substring(0, 50);
-}
+import { buildSpecId } from '../shared/spec-id';
 
 /**
  * Build task description from idea data
@@ -237,8 +227,7 @@ export async function convertIdeaToTask(
 
       // Get next spec number from global scan (main + all worktrees)
       const nextNum = lock.getNextSpecNumber(project.autoBuildPath);
-      const slugifiedTitle = slugifyTitle(idea.title);
-      const specId = `${String(nextNum).padStart(3, '0')}-${slugifiedTitle}`;
+      const specId = buildSpecId(nextNum, idea.title);
       const specDir = path.join(specsDir, specId);
 
       // Build task description and metadata

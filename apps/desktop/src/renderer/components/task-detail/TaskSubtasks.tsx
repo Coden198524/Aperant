@@ -4,18 +4,21 @@ import { useTranslation } from 'react-i18next';
 import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, calculateProgress } from '../../lib/utils';
+import { resolveActiveSubtaskIndex } from '../../lib/subtask-progress';
 import type { Task } from '../../../shared/types';
 
 interface TaskSubtasksProps {
   task: Task;
 }
 
-function getSubtaskStatusIcon(status: string) {
+function getSubtaskStatusIcon(status: string, isInProgress: boolean) {
+  if (isInProgress) {
+    return <Clock className="h-4 w-4 text-[var(--info)] animate-pulse" />;
+  }
+
   switch (status) {
     case 'completed':
       return <CheckCircle2 className="h-4 w-4 text-[var(--success)]" />;
-    case 'in_progress':
-      return <Clock className="h-4 w-4 text-[var(--info)] animate-pulse" />;
     case 'failed':
       return <XCircle className="h-4 w-4 text-[var(--error)]" />;
     default:
@@ -27,6 +30,13 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const { t } = useTranslation(['tasks']);
   const progress = calculateProgress(task.subtasks);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const isTaskRunning = task.status === 'in_progress' || task.executionProgress?.phase === 'coding';
+  const activeSubtaskIndex = resolveActiveSubtaskIndex({
+    subtasks: task.subtasks,
+    currentSubtask: task.executionProgress?.currentSubtask,
+    isRunning: isTaskRunning,
+    phase: task.executionProgress?.phase,
+  });
 
   const toggleExpand = useCallback((id: string) => {
     setExpandedIds(prev => {
@@ -91,13 +101,18 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
             const hasDetails = (subtask.description && subtask.description !== subtask.title) ||
               (subtask.files && subtask.files.length > 0) ||
               subtask.verification;
+            const isDerivedInProgress = isTaskRunning &&
+              activeSubtaskIndex === index &&
+              subtask.status !== 'completed' &&
+              subtask.status !== 'failed';
+            const isInProgress = subtask.status === 'in_progress' || isDerivedInProgress;
 
             return (
               <div
                 key={subtask.id}
                 className={cn(
                   'rounded-xl border border-border bg-secondary/30 transition-all duration-200 hover:bg-secondary/50 overflow-hidden',
-                  subtask.status === 'in_progress' && 'border-[var(--info)]/50 bg-[var(--info-light)] ring-1 ring-info/20',
+                  isInProgress && 'border-[var(--info)]/50 bg-[var(--info-light)] ring-1 ring-info/20',
                   subtask.status === 'completed' && 'border-[var(--success)]/50 bg-[var(--success-light)]',
                   subtask.status === 'failed' && 'border-[var(--error)]/50 bg-[var(--error-light)]'
                 )}
@@ -109,12 +124,12 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
                   className="flex items-center gap-2 w-full p-3 text-left cursor-pointer"
                 >
                   <div className="shrink-0">
-                    {getSubtaskStatusIcon(subtask.status)}
+                    {getSubtaskStatusIcon(subtask.status, isInProgress)}
                   </div>
                   <span className={cn(
                     'text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0',
                     subtask.status === 'completed' ? 'bg-success/20 text-success' :
-                    subtask.status === 'in_progress' ? 'bg-info/20 text-info' :
+                    isInProgress ? 'bg-info/20 text-info' :
                     subtask.status === 'failed' ? 'bg-destructive/20 text-destructive' :
                     'bg-muted text-muted-foreground'
                   )}>

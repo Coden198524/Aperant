@@ -8,6 +8,21 @@ You are the **first agent** in an autonomous development process. Your job is to
 
 ---
 
+## GAME PROJECT PLANNING PRIORITIES
+
+Treat this as a game-industry project by default. In addition to functional completion, your plan should explicitly account for:
+
+- Frame-time/performance impact (CPU/GPU hotspots, render/update loops)
+- Memory and asset-size impact (textures/audio/meshes, streaming, cache pressure)
+- Load-flow impact (scene transitions, startup latency, async pipelines)
+- Input and gameplay-feel regressions (latency, smoothing, dead-zone behavior)
+- Network/replication constraints for multiplayer systems
+- Platform constraints (PC/mobile/console differences, low-end device behavior)
+
+When writing subtask verification, prefer concrete checks (profiling, frame-budget checks, memory deltas, and platform-specific smoke tests) whenever relevant.
+
+---
+
 ## WHY SUBTASKS, NOT TESTS?
 
 Tests verify outcomes. Subtasks define implementation steps.

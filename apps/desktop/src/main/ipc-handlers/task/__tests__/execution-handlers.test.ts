@@ -95,6 +95,13 @@ describe('registerTaskExecutionHandlers', () => {
   let onHandlers: Record<string, Function>;
   let handleHandlers: Record<string, Function>;
   let mockMainWindow: Partial<BrowserWindow>;
+  let mockAgentManager: {
+    startSpecCreation: ReturnType<typeof vi.fn>;
+    startTaskExecution: ReturnType<typeof vi.fn>;
+    startQAProcess: ReturnType<typeof vi.fn>;
+    killTask: ReturnType<typeof vi.fn>;
+    isRunning: ReturnType<typeof vi.fn>;
+  };
 
   beforeEach(async () => {
     vi.clearAllMocks();
@@ -114,15 +121,17 @@ describe('registerTaskExecutionHandlers', () => {
       } as unknown as BrowserWindow['webContents'],
     };
 
+    mockAgentManager = {
+      startSpecCreation: vi.fn(),
+      startTaskExecution: vi.fn(),
+      startQAProcess: vi.fn(),
+      killTask: vi.fn(),
+      isRunning: vi.fn(() => false),
+    };
+
     const { registerTaskExecutionHandlers } = await import('../execution-handlers');
     registerTaskExecutionHandlers(
-      {
-        startSpecCreation: vi.fn(),
-        startTaskExecution: vi.fn(),
-        startQAProcess: vi.fn(),
-        killTask: vi.fn(),
-        isRunning: vi.fn(() => false),
-      } as never,
+      mockAgentManager as never,
       () => mockMainWindow as BrowserWindow,
     );
   });
@@ -256,5 +265,144 @@ describe('registerTaskExecutionHandlers', () => {
 
     expect(findTaskAndProject).toHaveBeenCalledWith('001-fast-task', 'project-fast');
     expect(result).toEqual({ success: true });
+  });
+
+  it('uses PLAN_APPROVED and restarts coding (not QA) for plan_review Request Changes', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const fs = await import('fs');
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-plan-review',
+        specId: '001-plan-review',
+        projectId: 'project-fast',
+        title: 'Plan review task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'plan_review',
+        subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'pending', files: [] }],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.auto-claude',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('plan_review');
+    (fs.existsSync as Mock).mockReturnValue(true);
+    (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.json')) {
+        return JSON.stringify({
+          phases: [{ subtasks: [{ status: 'pending' }] }]
+        });
+      }
+      return '';
+    });
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-plan-review', false, 'need changes');
+
+    expect(result).toEqual({ success: true });
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-plan-review',
+      { type: 'PLAN_APPROVED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
+  it('uses PLANNING_STARTED for errors without subtasks and restarts execution (not QA)', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const fs = await import('fs');
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-error-review',
+        specId: '001-error-review',
+        projectId: 'project-fast',
+        title: 'Error review task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'errors',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.auto-claude',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('error');
+    (fs.existsSync as Mock).mockReturnValue(true);
+    (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.json')) {
+        return JSON.stringify({ phases: [{ subtasks: [] }] });
+      }
+      return '';
+    });
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-error-review', false, 'retry');
+
+    expect(result).toEqual({ success: true });
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-error-review',
+      { type: 'PLANNING_STARTED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
+  it('keeps QA fix flow for regular human review Request Changes', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const fs = await import('fs');
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-qa-review',
+        specId: '001-qa-review',
+        projectId: 'project-fast',
+        title: 'QA review task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'completed',
+        subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'completed', files: [] }],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.auto-claude',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (fs.existsSync as Mock).mockReturnValue(true);
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-qa-review', false, 'fix please');
+
+    expect(result).toEqual({ success: true });
+    expect(mockAgentManager.startQAProcess).toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-qa-review',
+      { type: 'USER_RESUMED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
   });
 });

@@ -23,7 +23,8 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { cn, formatRelativeTime, formatTokenCount, sanitizeMarkdownForDisplay } from '../lib/utils';
+import { buildTokenHoverTitle, cn, formatRelativeTime, formatTokenCount, sanitizeMarkdownForDisplay } from '../lib/utils';
+import { resolveActiveSubtaskIndex } from '../lib/subtask-progress';
 import { PhaseProgressIndicator } from './PhaseProgressIndicator';
 import {
   TASK_CATEGORY_COLORS,
@@ -112,14 +113,18 @@ function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProp
     prevTask.reviewReason === nextTask.reviewReason &&
     prevTask.executionProgress?.phase === nextTask.executionProgress?.phase &&
     prevTask.executionProgress?.phaseProgress === nextTask.executionProgress?.phaseProgress &&
+    prevTask.executionProgress?.currentSubtask === nextTask.executionProgress?.currentSubtask &&
     prevTask.subtasks.length === nextTask.subtasks.length &&
     prevTask.metadata?.fastMode === nextTask.metadata?.fastMode &&
     prevTask.metadata?.category === nextTask.metadata?.category &&
     prevTask.metadata?.complexity === nextTask.metadata?.complexity &&
     prevTask.metadata?.archivedAt === nextTask.metadata?.archivedAt &&
     prevTask.metadata?.prUrl === nextTask.metadata?.prUrl &&
-    // Only compare stepsExecuted for re-render detection
+    // Compare token usage fields rendered in card badges
     prevTask.tokenUsage?.stepsExecuted === nextTask.tokenUsage?.stepsExecuted &&
+    prevTask.tokenUsage?.promptTokens === nextTask.tokenUsage?.promptTokens &&
+    prevTask.tokenUsage?.completionTokens === nextTask.tokenUsage?.completionTokens &&
+    prevTask.tokenUsage?.totalTokens === nextTask.tokenUsage?.totalTokens &&
     // Check if any subtask statuses changed (compare all subtasks)
     prevTask.subtasks.every((s, i) => s.status === nextTask.subtasks[i]?.status)
   );
@@ -196,28 +201,77 @@ export const TaskCard = memo(function TaskCard({
   );
 
   const tokenBadges = useMemo(() => {
-    // Only show request count (stepsExecuted)
-    const hasStepsExecuted = task.tokenUsage?.stepsExecuted && task.tokenUsage.stepsExecuted > 0;
+    const stepsExecuted = task.tokenUsage?.stepsExecuted || 0;
+    const promptTokens = task.tokenUsage?.promptTokens || 0;
+    const completionTokens = task.tokenUsage?.completionTokens || 0;
+    const totalTokens = task.tokenUsage?.totalTokens || 0;
 
     // For running tasks, show current usage even if 0
     const isActiveTask = task.status === 'in_progress' || task.status === 'ai_review';
+    const hasTokenUsage = promptTokens > 0 || completionTokens > 0 || totalTokens > 0;
 
-    if (!hasStepsExecuted && !isActiveTask) return [];
+    if (!isActiveTask && stepsExecuted <= 0 && !hasTokenUsage) return [];
 
     return [
       {
         key: 'requests',
         label: t('detail.requestsShort', { defaultValue: '请求' }),
         title: t('detail.requests', { defaultValue: 'AI 请求次数' }),
-        value: String(task.tokenUsage?.stepsExecuted || 0),
+        value: String(stepsExecuted),
+        variant: 'secondary' as const,
+      },
+      {
+        key: 'prompt',
+        label: t('detail.promptTokensShort', { defaultValue: '输入' }),
+        title: t('detail.promptTokens', { defaultValue: '输入 Token' }),
+        value: formatTokenCount(promptTokens),
+        variant: 'secondary' as const,
+      },
+      {
+        key: 'completion',
+        label: t('detail.completionTokensShort', { defaultValue: '输出' }),
+        title: t('detail.completionTokens', { defaultValue: '输出 Token' }),
+        value: formatTokenCount(completionTokens),
+        variant: 'secondary' as const,
+      },
+      {
+        key: 'total',
+        label: t('detail.totalTokensShort', { defaultValue: '总计' }),
+        title: t('detail.totalTokens', { defaultValue: '总计 Token' }),
+        value: formatTokenCount(totalTokens),
         variant: 'secondary' as const,
       },
     ];
   }, [
     task.status,
     task.tokenUsage?.stepsExecuted,
+    task.tokenUsage?.promptTokens,
+    task.tokenUsage?.completionTokens,
+    task.tokenUsage?.totalTokens,
     t,
   ]);
+
+  const activeSubtaskSummary = useMemo(() => {
+    if (!isRunning || task.subtasks.length === 0) {
+      return null;
+    }
+
+    const activeIndex = resolveActiveSubtaskIndex({
+      subtasks: task.subtasks,
+      currentSubtask: task.executionProgress?.currentSubtask,
+      isRunning,
+      phase: executionPhase,
+    });
+
+    if (activeIndex < 0) {
+      return t('detail.activeSubtaskSyncing', { defaultValue: 'Syncing current subtask status...' });
+    }
+
+    return t('detail.activeSubtaskSummary', {
+      index: activeIndex + 1,
+      defaultValue: 'Executing #{{index}}',
+    });
+  }, [isRunning, task.subtasks, task.executionProgress?.currentSubtask, executionPhase, t]);
 
   // Memoize status menu items to avoid recreating on every render
   const statusMenuItems = useMemo(() => {
@@ -592,9 +646,15 @@ export const TaskCard = memo(function TaskCard({
               phase={executionPhase}
               subtasks={task.subtasks}
               phaseProgress={task.executionProgress?.phaseProgress}
+              currentSubtask={task.executionProgress?.currentSubtask}
               isStuck={isStuck}
               isRunning={isRunning}
             />
+            {activeSubtaskSummary && (
+              <p className="mt-2 text-[11px] text-info truncate" title={activeSubtaskSummary}>
+                {activeSubtaskSummary}
+              </p>
+            )}
           </div>
         )}
 
@@ -605,7 +665,24 @@ export const TaskCard = memo(function TaskCard({
                 key={stat.key}
                 variant={stat.variant}
                 className="px-1.5 py-0.5 text-[10px] font-mono"
-                title={stat.title}
+                title={
+                  stat.key === 'prompt'
+                    ? buildTokenHoverTitle(
+                        t('detail.promptTokens', { defaultValue: 'Prompt Tokens' }),
+                        task.tokenUsage?.promptTokens || 0
+                      )
+                    : stat.key === 'completion'
+                      ? buildTokenHoverTitle(
+                          t('detail.completionTokens', { defaultValue: 'Completion Tokens' }),
+                          task.tokenUsage?.completionTokens || 0
+                        )
+                      : stat.key === 'total'
+                        ? buildTokenHoverTitle(
+                            t('detail.totalTokens', { defaultValue: 'Total Tokens' }),
+                            task.tokenUsage?.totalTokens || 0
+                          )
+                        : stat.title
+                }
               >
                 {stat.key === 'total' && <Gauge className="mr-1 h-2.5 w-2.5" />}
                 <span className="text-muted-foreground mr-1">{stat.label}</span>
@@ -690,7 +767,12 @@ export const TaskCard = memo(function TaskCard({
                 <Archive className="mr-1.5 h-3 w-3" />
                 {t('actions.archive')}
               </Button>
-            ) : (task.status === 'backlog' || task.status === 'in_progress') && (
+            ) : (
+              task.status === 'backlog' ||
+              task.status === 'in_progress' ||
+              (task.status === 'human_review' && task.reviewReason !== 'completed') ||
+              task.status === 'error'
+            ) && (
               <Button
                 variant={isRunning ? 'destructive' : 'default'}
                 size="sm"

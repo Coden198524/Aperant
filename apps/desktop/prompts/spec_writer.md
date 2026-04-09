@@ -188,6 +188,17 @@ From `[reference file path]`:
 ### Required Environment Variables
 - `VAR_NAME`: [from project_index or .env.example]
 
+## Estimated Manual Effort
+
+- **Likely effort (human)**: [X-Y hours]
+- **Range**: [Best case A hours, worst case B hours]
+- **Assumptions**:
+  - [assumption 1 that affects effort]
+  - [assumption 2 that affects effort]
+- **Major uncertainty drivers**:
+  - [risk/unknown 1]
+  - [risk/unknown 2]
+
 ## Success Criteria
 
 The task is complete when:
@@ -248,6 +259,7 @@ After creating, use the **Read tool** to read back `spec.md` and verify it has a
 - Overview
 - Workflow Type
 - Task Scope
+- Estimated Manual Effort
 - Success Criteria
 
 You can also use the **Grep tool** to search for section headings if needed.
@@ -275,7 +287,7 @@ Next phase: Implementation Planning
 ## CRITICAL RULES
 
 1. **ALWAYS create spec.md** - The orchestrator checks for this file
-2. **Include ALL required sections** - Overview, Workflow Type, Task Scope, Success Criteria
+2. **Include ALL required sections** - Overview, Workflow Type, Task Scope, Estimated Manual Effort, Success Criteria
 3. **Use information from input files** - Don't make up data
 4. **Be specific about files** - Use exact paths from context.json
 5. **Include QA criteria** - The QA agent needs this for validation

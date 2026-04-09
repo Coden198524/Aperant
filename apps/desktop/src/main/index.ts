@@ -69,6 +69,7 @@ import { initializeClaudeProfileManager, getClaudeProfileManager } from './claud
 import { isProfileAuthenticated } from './claude-profile/profile-utils';
 import { isMacOS, isWindows } from './platform';
 import { ptyDaemonClient } from './terminal/pty-daemon-client';
+import { getYunxiaoAutoSyncService } from './integrations/yunxiao-auto-sync';
 import type { AppSettings, AuthFailureInfo } from '../shared/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -183,6 +184,7 @@ function getIconPath(): string {
 let mainWindow: BrowserWindow | null = null;
 let agentManager: AgentManager | null = null;
 let terminalManager: TerminalManager | null = null;
+const yunxiaoAutoSyncService = getYunxiaoAutoSyncService();
 
 // Capture child process exits (renderer/GPU/utility) for crash diagnostics.
 app.on('child-process-gone', (_event, details) => {
@@ -537,6 +539,12 @@ app.whenReady().then(() => {
   // Setup IPC handlers
   setupIpcHandlers(agentManager, terminalManager, () => mainWindow);
 
+  // Start Yunxiao auto-sync background service.
+  // It syncs open Bug items into the local Yunxiao Issues module when
+  // YUNXIAO_ENABLED=true and YUNXIAO_AUTO_SYNC=true.
+  yunxiaoAutoSyncService.setMainWindowGetter(() => mainWindow);
+  yunxiaoAutoSyncService.start();
+
   // Create window
   createWindow();
 
@@ -681,6 +689,7 @@ app.on('before-quit', (event) => {
 
   // Stop synchronous services immediately
   stopPeriodicUpdates();
+  yunxiaoAutoSyncService.stop();
 
   const usageMonitor = getUsageMonitor();
   usageMonitor.stop();

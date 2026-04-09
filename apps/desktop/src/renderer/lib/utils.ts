@@ -44,17 +44,6 @@ export function formatRelativeTime(date: Date): string {
 export function formatTokenCount(count: number): string {
   if (!Number.isFinite(count)) return '0';
 
-  if (typeof Intl !== 'undefined' && Intl.NumberFormat) {
-    try {
-      return new Intl.NumberFormat(undefined, {
-        notation: 'compact',
-        maximumFractionDigits: count >= 1000 ? 1 : 0
-      }).format(count);
-    } catch {
-      // Fall through to manual formatting
-    }
-  }
-
   if (count >= 1_000_000) {
     return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
   }
@@ -62,6 +51,16 @@ export function formatTokenCount(count: number): string {
     return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
   }
   return String(Math.round(count));
+}
+
+/**
+ * Build hover text for token values.
+ */
+export function buildTokenHoverTitle(label: string, count: number): string {
+  const exactTokens = Math.round(count);
+  const tokenText = new Intl.NumberFormat().format(exactTokens);
+
+  return `${label}: ${tokenText}`;
 }
 
 /**

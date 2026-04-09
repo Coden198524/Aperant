@@ -306,6 +306,26 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
       );
     }
 
+    // In human review, users should generally be able to continue work unless it is
+    // already in the "completed" review state awaiting final merge/close actions.
+    if (task.status === 'human_review' && task.reviewReason !== 'completed') {
+      return (
+        <Button variant="default" onClick={handleStartStop}>
+          <Play className="mr-2 h-4 w-4" />
+          {t('tasks:actions.resume')}
+        </Button>
+      );
+    }
+
+    if (task.status === 'error') {
+      return (
+        <Button variant="default" onClick={handleStartStop}>
+          <Play className="mr-2 h-4 w-4" />
+          {t('tasks:actions.resume')}
+        </Button>
+      );
+    }
+
     if (task.status === 'done' && task.metadata?.prUrl) {
       return (
         <div className="flex items-center gap-4">

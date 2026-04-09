@@ -7,6 +7,7 @@ import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync } from 
 import { projectStore } from '../project-store';
 import { parseEnvFile } from './utils';
 import { sanitizeText, sanitizeUrl } from './shared/sanitize';
+import { buildSpecId } from './shared/spec-id';
 
 
 import { AgentManager } from '../agent';
@@ -485,13 +486,7 @@ ${safeDescription || 'No description provided.'}
               specNumber = Math.max(...existingNumbers) + 1;
             }
 
-            // Create spec ID with zero-padded number and slugified title
-            const slugifiedTitle = safeTitle
-              .toLowerCase()
-              .replace(/[^a-z0-9]+/g, '-')
-              .replace(/^-|-$/g, '')
-              .substring(0, 50);
-            const specId = `${String(specNumber).padStart(3, '0')}-${slugifiedTitle}`;
+            const specId = buildSpecId(specNumber, safeTitle);
 
             // Create spec directory
             const specDir = path.join(specsDir, specId);

@@ -331,6 +331,48 @@ describe('ProjectStore', () => {
       expect(tasks[0].status).toBe('in_progress'); // Some completed, some pending
     });
 
+    it('should provide fallback subtask titles when title is missing', async () => {
+      const specsDir = path.join(TEST_PROJECT_PATH, '.auto-claude', 'specs', '001-missing-subtask-title');
+      mkdirSync(specsDir, { recursive: true });
+
+      const plan = {
+        feature: 'Fallback Title Feature',
+        workflow_type: 'feature',
+        services_involved: [],
+        status: 'in_progress',
+        phases: [
+          {
+            phase: 1,
+            name: 'Phase 1',
+            type: 'implementation',
+            subtasks: [
+              { id: 'subtask-1', description: 'Implement API endpoint', status: 'pending' },
+              { id: 'subtask-2', title: '', description: '', status: 'pending' }
+            ]
+          }
+        ],
+        final_acceptance: [],
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-02T00:00:00Z',
+        spec_file: 'spec.md'
+      };
+
+      writeFileSync(
+        path.join(specsDir, 'implementation_plan.json'),
+        JSON.stringify(plan)
+      );
+
+      const { ProjectStore } = await import('../project-store');
+      const store = new ProjectStore();
+
+      const project = store.addProject(TEST_PROJECT_PATH);
+      const tasks = store.getTasks(project.id);
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].subtasks[0].title).toBe('Implement API endpoint');
+      expect(tasks[0].subtasks[1].title).toBe('Subtask subtask-2');
+    });
+
     it('should determine status as backlog when no subtasks completed', async () => {
       const specsDir = path.join(TEST_PROJECT_PATH, '.auto-claude', 'specs', '002-pending');
       mkdirSync(specsDir, { recursive: true });
@@ -1004,6 +1046,67 @@ describe('ProjectStore', () => {
       // Should only return ONE task, not two
       const matchingTasks = tasks.filter(t => t.specId === '007-dedupe-test');
       expect(matchingTasks).toHaveLength(1);
+    });
+
+    it('should preserve non-manual sourceType and description when main copy is stale', async () => {
+      const mainSpecsDir = path.join(TEST_PROJECT_PATH, '.auto-claude', 'specs', '008-dedupe-metadata');
+      mkdirSync(mainSpecsDir, { recursive: true });
+
+      const worktreeDir = path.join(
+        TEST_PROJECT_PATH,
+        '.auto-claude',
+        'worktrees',
+        'tasks',
+        'dedupe-metadata-worktree',
+        '.auto-claude',
+        'specs',
+        '008-dedupe-metadata'
+      );
+      mkdirSync(worktreeDir, { recursive: true });
+
+      const staleMainPlan = {
+        feature: 'Metadata Dedupe Feature',
+        description: '',
+        workflow_type: 'feature',
+        services_involved: [],
+        status: 'human_review',
+        phases: [],
+        final_acceptance: [],
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-02T00:00:00Z',
+        spec_file: 'spec.md'
+      };
+
+      const richerWorktreePlan = {
+        ...staleMainPlan,
+        description: '# Imported from Yunxiao\n\nOriginal description from external source.'
+      };
+
+      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(staleMainPlan));
+      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(richerWorktreePlan));
+
+      writeFileSync(
+        path.join(mainSpecsDir, 'task_metadata.json'),
+        JSON.stringify({ sourceType: 'manual' })
+      );
+      writeFileSync(
+        path.join(worktreeDir, 'task_metadata.json'),
+        JSON.stringify({
+          sourceType: 'yunxiao',
+          yunxiaoWorkItemId: '12345',
+          yunxiaoIdentifier: 'YUNXIAO-12345'
+        })
+      );
+
+      const { ProjectStore } = await import('../project-store');
+      const store = new ProjectStore();
+      const project = store.addProject(TEST_PROJECT_PATH);
+      const tasks = store.getTasks(project.id);
+
+      const task = tasks.find(t => t.specId === '008-dedupe-metadata');
+      expect(task).toBeDefined();
+      expect(task?.metadata?.sourceType).toBe('yunxiao');
+      expect(task?.description).toContain('Original description from external source.');
     });
   });
 });

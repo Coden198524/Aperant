@@ -220,6 +220,7 @@ After making changes:
 2. Use the **Grep tool** to confirm key sections exist:
    - Search for `^##? Overview` in spec.md
    - Search for `^##? Requirements` in spec.md
+   - Search for `^##? Estimated Manual Effort` in spec.md
    - Search for `^##? Success Criteria` in spec.md
 
 ---

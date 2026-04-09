@@ -122,7 +122,14 @@ import type {
   LinearSyncStatus,
   YunxiaoProject,
   YunxiaoWorkItem,
+  YunxiaoIssue,
+  YunxiaoAutoFixConfig,
+  YunxiaoAutoFixQueueItem,
+  YunxiaoAnalyzePreviewProgress,
+  YunxiaoAnalyzePreviewResult,
+  YunxiaoProposedBatch,
   YunxiaoImportResult,
+  YunxiaoIssueSyncResult,
   YunxiaoSyncStatus,
   GitHubRepository,
   GitHubIssue,
@@ -520,7 +527,54 @@ export interface ElectronAPI {
     workItemIds: string[],
     options?: { organizationId?: string; spaceId?: string; category?: string }
   ) => Promise<IPCResult<YunxiaoImportResult>>;
+  getYunxiaoIssues: (projectId: string) => Promise<IPCResult<YunxiaoIssue[]>>;
+  syncYunxiaoIssues: (projectId: string) => Promise<IPCResult<YunxiaoIssueSyncResult>>;
+  updateYunxiaoIssue: (
+    projectId: string,
+    workItemId: string,
+    updates: {
+      localCategory?: string;
+      localSeverity?: 'low' | 'medium' | 'high' | 'critical';
+      localTags?: string[];
+      localAnalysis?: string;
+    }
+  ) => Promise<IPCResult<YunxiaoIssue>>;
+  analyzeYunxiaoIssue: (projectId: string, workItemId: string) => Promise<IPCResult<string>>;
   checkYunxiaoConnection: (projectId: string) => Promise<IPCResult<YunxiaoSyncStatus>>;
+  loadYunxiaoImage: (projectId: string, imageUrl: string, workItemId?: string) => Promise<IPCResult<string>>;
+  getYunxiaoAutoFixConfig: (projectId: string) => Promise<YunxiaoAutoFixConfig | null>;
+  saveYunxiaoAutoFixConfig: (projectId: string, config: YunxiaoAutoFixConfig) => Promise<boolean>;
+  getYunxiaoAutoFixQueue: (projectId: string) => Promise<YunxiaoAutoFixQueueItem[]>;
+  checkNewYunxiaoIssues: (projectId: string) => Promise<Array<{ workItemId: string }>>;
+  startYunxiaoAutoFix: (projectId: string, workItemId: string) => void;
+  analyzeYunxiaoIssuesPreview: (projectId: string, workItemIds?: string[], maxIssues?: number) => void;
+  approveYunxiaoIssueBatches: (
+    projectId: string,
+    approvedBatches: YunxiaoProposedBatch[]
+  ) => Promise<{ success: boolean; error?: string }>;
+  onYunxiaoAutoFixProgress: (
+    callback: (projectId: string, progress: {
+      workItemId: string;
+      progress: number;
+      message: string;
+      phase: 'fetching' | 'creating_spec' | 'complete';
+    }) => void
+  ) => () => void;
+  onYunxiaoAutoFixComplete: (
+    callback: (projectId: string, result: YunxiaoAutoFixQueueItem) => void
+  ) => () => void;
+  onYunxiaoAutoFixError: (
+    callback: (projectId: string, error: { workItemId?: string; error: string }) => void
+  ) => () => void;
+  onYunxiaoAnalyzePreviewProgress: (
+    callback: (projectId: string, progress: YunxiaoAnalyzePreviewProgress) => void
+  ) => () => void;
+  onYunxiaoAnalyzePreviewComplete: (
+    callback: (projectId: string, result: YunxiaoAnalyzePreviewResult) => void
+  ) => () => void;
+  onYunxiaoAnalyzePreviewError: (
+    callback: (projectId: string, error: { error: string }) => void
+  ) => () => void;
 
   // GitHub integration operations
   getGitHubRepositories: (projectId: string) => Promise<IPCResult<GitHubRepository[]>>;

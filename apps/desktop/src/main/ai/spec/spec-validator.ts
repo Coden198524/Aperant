@@ -46,7 +46,13 @@ const VERIFICATION_TYPES = ['command', 'api', 'browser', 'component', 'e2e', 'ma
 const CONTEXT_REQUIRED_FIELDS = ['task_description'];
 const CONTEXT_RECOMMENDED_FIELDS = ['files_to_modify', 'files_to_reference', 'scoped_services'];
 
-const SPEC_REQUIRED_SECTIONS = ['Overview', 'Workflow Type', 'Task Scope', 'Success Criteria'];
+const SPEC_REQUIRED_SECTIONS = [
+  'Overview',
+  'Workflow Type',
+  'Task Scope',
+  'Estimated Manual Effort',
+  'Success Criteria',
+];
 const SPEC_RECOMMENDED_SECTIONS = [
   'Files to Modify',
   'Files to Reference',
@@ -653,7 +659,7 @@ Schemas:
 - context.json requires: task_description (string)
 - implementation_plan.json requires: feature (string), workflow_type (string: feature|refactor|investigation|migration|simple|bugfix), phases (array of {phase|id, name, subtasks})
 - Each subtask requires: id (string), description (string), status (string: pending|in_progress|completed|blocked|failed)
-- spec.md requires sections: ## Overview, ## Workflow Type, ## Task Scope, ## Success Criteria
+- spec.md requires sections: ## Overview, ## Workflow Type, ## Task Scope, ## Estimated Manual Effort, ## Success Criteria
 
 Rules:
 1. READ BEFORE FIXING - Always read the file first

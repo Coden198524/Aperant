@@ -209,6 +209,65 @@ export function registerAgenteventsHandlers(
           const specsBaseDir = getSpecsDir(specProject.autoBuildPath);
           const specDir = path.join(specProject.path, specsBaseDir, specTask.specId);
           const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+          const planPath = getPlanPath(specProject, specTask);
+          const requireReviewBeforeCoding = specTask.metadata?.requireReviewBeforeCoding === true;
+          if (requireReviewBeforeCoding) {
+            const specExists = existsSync(specFilePath);
+            const planFileExists = existsSync(planPath);
+            let parsedPlan: ImplementationPlan | null = finalPlan ?? null;
+
+            if (!parsedPlan && planFileExists) {
+              try {
+                const planContent = readFileSync(planPath, "utf-8");
+                parsedPlan = safeParseJson<ImplementationPlan>(planContent);
+              } catch {
+                parsedPlan = null;
+              }
+            }
+
+            const subtaskCount = parsedPlan?.phases?.flatMap((phase) => phase.subtasks || []).length || 0;
+            if (specExists && parsedPlan && subtaskCount > 0) {
+              console.warn(`[Task ${taskId}] Plan review required before coding - waiting for manual approval`);
+              taskStateManager.handleUiEvent(
+                taskId,
+                {
+                  type: 'PLANNING_COMPLETE',
+                  hasSubtasks: true,
+                  subtaskCount,
+                  requireReviewBeforeCoding: true
+                },
+                specTask,
+                specProject
+              );
+              return;
+            }
+
+            const missingArtifacts: string[] = [];
+            if (!specExists) {
+              missingArtifacts.push(AUTO_BUILD_PATHS.SPEC_FILE);
+            }
+            if (!planFileExists || !parsedPlan) {
+              missingArtifacts.push(AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+            } else if (subtaskCount === 0) {
+              missingArtifacts.push("subtasks");
+            }
+
+            const error = `Plan review unavailable: ${missingArtifacts.join(", ")} was not generated.`;
+            console.warn(`[Task ${taskId}] ${error}`);
+            safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_ERROR, taskId, error, specProject.id);
+            taskStateManager.handleUiEvent(
+              taskId,
+              {
+                type: 'PLANNING_FAILED',
+                error,
+                recoverable: true
+              },
+              specTask,
+              specProject
+            );
+            return;
+          }
+
           if (existsSync(specFilePath)) {
             console.warn(`[Task ${taskId}] Spec created successfully — starting task execution`);
             // Re-watch the spec directory for the build phase

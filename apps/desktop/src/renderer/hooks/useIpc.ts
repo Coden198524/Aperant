@@ -1,6 +1,6 @@
-import { useEffect } from 'react';
+import { useEffect, useRef } from 'react';
 import { unstable_batchedUpdates } from 'react-dom';
-import { useTaskStore } from '../stores/task-store';
+import { useTaskStore, loadTasks } from '../stores/task-store';
 import { useRoadmapStore } from '../stores/roadmap-store';
 import { useRateLimitStore } from '../stores/rate-limit-store';
 import { useAuthFailureStore } from '../stores/auth-failure-store';
@@ -9,6 +9,8 @@ import type { ImplementationPlan, TaskStatus, RoadmapGenerationStatus, Roadmap, 
 
 /** Maximum log entries to buffer in the batch queue between flushes (OOM prevention) */
 const MAX_BATCH_QUEUE_LOGS = 100;
+const TASK_REFRESH_SENTINEL = '__tasks_refresh__';
+const TASK_REFRESH_COOLDOWN_MS = 1500;
 
 /**
  * Batched update queue for IPC events.
@@ -180,6 +182,7 @@ export function useIpcListeners(): void {
   const appendLog = useTaskStore((state) => state.appendLog);
   const batchAppendLogs = useTaskStore((state) => state.batchAppendLogs);
   const setError = useTaskStore((state) => state.setError);
+  const lastForcedTaskRefreshAtRef = useRef(0);
 
   // Update module-level store actions reference for batch flushing
   // This ensures flushBatch() always has access to current action implementations
@@ -238,6 +241,16 @@ export function useIpcListeners(): void {
         });
         // Filter by project to prevent multi-project interference
         if (!isTaskForCurrentProject(projectId)) return;
+
+        if (taskId === TASK_REFRESH_SENTINEL) {
+          const now = Date.now();
+          if (projectId && now - lastForcedTaskRefreshAtRef.current >= TASK_REFRESH_COOLDOWN_MS) {
+            lastForcedTaskRefreshAtRef.current = now;
+            void loadTasks(projectId, { forceRefresh: true });
+          }
+          return;
+        }
+
         queueUpdate(taskId, { status, reviewReason });
 
         // Sync roadmap feature when task completes

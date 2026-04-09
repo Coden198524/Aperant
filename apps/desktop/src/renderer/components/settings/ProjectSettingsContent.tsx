@@ -181,6 +181,7 @@ function ProjectSettingsContentInner({
         projectId={project.id}
         open={showYunxiaoImportModal}
         onOpenChange={setShowYunxiaoImportModal}
+        defaultCategory={envConfig?.yunxiaoWorkitemCategory}
         onImportComplete={async (result) => {
           if (result.imported > 0) {
             await loadTasks(project.id);

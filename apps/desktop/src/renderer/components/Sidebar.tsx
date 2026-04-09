@@ -8,6 +8,7 @@ import {
   Map,
   BookOpen,
   Lightbulb,
+  Bug,
   AlertCircle,
   Download,
   RefreshCw,
@@ -60,7 +61,7 @@ import { RateLimitIndicator } from './RateLimitIndicator';
 import { UpdateBanner } from './UpdateBanner';
 import type { Project, GitStatus } from '../../shared/types';
 
-export type SidebarView = 'kanban' | 'terminals' | 'roadmap' | 'context' | 'ideation' | 'github-issues' | 'gitlab-issues' | 'github-prs' | 'gitlab-merge-requests' | 'changelog' | 'insights' | 'worktrees' | 'agent-tools';
+export type SidebarView = 'kanban' | 'terminals' | 'roadmap' | 'context' | 'ideation' | 'github-issues' | 'gitlab-issues' | 'yunxiao-issues' | 'github-prs' | 'gitlab-merge-requests' | 'changelog' | 'insights' | 'worktrees' | 'agent-tools';
 
 interface SidebarProps {
   onSettingsClick: () => void;
@@ -101,6 +102,11 @@ const gitlabNavItems: NavItem[] = [
   { id: 'gitlab-merge-requests', labelKey: 'navigation:items.gitlabMRs', icon: GitMerge, shortcut: 'R' }
 ];
 
+// Yunxiao nav items shown when Yunxiao is enabled
+const yunxiaoNavItems: NavItem[] = [
+  { id: 'yunxiao-issues', labelKey: 'navigation:items.yunxiaoIssues', icon: Bug, shortcut: 'Y' }
+];
+
 export function Sidebar({
   onSettingsClick,
   onNewTaskClick,
@@ -131,6 +137,7 @@ export function Sidebar({
   // Subscribe to project-env-store for reactive GitHub/GitLab tab visibility
   const githubEnabled = useProjectEnvStore((state) => state.envConfig?.githubEnabled ?? false);
   const gitlabEnabled = useProjectEnvStore((state) => state.envConfig?.gitlabEnabled ?? false);
+  const yunxiaoEnabled = useProjectEnvStore((state) => state.envConfig?.yunxiaoEnabled ?? false);
 
   // Track the last loaded project ID to avoid redundant loads
   const lastLoadedProjectIdRef = useRef<string | null>(null);
@@ -147,8 +154,12 @@ export function Sidebar({
       items.push(...gitlabNavItems);
     }
 
+    if (yunxiaoEnabled) {
+      items.push(...yunxiaoNavItems);
+    }
+
     return items;
-  }, [githubEnabled, gitlabEnabled]);
+  }, [githubEnabled, gitlabEnabled, yunxiaoEnabled]);
 
   // Load envConfig when project changes to ensure store is populated
   useEffect(() => {

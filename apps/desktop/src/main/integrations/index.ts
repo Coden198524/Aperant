@@ -12,6 +12,7 @@
  */
 
 export * from './types';
+export * from './yunxiao-auto-sync';
 
 // Future: Export concrete adapter implementations
 // export { CannyAdapter } from './canny-adapter';

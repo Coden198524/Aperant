@@ -954,5 +954,75 @@
       "blockedTooltip": "This PR cannot be merged due to blocking conditions",
       "conflictTooltip": "This PR has merge conflicts that need to be resolved"
     }
+  },
+  "yunxiaoIssues": {
+    "title": "Yunxiao Issues",
+    "openBugsCount": "{{count}} open bugs",
+    "searchPlaceholder": "Search bug title / identifier",
+    "filters": {
+      "allCategories": "All Categories"
+    },
+    "categories": {
+      "unclassified": "Unclassified",
+      "gameplay": "Gameplay",
+      "balance": "Balance",
+      "economy": "Economy",
+      "ui": "UI",
+      "performance": "Performance",
+      "network": "Network",
+      "backend": "Backend",
+      "pipeline": "Pipeline"
+    },
+    "severity": {
+      "all": "All Severities",
+      "critical": "Critical",
+      "high": "High",
+      "medium": "Medium",
+      "low": "Low"
+    },
+    "fields": {
+      "category": "Category",
+      "severity": "Severity",
+      "newCategoryPlaceholder": "Enter custom category",
+      "analysis": "Bug Analysis",
+      "analysisPlaceholder": "Root cause / reproduction / workaround / risk..."
+    },
+    "badges": {
+      "inKanban": "in Kanban"
+    },
+    "actions": {
+      "openProjectSettings": "Open Project Settings",
+      "addCategory": "Add Category",
+      "deleteCategory": "Delete Category",
+      "generateAnalysis": "AI Analysis",
+      "generatingAnalysis": "Generating...",
+      "saveAnalysis": "Save Analysis",
+      "viewTask": "View Task",
+      "addToKanban": "Add To Kanban"
+    },
+    "messages": {
+      "notConnected": "Yunxiao is not connected for this project.",
+      "noBugs": "No Yunxiao bugs found",
+      "selectIssue": "Select a Yunxiao issue to view details",
+      "noDescription": "No description",
+      "syncSummary": "Yunxiao synced: +{{created}} / ~{{updated}} / -{{removed}}",
+      "categoryAdded": "Category updated",
+      "categoryDeleted": "Category deleted and {{count}} issue(s) reset to unclassified",
+      "categoryDeleteFailedTitle": "Delete failed",
+      "categoryDeletePartial": "Only {{success}}/{{total}} issues were updated",
+      "categoryNotFound": "Category not found",
+      "cannotDeleteBuiltinCategory": "Built-in categories cannot be deleted",
+      "categoryEmpty": "Category cannot be empty",
+      "categoryTooLong": "Category must be 50 characters or fewer",
+      "analysisGenerated": "AI analysis draft generated",
+      "analysisSaved": "Yunxiao issue analysis saved",
+      "analysisGenerateFailedTitle": "Generation failed",
+      "analysisGenerateFailed": "Failed to generate Yunxiao issue analysis",
+      "importFailedTitle": "Import failed",
+      "importFailed": "Failed to import Yunxiao issue",
+      "addedToKanban": "Yunxiao issue added to Kanban",
+      "imageLoadFailed": "Failed to load image",
+      "open": "open"
+    }
   }
 }
