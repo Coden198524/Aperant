@@ -553,6 +553,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                             worktreeStatus={state.worktreeStatus}
                             worktreeDiff={state.worktreeDiff}
                             isLoadingWorktree={state.isLoadingWorktree}
+                            isLoadingDiff={state.isLoadingDiff}
                             isMerging={state.isMerging}
                             isDiscarding={state.isDiscarding}
                             showDiscardDialog={state.showDiscardDialog}

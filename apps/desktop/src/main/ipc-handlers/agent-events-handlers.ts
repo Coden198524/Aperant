@@ -161,7 +161,7 @@ export function registerAgenteventsHandlers(
     // This ensures the renderer has the final subtask data (fixes 0/0 subtask bug)
     // Always prefer the worktree plan — it has the most current subtask data
     // from agent execution. The file watcher may have been watching main project.
-    let finalPlan = fileWatcher.getCurrentPlan(taskId);
+    let finalPlan = fileWatcher.getCurrentPlan(taskId, exitProjectId);
     if (exitTask && exitProject) {
       const worktreePath = findTaskWorktree(exitProject.path, exitTask.specId);
       if (worktreePath) {
@@ -196,7 +196,7 @@ export function registerAgenteventsHandlers(
       syncPlanPhasesToMainSync(getPlanPath(exitProject, exitTask), finalPlan.phases, exitProjectId);
     }
 
-    fileWatcher.unwatch(taskId).catch((err) => {
+    fileWatcher.unwatch(taskId, exitProjectId).catch((err) => {
       console.error(`[agent-events-handlers] Failed to unwatch for ${taskId}:`, err);
     });
 
@@ -271,7 +271,7 @@ export function registerAgenteventsHandlers(
           if (existsSync(specFilePath)) {
             console.warn(`[Task ${taskId}] Spec created successfully — starting task execution`);
             // Re-watch the spec directory for the build phase
-            fileWatcher.watch(taskId, specDir).catch((err) => {
+            fileWatcher.watch(taskId, specDir, specProject.id).catch((err) => {
               console.error(`[agent-events-handlers] Failed to re-watch spec dir for ${taskId}:`, err);
             });
             const baseBranch = specTask.metadata?.baseBranch || specProject.settings?.mainBranch;
@@ -439,10 +439,10 @@ export function registerAgenteventsHandlers(
         // This handles the case where the task started before the worktree existed:
         // the initial watch fell back to the main project spec dir, but now the worktree
         // is available and implementation_plan.json is being written there.
-        const currentWatchDir = fileWatcher.getWatchedSpecDir(taskId);
+        const currentWatchDir = fileWatcher.getWatchedSpecDir(taskId, project.id);
         if (currentWatchDir && currentWatchDir !== worktreeSpecDir && existsSync(worktreePlanPath)) {
           console.warn(`[agent-events-handlers] Re-watching worktree path for ${taskId}: ${worktreeSpecDir}`);
-          fileWatcher.watch(taskId, worktreeSpecDir).catch((err) => {
+          fileWatcher.watch(taskId, worktreeSpecDir, project.id).catch((err) => {
             console.error(`[agent-events-handlers] Failed to re-watch worktree for ${taskId}:`, err);
           });
         }
@@ -480,9 +480,10 @@ export function registerAgenteventsHandlers(
   // File Watcher Events → Renderer
   // ============================================
 
-  fileWatcher.on("progress", (taskId: string, plan: ImplementationPlan) => {
+  fileWatcher.on("progress", (taskId: string, plan: ImplementationPlan, projectId?: string) => {
     // File watcher events don't carry projectId — fall back to lookup
-    const { task, project } = findTaskAndProject(taskId);
+    const { task, project } = findTaskAndProject(taskId, projectId);
+    const resolvedProjectId = project?.id ?? projectId;
 
     // Diagnostic: log subtask status summary for debugging status-not-updating issues.
     // Only log when there are non-pending statuses (reduces noise).
@@ -499,12 +500,12 @@ export function registerAgenteventsHandlers(
         console.warn(
           `[FileWatcher→Renderer] Task ${taskId} subtask statuses:`,
           statusCounts,
-          `| projectId: ${project?.id ?? 'UNKNOWN'}`,
+          `| projectId: ${resolvedProjectId ?? 'UNKNOWN'}`,
         );
       }
     }
 
-    safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_PROGRESS, taskId, plan, project?.id);
+    safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_PROGRESS, taskId, plan, resolvedProjectId);
 
     // Re-stamp XState status fields if the backend overwrote the plan file without them.
     // The planner agent writes implementation_plan.json via the Write tool, which replaces
@@ -536,10 +537,10 @@ export function registerAgenteventsHandlers(
     }
   });
 
-  fileWatcher.on("error", (taskId: string, error: string) => {
+  fileWatcher.on("error", (taskId: string, error: string, projectId?: string) => {
     // File watcher events don't carry projectId — fall back to lookup
-    const { project } = findTaskAndProject(taskId);
-    safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_ERROR, taskId, error, project?.id);
+    const { project } = findTaskAndProject(taskId, projectId);
+    safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_ERROR, taskId, error, project?.id ?? projectId);
   });
 }
 

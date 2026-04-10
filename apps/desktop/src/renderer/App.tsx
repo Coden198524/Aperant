@@ -56,7 +56,7 @@ import { OnboardingWizard } from './components/onboarding';
 import { AppUpdateNotification } from './components/AppUpdateNotification';
 import { ProactiveSwapListener } from './components/ProactiveSwapListener';
 import { GitHubSetupModal } from './components/GitHubSetupModal';
-import { useProjectStore, loadProjects, addProject, initializeProject, removeProject } from './stores/project-store';
+import { useProjectStore, loadProjects, addProject, initializeProject, removeProject, updateProjectSettings } from './stores/project-store';
 import { useTaskStore, loadTasks } from './stores/task-store';
 import { useSettingsStore, loadSettings, loadProfiles, saveSettings } from './stores/settings-store';
 import { useClaudeProfileStore, loadClaudeProfiles } from './stores/claude-profile-store';
@@ -67,8 +67,9 @@ import { GlobalDownloadIndicator } from './components/GlobalDownloadIndicator';
 import { useIpcListeners } from './hooks/useIpc';
 import { useGlobalTerminalListeners } from './hooks/useGlobalTerminalListeners';
 import { useTerminalProfileChange } from './hooks/useTerminalProfileChange';
+import { useAutoRecoverStuckTasks } from './hooks/useAutoRecoverStuckTasks';
 import { COLOR_THEMES, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_DEFAULT } from '../shared/constants';
-import type { Task, Project, ColorTheme } from '../shared/types';
+import type { Task, Project, ColorTheme, ProjectEnvConfig } from '../shared/types';
 import { ProjectTabBar } from './components/ProjectTabBar';
 import { AddProjectModal } from './components/AddProjectModal';
 import { ViewStateProvider } from './contexts/ViewStateContext';
@@ -116,6 +117,9 @@ export function App() {
 
   // Handle terminal profile change events (recreate terminals on profile switch)
   useTerminalProfileChange();
+
+  // Automatically recover tasks that are stuck with no running backend process
+  useAutoRecoverStuckTasks();
 
   // Stores
   const projects = useProjectStore((state) => state.projects);
@@ -740,10 +744,8 @@ export function App() {
         setShowInitDialog(false);
         setPendingProject(null);
 
-        // Show GitHub setup modal
         if (updatedProject) {
-          setGitHubSetupProject(updatedProject);
-          setShowGitHubSetup(true);
+          await handlePostInitializationSetup(updatedProject);
         }
       } else {
         // Initialization failed - show error but keep dialog open
@@ -759,6 +761,70 @@ export function App() {
       setInitError(errorMessage);
       setIsInitializing(false);
     }
+  };
+
+  const maybePersistDetectedMainBranch = async (project: Project) => {
+    try {
+      const detectedBranch = await window.electronAPI.detectMainBranch(project.path);
+      if (detectedBranch.success && detectedBranch.data && detectedBranch.data !== project.settings?.mainBranch) {
+        await updateProjectSettings(project.id, { mainBranch: detectedBranch.data });
+      }
+    } catch (error) {
+      console.error('Failed to auto-detect main branch after initialization:', error);
+    }
+  };
+
+  const handleOpenIntegrationSettings = async (
+    projectSection: ProjectSettingsSection,
+    project: Project,
+    envUpdates?: Partial<ProjectEnvConfig>
+  ) => {
+    if (envUpdates) {
+      try {
+        await window.electronAPI.updateProjectEnv(project.id, envUpdates);
+      } catch (error) {
+        console.error(`Failed to prefill ${projectSection} integration settings:`, error);
+      }
+    }
+
+    await maybePersistDetectedMainBranch(project);
+    setSettingsInitialProjectSection(projectSection);
+    setIsSettingsDialogOpen(true);
+  };
+
+  const handlePostInitializationSetup = async (project: Project) => {
+    try {
+      const detectedRemote = await window.electronAPI.detectProjectRemoteProvider(project.path);
+      if (detectedRemote.success && detectedRemote.data) {
+        if (detectedRemote.data.provider === 'gitblit') {
+          await handleOpenIntegrationSettings('gitblit', project, {
+            gitblitEnabled: true,
+            gitblitBaseUrl: detectedRemote.data.baseUrl,
+            gitblitRepo: detectedRemote.data.path.replace(/^r\//i, '')
+          });
+          return;
+        }
+
+        if (detectedRemote.data.provider === 'gitlab') {
+          await handleOpenIntegrationSettings('gitlab', project, {
+            gitlabEnabled: true,
+            gitlabInstanceUrl: detectedRemote.data.baseUrl,
+            gitlabProject: detectedRemote.data.repoPath
+          });
+          return;
+        }
+
+        if (detectedRemote.data.provider === 'unknown') {
+          await maybePersistDetectedMainBranch(project);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Failed to detect project remote provider after initialization:', error);
+    }
+
+    setGitHubSetupProject(project);
+    setShowGitHubSetup(true);
   };
 
   const handleGitHubSetupComplete = async (settings: {

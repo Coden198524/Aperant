@@ -22,6 +22,7 @@ import { join } from 'node:path';
 
 import { createSimpleClient } from '../../client/factory';
 import type { ModelShorthand, ThinkingLevel } from '../../config/types';
+import { generateCommitMessage } from '../commit-message';
 
 // =============================================================================
 // Constants
@@ -237,6 +238,104 @@ function pushBranch(
   }
 }
 
+function normalizeBaseBranch(baseBranch: string): string {
+  return baseBranch.startsWith('origin/')
+    ? baseBranch.slice('origin/'.length)
+    : baseBranch;
+}
+
+function getAheadCount(
+  worktreePath: string,
+  gitPath: string,
+  baseBranch: string,
+): number {
+  for (const range of [`origin/${baseBranch}..HEAD`, `${baseBranch}..HEAD`]) {
+    try {
+      const output = execFileSync(
+        gitPath,
+        ['rev-list', '--count', range],
+        { cwd: worktreePath, encoding: 'utf-8', stdio: 'pipe' },
+      ).trim();
+      return Number.parseInt(output, 10) || 0;
+    } catch {
+      // Fall through to the next range candidate.
+    }
+  }
+
+  return 0;
+}
+
+function getWorkingTreeStatus(worktreePath: string, gitPath: string): string {
+  try {
+    return execFileSync(
+      gitPath,
+      ['status', '--porcelain'],
+      { cwd: worktreePath, encoding: 'utf-8', stdio: 'pipe' },
+    ).trim();
+  } catch {
+    return '';
+  }
+}
+
+async function ensureCommittedChanges(
+  worktreePath: string,
+  projectDir: string,
+  gitPath: string,
+  specId: string,
+): Promise<string | undefined> {
+  try {
+    execFileSync(
+      gitPath,
+      ['add', '-A'],
+      { cwd: worktreePath, encoding: 'utf-8', stdio: 'pipe' },
+    );
+
+    const diffSummary = execFileSync(
+      gitPath,
+      ['diff', '--cached', '--stat'],
+      { cwd: worktreePath, encoding: 'utf-8', stdio: 'pipe' },
+    ).trim();
+    const filesChanged = execFileSync(
+      gitPath,
+      ['diff', '--cached', '--name-only'],
+      { cwd: worktreePath, encoding: 'utf-8', stdio: 'pipe' },
+    )
+      .trim()
+      .split('\n')
+      .map((file) => file.trim())
+      .filter(Boolean);
+
+    if (filesChanged.length === 0) {
+      return 'No staged changes to commit for this PR.';
+    }
+
+    let commitMessage = `feat: update ${specId}`;
+    try {
+      commitMessage = await generateCommitMessage({
+        projectDir,
+        specName: specId,
+        diffSummary,
+        filesChanged,
+      });
+    } catch {
+      // Fallback to the deterministic commit message above.
+    }
+
+    execFileSync(
+      gitPath,
+      ['commit', '-m', commitMessage],
+      { cwd: worktreePath, encoding: 'utf-8', stdio: 'pipe' },
+    );
+
+    return undefined;
+  } catch (err: unknown) {
+    const stderr = err instanceof Error && 'stderr' in err
+      ? String((err as NodeJS.ErrnoException & { stderr?: string }).stderr)
+      : String(err);
+    return stderr || 'Failed to create a commit before opening the PR.';
+  }
+}
+
 // =============================================================================
 // Get Existing PR URL
 // =============================================================================
@@ -296,6 +395,26 @@ export async function createPR(config: CreatePRConfig): Promise<CreatePRResult> 
     modelShorthand = 'haiku',
     thinkingLevel = 'low',
   } = config;
+  const effectiveBase = normalizeBaseBranch(baseBranch);
+
+  let aheadCount = getAheadCount(worktreePath, gitPath, effectiveBase);
+  if (aheadCount === 0) {
+    const workingTreeStatus = getWorkingTreeStatus(worktreePath, gitPath);
+    if (workingTreeStatus) {
+      const commitError = await ensureCommittedChanges(worktreePath, projectDir, gitPath, specId);
+      if (commitError) {
+        return { success: false, error: commitError };
+      }
+      aheadCount = getAheadCount(worktreePath, gitPath, effectiveBase);
+    }
+  }
+
+  if (aheadCount === 0) {
+    return {
+      success: false,
+      error: `No commits found between ${effectiveBase} and ${branchName}. Commit your task changes before creating a PR.`,
+    };
+  }
 
   // Step 1: Push the branch to origin
   const pushError = pushBranch(worktreePath, gitPath, branchName);
@@ -325,12 +444,7 @@ export async function createPR(config: CreatePRConfig): Promise<CreatePRResult> 
 
   const prBody = aiBody || extractSpecSummary(projectDir, specId);
 
-  // Step 4: Strip remote prefix from base branch if present
-  const effectiveBase = baseBranch.startsWith('origin/')
-    ? baseBranch.slice('origin/'.length)
-    : baseBranch;
-
-  // Step 5: Build gh pr create command
+  // Step 4: Build gh pr create command
   const ghArgs = [
     'pr', 'create',
     '--base', effectiveBase,
@@ -343,7 +457,7 @@ export async function createPR(config: CreatePRConfig): Promise<CreatePRResult> 
     ghArgs.push('--draft');
   }
 
-  // Step 6: Execute gh pr create with retry on network errors
+  // Step 5: Execute gh pr create with retry on network errors
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       const output = execFileSync(ghPath, ghArgs, {
@@ -366,6 +480,13 @@ export async function createPR(config: CreatePRConfig): Promise<CreatePRResult> 
       const spawnErr = err as NodeJS.ErrnoException & { stderr?: string; stdout?: string };
       const stderr = String(spawnErr.stderr ?? '');
       const stdout = String(spawnErr.stdout ?? '');
+
+      if (/No commits between/i.test(stderr) || /No commits between/i.test(stdout)) {
+        return {
+          success: false,
+          error: `No commits found between ${effectiveBase} and ${branchName}. Commit your task changes before creating a PR.`,
+        };
+      }
 
       // Check "already exists" — not a failure
       if (stderr.toLowerCase().includes('already exists') || stdout.toLowerCase().includes('already exists')) {

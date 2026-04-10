@@ -1,4 +1,4 @@
-import { Eye, FileCode } from 'lucide-react';
+import { Eye, FileCode, Loader2 } from 'lucide-react';
 import {
   AlertDialog,
   AlertDialogCancel,
@@ -15,6 +15,7 @@ import type { WorktreeDiff } from '../../../../shared/types';
 interface DiffViewDialogProps {
   open: boolean;
   worktreeDiff: WorktreeDiff | null;
+  isLoadingDiff: boolean;
   onOpenChange: (open: boolean) => void;
 }
 
@@ -24,6 +25,7 @@ interface DiffViewDialogProps {
 export function DiffViewDialog({
   open,
   worktreeDiff,
+  isLoadingDiff,
   onOpenChange
 }: DiffViewDialogProps) {
   return (
@@ -39,7 +41,12 @@ export function DiffViewDialog({
           </AlertDialogDescription>
         </AlertDialogHeader>
         <div className="flex-1 overflow-auto min-h-0 -mx-6 px-6">
-          {worktreeDiff?.files && worktreeDiff.files.length > 0 ? (
+          {isLoadingDiff ? (
+            <div className="flex items-center justify-center py-8 text-muted-foreground">
+              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+              Loading changed files...
+            </div>
+          ) : worktreeDiff?.files && worktreeDiff.files.length > 0 ? (
             <div className="space-y-2">
               {worktreeDiff.files.map((file, idx) => (
                 <div

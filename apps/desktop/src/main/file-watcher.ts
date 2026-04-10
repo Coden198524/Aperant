@@ -6,7 +6,9 @@ import type { ImplementationPlan } from '../shared/types';
 import { safeParseJson } from './utils/json-repair';
 
 interface WatcherInfo {
+  key: string;
   taskId: string;
+  projectId?: string;
   watcher: FSWatcher;
   planPath: string;
 }
@@ -16,49 +18,55 @@ interface WatcherInfo {
  */
 export class FileWatcher extends EventEmitter {
   private watchers: Map<string, WatcherInfo> = new Map();
-  // Maps taskId -> specDir for the in-flight watch() call.
+  // Maps watchKey -> specDir for the in-flight watch() call.
   // Allows re-watch calls with a different specDir to proceed while
   // still preventing duplicate calls for the exact same specDir.
   private pendingWatches: Map<string, string> = new Map();
-  // Tracks taskIds that had unwatch() called while watch() was in-flight.
+  // Tracks watchKeys that had unwatch() called while watch() was in-flight.
   // Checked after each await point in watch() to avoid creating a leaked watcher.
   private cancelledWatches: Set<string> = new Set();
+
+  private getWatchKey(taskId: string, projectId?: string): string {
+    return projectId ? `${projectId}:${taskId}` : taskId;
+  }
 
   /**
    * Start watching a task's implementation plan
    */
-  async watch(taskId: string, specDir: string): Promise<void> {
-    // Prevent overlapping watch() calls for the same taskId + specDir combination.
+  async watch(taskId: string, specDir: string, projectId?: string): Promise<void> {
+    const watchKey = this.getWatchKey(taskId, projectId);
+
+    // Prevent overlapping watch() calls for the same watchKey + specDir combination.
     // Since watch() is async, rapid-fire callers could enter concurrently
     // before the first call updates state, creating duplicate watchers.
     // A call with a different specDir is a legitimate re-watch and is allowed through.
-    const pendingSpecDir = this.pendingWatches.get(taskId);
+    const pendingSpecDir = this.pendingWatches.get(watchKey);
     if (pendingSpecDir !== undefined && pendingSpecDir === specDir) {
       return;
     }
-    this.pendingWatches.set(taskId, specDir);
+    this.pendingWatches.set(watchKey, specDir);
 
     try {
       // Close any existing watcher for this task.
       // Delete from the map BEFORE awaiting close so that a concurrent watch()
       // call entering after the await cannot obtain the same FSWatcher reference
       // and attempt a second close() on the same object.
-      const existing = this.watchers.get(taskId);
+      const existing = this.watchers.get(watchKey);
       if (existing) {
-        this.watchers.delete(taskId);
+        this.watchers.delete(watchKey);
         await existing.watcher.close();
       }
 
       // Check if a newer watch() call has superseded this one while we were awaiting.
-      // If the pending specDir changed, another concurrent watch() took over — bail out
+      // If the pending specDir changed, another concurrent watch() took over, bail out
       // to avoid overwriting the watcher it is about to create.
-      if (this.pendingWatches.get(taskId) !== specDir) {
+      if (this.pendingWatches.get(watchKey) !== specDir) {
         return;
       }
 
       // Check if unwatch() was called while we were awaiting above.
-      if (this.cancelledWatches.has(taskId)) {
-        this.cancelledWatches.delete(taskId);
+      if (this.cancelledWatches.has(watchKey)) {
+        this.cancelledWatches.delete(watchKey);
         return;
       }
 
@@ -66,7 +74,7 @@ export class FileWatcher extends EventEmitter {
 
       // Check if plan file exists
       if (!existsSync(planPath)) {
-        this.emit('error', taskId, `Plan file not found: ${planPath}`);
+        this.emit('error', taskId, `Plan file not found: ${planPath}`, projectId);
         return;
       }
 
@@ -81,15 +89,17 @@ export class FileWatcher extends EventEmitter {
       });
 
       // Check again after the synchronous watcher creation (no await, but defensive).
-      if (this.cancelledWatches.has(taskId)) {
-        this.cancelledWatches.delete(taskId);
+      if (this.cancelledWatches.has(watchKey)) {
+        this.cancelledWatches.delete(watchKey);
         await watcher.close();
         return;
       }
 
       // Store watcher info
-      this.watchers.set(taskId, {
+      this.watchers.set(watchKey, {
+        key: watchKey,
         taskId,
+        projectId,
         watcher,
         planPath
       });
@@ -100,9 +110,9 @@ export class FileWatcher extends EventEmitter {
           const content = readFileSync(planPath, 'utf-8');
           const plan = safeParseJson<ImplementationPlan>(content);
           if (plan) {
-            this.emit('progress', taskId, this.normalizePlanStatuses(plan));
+            this.emit('progress', taskId, this.normalizePlanStatuses(plan), projectId);
           }
-          // If null, JSON is corrupt even after repair — skip this event
+          // If null, JSON is corrupt even after repair, skip this event
         } catch {
           // File might be in the middle of being written
         }
@@ -111,7 +121,7 @@ export class FileWatcher extends EventEmitter {
       // Handle errors
       watcher.on('error', (error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        this.emit('error', taskId, message);
+        this.emit('error', taskId, message, projectId);
       });
 
       // Read and emit initial state
@@ -119,7 +129,7 @@ export class FileWatcher extends EventEmitter {
         const content = readFileSync(planPath, 'utf-8');
         const plan = safeParseJson<ImplementationPlan>(content);
         if (plan) {
-          this.emit('progress', taskId, this.normalizePlanStatuses(plan));
+          this.emit('progress', taskId, this.normalizePlanStatuses(plan), projectId);
         }
       } catch {
         // Initial read failed - not critical
@@ -129,12 +139,12 @@ export class FileWatcher extends EventEmitter {
       // concurrent watch() call has already updated pendingWatches with a
       // different specDir, leave that entry intact so the superseding call
       // can proceed correctly.
-      if (this.pendingWatches.get(taskId) === specDir) {
-        this.pendingWatches.delete(taskId);
+      if (this.pendingWatches.get(watchKey) === specDir) {
+        this.pendingWatches.delete(watchKey);
         // The delete above guarantees has() is now false, so there is no
-        // longer any in-flight watch() for this taskId. Clear the
+        // longer any in-flight watch() for this watchKey. Clear the
         // cancellation flag so it doesn't linger for future watch() calls.
-        this.cancelledWatches.delete(taskId);
+        this.cancelledWatches.delete(watchKey);
       }
     }
   }
@@ -142,18 +152,20 @@ export class FileWatcher extends EventEmitter {
   /**
    * Stop watching a task
    */
-  async unwatch(taskId: string): Promise<void> {
-    // If watch() is currently in-flight for this taskId, it is already closing the
+  async unwatch(taskId: string, projectId?: string): Promise<void> {
+    const watchKey = this.getWatchKey(taskId, projectId);
+
+    // If watch() is currently in-flight for this watchKey, it is already closing the
     // existing watcher. Just set the cancellation flag and return to avoid a
     // double-close of the same FSWatcher.
-    if (this.pendingWatches.has(taskId)) {
-      this.cancelledWatches.add(taskId);
+    if (this.pendingWatches.has(watchKey)) {
+      this.cancelledWatches.add(watchKey);
       return;
     }
-    const watcherInfo = this.watchers.get(taskId);
+    const watcherInfo = this.watchers.get(watchKey);
     if (watcherInfo) {
       await watcherInfo.watcher.close();
-      this.watchers.delete(taskId);
+      this.watchers.delete(watchKey);
     }
   }
 
@@ -163,8 +175,8 @@ export class FileWatcher extends EventEmitter {
   async unwatchAll(): Promise<void> {
     // Cancel any in-flight watch() calls so they don't create new watchers
     // after this cleanup completes.
-    for (const taskId of this.pendingWatches.keys()) {
-      this.cancelledWatches.add(taskId);
+    for (const watchKey of this.pendingWatches.keys()) {
+      this.cancelledWatches.add(watchKey);
     }
     this.pendingWatches.clear();
     // Clear cancellation flags now that pendingWatches is empty: the in-flight
@@ -184,15 +196,15 @@ export class FileWatcher extends EventEmitter {
   /**
    * Check if a task is being watched
    */
-  isWatching(taskId: string): boolean {
-    return this.watchers.has(taskId);
+  isWatching(taskId: string, projectId?: string): boolean {
+    return this.watchers.has(this.getWatchKey(taskId, projectId));
   }
 
   /**
    * Get the spec directory currently being watched for a task
    */
-  getWatchedSpecDir(taskId: string): string | null {
-    const watcherInfo = this.watchers.get(taskId);
+  getWatchedSpecDir(taskId: string, projectId?: string): string | null {
+    const watcherInfo = this.watchers.get(this.getWatchKey(taskId, projectId));
     if (!watcherInfo) return null;
     return path.dirname(watcherInfo.planPath);
   }
@@ -200,8 +212,8 @@ export class FileWatcher extends EventEmitter {
   /**
    * Get current plan state for a task
    */
-  getCurrentPlan(taskId: string): ImplementationPlan | null {
-    const watcherInfo = this.watchers.get(taskId);
+  getCurrentPlan(taskId: string, projectId?: string): ImplementationPlan | null {
+    const watcherInfo = this.watchers.get(this.getWatchKey(taskId, projectId));
     if (!watcherInfo) return null;
 
     try {

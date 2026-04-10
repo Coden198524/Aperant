@@ -95,6 +95,7 @@ const PRINTABLE_CHARS_REGEX = /^[\x20-\x7E\u00A0-\uFFFF]*$/;
 
 // Timeout for PR creation operations (2 minutes for network operations)
 const PR_CREATION_TIMEOUT_MS = 120000;
+const WORKTREE_GIT_TIMEOUT_MS = 10000;
 
 /**
  * Read utility feature settings (for commit message, merge resolver) from settings file
@@ -1500,6 +1501,8 @@ function getEffectiveBaseBranch(projectPath: string, specId: string, projectMain
         cwd: projectPath,
         encoding: 'utf-8',
         stdio: ['pipe', 'pipe', 'pipe'],
+        env: getIsolatedGitEnv(),
+        timeout: WORKTREE_GIT_TIMEOUT_MS,
       });
       return branch;
     } catch {
@@ -1810,10 +1813,13 @@ export function registerWorktreeHandlers(
         // Get branch info from git
         try {
           // Get current branch in worktree
-          const branch = execFileSync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
+          const branchResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
             cwd: worktreePath,
-            encoding: 'utf-8'
-          }).trim();
+            encoding: 'utf-8',
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          });
+          const branch = (branchResult.stdout as string).trim();
 
           // Get base branch using proper fallback chain:
           // 1. Task metadata baseBranch, 2. Project settings mainBranch, 3. main/master detection
@@ -1822,10 +1828,13 @@ export function registerWorktreeHandlers(
           // Get user's current branch in main project (this is where changes will merge INTO)
           let currentProjectBranch: string | undefined;
           try {
-            currentProjectBranch = execFileSync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
+            const currentBranchResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
               cwd: project.path,
-              encoding: 'utf-8'
-            }).trim();
+              encoding: 'utf-8',
+              env: getIsolatedGitEnv(),
+              timeout: WORKTREE_GIT_TIMEOUT_MS,
+            });
+            currentProjectBranch = (currentBranchResult.stdout as string).trim();
           } catch {
             // Ignore - might be in detached HEAD or git error
           }
@@ -1833,12 +1842,13 @@ export function registerWorktreeHandlers(
           // Get commit count (cross-platform - no shell syntax)
           let commitCount = 0;
           try {
-            const countOutput = execFileSync(getToolPath('git'), ['rev-list', '--count', `${baseBranch}..HEAD`], {
+            const countResult = await execFileAsync(getToolPath('git'), ['rev-list', '--count', `${baseBranch}..HEAD`], {
               cwd: worktreePath,
               encoding: 'utf-8',
-              stdio: ['pipe', 'pipe', 'pipe']
-            }).trim();
-            commitCount = parseInt(countOutput, 10) || 0;
+              env: getIsolatedGitEnv(),
+              timeout: WORKTREE_GIT_TIMEOUT_MS,
+            });
+            commitCount = parseInt((countResult.stdout as string).trim(), 10) || 0;
           } catch {
             commitCount = 0;
           }
@@ -1852,11 +1862,13 @@ export function registerWorktreeHandlers(
           // (both committed and uncommitted). This ensures the UI shows file stats
           // even when the agent hasn't committed its work yet.
           try {
-            const diffStat = execFileSync(getToolPath('git'), ['diff', '--stat', baseBranch], {
+            const diffResult = await execFileAsync(getToolPath('git'), ['diff', '--stat', baseBranch], {
               cwd: worktreePath,
               encoding: 'utf-8',
-              stdio: ['pipe', 'pipe', 'pipe']
-            }).trim();
+              env: getIsolatedGitEnv(),
+              timeout: WORKTREE_GIT_TIMEOUT_MS,
+            });
+            const diffStat = (diffResult.stdout as string).trim();
 
             // Parse the summary line (e.g., "3 files changed, 50 insertions(+), 10 deletions(-)")
             const summaryMatch = diffStat.match(/(\d+) files? changed(?:, (\d+) insertions?\(\+\))?(?:, (\d+) deletions?\(-\))?/);
@@ -1934,18 +1946,22 @@ export function registerWorktreeHandlers(
           // Use working-tree diff against baseBranch to capture ALL changes
           // (both committed and uncommitted). This ensures the diff view shows
           // file changes even when the agent hasn't committed its work yet.
-          numstat = execFileSync(getToolPath('git'), ['diff', '--numstat', baseBranch], {
+          const numstatResult = await execFileAsync(getToolPath('git'), ['diff', '--numstat', baseBranch], {
             cwd: worktreePath,
             encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe']
-          }).trim();
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          });
+          numstat = (numstatResult.stdout as string).trim();
 
           // Get name-status for file status (cross-platform)
-          nameStatus = execFileSync(getToolPath('git'), ['diff', '--name-status', baseBranch], {
+          const nameStatusResult = await execFileAsync(getToolPath('git'), ['diff', '--name-status', baseBranch], {
             cwd: worktreePath,
             encoding: 'utf-8',
-            stdio: ['pipe', 'pipe', 'pipe']
-          }).trim();
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          });
+          nameStatus = (nameStatusResult.stdout as string).trim();
 
           // Parse name-status to get file statuses
           const statusMap: Record<string, 'added' | 'modified' | 'deleted' | 'renamed'> = {};
@@ -3063,14 +3079,14 @@ export function registerWorktreeHandlers(
         }
 
         // Determine base branch and branch name
-        const taskBaseBranch = getTaskBaseBranch(specDir);
-        const baseBranch = options?.targetBranch || taskBaseBranch || 'main';
+        const baseBranch = options?.targetBranch || getEffectiveBaseBranch(
+          project.path,
+          task.specId,
+          project.settings?.mainBranch,
+        );
         const branchName = `auto-claude/${task.specId}`;
         const prTitle = options?.title || `auto-claude: ${task.specId}`;
-
-        if (taskBaseBranch) {
-          debug('Using stored base branch:', taskBaseBranch);
-        }
+        debug('Using base branch for PR creation:', baseBranch);
 
         const gitblitConfig = getGitBlitProjectConfig(project.path, project.autoBuildPath);
         const gitPath = getToolPath('git');

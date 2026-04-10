@@ -43,6 +43,11 @@ export const projectMock = {
     }
   }),
 
+  detectProjectRemoteProvider: async () => ({
+    success: true,
+    data: null
+  }),
+
   // Tab state operations (persisted in main process)
   getTabState: async () => ({
     success: true,

@@ -193,10 +193,18 @@ export interface ElectronAPI {
   // Project operations
   addProject: (projectPath: string) => Promise<IPCResult<Project>>;
   removeProject: (projectId: string) => Promise<IPCResult>;
-  getProjects: () => Promise<IPCResult<Project[]>>;
-  updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) => Promise<IPCResult>;
-  initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
-  checkProjectVersion: (projectId: string) => Promise<IPCResult<AutoBuildVersionInfo>>;
+    getProjects: () => Promise<IPCResult<Project[]>>;
+    updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) => Promise<IPCResult>;
+    initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
+    checkProjectVersion: (projectId: string) => Promise<IPCResult<AutoBuildVersionInfo>>;
+    detectProjectRemoteProvider: (projectPath: string) => Promise<IPCResult<{
+      provider: 'github' | 'gitlab' | 'gitblit' | 'unknown';
+      remoteUrl: string;
+      host: string;
+      baseUrl: string;
+      path: string;
+      repoPath: string;
+    } | null>>;
 
   // Tab State (persisted in main process for reliability)
   getTabState: () => Promise<IPCResult<TabState>>;

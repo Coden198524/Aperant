@@ -458,6 +458,10 @@ export const TaskCard = memo(function TaskCard({
   const effectiveReviewReason: ReviewReason | undefined =
     executionPhase === 'complete' ? 'completed' : task.reviewReason;
   const reviewReasonInfo = task.status === 'human_review' ? getReviewReasonLabel(effectiveReviewReason) : null;
+  const shouldShowResumeAction =
+    isIncomplete ||
+    task.status === 'error' ||
+    (task.status === 'human_review' && task.reviewReason !== 'completed');
 
   const isArchived = !!task.metadata?.archivedAt;
 
@@ -787,7 +791,7 @@ export const TaskCard = memo(function TaskCard({
                 ) : (
                   <>
                     <Play className="mr-1.5 h-3 w-3" />
-                    {t('actions.start')}
+                    {shouldShowResumeAction ? t('actions.resume') : t('actions.start')}
                   </>
                 )}
               </Button>

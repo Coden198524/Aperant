@@ -67,6 +67,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   const [worktreeStatus, setWorktreeStatus] = useState<WorktreeStatus | null>(null);
   const [worktreeDiff, setWorktreeDiff] = useState<WorktreeDiff | null>(null);
   const [isLoadingWorktree, setIsLoadingWorktree] = useState(false);
+  const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [isMerging, setIsMerging] = useState(false);
   const [isDiscarding, setIsDiscarding] = useState(false);
   const [showDiscardDialog, setShowDiscardDialog] = useState(false);
@@ -193,21 +194,43 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     setFeedbackImages([]);
   }, []);
 
-  // Load worktree status when task is in human_review
+  const loadWorktreeDiff = useCallback(async (force = false) => {
+    if (!needsReview) {
+      return;
+    }
+
+    if (!force && (isLoadingDiff || worktreeDiff)) {
+      return;
+    }
+
+    setIsLoadingDiff(true);
+    try {
+      const diffResult = await window.electronAPI.getWorktreeDiff(task.id);
+      if (diffResult.success && diffResult.data) {
+        setWorktreeDiff(diffResult.data);
+        return;
+      }
+
+      setWorkspaceError(diffResult.error || 'Failed to load workspace diff');
+    } catch (err) {
+      console.error('Failed to load worktree diff:', err);
+      setWorkspaceError(err instanceof Error ? err.message : 'Failed to load workspace diff');
+    } finally {
+      setIsLoadingDiff(false);
+    }
+  }, [isLoadingDiff, needsReview, task.id, worktreeDiff]);
+
+  // Load worktree status when task is in human_review.
+  // Diff is loaded lazily when the user actually opens the dialog because it can be expensive.
   useEffect(() => {
     if (needsReview) {
       setIsLoadingWorktree(true);
       setWorkspaceError(null);
+      setWorktreeDiff(null);
 
-      Promise.all([
-        window.electronAPI.getWorktreeStatus(task.id),
-        window.electronAPI.getWorktreeDiff(task.id)
-      ]).then(([statusResult, diffResult]) => {
+      window.electronAPI.getWorktreeStatus(task.id).then((statusResult) => {
         if (statusResult.success && statusResult.data) {
           setWorktreeStatus(statusResult.data);
-        }
-        if (diffResult.success && diffResult.data) {
-          setWorktreeDiff(diffResult.data);
         }
       }).catch((err) => {
         console.error('Failed to load worktree info:', err);
@@ -217,8 +240,15 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     } else {
       setWorktreeStatus(null);
       setWorktreeDiff(null);
+      setIsLoadingDiff(false);
     }
   }, [task.id, needsReview]);
+
+  useEffect(() => {
+    if (showDiffDialog && needsReview && !worktreeDiff && !isLoadingDiff) {
+      void loadWorktreeDiff();
+    }
+  }, [showDiffDialog, needsReview, worktreeDiff, isLoadingDiff, loadWorktreeDiff]);
 
   // Load and watch phase logs
   useEffect(() => {
@@ -389,19 +419,14 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
 
     // Reset workspace error state
     setWorkspaceError(null);
+    setWorktreeDiff(null);
 
     // Reload worktree status
     setIsLoadingWorktree(true);
     try {
-      const [statusResult, diffResult] = await Promise.all([
-        window.electronAPI.getWorktreeStatus(task.id),
-        window.electronAPI.getWorktreeDiff(task.id)
-      ]);
+      const statusResult = await window.electronAPI.getWorktreeStatus(task.id);
       if (statusResult.success && statusResult.data) {
         setWorktreeStatus(statusResult.data);
-      }
-      if (diffResult.success && diffResult.data) {
-        setWorktreeDiff(diffResult.data);
       }
 
       // Reload task data from store to reflect cleared staged state
@@ -514,6 +539,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     worktreeStatus,
     worktreeDiff,
     isLoadingWorktree,
+    isLoadingDiff,
     isMerging,
     isDiscarding,
     showDiscardDialog,
@@ -560,6 +586,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     setWorktreeStatus,
     setWorktreeDiff,
     setIsLoadingWorktree,
+    setIsLoadingDiff,
     setIsMerging,
     setIsDiscarding,
     setShowDiscardDialog,
@@ -581,6 +608,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     // Handlers
     handleLogsScroll,
     togglePhase,
+    loadWorktreeDiff,
     loadMergePreview,
     addFeedbackImage,
     addFeedbackImages,

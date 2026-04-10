@@ -20,6 +20,19 @@ vi.mock('@modelcontextprotocol/sdk/client/stdio.js', () => ({
   }),
 }));
 
+vi.mock('../../../platform', () => ({
+  isWindows: vi.fn(() => false),
+  getNpxCommand: vi.fn(() => 'npx.cmd'),
+  getNpmCommand: vi.fn(() => 'npm.cmd'),
+}));
+
+vi.mock('../hidden-stdio-transport', () => ({
+  // biome-ignore lint/suspicious/noExplicitAny: test mock constructor
+  HiddenWindowsStdioTransport: vi.fn().mockImplementation(function (this: any) {
+    Object.assign(this, { __kind: 'hidden-stdio-transport' });
+  }),
+}));
+
 // Mock registry to control which servers get resolved
 vi.mock('../registry', () => ({
   resolveMcpServers: vi.fn(),
@@ -33,6 +46,8 @@ vi.mock('../../config/agent-configs', () => ({
 import { createMCPClient } from '@ai-sdk/mcp';
 import type { MCPClient } from '@ai-sdk/mcp';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { isWindows } from '../../../platform';
+import { HiddenWindowsStdioTransport } from '../hidden-stdio-transport';
 import { resolveMcpServers } from '../registry';
 import { getRequiredMcpServers } from '../../config/agent-configs';
 import type { McpServerResolveOptions } from '../../config/agent-configs';
@@ -46,11 +61,14 @@ import type { McpServerConfig } from '../types';
 
 const mockCreateMCPClient = vi.mocked(createMCPClient);
 const mockStdioClientTransport = vi.mocked(StdioClientTransport);
+const mockHiddenWindowsStdioTransport = vi.mocked(HiddenWindowsStdioTransport);
+const mockIsWindows = vi.mocked(isWindows);
 const mockResolveMcpServers = vi.mocked(resolveMcpServers);
 const mockGetRequiredMcpServers = vi.mocked(getRequiredMcpServers);
 
 // Sentinel: what StdioClientTransport instances look like after construction
 const FAKE_STDIO_TRANSPORT_PROPS = { __kind: 'stdio-transport' };
+const FAKE_HIDDEN_STDIO_TRANSPORT_PROPS = { __kind: 'hidden-stdio-transport' };
 
 // Helper: build a mock MCP client instance
 function makeMockMcpInstance(tools = { tool_a: {}, tool_b: {} }) {
@@ -88,11 +106,16 @@ const httpConfig: McpServerConfig = {
 
 beforeEach(() => {
   vi.clearAllMocks();
+  mockIsWindows.mockReturnValue(false);
   // Default: StdioClientTransport constructor sets __kind on instance
   // biome-ignore lint/suspicious/noExplicitAny: test mock constructor
   mockStdioClientTransport.mockImplementation(function (this: any) {
     Object.assign(this, FAKE_STDIO_TRANSPORT_PROPS);
   } as unknown as typeof StdioClientTransport);
+  // biome-ignore lint/suspicious/noExplicitAny: test mock constructor
+  mockHiddenWindowsStdioTransport.mockImplementation(function (this: any) {
+    Object.assign(this, FAKE_HIDDEN_STDIO_TRANSPORT_PROPS);
+  } as unknown as typeof HiddenWindowsStdioTransport);
   // Default: createMCPClient returns a standard mock instance
   mockCreateMCPClient.mockResolvedValue(makeMockMcpInstance() as unknown as MCPClient);
   mockGetRequiredMcpServers.mockReturnValue([]);
@@ -167,6 +190,23 @@ describe('createMcpClient', () => {
     expect(mockStdioClientTransport).toHaveBeenCalledWith(
       expect.objectContaining({ env: undefined }),
     );
+  });
+
+  it('uses the hidden Windows stdio transport for MCP servers on Windows', async () => {
+    mockIsWindows.mockReturnValueOnce(true);
+
+    await createMcpClient(stdioConfig);
+
+    expect(mockHiddenWindowsStdioTransport).toHaveBeenCalledWith({
+      command: 'npx',
+      args: ['-y', 'some-mcp-server'],
+      env: expect.objectContaining({ MY_VAR: 'value' }),
+      cwd: undefined,
+    });
+    expect(mockStdioClientTransport).not.toHaveBeenCalled();
+    expect(mockCreateMCPClient).toHaveBeenCalledWith({
+      transport: expect.objectContaining(FAKE_HIDDEN_STDIO_TRANSPORT_PROPS),
+    });
   });
 
   it('close() delegates to the underlying MCP client close method', async () => {

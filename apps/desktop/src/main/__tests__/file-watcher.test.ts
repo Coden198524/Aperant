@@ -182,6 +182,35 @@ describe('FileWatcher concurrency', () => {
   });
 
   // -------------------------------------------------------------------------
+  // 3. Project isolation - same taskId in different projects
+  // -------------------------------------------------------------------------
+  describe('project isolation: same taskId across projects does not collide', () => {
+    it('keeps watchers isolated by projectId and only unwatches the targeted project', async () => {
+      const taskId = '002-task';
+      const projectIdA = 'project-a';
+      const projectIdB = 'project-b';
+      const specDirA = path.join('/project-a', '.auto-claude', 'specs', taskId);
+      const specDirB = path.join('/project-b', '.auto-claude', 'specs', taskId);
+
+      await fw.watch(taskId, specDirA, projectIdA);
+      await fw.watch(taskId, specDirB, projectIdB);
+
+      expect(createdWatchers).toHaveLength(2);
+      expect(fw.isWatching(taskId, projectIdA)).toBe(true);
+      expect(fw.isWatching(taskId, projectIdB)).toBe(true);
+      expect(fw.getWatchedSpecDir(taskId, projectIdA)).toBe(specDirA);
+      expect(fw.getWatchedSpecDir(taskId, projectIdB)).toBe(specDirB);
+
+      await fw.unwatch(taskId, projectIdA);
+
+      expect(fw.isWatching(taskId, projectIdA)).toBe(false);
+      expect(fw.isWatching(taskId, projectIdB)).toBe(true);
+      expect(fw.getWatchedSpecDir(taskId, projectIdA)).toBeNull();
+      expect(fw.getWatchedSpecDir(taskId, projectIdB)).toBe(specDirB);
+    });
+  });
+
+  // -------------------------------------------------------------------------
   // 3. Cancellation — unwatch() during in-flight watch()
   // -------------------------------------------------------------------------
   describe('cancellation: unwatch() during in-flight watch() prevents watcher creation', () => {

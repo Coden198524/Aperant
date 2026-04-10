@@ -30,6 +30,14 @@ export interface ProjectAPI {
   ) => Promise<IPCResult>;
   initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
   checkProjectVersion: (projectId: string) => Promise<IPCResult<AutoBuildVersionInfo>>;
+  detectProjectRemoteProvider: (projectPath: string) => Promise<IPCResult<{
+    provider: 'github' | 'gitlab' | 'gitblit' | 'unknown';
+    remoteUrl: string;
+    host: string;
+    baseUrl: string;
+    path: string;
+    repoPath: string;
+  } | null>>;
 
   // Tab State (persisted in main process for reliability)
   getTabState: () => Promise<IPCResult<TabState>>;
@@ -157,6 +165,18 @@ export const createProjectAPI = (): ProjectAPI => ({
 
   checkProjectVersion: (projectId: string): Promise<IPCResult<AutoBuildVersionInfo>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CHECK_VERSION, projectId),
+
+  detectProjectRemoteProvider: (
+    projectPath: string
+  ): Promise<IPCResult<{
+    provider: 'github' | 'gitlab' | 'gitblit' | 'unknown';
+    remoteUrl: string;
+    host: string;
+    baseUrl: string;
+    path: string;
+    repoPath: string;
+  } | null>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_DETECT_REMOTE_PROVIDER, projectPath),
 
   // Tab State (persisted in main process for reliability)
   getTabState: (): Promise<IPCResult<TabState>> =>

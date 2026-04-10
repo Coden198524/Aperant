@@ -11,13 +11,15 @@
  * transport from @ai-sdk/mcp.
  */
 
-import { createMCPClient } from '@ai-sdk/mcp';
+import { createMCPClient, type MCPTransport } from '@ai-sdk/mcp';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import type { McpClientResult, McpServerConfig, StdioTransportConfig, StreamableHttpTransportConfig } from './types';
 import { type McpRegistryOptions, resolveMcpServers } from './registry';
 import type { AgentType } from '../config/agent-configs';
 import { getRequiredMcpServers } from '../config/agent-configs';
 import type { McpServerResolveOptions } from '../config/agent-configs';
+import { isWindows } from '../../platform';
+import { HiddenWindowsStdioTransport } from './hidden-stdio-transport';
 
 // =============================================================================
 // Transport Creation
@@ -34,17 +36,28 @@ import type { McpServerResolveOptions } from '../config/agent-configs';
  */
 function createTransport(
   config: McpServerConfig,
-): StdioClientTransport | { type: 'sse'; url: string; headers?: Record<string, string> } {
+): MCPTransport | { type: 'sse'; url: string; headers?: Record<string, string> } {
   const { transport } = config;
 
   if (transport.type === 'stdio') {
     const stdioConfig = transport as StdioTransportConfig;
+    const mergedEnv = stdioConfig.env
+      ? { ...process.env, ...stdioConfig.env } as Record<string, string>
+      : undefined;
+
+    if (isWindows()) {
+      return new HiddenWindowsStdioTransport({
+        command: stdioConfig.command,
+        args: stdioConfig.args ?? [],
+        env: mergedEnv,
+        cwd: stdioConfig.cwd,
+      });
+    }
+
     return new StdioClientTransport({
       command: stdioConfig.command,
       args: stdioConfig.args ?? [],
-      env: stdioConfig.env
-        ? { ...process.env, ...stdioConfig.env } as Record<string, string>
-        : undefined,
+      env: mergedEnv,
       cwd: stdioConfig.cwd,
     });
   }

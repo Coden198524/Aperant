@@ -21,6 +21,8 @@ import {
 } from '../project-initializer';
 import { getToolPath } from '../cli-tool-manager';
 import type { BrowserWindow } from 'electron';
+import { getIsolatedGitEnv } from '../utils/git-isolation';
+import { detectRemoteProviderFromUrl } from '../utils/remote-provider-detector';
 
 // ============================================
 // Git Helper Functions
@@ -417,6 +419,30 @@ export function registerProjectHandlers(
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROJECT_DETECT_REMOTE_PROVIDER,
+    async (_, projectPath: string): Promise<IPCResult<ReturnType<typeof detectRemoteProviderFromUrl>>> => {
+      try {
+        const remoteUrl = execFileSync(getToolPath('git'), ['remote', 'get-url', 'origin'], {
+          cwd: projectPath,
+          encoding: 'utf-8',
+          stdio: ['pipe', 'pipe', 'pipe'],
+          env: getIsolatedGitEnv()
+        }).trim();
+
+        return {
+          success: true,
+          data: detectRemoteProviderFromUrl(remoteUrl)
+        };
+      } catch {
+        return {
+          success: true,
+          data: null
         };
       }
     }

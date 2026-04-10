@@ -19,6 +19,7 @@ interface TaskReviewProps {
   worktreeStatus: WorktreeStatus | null;
   worktreeDiff: WorktreeDiff | null;
   isLoadingWorktree: boolean;
+  isLoadingDiff: boolean;
   isMerging: boolean;
   isDiscarding: boolean;
   showDiscardDialog: boolean;
@@ -71,6 +72,7 @@ export function TaskReview({
   worktreeStatus,
   worktreeDiff,
   isLoadingWorktree,
+  isLoadingDiff,
   isMerging,
   isDiscarding,
   showDiscardDialog,
@@ -182,6 +184,7 @@ export function TaskReview({
       <DiffViewDialog
         open={showDiffDialog}
         worktreeDiff={worktreeDiff}
+        isLoadingDiff={isLoadingDiff}
         onOpenChange={onShowDiffDialog}
       />
 

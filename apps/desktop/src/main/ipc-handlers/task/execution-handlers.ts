@@ -151,7 +151,7 @@ export function registerTaskExecutionHandlers(
     }
 
     const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
-    fileWatcher.watch(taskId, watchSpecDir).catch((err) => {
+    fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
       console.error(`${logPrefix} Failed to watch spec dir for ${taskId}:`, err);
     });
 
@@ -368,7 +368,7 @@ export function registerTaskExecutionHandlers(
       // Start file watcher for this task
       // Use worktree path if it exists, since the backend writes implementation_plan.json there
       const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
-      fileWatcher.watch(taskId, watchSpecDir).catch((err) => {
+      fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
         console.error(`[TASK_START] Failed to watch spec dir for ${taskId}:`, err);
       });
 
@@ -449,14 +449,15 @@ export function registerTaskExecutionHandlers(
    */
   ipcMain.on(IPC_CHANNELS.TASK_STOP, (_, taskId: string, projectId?: string) => {
     agentManager.killTask(taskId);
-    fileWatcher.unwatch(taskId).catch((err) => {
-      console.error('[TASK_STOP] Failed to unwatch:', err);
-    });
 
     // Find task and project to emit USER_STOPPED with plan context
     const { task, project } = findTaskAndProject(taskId, projectId);
 
     if (!task || !project) return;
+
+    fileWatcher.unwatch(taskId, project.id).catch((err) => {
+      console.error('[TASK_STOP] Failed to unwatch:', err);
+    });
 
     // Use shared utility to determine if a valid implementation plan exists
     const hasPlan = hasPlanWithSubtasks(project, task);
@@ -934,7 +935,7 @@ export function registerTaskExecutionHandlers(
           // Start file watcher for this task
           // Use worktree path if it exists, since the backend writes implementation_plan.json there
           const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
-          fileWatcher.watch(taskId, watchSpecDir).catch((err) => {
+          fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
             console.error(`[TASK_UPDATE_STATUS] Failed to watch spec dir for ${taskId}:`, err);
           });
 
@@ -1367,7 +1368,7 @@ export function registerTaskExecutionHandlers(
         }
 
         // Stop file watcher if it was watching this task
-        fileWatcher.unwatch(taskId).catch((err) => {
+        fileWatcher.unwatch(taskId, project.id).catch((err) => {
           console.error('[TASK_RECOVER_STUCK] Failed to unwatch:', err);
         });
 
@@ -1458,7 +1459,7 @@ export function registerTaskExecutionHandlers(
             // Start file watcher for this task
             // Use worktree path if it exists, since the backend writes implementation_plan.json there
             const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
-            fileWatcher.watch(taskId, watchSpecDir).catch((err) => {
+            fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
               console.error(`[Recovery] Failed to watch spec dir for ${taskId}:`, err);
             });
 

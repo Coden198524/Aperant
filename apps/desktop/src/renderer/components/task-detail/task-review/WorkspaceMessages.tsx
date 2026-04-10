@@ -48,6 +48,19 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
   const isPlanReview =
     task?.status === 'human_review' &&
     task.reviewReason === 'plan_review';
+  const canResumeExecution =
+    !!task &&
+    (
+      task.status === 'error' ||
+      (task.status === 'human_review' && task.reviewReason !== 'completed')
+    );
+  const isErrorRecovery =
+    !!task &&
+    (
+      task.status === 'error' ||
+      task.reviewReason === 'errors' ||
+      task.reviewReason === 'stopped'
+    );
 
   const handleMarkDone = async () => {
     if (!task) return;
@@ -112,7 +125,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
       </p>
 
       {/* Allow marking as done */}
-      {isPlanReview ? (
+      {canResumeExecution ? (
         <Button
           onClick={handleProceedToCoding}
           disabled={isProceeding}
@@ -130,9 +143,17 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
           ) : (
             <>
               <Play className="h-4 w-4 mr-2" />
-              {t('workspaceMessages.proceedToCoding', {
-                defaultValue: 'Proceed to Coding'
-              })}
+              {isPlanReview
+                ? t('workspaceMessages.proceedToCoding', {
+                    defaultValue: 'Proceed to Coding'
+                  })
+                : isErrorRecovery
+                  ? t('workspaceMessages.retryExecution', {
+                      defaultValue: 'Retry Execution'
+                    })
+                  : t('workspaceMessages.continueExecution', {
+                      defaultValue: 'Continue Execution'
+                    })}
             </>
           )}
         </Button>
