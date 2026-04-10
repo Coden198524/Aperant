@@ -215,6 +215,18 @@
     "openInIDE": "在 IDE 中打开"
   },
   "metadata": {
+    "baseBranch": "基础分支",
+    "baseBranchUnknown": "未知",
+    "baseBranchProjectDefault": "跟随项目默认分支",
+    "baseBranchProjectDefaultWithBranch": "跟随项目默认分支（{{branch}}）",
+    "baseBranchDefaultHelp": "当前任务正在跟随项目默认分支。",
+    "baseBranchOverrideHelp": "当前任务正在覆盖项目默认分支。",
+    "baseBranchHelp": "会用于该任务后续重启、审查差异和创建 PR。",
+    "baseBranchSearch": "搜索分支...",
+    "baseBranchNoBranches": "未找到分支",
+    "baseBranchUpdateFailed": "暂时无法保存基础分支。",
+    "editBaseBranch": "编辑",
+    "saveBaseBranch": "保存",
     "fastMode": "快速",
     "severity": "严重程度",
     "pullRequest": "拉取请求",

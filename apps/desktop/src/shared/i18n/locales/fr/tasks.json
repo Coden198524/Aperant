@@ -175,6 +175,18 @@
     "openInIDE": "Ouvrir dans l'IDE"
   },
   "metadata": {
+    "baseBranch": "Branche de base",
+    "baseBranchUnknown": "Inconnue",
+    "baseBranchProjectDefault": "Utiliser la branche par défaut du projet",
+    "baseBranchProjectDefaultWithBranch": "Utiliser la branche par défaut du projet ({{branch}})",
+    "baseBranchDefaultHelp": "Cette tâche suit la branche par défaut du projet.",
+    "baseBranchOverrideHelp": "Cette tâche remplace la branche par défaut du projet.",
+    "baseBranchHelp": "Utilisée pour les reprises futures, les diffs de revue et la création de PR pour cette tâche.",
+    "baseBranchSearch": "Rechercher des branches...",
+    "baseBranchNoBranches": "Aucune branche trouvée",
+    "baseBranchUpdateFailed": "Impossible d'enregistrer la branche de base pour le moment.",
+    "editBaseBranch": "Modifier",
+    "saveBaseBranch": "Enregistrer",
     "fastMode": "Rapide",
     "severity": "sévérité",
     "pullRequest": "Pull Request",

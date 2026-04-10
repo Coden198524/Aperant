@@ -16,13 +16,19 @@ import {
   Clock,
   ExternalLink,
   ChevronDown,
-  ChevronUp
+  ChevronUp,
+  Loader2,
+  Pencil,
+  Save,
+  X
 } from 'lucide-react';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
 import { Badge } from '../ui/badge';
 import { Button } from '../ui/button';
+import { Combobox } from '../ui/combobox';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
+import { buildBranchOptions } from '../../lib/branch-utils';
 import { buildTokenHoverTitle, cn, formatRelativeTime, formatTokenCount } from '../../lib/utils';
 import {
   TASK_CATEGORY_COLORS,
@@ -31,7 +37,7 @@ import {
   TASK_PRIORITY_COLORS,
   JSON_ERROR_PREFIX
 } from '../../../shared/constants';
-import type { Task, TaskCategory } from '../../../shared/types';
+import type { Task, TaskCategory, GitBranchDetail } from '../../../shared/types';
 import type { IdeationType } from '../../../shared/types/insights';
 import {
   getIdeationTypeLabel,
@@ -42,6 +48,8 @@ import {
   getTaskSeverityLabel,
   getTaskSourceTypeLabel
 } from '../../lib/i18n-labels';
+import { useProjectStore } from '../../stores/project-store';
+import { persistUpdateTask } from '../../stores/task-store';
 
 const CategoryIcon: Record<TaskCategory, typeof Target> = {
   feature: Target,
@@ -60,6 +68,7 @@ interface TaskMetadataProps {
 }
 
 const COLLAPSED_HEIGHT = 200;
+const PROJECT_DEFAULT_BRANCH = '__project_default__';
 const yunxiaoImageCache = new Map<string, string>();
 
 function isYunxiaoProtectedImageUrl(url: string): boolean {
@@ -154,8 +163,16 @@ function TaskDescriptionImage({ src, alt, task }: TaskDescriptionImageProps) {
 export function TaskMetadata({ task }: TaskMetadataProps) {
   const { t } = useTranslation(['tasks', 'errors']);
   const { t: tCommon } = useTranslation('common');
+  const project = useProjectStore((state) => state.projects.find((entry) => entry.id === task.projectId));
   const [isExpanded, setIsExpanded] = useState(false);
   const [hasOverflow, setHasOverflow] = useState(false);
+  const [isEditingBaseBranch, setIsEditingBaseBranch] = useState(false);
+  const [isSavingBaseBranch, setIsSavingBaseBranch] = useState(false);
+  const [isLoadingBranches, setIsLoadingBranches] = useState(false);
+  const [branches, setBranches] = useState<GitBranchDetail[]>([]);
+  const [projectDefaultBranch, setProjectDefaultBranch] = useState('');
+  const [baseBranchDraft, setBaseBranchDraft] = useState(task.metadata?.baseBranch || PROJECT_DEFAULT_BRANCH);
+  const [baseBranchError, setBaseBranchError] = useState<string | null>(null);
   const contentRef = useRef<HTMLDivElement>(null);
   const contentId = useId();
 
@@ -176,6 +193,62 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
       setHasOverflow(element.scrollHeight > COLLAPSED_HEIGHT);
     }
   }, [task.id, task.description]);
+
+  useEffect(() => {
+    setBaseBranchDraft(task.metadata?.baseBranch || PROJECT_DEFAULT_BRANCH);
+    setBaseBranchError(null);
+    setIsEditingBaseBranch(false);
+  }, [task.id, task.metadata?.baseBranch]);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadBranchData = async () => {
+      if (!project?.path) return;
+
+      setIsLoadingBranches(true);
+      try {
+        const [branchesResult, envResult] = await Promise.all([
+          window.electronAPI.getGitBranchesWithInfo(project.path),
+          window.electronAPI.getProjectEnv(task.projectId),
+        ]);
+
+        if (cancelled) return;
+
+        if (branchesResult.success && branchesResult.data) {
+          setBranches(branchesResult.data);
+        } else {
+          setBranches([]);
+        }
+
+        const envDefaultBranch = envResult.success ? envResult.data?.defaultBranch : undefined;
+        if (envDefaultBranch) {
+          setProjectDefaultBranch(envDefaultBranch);
+          return;
+        }
+
+        const detectedBranch = await window.electronAPI.detectMainBranch(project.path);
+        if (!cancelled && detectedBranch.success && detectedBranch.data) {
+          setProjectDefaultBranch(detectedBranch.data);
+        }
+      } catch (error) {
+        if (!cancelled) {
+          console.error('Failed to load task base branch options:', error);
+          setBranches([]);
+        }
+      } finally {
+        if (!cancelled) {
+          setIsLoadingBranches(false);
+        }
+      }
+    };
+
+    void loadBranchData();
+
+    return () => {
+      cancelled = true;
+    };
+  }, [project?.path, task.projectId]);
 
   const hasClassification = task.metadata && (
     task.metadata.category ||
@@ -248,6 +321,49 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
       return <TaskDescriptionImage src={src} alt={alt || ''} task={task} />;
     }
   }), [task]);
+
+  const branchOptions = useMemo(() => buildBranchOptions(branches, {
+    t,
+    includeProjectDefault: {
+      value: PROJECT_DEFAULT_BRANCH,
+      branchName: projectDefaultBranch,
+      labelKey: projectDefaultBranch
+        ? 'tasks:metadata.baseBranchProjectDefaultWithBranch'
+        : 'tasks:metadata.baseBranchProjectDefault',
+    },
+  }), [branches, projectDefaultBranch, t]);
+
+  const displayedBaseBranch = task.metadata?.baseBranch
+    || projectDefaultBranch
+    || t('tasks:metadata.baseBranchUnknown', { defaultValue: 'Unknown' });
+
+  const handleSaveBaseBranch = async () => {
+    const nextBaseBranch = baseBranchDraft === PROJECT_DEFAULT_BRANCH ? undefined : baseBranchDraft.trim();
+    if (!nextBaseBranch && !projectDefaultBranch) {
+      setBaseBranchError(t('tasks:metadata.baseBranchUpdateFailed', {
+        defaultValue: 'Unable to save the base branch right now.',
+      }));
+      return;
+    }
+
+    setIsSavingBaseBranch(true);
+    setBaseBranchError(null);
+    const success = await persistUpdateTask(task.id, {
+      metadata: {
+        baseBranch: nextBaseBranch || undefined,
+      },
+    });
+    setIsSavingBaseBranch(false);
+
+    if (!success) {
+      setBaseBranchError(t('tasks:metadata.baseBranchUpdateFailed', {
+        defaultValue: 'Unable to save the base branch right now.',
+      }));
+      return;
+    }
+
+    setIsEditingBaseBranch(false);
+  };
 
   return (
     <div className="space-y-5">
@@ -401,6 +517,102 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
           )}
         </div>
       )}
+
+      <div className="rounded-lg border border-border/50 bg-muted/20 px-4 py-3">
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wide mb-1.5 flex items-center gap-1.5">
+              <GitBranch className="h-3 w-3 text-info" />
+              {t('tasks:metadata.baseBranch', { defaultValue: 'Base Branch' })}
+            </h3>
+            {!isEditingBaseBranch ? (
+              <>
+                <p className="text-sm font-medium text-foreground break-all">{displayedBaseBranch}</p>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {task.metadata?.baseBranch
+                    ? t('tasks:metadata.baseBranchOverrideHelp', {
+                        defaultValue: 'This task is overriding the project default branch.',
+                      })
+                    : t('tasks:metadata.baseBranchDefaultHelp', {
+                        defaultValue: 'This task is following the project default branch.',
+                      })}
+                </p>
+              </>
+            ) : (
+              <div className="space-y-3">
+                <Combobox
+                  value={baseBranchDraft}
+                  onValueChange={setBaseBranchDraft}
+                  options={branchOptions}
+                  placeholder={projectDefaultBranch
+                    ? t('tasks:metadata.baseBranchProjectDefaultWithBranch', {
+                        branch: projectDefaultBranch,
+                        defaultValue: `Use project default (${projectDefaultBranch})`,
+                      })
+                    : t('tasks:metadata.baseBranchProjectDefault', {
+                        defaultValue: 'Use project default',
+                      })}
+                  searchPlaceholder={t('tasks:metadata.baseBranchSearch', {
+                    defaultValue: 'Search branches...',
+                  })}
+                  emptyMessage={t('tasks:metadata.baseBranchNoBranches', {
+                    defaultValue: 'No branches found',
+                  })}
+                  disabled={isLoadingBranches || isSavingBaseBranch}
+                  className="h-9 min-w-[260px]"
+                />
+                <p className="text-xs text-muted-foreground">
+                  {t('tasks:metadata.baseBranchHelp', {
+                    defaultValue: 'Used for future restarts, review diffs, and PR creation for this task.',
+                  })}
+                </p>
+                {baseBranchError ? (
+                  <p className="text-xs text-destructive">{baseBranchError}</p>
+                ) : null}
+              </div>
+            )}
+          </div>
+
+          {!isEditingBaseBranch ? (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => {
+                setBaseBranchDraft(task.metadata?.baseBranch || PROJECT_DEFAULT_BRANCH);
+                setBaseBranchError(null);
+                setIsEditingBaseBranch(true);
+              }}
+            >
+              <Pencil className="mr-1.5 h-3.5 w-3.5" />
+              {t('tasks:metadata.editBaseBranch', { defaultValue: 'Edit' })}
+            </Button>
+          ) : (
+            <div className="flex items-center gap-2">
+              <Button
+                variant="outline"
+                size="sm"
+                onClick={() => {
+                  setBaseBranchDraft(task.metadata?.baseBranch || PROJECT_DEFAULT_BRANCH);
+                  setBaseBranchError(null);
+                  setIsEditingBaseBranch(false);
+                }}
+                disabled={isSavingBaseBranch}
+              >
+                <X className="mr-1.5 h-3.5 w-3.5" />
+                {t('common:buttons.cancel', { defaultValue: 'Cancel' })}
+              </Button>
+              <Button size="sm" onClick={() => void handleSaveBaseBranch()} disabled={isSavingBaseBranch || isLoadingBranches}>
+                {isSavingBaseBranch ? (
+                  <Loader2 className="mr-1.5 h-3.5 w-3.5 animate-spin" />
+                ) : (
+                  <Save className="mr-1.5 h-3.5 w-3.5" />
+                )}
+                {t('tasks:metadata.saveBaseBranch', { defaultValue: 'Save' })}
+              </Button>
+            </div>
+          )}
+        </div>
+      </div>
 
       {task.metadata && (
         <div className="space-y-4 pt-2">
