@@ -38,6 +38,71 @@ function isOAuthToken(token: string | undefined): boolean {
   return token.startsWith('sk-ant-oa') || token.startsWith('sk-ant-ort');
 }
 
+/**
+ * Detects if the baseURL is an official Anthropic API endpoint.
+ * Third-party API gateways should not receive Claude Code beta headers.
+ */
+function isOfficialAnthropicBaseUrl(baseURL: string | undefined): boolean {
+  if (!baseURL) return true; // Default to official API
+
+  try {
+    const { hostname } = new URL(baseURL);
+    return (
+      hostname === 'api.anthropic.com' ||
+      hostname.endsWith('.anthropic.com')
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Normalizes the baseURL for third-party Anthropic-compatible APIs.
+ *
+ * The Anthropic SDK appends `/messages` to the baseURL, so:
+ * - Official API: uses built-in `/v1` path
+ * - Third-party APIs: may need `/v1` added if missing
+ *
+ * This function ensures third-party APIs work correctly by:
+ * 1. Checking if the URL already ends with `/v1` or `/v1/`
+ * 2. If not, appending `/v1` for compatibility
+ *
+ * @param baseURL - The configured base URL
+ * @returns Normalized base URL with `/v1` if needed
+ */
+function normalizeAnthropicBaseUrl(baseURL: string | undefined): string | undefined {
+  if (!baseURL) return baseURL;
+
+  // Official Anthropic API doesn't need normalization
+  if (isOfficialAnthropicBaseUrl(baseURL)) {
+    return baseURL;
+  }
+
+  try {
+    const url = new URL(baseURL);
+    const pathname = url.pathname;
+
+    // Already has /v1 or /v1/ at the end
+    if (pathname.endsWith('/v1') || pathname.endsWith('/v1/')) {
+      return baseURL;
+    }
+
+    // Already has /v1 in the middle (e.g., /api/v1)
+    if (pathname.includes('/v1/') || pathname.includes('/v1')) {
+      return baseURL;
+    }
+
+    // Add /v1 to the end (remove trailing slash first)
+    const normalizedPathname = pathname.replace(/\/+$/, '') + '/v1';
+    url.pathname = normalizedPathname;
+
+    return url.toString();
+  } catch {
+    // Invalid URL, return as-is
+    return baseURL;
+  }
+}
+
 function isOfficialOpenAIBaseUrl(baseURL: string | undefined): boolean {
   if (!baseURL) return true;
 
@@ -92,20 +157,33 @@ function createProviderInstance(config: ProviderConfig) {
     case SupportedProvider.Anthropic: {
       // OAuth tokens use authToken (Authorization: Bearer) + required beta header
       // API keys use apiKey (x-api-key header)
-      if (isOAuthToken(apiKey)) {
+      // IMPORTANT: Only add beta header for official Anthropic API endpoints
+      // Third-party API gateways may not support or recognize these beta features
+      const isOAuth = isOAuthToken(apiKey);
+      const normalizedBaseURL = normalizeAnthropicBaseUrl(baseURL);
+      const isOfficialApi = isOfficialAnthropicBaseUrl(normalizedBaseURL);
+
+      if (isOAuth) {
+        // OAuth tokens always use authToken + beta header (only for official API)
         return createAnthropic({
           authToken: apiKey,
-          baseURL,
-          headers: {
+          baseURL: normalizedBaseURL,
+          headers: isOfficialApi ? {
             ...headers,
             'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14',
-          },
+          } : headers,
         });
       }
+
+      // API keys: only add beta header for official Anthropic API
+      // Third-party APIs should work without beta headers
       return createAnthropic({
         apiKey,
-        baseURL,
-        headers,
+        baseURL: normalizedBaseURL,
+        headers: isOfficialApi ? {
+          ...headers,
+          'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14',
+        } : headers,
       });
     }
 

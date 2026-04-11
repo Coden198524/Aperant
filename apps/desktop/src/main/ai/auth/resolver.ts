@@ -150,15 +150,28 @@ async function resolveFromProfileOAuth(ctx: AuthResolverContext): Promise<Resolv
       const resolved: ResolvedAuth = {
         apiKey: tokenResult.token,
         source: 'profile-oauth',
-        // OAuth tokens require the beta header for Anthropic API
-        headers: { 'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14' },
       };
 
       // Check for custom base URL from environment (profile may set ANTHROPIC_BASE_URL)
       const baseUrlEnv = PROVIDER_BASE_URL_ENV[ctx.provider];
       if (baseUrlEnv) {
         const baseURL = process.env[baseUrlEnv];
-        if (baseURL) resolved.baseURL = baseURL;
+        if (baseURL) {
+          resolved.baseURL = baseURL;
+        }
+      }
+
+      // Only add beta header for official Anthropic API endpoints
+      // Third-party API gateways may not support these beta features
+      const isOfficialApi = !resolved.baseURL ||
+        resolved.baseURL.includes('api.anthropic.com') ||
+        resolved.baseURL.includes('.anthropic.com');
+
+      if (isOfficialApi) {
+        // OAuth tokens require the beta header for Anthropic API
+        resolved.headers = {
+          'anthropic-beta': 'claude-code-20250219,oauth-2025-04-20,interleaved-thinking-2025-05-14'
+        };
       }
 
       return resolved;
