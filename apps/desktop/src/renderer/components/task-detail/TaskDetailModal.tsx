@@ -107,7 +107,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           return;
         }
       }
-      const result = await startTaskOrQueue(task.id);
+      const result = await startTaskOrQueue(task.id, task.projectId);
       if (!result.success) {
         toast({
           title: t('tasks:wizard.errors.startFailed'),
@@ -159,7 +159,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
     state.setIsMerging(true);
     state.setWorkspaceError(null);
     try {
-      const result = await window.electronAPI.mergeWorktree(task.id, { noCommit: state.stageOnly });
+      const result = await window.electronAPI.mergeWorktree(task.id, { noCommit: state.stageOnly }, task.projectId);
       if (result.success && result.data?.success) {
         if (state.stageOnly && result.data.staged) {
           state.setWorkspaceError(null);
@@ -182,7 +182,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   const handleDiscard = async () => {
     state.setIsDiscarding(true);
     state.setWorkspaceError(null);
-    const result = await window.electronAPI.discardWorktree(task.id);
+    const result = await window.electronAPI.discardWorktree(task.id, undefined, task.projectId);
     if (result.success && result.data?.success) {
       state.setShowDiscardDialog(false);
       onOpenChange(false);
@@ -195,7 +195,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   const handleCreatePR = async (options: WorktreeCreatePROptions) => {
     state.setIsCreatingPR(true);
     try {
-      const result = await window.electronAPI.createWorktreePR(task.id, options);
+      const result = await window.electronAPI.createWorktreePR(task.id, options, task.projectId);
       if (result.success && result.data) {
         // Update single task in store with new status and prUrl (more efficient than reloading all tasks)
         if (result.data.success && result.data.prUrl && !result.data.alreadyExists) {
@@ -308,7 +308,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
     // In human review, users should generally be able to continue work unless it is
     // already in the "completed" review state awaiting final merge/close actions.
-    if (task.status === 'human_review' && task.reviewReason !== 'completed') {
+    if (task.status === 'human_review') {
       return (
         <Button variant="default" onClick={handleStartStop}>
           <Play className="mr-2 h-4 w-4" />

@@ -4,6 +4,20 @@
     "openInbuilt": "在内置终端中打开",
     "openExternal": "在外部终端中打开"
   },
+  "diff": {
+    "title": "变更文件",
+    "loading": "正在加载变更文件...",
+    "emptySummary": "未发现变更",
+    "empty": "未发现变更文件",
+    "noPatch": "该文件没有可直接展示的行级 diff。",
+    "renamedFrom": "重命名自 {{path}}",
+    "status": {
+      "added": "新增",
+      "modified": "修改",
+      "deleted": "删除",
+      "renamed": "重命名"
+    }
+  },
   "merge": {
     "branchHasNewCommits": "{{branch}} 分支有 {{count}} 个新提交。",
     "branchHasNewCommits_other": "{{branch}} 分支有 {{count}} 个新提交。",
@@ -201,5 +215,19 @@
     "alreadyExisted": "已存在",
     "noWorktree": "未找到此任务的工作区",
     "resultsDescriptionWithSkipped": "{{success}} 个成功，{{skipped}} 个跳过，{{failed}} 个失败"
+  },
+  "workspaceStatus": {
+    "reviewReadyTitle": "构建已就绪，等待审核",
+    "view": "查看",
+    "commitsLabel_one": "次提交",
+    "commitsLabel_other": "次提交",
+    "pathLabel": "路径：",
+    "openInIDE": "在 {{name}} 中打开",
+    "openInTerminal": "在 {{name}} 中打开",
+    "uncommittedChangesWarning_one": "主项目中有 {{count}} 处未提交更改",
+    "uncommittedChangesWarning_other": "主项目中有 {{count}} 处未提交更改",
+    "uncommittedChangesHint": "在暂存前请先在终端中提交或暂存这些更改，以避免冲突。",
+    "checkingConflicts": "正在检查冲突...",
+    "checkForConflicts": "检查冲突"
   }
 }

@@ -99,6 +99,34 @@ describe('Task Store', () => {
 
       expect(useTaskStore.getState().tasks).toHaveLength(0);
     });
+
+    it('should preserve token usage when refreshed tasks omit it', () => {
+      useTaskStore.getState().setTasks([
+        createTestTask({
+          id: 'task-1',
+          specId: '001-task',
+          projectId: 'project-1',
+          tokenUsage: createTokenUsage({ promptTokens: 300, completionTokens: 120, totalTokens: 420 })
+        })
+      ]);
+
+      useTaskStore.getState().setTasks([
+        createTestTask({
+          id: 'task-1',
+          specId: '001-task',
+          projectId: 'project-1',
+          status: 'in_progress'
+        })
+      ]);
+
+      expect(useTaskStore.getState().tasks[0].tokenUsage).toEqual(
+        expect.objectContaining({
+          promptTokens: 300,
+          completionTokens: 120,
+          totalTokens: 420
+        })
+      );
+    });
   });
 
   describe('addTask', () => {

@@ -332,7 +332,7 @@ export const TaskCard = memo(function TaskCard({
     }
 
     setIsCheckingChanges(true);
-    window.electronAPI.checkWorktreeChanges(task.id).then((result) => {
+    window.electronAPI.checkWorktreeChanges(task.id, task.projectId).then((result) => {
       if (result.success && result.data) {
         setWorktreeChangesInfo(result.data);
       }
@@ -349,7 +349,7 @@ export const TaskCard = memo(function TaskCard({
       // User should be able to force-stop a stuck task
       stopTask(task.id);
     } else {
-      const result = await startTaskOrQueue(task.id);
+      const result = await startTaskOrQueue(task.id, task.projectId);
       if (!result.success) {
         toast({
           title: t('tasks:wizard.errors.startFailed'),

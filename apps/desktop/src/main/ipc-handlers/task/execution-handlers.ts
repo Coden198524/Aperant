@@ -2,7 +2,7 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
 import path from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { spawnSync, execFileSync } from 'child_process';
 import { getToolPath } from '../../cli-tool-manager';
 import { AgentManager } from '../../agent';
@@ -124,6 +124,134 @@ function hasPlanSubtasks(planFilePath: string): boolean {
     const plan = JSON.parse(planContent);
     return checkSubtasksCompletion(plan).totalCount > 0;
   } catch {
+    return false;
+  }
+}
+
+const IMPLEMENTATION_FAILURE_FEEDBACK_PATTERNS: RegExp[] = [
+  /\bcompile (?:failed|failure|error|errors)\b/i,
+  /\bcompilation (?:failed|failure|error|errors)\b/i,
+  /\bbuild (?:failed|failure|error|errors)\b/i,
+  /\btype(?:script)? (?:error|errors|failed|failure)\b/i,
+  /\btypecheck\b/i,
+  /\btsc\b/i,
+  /\blint(?:ing)? (?:error|errors|failed|failure)\b/i,
+  /\beslint\b/i,
+  /\btest(?:s)? (?:failed|failure|error|errors)\b/i,
+  /\bunit test(?:s)? (?:failed|failure)\b/i,
+  /\bexit code\b/i,
+  /\bsyntaxerror\b/i,
+  /\btypeerror\b/i,
+  /\breferenceerror\b/i,
+  /\bmodule not found\b/i,
+  /\bcannot find module\b/i,
+  /编译失败|编译报错|构建失败|构建报错|打包失败|打包报错|运行失败|启动失败|类型错误|类型检查失败|测试失败|单测失败|校验失败|语法错误/,
+];
+
+function feedbackRequiresImplementationRestart(feedback: string): boolean {
+  const normalized = feedback.trim();
+  if (!normalized) {
+    return false;
+  }
+
+  return IMPLEMENTATION_FAILURE_FEEDBACK_PATTERNS.some((pattern) => pattern.test(normalized));
+}
+
+function buildHumanInputContent(feedback: string, imageReferences: string): string {
+  return (
+    `# Human Input\n\n` +
+    `The user reviewed the previous implementation and reported issues that require another coding pass.\n\n` +
+    `## Requested Fixes\n\n` +
+    `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
+    `## Instructions\n\n` +
+    `- Fix the reported implementation issues.\n` +
+    `- Re-run the relevant build/test/validation steps.\n` +
+    `- Update implementation_plan.json as you make progress.\n`
+  );
+}
+
+function buildFollowupSummary(feedback: string): string {
+  const normalized = feedback
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .find((line) => line.length > 0);
+
+  if (!normalized) {
+    return '';
+  }
+
+  // Remove common markdown list prefixes to keep title concise.
+  const cleaned = normalized.replace(/^[-*+\d.)\s]+/, '').trim();
+  if (!cleaned) {
+    return '';
+  }
+
+  const maxLength = 26;
+  return cleaned.length > maxLength ? `${cleaned.slice(0, maxLength)}...` : cleaned;
+}
+
+function reopenCompletedPlanForFollowupFix(planPath: string, feedback: string): boolean {
+  const planContent = safeReadFileSync(planPath);
+  if (!planContent) {
+    return false;
+  }
+
+  try {
+    const plan = JSON.parse(planContent) as {
+      phases?: Array<{
+        phase?: number;
+        name?: string;
+        type?: string;
+        subtasks?: Array<Record<string, unknown>>;
+      }>;
+      updated_at?: string;
+    };
+
+    if (!Array.isArray(plan.phases)) {
+      plan.phases = [];
+    }
+
+    let targetPhase = plan.phases[plan.phases.length - 1];
+    if (!targetPhase) {
+      targetPhase = {
+        phase: 1,
+        name: '后续修复',
+        type: 'implementation',
+        subtasks: [],
+      };
+      plan.phases.push(targetPhase);
+    }
+
+    if (!Array.isArray(targetPhase.subtasks)) {
+      targetPhase.subtasks = [];
+    }
+
+    const phaseNumber = typeof targetPhase.phase === 'number'
+      ? targetPhase.phase
+      : plan.phases.length;
+
+    const nextSubtaskIndex = targetPhase.subtasks.length + 1;
+    const subtaskId = `${phaseNumber}.${nextSubtaskIndex}`;
+    const description = feedback.trim() || '请根据最新人工审核反馈完成修复并验证结果。';
+    const summary = buildFollowupSummary(description);
+    const title = summary
+      ? `处理评审反馈：${summary}`
+      : `处理评审反馈 #${nextSubtaskIndex}`;
+
+    targetPhase.subtasks.push({
+      id: subtaskId,
+      title,
+      description: `根据人工审核反馈修复问题，并完成必要验证。\n\n评审反馈：\n${description}`,
+      status: 'pending',
+      files: [],
+    });
+
+    plan.updated_at = new Date().toISOString();
+    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    return true;
+  } catch (error) {
+    console.error('[reopenCompletedPlanForFollowupFix] Failed to update plan:', error);
     return false;
   }
 }
@@ -324,6 +452,11 @@ export function registerTaskExecutionHandlers(
         // XState says plan_review - send PLAN_APPROVED
         console.warn('[TASK_START] XState: plan_review -> coding via PLAN_APPROVED');
         taskStateManager.handleUiEvent(taskId, { type: 'PLAN_APPROVED' }, task, project);
+      } else if (currentXState === 'human_review' && !planHasSubtasks) {
+        // Human-review task with no generated plan/subtasks should restart planning.
+        // This is common for stopped/interrupted tasks that entered review without a valid plan.
+        console.warn('[TASK_START] XState: human_review with no plan subtasks -> planning via PLANNING_STARTED');
+        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
       } else if (currentXState === 'error' && !planHasSubtasks) {
         // FIX (#1562): Task crashed during planning (no subtasks yet).
         // Uses planHasSubtasks from implementation_plan.json (more reliable than task.subtasks.length).
@@ -342,6 +475,10 @@ export function registerTaskExecutionHandlers(
         // No XState actor - fallback to task data (e.g., after app restart)
         console.warn('[TASK_START] No XState actor, task data: plan_review -> coding via PLAN_APPROVED');
         taskStateManager.handleUiEvent(taskId, { type: 'PLAN_APPROVED' }, task, project);
+      } else if (task.status === 'human_review' && !planHasSubtasks) {
+        // No XState actor and no subtasks: restart planning instead of resuming coding.
+        console.warn('[TASK_START] No XState actor, human_review with no plan subtasks -> planning via PLANNING_STARTED');
+        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
       } else if (task.status === 'error' && !planHasSubtasks) {
         // FIX (#1562): No XState actor, task crashed during planning (no subtasks).
         // Uses planHasSubtasks from implementation_plan.json (more reliable than task.subtasks.length).
@@ -528,26 +665,24 @@ export function registerTaskExecutionHandlers(
         );
       } else {
         const currentXState = taskStateManager.getCurrentState(taskId);
-        const isPlanReview = currentXState === 'plan_review' || task.reviewReason === 'plan_review';
+        const isPlanReview = currentXState === 'plan_review'
+          || task.reviewReason === 'plan_review'
+          || (task.status === 'human_review' && task.executionProgress?.phase === 'planning');
         const isErrorRecovery = currentXState === 'error' || task.reviewReason === 'errors';
+        const needsImplementationRestart = task.status === 'human_review'
+          && !isPlanReview
+          && !isErrorRecovery;
 
-        // For plan review and error recovery, restart normal execution instead of QA fixing.
-        // QA fixer requires completed implementation context and can dead-end plan_review/errors.
-        if (isPlanReview || isErrorRecovery) {
+        // For error recovery, restart normal execution instead of QA fixing.
+        // QA fixer requires completed implementation context and can dead-end error recovery.
+        if (isErrorRecovery) {
           const specsBaseDir = getSpecsDir(project.autoBuildPath);
           const specDirForState = path.join(project.path, specsBaseDir, task.specId);
           const planHasSubtasks = hasPlanSubtasks(path.join(specDirForState, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
 
           taskStateManager.prepareForRestart(taskId);
 
-          if (isPlanReview) {
-            taskStateManager.handleUiEvent(
-              taskId,
-              { type: 'PLAN_APPROVED' },
-              task,
-              project
-            );
-          } else if (!planHasSubtasks) {
+          if (!planHasSubtasks) {
             taskStateManager.handleUiEvent(
               taskId,
               { type: 'PLANNING_STARTED' },
@@ -677,6 +812,123 @@ export function registerTaskExecutionHandlers(
           } catch (dirError) {
             console.error('[TASK_REVIEW] Failed to create images directory:', dirError);
           }
+        }
+
+      if (isPlanReview) {
+          const humanInputContent = buildHumanInputContent(
+            feedback || 'Address the reported plan review issues and regenerate the implementation plan.',
+            imageReferences
+          );
+
+          const humanInputPaths = new Set<string>([
+            path.join(targetSpecDir, 'HUMAN_INPUT.md'),
+            path.join(specDir, 'HUMAN_INPUT.md'),
+          ]);
+
+          for (const humanInputPath of humanInputPaths) {
+            try {
+              writeFileSync(humanInputPath, humanInputContent, 'utf-8');
+            } catch (error) {
+              console.error('[TASK_REVIEW] Failed to write HUMAN_INPUT.md for plan review:', error);
+              return { success: false, error: 'Failed to write human input file' };
+            }
+          }
+
+          const planPaths = new Set<string>([
+            path.join(targetSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+            path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+          ]);
+
+          for (const planPath of planPaths) {
+            try {
+              if (existsSync(planPath)) {
+                unlinkSync(planPath);
+                console.warn('[TASK_REVIEW] Removed implementation plan to force replanning:', planPath);
+              }
+            } catch (error) {
+              console.error('[TASK_REVIEW] Failed to remove implementation plan for replanning:', error);
+              return { success: false, error: 'Failed to reset implementation plan for replanning' };
+            }
+          }
+
+          taskStateManager.prepareForRestart(taskId);
+          taskStateManager.handleUiEvent(
+            taskId,
+            { type: 'PLANNING_STARTED' },
+            task,
+            project
+          );
+          projectStore.invalidateTasksCache(project.id);
+
+          try {
+            await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]');
+          } catch (error) {
+            console.error('[TASK_REVIEW] Failed to restart planning after plan review rejection:', error);
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to restart task execution'
+            };
+          }
+
+          return { success: true };
+        }
+
+        if (needsImplementationRestart) {
+          if (!feedbackRequiresImplementationRestart(feedback || '')) {
+            console.warn('[TASK_REVIEW] Human review rejected - creating follow-up coding subtask.');
+          }
+          const humanInputContent = buildHumanInputContent(feedback || 'No feedback provided', imageReferences);
+          const humanInputPaths = new Set<string>([
+            path.join(targetSpecDir, 'HUMAN_INPUT.md'),
+            path.join(specDir, 'HUMAN_INPUT.md'),
+          ]);
+
+          for (const humanInputPath of humanInputPaths) {
+            try {
+              writeFileSync(humanInputPath, humanInputContent, 'utf-8');
+            } catch (error) {
+              console.error('[TASK_REVIEW] Failed to write HUMAN_INPUT.md:', error);
+              return { success: false, error: 'Failed to write human input file' };
+            }
+          }
+
+          const reopenedWorktreePlan = reopenCompletedPlanForFollowupFix(
+            path.join(targetSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+            feedback || 'Address the reported human review issues.'
+          );
+          let reopenedSourcePlan = false;
+          if (targetSpecDir !== specDir) {
+            reopenedSourcePlan = reopenCompletedPlanForFollowupFix(
+              path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+              feedback || 'Address the reported human review issues.'
+            );
+          }
+          const reopenedAnyPlan = reopenedWorktreePlan || reopenedSourcePlan;
+
+          if (!reopenedAnyPlan) {
+            console.warn('[TASK_REVIEW] Completed plan was not reopened; restart may skip coding');
+          }
+
+          taskStateManager.prepareForRestart(taskId);
+          taskStateManager.handleUiEvent(
+            taskId,
+            { type: 'USER_RESUMED' },
+            task,
+            project
+          );
+          projectStore.invalidateTasksCache(project.id);
+
+          try {
+            await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]');
+          } catch (error) {
+            console.error('[TASK_REVIEW] Failed to restart execution after implementation feedback:', error);
+            return {
+              success: false,
+              error: error instanceof Error ? error.message : 'Failed to restart task execution'
+            };
+          }
+
+          return { success: true };
         }
 
         try {

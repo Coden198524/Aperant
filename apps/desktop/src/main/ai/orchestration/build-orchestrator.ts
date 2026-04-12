@@ -23,10 +23,12 @@ import {
 } from '../../../shared/constants/phase-protocol';
 import type { AgentType } from '../config/agent-configs';
 import type { Phase } from '../config/types';
+import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   ImplementationPlanSchema,
   ImplementationPlanOutputSchema,
   validateAndNormalizeJsonFile,
+  validateImplementationPlanLanguage,
   repairJsonWithLLM,
   buildValidationRetryPrompt,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
@@ -41,7 +43,7 @@ import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
 // =============================================================================
 
 /** Delay between iterations when auto-continuing (ms) */
-const AUTO_CONTINUE_DELAY_MS = 3_000;
+const AUTO_CONTINUE_DELAY_MS = 500;
 
 /** Maximum planning validation retries before failing */
 const MAX_PLANNING_VALIDATION_RETRIES = 3;
@@ -87,6 +89,8 @@ export interface BuildOrchestratorConfig {
   cliModel?: string;
   /** CLI thinking level override */
   cliThinking?: string;
+  /** App UI language */
+  language?: SupportedLanguage;
   /** Maximum iterations (0 = unlimited) */
   maxIterations?: number;
   /** Abort signal for cancellation */
@@ -375,7 +379,14 @@ export class BuildOrchestrator extends EventEmitter {
       // subtask_id→id, status normalization, etc.) and writes back canonical data.
       const planPath = join(this.config.specDir, 'implementation_plan.json');
       const validation = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
-      if (validation.valid) {
+      const languageErrors = validation.valid && validation.data
+        ? validateImplementationPlanLanguage(validation.data, this.config.language)
+        : [];
+      const validationErrors = validation.valid
+        ? languageErrors
+        : [...validation.errors, ...languageErrors];
+
+      if (validation.valid && validationErrors.length === 0) {
         // Sync to source if in worktree mode
         if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
           await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);
@@ -387,7 +398,7 @@ export class BuildOrchestrator extends EventEmitter {
       // Plan is invalid — try lightweight LLM repair first (single generateText call,
       // no tools, no codebase re-exploration). This is ~100x cheaper than a full re-plan.
       validationFailures++;
-      this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}), attempting lightweight repair...`);
+      this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Attempting lightweight repair...`);
 
       if (this.config.getModel) {
         const model = await this.config.getModel('planner');
@@ -397,7 +408,7 @@ export class BuildOrchestrator extends EventEmitter {
             ImplementationPlanSchema,
             ImplementationPlanOutputSchema,
             model,
-            validation.errors,
+            validationErrors,
             IMPLEMENTATION_PLAN_SCHEMA_HINT,
           );
           if (repairResult.valid) {
@@ -416,14 +427,14 @@ export class BuildOrchestrator extends EventEmitter {
       if (validationFailures >= MAX_PLANNING_VALIDATION_RETRIES) {
         return {
           success: false,
-          error: `Implementation plan validation failed after ${validationFailures} attempts: ${validation.errors.join(', ')}`,
+          error: `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
         };
       }
 
       // Build retry context for the full re-plan (last resort)
       planningRetryContext = buildValidationRetryPrompt(
         'implementation_plan.json',
-        validation.errors,
+        validationErrors,
         IMPLEMENTATION_PLAN_SCHEMA_HINT,
       );
 

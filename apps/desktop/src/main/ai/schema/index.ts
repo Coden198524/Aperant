@@ -21,6 +21,8 @@ export {
   type ValidatedPlanSubtask,
 } from './implementation-plan';
 
+export { validateImplementationPlanLanguage } from './plan-language';
+
 export {
   ComplexityAssessmentSchema,
   type ValidatedComplexityAssessment,

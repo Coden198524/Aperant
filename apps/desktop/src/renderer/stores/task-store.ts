@@ -248,9 +248,33 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   taskOrder: null,
 
   setTasks: (tasks) => {
+    const previousTasks = get().tasks;
+    const previousTaskMap = new Map<string, Task>();
+    for (const task of previousTasks) {
+      previousTaskMap.set(`${task.projectId}:${task.id}`, task);
+      previousTaskMap.set(`${task.projectId}:${task.specId}`, task);
+    }
+
+    const mergedTasks = tasks.map((task) => {
+      const previousTask =
+        previousTaskMap.get(`${task.projectId}:${task.id}`) ??
+        previousTaskMap.get(`${task.projectId}:${task.specId}`);
+
+      if (!previousTask?.tokenUsage) {
+        return task;
+      }
+
+      return {
+        ...task,
+        tokenUsage: task.tokenUsage
+          ? mergeTokenUsageForTask(previousTask.tokenUsage, task.tokenUsage)
+          : previousTask.tokenUsage
+      };
+    });
+
     debugLog('[TaskStore.setTasks] Hydrating tasks:', {
-      count: tasks.length,
-      taskIds: tasks.map(t => ({
+      count: mergedTasks.length,
+      taskIds: mergedTasks.map(t => ({
         id: t.id,
         status: t.status,
         logCount: t.logs?.length || 0,
@@ -260,7 +284,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     });
 
     // Log detailed info for each task with logs
-    tasks.forEach(task => {
+    mergedTasks.forEach(task => {
       if (task.logs && task.logs.length > 0) {
         debugLog(`[TaskStore.setTasks] Task ${task.id} has ${task.logs.length} logs:`, {
           firstLogPreview: task.logs[0]?.substring(0, 100),
@@ -269,7 +293,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       }
     });
 
-    return set({ tasks });
+    return set({ tasks: mergedTasks });
   },
 
   addTask: (task) =>
@@ -970,13 +994,18 @@ export interface StartTaskOrQueueResult {
  * Backend failures are surfaced asynchronously through task status change events,
  * not through this return value.
  */
-export async function startTaskOrQueue(taskId: string): Promise<StartTaskOrQueueResult> {
+export async function startTaskOrQueue(taskId: string, projectId?: string): Promise<StartTaskOrQueueResult> {
   const task = useTaskStore.getState().tasks.find(t => t.id === taskId);
+  const resolvedProjectId = projectId ?? task?.projectId;
   // Exclude this task from the capacity check when it's already in_progress (stuck restart)
   const excludeId = task?.status === 'in_progress' ? taskId : undefined;
 
   if (isQueueAtCapacity(excludeId)) {
-    const result = await persistTaskStatus(taskId, 'queue');
+    const result = await persistTaskStatus(
+      taskId,
+      'queue',
+      resolvedProjectId ? { projectId: resolvedProjectId } : undefined
+    );
     if (!result.success) {
       console.error('[Queue] Failed to queue task:', taskId, result.error);
       return { action: 'queued', success: false, error: result.error };
@@ -984,7 +1013,7 @@ export async function startTaskOrQueue(taskId: string): Promise<StartTaskOrQueue
     return { action: 'queued', success: true };
   }
 
-  startTask(taskId);
+  startTask(taskId, resolvedProjectId ? { projectId: resolvedProjectId } : undefined);
   return { action: 'started', success: true };
 }
 

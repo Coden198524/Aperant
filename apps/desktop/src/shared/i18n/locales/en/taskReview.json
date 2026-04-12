@@ -4,6 +4,20 @@
     "openInbuilt": "Open in Inbuilt Terminal",
     "openExternal": "Open in External Terminal"
   },
+  "diff": {
+    "title": "Changed Files",
+    "loading": "Loading changed files...",
+    "emptySummary": "No changes found",
+    "empty": "No changed files found",
+    "noPatch": "No inline diff available for this file.",
+    "renamedFrom": "Renamed from {{path}}",
+    "status": {
+      "added": "added",
+      "modified": "modified",
+      "deleted": "deleted",
+      "renamed": "renamed"
+    }
+  },
   "merge": {
     "branchHasNewCommits": "{{branch}} branch has {{count}} new commit.",
     "branchHasNewCommits_other": "{{branch}} branch has {{count}} new commits.",
@@ -158,5 +172,19 @@
     "alreadyExisted": "already existed",
     "noWorktree": "No worktree found for this task",
     "resultsDescriptionWithSkipped": "{{success}} succeeded, {{skipped}} skipped, {{failed}} failed"
+  },
+  "workspaceStatus": {
+    "reviewReadyTitle": "Build Ready for Review",
+    "view": "View",
+    "commitsLabel_one": "commit",
+    "commitsLabel_other": "commits",
+    "pathLabel": "Path:",
+    "openInIDE": "Open in {{name}}",
+    "openInTerminal": "Open in {{name}}",
+    "uncommittedChangesWarning_one": "{{count}} uncommitted change in main project",
+    "uncommittedChangesWarning_other": "{{count}} uncommitted changes in main project",
+    "uncommittedChangesHint": "Commit or stash them in your terminal before staging to avoid conflicts.",
+    "checkingConflicts": "Checking for conflicts...",
+    "checkForConflicts": "Check for Conflicts"
   }
 }

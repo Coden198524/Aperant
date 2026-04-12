@@ -244,18 +244,18 @@ export interface ElectronAPI {
   loadImageThumbnail: (projectPath: string, specId: string, imagePath: string) => Promise<IPCResult<string>>;
 
   // Worktree change detection
-  checkWorktreeChanges: (taskId: string) => Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>>;
+  checkWorktreeChanges: (taskId: string, projectId?: string) => Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>>;
 
   // Workspace management (for human review)
   // Per-spec architecture: Each spec has its own worktree at .worktrees/{spec-name}/
-  getWorktreeStatus: (taskId: string) => Promise<IPCResult<WorktreeStatus>>;
-  getWorktreeDiff: (taskId: string) => Promise<IPCResult<WorktreeDiff>>;
-  mergeWorktree: (taskId: string, options?: { noCommit?: boolean }) => Promise<IPCResult<WorktreeMergeResult>>;
-  mergeWorktreePreview: (taskId: string) => Promise<IPCResult<WorktreeMergeResult>>;
-  createWorktreePR: (taskId: string, options?: WorktreeCreatePROptions) => Promise<IPCResult<WorktreeCreatePRResult>>;
-  discardWorktree: (taskId: string, skipStatusChange?: boolean) => Promise<IPCResult<WorktreeDiscardResult>>;
+  getWorktreeStatus: (taskId: string, projectId?: string) => Promise<IPCResult<WorktreeStatus>>;
+  getWorktreeDiff: (taskId: string, projectId?: string) => Promise<IPCResult<WorktreeDiff>>;
+  mergeWorktree: (taskId: string, options?: { noCommit?: boolean }, projectId?: string) => Promise<IPCResult<WorktreeMergeResult>>;
+  mergeWorktreePreview: (taskId: string, projectId?: string) => Promise<IPCResult<WorktreeMergeResult>>;
+  createWorktreePR: (taskId: string, options?: WorktreeCreatePROptions, projectId?: string) => Promise<IPCResult<WorktreeCreatePRResult>>;
+  discardWorktree: (taskId: string, skipStatusChange?: boolean, projectId?: string) => Promise<IPCResult<WorktreeDiscardResult>>;
   discardOrphanedWorktree: (projectId: string, specName: string) => Promise<IPCResult<WorktreeDiscardResult>>;
-  clearStagedState: (taskId: string) => Promise<IPCResult<{ cleared: boolean }>>;
+  clearStagedState: (taskId: string, projectId?: string) => Promise<IPCResult<{ cleared: boolean }>>;
   listWorktrees: (projectId: string, options?: { includeStats?: boolean }) => Promise<IPCResult<WorktreeListResult>>;
   worktreeOpenInIDE: (worktreePath: string, ide: SupportedIDE, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;
   worktreeOpenInTerminal: (worktreePath: string, terminal: SupportedTerminal, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;

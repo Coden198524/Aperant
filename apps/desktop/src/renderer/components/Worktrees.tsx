@@ -221,7 +221,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
 
     setIsMerging(true);
     try {
-      const result = await window.electronAPI.mergeWorktree(task.id);
+      const result = await window.electronAPI.mergeWorktree(task.id, undefined, task.projectId);
       if (result.success && result.data) {
         setMergeResult(result.data);
         if (result.data.success) {
@@ -255,7 +255,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
       let result;
       if (task) {
         // Normal delete via task ID
-        result = await window.electronAPI.discardWorktree(task.id);
+        result = await window.electronAPI.discardWorktree(task.id, undefined, task.projectId);
       } else if (worktreeToDelete.isOrphaned) {
         // Orphaned worktree - delete by spec name directly
         result = await window.electronAPI.discardOrphanedWorktree(projectId, worktreeToDelete.specName);
@@ -321,7 +321,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
     if (!prTask) return null;
 
     try {
-      const result = await window.electronAPI.createWorktreePR(prTask.id, options);
+      const result = await window.electronAPI.createWorktreePR(prTask.id, options, prTask.projectId);
       if (result.success && result.data) {
         if (result.data.success && result.data.prUrl && !result.data.alreadyExists) {
           // Update task in store
@@ -374,7 +374,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
         let result;
         if (task) {
           // Normal delete via task ID
-          result = await window.electronAPI.discardWorktree(task.id);
+          result = await window.electronAPI.discardWorktree(task.id, undefined, task.projectId);
         } else if (worktree?.isOrphaned) {
           // Orphaned worktree - delete by spec name directly
           result = await window.electronAPI.discardOrphanedWorktree(projectId, specName);

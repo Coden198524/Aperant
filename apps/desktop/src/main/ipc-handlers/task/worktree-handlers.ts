@@ -97,6 +97,36 @@ const PRINTABLE_CHARS_REGEX = /^[\x20-\x7E\u00A0-\uFFFF]*$/;
 const PR_CREATION_TIMEOUT_MS = 120000;
 const WORKTREE_GIT_TIMEOUT_MS = 10000;
 
+function parsePatchStats(patch: string): { additions: number; deletions: number } {
+  let additions = 0;
+  let deletions = 0;
+  let insideHunk = false;
+
+  for (const line of patch.split(/\r?\n/)) {
+    if (line.startsWith('diff --git')) {
+      insideHunk = false;
+      continue;
+    }
+
+    if (line.startsWith('@@')) {
+      insideHunk = true;
+      continue;
+    }
+
+    if (!insideHunk) {
+      continue;
+    }
+
+    if (line.startsWith('+')) {
+      additions += 1;
+    } else if (line.startsWith('-')) {
+      deletions += 1;
+    }
+  }
+
+  return { additions, deletions };
+}
+
 /**
  * Read utility feature settings (for commit message, merge resolver) from settings file
  */
@@ -1793,9 +1823,9 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_STATUS,
-    async (_, taskId: string): Promise<IPCResult<WorktreeStatus>> => {
+    async (_, taskId: string, projectId?: string): Promise<IPCResult<WorktreeStatus>> => {
       try {
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
           return { success: false, error: 'Task not found' };
         }
@@ -1918,9 +1948,9 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_DIFF,
-    async (_, taskId: string): Promise<IPCResult<WorktreeDiff>> => {
+    async (_, taskId: string, projectId?: string): Promise<IPCResult<WorktreeDiff>> => {
       try {
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
           return { success: false, error: 'Task not found' };
         }
@@ -1937,25 +1967,14 @@ export function registerWorktreeHandlers(
         // Note: We do NOT use current HEAD as that may be a feature branch
         const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
 
-        // Get the diff with file stats
-        const files: WorktreeDiffFile[] = [];
-
-        let numstat = '';
+        // Get the diff with per-file patches
+        let files: WorktreeDiffFile[] = [];
         let nameStatus = '';
         try {
           // Use working-tree diff against baseBranch to capture ALL changes
           // (both committed and uncommitted). This ensures the diff view shows
           // file changes even when the agent hasn't committed its work yet.
-          const numstatResult = await execFileAsync(getToolPath('git'), ['diff', '--numstat', baseBranch], {
-            cwd: worktreePath,
-            encoding: 'utf-8',
-            env: getIsolatedGitEnv(),
-            timeout: WORKTREE_GIT_TIMEOUT_MS,
-          });
-          numstat = (numstatResult.stdout as string).trim();
-
-          // Get name-status for file status (cross-platform)
-          const nameStatusResult = await execFileAsync(getToolPath('git'), ['diff', '--name-status', baseBranch], {
+          const nameStatusResult = await execFileAsync(getToolPath('git'), ['diff', '--find-renames', '--name-status', baseBranch], {
             cwd: worktreePath,
             encoding: 'utf-8',
             env: getIsolatedGitEnv(),
@@ -1963,30 +1982,69 @@ export function registerWorktreeHandlers(
           });
           nameStatus = (nameStatusResult.stdout as string).trim();
 
-          // Parse name-status to get file statuses
-          const statusMap: Record<string, 'added' | 'modified' | 'deleted' | 'renamed'> = {};
-          nameStatus.split('\n').filter(Boolean).forEach((line: string) => {
-            const [status, ...pathParts] = line.split('\t');
-            const filePath = pathParts.join('\t'); // Handle files with tabs in name
-            switch (status[0]) {
-              case 'A': statusMap[filePath] = 'added'; break;
-              case 'M': statusMap[filePath] = 'modified'; break;
-              case 'D': statusMap[filePath] = 'deleted'; break;
-              case 'R': statusMap[pathParts[1] || filePath] = 'renamed'; break;
-              default: statusMap[filePath] = 'modified';
-            }
-          });
+          const fileEntries = nameStatus
+            .split('\n')
+            .filter(Boolean)
+            .map((line: string): Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'> | null => {
+              const [status, ...pathParts] = line.split('\t');
+              const statusCode = status?.[0];
 
-          // Parse numstat for additions/deletions
-          numstat.split('\n').filter(Boolean).forEach((line: string) => {
-            const [adds, dels, filePath] = line.split('\t');
-            files.push({
-              path: filePath,
-              status: statusMap[filePath] || 'modified',
-              additions: parseInt(adds, 10) || 0,
-              deletions: parseInt(dels, 10) || 0
-            });
-          });
+              if (!statusCode) {
+                return null;
+              }
+
+              switch (statusCode) {
+                case 'A':
+                  return { path: pathParts.join('\t'), status: 'added' };
+                case 'M':
+                  return { path: pathParts.join('\t'), status: 'modified' };
+                case 'D':
+                  return { path: pathParts.join('\t'), status: 'deleted' };
+                case 'R':
+                  return {
+                    path: pathParts[1] || pathParts[0] || '',
+                    previousPath: pathParts[0],
+                    status: 'renamed',
+                  };
+                default:
+                  return { path: pathParts.join('\t'), status: 'modified' };
+              }
+            })
+            .filter((file): file is Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'> => !!file && !!file.path);
+
+          files = await Promise.all(
+            fileEntries.map(async (file) => {
+              let patch = '';
+
+              try {
+                const diffArgs = ['diff', '--no-color', '--find-renames', '--unified=3', baseBranch, '--'];
+                if (file.previousPath && file.previousPath !== file.path) {
+                  diffArgs.push(file.previousPath, file.path);
+                } else {
+                  diffArgs.push(file.path);
+                }
+
+                const patchResult = await execFileAsync(getToolPath('git'), diffArgs, {
+                  cwd: worktreePath,
+                  encoding: 'utf-8',
+                  env: getIsolatedGitEnv(),
+                  timeout: WORKTREE_GIT_TIMEOUT_MS,
+                });
+                patch = ((patchResult.stdout as string) || '').trimEnd();
+              } catch (patchError) {
+                console.warn(`[TASK_WORKTREE_DIFF] Failed to load patch for ${file.path}:`, patchError);
+              }
+
+              const { additions, deletions } = parsePatchStats(patch);
+
+              return {
+                ...file,
+                additions,
+                deletions,
+                patch,
+              };
+            })
+          );
         } catch (diffError) {
           console.error('Error getting diff:', diffError);
         }
@@ -1994,7 +2052,9 @@ export function registerWorktreeHandlers(
         // Generate summary
         const totalAdditions = files.reduce((sum, f) => sum + f.additions, 0);
         const totalDeletions = files.reduce((sum, f) => sum + f.deletions, 0);
-        const summary = `${files.length} files changed, ${totalAdditions} insertions(+), ${totalDeletions} deletions(-)`;
+        const summary = files.length > 0
+          ? `${files.length} files changed, ${totalAdditions} insertions(+), ${totalDeletions} deletions(-)`
+          : 'No changes found';
 
         return {
           success: true,
@@ -2015,7 +2075,7 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_MERGE,
-    async (_, taskId: string, options?: { noCommit?: boolean }): Promise<IPCResult<WorktreeMergeResult>> => {
+    async (_, taskId: string, options?: { noCommit?: boolean }, projectId?: string): Promise<IPCResult<WorktreeMergeResult>> => {
       const isDebugMode = process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development';
       const debug = (...args: unknown[]) => {
         if (isDebugMode) {
@@ -2026,7 +2086,7 @@ export function registerWorktreeHandlers(
       try {
         debug('Handler called with taskId:', taskId, 'options:', options);
 
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
           debug('Task or project not found');
           return { success: false, error: 'Task not found' };
@@ -2436,10 +2496,10 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_MERGE_PREVIEW,
-    async (_, taskId: string): Promise<IPCResult<WorktreeMergeResult>> => {
+    async (_, taskId: string, projectId?: string): Promise<IPCResult<WorktreeMergeResult>> => {
       console.warn('[IPC] TASK_WORKTREE_MERGE_PREVIEW called with taskId:', taskId);
       try {
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
           console.error('[IPC] Task not found:', taskId);
           return { success: false, error: 'Task not found' };
@@ -2570,9 +2630,9 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_DISCARD,
-    async (_, taskId: string, skipStatusChange?: boolean): Promise<IPCResult<WorktreeDiscardResult>> => {
+    async (_, taskId: string, skipStatusChange?: boolean, projectId?: string): Promise<IPCResult<WorktreeDiscardResult>> => {
       try {
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
           return { success: false, error: 'Task not found' };
         }
@@ -2949,9 +3009,9 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_CLEAR_STAGED_STATE,
-    async (_, taskId: string): Promise<IPCResult<{ cleared: boolean }>> => {
+    async (_, taskId: string, projectId?: string): Promise<IPCResult<{ cleared: boolean }>> => {
       try {
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
           return { success: false, error: 'Task not found' };
         }
@@ -3025,7 +3085,7 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_CREATE_PR,
-    async (_, taskId: string, options?: WorktreeCreatePROptions): Promise<IPCResult<WorktreeCreatePRResult>> => {
+    async (_, taskId: string, options?: WorktreeCreatePROptions, projectId?: string): Promise<IPCResult<WorktreeCreatePRResult>> => {
       const isDebugMode = process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development';
       const debug = (...args: unknown[]) => {
         if (isDebugMode) {
@@ -3036,7 +3096,7 @@ export function registerWorktreeHandlers(
       try {
         debug('Handler called with taskId:', taskId, 'options:', options);
 
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
           debug('Task or project not found');
           return { success: false, error: 'Task not found' };

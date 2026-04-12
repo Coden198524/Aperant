@@ -371,4 +371,5 @@ export const IMPLEMENTATION_PLAN_SCHEMA_HINT = `\`\`\`
 \`\`\`
 
 IMPORTANT: Each subtask MUST be an object with at least "id", "title", and "status" fields.
-Do NOT write subtasks as plain strings — they must be objects.`;
+Do NOT write subtasks as plain strings — they must be objects.
+When the app language is Simplified Chinese (\`zh-CN\`), write \`feature\`, phase \`name\`, subtask \`title\`, and subtask \`description\` in Simplified Chinese. Keep file paths, commands, APIs, and code identifiers in their original language when needed.`;

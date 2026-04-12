@@ -365,6 +365,8 @@ export interface WorktreeDiffFile {
   status: 'added' | 'modified' | 'deleted' | 'renamed';
   additions: number;
   deletions: number;
+  previousPath?: string;
+  patch?: string;
 }
 
 // Conflict severity levels from merge system

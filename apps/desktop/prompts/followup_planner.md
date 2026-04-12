@@ -4,6 +4,15 @@ You are continuing work on a **COMPLETED spec** that needs additional functional
 
 **Key Principle**: Extend, don't replace. All existing subtasks and their statuses must be preserved.
 
+## OUTPUT LANGUAGE (MANDATORY)
+
+The orchestrator may require a specific app language. You MUST follow it.
+
+- When the app language is `zh-CN`, write all newly added user-facing planning content in Simplified Chinese.
+- This includes new phase `name`, phase `description`, subtask `title`, subtask `description`, summary updates, acceptance criteria, and progress notes.
+- Preserve existing data, but do not append new English-only phase names or subtask titles when Chinese is required.
+- Keep file paths, commands, API names, class names, and code identifiers in their original language when needed.
+
 ---
 
 ## WHY FOLLOW-UP PLANNING?

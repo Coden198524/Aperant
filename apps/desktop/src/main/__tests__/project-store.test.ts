@@ -1108,5 +1108,63 @@ describe('ProjectStore', () => {
       expect(task?.metadata?.sourceType).toBe('yunxiao');
       expect(task?.description).toContain('Original description from external source.');
     });
+
+    it('should preserve richer token usage when preferred main copy is missing it', async () => {
+      const mainSpecsDir = path.join(TEST_PROJECT_PATH, '.auto-claude', 'specs', '009-dedupe-token-usage');
+      mkdirSync(mainSpecsDir, { recursive: true });
+
+      const worktreeDir = path.join(
+        TEST_PROJECT_PATH,
+        '.auto-claude',
+        'worktrees',
+        'tasks',
+        'dedupe-token-usage-worktree',
+        '.auto-claude',
+        'specs',
+        '009-dedupe-token-usage'
+      );
+      mkdirSync(worktreeDir, { recursive: true });
+
+      const mainPlan = {
+        feature: 'Token Usage Dedupe Feature',
+        workflow_type: 'feature',
+        services_involved: [],
+        status: 'human_review',
+        phases: [],
+        final_acceptance: [],
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-02T00:00:00Z',
+        spec_file: 'spec.md'
+      };
+
+      const worktreePlan = {
+        ...mainPlan,
+        tokenUsage: {
+          promptTokens: 1200,
+          completionTokens: 450,
+          totalTokens: 1650,
+          stepsExecuted: 8
+        }
+      };
+
+      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(mainPlan));
+      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(worktreePlan));
+
+      const { ProjectStore } = await import('../project-store');
+      const store = new ProjectStore();
+      const project = store.addProject(TEST_PROJECT_PATH);
+      const tasks = store.getTasks(project.id);
+
+      const task = tasks.find(t => t.specId === '009-dedupe-token-usage');
+      expect(task).toBeDefined();
+      expect(task?.tokenUsage).toEqual(
+        expect.objectContaining({
+          promptTokens: 1200,
+          completionTokens: 450,
+          totalTokens: 1650,
+          stepsExecuted: 8
+        })
+      );
+    });
   });
 });

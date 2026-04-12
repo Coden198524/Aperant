@@ -256,5 +256,5 @@ export function setupErrorLogging(): void {
     safeLogUnhandled('Unhandled rejection:', reason);
   });
 
-  log.info('Error logging initialized');
+  log.info('Application logging initialized');
 }

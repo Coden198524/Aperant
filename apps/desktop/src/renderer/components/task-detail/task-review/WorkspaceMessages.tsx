@@ -44,6 +44,13 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
   const [isProceeding, setIsProceeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
+  const isDirectModeTask =
+    !!task &&
+    (
+      task.metadata?.useWorktree === false ||
+      task.metadata?.workflowMode === 'fast' ||
+      task.metadata?.fastMode === true
+    );
 
   const isPlanReview =
     task?.status === 'human_review' &&
@@ -52,7 +59,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
     !!task &&
     (
       task.status === 'error' ||
-      (task.status === 'human_review' && task.reviewReason !== 'completed')
+      task.status === 'human_review'
     );
   const isErrorRecovery =
     !!task &&
@@ -84,7 +91,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
     setError(null);
     setNotice(null);
     try {
-      const result = await startTaskOrQueue(task.id);
+      const result = await startTaskOrQueue(task.id, task.projectId);
       if (!result.success) {
         setError(result.error || t('tasks:wizard.errors.startFailed'));
       } else if (result.action === 'queued') {
@@ -108,6 +115,10 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
           ? t('workspaceMessages.planReviewTitle', {
               defaultValue: 'Human Review Required'
             })
+          : isDirectModeTask
+            ? t('workspaceMessages.directModeTitle', {
+                defaultValue: 'Direct Mode Task'
+              })
           : t('workspaceMessages.noWorkspaceTitle', {
               defaultValue: 'No Workspace Found'
             })}
@@ -118,6 +129,11 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
               defaultValue:
                 'Human review required prior to coding. Review your spec.md for any necessary changes.'
             })
+          : isDirectModeTask
+            ? t('workspaceMessages.directModeDescription', {
+                defaultValue:
+                  'This task is running in direct mode and does not create an isolated workspace. Changes are applied directly to your project branch.'
+              })
           : t('workspaceMessages.noWorkspaceDescription', {
               defaultValue:
                 'No isolated workspace was found for this task. The changes may have been made directly in your project.'
@@ -219,7 +235,7 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
       // Call the discard/delete worktree command
       // Pass skipStatusChange=true to prevent backend from resetting to 'backlog'
       // since we explicitly set status to 'done' immediately after
-      const result = await window.electronAPI.discardWorktree(task.id, true);
+      const result = await window.electronAPI.discardWorktree(task.id, true, task.projectId);
 
       if (!result.success) {
         setError(
@@ -298,7 +314,7 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
 
     try {
       // Clear the staged flag via IPC
-      const result = await window.electronAPI.clearStagedState(task.id);
+      const result = await window.electronAPI.clearStagedState(task.id, task.projectId);
 
       if (!result.success) {
         setError(

@@ -364,6 +364,19 @@ function getLanguageRequirement(language: SerializableSessionConfig['language'])
   }
 }
 
+function getImplementationPlanLanguageRequirement(
+  language: SerializableSessionConfig['language'],
+): string | null {
+  switch (language) {
+    case 'zh-CN':
+      return 'When writing implementation_plan.json, all user-facing planning fields must be in Simplified Chinese. This includes `feature`, phase `name` and `description`, subtask `title`, subtask `description`, acceptance criteria, and progress notes. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed, but do not leave the planning text itself in English.';
+    case 'fr':
+      return 'When writing implementation_plan.json, all user-facing planning fields must be in French. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed.';
+    default:
+      return null;
+  }
+}
+
 function appendLanguageRequirement(
   content: string,
   language: SerializableSessionConfig['language'],
@@ -399,13 +412,34 @@ async function assemblePrompt(
     }
   }
 
+  let humanInput: string | null = null;
+  if (!promptName.startsWith('qa_')) {
+    const humanInputPath = join(session.specDir, 'HUMAN_INPUT.md');
+    if (existsSync(humanInputPath)) {
+      try {
+        humanInput = readFileSync(humanInputPath, 'utf-8').trim() || null;
+      } catch {
+        humanInput = null;
+      }
+    }
+  }
+
   const promptWithContext = injectContext(basePrompt, {
     specDir: session.specDir,
     projectDir: session.projectDir,
     projectInstructions: cachedProjectInstructions,
+    humanInput,
   });
 
-  return appendLanguageRequirement(promptWithContext, session.language);
+  let promptWithLanguage = appendLanguageRequirement(promptWithContext, session.language);
+  if (promptName === 'planner' || promptName === 'followup_planner' || promptName === 'spec_quick') {
+    const planRequirement = getImplementationPlanLanguageRequirement(session.language);
+    if (planRequirement) {
+      promptWithLanguage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planRequirement}`;
+    }
+  }
+
+  return promptWithLanguage;
 }
 
 // =============================================================================
@@ -735,6 +769,7 @@ async function runBuildOrchestrator(
     projectDir: session.projectDir,
     sourceSpecDir: session.sourceSpecDir,
     maxIterations: isFastWorkflow(session) ? 1 : undefined,
+    language: session.language,
     abortSignal: abortController.signal,
 
     generatePrompt: async (agentType, _phase, context) => {
@@ -1056,6 +1091,7 @@ async function runSpecOrchestrator(
     complexityOverride: isFastWorkflow(session) ? 'simple' : undefined,
     useAiAssessment: !isFastWorkflow(session),
     projectIndex: projectIndexContent,
+    language: session.language,
     abortSignal: abortController.signal,
 
     generatePrompt: async (_agentType, phase, context) => {
@@ -1408,6 +1444,13 @@ function buildSpecKickoffMessage(
     contextSections.push(`\n\n## PROJECT INDEX (pre-generated)\n\nThe following project structure analysis has been pre-generated for you. Use this as your starting point instead of scanning the entire project:\n\n\`\`\`json\n${projectIndex}\n\`\`\``);
   }
 
+  const planLanguageRequirement = (agentType === 'planner' || specPhase === 'quick_spec')
+    ? getImplementationPlanLanguageRequirement(language)
+    : null;
+  if (planLanguageRequirement) {
+    contextSections.push(`\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n\n${planLanguageRequirement}`);
+  }
+
   if (priorPhaseOutputs && Object.keys(priorPhaseOutputs).length > 0) {
     contextSections.push('\n\n## CONTEXT FROM PRIOR PHASES\n\nThe following outputs from earlier spec phases are provided to avoid re-reading files:');
     for (const [fileName, content] of Object.entries(priorPhaseOutputs)) {
@@ -1449,7 +1492,15 @@ function buildKickoffMessage(
       break;
   }
 
-  return appendLanguageRequirement(baseMessage, language);
+  let kickoffMessage = appendLanguageRequirement(baseMessage, language);
+  if (agentType === 'planner') {
+    const planLanguageRequirement = getImplementationPlanLanguageRequirement(language);
+    if (planLanguageRequirement) {
+      kickoffMessage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planLanguageRequirement}`;
+    }
+  }
+
+  return kickoffMessage;
 }
 
 /**
@@ -1458,7 +1509,7 @@ function buildKickoffMessage(
 function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: string): string {
   switch (agentType) {
     case 'planner':
-      return `You are a planning agent. Read spec.md in ${specDir} and create implementation_plan.json with phases and subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending".`;
+      return `You are a planning agent. Read spec.md in ${specDir} and create implementation_plan.json with phases and subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending". If the system prompt specifies an app language, localize all user-facing planning fields such as feature, phase names, subtask titles, and subtask descriptions to that language.`;
     case 'coder':
       return `You are a coding agent. Implement the current pending subtask from implementation_plan.json in ${specDir}. Project root: ${projectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
     case 'qa_reviewer':

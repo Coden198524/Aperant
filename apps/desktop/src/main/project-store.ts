@@ -32,6 +32,24 @@ interface TasksCacheEntry {
   timestamp: number;
 }
 
+function mergeTokenUsage(
+  preferred: TokenUsage | undefined,
+  fallback: TokenUsage | undefined
+): TokenUsage | undefined {
+  if (!preferred) return fallback;
+  if (!fallback) return preferred;
+
+  return {
+    promptTokens: Math.max(preferred.promptTokens ?? 0, fallback.promptTokens ?? 0),
+    completionTokens: Math.max(preferred.completionTokens ?? 0, fallback.completionTokens ?? 0),
+    totalTokens: Math.max(preferred.totalTokens ?? 0, fallback.totalTokens ?? 0),
+    thinkingTokens: Math.max(preferred.thinkingTokens ?? 0, fallback.thinkingTokens ?? 0) || undefined,
+    cacheReadTokens: Math.max(preferred.cacheReadTokens ?? 0, fallback.cacheReadTokens ?? 0) || undefined,
+    cacheCreationTokens: Math.max(preferred.cacheCreationTokens ?? 0, fallback.cacheCreationTokens ?? 0) || undefined,
+    stepsExecuted: Math.max(preferred.stepsExecuted ?? 0, fallback.stepsExecuted ?? 0) || undefined,
+  };
+}
+
 /**
  * Persistent storage for projects and settings
  */
@@ -381,6 +399,11 @@ export class ProjectStore {
             }
 
             merged = { ...merged, metadata: mergedMetadata };
+          }
+
+          const mergedTokenUsage = mergeTokenUsage(preferred.tokenUsage, fallback.tokenUsage);
+          if (mergedTokenUsage) {
+            merged = { ...merged, tokenUsage: mergedTokenUsage };
           }
 
           return merged;

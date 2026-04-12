@@ -145,7 +145,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   useEffect(() => {
     if (showDeleteDialog && task) {
       setIsCheckingChanges(true);
-      window.electronAPI.checkWorktreeChanges(task.id).then((result) => {
+      window.electronAPI.checkWorktreeChanges(task.id, task.projectId).then((result) => {
         if (result.success && result.data) {
           setWorktreeChangesInfo(result.data);
         }
@@ -205,7 +205,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
 
     setIsLoadingDiff(true);
     try {
-      const diffResult = await window.electronAPI.getWorktreeDiff(task.id);
+      const diffResult = await window.electronAPI.getWorktreeDiff(task.id, task.projectId);
       if (diffResult.success && diffResult.data) {
         setWorktreeDiff(diffResult.data);
         return;
@@ -218,7 +218,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     } finally {
       setIsLoadingDiff(false);
     }
-  }, [isLoadingDiff, needsReview, task.id, worktreeDiff]);
+  }, [isLoadingDiff, needsReview, task.id, task.projectId, worktreeDiff]);
 
   // Load worktree status when task is in human_review.
   // Diff is loaded lazily when the user actually opens the dialog because it can be expensive.
@@ -228,7 +228,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
       setWorkspaceError(null);
       setWorktreeDiff(null);
 
-      window.electronAPI.getWorktreeStatus(task.id).then((statusResult) => {
+      window.electronAPI.getWorktreeStatus(task.id, task.projectId).then((statusResult) => {
         if (statusResult.success && statusResult.data) {
           setWorktreeStatus(statusResult.data);
         }
@@ -242,7 +242,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
       setWorktreeDiff(null);
       setIsLoadingDiff(false);
     }
-  }, [task.id, needsReview]);
+  }, [task.id, task.projectId, needsReview]);
 
   useEffect(() => {
     if (showDiffDialog && needsReview && !worktreeDiff && !isLoadingDiff) {
@@ -346,7 +346,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
       setMergePreview(null);
       hasLoadedPreviewRef.current = null;
     }
-  }, [task.id]);
+  }, [task.id, task.projectId]);
 
   // Load merge preview (conflict detection) and refresh worktree status
   const loadMergePreview = useCallback(async () => {
@@ -361,8 +361,8 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
       // Use Promise.allSettled to handle partial failures - if one API call fails,
       // the other's result is still processed rather than being discarded
       const [previewResult, statusResult] = await Promise.allSettled([
-        window.electronAPI.mergeWorktreePreview(task.id),
-        window.electronAPI.getWorktreeStatus(task.id)
+        window.electronAPI.mergeWorktreePreview(task.id, task.projectId),
+        window.electronAPI.getWorktreeStatus(task.id, task.projectId)
       ]);
 
       const errors: string[] = [];
@@ -424,7 +424,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     // Reload worktree status
     setIsLoadingWorktree(true);
     try {
-      const statusResult = await window.electronAPI.getWorktreeStatus(task.id);
+      const statusResult = await window.electronAPI.getWorktreeStatus(task.id, task.projectId);
       if (statusResult.success && statusResult.data) {
         setWorktreeStatus(statusResult.data);
       }
@@ -439,7 +439,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     } finally {
       setIsLoadingWorktree(false);
     }
-  }, [task.id, currentProject]);
+  }, [task.id, task.projectId, currentProject]);
 
   // NOTE: Merge preview is NO LONGER auto-loaded on modal open.
   // User must click "Check for Conflicts" button to trigger the expensive preview operation.

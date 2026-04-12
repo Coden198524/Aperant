@@ -52,7 +52,7 @@ export function StagedSuccessMessage({
     setError(null);
 
     try {
-      const result = await window.electronAPI.discardWorktree(task.id, true);
+      const result = await window.electronAPI.discardWorktree(task.id, true, task.projectId);
 
       if (!result.success) {
         setError(result.error || t('taskReview:stagedSuccess.errors.failedToDeleteWorktree'));
@@ -100,7 +100,7 @@ export function StagedSuccessMessage({
     setError(null);
 
     try {
-      const result = await window.electronAPI.clearStagedState(task.id);
+      const result = await window.electronAPI.clearStagedState(task.id, task.projectId);
 
       if (!result.success) {
         setError(result.error || t('taskReview:stagedSuccess.errors.failedToResetStagedState'));

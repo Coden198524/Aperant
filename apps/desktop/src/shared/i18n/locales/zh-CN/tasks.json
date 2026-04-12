@@ -307,12 +307,16 @@
     "cancel": "取消"
   },
   "feedback": {
+    "requestChanges": "要求修改",
+    "description": "发现问题了吗？请描述需要修复的内容，AI 将继续处理。",
+    "placeholder": "请描述问题或需要修改的内容...",
     "dragDropHint": "拖放图片或粘贴截图",
     "imageAdded": "图片添加成功",
     "maxImagesError": "最多允许 {{count}} 张图片",
     "invalidTypeError": "无效的图片类型。允许：{{types}}",
     "removeImage": "移除图片",
-    "processingError": "处理图片失败"
+    "processingError": "处理图片失败",
+    "submitting": "提交中..."
   },
   "review": {
     "mergeTooltip": "将任务工作树分支中的更改合并回基础分支。AI 会解决冲突，之后你可以选择保留或移除工作树。"

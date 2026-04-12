@@ -140,7 +140,7 @@ export function BulkPRDialog({
         const prResult = await window.electronAPI?.createWorktreePR(tasks[i].id, {
           targetBranch: targetBranch || undefined,
           draft: isDraft
-        });
+        }, tasks[i].projectId);
 
         if (isCancelledRef.current) break;
 

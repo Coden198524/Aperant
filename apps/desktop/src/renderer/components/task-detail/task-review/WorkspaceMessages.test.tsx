@@ -52,19 +52,24 @@ describe('NoWorkspaceMessage', () => {
     fireEvent.click(button);
 
     await waitFor(() => {
-      expect(mockStartTaskOrQueue).toHaveBeenCalledWith('task-1');
+      expect(mockStartTaskOrQueue).toHaveBeenCalledWith('task-1', 'project-1');
     });
     expect(mockPersistTaskStatus).not.toHaveBeenCalled();
   });
 
-  it('keeps mark as done for completed review tasks', () => {
+  it('allows continuing execution for completed review tasks', async () => {
     render(
       <NoWorkspaceMessage
         task={createTask({ reviewReason: 'completed' })}
       />
     );
 
-    expect(screen.getByRole('button', { name: /mark as done/i })).toBeInTheDocument();
-    expect(screen.queryByRole('button', { name: /retry execution/i })).not.toBeInTheDocument();
+    const button = screen.getByRole('button', { name: /continue execution/i });
+    fireEvent.click(button);
+
+    await waitFor(() => {
+      expect(mockStartTaskOrQueue).toHaveBeenCalledWith('task-1', 'project-1');
+    });
+    expect(mockPersistTaskStatus).not.toHaveBeenCalled();
   });
 });

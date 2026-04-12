@@ -765,8 +765,8 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_CHECK_WORKTREE_CHANGES,
-    async (_, taskId: string): Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>> => {
-      const { task, project } = findTaskAndProject(taskId);
+    async (_, taskId: string, projectId?: string): Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>> => {
+      const { task, project } = findTaskAndProject(taskId, projectId);
       if (!task || !project) {
         return { success: true, data: { hasChanges: false } };
       }

@@ -20,11 +20,13 @@ import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
 import type { Phase } from '../config/types';
+import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   validateJsonFile,
   validateAndNormalizeJsonFile,
   ComplexityAssessmentSchema,
   ImplementationPlanSchema,
+  validateImplementationPlanLanguage,
   ComplexityAssessmentOutputSchema,
   ImplementationPlanOutputSchema,
   buildValidationRetryPrompt,
@@ -134,6 +136,8 @@ export interface SpecOrchestratorConfig {
   cliModel?: string;
   /** CLI thinking level override */
   cliThinking?: string;
+  /** App UI language */
+  language?: SupportedLanguage;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
   /** Callback to generate the system prompt for a given agent type and phase */
@@ -681,7 +685,13 @@ export class SpecOrchestrator extends EventEmitter {
       const planPath = join(this.config.specDir, 'implementation_plan.json');
       try {
         const result = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
-        return { valid: result.valid, errors: result.errors };
+        const languageErrors = result.valid && result.data
+          ? validateImplementationPlanLanguage(result.data, this.config.language)
+          : [];
+        return {
+          valid: result.valid && languageErrors.length === 0,
+          errors: [...result.errors, ...languageErrors],
+        };
       } catch {
         return null; // File doesn't exist yet — handled by validatePhaseOutputs
       }
