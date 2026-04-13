@@ -80,6 +80,19 @@ export interface FinishStepPart {
     inputTokens?: number;
     outputTokens?: number;
   };
+  response?: {
+    id?: string;
+    timestamp?: Date;
+    modelId?: string;
+    headers?: Record<string, string>;
+    // OpenAI compatible APIs may include usage in response
+    usage?: {
+      prompt_tokens?: number;
+      completion_tokens?: number;
+      total_tokens?: number;
+    };
+  };
+  providerMetadata?: Record<string, unknown>;
 }
 
 export interface ErrorPart {
@@ -150,9 +163,9 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
   }
 
   function processPart(part: FullStreamPart): void {
-    // Log all parts for debugging
-    if (part.type === 'finish-step' || part.type === 'error') {
-      console.log(`[StreamHandler] Processing part:`, part.type, part);
+    // Only log important part types
+    if (part.type === 'finish-step' || part.type === 'finish' || part.type === 'error') {
+      console.log(`[StreamHandler] ${part.type}:`, part);
     }
 
     switch (part.type) {
@@ -173,6 +186,23 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
         break;
       case 'finish-step':
         handleFinishStep(part as FinishStepPart);
+        break;
+      case 'finish':
+        // Handle final 'finish' event which might contain usage
+        console.log('[StreamHandler] Got finish event:', part);
+        if ((part as any).usage) {
+          console.log('[StreamHandler] Found usage in finish event!', (part as any).usage);
+          // Accumulate usage from finish event
+          const usage = (part as any).usage;
+          const promptTokens = usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokens ?? 0;
+          const completionTokens = usage.completion_tokens ?? usage.outputTokens ?? usage.completionTokens ?? 0;
+          if (promptTokens > 0 || completionTokens > 0) {
+            state.cumulativeUsage.promptTokens += promptTokens;
+            state.cumulativeUsage.completionTokens += completionTokens;
+            state.cumulativeUsage.totalTokens += (promptTokens + completionTokens);
+            console.log('[StreamHandler] Updated cumulative usage from finish event:', state.cumulativeUsage);
+          }
+        }
         break;
       case 'error':
         handleError(part as ErrorPart);
@@ -247,24 +277,43 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
     // AI SDK usage field names differ by provider/transport:
     // - promptTokens/completionTokens (legacy)
     // - inputTokens/outputTokens (OpenAI Responses)
-    const promptTokens = part.usage?.promptTokens ?? part.usage?.inputTokens ?? 0;
-    const completionTokens = part.usage?.completionTokens ?? part.usage?.outputTokens ?? 0;
+    // - response.usage.prompt_tokens/completion_tokens (OpenAI compatible APIs)
+    let promptTokens = part.usage?.promptTokens ?? part.usage?.inputTokens ?? 0;
+    let completionTokens = part.usage?.completionTokens ?? part.usage?.outputTokens ?? 0;
+
+    // Fallback: Try to get usage from response object (for OpenAI compatible APIs)
+    if (promptTokens === 0 && completionTokens === 0 && part.response?.usage) {
+      promptTokens = part.response.usage.prompt_tokens ?? 0;
+      completionTokens = part.response.usage.completion_tokens ?? 0;
+    }
+
+    // Check if response has any usage-related fields we might have missed
+    if (promptTokens === 0 && completionTokens === 0 && part.response) {
+      const resp = part.response as any;
+      console.log('[StreamHandler] No usage found, checking response object:', {
+        hasUsage: !!resp.usage,
+        responseKeys: Object.keys(resp),
+        headers: resp.headers ? Object.keys(resp.headers) : 'none'
+      });
+    }
+
     const totalTokens = promptTokens + completionTokens;
 
-    console.log(`[StreamHandler] finish-step received:`, {
-      stepNumber: state.stepNumber,
-      usage: part.usage,
-      promptTokens,
-      completionTokens,
-      totalTokens
-    });
+    // Only log if we got non-zero usage or if usage data is completely missing
+    if (totalTokens > 0 || (!part.usage && !part.response?.usage)) {
+      console.log(`[StreamHandler] finish-step usage:`, {
+        step: state.stepNumber,
+        prompt: promptTokens,
+        completion: completionTokens,
+        total: totalTokens,
+        source: part.usage ? 'part.usage' : part.response?.usage ? 'response.usage' : 'none',
+      });
+    }
 
     // Accumulate usage
     state.cumulativeUsage.promptTokens += promptTokens;
     state.cumulativeUsage.completionTokens += completionTokens;
     state.cumulativeUsage.totalTokens += totalTokens;
-
-    console.log(`[StreamHandler] Cumulative usage after step ${state.stepNumber}:`, state.cumulativeUsage);
 
     const stepUsage: TokenUsage = {
       promptTokens,

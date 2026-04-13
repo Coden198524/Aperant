@@ -673,16 +673,9 @@ async function executeStream(
   // AI SDK v6 uses inputTokens/outputTokens naming
   let totalUsage: { inputTokens?: number; outputTokens?: number } | undefined;
 
-  // Debug: log all available fields on result object
-  console.log('[SessionRunner] Available result fields:', Object.keys(result));
-  console.log('[SessionRunner] result.usage:', (result as any).usage);
-  console.log('[SessionRunner] result.experimental_providerMetadata:', (result as any).experimental_providerMetadata);
-
   try {
     totalUsage = await withTimeout(result.totalUsage, POST_STREAM_TIMEOUT_MS, 'result.totalUsage');
-    console.log('[SessionRunner] Got totalUsage from result:', totalUsage);
   } catch (err) {
-    console.warn('[SessionRunner] Failed to get totalUsage from result:', err);
     // Fall through — use summary usage collected during stream iteration.
   }
 
@@ -693,11 +686,20 @@ async function executeStream(
     promptTokens: totalUsage?.inputTokens ?? summary.usage.promptTokens,
     completionTokens: totalUsage?.outputTokens ?? summary.usage.completionTokens,
     totalTokens:
-      (totalUsage?.inputTokens ?? 0) + (totalUsage?.outputTokens ?? 0) ||
-      summary.usage.totalTokens,
+      // FIX: Only fallback to summary when totalUsage is undefined, not when it's 0
+      // The previous logic `0 || X` incorrectly treated valid 0 values as falsy
+      totalUsage !== undefined
+        ? (totalUsage.inputTokens ?? 0) + (totalUsage.outputTokens ?? 0)
+        : summary.usage.totalTokens,
   };
 
-  console.log('[SessionRunner] Final usage:', usage);
+  // Log only when usage is missing or zero (potential issue)
+  if (usage.totalTokens === 0) {
+    console.log('[SessionRunner] Warning: Zero token usage detected', {
+      totalUsage,
+      summaryUsage: summary.usage,
+    });
+  }
 
   return {
     outcome,

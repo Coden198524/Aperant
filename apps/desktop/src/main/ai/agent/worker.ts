@@ -875,7 +875,9 @@ async function runBuildOrchestrator(
 
     // Send token usage from this session
     console.log(`[Worker] Session complete for ${config.taskId}, usage:`, result.usage);
-    if (result.usage && result.usage.totalTokens > 0) {
+    // Always send usage data, even if totalTokens is 0 (helps with debugging)
+    // The UI and persistence layer will handle 0 values appropriately
+    if (result.usage) {
       console.log(`[Worker] Sending task-token-usage for ${config.taskId}:`, result.usage);
       postMessage({
         type: 'task-token-usage',
@@ -884,7 +886,7 @@ async function runBuildOrchestrator(
         projectId: config.projectId,
       });
     } else {
-      console.warn(`[Worker] No token usage to send for ${config.taskId}:`, result.usage);
+      console.warn(`[Worker] No usage object in result for ${config.taskId}`);
     }
   });
 
