@@ -237,6 +237,16 @@ export class ProgressTracker {
     // Check tool name patterns
     for (const { toolName, phase, message } of TOOL_NAME_PHASE_PATTERNS) {
       if (event.toolName === toolName || event.toolName.endsWith(toolName)) {
+        // Special handling for update_subtask_status: extract subtask_id
+        if (toolName === 'update_subtask_status') {
+          const subtaskId = this.extractSubtaskId(event.args);
+          if (subtaskId && subtaskId !== this._currentSubtask) {
+            this._currentSubtask = subtaskId;
+            const msg = `Working on subtask ${subtaskId}...`;
+            this._currentMessage = msg;
+            return { phase, message: msg, currentSubtask: subtaskId, source: 'tool-call' };
+          }
+        }
         return this.tryTransition(phase, message, 'tool-call');
       }
     }
