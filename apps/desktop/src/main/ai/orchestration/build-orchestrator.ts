@@ -37,6 +37,7 @@ import { safeParseJson } from '../../utils/json-repair';
 import type { SessionResult } from '../session/types';
 import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
+import type { BatchExecutorConfig } from './batch-executor';
 
 // =============================================================================
 // Constants
@@ -95,6 +96,14 @@ export interface BuildOrchestratorConfig {
   maxIterations?: number;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Enable batch execution for parallel subtasks (default: false) */
+  enableBatchExecution?: boolean;
+  /** Batch size for parallel execution (default: 'auto') */
+  batchSize?: number | 'auto';
+  /** Maximum retries per batch (default: 2) */
+  maxBatchRetries?: number;
+  /** Hard cap on subtasks executed concurrently in a single batch */
+  maxConcurrentSubtasks?: number;
   /** Callback to generate the system prompt for a given agent type and phase */
   generatePrompt: (agentType: AgentType, phase: BuildPhase, context: PromptContext) => Promise<string>;
   /** Callback to run an agent session */
@@ -126,6 +135,8 @@ export interface SubtaskInfo {
   phaseName?: string;
   filesToCreate?: string[];
   filesToModify?: string[];
+  patternFiles?: string[];
+  verification?: string;
   status: string;
 }
 
@@ -234,9 +245,9 @@ export class BuildOrchestrator extends EventEmitter {
    * Run the full build lifecycle.
    *
    * Phase progression:
-   * 1. Check if implementation_plan.json exists
-   *    - No: Run planning phase to create it
-   *    - Yes: Skip to coding
+   * 1. Check if implementation_plan.json is missing or non-executable
+   *    - Missing/empty/invalid: Run planning phase to create a usable plan
+   *    - Valid with subtasks: Skip to coding
    * 2. Run coding phase (iterate subtasks)
    * 3. Run QA review
    * 4. If QA fails: run QA fixing, then re-review
@@ -246,10 +257,10 @@ export class BuildOrchestrator extends EventEmitter {
     const startTime = Date.now();
 
     try {
-      // Determine starting phase
-      const isFirstRun = await this.isFirstRun();
+      // Missing, malformed, or empty plans must re-enter planning.
+      const needsPlanningPhase = await this.shouldRunPlanningPhase();
 
-      if (isFirstRun) {
+      if (needsPlanningPhase) {
         // Planning phase
         const planResult = await this.runPlanningPhase();
         if (!planResult.success) {
@@ -259,7 +270,8 @@ export class BuildOrchestrator extends EventEmitter {
         // Reset subtask statuses to "pending" after first-run planning — the spec
         // pipeline or planner may have created the plan with pre-set "completed"
         // statuses, which would cause isBuildComplete() to skip coding entirely.
-        // Only on first run: resumed builds must preserve genuine progress.
+        // Only after replanning: resumed builds with an existing executable plan
+        // must preserve genuine progress.
         await this.resetSubtaskStatuses();
       }
 
@@ -450,75 +462,126 @@ export class BuildOrchestrator extends EventEmitter {
   private async runCodingPhase(): Promise<{ success: boolean; error?: string }> {
     this.transitionPhase('coding', 'Starting implementation');
 
-    const iteratorConfig: SubtaskIteratorConfig = {
-      specDir: this.config.specDir,
-      projectDir: this.config.projectDir,
-      sourceSpecDir: this.config.sourceSpecDir,
-      maxRetries: MAX_SUBTASK_RETRIES,
-      autoContinueDelayMs: AUTO_CONTINUE_DELAY_MS,
-      abortSignal: this.config.abortSignal,
-      onSubtaskStart: (subtask, attempt) => {
-        this.iteration++;
-        this.emitTyped('iteration-start', this.iteration, 'coding');
-        this.emitTyped('log', `Working on ${subtask.id}: ${subtask.description} (attempt ${attempt})`);
-      },
-      runSubtaskSession: async (subtask, attempt) => {
-        const prompt = await this.config.generatePrompt('coder', 'coding', {
-          iteration: this.iteration,
-          subtask,
-          attemptCount: attempt,
-        });
+    // Build common session runner for both serial and batch execution
+    const runSubtaskSession = async (subtask: SubtaskInfo, attempt: number) => {
+      const prompt = await this.config.generatePrompt('coder', 'coding', {
+        iteration: this.iteration,
+        subtask,
+        attemptCount: attempt,
+      });
 
-        return this.config.runSession({
-          agentType: 'coder',
-          phase: 'coding',
-          systemPrompt: prompt,
-          specDir: this.config.specDir,
-          projectDir: this.config.projectDir,
-          subtaskId: subtask.id,
-          sessionNumber: this.iteration,
-          abortSignal: this.config.abortSignal,
-          cliModel: this.config.cliModel,
-          cliThinking: this.config.cliThinking,
-        });
-      },
-      onSubtaskComplete: (subtask, result) => {
-        this.emitTyped('session-complete', result, 'coding');
-      },
-      onSubtaskStuck: (subtask, reason) => {
-        this.emitTyped('log', `Subtask ${subtask.id} stuck: ${reason}`);
-      },
+      return this.config.runSession({
+        agentType: 'coder',
+        phase: 'coding',
+        systemPrompt: prompt,
+        specDir: this.config.specDir,
+        projectDir: this.config.projectDir,
+        subtaskId: subtask.id,
+        sessionNumber: this.iteration,
+        abortSignal: this.config.abortSignal,
+        cliModel: this.config.cliModel,
+        cliThinking: this.config.cliThinking,
+      });
     };
 
-    const iteratorResult = await iterateSubtasks(iteratorConfig);
+    // If batch execution is enabled, use batch executor for parallel-safe subtasks
+    if (this.config.enableBatchExecution) {
+      this.emitTyped('log', 'Batch execution enabled - analyzing parallel opportunities');
+      const { executeBatches } = await import('./batch-executor');
 
-    if (iteratorResult.cancelled) {
-      return { success: false, error: 'Build cancelled' };
-    }
+      const batchConfig: BatchExecutorConfig = {
+        specDir: this.config.specDir,
+        projectDir: this.config.projectDir,
+        sourceSpecDir: this.config.sourceSpecDir,
+        maxRetries: this.config.maxBatchRetries ?? MAX_SUBTASK_RETRIES,
+        batchSize: this.config.batchSize ?? 'auto',
+        executionMode: 'batch',
+        maxConcurrentSubtasks: this.config.maxConcurrentSubtasks,
+        abortSignal: this.config.abortSignal,
+        runSubtaskSession,
+        onBatchStart: (batch, batchNum, totalBatches) => {
+          this.iteration++;
+          this.emitTyped('iteration-start', this.iteration, 'coding');
+          this.emitTyped('log', `Starting batch ${batchNum}/${totalBatches}: ${batch.length} subtasks`);
+        },
+        onSubtaskSessionComplete: (subtask, result) => {
+          this.emitTyped('session-complete', result, 'coding');
+        },
+        onBatchComplete: (batch, result) => {
+          this.emitTyped('log', `Batch completed: ${result.completed.length}/${batch.length} subtasks succeeded`);
+        },
+        onLog: (message) => {
+          this.emitTyped('log', message);
+        },
+      };
 
-    // Check if all subtasks are completed
-    const allCompleted = iteratorResult.completedSubtasks === iteratorResult.totalSubtasks;
-    const hasStuckSubtasks = iteratorResult.stuckSubtasks.length > 0;
+      const batchResult = await executeBatches(batchConfig);
 
-    if (!allCompleted) {
-      if (hasStuckSubtasks && iteratorResult.completedSubtasks === 0) {
-        // All subtasks stuck, none completed
+      if (batchResult.cancelled) {
+        return { success: false, error: 'Build cancelled' };
+      }
+
+      if (!batchResult.success) {
         return {
           success: false,
-          error: `All subtasks stuck: ${iteratorResult.stuckSubtasks.join(', ')}`,
+          error: batchResult.error ?? `Batch execution failed: ${batchResult.totalCompleted} completed, ${batchResult.totalFailed ?? 0} failed`,
         };
-      } else if (hasStuckSubtasks) {
-        // Some subtasks stuck, some completed
-        return {
-          success: false,
-          error: `${iteratorResult.stuckSubtasks.length} subtask(s) stuck (${iteratorResult.completedSubtasks}/${iteratorResult.totalSubtasks} completed): ${iteratorResult.stuckSubtasks.join(', ')}`,
-        };
-      } else {
-        // Some subtasks not completed (shouldn't happen, but guard against it)
-        return {
-          success: false,
-          error: `Coding incomplete: ${iteratorResult.completedSubtasks}/${iteratorResult.totalSubtasks} subtasks completed`,
-        };
+      }
+
+      this.emitTyped('log', `Batch execution completed successfully: ${batchResult.totalCompleted} subtasks`);
+    } else {
+      // Fallback to serial execution (existing behavior)
+      const iteratorConfig: SubtaskIteratorConfig = {
+        specDir: this.config.specDir,
+        projectDir: this.config.projectDir,
+        sourceSpecDir: this.config.sourceSpecDir,
+        maxRetries: MAX_SUBTASK_RETRIES,
+        autoContinueDelayMs: AUTO_CONTINUE_DELAY_MS,
+        abortSignal: this.config.abortSignal,
+        onSubtaskStart: (subtask, attempt) => {
+          this.iteration++;
+          this.emitTyped('iteration-start', this.iteration, 'coding');
+          this.emitTyped('log', `Working on ${subtask.id}: ${subtask.description} (attempt ${attempt})`);
+        },
+        runSubtaskSession,
+        onSubtaskComplete: (subtask, result) => {
+          this.emitTyped('session-complete', result, 'coding');
+        },
+        onSubtaskStuck: (subtask, reason) => {
+          this.emitTyped('log', `Subtask ${subtask.id} stuck: ${reason}`);
+        },
+      };
+
+      const iteratorResult = await iterateSubtasks(iteratorConfig);
+
+      if (iteratorResult.cancelled) {
+        return { success: false, error: 'Build cancelled' };
+      }
+
+      // Check if all subtasks are completed
+      const allCompleted = iteratorResult.completedSubtasks === iteratorResult.totalSubtasks;
+      const hasStuckSubtasks = iteratorResult.stuckSubtasks.length > 0;
+
+      if (!allCompleted) {
+        if (hasStuckSubtasks && iteratorResult.completedSubtasks === 0) {
+          // All subtasks stuck, none completed
+          return {
+            success: false,
+            error: `All subtasks stuck: ${iteratorResult.stuckSubtasks.join(', ')}`,
+          };
+        } else if (hasStuckSubtasks) {
+          // Some subtasks stuck, some completed
+          return {
+            success: false,
+            error: `${iteratorResult.stuckSubtasks.length} subtask(s) stuck (${iteratorResult.completedSubtasks}/${iteratorResult.totalSubtasks} completed): ${iteratorResult.stuckSubtasks.join(', ')}`,
+          };
+        } else {
+          // Some subtasks not completed (shouldn't happen, but guard against it)
+          return {
+            success: false,
+            error: `Coding incomplete: ${iteratorResult.completedSubtasks}/${iteratorResult.totalSubtasks} subtasks completed`,
+          };
+        }
       }
     }
 
@@ -730,13 +793,19 @@ export class BuildOrchestrator extends EventEmitter {
   // ===========================================================================
 
   /**
-   * Check if this is a first run (no implementation plan exists).
+   * Check whether the build must enter planning before coding can start.
+   * Missing, malformed, or empty plans are treated as needing planning.
    */
-  private async isFirstRun(): Promise<boolean> {
+  private async shouldRunPlanningPhase(): Promise<boolean> {
     const planPath = join(this.config.specDir, 'implementation_plan.json');
     try {
-      await readFile(planPath, 'utf-8');
-      return false;
+      const raw = await readFile(planPath, 'utf-8');
+      const plan = safeParseJson<ImplementationPlan>(raw);
+      if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) {
+        return true;
+      }
+
+      return !plan.phases.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0);
     } catch {
       return true;
     }

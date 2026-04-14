@@ -19,6 +19,7 @@ import { z } from 'zod/v3';
 import { assertPathContained } from '../../security/path-containment';
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
+import type { FileContentCache } from '../cache/file-cache';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -106,11 +107,27 @@ export const readTool = Tool.define({
   },
   inputSchema,
   execute: async (input, context) => {
-    const { file_path, offset, limit, pages } = input;
+    let { file_path, offset, limit, pages } = input;
+
+    // 兜底：标准化路径，将 Windows 反斜杠转换为正斜杠
+    // 这样即使 AI 生成了错误格式的路径，也能正常工作
+    file_path = file_path.replace(/\\/g, '/');
+
     const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
     // Security: ensure path is within an allowed project boundary
     const { resolvedPath } = assertPathContained(file_path, allowedRoots);
+
+    // Try cache first (if available)
+    const cache = context.fileCache as FileContentCache | undefined;
+    if (cache && !offset && !limit && !pages) {
+      const cached = cache.getSync(resolvedPath);
+      if (cached) {
+        // Return cached content with line numbers
+        const lines = cached.split(/\r?\n/);
+        return formatWithLineNumbers(cached, 0);
+      }
+    }
 
     // Open fd once — all subsequent stat/read go through this fd to avoid TOCTOU
     let fd: number;
@@ -153,6 +170,11 @@ export const readTool = Tool.define({
 
       // Text files — read from same fd
       const content = fs.readFileSync(fd, 'utf-8');
+
+      // Cache the content if no offset/limit (full file read)
+      if (cache && !offset && !limit) {
+        cache.set(resolvedPath, content, stat.mtimeMs);
+      }
 
       if (content.length === 0) {
         return `[File exists but is empty: ${file_path}]`;

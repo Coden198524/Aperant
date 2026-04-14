@@ -9,6 +9,7 @@
 import type { z } from 'zod/v3';
 
 import type { SecurityProfile } from '../security/bash-validator';
+import type { FileContentCache } from './cache/file-cache';
 
 // ---------------------------------------------------------------------------
 // Tool Context
@@ -33,6 +34,8 @@ export interface ToolContext {
   abortSignal?: AbortSignal;
   /** If set, Write/Edit tools can only write within these directories */
   allowedWritePaths?: string[];
+  /** Optional file content cache for session-scoped caching */
+  fileCache?: FileContentCache;
 }
 
 // ---------------------------------------------------------------------------

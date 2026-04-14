@@ -1,3 +1,4 @@
+import { useTranslation } from 'react-i18next';
 import { Zap, Loader2 } from 'lucide-react';
 import { Progress } from '../ui/progress';
 import { cn, calculateProgress } from '../../lib/utils';
@@ -13,7 +14,12 @@ interface TaskProgressProps {
 }
 
 export function TaskProgress({ task, isRunning, hasActiveExecution, executionPhase, isStuck }: TaskProgressProps) {
+  const { t } = useTranslation('tasks');
   const progress = calculateProgress(task.subtasks);
+  const activeBatchCount = executionPhase === 'coding'
+    ? task.subtasks.filter((subtask) => subtask.status === 'in_progress').length
+    : 0;
+  const showParallelSummary = activeBatchCount > 1;
 
   return (
     <div>
@@ -38,9 +44,19 @@ export function TaskProgress({ task, isRunning, hasActiveExecution, executionPha
                 {task.executionProgress.message}
               </p>
             )}
-            {task.executionProgress?.currentSubtask && (
+            {showParallelSummary ? (
               <p className="text-xs mt-0.5 opacity-70">
-                Subtask: {task.executionProgress.currentSubtask}
+                {t('detail.parallelSubtaskLabel', {
+                  count: activeBatchCount,
+                  defaultValue: 'Parallel: {{count}} subtasks active',
+                })}
+              </p>
+            ) : task.executionProgress?.currentSubtask && (
+              <p className="text-xs mt-0.5 opacity-70">
+                {t('detail.currentSubtaskLabel', {
+                  subtask: task.executionProgress.currentSubtask,
+                  defaultValue: 'Subtask: {{subtask}}',
+                })}
               </p>
             )}
           </div>

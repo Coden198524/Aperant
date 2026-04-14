@@ -435,6 +435,14 @@
       "validation": "验证"
     }
   },
+  "logActions": {
+    "clearAction": "清空日志",
+    "clearing": "清理中...",
+    "clearSuccessTitle": "日志已清空",
+    "clearSuccessDescription": "任务详情日志列表已清空。",
+    "clearFailedTitle": "清空日志失败",
+    "clearFailedDescription": "请稍后重试。"
+  },
   "errors": {
     "failedToLoadTasks": "加载任务失败",
     "failedToUpdateTask": "更新任务失败",

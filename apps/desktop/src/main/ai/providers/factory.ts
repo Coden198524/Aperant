@@ -22,6 +22,11 @@ import type { LanguageModel } from 'ai';
 
 import { MODEL_PROVIDER_MAP } from '../config/types';
 import { createOAuthProviderFetch } from './oauth-fetch';
+import {
+  createOpenAICompatibleEndpointFetch,
+  isOfficialOpenAIBaseUrl,
+  normalizeOpenAICompatibleBaseUrl,
+} from './openai-base-url';
 import { type ProviderConfig, SupportedProvider } from './types';
 
 // =============================================================================
@@ -103,22 +108,6 @@ function normalizeAnthropicBaseUrl(baseURL: string | undefined): string | undefi
   }
 }
 
-function isOfficialOpenAIBaseUrl(baseURL: string | undefined): boolean {
-  if (!baseURL) return true;
-
-  try {
-    const { hostname } = new URL(baseURL);
-    return (
-      hostname === 'openai.com' ||
-      hostname.endsWith('.openai.com') ||
-      hostname === 'chatgpt.com' ||
-      hostname.endsWith('.chatgpt.com')
-    );
-  } catch {
-    return false;
-  }
-}
-
 function shouldUseOpenAICompatibleChat(config: ProviderConfig): boolean {
   return (
     config.provider === SupportedProvider.OpenAI &&
@@ -132,12 +121,13 @@ function createOpenAICompatibleChatModel(
   modelId: string,
   fetchImpl?: typeof fetch,
 ): LanguageModel {
+  const normalizedBaseURL = normalizeOpenAICompatibleBaseUrl(config.baseURL);
   const provider = createOpenAICompatible({
     name: 'openai-compatible',
     apiKey: config.apiKey ?? 'custom-endpoint',
-    baseURL: config.baseURL ?? 'https://api.openai.com/v1',
+    baseURL: normalizedBaseURL ?? 'https://api.openai.com/v1',
     headers: config.headers,
-    ...(fetchImpl ? { fetch: fetchImpl } : {}),
+    fetch: fetchImpl ?? createOpenAICompatibleEndpointFetch(),
   });
   return provider.chatModel(modelId);
 }
@@ -208,8 +198,9 @@ function createProviderInstance(config: ProviderConfig) {
       return createOpenAICompatible({
         name: 'openai-compatible',
         apiKey: apiKey ?? 'custom-endpoint',
-        baseURL: baseURL ?? 'https://api.openai.com/v1',
+        baseURL: normalizeOpenAICompatibleBaseUrl(baseURL) ?? 'https://api.openai.com/v1',
         headers,
+        fetch: createOpenAICompatibleEndpointFetch(),
       });
 
     case SupportedProvider.Google:
@@ -337,6 +328,7 @@ export interface CreateProviderOptions {
  * Handles per-provider quirks:
  * - Azure uses deployment-based routing via `.chat()`
  * - Ollama uses OpenAI-compatible adapter
+ * - Anthropic: enables prompt caching for official API endpoints
  *
  * @param options - Provider config and model ID
  * @returns A configured LanguageModel instance
@@ -349,6 +341,25 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
   if (config.provider === SupportedProvider.Azure) {
     const deploymentName = config.deploymentName ?? modelId;
     return (instance as ReturnType<typeof createAzure>).chat(deploymentName);
+  }
+
+  // Anthropic: return the model with provider metadata for prompt caching
+  // Only enable caching for official Anthropic API endpoints
+  if (config.provider === SupportedProvider.Anthropic) {
+    const model = (instance as ReturnType<typeof createAnthropic>)(modelId);
+    const isOfficialApi = isOfficialAnthropicBaseUrl(config.baseURL);
+
+    // Add prompt caching support for official Anthropic API
+    if (isOfficialApi) {
+      return {
+        ...model,
+        // Mark this model as supporting prompt caching
+        // The runner.ts will use experimental_providerMetadata when calling streamText()
+        supportsPromptCaching: true,
+      } as LanguageModel;
+    }
+
+    return model;
   }
 
   // OpenAI: Codex OAuth accounts rewrite ALL URLs to the Codex Responses endpoint,
@@ -386,7 +397,7 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
 
       const responsesProvider = createOpenAI({
         apiKey: config.apiKey ?? 'custom-endpoint',
-        baseURL: config.baseURL ?? 'https://api.openai.com/v1',
+        baseURL: normalizeOpenAICompatibleBaseUrl(config.baseURL) ?? 'https://api.openai.com/v1',
         headers: config.headers,
       });
       return responsesProvider.responses(modelId);

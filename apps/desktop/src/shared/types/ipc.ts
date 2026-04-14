@@ -910,6 +910,7 @@ export interface ElectronAPI {
 
   // Task logs operations
   getTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs | null>>;
+  clearTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs>>;
   watchTaskLogs: (projectId: string, specId: string) => Promise<IPCResult>;
   unwatchTaskLogs: (specId: string) => Promise<IPCResult>;
 

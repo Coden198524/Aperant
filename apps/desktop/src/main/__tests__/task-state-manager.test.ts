@@ -220,6 +220,42 @@ describe('TaskStateManager', () => {
       expect(result).toBe(true);
     });
 
+    it('should force done state when marking an in-progress task complete', () => {
+      const runningTask = createMockTask({
+        id: 'running-to-done',
+        status: 'in_progress',
+        executionProgress: {
+          phase: 'coding',
+          phaseProgress: 60,
+          overallProgress: 60
+        }
+      });
+
+      manager.handleTaskEvent(
+        runningTask.id,
+        {
+          type: 'CODING_STARTED',
+          taskId: runningTask.id,
+          specId: runningTask.specId,
+          projectId: mockProject.id,
+          timestamp: new Date().toISOString(),
+          eventId: 'evt-running',
+          sequence: 0,
+          subtaskId: 'subtask-1',
+          subtaskDescription: 'Implement feature'
+        },
+        runningTask,
+        mockProject
+      );
+
+      expect(manager.getCurrentState(runningTask.id)).toBe('coding');
+
+      const result = manager.handleManualStatusChange(runningTask.id, 'done', runningTask, mockProject);
+
+      expect(result).toBe(true);
+      expect(manager.getCurrentState(runningTask.id)).toBe('done');
+    });
+
     it('should handle pr_created status', () => {
       const taskWithPrUrl = createMockTask({ metadata: { prUrl: 'https://github.com/test/pr/1' } });
       const result = manager.handleManualStatusChange(mockTask.id, 'pr_created', taskWithPrUrl, mockProject);

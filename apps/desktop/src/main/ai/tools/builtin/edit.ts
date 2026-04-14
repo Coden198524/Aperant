@@ -13,6 +13,7 @@ import { z } from 'zod/v3';
 import { assertPathContained } from '../../security/path-containment';
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
+import type { FileContentCache } from '../cache/file-cache';
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -44,7 +45,11 @@ export const editTool = Tool.define({
   },
   inputSchema,
   execute: async (input, context) => {
-    const { file_path, old_string, new_string, replace_all } = input;
+    let { file_path, old_string, new_string, replace_all } = input;
+
+    // 兜底：标准化路径，将 Windows 反斜杠转换为正斜杠
+    file_path = file_path.replace(/\\/g, '/');
+
     const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
     // Security: ensure path is within an allowed project boundary
@@ -93,6 +98,10 @@ export const editTool = Tool.define({
     }
 
     fs.writeFileSync(resolvedPath, newContent, 'utf-8');
+
+    // Invalidate cache after edit
+    const cache = context.fileCache as FileContentCache | undefined;
+    cache?.invalidate(resolvedPath);
 
     if (replace_all) {
       const count = content.split(old_string).length - 1;

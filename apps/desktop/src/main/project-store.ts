@@ -50,6 +50,36 @@ function mergeTokenUsage(
   };
 }
 
+function getSubtaskProgressScore(subtasks: Task['subtasks']): number {
+  return subtasks.reduce((score, subtask) => {
+    switch (subtask.status) {
+      case 'completed':
+        return score + 3;
+      case 'in_progress':
+      case 'failed':
+        return score + 2;
+      default:
+        return score + 1;
+    }
+  }, 0);
+}
+
+function shouldRestoreSubtasks(preferred: Task, fallback: Task): boolean {
+  if (fallback.subtasks.length === 0) {
+    return false;
+  }
+
+  if (preferred.subtasks.length === 0) {
+    return true;
+  }
+
+  if (fallback.subtasks.length !== preferred.subtasks.length) {
+    return fallback.subtasks.length > preferred.subtasks.length;
+  }
+
+  return getSubtaskProgressScore(fallback.subtasks) > getSubtaskProgressScore(preferred.subtasks);
+}
+
 /**
  * Persistent storage for projects and settings
  */
@@ -404,6 +434,14 @@ export class ProjectStore {
           const mergedTokenUsage = mergeTokenUsage(preferred.tokenUsage, fallback.tokenUsage);
           if (mergedTokenUsage) {
             merged = { ...merged, tokenUsage: mergedTokenUsage };
+          }
+
+          // Startup task hydration prefers the main project copy to avoid reviving stale
+          // worktree records, but the worktree often has the freshest subtask list while
+          // execution is in progress. Preserve the richer subtask snapshot so subtasks
+          // still appear after an app restart.
+          if (shouldRestoreSubtasks(preferred, fallback)) {
+            merged = { ...merged, subtasks: fallback.subtasks };
           }
 
           return merged;

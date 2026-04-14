@@ -19,6 +19,10 @@ import { runAgentSession } from '../session/runner';
 import { runContinuableSession } from '../session/continuation';
 import { createProvider } from '../providers/factory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import {
+  createOpenAICompatibleEndpointFetch,
+  normalizeOpenAICompatibleBaseUrl,
+} from '../providers/openai-base-url';
 import type { SupportedProvider } from '../providers/types';
 import { getModelContextWindow } from '../../../shared/constants/models';
 import { refreshOAuthTokenReactive } from '../auth/resolver';
@@ -50,10 +54,14 @@ import { createMcpClientsForAgent, mergeMcpTools, closeAllMcpClients } from '../
 import type { McpClientResult } from '../mcp/types';
 import { runProjectIndexer } from '../project/project-indexer';
 import type { TaskWorkflowMode } from '../../../shared/types';
+import { FileContentCache } from '../tools/cache/file-cache';
+import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 
 // =============================================================================
 // Validation
 // =============================================================================
+
+const MAX_PARALLEL_SUBTASKS_PER_BATCH = 5;
 
 if (!parentPort) {
   throw new Error('worker.ts must be run inside a worker_thread');
@@ -96,6 +104,13 @@ const logWriter = config.session.specDir
   : null;
 
 // =============================================================================
+// File Content Cache
+// =============================================================================
+
+// Session-scoped file content cache for this worker
+const fileCache = new FileContentCache();
+
+// =============================================================================
 // Messaging Helpers
 // =============================================================================
 
@@ -104,10 +119,20 @@ function postMessage(message: WorkerMessage): void {
 }
 
 function postLog(data: string): void {
+  const trimmed = data.trim();
+  if (trimmed) {
+    console.log(`[Worker:${config.taskId}] ${trimmed}`);
+    logWriter?.logText(trimmed, undefined, 'info');
+  }
   postMessage({ type: 'log', taskId: config.taskId, data, projectId: config.projectId });
 }
 
 function postError(data: string): void {
+  const trimmed = data.trim();
+  if (trimmed) {
+    console.error(`[Worker:${config.taskId}] ${trimmed}`);
+    logWriter?.logText(trimmed, undefined, 'error');
+  }
   postMessage({ type: 'error', taskId: config.taskId, data, projectId: config.projectId });
 }
 
@@ -171,7 +196,7 @@ function buildSecurityProfile(session: SerializableSessionConfig): SecurityProfi
 /**
  * Build a ToolContext for the given session config.
  */
-function buildToolContext(session: SerializableSessionConfig, securityProfile: SecurityProfile): ToolContext {
+function buildToolContext(session: SerializableSessionConfig, securityProfile: SecurityProfile, fileCache?: FileContentCache): ToolContext {
   const allowedPathRoots = [
     session.toolContext.projectDir,
     session.sourceProjectDir,
@@ -186,6 +211,7 @@ function buildToolContext(session: SerializableSessionConfig, securityProfile: S
     specDir: session.toolContext.specDir,
     securityProfile,
     abortSignal: abortController.signal,
+    fileCache,
   };
 }
 
@@ -290,7 +316,8 @@ function createForcedChatModel(session: SerializableSessionConfig, modelId: stri
   const provider = createOpenAICompatible({
     name: 'openai-compatible',
     apiKey: session.apiKey ?? 'custom-endpoint',
-    baseURL: session.baseURL ?? 'https://api.openai.com/v1',
+    baseURL: normalizeOpenAICompatibleBaseUrl(session.baseURL) ?? 'https://api.openai.com/v1',
+    fetch: createOpenAICompatibleEndpointFetch(),
   });
   return provider.chatModel(modelId);
 }
@@ -582,7 +609,7 @@ async function run(): Promise<void> {
 
   try {
     const securityProfile = buildSecurityProfile(session);
-    const toolContext = buildToolContext(session, securityProfile);
+    const toolContext = buildToolContext(session, securityProfile, fileCache);
     const registry = buildToolRegistry();
 
     // Initialize MCP clients from session config
@@ -643,6 +670,12 @@ async function run(): Promise<void> {
     const message = error instanceof Error ? error.message : String(error);
     postError(`Agent session failed: ${message}`);
   } finally {
+    // Log file cache statistics
+    const cacheStats = fileCache.getStats();
+    if (cacheStats.hits > 0 || cacheStats.misses > 0) {
+      postLog(`[FileCache] Session Stats: ${cacheStats.hits} hits, ${cacheStats.misses} misses, ${(cacheStats.hitRate * 100).toFixed(1)}% hit rate, ${cacheStats.size} files cached`);
+    }
+
     // Cleanup MCP clients
     if (mcpClients.length > 0) {
       await closeAllMcpClients(mcpClients);
@@ -772,6 +805,14 @@ async function runBuildOrchestrator(
     language: session.language,
     abortSignal: abortController.signal,
 
+    // Disable subtask batch execution for now and run subtasks serially.
+    // The current product signal is that parallel subtasks add complexity
+    // without enough throughput gain, so prefer a single focused coder session.
+    enableBatchExecution: false,
+    batchSize: 'auto', // Auto-detect based on subtask dependencies
+    maxBatchRetries: 2,
+    maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,
+
     generatePrompt: async (agentType, _phase, context) => {
       const promptName = agentType === 'coder' ? 'coder' : agentType;
       let prompt = await assemblePrompt(promptName, session);
@@ -791,6 +832,7 @@ async function runBuildOrchestrator(
         runConfig.agentType,
         runConfig.specDir,
         runConfig.projectDir,
+        runConfig.subtaskId,
         session.language,
       );
       return runSingleSession(
@@ -988,6 +1030,7 @@ async function runQALoop(
         runConfig.agentType,
         runConfig.specDir,
         runConfig.projectDir,
+        undefined,
         session.language,
       );
       return runSingleSession(
@@ -1473,6 +1516,7 @@ function buildKickoffMessage(
   agentType: AgentType,
   specDir: string,
   projectDir: string,
+  subtaskId?: string,
   language?: SerializableSessionConfig['language'],
 ): string {
   let baseMessage: string;
@@ -1481,7 +1525,15 @@ function buildKickoffMessage(
       baseMessage = `Read the spec at ${specDir}/spec.md and create a detailed implementation plan at ${specDir}/implementation_plan.json. Project root: ${projectDir}`;
       break;
     case 'coder':
-      baseMessage = `Read ${specDir}/implementation_plan.json and implement the next pending subtask. Project root: ${projectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+      if (subtaskId) {
+        baseMessage = buildFocusedCoderKickoffMessage(
+          specDir,
+          projectDir,
+          subtaskId,
+        );
+      } else {
+        baseMessage = `Read ${specDir}/implementation_plan.json and implement the next pending subtask. Project root: ${projectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+      }
       break;
     case 'qa_reviewer':
       baseMessage = `Review the implementation in ${projectDir} against the specification in ${specDir}/spec.md. Write your findings to ${specDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;

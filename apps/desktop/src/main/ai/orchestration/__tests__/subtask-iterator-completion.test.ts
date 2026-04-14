@@ -91,5 +91,42 @@ describe('iterateSubtasks completion gating', () => {
     expect(result.stuckSubtasks).toEqual([]);
     expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
   });
-});
 
+  it('marks subtask in_progress and restamps executionPhase before coder session starts', async () => {
+    const plan = {
+      executionPhase: 'planning',
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    let snapshotDuringRun: Record<string, unknown> | null = null;
+
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => {
+        snapshotDuringRun = JSON.parse(await readFile(planPath, 'utf-8')) as Record<string, unknown>;
+        return makeResult('completed');
+      },
+    });
+
+    expect(result.totalSubtasks).toBe(1);
+    expect(snapshotDuringRun).not.toBeNull();
+    const planDuringRun = snapshotDuringRun!;
+    const typedPlanDuringRun = planDuringRun as {
+      executionPhase?: string;
+      phases: Array<{ subtasks: Array<{ status: string }> }>;
+    };
+    expect(typedPlanDuringRun.executionPhase).toBe('coding');
+    expect(typedPlanDuringRun.phases[0].subtasks[0].status).toBe('in_progress');
+  });
+});

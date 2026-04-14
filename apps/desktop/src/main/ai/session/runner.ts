@@ -49,11 +49,11 @@ const MAX_AUTH_RETRIES = 1;
 /** Default max steps if not specified in config — safety backstop for spinning agents */
 const DEFAULT_MAX_STEPS = 500;
 
-/** Context window usage threshold (85%) for reactive compaction warning */
-const CONTEXT_WINDOW_THRESHOLD = 0.85;
+/** Context window usage threshold (90%) for reactive compaction warning */
+const CONTEXT_WINDOW_THRESHOLD = 0.90;
 
-/** Context window usage threshold (90%) for hard abort — triggers continuation */
-const CONTEXT_WINDOW_ABORT_THRESHOLD = 0.90;
+/** Context window usage threshold (95%) for hard abort — triggers continuation */
+const CONTEXT_WINDOW_ABORT_THRESHOLD = 0.95;
 
 /** Unique reason string for context-window aborts (used in catch to distinguish from user cancel) */
 const CONTEXT_WINDOW_ABORT_REASON = '__context_window_exhausted__';
@@ -76,7 +76,7 @@ const POST_STREAM_TIMEOUT_MS = 10_000;
  *  If no stream parts arrive within this period, the stream is aborted.
  *  Protects against providers that accept the request but never send data
  *  (observed with OpenAI Codex via chatgpt.com/backend-api/codex/responses). */
-const STREAM_INACTIVITY_TIMEOUT_MS = 60_000;
+const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes - increased for complex planning tasks
 
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
@@ -369,6 +369,10 @@ async function executeStream(
     // Track prompt tokens for context window guard
     if (event.type === 'step-finish') {
       lastPromptTokens = event.usage.promptTokens;
+      const usagePct = contextWindowLimit > 0
+        ? ((lastPromptTokens / contextWindowLimit) * 100).toFixed(1)
+        : 'N/A';
+      console.log(`[SessionRunner] Context Window: ${lastPromptTokens.toLocaleString()} / ${contextWindowLimit.toLocaleString()} tokens (${usagePct}%)`);
     }
     // Forward to external listener
     onEvent?.(event);
@@ -398,6 +402,22 @@ async function executeStream(
     ? buildThinkingProviderOptions(modelId, config.thinkingLevel)
     : undefined;
 
+  // Check if model supports prompt caching (Anthropic only)
+  const supportsPromptCaching = (config.model as any)?.supportsPromptCaching === true;
+
+  // Build prompt caching metadata for Anthropic
+  const promptCachingMetadata = supportsPromptCaching ? {
+    anthropic: {
+      cacheControl: { type: 'ephemeral' as const }
+    }
+  } : undefined;
+
+  if (promptCachingMetadata) {
+    console.log('[SessionRunner] Prompt Caching: ENABLED (Anthropic ephemeral cache)');
+  } else {
+    console.log('[SessionRunner] Prompt Caching: DISABLED (model does not support caching)');
+  }
+
   // Execute streamText — prepareStep is only added when memory context exists
   //
   // IMPORTANT: Output.object() must NOT be combined with tools in the same streamText()
@@ -421,7 +441,7 @@ async function executeStream(
     ...(useOutputSchema ? { output: Output.object({ schema: config.outputSchema! }) } : {}),
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
-    ...((thinkingOptions || isResponsesModel || (useOutputSchema && isAnthropicModel)) ? {
+    ...((thinkingOptions || isResponsesModel || (useOutputSchema && isAnthropicModel) || promptCachingMetadata) ? {
       providerOptions: {
         ...(thinkingOptions ?? {}),
         ...(usesResponsesTransport ? {
@@ -436,8 +456,11 @@ async function executeStream(
         } : {}),
       },
     } : {}),
+    ...(promptCachingMetadata ? {
+      experimental_providerMetadata: promptCachingMetadata,
+    } : {}),
     prepareStep: async ({ stepNumber }) => {
-      // Hard abort: if we're at 90%+ of context window, stop the session
+      // Hard abort: if we're at 95%+ of context window, stop the session
       // so the continuation wrapper can checkpoint and resume.
       if (
         contextWindowLimit > 0 &&
@@ -489,6 +512,17 @@ async function executeStream(
       // Memory injection (only when memory context is active)
       if (memoryContext && stepMemoryState) {
         if (stepNumber < MEMORY_INJECTION_WARMUP_STEPS) {
+          memoryContext.proxy.onStepComplete(stepNumber);
+          return systemMessage ? { system: systemMessage } : {};
+        }
+
+        // Skip memory injection if context window is tight (>80% usage)
+        const contextUsage = contextWindowLimit > 0 && lastPromptTokens > 0
+          ? lastPromptTokens / contextWindowLimit
+          : 0;
+
+        if (contextUsage > 0.80) {
+          // Context window tight — skip memory injection to preserve space
           memoryContext.proxy.onStepComplete(stepNumber);
           return systemMessage ? { system: systemMessage } : {};
         }
@@ -692,6 +726,22 @@ async function executeStream(
         ? (totalUsage.inputTokens ?? 0) + (totalUsage.outputTokens ?? 0)
         : summary.usage.totalTokens,
   };
+
+  // Log token usage with cache information
+  const cacheReadTokens = (totalUsage as any)?.cacheReadTokens ?? 0;
+  const cacheCreationTokens = (totalUsage as any)?.cacheCreationTokens ?? 0;
+  const hasCacheData = cacheReadTokens > 0 || cacheCreationTokens > 0;
+
+  console.log('[SessionRunner] Token Usage:', {
+    prompt: usage.promptTokens.toLocaleString(),
+    completion: usage.completionTokens.toLocaleString(),
+    total: usage.totalTokens.toLocaleString(),
+    ...(hasCacheData ? {
+      cacheRead: cacheReadTokens.toLocaleString(),
+      cacheCreation: cacheCreationTokens.toLocaleString(),
+      cacheSavings: cacheReadTokens > 0 ? `${((cacheReadTokens / (usage.promptTokens + cacheReadTokens)) * 100).toFixed(1)}%` : '0%',
+    } : {}),
+  });
 
   // Log only when usage is missing or zero (potential issue)
   if (usage.totalTokens === 0) {

@@ -74,6 +74,8 @@ export const taskMachine = createMachine(
           // Fallback: if QA_PASSED arrives while in planning (entire build completed), go to human_review
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           PLANNING_FAILED: { target: 'error', actions: ['setReviewReasonErrors', 'setError'] },
+          // Older workers may still emit CODING_FAILED for pre-coding failures.
+          CODING_FAILED: { target: 'error', actions: ['setReviewReasonErrors', 'setError'] },
           USER_STOPPED: [
             { target: 'backlog', guard: 'noPlanYet', actions: 'clearReviewReason' },
             { target: 'human_review', actions: 'setReviewReasonStopped' }

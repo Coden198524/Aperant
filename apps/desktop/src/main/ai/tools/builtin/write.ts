@@ -14,6 +14,7 @@ import { z } from 'zod/v3';
 import { assertPathContained } from '../../security/path-containment';
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
+import type { FileContentCache } from '../cache/file-cache';
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -40,7 +41,10 @@ export const writeTool = Tool.define({
   },
   inputSchema,
   execute: async (input, context) => {
-    const { file_path, content } = input;
+    // Normalize path: convert Windows backslashes to forward slashes
+    // This is a safety fallback in case the AI model generates paths with backslashes
+    const file_path = input.file_path.replace(/\\/g, '/');
+    const { content } = input;
     const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
     // Security: ensure path is within an allowed project boundary
@@ -54,6 +58,10 @@ export const writeTool = Tool.define({
 
     // Write the file
     fs.writeFileSync(resolvedPath, content, 'utf-8');
+
+    // Invalidate cache after write
+    const cache = context.fileCache as FileContentCache | undefined;
+    cache?.invalidate(resolvedPath);
 
     const lineCount = content.split(/\r?\n/).length;
     return `Successfully wrote ${lineCount} lines to ${file_path}`;

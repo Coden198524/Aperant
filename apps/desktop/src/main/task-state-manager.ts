@@ -107,9 +107,29 @@ export class TaskStateManager {
       currentState === 'pr_created' ||
       (!currentState && (task.status === 'done' || task.status === 'pr_created'))
     );
+    const canMarkDoneFromCurrentState = (
+      currentState === 'human_review' ||
+      currentState === 'error' ||
+      currentState === 'pr_created' ||
+      (!currentState && (task.status === 'human_review' || task.status === 'error' || task.status === 'pr_created'))
+    );
 
     switch (status) {
       case 'done':
+        // Merge completion can arrive while the actor is still restored as an active state
+        // (for example after a stale in-progress snapshot). In that case MARK_DONE would be
+        // ignored, so force the actor into the terminal done snapshot instead.
+        if (currentState === 'done' || (!currentState && task.status === 'done')) {
+          return true;
+        }
+        if (!canMarkDoneFromCurrentState) {
+          this.reinitializeActorForTask(taskId, {
+            ...task,
+            status: 'done',
+            reviewReason: undefined,
+          }, project);
+          return true;
+        }
         this.handleUiEvent(taskId, { type: 'MARK_DONE' }, task, project);
         return true;
       case 'pr_created':

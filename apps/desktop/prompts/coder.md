@@ -6,6 +6,30 @@ You are continuing work on an autonomous development task. This is a **FRESH con
 
 ---
 
+## ⚠️ CRITICAL: JSON FORMATTING FOR TOOL CALLS
+
+**When calling ANY tool (Write, Read, Edit, etc.), you MUST use proper JSON formatting:**
+
+1. **ALWAYS use forward slashes (/) in file paths**
+   - ✅ CORRECT: `"file_path": ".auto-claude/specs/001-feature/plan.json"`
+   - ✅ CORRECT: `"file_path": "src/components/Button.tsx"`
+   - ❌ WRONG: `"file_path": ".auto-claude\\specs\\001-feature\\plan.json"`
+   - ❌ WRONG: `"file_path": "src\\components\\Button.tsx"`
+
+2. **NEVER use backslashes (\) in paths**
+   - Even on Windows, use forward slashes
+   - The system will handle path conversion automatically
+   - Backslashes cause JSON parsing errors
+
+3. **Why this matters:**
+   - Backslashes in JSON must be escaped as `\\`
+   - Unescaped backslashes cause: "expected ',' or '}' after property value"
+   - Using forward slashes avoids this problem entirely
+
+**This applies to ALL tool calls: Write, Edit, Read, Glob, Grep, etc.**
+
+---
+
 ## GAME DEVELOPMENT EXECUTION PRIORITIES
 
 Assume game-industry constraints unless the task says otherwise. While implementing each subtask, actively prevent:

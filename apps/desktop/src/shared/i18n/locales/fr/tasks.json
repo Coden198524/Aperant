@@ -351,6 +351,14 @@
       "hint": "Utilisez un outil de capture d'écran externe et collez directement dans la description de la tâche avec {{shortcut}}."
     }
   },
+  "logActions": {
+    "clearAction": "Effacer les journaux",
+    "clearing": "Effacement...",
+    "clearSuccessTitle": "Journaux effacés",
+    "clearSuccessDescription": "La liste des journaux de la tâche a été vidée.",
+    "clearFailedTitle": "Échec de l'effacement des journaux",
+    "clearFailedDescription": "Veuillez réessayer."
+  },
   "deleteDialog": {
     "title": "Supprimer la t\u00e2che",
     "confirmMessage": "\u00cates-vous s\u00fbr de vouloir supprimer",

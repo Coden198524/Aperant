@@ -335,6 +335,9 @@ export interface PlanSubtask {
   /** Detailed implementation notes for the coder agent */
   description: string;
   status: SubtaskStatus;
+  files_to_create?: string[];
+  files_to_modify?: string[];
+  pattern_files?: string[];
   verification?: {
     type: string;
     run?: string;

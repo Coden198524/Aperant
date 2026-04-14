@@ -120,12 +120,10 @@ function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProp
     prevTask.metadata?.complexity === nextTask.metadata?.complexity &&
     prevTask.metadata?.archivedAt === nextTask.metadata?.archivedAt &&
     prevTask.metadata?.prUrl === nextTask.metadata?.prUrl &&
-    // Compare token usage fields rendered in card badges
     prevTask.tokenUsage?.stepsExecuted === nextTask.tokenUsage?.stepsExecuted &&
     prevTask.tokenUsage?.promptTokens === nextTask.tokenUsage?.promptTokens &&
     prevTask.tokenUsage?.completionTokens === nextTask.tokenUsage?.completionTokens &&
     prevTask.tokenUsage?.totalTokens === nextTask.tokenUsage?.totalTokens &&
-    // Check if any subtask statuses changed (compare all subtasks)
     prevTask.subtasks.every((s, i) => s.status === nextTask.subtasks[i]?.status)
   );
 
@@ -165,8 +163,11 @@ export const TaskCard = memo(function TaskCard({
   const stuckIntervalRef = useRef<NodeJS.Timeout | null>(null);
 
   const isRunning = task.status === 'in_progress';
+  const isExecutionActive = task.status === 'in_progress' || task.status === 'ai_review';
   const executionPhase = task.executionProgress?.phase;
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
+  const activeBatchCount = task.subtasks.filter((subtask) => subtask.status === 'in_progress').length;
+  const hasParallelSubtasks = isRunning && activeBatchCount > 1;
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);
@@ -256,6 +257,13 @@ export const TaskCard = memo(function TaskCard({
       return null;
     }
 
+    if (hasParallelSubtasks) {
+      return t('detail.parallelSubtaskSummary', {
+        count: activeBatchCount,
+        defaultValue: '{{count}} subtasks running in parallel',
+      });
+    }
+
     const activeIndex = resolveActiveSubtaskIndex({
       subtasks: task.subtasks,
       currentSubtask: task.executionProgress?.currentSubtask,
@@ -271,7 +279,7 @@ export const TaskCard = memo(function TaskCard({
       index: activeIndex + 1,
       defaultValue: 'Executing #{{index}}',
     });
-  }, [isRunning, task.subtasks, task.executionProgress?.currentSubtask, executionPhase, t]);
+  }, [activeBatchCount, executionPhase, hasParallelSubtasks, isRunning, task.subtasks, task.executionProgress?.currentSubtask, t]);
 
   // Memoize status menu items to avoid recreating on every render
   const statusMenuItems = useMemo(() => {
@@ -507,7 +515,7 @@ export const TaskCard = memo(function TaskCard({
         )}
 
         {/* Metadata badges */}
-        {(task.metadata || isStuck || isIncomplete || hasActiveExecution || reviewReasonInfo) && (
+        {(task.metadata || isStuck || isIncomplete || hasActiveExecution || hasParallelSubtasks || reviewReasonInfo) && (
           <div className="mt-2.5 flex flex-wrap gap-1.5">
             {/* Stuck indicator - highest priority */}
             {isStuck && (
@@ -550,6 +558,18 @@ export const TaskCard = memo(function TaskCard({
               >
                 <Loader2 className="h-2.5 w-2.5 animate-spin" />
                 {getTaskExecutionPhaseLabel(t, executionPhase)}
+              </Badge>
+            )}
+            {hasParallelSubtasks && !isStuck && !isIncomplete && (
+              <Badge
+                variant="outline"
+                className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-info/10 text-info border-info/30"
+              >
+                <Loader2 className="h-2.5 w-2.5 animate-spin" />
+                {t('detail.parallelSubtaskLabel', {
+                  count: activeBatchCount,
+                  defaultValue: 'Parallel: {{count}}',
+                })}
               </Badge>
             )}
              {/* Status badge - hide when execution phase badge is showing */}
@@ -652,7 +672,7 @@ export const TaskCard = memo(function TaskCard({
               phaseProgress={task.executionProgress?.phaseProgress}
               currentSubtask={task.executionProgress?.currentSubtask}
               isStuck={isStuck}
-              isRunning={isRunning}
+              isRunning={isExecutionActive}
             />
             {activeSubtaskSummary && (
               <p className="mt-2 text-[11px] text-info truncate" title={activeSubtaskSummary}>

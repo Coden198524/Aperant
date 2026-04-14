@@ -375,6 +375,39 @@ describe('Task Store', () => {
       expect(useTaskStore.getState().tasks[0].reviewReason).toBe('errors');
     });
 
+    it('should promote planning phase to coding when plan shows subtask execution activity', () => {
+      useTaskStore.setState({
+        tasks: [createTestTask({
+          id: 'task-1',
+          status: 'in_progress',
+          executionProgress: {
+            phase: 'planning',
+            phaseProgress: 15,
+            overallProgress: 10,
+          }
+        })]
+      });
+
+      const plan = createTestPlan({
+        phases: [
+          {
+            phase: 1,
+            name: 'Implementation',
+            type: 'implementation',
+            subtasks: [
+              { id: 'c1', title: 'Subtask 1', description: 'Implement subtask 1', status: 'completed' },
+              { id: 'c2', title: 'Subtask 2', description: 'Implement subtask 2', status: 'in_progress' }
+            ]
+          }
+        ]
+      });
+
+      useTaskStore.getState().updateTaskFromPlan('task-1', plan);
+
+      expect(useTaskStore.getState().tasks[0].executionProgress?.phase).toBe('coding');
+      expect(useTaskStore.getState().tasks[0].executionProgress?.currentSubtask).toBe('Subtask 2');
+    });
+
     it('should skip update when plan is invalid', () => {
       useTaskStore.setState({
         tasks: [createTestTask({ id: 'task-1', subtasks: [] })]

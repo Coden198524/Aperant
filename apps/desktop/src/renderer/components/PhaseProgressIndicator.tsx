@@ -97,12 +97,22 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
   const completedSubtasks = subtasks.filter((c) => c.status === 'completed').length;
   const totalSubtasks = subtasks.length;
   const subtaskProgress = totalSubtasks > 0 ? Math.round((completedSubtasks / totalSubtasks) * 100) : 0;
+  const activeBatchCount = subtasks.filter((subtask) => subtask.status === 'in_progress').length;
+  const hasParallelSubtasks =
+    activeBatchCount > 1 &&
+    isRunning &&
+    phase !== 'planning' &&
+    phase !== 'qa_review' &&
+    phase !== 'qa_fixing' &&
+    phase !== 'complete' &&
+    phase !== 'failed';
   const activeSubtaskIndex = resolveActiveSubtaskIndex({
     subtasks,
     currentSubtask,
     isRunning,
     phase,
   });
+  const normalizedPhaseProgress = Math.max(0, Math.min(100, phaseProgress ?? 0));
 
   // Get log entry counts for activity indication
   const planningEntries = phaseLogs?.phases?.planning?.entries?.length || 0;
@@ -120,6 +130,7 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
   const isIndeterminatePhase = phase === 'planning' || phase === 'qa_review' || phase === 'qa_fixing';
   // Show subtask progress whenever subtasks exist (stops pulsing animation when spec completes)
   const showSubtaskProgress = totalSubtasks > 0;
+  const showPhaseProgress = !showSubtaskProgress && isIndeterminatePhase && normalizedPhaseProgress > 0;
 
   const colors = PHASE_COLORS[phase] || PHASE_COLORS.idle;
   const phaseLabel = t(PHASE_LABEL_KEYS[phase] || PHASE_LABEL_KEYS.idle);
@@ -133,6 +144,14 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
           <span className="text-xs text-muted-foreground">
             {isStuck ? t('execution.labels.interrupted') : showSubtaskProgress ? t('execution.labels.progress') : phaseLabel}
           </span>
+          {hasParallelSubtasks && (
+            <span className="rounded-full bg-info/10 px-1.5 py-0.5 text-[10px] font-medium text-info">
+              {t('execution.labels.parallelSubtasks', {
+                count: activeBatchCount,
+                defaultValue: '{{count}} parallel',
+              })}
+            </span>
+          )}
           {/* Activity indicator dot for non-coding phases - only animate when visible */}
           {isRunning && !isStuck && isIndeterminatePhase && (
             <motion.div
@@ -152,12 +171,12 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
         <span className="text-xs font-medium text-foreground">
           {showSubtaskProgress ? (
             `${subtaskProgress}%`
+          ) : showPhaseProgress ? (
+            `${Math.round(normalizedPhaseProgress)}%`
           ) : activeEntries > 0 ? (
             <span className="text-muted-foreground">
               {activeEntries} {activeEntries === 1 ? t('execution.labels.entry') : t('execution.labels.entries')}
             </span>
-          ) : isRunning && isIndeterminatePhase && (phaseProgress ?? 0) > 0 ? (
-            `${Math.round(Math.min(phaseProgress!, 100))}%`
           ) : (
             '—'
           )}
@@ -188,6 +207,15 @@ export const PhaseProgressIndicator = memo(function PhaseProgressIndicator({
               className={cn('h-full rounded-full', colors.color)}
               initial={{ width: 0 }}
               animate={{ width: `${subtaskProgress}%` }}
+              transition={{ duration: 0.5, ease: 'easeOut' }}
+            />
+          ) : showPhaseProgress ? (
+            // Determinate progress for planning/validation when backend provides a percentage
+            <motion.div
+              key="phase-determinate"
+              className={cn('h-full rounded-full', colors.color)}
+              initial={{ width: 0 }}
+              animate={{ width: `${normalizedPhaseProgress}%` }}
               transition={{ duration: 0.5, ease: 'easeOut' }}
             />
           ) : shouldAnimate && isIndeterminatePhase ? (

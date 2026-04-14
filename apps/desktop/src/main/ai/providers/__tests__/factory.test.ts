@@ -146,6 +146,23 @@ describe('createProvider', () => {
     expect(result.provider).toBe('openai-compatible-chat');
   });
 
+  it('normalizes custom OpenAI base URLs to /v1 for GPT-5 chat transport', () => {
+    createProvider({
+      config: {
+        provider: SupportedProvider.OpenAI,
+        apiKey: 'test-key',
+        baseURL: 'https://cc-vibe.com',
+      },
+      modelId: 'gpt-5.4',
+    });
+
+    expect(createOpenAICompatible).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseURL: 'https://cc-vibe.com/v1',
+      }),
+    );
+  });
+
   it('keeps Responses API for official OpenAI base URLs', () => {
     const result = createProvider({
       config: {
@@ -165,6 +182,19 @@ describe('createProvider', () => {
       modelId: 'gpt-5.4',
     }) as any;
     expect(result.provider).toBe('openai-compatible-chat');
+  });
+
+  it('normalizes custom OpenAI-compatible base URLs to /v1', () => {
+    createProvider({
+      config: { provider: SupportedProvider.OpenAICompatible, apiKey: 'test-key', baseURL: 'https://example.com/codex' },
+      modelId: 'gpt-5.4',
+    });
+
+    expect(createOpenAICompatible).toHaveBeenCalledWith(
+      expect.objectContaining({
+        baseURL: 'https://example.com/codex/v1',
+      }),
+    );
   });
 
   it('uses .chat() with deploymentName for Azure provider', () => {
@@ -196,7 +226,7 @@ describe('createProvider', () => {
     });
     expect(createAnthropic).toHaveBeenCalledWith({
       apiKey: 'sk-test',
-      baseURL: 'https://custom.api.com',
+      baseURL: 'https://custom.api.com/v1',
       headers: { 'X-Custom': 'value' },
     });
   });
@@ -253,7 +283,7 @@ describe('createProviderFromModelId', () => {
     expect(createAnthropic).toHaveBeenCalledWith(
       expect.objectContaining({
         apiKey: 'override-key',
-        baseURL: 'https://override.com',
+        baseURL: 'https://override.com/v1',
       }),
     );
   });

@@ -105,6 +105,8 @@ interface PlanSubtask {
   status: string;
   files_to_create?: string[];
   files_to_modify?: string[];
+  pattern_files?: string[];
+  verification?: string;
 }
 
 // =============================================================================
@@ -159,6 +161,8 @@ export async function iterateSubtasks(
       phaseName,
       filesToCreate: subtask.files_to_create,
       filesToModify: subtask.files_to_modify,
+      patternFiles: subtask.pattern_files,
+      verification: subtask.verification,
       status: subtask.status,
     };
 
@@ -174,6 +178,14 @@ export async function iterateSubtasks(
         `Exceeded max retries (${config.maxRetries})`,
       );
       continue;
+    }
+
+    // Persist subtask start before launching the coder session so the UI and
+    // restored task state can reflect that coding has actually begun.
+    await markSubtaskInProgress(config.specDir, subtask.id);
+    await restampExecutionPhase(config.specDir, 'coding');
+    if (config.sourceSpecDir) {
+      await syncExecutionStateToMain(config.specDir, config.sourceSpecDir);
     }
 
     // Notify start
@@ -319,6 +331,43 @@ async function ensureSubtaskMarkedCompleted(
   }
 }
 
+async function markSubtaskInProgress(
+  specDir: string,
+  subtaskId: string,
+): Promise<void> {
+  const planPath = join(specDir, 'implementation_plan.json');
+  try {
+    const raw = await readFile(planPath, 'utf-8');
+    const plan = safeParseJson<ImplementationPlan>(raw);
+    if (!plan) {
+      return;
+    }
+
+    let updated = false;
+
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
+        if (withLegacyId.subtask_id && !subtask.id) {
+          subtask.id = withLegacyId.subtask_id;
+          updated = true;
+        }
+
+        if (subtask.id === subtaskId && subtask.status === 'pending') {
+          subtask.status = 'in_progress';
+          updated = true;
+        }
+      }
+    }
+
+    if (updated) {
+      await writeFile(planPath, JSON.stringify(plan, null, 2));
+    }
+  } catch {
+    // Non-fatal: the session can still run even if progress persistence fails
+  }
+}
+
 /**
  * Re-stamp executionPhase on the plan file after a coder session.
  *
@@ -385,6 +434,37 @@ async function syncPhasesToMain(
     // Log so we can diagnose subtask-status-not-updating issues.
     console.warn(
       `[syncPhasesToMain] Failed to sync phases from ${worktreeSpecDir} to ${mainSpecDir}:`,
+      err instanceof Error ? err.message : err,
+    );
+  }
+}
+
+async function syncExecutionStateToMain(
+  worktreeSpecDir: string,
+  mainSpecDir: string,
+): Promise<void> {
+  try {
+    const worktreePlanPath = join(worktreeSpecDir, 'implementation_plan.json');
+    const mainPlanPath = join(mainSpecDir, 'implementation_plan.json');
+
+    const worktreeRaw = await readFile(worktreePlanPath, 'utf-8');
+    const worktreePlan = safeParseJson<Record<string, unknown>>(worktreeRaw);
+    if (!worktreePlan) return;
+
+    const mainRaw = await readFile(mainPlanPath, 'utf-8');
+    const mainPlan = safeParseJson<Record<string, unknown>>(mainRaw);
+    if (!mainPlan) return;
+
+    mainPlan.phases = worktreePlan.phases;
+    if (typeof worktreePlan.executionPhase === 'string') {
+      mainPlan.executionPhase = worktreePlan.executionPhase;
+    }
+    mainPlan.updated_at = new Date().toISOString();
+
+    await writeFile(mainPlanPath, JSON.stringify(mainPlan, null, 2));
+  } catch (err) {
+    console.warn(
+      `[syncExecutionStateToMain] Failed to sync execution state from ${worktreeSpecDir} to ${mainSpecDir}:`,
       err instanceof Error ? err.message : err,
     );
   }

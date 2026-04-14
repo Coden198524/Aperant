@@ -94,6 +94,23 @@ export const taskMock = {
     data: null
   }),
 
+  clearTaskLogs: async (_projectId: string, specId: string) => {
+    const now = new Date().toISOString();
+    return {
+      success: true,
+      data: {
+        spec_id: specId,
+        created_at: now,
+        updated_at: now,
+        phases: {
+          planning: { phase: 'planning' as const, status: 'pending' as const, started_at: null, completed_at: null, entries: [] },
+          coding: { phase: 'coding' as const, status: 'pending' as const, started_at: null, completed_at: null, entries: [] },
+          validation: { phase: 'validation' as const, status: 'pending' as const, started_at: null, completed_at: null, entries: [] },
+        }
+      }
+    };
+  },
+
   watchTaskLogs: async () => ({ success: true }),
 
   unwatchTaskLogs: async () => ({ success: true }),

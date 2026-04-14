@@ -21,6 +21,14 @@ import type { TaskLogs, TaskLogPhase, TaskLogPhaseStatus, TaskLogEntry, TaskLogE
 import type { StreamEvent } from '../session/types';
 import type { Phase } from '../config/types';
 
+const DEFAULT_LIVE_TEXT_FLUSH_MS = 1000;
+const DEFAULT_LIVE_TEXT_MAX_CHARS = 1200;
+
+interface TaskLogWriterOptions {
+  liveTextFlushMs?: number;
+  liveTextMaxChars?: number;
+}
+
 // =============================================================================
 // Phase Mapping
 // =============================================================================
@@ -57,14 +65,20 @@ function toLogPhase(phase: Phase | undefined): TaskLogPhase {
  */
 export class TaskLogWriter {
   private readonly logFile: string;
+  private readonly liveTextFlushMs: number;
+  private readonly liveTextMaxChars: number;
   private data: TaskLogs;
   private currentPhase: TaskLogPhase = 'planning';
   private currentSubtask: string | undefined;
   private pendingText = '';
   private pendingTextPhase: TaskLogPhase | undefined;
+  private pendingTextSubtask: string | undefined;
+  private pendingTextFlushTimer: NodeJS.Timeout | undefined;
 
-  constructor(specDir: string, specId: string) {
+  constructor(specDir: string, specId: string, options: TaskLogWriterOptions = {}) {
     this.logFile = join(specDir, 'task_logs.json');
+    this.liveTextFlushMs = options.liveTextFlushMs ?? DEFAULT_LIVE_TEXT_FLUSH_MS;
+    this.liveTextMaxChars = options.liveTextMaxChars ?? DEFAULT_LIVE_TEXT_MAX_CHARS;
     this.data = this.loadOrCreate(specDir, specId);
   }
 
@@ -115,6 +129,9 @@ export class TaskLogWriter {
    * Set the current subtask ID for subsequent log entries.
    */
   setSubtask(subtaskId: string | undefined): void {
+    if (this.pendingText && this.currentSubtask !== subtaskId) {
+      this.flushPendingText();
+    }
     this.currentSubtask = subtaskId;
   }
 
@@ -161,7 +178,13 @@ export class TaskLogWriter {
    * Write a plain text log message to the current phase.
    */
   logText(content: string, phase?: Phase, entryType: TaskLogEntryType = 'text'): void {
+    this.flushPendingText();
     const logPhase = phase ? toLogPhase(phase) : this.currentPhase;
+    const phaseData = this.data.phases[logPhase];
+    if (phaseData?.status === 'pending') {
+      phaseData.status = 'active';
+      phaseData.started_at = phaseData.started_at ?? this.timestamp();
+    }
     this.addEntry(logPhase, entryType, content);
     this.save();
   }
@@ -189,14 +212,15 @@ export class TaskLogWriter {
     phase: TaskLogPhase,
     type: TaskLogEntryType,
     content: string,
-    extra?: Partial<TaskLogEntry>
+    extra?: Partial<TaskLogEntry>,
+    subtaskId = this.currentSubtask
   ): void {
     const entry: TaskLogEntry = {
       timestamp: this.timestamp(),
       type,
       content: content.slice(0, 2000), // Reasonable cap to prevent huge entries
       phase,
-      ...(this.currentSubtask ? { subtask_id: this.currentSubtask } : {}),
+      ...(subtaskId ? { subtask_id: subtaskId } : {}),
       ...extra,
     };
 
@@ -260,26 +284,64 @@ export class TaskLogWriter {
       // Phase changed mid-accumulation — flush what we have
       this.flushPendingText();
     }
+    if (!this.pendingText) {
+      this.pendingTextPhase = phase;
+      this.pendingTextSubtask = this.currentSubtask;
+    }
+
     this.pendingText += text;
-    this.pendingTextPhase = phase;
+
+    if (this.pendingText.length >= this.liveTextMaxChars) {
+      this.flushPendingText();
+      return;
+    }
+
+    this.schedulePendingTextFlush();
   }
 
   private flushPendingText(): void {
+    this.clearPendingTextFlushTimer();
+
     if (!this.pendingText.trim()) {
       this.pendingText = '';
       this.pendingTextPhase = undefined;
+      this.pendingTextSubtask = undefined;
       return;
     }
 
     const phase = this.pendingTextPhase ?? this.currentPhase;
     const content = this.pendingText.trim();
+    const subtaskId = this.pendingTextSubtask;
 
     // Write as a text entry
-    this.addEntry(phase, 'text', content.slice(0, 4000));
+    this.addEntry(phase, 'text', content.slice(0, 4000), undefined, subtaskId);
     this.save();
 
     this.pendingText = '';
     this.pendingTextPhase = undefined;
+    this.pendingTextSubtask = undefined;
+  }
+
+  private schedulePendingTextFlush(): void {
+    if (this.pendingTextFlushTimer || this.liveTextFlushMs <= 0) {
+      return;
+    }
+
+    this.pendingTextFlushTimer = setTimeout(() => {
+      this.pendingTextFlushTimer = undefined;
+      this.flushPendingText();
+    }, this.liveTextFlushMs);
+
+    this.pendingTextFlushTimer.unref?.();
+  }
+
+  private clearPendingTextFlushTimer(): void {
+    if (!this.pendingTextFlushTimer) {
+      return;
+    }
+
+    clearTimeout(this.pendingTextFlushTimer);
+    this.pendingTextFlushTimer = undefined;
   }
 
   // ===========================================================================

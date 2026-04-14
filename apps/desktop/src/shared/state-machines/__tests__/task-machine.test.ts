@@ -206,6 +206,18 @@ describe('taskMachine', () => {
       expect(snapshot.context.error).toBe('Coding error');
     });
 
+    it('should transition to error on CODING_FAILED while planning', () => {
+      const events: TaskEvent[] = [
+        { type: 'PLANNING_STARTED' },
+        { type: 'CODING_FAILED', subtaskId: 'planning', error: 'Planning error', attemptCount: 0 }
+      ];
+
+      const snapshot = runEvents(events);
+      expect(snapshot.value).toBe('error');
+      expect(snapshot.context.reviewReason).toBe('errors');
+      expect(snapshot.context.error).toBe('Planning error');
+    });
+
     it('should transition to error on QA_MAX_ITERATIONS from qa_review', () => {
       const events: TaskEvent[] = [
         { type: 'PLANNING_STARTED' },

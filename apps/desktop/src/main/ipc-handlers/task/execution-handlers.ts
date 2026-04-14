@@ -26,6 +26,8 @@ import { cancelFallbackTimer } from '../agent-events-handlers';
 import { readSettingsFile } from '../../settings-utils';
 import type { ProviderAccount } from '../../../shared/types/provider-account';
 
+const TASK_STOP_STARTUP_GRACE_MS = 5000;
+
 /**
  * Check if any provider account is configured (API key or OAuth).
  * Used to bypass the legacy hasValidAuth() check for non-Anthropic providers.
@@ -585,6 +587,25 @@ export function registerTaskExecutionHandlers(
    * Stop a task
    */
   ipcMain.on(IPC_CHANNELS.TASK_STOP, (_, taskId: string, projectId?: string) => {
+    const runtimeMs = typeof agentManager.getTaskRuntimeMs === 'function'
+      ? agentManager.getTaskRuntimeMs(taskId)
+      : null;
+    if (runtimeMs !== null && runtimeMs < TASK_STOP_STARTUP_GRACE_MS) {
+      console.warn('[TASK_STOP] Ignoring stop during startup grace period:', {
+        taskId,
+        projectId,
+        runtimeMs,
+        graceMs: TASK_STOP_STARTUP_GRACE_MS,
+      });
+      return;
+    }
+
+    console.warn('[TASK_STOP] Received stop request:', {
+      taskId,
+      projectId,
+      runtimeMs,
+    });
+
     agentManager.killTask(taskId);
 
     // Find task and project to emit USER_STOPPED with plan context

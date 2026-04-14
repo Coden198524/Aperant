@@ -21,7 +21,9 @@ vi.mock('electron', () => ({
 vi.mock('fs', () => ({
   existsSync: vi.fn(),
   readFileSync: vi.fn(),
-  watchFile: vi.fn()
+  watchFile: vi.fn(),
+  mkdirSync: vi.fn(),
+  writeFileSync: vi.fn()
 }));
 
 vi.mock('../../../project-store', () => ({
@@ -37,6 +39,10 @@ vi.mock('../../../task-log-service', () => ({
     stopWatching: vi.fn(),
     on: vi.fn()
   }
+}));
+
+vi.mock('../../../worktree-paths', () => ({
+  findTaskWorktree: vi.fn()
 }));
 
 vi.mock('../../../utils/spec-path-helpers', () => ({
@@ -286,6 +292,137 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
 
       expect(result.success).toBe(true);
       expect(result.data).toBeNull();
+    });
+  });
+
+  describe('TASK_LOGS_CLEAR handler', () => {
+    it('should clear task logs and emit TASK_LOGS_CHANGED', async () => {
+      const { projectStore } = await import('../../../project-store');
+      const { taskLogService } = await import('../../../task-log-service');
+      const { findTaskWorktree } = await import('../../../worktree-paths');
+      const { mkdirSync, writeFileSync } = await import('fs');
+
+      const mockProject = {
+        id: 'project-123',
+        path: '/absolute/path/to/project',
+        autoBuildPath: '.auto-claude'
+      };
+
+      const existingLogs: TaskLogs = {
+        spec_id: '001-test-task',
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T01:00:00Z',
+        phases: {
+          planning: {
+            phase: 'planning',
+            status: 'completed',
+            started_at: '2024-01-01T00:00:00Z',
+            completed_at: '2024-01-01T00:10:00Z',
+            entries: [{ type: 'text', content: 'done', phase: 'planning', timestamp: '2024-01-01T00:10:00Z' }]
+          },
+          coding: { phase: 'coding', status: 'pending', started_at: null, completed_at: null, entries: [] },
+          validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] }
+        }
+      };
+
+      const clearedLogs: TaskLogs = {
+        spec_id: '001-test-task',
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-01T02:00:00Z',
+        phases: {
+          planning: { phase: 'planning', status: 'pending', started_at: null, completed_at: null, entries: [] },
+          coding: { phase: 'coding', status: 'pending', started_at: null, completed_at: null, entries: [] },
+          validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] }
+        }
+      };
+
+      (projectStore.getProject as Mock).mockReturnValue(mockProject);
+      (findTaskWorktree as Mock).mockReturnValue(null);
+      (taskLogService.loadLogs as Mock)
+        .mockReturnValueOnce(existingLogs)
+        .mockReturnValueOnce(clearedLogs);
+
+      const handler = ipcHandlers['task:logsClear'];
+      const result = await handler({}, 'project-123', '001-test-task') as IPCResult<TaskLogs>;
+
+      expect(result.success).toBe(true);
+      expect(result.data).toEqual(clearedLogs);
+      expect(mkdirSync).toHaveBeenCalledWith(
+        path.join('/absolute/path/to/project', '.auto-claude/specs', '001-test-task'),
+        { recursive: true }
+      );
+      expect(writeFileSync).toHaveBeenCalledTimes(1);
+      expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
+        'task:logsChanged',
+        '001-test-task',
+        clearedLogs
+      );
+    });
+
+    it('should clear both main and worktree log files when worktree exists', async () => {
+      const { projectStore } = await import('../../../project-store');
+      const { taskLogService } = await import('../../../task-log-service');
+      const { findTaskWorktree } = await import('../../../worktree-paths');
+      const { writeFileSync } = await import('fs');
+
+      const mockProject = {
+        id: 'project-123',
+        path: '/absolute/path/to/project',
+        autoBuildPath: '.auto-claude'
+      };
+
+      (projectStore.getProject as Mock).mockReturnValue(mockProject);
+      (findTaskWorktree as Mock).mockReturnValue(
+        '/absolute/path/to/project/.auto-claude/worktrees/tasks/001-test-task'
+      );
+      (taskLogService.loadLogs as Mock)
+        .mockReturnValueOnce(null)
+        .mockReturnValueOnce({
+          spec_id: '001-test-task',
+          created_at: '2024-01-01T02:00:00Z',
+          updated_at: '2024-01-01T02:00:00Z',
+          phases: {
+            planning: { phase: 'planning', status: 'pending', started_at: null, completed_at: null, entries: [] },
+            coding: { phase: 'coding', status: 'pending', started_at: null, completed_at: null, entries: [] },
+            validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] }
+          }
+        } satisfies TaskLogs);
+
+      const handler = ipcHandlers['task:logsClear'];
+      const result = await handler({}, 'project-123', '001-test-task') as IPCResult<TaskLogs>;
+
+      expect(result.success).toBe(true);
+      expect(writeFileSync).toHaveBeenCalledTimes(2);
+      expect(writeFileSync).toHaveBeenCalledWith(
+        path.join('/absolute/path/to/project', '.auto-claude/specs', '001-test-task', 'task_logs.json'),
+        expect.any(String),
+        'utf-8'
+      );
+      expect(writeFileSync).toHaveBeenCalledWith(
+        path.join('/absolute/path/to/project/.auto-claude/worktrees/tasks/001-test-task', '.auto-claude/specs', '001-test-task', 'task_logs.json'),
+        expect.any(String),
+        'utf-8'
+      );
+    });
+
+    it('should reject invalid specId when clearing logs', async () => {
+      const handler = ipcHandlers['task:logsClear'];
+      const result = await handler({}, 'project-123', '../../../etc/passwd') as IPCResult<TaskLogs>;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Invalid spec ID');
+    });
+
+    it('should return error when project is not found while clearing logs', async () => {
+      const { projectStore } = await import('../../../project-store');
+
+      (projectStore.getProject as Mock).mockReturnValue(null);
+
+      const handler = ipcHandlers['task:logsClear'];
+      const result = await handler({}, 'missing-project', '001-test-task') as IPCResult<TaskLogs>;
+
+      expect(result.success).toBe(false);
+      expect(result.error).toBe('Project not found');
     });
   });
 

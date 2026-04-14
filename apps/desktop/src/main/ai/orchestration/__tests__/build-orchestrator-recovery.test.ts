@@ -185,4 +185,52 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(secondQa).toBeGreaterThan(recoveryCoding);
     expect(outcome.finalPhase).toBe('complete');
   });
+
+  it('re-enters planning when an existing implementation_plan.json has no subtasks', async () => {
+    let plannerRuns = 0;
+    let codingRuns = 0;
+
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.json')) {
+        if (plannerRuns === 0) {
+          return Promise.resolve(JSON.stringify({ phases: [] }));
+        }
+        return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve('Status: PASSED');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = makeOrchestrator(runSession);
+    const phases: ExecutionPhase[] = [];
+    orchestrator.on('phase-change', (phase) => phases.push(phase));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(runSession.mock.calls.some(([config]) => config.agentType === 'planner')).toBe(true);
+    expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
+    expect(phases[0]).toBe('planning');
+    expect(phases).toContain('coding');
+    expect(phases).toContain('qa_review');
+  });
 });

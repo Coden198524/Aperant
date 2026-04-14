@@ -24,6 +24,16 @@ vi.mock('../../../claude-profile/profile-scorer', () => ({
   scoreProviderAccount: vi.fn(),
 }));
 
+vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn(() => '/tmp/codex-user-data'),
+  },
+}));
+
+vi.mock('../../providers/oauth-fetch', () => ({
+  ensureValidOAuthToken: vi.fn(),
+}));
+
 // Mock model equivalence
 // ../../../../shared/ = src/shared/ (4 levels up from __tests__ = src/)
 vi.mock('../../../../shared/constants/models', () => ({
@@ -38,6 +48,7 @@ vi.mock('../../providers/factory', () => ({
 
 import { ensureValidToken, reactiveTokenRefresh } from '../../../claude-profile/token-refresh';
 import { scoreProviderAccount } from '../../../claude-profile/profile-scorer';
+import { ensureValidOAuthToken } from '../../providers/oauth-fetch';
 import { resolveModelEquivalent } from '../../../../shared/constants/models';
 import { detectProviderFromModel } from '../../providers/factory';
 import {
@@ -52,6 +63,7 @@ import {
 const mockEnsureValidToken = vi.mocked(ensureValidToken);
 const mockReactiveTokenRefresh = vi.mocked(reactiveTokenRefresh);
 const mockScoreProviderAccount = vi.mocked(scoreProviderAccount);
+const mockEnsureValidOAuthToken = vi.mocked(ensureValidOAuthToken);
 const mockResolveModelEquivalent = vi.mocked(resolveModelEquivalent);
 const _mockDetectProviderFromModel = vi.mocked(detectProviderFromModel);
 
@@ -63,6 +75,7 @@ function clearSettingsAccessor() {
 beforeEach(() => {
   vi.clearAllMocks();
   clearSettingsAccessor();
+  mockEnsureValidOAuthToken.mockResolvedValue('oauth-token');
   // Clean up any environment variable side effects
   delete process.env.ANTHROPIC_API_KEY;
   delete process.env.OPENAI_API_KEY;
@@ -472,6 +485,130 @@ describe('resolveAuthFromQueue', () => {
     expect(result?.resolvedProvider).toBe('openai-compatible');
     expect(result?.resolvedModelId).toBe('gpt-5.4');
     expect(result?.reasoningConfig).toEqual({ type: 'reasoning_effort', level: 'high' });
+  });
+
+  it('skips OpenAI OAuth accounts for non-Codex agentic models', async () => {
+    const openAIOAuthAccount = {
+      ...baseAccount,
+      id: 'acc-openai-oauth',
+      provider: 'openai' as const,
+      authType: 'oauth' as const,
+      apiKey: undefined,
+    };
+    const openAIApiKeyAccount = {
+      ...baseAccount,
+      id: 'acc-openai-key',
+      provider: 'openai' as const,
+      authType: 'api-key' as const,
+      apiKey: 'sk-openai-api',
+    };
+
+    _mockDetectProviderFromModel.mockReturnValue('openai');
+    mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
+      if (modelValue === 'gpt-5.4' && targetProvider === 'openai') {
+        return {
+          modelId: 'gpt-5.4',
+          reasoning: { type: 'reasoning_effort', level: 'high' },
+        };
+      }
+      return null;
+    });
+
+    const result = await resolveAuthFromQueue('gpt-5.4', [openAIOAuthAccount, openAIApiKeyAccount], {
+      executionMode: 'agentic',
+    });
+
+    expect(result?.accountId).toBe('acc-openai-key');
+    expect(result?.resolvedModelId).toBe('gpt-5.4');
+    expect(mockEnsureValidOAuthToken).not.toHaveBeenCalled();
+  });
+
+  it('keeps OpenAI API-key accounts with custom baseUrl available for agentic gpt-5 models', async () => {
+    const openAICustomBaseUrlAccount = {
+      ...baseAccount,
+      id: 'acc-openai-custom-baseurl',
+      provider: 'openai' as const,
+      authType: 'api-key' as const,
+      apiKey: 'sk-openai-api',
+      baseUrl: 'https://cc-vibe.com',
+    };
+
+    _mockDetectProviderFromModel.mockReturnValue('openai');
+    mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
+      if (modelValue === 'gpt-5.4' && targetProvider === 'openai') {
+        return {
+          modelId: 'gpt-5.4',
+          reasoning: { type: 'reasoning_effort', level: 'high' },
+        };
+      }
+      return null;
+    });
+
+    const result = await resolveAuthFromQueue('gpt-5.4', [openAICustomBaseUrlAccount], {
+      executionMode: 'agentic',
+    });
+
+    expect(result?.accountId).toBe('acc-openai-custom-baseurl');
+    expect(result?.resolvedModelId).toBe('gpt-5.4');
+  });
+
+  it('keeps shorthand requests when OpenAI custom baseUrl resolves to agentic gpt-5', async () => {
+    const openAICustomBaseUrlAccount = {
+      ...baseAccount,
+      id: 'acc-openai-custom-baseurl',
+      provider: 'openai' as const,
+      authType: 'api-key' as const,
+      apiKey: 'sk-openai-api',
+      baseUrl: 'https://cc-vibe.com',
+    };
+
+    _mockDetectProviderFromModel.mockReturnValue(undefined);
+    mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
+      if (modelValue === 'sonnet' && targetProvider === 'openai') {
+        return {
+          modelId: 'gpt-5.4',
+          reasoning: { type: 'reasoning_effort', level: 'high' },
+        };
+      }
+      return null;
+    });
+
+    const result = await resolveAuthFromQueue('sonnet', [openAICustomBaseUrlAccount], {
+      executionMode: 'agentic',
+    });
+
+    expect(result?.accountId).toBe('acc-openai-custom-baseurl');
+    expect(result?.resolvedModelId).toBe('gpt-5.4');
+  });
+
+  it('allows OpenAI OAuth accounts for Codex agentic models', async () => {
+    const openAIOAuthAccount = {
+      ...baseAccount,
+      id: 'acc-openai-oauth',
+      provider: 'openai' as const,
+      authType: 'oauth' as const,
+      apiKey: undefined,
+    };
+
+    _mockDetectProviderFromModel.mockReturnValue('openai');
+    mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
+      if (modelValue === 'gpt-5.3-codex' && targetProvider === 'openai') {
+        return {
+          modelId: 'gpt-5.3-codex',
+          reasoning: { type: 'reasoning_effort', level: 'high' },
+        };
+      }
+      return null;
+    });
+
+    const result = await resolveAuthFromQueue('gpt-5.3-codex', [openAIOAuthAccount], {
+      executionMode: 'agentic',
+    });
+
+    expect(result?.accountId).toBe('acc-openai-oauth');
+    expect(result?.resolvedModelId).toBe('gpt-5.3-codex');
+    expect(result?.source).toBe('codex-oauth');
+    expect(mockEnsureValidOAuthToken).toHaveBeenCalled();
   });
 
   it('does not cross-map full model IDs to different providers', async () => {

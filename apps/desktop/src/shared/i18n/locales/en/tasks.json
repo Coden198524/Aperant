@@ -358,6 +358,14 @@
       "hint": "Use an external screenshot tool and paste directly into the task description with {{shortcut}}."
     }
   },
+  "logActions": {
+    "clearAction": "Clear Logs",
+    "clearing": "Clearing...",
+    "clearSuccessTitle": "Logs cleared",
+    "clearSuccessDescription": "Task log list has been cleared.",
+    "clearFailedTitle": "Failed to clear logs",
+    "clearFailedDescription": "Please try again."
+  },
   "deleteDialog": {
     "title": "Delete Task",
     "confirmMessage": "Are you sure you want to delete",

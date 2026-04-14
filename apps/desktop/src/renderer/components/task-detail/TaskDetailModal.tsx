@@ -1,3 +1,4 @@
+import { useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useToast } from '../../hooks/use-toast';
@@ -32,7 +33,8 @@ import {
 } from 'lucide-react';
 import { cn } from '../../lib/utils';
 import { calculateProgress } from '../../lib/utils';
-import { stopTask, submitReview, recoverStuckTask, deleteTask, useTaskStore, startTaskOrQueue } from '../../stores/task-store';
+import { getTaskExecutionPhaseLabel } from '../../lib/i18n-labels';
+import { stopTask, submitReview, recoverStuckTask, deleteTask, useTaskStore, startTaskOrQueue, loadTasks } from '../../stores/task-store';
 import { useProjectStore } from '../../stores/project-store';
 import { TASK_STATUS_LABELS } from '../../../shared/constants';
 import { TaskEditDialog } from '../TaskEditDialog';
@@ -43,7 +45,7 @@ import { TaskSubtasks } from './TaskSubtasks';
 import { TaskLogs } from './TaskLogs';
 import { TaskFiles } from './TaskFiles';
 import { TaskReview } from './TaskReview';
-import type { Task, WorktreeCreatePROptions } from '../../../shared/types';
+import type { Task, TaskLogPhase, WorktreeCreatePROptions } from '../../../shared/types';
 
 interface TaskDetailModalProps {
   open: boolean;
@@ -81,11 +83,28 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   const { t } = useTranslation(['tasks', 'common']);
   const { toast } = useToast();
   const state = useTaskDetail({ task });
+  const [isClearingLogs, setIsClearingLogs] = useState(false);
   const activeProject = useProjectStore(s => s.getActiveProject());
   const showFilesTab = isFilesTabEnabled();
   const progressPercent = calculateProgress(task.subtasks);
   const completedSubtasks = task.subtasks.filter(s => s.status === 'completed').length;
   const totalSubtasks = task.subtasks.length;
+  const isPlanningExecution = state.hasActiveExecution && state.executionPhase === 'planning';
+  const planningProgressPercent = Math.round(
+    Math.max(
+      0,
+      Math.min(100, task.executionProgress?.phaseProgress ?? task.executionProgress?.overallProgress ?? 0)
+    )
+  );
+  const showHeaderProgress = isPlanningExecution || ((state.isRunning || completedSubtasks > 0) && totalSubtasks > 0);
+  const headerProgressPercent = isPlanningExecution ? planningProgressPercent : progressPercent;
+  const headerProgressLabel = isPlanningExecution
+    ? (task.executionProgress?.message || getTaskExecutionPhaseLabel(t, 'planning'))
+    : t('tasks:detail.subtasksSummary', {
+        completed: completedSubtasks,
+        total: totalSubtasks,
+        defaultValue: '{{completed}}/{{total}} subtasks'
+      });
 
   // Event Handlers
   const handleStartStop = async () => {
@@ -167,6 +186,8 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           state.setStagedProjectPath(result.data.projectPath);
           state.setSuggestedCommitMessage(result.data.suggestedCommitMessage);
         } else {
+          useTaskStore.getState().updateTaskStatus(task.id, 'done');
+          void loadTasks(task.projectId, { forceRefresh: true });
           onOpenChange(false);
         }
       } else {
@@ -190,6 +211,35 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
       state.setWorkspaceError(result.data?.message || result.error || t('tasks:detail.discardFailed', { defaultValue: 'Failed to discard changes' }));
     }
     state.setIsDiscarding(false);
+  };
+
+  const handleClearLogs = async () => {
+    setIsClearingLogs(true);
+    try {
+      const result = await window.electronAPI.clearTaskLogs(task.projectId, task.specId);
+      if (result.success && result.data) {
+        state.setPhaseLogs(result.data);
+        state.setExpandedPhases(new Set<TaskLogPhase>());
+        toast({
+          title: t('tasks:logActions.clearSuccessTitle', { defaultValue: 'Logs cleared' }),
+          description: t('tasks:logActions.clearSuccessDescription', { defaultValue: 'Task log list has been cleared.' }),
+        });
+      } else {
+        toast({
+          title: t('tasks:logActions.clearFailedTitle', { defaultValue: 'Failed to clear logs' }),
+          description: result.error || t('tasks:logActions.clearFailedDescription', { defaultValue: 'Please try again.' }),
+          variant: 'destructive',
+        });
+      }
+    } catch (error) {
+      toast({
+        title: t('tasks:logActions.clearFailedTitle', { defaultValue: 'Failed to clear logs' }),
+        description: error instanceof Error ? error.message : t('tasks:logActions.clearFailedDescription', { defaultValue: 'Please try again.' }),
+        variant: 'destructive',
+      });
+    } finally {
+      setIsClearingLogs(false);
+    }
   };
 
   const handleCreatePR = async (options: WorktreeCreatePROptions) => {
@@ -477,11 +527,24 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                 </div>
               </div>
 
-              {/* Progress bar - only show when running or has progress */}
-              {(state.isRunning || completedSubtasks > 0) && totalSubtasks > 0 && (
-                <div className="mt-3 flex items-center gap-3">
-                  <Progress value={progressPercent} className="h-1.5 flex-1" />
-                  <span className="text-xs text-muted-foreground tabular-nums w-10 text-right">{progressPercent}%</span>
+              {/* Progress bar - show planning progress before subtasks exist */}
+              {showHeaderProgress && (
+                <div className="mt-3 space-y-2">
+                  <div className="flex items-center justify-between gap-3">
+                    <span className="text-xs text-muted-foreground truncate">
+                      {headerProgressLabel}
+                    </span>
+                    <span className="text-xs text-muted-foreground tabular-nums shrink-0">
+                      {headerProgressPercent}%
+                    </span>
+                  </div>
+                  <Progress
+                    value={headerProgressPercent}
+                    className={cn(
+                      'h-1.5',
+                      isPlanningExecution && '[&>div]:bg-amber-500'
+                    )}
+                  />
                 </div>
               )}
 
@@ -599,6 +662,26 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
                 {/* Logs Tab */}
                 <TabsContent value="logs" className="flex-1 min-h-0 overflow-hidden mt-0">
+                  <div className="px-5 pt-3 pb-2 border-b border-border flex items-center justify-end">
+                    <Button
+                      variant="outline"
+                      size="sm"
+                      onClick={handleClearLogs}
+                      disabled={isClearingLogs}
+                    >
+                      {isClearingLogs ? (
+                        <>
+                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                          {t('tasks:logActions.clearing', { defaultValue: 'Clearing...' })}
+                        </>
+                      ) : (
+                        <>
+                          <Trash2 className="mr-2 h-4 w-4" />
+                          {t('tasks:logActions.clearAction', { defaultValue: 'Clear Logs' })}
+                        </>
+                      )}
+                    </Button>
+                  </div>
                   <TaskLogs
                     task={task}
                     phaseLogs={state.phaseLogs}

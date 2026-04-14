@@ -193,6 +193,40 @@ function validatePlanData(plan: ImplementationPlan): boolean {
   return true;
 }
 
+function hasCodingActivityInSubtasks(subtasks: Subtask[]): boolean {
+  return subtasks.some((subtask) => subtask.status !== 'pending');
+}
+
+function promoteExecutionPhaseFromPlan(
+  task: Task,
+  subtasks: Subtask[],
+): ExecutionProgress | undefined {
+  if (task.status !== 'in_progress') {
+    return task.executionProgress;
+  }
+
+  const currentPhase = task.executionProgress?.phase;
+  const shouldPromoteToCoding = (currentPhase === undefined || currentPhase === 'planning')
+    && hasCodingActivityInSubtasks(subtasks);
+
+  if (!shouldPromoteToCoding) {
+    return task.executionProgress;
+  }
+
+  const activeSubtask = subtasks.find((subtask) => subtask.status === 'in_progress');
+
+  return {
+    phase: 'coding',
+    phaseProgress: task.executionProgress?.phaseProgress ?? 0,
+    overallProgress: task.executionProgress?.overallProgress ?? 0,
+    currentSubtask: activeSubtask?.title ?? task.executionProgress?.currentSubtask,
+    message: task.executionProgress?.message,
+    startedAt: task.executionProgress?.startedAt,
+    sequenceNumber: task.executionProgress?.sequenceNumber,
+    completedPhases: task.executionProgress?.completedPhases,
+  };
+}
+
 // localStorage key prefix for task order persistence
 const TASK_ORDER_KEY_PREFIX = 'task-order-state';
 
@@ -480,11 +514,13 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           // XState is the source of truth for status - it emits TASK_STATUS_CHANGE.
           // Plan updates only update subtasks, title, and other non-status fields.
           // This prevents race conditions where a stale plan overwrites XState status.
+          const executionProgress = promoteExecutionPhaseFromPlan(t, subtasks);
 
           return {
             ...t,
             title: plan.feature || t.title,
             subtasks,
+            ...(executionProgress ? { executionProgress } : {}),
             // Keep existing status and reviewReason - XState manages these via TASK_STATUS_CHANGE
             updatedAt: new Date()
           };

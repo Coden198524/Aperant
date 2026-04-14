@@ -1166,5 +1166,62 @@ describe('ProjectStore', () => {
         })
       );
     });
+
+    it('should preserve worktree subtasks when the main copy has no phases after restart', async () => {
+      const mainSpecsDir = path.join(TEST_PROJECT_PATH, '.auto-claude', 'specs', '010-dedupe-subtasks');
+      mkdirSync(mainSpecsDir, { recursive: true });
+
+      const worktreeDir = path.join(
+        TEST_PROJECT_PATH,
+        '.auto-claude',
+        'worktrees',
+        'tasks',
+        'dedupe-subtasks-worktree',
+        '.auto-claude',
+        'specs',
+        '010-dedupe-subtasks'
+      );
+      mkdirSync(worktreeDir, { recursive: true });
+
+      const staleMainPlan = {
+        feature: 'Subtask Dedupe Feature',
+        workflow_type: 'feature',
+        services_involved: [],
+        status: 'in_progress',
+        phases: [],
+        final_acceptance: [],
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-02T00:00:00Z',
+        spec_file: 'spec.md'
+      };
+
+      const richerWorktreePlan = {
+        ...staleMainPlan,
+        phases: [
+          {
+            phase: 1,
+            name: 'Implementation',
+            type: 'implementation',
+            subtasks: [
+              { id: 'subtask-1', title: 'Build board', description: 'Render kanban board', status: 'completed' },
+              { id: 'subtask-2', title: 'Show progress', description: 'Display planning progress', status: 'in_progress' }
+            ]
+          }
+        ]
+      };
+
+      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(staleMainPlan));
+      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(richerWorktreePlan));
+
+      const { ProjectStore } = await import('../project-store');
+      const store = new ProjectStore();
+      const project = store.addProject(TEST_PROJECT_PATH);
+      const tasks = store.getTasks(project.id);
+
+      const task = tasks.find(t => t.specId === '010-dedupe-subtasks');
+      expect(task).toBeDefined();
+      expect(task?.subtasks).toHaveLength(2);
+      expect(task?.subtasks.map(subtask => subtask.status)).toEqual(['completed', 'in_progress']);
+    });
   });
 });

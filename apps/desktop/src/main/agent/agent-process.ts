@@ -30,6 +30,18 @@ import { debugLog } from '../../shared/utils/debug-logger';
  */
 type CliTool = 'claude' | 'gh' | 'glab';
 
+function getInitialPhaseForProcess(processType: ProcessType): ExecutionProgressData['phase'] {
+  switch (processType) {
+    case 'spec-creation':
+      return 'planning';
+    case 'qa-process':
+      return 'qa_review';
+    case 'task-execution':
+    default:
+      return 'coding';
+  }
+}
+
 /**
  * Mapping of CLI tools to their environment variable names
  * This ensures type safety - tools cannot be mismatched with env vars.
@@ -914,7 +926,21 @@ export class AgentProcessManager {
 
     // Spawn the worker via the bridge
     try {
+      console.log('[AgentProcess] Spawning worker thread for task:', {
+        taskId,
+        processType,
+        projectId,
+        agentType: executorConfig.session.agentType,
+        provider: executorConfig.session.provider,
+        modelId: executorConfig.session.modelId,
+        specDir: executorConfig.session.specDir,
+        projectDir: executorConfig.session.projectDir,
+      });
       bridge.spawn(executorConfig);
+      console.log('[AgentProcess] Worker thread spawned for task:', {
+        taskId,
+        processType,
+      });
     } catch (err) {
       this.state.deleteProcess(taskId);
       this.emitter.emit('error', taskId, err instanceof Error ? err.message : String(err), projectId);
@@ -934,11 +960,12 @@ export class AgentProcessManager {
     }
 
     // Emit initial progress
+    const initialPhase = getInitialPhaseForProcess(processType);
     this.emitter.emit('execution-progress', taskId, {
-      phase: processType === 'spec-creation' ? 'planning' : 'planning',
+      phase: initialPhase,
       phaseProgress: 0,
       overallProgress: 0,
-      message: 'Starting AI agent session...',
+      message: `Starting ${initialPhase} session...`,
     }, projectId);
   }
 

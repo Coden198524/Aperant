@@ -94,8 +94,12 @@ const TRAILING_JSON_ARTIFACT_RE = /['"}\],{]+$/;
 
 /**
  * Sanitize file_path (and similar path-like) arguments in tool input.
- * Strips trailing JSON structural characters that models sometimes
- * include when generating tool call arguments with malformed JSON.
+ *
+ * Performs two sanitization steps:
+ * 1. Strips trailing JSON structural characters that models sometimes
+ *    include when generating tool call arguments with malformed JSON.
+ * 2. Normalizes Windows backslashes to forward slashes to prevent
+ *    JSON parsing errors when models generate paths like "e:\work\...".
  *
  * Mutates the input object in place for efficiency.
  *
@@ -105,7 +109,16 @@ export function sanitizeFilePathArg(input: Record<string, unknown>): void {
   const filePath = input.file_path;
   if (typeof filePath !== 'string') return;
 
-  const cleaned = filePath.replace(TRAILING_JSON_ARTIFACT_RE, '');
+  let cleaned = filePath;
+
+  // Step 1: Strip trailing JSON artifacts
+  cleaned = cleaned.replace(TRAILING_JSON_ARTIFACT_RE, '');
+
+  // Step 2: Normalize Windows backslashes to forward slashes
+  // This prevents JSON parsing errors when AI generates paths like "e:\work\..."
+  // Node.js accepts forward slashes on all platforms, including Windows
+  cleaned = cleaned.replace(/\\/g, '/');
+
   if (cleaned !== filePath) {
     input.file_path = cleaned;
   }

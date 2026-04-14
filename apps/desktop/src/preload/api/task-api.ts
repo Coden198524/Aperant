@@ -90,6 +90,7 @@ export interface TaskAPI {
 
   // Task Phase Logs
   getTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs | null>>;
+  clearTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs>>;
   watchTaskLogs: (projectId: string, specId: string) => Promise<IPCResult>;
   unwatchTaskLogs: (specId: string) => Promise<IPCResult>;
   onTaskLogsChanged: (callback: (specId: string, logs: TaskLogs) => void) => () => void;
@@ -313,6 +314,9 @@ export const createTaskAPI = (): TaskAPI => ({
   // Task Phase Logs
   getTaskLogs: (projectId: string, specId: string): Promise<IPCResult<TaskLogs | null>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_LOGS_GET, projectId, specId),
+
+  clearTaskLogs: (projectId: string, specId: string): Promise<IPCResult<TaskLogs>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_LOGS_CLEAR, projectId, specId),
 
   watchTaskLogs: (projectId: string, specId: string): Promise<IPCResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_LOGS_WATCH, projectId, specId),

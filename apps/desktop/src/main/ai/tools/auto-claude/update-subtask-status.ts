@@ -14,6 +14,7 @@ import { z } from 'zod/v3';
 
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
+import { writeFileAtomic } from '../../../utils/atomic-file';
 import { safeParseJson } from '../../../utils/json-repair';
 
 // ---------------------------------------------------------------------------
@@ -47,12 +48,7 @@ interface PlanPhase {
 interface ImplementationPlan {
   phases?: PlanPhase[];
   last_updated?: string;
-}
-
-function writeJsonAtomic(filePath: string, data: unknown): void {
-  const tmp = `${filePath}.tmp`;
-  fs.writeFileSync(tmp, JSON.stringify(data, null, 2), 'utf-8');
-  fs.renameSync(tmp, filePath);
+  [key: string]: unknown;
 }
 
 function updateSubtaskInPlan(
@@ -89,7 +85,7 @@ export const updateSubtaskStatusTool = Tool.define({
     executionOptions: DEFAULT_EXECUTION_OPTIONS,
   },
   inputSchema,
-  execute: (input, context) => {
+  execute: async (input, context) => {
     const { subtask_id, status, notes } = input;
     const planFile = path.join(context.specDir, 'implementation_plan.json');
 
@@ -97,7 +93,8 @@ export const updateSubtaskStatusTool = Tool.define({
       return 'Error: implementation_plan.json not found';
     }
 
-    const plan = safeParseJson<ImplementationPlan>(fs.readFileSync(planFile, 'utf-8'));
+    const planContent = fs.readFileSync(planFile, 'utf-8');
+    const plan = safeParseJson<ImplementationPlan>(planContent);
     if (!plan) {
       return 'Error: implementation_plan.json contains unrepairable JSON';
     }
@@ -107,11 +104,8 @@ export const updateSubtaskStatusTool = Tool.define({
       return `Error: Subtask '${subtask_id}' not found in implementation plan`;
     }
 
-    try {
-      writeJsonAtomic(planFile, plan);
-      return `Successfully updated subtask '${subtask_id}' to status '${status}'`;
-    } catch (e) {
-      return `Error writing implementation_plan.json: ${e}`;
-    }
+    await writeFileAtomic(planFile, JSON.stringify(plan, null, 2), { encoding: 'utf-8' });
+
+    return `Successfully updated subtask '${subtask_id}' to status '${status}'`;
   },
 });

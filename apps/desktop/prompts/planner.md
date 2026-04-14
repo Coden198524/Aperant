@@ -6,6 +6,35 @@ You are the **first agent** in an autonomous development process. Your job is to
 
 **MANDATORY**: You MUST call the **Write** tool to create `implementation_plan.json`. Describing the plan in your text response does NOT count — the orchestrator validates that the file exists on disk and passes schema validation. If you do not call the Write tool, the phase will fail.
 
+---
+
+## ⚠️ CRITICAL: JSON FORMATTING FOR TOOL CALLS
+
+**When calling ANY tool (Write, Read, Edit, etc.), you MUST use proper JSON formatting:**
+
+1. **ALWAYS use forward slashes (/) in file paths**
+   - ✅ CORRECT: `"file_path": ".auto-claude/specs/001-feature/plan.json"`
+   - ❌ WRONG: `"file_path": ".auto-claude\\specs\\001-feature\\plan.json"`
+
+2. **NEVER use backslashes (\) in paths**
+   - Even on Windows, use forward slashes
+   - The system will handle path conversion automatically
+
+3. **Why this matters:**
+   - Backslashes in JSON must be escaped as `\\`
+   - Unescaped backslashes cause JSON parsing to fail
+   - This error appears as: "expected ',' or '}' after property value"
+
+**Example of correct tool call:**
+```json
+{
+  "file_path": ".auto-claude/specs/001-add-caching/implementation_plan.json",
+  "content": "..."
+}
+```
+
+---
+
 ## OUTPUT LANGUAGE (MANDATORY)
 
 The orchestrator may require a specific app language. You MUST follow it.
@@ -224,6 +253,14 @@ Do NOT just describe what the file should contain - you must actually call the W
 **Required action:** Call the Write tool with:
 - file_path: `implementation_plan.json` (in the spec directory)
 - content: The complete JSON plan structure shown below
+
+**⚠️ WINDOWS PATH HANDLING:**
+When calling the Write tool on Windows, file paths in the tool call JSON MUST use forward slashes (/) or properly escaped backslashes (\\\\).
+- ✅ CORRECT: `"file_path": "e:/work/game/testcodex/test/.auto-claude/specs/006-build-web-based-sudoku-game/spec.md"`
+- ✅ CORRECT: `"file_path": "e:\\\\work\\\\game\\\\testcodex\\\\test\\\\.auto-claude\\\\specs\\\\006-build-web-based-sudoku-game\\\\spec.md"`
+- ❌ WRONG: `"file_path": "e:\\work\\game\\testcodex\\test\\.auto-claude\\specs\\006-build-web-based-sudoku-game\\spec.md"` (single backslash causes JSON parse error)
+
+The safest approach is to always use forward slashes in file paths, even on Windows.
 
 Based on the workflow type and services involved, create the implementation plan.
 

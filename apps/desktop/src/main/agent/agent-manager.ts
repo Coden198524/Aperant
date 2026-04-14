@@ -29,8 +29,15 @@ import { findTaskWorktree } from '../worktree-paths';
 import { readSettingsFile } from '../settings-utils';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
+import { buildProviderQueueResolutionErrorMessage } from './provider-queue-errors';
 
 const DEFAULT_SESSION_MAX_STEPS = 1000;
+const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
+  spec: 120,
+  planning: 140,
+  coding: 220,
+  qa: 80,
+} as const;
 const FAST_WORKFLOW_PHASE_STEP_BUDGETS = {
   spec: 80,
   planning: 80,
@@ -138,7 +145,7 @@ export class AgentManager extends EventEmitter {
 
   /**
    * Resolve auth using the provider accounts priority queue.
-   * Falls back to legacy Claude profile if no provider accounts exist.
+   * Falls back to legacy Claude profile only when no provider accounts exist.
    */
   private async resolveAuthFromProviderQueue(
     requestedModel: string,
@@ -230,7 +237,14 @@ export class AgentManager extends EventEmitter {
         };
       }
 
-      console.warn('[AgentManager] No available account in provider queue, falling back to legacy profile');
+      const requestedProvider = preferredProvider ?? detectProviderFromModel(requestedModel);
+      const errorMessage = buildProviderQueueResolutionErrorMessage(
+        requestedModel,
+        requestedProvider,
+        orderedQueue,
+      );
+      console.warn(`[AgentManager] ${errorMessage}`);
+      throw new Error(errorMessage);
     }
 
     // Fallback: legacy Claude profile system
@@ -425,7 +439,14 @@ export class AgentManager extends EventEmitter {
     const systemPrompt = this.loadPrompt('spec_orchestrator') ?? this.buildDefaultSpecPrompt(taskDescription, specDir);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
-    const resolved = await this.resolveAuthFromProviderQueue(specModelRequest, preferredProvider);
+    let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
+    try {
+      resolved = await this.resolveAuthFromProviderQueue(specModelRequest, preferredProvider);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
+      this.emit('error', taskId, message);
+      return;
+    }
     if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
       this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`);
       return;
@@ -527,7 +548,14 @@ export class AgentManager extends EventEmitter {
     const systemPrompt = this.loadPrompt('planner') ?? this.buildDefaultPlannerPrompt(specId, projectPath);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
-    const resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
+    try {
+      resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
+      this.emit('error', taskId, message, projectId);
+      return;
+    }
     if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
       this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
       return;
@@ -655,7 +683,14 @@ export class AgentManager extends EventEmitter {
     const systemPrompt = this.loadPrompt('qa_reviewer') ?? this.buildDefaultQAPrompt(specId, projectPath);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
-    const resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
+    try {
+      resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
+      this.emit('error', taskId, message, projectId);
+      return;
+    }
     if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
       this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
       return;
@@ -793,6 +828,11 @@ export class AgentManager extends EventEmitter {
    */
   isRunning(taskId: string): boolean {
     return this.state.hasProcess(taskId);
+  }
+
+  getTaskRuntimeMs(taskId: string): number | null {
+    const process = this.state.getProcess(taskId);
+    return process ? Date.now() - process.startedAt.getTime() : null;
   }
 
   /**
@@ -1245,6 +1285,7 @@ export class AgentManager extends EventEmitter {
 
     return {
       maxSteps: DEFAULT_SESSION_MAX_STEPS,
+      phaseStepBudgets: DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS,
       mcpOptions: {
         context7Enabled,
         memoryEnabled,

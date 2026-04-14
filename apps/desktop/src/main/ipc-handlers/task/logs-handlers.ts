@@ -2,11 +2,33 @@ import { ipcMain, BrowserWindow } from 'electron';
 import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskLogs, TaskLogStreamChunk } from '../../../shared/types';
 import path from 'path';
+import { mkdirSync, writeFileSync } from 'fs';
 import { projectStore } from '../../project-store';
 import { taskLogService } from '../../task-log-service';
 import { isValidTaskId } from '../../utils/spec-path-helpers';
 import { debugLog } from '../../../shared/utils/debug-logger';
 import { ensureAbsolutePath } from '../../utils/path-helpers';
+import { findTaskWorktree } from '../../worktree-paths';
+
+function createEmptyTaskLogs(specId: string, createdAt?: string): TaskLogs {
+  const now = new Date().toISOString();
+  return {
+    spec_id: specId,
+    created_at: createdAt || now,
+    updated_at: now,
+    phases: {
+      planning: { phase: 'planning', status: 'pending', started_at: null, completed_at: null, entries: [] },
+      coding: { phase: 'coding', status: 'pending', started_at: null, completed_at: null, entries: [] },
+      validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] },
+    },
+  };
+}
+
+function writeTaskLogs(specDir: string, logs: TaskLogs): void {
+  mkdirSync(specDir, { recursive: true });
+  const logFile = path.join(specDir, 'task_logs.json');
+  writeFileSync(logFile, JSON.stringify(logs, null, 2), 'utf-8');
+}
 
 /**
  * Register task logs handlers
@@ -64,6 +86,57 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to get task logs'
+        };
+      }
+    }
+  );
+
+  /**
+   * Clear task logs from spec directory (and worktree mirror when present)
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_LOGS_CLEAR,
+    async (_, projectId: string, specId: string): Promise<IPCResult<TaskLogs>> => {
+      try {
+        if (!isValidTaskId(specId)) {
+          return { success: false, error: 'Invalid spec ID' };
+        }
+
+        const project = projectStore.getProject(projectId);
+        if (!project) {
+          console.error('[TASK_LOGS_CLEAR] Project not found:', projectId);
+          return { success: false, error: 'Project not found' };
+        }
+
+        const absoluteProjectPath = ensureAbsolutePath(project.path);
+        const specsRelPath = getSpecsDir(project.autoBuildPath);
+        const specDir = path.join(absoluteProjectPath, specsRelPath, specId);
+
+        // Preserve created_at when possible to avoid breaking timeline semantics.
+        const existingLogs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId);
+        const clearedLogs = createEmptyTaskLogs(specId, existingLogs?.created_at);
+
+        writeTaskLogs(specDir, clearedLogs);
+
+        const worktreePath = findTaskWorktree(absoluteProjectPath, specId);
+        if (worktreePath) {
+          const worktreeSpecDir = path.join(worktreePath, specsRelPath, specId);
+          writeTaskLogs(worktreeSpecDir, clearedLogs);
+        }
+
+        const refreshedLogs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId) || clearedLogs;
+
+        const mainWindow = getMainWindow();
+        if (mainWindow) {
+          mainWindow.webContents.send(IPC_CHANNELS.TASK_LOGS_CHANGED, specId, refreshedLogs);
+        }
+
+        return { success: true, data: refreshedLogs };
+      } catch (error) {
+        console.error('[TASK_LOGS_CLEAR] Failed to clear task logs:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to clear task logs'
         };
       }
     }

@@ -105,16 +105,29 @@ export class WorkerBridge extends EventEmitter {
       workerData: workerConfig,
     });
 
+    this.worker.on('online', () => {
+      const message = `Worker thread online: ${path.basename(workerPath)}`;
+      console.log(`[WorkerBridge:${this.taskId}] ${message}`);
+      this.emitTyped('log', this.taskId, message, this.projectId);
+    });
+
     this.worker.on('message', (message: WorkerMessage) => {
       this.handleWorkerMessage(message);
     });
 
+    this.worker.on('messageerror', (error: Error) => {
+      console.error(`[WorkerBridge:${this.taskId}] Worker message error:`, error);
+      this.emitTyped('error', this.taskId, `Worker message error: ${error.message}`, this.projectId);
+    });
+
     this.worker.on('error', (error: Error) => {
+      console.error(`[WorkerBridge:${this.taskId}] Worker error:`, error);
       this.emitTyped('error', this.taskId, error.message, this.projectId);
       this.cleanup();
     });
 
     this.worker.on('exit', (code: number) => {
+      console.log(`[WorkerBridge:${this.taskId}] Worker exited with code ${code}`);
       // Code 0 = clean exit; non-zero = crash/error
       // Only emit exit if we haven't already emitted from a 'result' message
       if (this.worker) {

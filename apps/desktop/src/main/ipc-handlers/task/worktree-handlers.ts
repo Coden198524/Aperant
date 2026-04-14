@@ -2455,6 +2455,10 @@ export function registerWorktreeHandlers(
                 // Non-fatal: UI will still update, but status may not persist across refresh
               }
 
+              // Merge success changes task status on disk immediately.
+              // Drop the cached snapshot so the next task fetch cannot revive stale in-progress data.
+              projectStore.invalidateTasksCache(project.id);
+
               // Route status change through TaskStateManager (XState) to avoid dual emission
               taskStateManager.handleManualStatusChange(taskId, newStatus as any, task, project);
 
