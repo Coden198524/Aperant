@@ -27,6 +27,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from './ui/tooltip';
 import { TaskCard } from './TaskCard';
 import { SortableTaskCard } from './SortableTaskCard';
 import { QueueSettingsModal } from './QueueSettingsModal';
+import { areTaskListsRenderEquivalent } from './task-render-equality';
 import { TASK_STATUS_COLUMNS, TASK_STATUS_LABELS } from '../../shared/constants';
 import { cn } from '../lib/utils';
 import { persistTaskStatus, forceCompleteTask, archiveTasks, deleteTasks, useTaskStore, isQueueAtCapacity, DEFAULT_MAX_PARALLEL_TASKS } from '../stores/task-store';
@@ -106,30 +107,6 @@ interface DroppableColumnProps {
 }
 
 /**
- * Compare two tasks arrays for meaningful changes.
- * Returns true if tasks are equivalent (should skip re-render).
- */
-function tasksAreEquivalent(prevTasks: Task[], nextTasks: Task[]): boolean {
-  if (prevTasks.length !== nextTasks.length) return false;
-  if (prevTasks === nextTasks) return true;
-
-  // Compare by ID and fields that affect rendering
-  for (let i = 0; i < prevTasks.length; i++) {
-    const prev = prevTasks[i];
-    const next = nextTasks[i];
-    if (
-      prev.id !== next.id ||
-      prev.status !== next.status ||
-      prev.executionProgress?.phase !== next.executionProgress?.phase ||
-      prev.updatedAt !== next.updatedAt
-    ) {
-      return false;
-    }
-  }
-  return true;
-}
-
-/**
  * Custom comparator for DroppableColumn memo.
  */
 function droppableColumnPropsAreEqual(
@@ -173,7 +150,7 @@ function droppableColumnPropsAreEqual(
   }
 
   // Deep compare tasks
-  const tasksEqual = tasksAreEquivalent(prevProps.tasks, nextProps.tasks);
+  const tasksEqual = areTaskListsRenderEquivalent(prevProps.tasks, nextProps.tasks);
 
   // Only log when re-rendering (reduces noise)
   if (window.DEBUG && !tasksEqual) {
