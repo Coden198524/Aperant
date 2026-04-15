@@ -661,8 +661,11 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                 </TabsContent>
 
                 {/* Logs Tab */}
-                <TabsContent value="logs" className="flex-1 min-h-0 overflow-hidden mt-0">
-                  <div className="px-5 pt-3 pb-2 border-b border-border flex items-center justify-end">
+                <TabsContent value="logs" className="flex flex-1 min-h-0 flex-col overflow-hidden mt-0" data-testid="task-logs-tab">
+                  <div
+                    className="shrink-0 px-5 pt-3 pb-2 border-b border-border flex items-center justify-end"
+                    data-testid="task-logs-actions"
+                  >
                     <Button
                       variant="outline"
                       size="sm"
@@ -682,17 +685,19 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                       )}
                     </Button>
                   </div>
-                  <TaskLogs
-                    task={task}
-                    phaseLogs={state.phaseLogs}
-                    isLoadingLogs={state.isLoadingLogs}
-                    expandedPhases={state.expandedPhases}
-                    isStuck={state.isStuck}
-                    logsEndRef={state.logsEndRef}
-                    logsContainerRef={state.logsContainerRef}
-                    onLogsScroll={state.handleLogsScroll}
-                    onTogglePhase={state.togglePhase}
-                  />
+                  <div className="flex-1 min-h-0">
+                    <TaskLogs
+                      task={task}
+                      phaseLogs={state.phaseLogs}
+                      isLoadingLogs={state.isLoadingLogs}
+                      expandedPhases={state.expandedPhases}
+                      isStuck={state.isStuck}
+                      logsEndRef={state.logsEndRef}
+                      logsContainerRef={state.logsContainerRef}
+                      onLogsScroll={state.handleLogsScroll}
+                      onTogglePhase={state.togglePhase}
+                    />
+                  </div>
                 </TabsContent>
 
                 {/* Files Tab */}

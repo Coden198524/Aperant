@@ -225,14 +225,28 @@ describe('WorkerBridge', () => {
       expect(handler.mock.calls[1]?.[1]?.sequenceNumber).toBe(2);
     });
 
-    it('emits log for text-delta stream events', () => {
+    it('buffers text-delta logs and flushes before non-text stream events', () => {
       const handler = vi.fn();
       bridge.on('log', handler);
       bridge.spawn(createConfig());
 
-      const streamEvent = { type: 'text-delta' as const, text: 'some output' };
-      const msg: WorkerMessage = { type: 'stream-event', taskId: 'task-123', data: streamEvent as never };
-      getWorker().emit('message', msg);
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: { type: 'text-delta', text: 'some ' } as never,
+      } satisfies WorkerMessage);
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: { type: 'text-delta', text: 'output' } as never,
+      } satisfies WorkerMessage);
+
+      // Non-text stream events force a flush of buffered text logs.
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: { type: 'tool-call', toolName: 'Read', toolCallId: 'call-1', args: {} } as never,
+      } satisfies WorkerMessage);
 
       expect(handler).toHaveBeenCalledWith('task-123', 'some output', undefined);
     });

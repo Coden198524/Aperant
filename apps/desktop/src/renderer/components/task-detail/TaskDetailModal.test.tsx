@@ -188,4 +188,23 @@ describe('TaskDetailModal', () => {
     expect(screen.getByText('Generating implementation plan...')).toBeInTheDocument();
     expect(screen.getByText('42%')).toBeInTheDocument();
   });
+
+  it('keeps the clear logs action in a dedicated logs header', () => {
+    mockUseTaskDetail.mockReturnValue({
+      ...createTaskDetailState(),
+      activeTab: 'logs',
+    } as unknown as ReturnType<typeof useTaskDetail>);
+
+    render(
+      <TaskDetailModal
+        open={true}
+        task={createTask()}
+        onOpenChange={vi.fn()}
+      />
+    );
+
+    expect(screen.getByTestId('task-logs-tab')).toHaveClass('flex-col');
+    expect(screen.getByTestId('task-logs-actions')).toBeInTheDocument();
+    expect(screen.getByRole('button', { name: /clear logs/i })).toBeInTheDocument();
+  });
 });

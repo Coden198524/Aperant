@@ -76,9 +76,67 @@ Your context window will be automatically compacted as it approaches its limit, 
 
 **Parallel tool calls** — When reading multiple files, running independent searches, or executing unrelated commands, make all calls in parallel rather than sequentially. This significantly speeds up investigation and implementation.
 
+## Development Workflows
+
+### Working on Frontend Components
+
+1. **Start dev server**: `npm run dev` (runs from `apps/desktop/`)
+2. **Edit component** in `src/renderer/`
+3. **HMR applies changes** automatically (no refresh needed)
+4. **Check i18n**: If adding UI text, add translation keys to `src/shared/i18n/locales/{en,fr}/*.json`
+5. **Run tests**: `npm test` to verify changes don't break existing functionality
+6. **Before commit**: `npm run lint:fix && npm run typecheck`
+
+### Working on AI Agent Layer
+
+1. **Edit agent code** in `src/main/ai/`
+2. **Restart dev server**: Changes to main process require rebuild (Ctrl+C and `npm run dev` again)
+3. **Check tool definitions**: Update Zod schemas in `src/main/ai/tools/` if modifying tool inputs
+4. **Update prompts**: Agent behavior controlled by `.md` files in `apps/desktop/prompts/`
+5. **Test orchestration**: Run `npm test` to verify agent pipeline logic
+
+### Working on IPC Communication
+
+1. **Main process handlers**: Edit `src/main/ipc-handlers/` modules
+2. **Renderer calls**: Update `window.electronAPI.*` calls in `src/renderer/`
+3. **Type safety**: Ensure handler signatures match preload exports in `src/preload/`
+4. **Restart dev server**: IPC changes require main process restart
+5. **Test E2E**: Run `npm run build && npm run test:e2e` to verify full integration
+
+### Debugging
+
+**Frontend (React/Renderer):**
+- Inspect with DevTools: Press `Ctrl+Shift+I` in dev mode
+- Use React DevTools browser extension (works in Electron)
+- Check console for i18n missing key warnings
+
+**Main Process:**
+- Run with `npm run dev:debug` to enable verbose logging
+- Check `~/.config/aperant/logs/` for production logs (platform-specific)
+- Use `console.log` for dev-only debugging (not visible in bundled app)
+- Use Sentry integration for production error tracking
+
+**Agent Sessions:**
+- Check `.auto-claude/specs/XXX-name/` for spec output and logs
+- Review `src/main/ai/session/error-classifier.ts` for error handling patterns
+- Monitor worker thread execution via `src/main/agent/worker-bridge.ts`
+
+**Electron CDP (Chrome DevTools Protocol):**
+- Start with `npm run dev:mcp` (enables remote debugging on port 9222)
+- Use for E2E testing or AI-assisted QA validation
+- MCP tools: `take_screenshot`, `click_by_text`, `fill_input`, `get_page_structure`
+
 ## Known Gotchas
 
-**Electron path resolution** — For bug fixes in the Electron app, check path resolution differences between dev and production builds (`app.isPackaged`, `process.resourcesPath`). Paths that work in dev often break when Electron is bundled for production — verify both contexts.
+**Electron path resolution** — For bug fixes in the Electron app, check path resolution differences between dev and production builds (`app.isPackaged`, `process.resourcesPath`). Paths that work in dev often break when Electron is bundled for production — verify both contexts. Use `app.getPath()` for system paths instead of hardcoding.
+
+**Native dependencies** — `node-pty` requires native compilation. Prebuilt binaries are downloaded automatically on install. If prebuilts aren't available for your Electron version, you'll need build tools (Visual Studio Build Tools on Windows, CMake on macOS/Linux). See [CONTRIBUTING.md](CONTRIBUTING.md#windows-users) for setup.
+
+**HMR limitations** — Hot Module Replacement works for renderer code, but main process and IPC changes require server restart. Watch for stale module state if changes don't appear.
+
+**Memory system communication** — Graphiti (memory system) runs as a separate MCP sidecar process. Connection failures are silent; check logs at `.auto-claude/logs/mcp.log` if memory features don't work.
+
+**i18n missing keys** — Dev mode logs warnings for missing translation keys. Ensure ALL new UI text is added to BOTH `en/*.json` and `fr/*.json` or the app won't render properly for French users.
 
 ### Resetting PR Review State
 
@@ -137,19 +195,53 @@ autonomous-coding/
 
 ## Commands Quick Reference
 
-### Setup
+### Setup & Installation
 ```bash
 npm run install:all              # Install all dependencies from root
-# Or separately:
-cd apps/desktop && npm install
+cd apps/desktop && npm install   # Install desktop app deps only
+```
+
+### Development
+```bash
+npm run dev                      # Start dev server with hot reload (HMR)
+npm run dev:debug               # Dev mode with verbose logging (DEBUG=true)
+npm run dev:mcp                 # Dev mode with Electron remote debugging (port 9222)
+npm run build                   # Build production assets
+npm start                       # Build and run production
 ```
 
 ### Testing
 
-| Stack | Command | Tool |
-|-------|---------|------|
-| Frontend unit | `cd apps/desktop && npm test` | Vitest |
-| Frontend E2E | `cd apps/desktop && npm run test:e2e` | Playwright |
+```bash
+# Unit & integration tests (Vitest)
+cd apps/desktop
+npm test                        # Run all tests once
+npm run test:unit               # Unit tests only (excludes integration/E2E)
+npm run test:integration        # Integration tests only
+npm run test:watch              # Watch mode (re-run on file changes)
+npm run test:coverage           # Coverage report
+
+# E2E tests (Playwright)
+npm run build                   # Must build first
+npm run test:e2e                # Run Playwright E2E tests
+```
+
+### Code Quality
+```bash
+npm run lint                    # Run Biome linter
+npm run lint:fix                # Auto-fix lint issues
+npm run format                  # Format code with Biome
+npm run typecheck               # TypeScript type checking
+```
+
+### Packaging & Distribution
+```bash
+npm run package                 # Package for current platform
+npm run package:mac             # Package for macOS (all archs)
+npm run package:win             # Package for Windows
+npm run package:linux           # Package for Linux (AppImage, deb, flatpak)
+npm run package:flatpak         # Linux Flatpak only
+```
 
 ### Releases
 ```bash
@@ -293,6 +385,79 @@ Full PTY-based terminal integration:
 - **`claude-integration-handler.ts`** — Claude SDK integration within terminals
 - Renderer: xterm.js 6 with WebGL, fit, web-links, serialize addons. Store: `terminal-store.ts`
 
+## Testing Strategy
+
+### Test Organization
+
+Tests live in `src/__tests__/` organized by type:
+
+```
+src/__tests__/
+├── unit/              # Isolated component & utility tests
+├── integration/       # Tests involving multiple modules
+└── e2e/              # End-to-end Playwright tests (renderer + main process)
+```
+
+### Running Tests
+
+```bash
+# All tests
+npm test
+
+# Unit tests only (fast feedback loop)
+npm run test:unit
+
+# Integration tests
+npm run test:integration
+
+# Watch mode (re-run on file changes)
+npm run test:watch
+
+# Single test file
+npm test -- path/to/test.ts
+
+# Tests matching a pattern
+npm test -- --grep "pattern"
+
+# With coverage
+npm run test:coverage
+```
+
+### Test Patterns
+
+**Component Tests** — Use React Testing Library, test behavior not implementation:
+```typescript
+import { render, screen } from '@testing-library/react';
+
+test('displays task name', () => {
+  render(<TaskCard task={{ name: 'Build feature' }} />);
+  expect(screen.getByText('Build feature')).toBeInTheDocument();
+});
+```
+
+**Agent Logic Tests** — Mock Claude AI SDK `streamText()` and tool execution:
+```typescript
+import { streamText } from 'ai';
+
+vi.mock('ai', () => ({
+  streamText: vi.fn().mockResolvedValue({ text: '...' }),
+}));
+```
+
+**IPC Tests** — Test handler functions directly without Electron:
+```typescript
+const result = await handleGetProjectInfo(projectPath);
+expect(result).toEqual(expectedValue);
+```
+
+### Test Quality
+
+- **Pre-commit checks** run via Husky; failing tests block commits
+- **CI runs on all platforms** — tests must pass on Windows, macOS, and Linux
+- **Coverage targets** — aim for >80% on critical paths (agent logic, IPC handlers, stores)
+- **No flaky tests** — if tests fail randomly, investigate timing/async issues first
+- **New features** should include tests before PR submission
+
 ## Code Quality
 
 ### Frontend
@@ -301,6 +466,170 @@ Full PTY-based terminal integration:
 - **Pre-commit:** Husky + lint-staged runs Biome on staged `.ts/.tsx/.js/.jsx/.json`
 - **Testing:** Vitest + React Testing Library + jsdom
 
+
+## Agent Configuration & Prompts
+
+Agent behavior is controlled by two systems:
+
+### 1. Agent Config Registry (`src/main/ai/config/agent-configs.ts`)
+
+Defines 25+ agent types with:
+- Model selection (thinking budget, context window)
+- Tool availability
+- System prompt file
+- Step limits and timeout
+- Temperature and sampling params
+
+**Common agent types:**
+- `spec_gatherer` — Collect requirements from user descriptions
+- `complexity_assessor` — Evaluate task complexity
+- `planner` — Break tasks into subtasks
+- `coder` — Implement subtasks
+- `qa_reviewer` — Validate implementation
+- `qa_fixer` — Fix QA issues
+
+**Adding a new agent:**
+1. Create system prompt: `apps/desktop/prompts/your-agent.md`
+2. Register in `AGENT_CONFIGS`: 
+```typescript
+const YOUR_AGENT: AgentConfig = {
+  name: 'your_agent',
+  model: models.claude.default,
+  systemPrompt: 'your-agent.md',
+  tools: ['read', 'write', 'bash'],
+  stepLimit: 100,
+};
+```
+
+### 2. System Prompts (`apps/desktop/prompts/`)
+
+Markdown files that define agent behavior. Key patterns:
+- **Use backtick examples** for showing code
+- **Structure with headers** (## Overview, ## Tools, ## Output Format)
+- **Include constraints** (file paths, scope limits)
+- **End with clear success criteria**
+
+**Critical prompts:**
+- `planner.md` — Must output JSON subtasks in `[IMPLEMENTATION_PLAN]` block
+- `coder.md` — Must track progress with `[PROGRESS: X/Y]` markers
+- `qa_reviewer.md` — Must validate against acceptance criteria
+
+**Prompt patterns to avoid:**
+- Avoid asking agent to "think" (wastes tokens when thinking mode is off)
+- Avoid ambiguous output formats (use structured JSON/YAML)
+- Avoid mixing concerns (one prompt = one clear job)
+
+## Store Management (Zustand)
+
+Frontend state lives in `src/renderer/stores/`. Each store is a Zustand slice managing a single domain:
+
+**Common patterns:**
+```typescript
+// Define store
+interface TaskStore {
+  tasks: Task[];
+  activeTask: string | null;
+  setActiveTask: (id: string) => void;
+}
+
+export const useTaskStore = create<TaskStore>((set) => ({
+  tasks: [],
+  activeTask: null,
+  setActiveTask: (id) => set({ activeTask: id }),
+}));
+
+// Use in component
+const { tasks, activeTask, setActiveTask } = useTaskStore();
+```
+
+**Store patterns:**
+- Keep stores shallow — complex logic goes in IPC handlers
+- Use separate stores per domain (don't combine unrelated state)
+- Subscribe to IPC events for external updates (e.g., agent progress)
+- Clear store on project change to avoid stale data
+
+**Main process stores** — Also use Zustand in `src/main/project-store.ts` and `src/main/terminal-session-store.ts` for persistent state.
+
+## Spec System Architecture
+
+Specs are the record of work. Each spec in `.auto-claude/specs/XXX-task-name/` is immutable once complete:
+
+```
+.auto-claude/specs/001-build-calculator/
+├── spec.md                  ← User requirements (input)
+├── requirements.json        ← Parsed requirements
+├── context.json            ← Project context snapshot
+├── implementation_plan.json ← Planner output (subtasks)
+├── qa_report.md            ← QA validation results
+└── QA_FIX_REQUEST.md       ← Issues to fix (if QA fails)
+```
+
+**Spec lifecycle:**
+1. **Creation** — User provides task → spec_gatherer writes `spec.md`
+2. **Planning** — planner writes `implementation_plan.json`
+3. **Coding** — coder implements subtasks, stores progress
+4. **QA** — qa_reviewer writes `qa_report.md`
+5. **Fixes** — If issues found, qa_fixer writes `QA_FIX_REQUEST.md`
+6. **Archive** — Completed spec is read-only
+
+**Accessing spec data:**
+```typescript
+// Load spec
+const specPath = join(projectDir, '.auto-claude/specs/001-task-name');
+const spec = JSON.parse(readFileSync(join(specPath, 'spec.json'), 'utf8'));
+const plan = JSON.parse(readFileSync(join(specPath, 'implementation_plan.json'), 'utf8'));
+```
+
+## Provider System
+
+Multi-provider support via `@ai-sdk/*` adapters. Providers configured through settings UI or `.env`.
+
+**Supported providers:**
+- Anthropic (Claude 3.5 Sonnet, Claude 4)
+- OpenAI (GPT-4, o1)
+- Google (Gemini)
+- AWS Bedrock
+- Azure OpenAI
+- Groq, Mistral, xAI, Ollama
+- OpenRouter (meta-provider)
+
+**Provider resolution** (`src/main/ai/providers/factory.ts`):
+1. Check Claude Code OAuth token (default)
+2. Fall back to API profiles from `src/main/claude-profile/`
+3. Rate limit? Auto-swap to next available profile
+4. Match model family (Claude → Anthropic, GPT → OpenAI)
+
+**Using a provider in agent code:**
+```typescript
+const provider = createProvider('claude'); // or 'gpt-4', 'gemini', etc.
+const result = await streamText({
+  model: provider,
+  system: prompt,
+  messages: history,
+  tools: toolRegistry.getToolsForAgent('coder'),
+});
+```
+
+## Orchestration Pipeline
+
+Full build flow in `src/main/ai/orchestration/build-orchestrator.ts`:
+
+**Phases** (sequential):
+1. **Spec Creation** — Gather user input, assess complexity
+2. **Planning** — Break into subtasks
+3. **Coding** — Implement all subtasks (batch or serial)
+4. **QA** — Validate implementation
+5. **QA Fix** — Resolve issues if found
+6. **Merge** — Integrate back to main branch
+
+**Batch vs. Serial Execution:**
+- **Batch mode** (default): Group independent subtasks, process in 2-4 batches
+- **Serial mode** (fallback): Execute subtasks one-by-one if conflicts detected
+
+**Progress tracking** — Events emitted:
+- `orchestration-phase-update` — Phase changed
+- `execution-state-update` — Subtask completed
+- `orchestration-complete` — Build finished
 
 ## i18n Guidelines
 

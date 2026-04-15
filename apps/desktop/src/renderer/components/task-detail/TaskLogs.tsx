@@ -24,10 +24,11 @@ import { Badge } from '../ui/badge';
 import { Collapsible, CollapsibleTrigger, CollapsibleContent } from '../ui/collapsible';
 import { cn } from '../../lib/utils';
 import { useSettingsStore } from '../../stores/settings-store';
-import type { Task, TaskLogs, TaskLogPhase, TaskPhaseLog, TaskLogEntry, TaskMetadata } from '../../../shared/types';
+import type { Task, TaskLogs, TaskLogPhase, TaskPhaseLog, TaskMetadata } from '../../../shared/types';
 import type { PhaseModelConfig, ThinkingLevel } from '../../../shared/types/settings';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
 import { getProviderModelLabel } from '@shared/utils/model-display';
+import { buildDisplayLogEntries, buildDisplayRuntimeLogs, type DisplayTaskLogEntry } from './task-log-display';
 
 interface TaskLogsProps {
   task: Task;
@@ -127,6 +128,13 @@ export function TaskLogs({
   onTogglePhase
 }: TaskLogsProps) {
   const { t } = useTranslation(['tasks', 'common']);
+  const logOrder = useSettingsStore(s => s.settings.logOrder);
+  const runtimeLogs = useMemo(() => {
+    const logs = buildDisplayRuntimeLogs(task.logs || []);
+    return logOrder === 'reverse-chronological' ? [...logs].reverse() : logs;
+  }, [task.logs, logOrder]);
+  const shouldShowRuntimeLogs = runtimeLogs.length > 0;
+
   return (
     <div
       ref={logsContainerRef}
@@ -153,6 +161,32 @@ export function TaskLogs({
                 phaseConfig={getPhaseConfig(task.metadata, phase, t)}
               />
             ))}
+            {shouldShowRuntimeLogs && (
+              <div className="rounded-lg border border-border bg-secondary/20 p-3">
+                <div className="mb-2 flex items-center gap-2">
+                  <Terminal className="h-4 w-4 text-muted-foreground" />
+                  <span className="text-sm font-medium">
+                    {t('tasks:logs.runtimeLabel', { defaultValue: 'Runtime' })}
+                  </span>
+                  <span className="text-xs text-muted-foreground">
+                    {t('tasks:logs.entriesCount', {
+                      count: runtimeLogs.length,
+                      defaultValue: '({{count}} entries)'
+                    })}
+                  </span>
+                </div>
+                <div className="space-y-1">
+                  {runtimeLogs.map((log, index) => (
+                    <div
+                      key={`${index}-${log.content.slice(0, 80)}`}
+                      className="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
+                    >
+                      {log.content}
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
             <div ref={logsEndRef} />
           </>
         ) : task.logs && task.logs.length > 0 ? (
@@ -204,7 +238,7 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
   // Memoize sorted entries to avoid re-calculating on every render
   // Entries are naturally in chronological order (oldest first from append())
   const displayedEntries = useMemo(() => {
-    const entries = phaseLog?.entries || [];
+    const entries = buildDisplayLogEntries(phaseLog?.entries || []);
     return logOrder === 'reverse-chronological' ? [...entries].reverse() : entries;
   }, [phaseLog?.entries, logOrder]);
 
@@ -318,7 +352,10 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
             <p className="text-xs text-muted-foreground italic">{t('tasks:logs.emptyTitle', 'No logs yet')}</p>
           ) : (
             displayedEntries.map((entry) => (
-              <LogEntry key={`${entry.timestamp}-${entry.type}-${entry.content}`} entry={entry} />
+              <LogEntry
+                key={`${entry.timestamp}-${entry.type}-${entry.content}-${entry.mergedEndTimestamp ?? ''}`}
+                entry={entry}
+              />
             ))
           )}
         </div>
@@ -329,7 +366,7 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
 
 // Log Entry Component
 interface LogEntryProps {
-  entry: TaskLogEntry;
+  entry: DisplayTaskLogEntry;
 }
 
 function LogEntry({ entry }: LogEntryProps) {
@@ -359,10 +396,27 @@ function LogEntry({ entry }: LogEntryProps) {
   const formatTime = (timestamp: string) => {
     try {
       const date = new Date(timestamp);
-      // Use system locale for date and time formatting
-      return date.toLocaleString();
+      return date.toLocaleTimeString();
     } catch {
       return '';
+    }
+  };
+
+  const formatTimeTitle = (startTimestamp: string, endTimestamp?: string) => {
+    try {
+      const start = new Date(startTimestamp);
+      const startLabel = start.toLocaleString();
+
+      if (!endTimestamp || endTimestamp === startTimestamp) {
+        return startLabel;
+      }
+
+      const end = new Date(endTimestamp);
+      return `${startLabel} - ${end.toLocaleString()}`;
+    } catch {
+      return endTimestamp && endTimestamp !== startTimestamp
+        ? `${startTimestamp} - ${endTimestamp}`
+        : startTimestamp;
     }
   };
 
@@ -493,7 +547,9 @@ function LogEntry({ entry }: LogEntryProps) {
     <div className="flex flex-col">
       <div className="flex items-start gap-2 text-xs text-muted-foreground py-0.5">
         <span className="text-[10px] text-muted-foreground/60 tabular-nums shrink-0">
-          {formatTime(entry.timestamp)}
+          <span title={formatTimeTitle(entry.timestamp, entry.mergedEndTimestamp)}>
+            {formatTime(entry.timestamp)}
+          </span>
         </span>
         <span className="break-words whitespace-pre-wrap flex-1">{entry.content}</span>
         <SubphaseBadge />
