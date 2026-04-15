@@ -112,6 +112,8 @@ export interface BuildOrchestratorConfig {
   syncSpecToSource?: (specDir: string, sourceSpecDir: string) => Promise<boolean>;
   /** Optional callback to get a resolved LanguageModel for lightweight repair calls */
   getModel?: (agentType: AgentType) => Promise<import('ai').LanguageModel | undefined>;
+  /** Quality improvement configuration */
+  qualityConfig?: import('./quality-integration').QualityConfig;
 }
 
 /** Context passed to prompt generation */
@@ -603,22 +605,21 @@ export class BuildOrchestrator extends EventEmitter {
       return this.resumeCodingFromQA('Detected incomplete subtasks before QA review - returning to coding');
     }
 
-    // Run pre-QA smoke tests first (fast checks before expensive QA agent)
-    this.emitTyped('log', 'Running pre-QA smoke tests...');
-    const { runPreQASmokeTests, formatSmokeTestResults } = await import('./pre-qa-smoke-tests');
+    // Run pre-QA quality checks (integrated)
+    this.emitTyped('log', 'Running pre-QA quality checks...');
+    const { runPreQAQualityChecks } = await import('./quality-integration');
 
-    const smokeTestResult = await runPreQASmokeTests(this.config.projectDir, this.config.specDir);
-    this.emitTyped('log', formatSmokeTestResults(smokeTestResult));
+    const preQAResult = await runPreQAQualityChecks(
+      this.config.qualityConfig || {},
+      this.config.projectDir,
+      this.config.specDir,
+    );
 
-    // If critical smoke tests failed, return to coding immediately
-    if (smokeTestResult.shouldReturnToCoding) {
-      const issuesSummary = smokeTestResult.issues
-        .filter(i => i.severity === 'critical')
-        .map(i => `${i.check}: ${i.output.split('\n')[0]}`)
-        .join('; ');
-
+    // If critical issues found, return to coding immediately
+    if (!preQAResult.shouldProceedToQA) {
+      const issuesSummary = preQAResult.issues.join('; ');
       return this.resumeCodingFromQA(
-        `Pre-QA smoke tests failed - ${issuesSummary}. Fix these issues before QA review.`
+        `Pre-QA quality checks failed - ${issuesSummary}. Fix these issues before QA review.`
       );
     }
 
