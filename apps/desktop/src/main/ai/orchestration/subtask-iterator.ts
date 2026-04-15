@@ -194,6 +194,36 @@ export async function iterateSubtasks(
     // Run the session
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
 
+    // Run incremental validation immediately after subtask completes
+    if (result.outcome === 'completed') {
+      const { runIncrementalValidation, formatValidationResults } = await import('./incremental-validation');
+
+      const validationResult = await runIncrementalValidation({
+        subtaskId: subtask.id,
+        filesModified: subtask.files_to_modify || [],
+        patternFiles: subtask.pattern_files,
+        projectDir: config.projectDir,
+        specDir: config.specDir,
+      });
+
+      // Log validation results
+      console.log(formatValidationResults(validationResult));
+
+      // If validation failed, mark subtask as needing retry
+      if (!validationResult.passed) {
+        const criticalFailures = validationResult.failures.filter(f => f.severity === 'error');
+        if (criticalFailures.length > 0) {
+          // Don't mark as completed - will retry on next iteration
+          const errorSummary = criticalFailures.map(f => `${f.type}: ${f.message}`).join('; ');
+          console.log(`Incremental validation failed for ${subtask.id}: ${errorSummary}`);
+
+          // Continue to next iteration (will retry this subtask)
+          await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
+          continue;
+        }
+      }
+    }
+
     // Notify complete
     config.onSubtaskComplete?.(subtaskInfo, result);
 

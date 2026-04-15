@@ -603,6 +603,25 @@ export class BuildOrchestrator extends EventEmitter {
       return this.resumeCodingFromQA('Detected incomplete subtasks before QA review - returning to coding');
     }
 
+    // Run pre-QA smoke tests first (fast checks before expensive QA agent)
+    this.emitTyped('log', 'Running pre-QA smoke tests...');
+    const { runPreQASmokeTests, formatSmokeTestResults } = await import('./pre-qa-smoke-tests');
+
+    const smokeTestResult = await runPreQASmokeTests(this.config.projectDir, this.config.specDir);
+    this.emitTyped('log', formatSmokeTestResults(smokeTestResult));
+
+    // If critical smoke tests failed, return to coding immediately
+    if (smokeTestResult.shouldReturnToCoding) {
+      const issuesSummary = smokeTestResult.issues
+        .filter(i => i.severity === 'critical')
+        .map(i => `${i.check}: ${i.output.split('\n')[0]}`)
+        .join('; ');
+
+      return this.resumeCodingFromQA(
+        `Pre-QA smoke tests failed - ${issuesSummary}. Fix these issues before QA review.`
+      );
+    }
+
     // QA review
     this.transitionPhase('qa_review', 'Running QA review');
 
