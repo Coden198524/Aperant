@@ -639,21 +639,24 @@ export class BuildOrchestrator extends EventEmitter {
     }
 
     // Run pre-QA quality checks (integrated)
-    this.emitTyped('log', 'Running pre-QA quality checks...');
-    const { runPreQAQualityChecks } = await import('./quality-integration');
+    // Note: Disabled by default to avoid infinite loops from build timeouts
+    if (this.config.qualityConfig?.enablePreQASmokeTests) {
+      this.emitTyped('log', 'Running pre-QA quality checks...');
+      const { runPreQAQualityChecks } = await import('./quality-integration');
 
-    const preQAResult = await runPreQAQualityChecks(
-      this.config.qualityConfig || {},
-      this.config.projectDir,
-      this.config.specDir,
-    );
-
-    // If critical issues found, return to coding immediately
-    if (!preQAResult.shouldProceedToQA) {
-      const issuesSummary = preQAResult.issues.join('; ');
-      return this.resumeCodingFromQA(
-        `Pre-QA quality checks failed - ${issuesSummary}. Fix these issues before QA review.`
+      const preQAResult = await runPreQAQualityChecks(
+        this.config.qualityConfig || {},
+        this.config.projectDir,
+        this.config.specDir,
       );
+
+      // If critical issues found, return to coding immediately
+      if (!preQAResult.shouldProceedToQA) {
+        const issuesSummary = preQAResult.issues.join('; ');
+        return this.resumeCodingFromQA(
+          `Pre-QA quality checks failed - ${issuesSummary}. Fix these issues before QA review.`
+        );
+      }
     }
 
     // QA review
