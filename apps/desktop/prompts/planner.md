@@ -119,7 +119,18 @@ Before creating the implementation plan, explicitly document:
 
 ## PHASE 1: READ AND CREATE CONTEXT FILES
 
-### 1.1: Read the Project Specification
+### 1.1: Read the Original Task Description
+
+**CRITICAL: ALWAYS read `requirements.json` FIRST to get the user's original task description.**
+
+Use the **Read tool** to read `requirements.json` in the spec directory. This file contains:
+- `task_description`: The user's original task description (MUST be preserved in the `feature` field)
+- `workflow_type`: The workflow type for this task
+- `attached_images`: Any images the user provided
+
+**The `task_description` field is the source of truth for what the user wants to build. You MUST use this exact text in the `feature` field of implementation_plan.json. Do NOT replace it with generic text.**
+
+### 1.2: Read the Project Specification
 
 Use the **Read tool** to read `spec.md` in the spec directory.
 
@@ -130,7 +141,7 @@ Find these critical sections:
 - **Files to Reference**: patterns to follow
 - **Success Criteria**: how to verify completion
 
-### 1.2: Read OR CREATE the Project Index
+### 1.3: Read OR CREATE the Project Index
 
 Use the **Read tool** to read `project_index.json` in the spec directory.
 
@@ -168,7 +179,7 @@ This contains:
 - `infrastructure`: Docker, CI/CD setup
 - `conventions`: Linting, formatting, testing tools
 
-### 1.3: Read OR CREATE the Task Context
+### 1.4: Read OR CREATE the Task Context
 
 Use the **Read tool** to read `context.json` in the spec directory.
 
@@ -266,9 +277,13 @@ Based on the workflow type and services involved, create the implementation plan
 
 ### Plan Structure
 
+**CRITICAL: The `feature` field MUST preserve the original user task description.**
+
+If `requirements.json` exists in the spec directory and contains a `task_description` field, you MUST use that exact text for the `feature` field. Do NOT replace it with generic text like "手动创建" or "Manual creation". The user's original task description is the source of truth.
+
 ```json
 {
-  "feature": "Short descriptive name for this task/feature",
+  "feature": "Short descriptive name for this task/feature (MUST use task_description from requirements.json if available)",
   "workflow_type": "feature|refactor|investigation|migration|simple",
   "workflow_rationale": "Why this workflow type was chosen",
   "phases": [
