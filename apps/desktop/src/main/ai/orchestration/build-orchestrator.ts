@@ -466,11 +466,51 @@ export class BuildOrchestrator extends EventEmitter {
 
     // Build common session runner for both serial and batch execution
     const runSubtaskSession = async (subtask: SubtaskInfo, attempt: number) => {
-      const prompt = await this.config.generatePrompt('coder', 'coding', {
+      // Run pre-implementation checklist if enabled
+      if (this.config.qualityConfig?.enablePreImplementationChecklist) {
+        const { runPreImplementationChecklist } = await import('./quality-integration');
+        const checklistResult = await runPreImplementationChecklist(
+          subtask,
+          this.config.qualityConfig,
+          this.config.projectDir,
+          this.config.specDir,
+        );
+
+        if (!checklistResult.passed) {
+          this.emitTyped('log', `Pre-implementation checklist failed for ${subtask.id}: ${checklistResult.issues.join('; ')}`);
+          // Return early with failure - will be retried
+          return {
+            outcome: 'failed' as const,
+            error: `Pre-implementation checklist failed: ${checklistResult.issues.join('; ')}`,
+            conversationPath: '',
+          };
+        }
+      }
+
+      let prompt = await this.config.generatePrompt('coder', 'coding', {
         iteration: this.iteration,
         subtask,
         attemptCount: attempt,
       });
+
+      // Determine quality tier and add standards
+      if (this.config.qualityConfig?.tieredQualityStandards !== false) {
+        const { determineQualityTier, formatTierClassification } = await import('./tiered-quality-standards');
+        const tierClassification = determineQualityTier(subtask);
+        const tierInfo = formatTierClassification(tierClassification);
+        prompt = prompt + '\n\n' + tierInfo;
+      }
+
+      // Enhance prompt with pattern injection
+      if (this.config.qualityConfig?.patternInjection !== false) {
+        const { enhanceCoderPrompt } = await import('./pattern-injection');
+        prompt = await enhanceCoderPrompt(
+          prompt,
+          subtask,
+          this.config.projectDir,
+          this.config.specDir,
+        );
+      }
 
       return this.config.runSession({
         agentType: 'coder',

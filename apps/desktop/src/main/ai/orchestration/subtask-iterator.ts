@@ -58,6 +58,8 @@ export interface SubtaskIteratorConfig {
    * Defaults to false (opt-in to avoid extra AI calls in test scenarios).
    */
   extractInsights?: boolean;
+  /** Quality improvement configuration */
+  qualityConfig?: import('./quality-integration').QualityConfig;
 }
 
 /** Result of the full subtask iteration */
@@ -191,37 +193,80 @@ export async function iterateSubtasks(
     // Notify start
     config.onSubtaskStart?.(subtaskInfo, currentAttempt);
 
+    // Run pre-implementation checklist before starting the session
+    if (config.qualityConfig?.preImplementationChecklist !== false) {
+      const { runPreImplementationChecklist } = await import('./pre-implementation-checklist');
+      const checklistResult = await runPreImplementationChecklist(
+        subtaskInfo,
+        config.projectDir,
+        config.specDir,
+      );
+
+      if (!checklistResult.passed) {
+        console.log(`Pre-implementation checklist failed for ${subtask.id}:`);
+        for (const issue of checklistResult.issues) {
+          console.log(`  - ${issue}`);
+        }
+        // Continue to session with checklist warnings (non-blocking)
+      }
+    }
+
     // Run the session
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
 
-    // Run incremental validation immediately after subtask completes
+    // Run self-critique after session completes (before validation)
+    if (result.outcome === 'completed' && config.qualityConfig?.selfCritique !== false) {
+      const { runSelfCritique } = await import('./self-critique');
+      const critiqueResult = await runSelfCritique(
+        subtaskInfo,
+        result,
+        config.projectDir,
+        config.specDir,
+      );
+
+      // If self-critique found critical issues, retry the subtask
+      if (!critiqueResult.passed) {
+        console.log(`Self-critique failed for ${subtask.id}:`);
+        for (const issue of critiqueResult.issues) {
+          console.log(`  - ${issue}`);
+        }
+        // Mark as needing retry
+        await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
+        continue;
+      }
+    }
+
+    // Run quality validation and learning after session completes
     if (result.outcome === 'completed') {
-      const { runIncrementalValidation, formatValidationResults } = await import('./incremental-validation');
+      const { validateSubtaskQuality, learnFromSession } = await import('./quality-integration');
 
-      const validationResult = await runIncrementalValidation({
-        subtaskId: subtask.id,
-        filesModified: subtask.files_to_modify || [],
-        patternFiles: subtask.pattern_files,
-        projectDir: config.projectDir,
-        specDir: config.specDir,
-      });
-
-      // Log validation results
-      console.log(formatValidationResults(validationResult));
+      // Validate subtask quality (includes incremental validation)
+      const validationResult = await validateSubtaskQuality(
+        subtaskInfo,
+        result,
+        config.qualityConfig || {},
+        config.projectDir,
+        config.specDir,
+      );
 
       // If validation failed, mark subtask as needing retry
       if (!validationResult.passed) {
-        const criticalFailures = validationResult.failures.filter(f => f.severity === 'error');
-        if (criticalFailures.length > 0) {
-          // Don't mark as completed - will retry on next iteration
-          const errorSummary = criticalFailures.map(f => `${f.type}: ${f.message}`).join('; ');
-          console.log(`Incremental validation failed for ${subtask.id}: ${errorSummary}`);
+        const errorSummary = validationResult.issues.join('; ');
+        console.log(`Quality validation failed for ${subtask.id}: ${errorSummary}`);
 
-          // Continue to next iteration (will retry this subtask)
-          await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
-          continue;
-        }
+        // Continue to next iteration (will retry this subtask)
+        await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
+        continue;
       }
+
+      // Learn from successful session
+      await learnFromSession(
+        subtaskInfo,
+        result,
+        config.qualityConfig || {},
+        config.projectDir,
+        config.specDir,
+      );
     }
 
     // Notify complete
@@ -299,6 +344,32 @@ export async function iterateSubtasks(
 
     // For errors, the subtask will be retried on next loop iteration
     // (implementation_plan.json status remains in_progress or pending)
+
+    // Analyze failure and suggest recovery strategy
+    if (result.outcome === 'failed' && config.qualityConfig?.contextAwareRecovery !== false) {
+      const { analyzeFailureAndRecover } = await import('./context-aware-recovery');
+      const failureRecord = {
+        subtaskId: subtask.id,
+        attempt: currentAttempt,
+        error: result.error?.message || 'Unknown error',
+        timestamp: new Date().toISOString(),
+      };
+
+      const recoveryAnalysis = await analyzeFailureAndRecover(
+        subtaskInfo,
+        [failureRecord],
+        config.projectDir,
+        config.specDir,
+      );
+
+      console.log(`Recovery strategy for ${subtask.id}: ${recoveryAnalysis.strategy}`);
+      if (recoveryAnalysis.suggestedActions.length > 0) {
+        console.log('Suggested actions:');
+        for (const action of recoveryAnalysis.suggestedActions) {
+          console.log(`  - ${action}`);
+        }
+      }
+    }
 
     // Delay before next iteration
     if (config.autoContinueDelayMs > 0) {
