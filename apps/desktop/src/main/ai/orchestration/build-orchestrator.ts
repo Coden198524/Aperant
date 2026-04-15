@@ -465,25 +465,18 @@ export class BuildOrchestrator extends EventEmitter {
     this.transitionPhase('coding', 'Starting implementation');
 
     // Build common session runner for both serial and batch execution
-    const runSubtaskSession = async (subtask: SubtaskInfo, attempt: number) => {
+    const runSubtaskSession = async (subtask: SubtaskInfo, attempt: number): Promise<SessionResult> => {
       // Run pre-implementation checklist if enabled
       if (this.config.qualityConfig?.enablePreImplementationChecklist) {
-        const { runPreImplementationChecklist } = await import('./quality-integration');
-        const checklistResult = await runPreImplementationChecklist(
+        const { generatePreImplementationChecklist } = await import('./pre-implementation-checklist');
+        const checklistResult = await generatePreImplementationChecklist({
           subtask,
-          this.config.qualityConfig,
-          this.config.projectDir,
-          this.config.specDir,
-        );
+          projectDir: this.config.projectDir,
+          specDir: this.config.specDir,
+        });
 
-        if (!checklistResult.passed) {
-          this.emitTyped('log', `Pre-implementation checklist failed for ${subtask.id}: ${checklistResult.issues.join('; ')}`);
-          // Return early with failure - will be retried
-          return {
-            outcome: 'failed' as const,
-            error: `Pre-implementation checklist failed: ${checklistResult.issues.join('; ')}`,
-            conversationPath: '',
-          };
+        if (checklistResult.riskLevel === 'critical') {
+          this.emitTyped('log', `Pre-implementation checklist shows critical risk for ${subtask.id}`);
         }
       }
 
@@ -494,7 +487,7 @@ export class BuildOrchestrator extends EventEmitter {
       });
 
       // Determine quality tier and add standards
-      if (this.config.qualityConfig?.tieredQualityStandards !== false) {
+      if (this.config.qualityConfig?.enableTieredQualityStandards !== false) {
         const { determineQualityTier, formatTierClassification } = await import('./tiered-quality-standards');
         const tierClassification = determineQualityTier(subtask);
         const tierInfo = formatTierClassification(tierClassification);
@@ -502,14 +495,14 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       // Enhance prompt with pattern injection
-      if (this.config.qualityConfig?.patternInjection !== false) {
+      if (this.config.qualityConfig?.enablePatternInjection !== false) {
         const { enhanceCoderPrompt } = await import('./pattern-injection');
-        prompt = await enhanceCoderPrompt(
-          prompt,
+        const injectionResult = await enhanceCoderPrompt(prompt, {
           subtask,
-          this.config.projectDir,
-          this.config.specDir,
-        );
+          projectDir: this.config.projectDir,
+          specDir: this.config.specDir,
+        });
+        prompt = injectionResult.enhancedPrompt;
       }
 
       return this.config.runSession({

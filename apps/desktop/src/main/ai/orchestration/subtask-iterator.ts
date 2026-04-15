@@ -194,20 +194,16 @@ export async function iterateSubtasks(
     config.onSubtaskStart?.(subtaskInfo, currentAttempt);
 
     // Run pre-implementation checklist before starting the session
-    if (config.qualityConfig?.preImplementationChecklist !== false) {
-      const { runPreImplementationChecklist } = await import('./pre-implementation-checklist');
-      const checklistResult = await runPreImplementationChecklist(
-        subtaskInfo,
-        config.projectDir,
-        config.specDir,
-      );
+    if (config.qualityConfig?.enablePreImplementationChecklist !== false) {
+      const { generatePreImplementationChecklist } = await import('./pre-implementation-checklist');
+      const checklistResult = await generatePreImplementationChecklist({
+        subtask: subtaskInfo,
+        projectDir: config.projectDir,
+        specDir: config.specDir,
+      });
 
-      if (!checklistResult.passed) {
-        console.log(`Pre-implementation checklist failed for ${subtask.id}:`);
-        for (const issue of checklistResult.issues) {
-          console.log(`  - ${issue}`);
-        }
-        // Continue to session with checklist warnings (non-blocking)
+      if (checklistResult.riskLevel === 'critical') {
+        console.log(`Pre-implementation checklist shows critical risk for ${subtask.id}`);
       }
     }
 
@@ -215,20 +211,20 @@ export async function iterateSubtasks(
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
 
     // Run self-critique after session completes (before validation)
-    if (result.outcome === 'completed' && config.qualityConfig?.selfCritique !== false) {
+    if (result.outcome === 'completed' && config.qualityConfig?.enableSelfCritique !== false) {
       const { runSelfCritique } = await import('./self-critique');
-      const critiqueResult = await runSelfCritique(
-        subtaskInfo,
-        result,
-        config.projectDir,
-        config.specDir,
-      );
+      const critiqueResult = await runSelfCritique({
+        generatedFiles: [], // TODO: extract from session result
+        subtask: subtaskInfo,
+        projectDir: config.projectDir,
+        specDir: config.specDir,
+      });
 
       // If self-critique found critical issues, retry the subtask
       if (!critiqueResult.passed) {
         console.log(`Self-critique failed for ${subtask.id}:`);
-        for (const issue of critiqueResult.issues) {
-          console.log(`  - ${issue}`);
+        for (const improvement of critiqueResult.improvements) {
+          console.log(`  - ${improvement}`);
         }
         // Mark as needing retry
         await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
@@ -346,11 +342,11 @@ export async function iterateSubtasks(
     // (implementation_plan.json status remains in_progress or pending)
 
     // Analyze failure and suggest recovery strategy
-    if (result.outcome === 'failed' && config.qualityConfig?.contextAwareRecovery !== false) {
+    if (result.outcome === 'error' && config.qualityConfig?.enableContextAwareRecovery !== false) {
       const { analyzeFailureAndRecover } = await import('./context-aware-recovery');
-      const failureRecord = {
-        subtaskId: subtask.id,
+      const failureRecord: import('./context-aware-recovery').FailureRecord = {
         attempt: currentAttempt,
+        outcome: result.outcome,
         error: result.error?.message || 'Unknown error',
         timestamp: new Date().toISOString(),
       };
@@ -362,13 +358,7 @@ export async function iterateSubtasks(
         config.specDir,
       );
 
-      console.log(`Recovery strategy for ${subtask.id}: ${recoveryAnalysis.strategy}`);
-      if (recoveryAnalysis.suggestedActions.length > 0) {
-        console.log('Suggested actions:');
-        for (const action of recoveryAnalysis.suggestedActions) {
-          console.log(`  - ${action}`);
-        }
-      }
+      console.log(`Recovery strategy for ${subtask.id}: ${recoveryAnalysis.strategy.type}`);
     }
 
     // Delay before next iteration

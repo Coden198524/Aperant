@@ -334,7 +334,7 @@ function extractKeyDecisions(messages: any[]): string[] {
 
       // Look for decision indicators
       if (content.includes('decided to') || content.includes('chose to')) {
-        const sentence = content.split('.').find((s) => s.includes('decided') || s.includes('chose'));
+        const sentence = content.split('.').find((s: string) => s.includes('decided') || s.includes('chose'));
         if (sentence) {
           decisions.push(sentence.trim());
         }
@@ -342,7 +342,7 @@ function extractKeyDecisions(messages: any[]): string[] {
 
       // Look for approach explanations
       if (content.includes('approach:') || content.includes('strategy:')) {
-        const sentence = content.split('\n').find((s) => s.includes('approach') || s.includes('strategy'));
+        const sentence = content.split('\n').find((s: string) => s.includes('approach') || s.includes('strategy'));
         if (sentence) {
           decisions.push(sentence.trim());
         }

@@ -9,12 +9,12 @@ const mockReadFileSync = vi.fn();
 const mockWriteFileAtomic = vi.fn();
 
 vi.mock('node:fs', () => ({
-  existsSync: (...args: unknown[]) => mockExistsSync(...args),
-  readFileSync: (...args: unknown[]) => mockReadFileSync(...args),
+  existsSync: (...args: Parameters<typeof mockExistsSync>) => mockExistsSync(...args),
+  readFileSync: (...args: Parameters<typeof mockReadFileSync>) => mockReadFileSync(...args),
 }));
 
 vi.mock('../../../../utils/atomic-file', () => ({
-  writeFileAtomic: (...args: unknown[]) => mockWriteFileAtomic(...args),
+  writeFileAtomic: (...args: Parameters<typeof mockWriteFileAtomic>) => mockWriteFileAtomic(...args),
 }));
 
 const baseContext: ToolContext = {
@@ -97,8 +97,8 @@ describe('Auto-Claude plan update tools', () => {
     const result = await updateQaStatusTool.config.execute(
       {
         status: 'rejected',
-        issues: '[{\"description\":\"Fix the failing test\"}]',
-        tests_passed: '{\"unit\":\"pass\"}',
+        issues: '[{"description":"Fix the failing test"}]',
+        tests_passed: '{"unit":"pass"}',
       },
       baseContext,
     );
