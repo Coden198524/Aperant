@@ -232,6 +232,8 @@ export class BuildOrchestrator extends EventEmitter {
   private completedPhases: CompletablePhase[] = [];
   private iteration = 0;
   private aborted = false;
+  private qaReturnToCodingCount = 0; // Track QA -> coding returns to prevent infinite loops
+  private readonly MAX_QA_RETURNS = 2; // Maximum times we can return from QA to coding
 
   constructor(config: BuildOrchestratorConfig) {
     super();
@@ -639,24 +641,31 @@ export class BuildOrchestrator extends EventEmitter {
     }
 
     // Run pre-QA quality checks (integrated)
-    // Note: Disabled by default to avoid infinite loops from build timeouts
-    if (this.config.qualityConfig?.enablePreQASmokeTests) {
-      this.emitTyped('log', 'Running pre-QA quality checks...');
-      const { runPreQAQualityChecks } = await import('./quality-integration');
+    this.emitTyped('log', 'Running pre-QA quality checks...');
+    const { runPreQAQualityChecks } = await import('./quality-integration');
 
-      const preQAResult = await runPreQAQualityChecks(
-        this.config.qualityConfig || {},
-        this.config.projectDir,
-        this.config.specDir,
-      );
+    const preQAResult = await runPreQAQualityChecks(
+      this.config.qualityConfig || {},
+      this.config.projectDir,
+      this.config.specDir,
+    );
 
-      // If critical issues found, return to coding immediately
-      if (!preQAResult.shouldProceedToQA) {
+    // If critical issues found, return to coding (with limit to prevent infinite loops)
+    if (!preQAResult.shouldProceedToQA) {
+      if (this.qaReturnToCodingCount >= this.MAX_QA_RETURNS) {
+        this.emitTyped('log', `Pre-QA checks failed ${this.MAX_QA_RETURNS} times. Proceeding to QA anyway to get detailed feedback.`);
+        // Reset counter and proceed to QA
+        this.qaReturnToCodingCount = 0;
+      } else {
+        this.qaReturnToCodingCount++;
         const issuesSummary = preQAResult.issues.join('; ');
         return this.resumeCodingFromQA(
-          `Pre-QA quality checks failed - ${issuesSummary}. Fix these issues before QA review.`
+          `Pre-QA quality checks failed (attempt ${this.qaReturnToCodingCount}/${this.MAX_QA_RETURNS}) - ${issuesSummary}. Fix these issues before QA review.`
         );
       }
+    } else {
+      // Reset counter on success
+      this.qaReturnToCodingCount = 0;
     }
 
     // QA review

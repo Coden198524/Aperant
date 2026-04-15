@@ -48,9 +48,9 @@ export interface QualityConfig {
   projectId?: string;
 }
 
-// Default configuration - Pre-QA Smoke Tests disabled by default to avoid infinite loops
+// Default configuration - all features enabled
 const DEFAULT_CONFIG: Required<Omit<QualityConfig, 'memoryService' | 'projectId'>> = {
-  enablePreQASmokeTests: false, // Disabled: can cause infinite loops if build fails
+  enablePreQASmokeTests: true,
   enableIncrementalValidation: true,
   enablePatternInjection: true,
   enablePreImplementationChecklist: true,
