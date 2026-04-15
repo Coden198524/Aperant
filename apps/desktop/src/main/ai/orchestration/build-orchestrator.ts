@@ -38,6 +38,7 @@ import type { SessionResult } from '../session/types';
 import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
 import type { BatchExecutorConfig } from './batch-executor';
+import { translateLogMessage, translatePhaseMessage } from './log-messages';
 
 // =============================================================================
 // Constants
@@ -287,14 +288,14 @@ export class BuildOrchestrator extends EventEmitter {
       const preCodingValidation = await validateAndNormalizeJsonFile(preCodingPlanPath, ImplementationPlanSchema);
       if (!preCodingValidation.valid) {
         const errorDetail = preCodingValidation.errors.join('; ');
-        this.emitTyped('log', `Pre-coding plan validation failed: ${errorDetail}`);
+        this.emitTyped('log', `${translateLogMessage('Pre-coding plan validation failed', this.config.language)}: ${errorDetail}`);
         return this.buildOutcome(false, Date.now() - startTime,
           `Implementation plan is invalid and cannot be executed: ${errorDetail}`);
       }
 
       // Check if build is already complete
       if (await this.isBuildComplete()) {
-        this.transitionPhase('complete', 'Build already complete');
+        this.transitionPhase('complete', translatePhaseMessage('complete', 'Build already complete', this.config.language));
         return this.buildOutcome(true, Date.now() - startTime);
       }
 
@@ -309,7 +310,7 @@ export class BuildOrchestrator extends EventEmitter {
         // Keep the task in coding instead of deadlocking in QA.
         const codingActuallyComplete = await this.isBuildComplete();
         if (!codingActuallyComplete) {
-          this.emitTyped('log', 'Detected incomplete subtasks after coding phase - continuing coding');
+          this.emitTyped('log', translateLogMessage('Detected incomplete subtasks after coding phase - continuing coding', this.config.language));
           continue;
         }
 
@@ -337,7 +338,7 @@ export class BuildOrchestrator extends EventEmitter {
    * Run the planning phase: invoke planner agent to create implementation_plan.json.
    */
   private async runPlanningPhase(): Promise<{ success: boolean; error?: string }> {
-    this.transitionPhase('planning', 'Creating implementation plan');
+    this.transitionPhase('planning', translatePhaseMessage('planning', 'Creating implementation plan', this.config.language));
     let planningRetryContext: string | undefined;
     let validationFailures = 0;
 
@@ -384,7 +385,7 @@ export class BuildOrchestrator extends EventEmitter {
         const structuredPlanPath = join(this.config.specDir, 'implementation_plan.json');
         try {
           await writeFile(structuredPlanPath, JSON.stringify(result.structuredOutput, null, 2));
-          this.emitTyped('log', 'Wrote implementation plan from structured output (schema-guaranteed)');
+          this.emitTyped('log', translateLogMessage('Wrote implementation plan from structured output (schema-guaranteed)', this.config.language));
         } catch {
           // Non-fatal — fall through to file-based validation
         }
@@ -428,7 +429,7 @@ export class BuildOrchestrator extends EventEmitter {
             IMPLEMENTATION_PLAN_SCHEMA_HINT,
           );
           if (repairResult.valid) {
-            this.emitTyped('log', 'Lightweight repair succeeded');
+            this.emitTyped('log', translateLogMessage('Lightweight repair succeeded', this.config.language));
             if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
               await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);
             }
@@ -464,7 +465,7 @@ export class BuildOrchestrator extends EventEmitter {
    * Run the coding phase: iterate through subtasks and invoke coder agent.
    */
   private async runCodingPhase(): Promise<{ success: boolean; error?: string }> {
-    this.transitionPhase('coding', 'Starting implementation');
+    this.transitionPhase('coding', translatePhaseMessage('coding', 'Starting implementation', this.config.language));
 
     // Build common session runner for both serial and batch execution
     const runSubtaskSession = async (subtask: SubtaskInfo, attempt: number): Promise<SessionResult> => {
@@ -523,7 +524,7 @@ export class BuildOrchestrator extends EventEmitter {
 
     // If batch execution is enabled, use batch executor for parallel-safe subtasks
     if (this.config.enableBatchExecution) {
-      this.emitTyped('log', 'Batch execution enabled - analyzing parallel opportunities');
+      this.emitTyped('log', translateLogMessage('Batch execution enabled - analyzing parallel opportunities', this.config.language));
       const { executeBatches } = await import('./batch-executor');
 
       const batchConfig: BatchExecutorConfig = {
@@ -641,7 +642,7 @@ export class BuildOrchestrator extends EventEmitter {
     }
 
     // Run pre-QA quality checks (integrated)
-    this.emitTyped('log', 'Running pre-QA quality checks...');
+    this.emitTyped('log', translateLogMessage('Running pre-QA quality checks...', this.config.language));
     const { runPreQAQualityChecks } = await import('./quality-integration');
 
     const preQAResult = await runPreQAQualityChecks(
