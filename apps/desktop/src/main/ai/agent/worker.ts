@@ -383,9 +383,9 @@ let cachedProjectInstructionsSource: string | null = null;
 function getLanguageRequirement(language: SerializableSessionConfig['language']): string | null {
   switch (language) {
     case 'zh-CN':
-      return 'IMPORTANT: The app language is Simplified Chinese. All user-facing outputs, QA reports, summaries, and markdown documents must be written in Simplified Chinese (简体中文), unless the user explicitly requests another language.';
+      return 'IMPORTANT: The app language is Simplified Chinese. You MUST communicate in Simplified Chinese (简体中文) at all times. This includes:\n- All your responses and explanations to the user\n- Your thinking process and reasoning\n- Task descriptions and progress updates\n- QA reports, summaries, and markdown documents\n- Error messages and debugging information\n\nThe ONLY exceptions are:\n- Code (variable names, function names, comments in English if that\'s the project convention)\n- File paths and command-line commands\n- Technical identifiers that must remain in English\n\nUnless the user explicitly requests another language, communicate entirely in Simplified Chinese.';
     case 'fr':
-      return 'IMPORTANT: The app language is French. All user-facing outputs, QA reports, summaries, and markdown documents must be written in French unless the user explicitly requests another language.';
+      return 'IMPORTANT: The app language is French. You MUST communicate in French at all times. This includes all your responses, explanations, thinking process, task descriptions, QA reports, summaries, and markdown documents. The only exceptions are code, file paths, commands, and technical identifiers. Unless the user explicitly requests another language, communicate entirely in French.';
     default:
       return null;
   }
