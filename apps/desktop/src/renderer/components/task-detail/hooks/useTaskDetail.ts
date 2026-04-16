@@ -250,9 +250,9 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     }
   }, [showDiffDialog, needsReview, worktreeDiff, isLoadingDiff, loadWorktreeDiff]);
 
-  // Load and watch phase logs
+  // Load and watch phase logs - only when Logs tab is active
   useEffect(() => {
-    if (!currentProject) return;
+    if (!currentProject || activeTab !== 'logs') return;
 
     const loadLogs = async () => {
       setIsLoadingLogs(true);
@@ -302,7 +302,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
       unsubscribe();
       window.electronAPI.unwatchTaskLogs(task.specId);
     };
-  }, [currentProject, task.specId]);
+  }, [currentProject, task.specId, activeTab]);
 
   // Toggle phase expansion
   const togglePhase = useCallback((phase: TaskLogPhase) => {
