@@ -40,7 +40,7 @@ import type {
 } from './types';
 import type { LanguageModel, Tool as AITool } from 'ai';
 import type { SessionConfig, StreamEvent, SessionResult } from '../session/types';
-import { BuildOrchestrator } from '../orchestration/build-orchestrator';
+import { BuildOrchestrator, type BuildOutcome } from '../orchestration/build-orchestrator';
 import { QALoop } from '../orchestration/qa-loop';
 import { SpecOrchestrator } from '../orchestration/spec-orchestrator';
 import type { SpecPhase } from '../orchestration/spec-orchestrator';
@@ -938,6 +938,10 @@ async function runBuildOrchestrator(
 
   orchestrator.on('error', (error: Error, phase: string) => {
     postLog(`Error in ${phase} phase: ${error.message}`);
+  });
+
+  orchestrator.on('build-complete', (outcome: BuildOutcome) => {
+    postLog(`Build orchestration complete: success=${outcome.success}, phase=${outcome.finalPhase}`);
   });
 
   const outcome = await orchestrator.run();

@@ -365,7 +365,8 @@ export class WorkerBridge extends EventEmitter {
 function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): TokenUsage {
   if (!previous) return incoming;
 
-  // Never regress aggregate counters in UI due to late zero/partial payloads.
+  // Token counts are cumulative within a session - use Math.max to keep the latest total
+  // stepsExecuted should accumulate across multiple updates within the same session
   return {
     promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
     completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),

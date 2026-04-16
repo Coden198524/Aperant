@@ -70,14 +70,16 @@ function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage)
     return incoming;
   }
 
+  // Accumulate token usage across multiple sessions (planning, coding, QA, fixes)
+  // Each session reports its own cumulative usage, so we add them together
   return {
-    promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
-    completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
-    totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
-    thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
-    cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
-    cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
-    stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+    promptTokens: (previous.promptTokens ?? 0) + (incoming.promptTokens ?? 0),
+    completionTokens: (previous.completionTokens ?? 0) + (incoming.completionTokens ?? 0),
+    totalTokens: (previous.totalTokens ?? 0) + (incoming.totalTokens ?? 0),
+    thinkingTokens: ((previous.thinkingTokens ?? 0) + (incoming.thinkingTokens ?? 0)) || undefined,
+    cacheReadTokens: ((previous.cacheReadTokens ?? 0) + (incoming.cacheReadTokens ?? 0)) || undefined,
+    cacheCreationTokens: ((previous.cacheCreationTokens ?? 0) + (incoming.cacheCreationTokens ?? 0)) || undefined,
+    stepsExecuted: ((previous.stepsExecuted ?? 0) + (incoming.stepsExecuted ?? 0)) || undefined,
   };
 }
 

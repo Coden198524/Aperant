@@ -673,7 +673,11 @@ export class BuildOrchestrator extends EventEmitter {
     this.transitionPhase('qa_review', 'Running QA review');
 
     const maxQACycles = this.config.maxIterations ?? 3;
+    this.emitTyped('log', `Starting QA review loop (max ${maxQACycles} cycles)`);
+
     for (let cycle = 0; cycle < maxQACycles; cycle++) {
+      this.emitTyped('log', `QA cycle ${cycle + 1}/${maxQACycles}`);
+
       if (this.aborted) {
         return { success: false, error: 'Build cancelled' };
       }
@@ -710,14 +714,17 @@ export class BuildOrchestrator extends EventEmitter {
 
       // Check QA result
       const qaStatus = await this.readQAStatus();
+      this.emitTyped('log', `QA cycle ${cycle + 1}/${maxQACycles} result: ${qaStatus}`);
 
       if (qaStatus === 'passed') {
         this.markPhaseCompleted('qa_review');
         this.transitionPhase('complete', 'Build complete - QA passed');
+        this.emitTyped('log', 'QA passed - build complete');
         return { success: true };
       }
 
       if ((qaStatus === 'failed' || qaStatus === 'unknown') && cycle < maxQACycles - 1) {
+        this.emitTyped('log', `QA ${qaStatus} - running fixer (cycle ${cycle + 1}/${maxQACycles})`);
         // Run QA fixer — mark qa_review completed BEFORE transitioning to qa_fixing
         // (the phase protocol requires qa_review in completedPhases for the transition)
         this.markPhaseCompleted('qa_review');
@@ -762,10 +769,12 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       // QA failed and no more cycles
+      this.emitTyped('log', `QA ${qaStatus} on final cycle ${cycle + 1}/${maxQACycles} - build failed`);
       this.transitionPhase('failed', 'QA review failed after maximum fix cycles');
       return { success: false, error: 'QA review failed after maximum fix cycles' };
     }
 
+    this.emitTyped('log', 'QA loop exhausted all cycles without resolution');
     return { success: false, error: 'QA exhausted all cycles' };
   }
 
@@ -909,9 +918,12 @@ export class BuildOrchestrator extends EventEmitter {
     try {
       const content = await readFile(qaReportPath, 'utf-8');
       const lower = content.toLowerCase();
+
       if (lower.includes('status: passed') || lower.includes('status: approved')) {
+        this.emitTyped('log', 'QA status: PASSED');
         return 'passed';
       }
+
       // Explicitly detect failure patterns so intermediate states don't short-circuit.
       // The QA fixer may write "FIXES_APPLIED" — that's an intermediate state that
       // should NOT count as a verdict. Only the reviewer writes the final verdict.
@@ -920,15 +932,21 @@ export class BuildOrchestrator extends EventEmitter {
         lower.includes('status: rejected') ||
         lower.includes('status: needs changes')
       ) {
+        this.emitTyped('log', 'QA status: FAILED');
         return 'failed';
       }
+
       // If the report has content but no recognizable verdict, treat as unknown
       // so the orchestrator can retry rather than permanently failing.
       if (content.trim().length > 0) {
+        this.emitTyped('log', `QA status: UNKNOWN (report exists but no clear verdict). First 200 chars: ${content.substring(0, 200)}`);
         return 'unknown';
       }
+
+      this.emitTyped('log', 'QA status: UNKNOWN (empty report)');
       return 'unknown';
-    } catch {
+    } catch (error) {
+      this.emitTyped('log', `QA status: UNKNOWN (error reading report: ${error instanceof Error ? error.message : String(error)})`);
       return 'unknown';
     }
   }
