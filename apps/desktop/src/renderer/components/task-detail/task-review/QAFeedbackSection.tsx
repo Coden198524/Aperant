@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState, type ClipboardEvent, type DragEvent } from 'react';
 import { useTranslation } from 'react-i18next';
-import { AlertCircle, RotateCcw, Loader2, Image as ImageIcon, X } from 'lucide-react';
+import { AlertCircle, RotateCcw, Loader2, Image as ImageIcon, X, FileText } from 'lucide-react';
 import { Button } from '../../ui/button';
 import { Textarea } from '../../ui/textarea';
 import {
@@ -162,7 +162,7 @@ export function QAFeedbackSection({
   }, []);
 
   /**
-   * Handle drop on textarea for images
+   * Handle drop on textarea for files (images and other file types)
    */
   const handleTextareaDrop = useCallback(
     async (e: DragEvent<HTMLTextAreaElement>) => {
@@ -170,25 +170,26 @@ export function QAFeedbackSection({
       e.stopPropagation();
       setIsDragOverTextarea(false);
 
-      // Skip image handling if feature is not enabled
+      // Skip file handling if feature is not enabled
       if (!onImagesChange) return;
       if (isSubmitting) return;
 
       const files = e.dataTransfer?.files;
       if (!files || files.length === 0) return;
 
-      // Filter for image files
-      const imageFiles: File[] = [];
+      // Accept all files (images and other types)
+      const acceptedFiles: File[] = [];
       for (let i = 0; i < files.length; i++) {
         const file = files[i];
-        if (file.type.startsWith('image/')) {
-          imageFiles.push(file);
+        // Skip directories and very large files (>10MB)
+        if (file.size > 0 && file.size < 10 * 1024 * 1024) {
+          acceptedFiles.push(file);
         }
       }
 
-      if (imageFiles.length === 0) return;
+      if (acceptedFiles.length === 0) return;
 
-      // Check if we can add more images
+      // Check if we can add more files
       const remainingSlots = MAX_IMAGES_PER_TASK - images.length;
       if (remainingSlots <= 0) {
         setError(t('feedback.maxImagesError', { count: MAX_IMAGES_PER_TASK }));
@@ -197,32 +198,27 @@ export function QAFeedbackSection({
 
       setError(null);
 
-      // Process image files
+      // Process files (images and other types)
       const newImages: ImageAttachment[] = [];
       const existingFilenames = images.map(img => img.filename);
 
-      for (const file of imageFiles.slice(0, remainingSlots)) {
-        // Validate image type
-        if (!isValidImageMimeType(file.type)) {
-          setError(t('feedback.invalidTypeError', { types: ALLOWED_IMAGE_TYPES_DISPLAY }));
-          continue;
-        }
-
+      for (const file of acceptedFiles.slice(0, remainingSlots)) {
         try {
           const dataUrl = await blobToBase64(file);
-          const thumbnail = await createThumbnail(dataUrl);
 
-          // Use original filename or generate one with proper extension
-          // Map MIME types to proper file extensions (handles svg+xml -> svg, etc.)
-          const mimeToExtension: Record<string, string> = {
-            'image/svg+xml': 'svg',
-            'image/jpeg': 'jpg',
-            'image/png': 'png',
-            'image/gif': 'gif',
-            'image/webp': 'webp',
-          };
-          const extension = mimeToExtension[file.type] || file.type.split('/')[1] || 'png';
-          const baseFilename = file.name || `dropped-image-${Date.now()}.${extension}`;
+          // Generate thumbnail only for image files
+          let thumbnail: string | undefined;
+          if (file.type.startsWith('image/') && isValidImageMimeType(file.type)) {
+            try {
+              thumbnail = await createThumbnail(dataUrl);
+            } catch (thumbError) {
+              console.warn('[QAFeedbackSection] Failed to create thumbnail:', thumbError);
+              // Continue without thumbnail
+            }
+          }
+
+          // Use original filename
+          const baseFilename = file.name || `dropped-file-${Date.now()}`;
           const resolvedFilename = resolveFilename(baseFilename, [
             ...existingFilenames,
             ...newImages.map(img => img.filename)
@@ -231,14 +227,14 @@ export function QAFeedbackSection({
           newImages.push({
             id: generateImageId(),
             filename: resolvedFilename,
-            mimeType: file.type,
+            mimeType: file.type || 'application/octet-stream',
             size: file.size,
             data: dataUrl.split(',')[1], // Store base64 without data URL prefix
             thumbnail
           });
         } catch (error) {
-          console.error('[QAFeedbackSection] Failed to process dropped image:', error);
-          setError(t('feedback.processingError', 'Failed to process dropped image'));
+          console.error('[QAFeedbackSection] Failed to process dropped file:', error);
+          setError(t('feedback.processingError', 'Failed to process dropped file'));
         }
       }
 
@@ -296,7 +292,7 @@ export function QAFeedbackSection({
       {/* Drag/paste hint - only show when feature is enabled */}
       {imageUploadEnabled && (
         <p className="text-xs text-muted-foreground mb-2">
-          {t('feedback.dragDropHint', 'Drag & drop images or paste screenshots')}
+          {t('feedback.dragDropHint', 'Drag & drop files or paste screenshots (max 10MB per file)')}
         </p>
       )}
 
@@ -319,40 +315,54 @@ export function QAFeedbackSection({
       {/* Image Thumbnails - displayed inline below textarea */}
       {images.length > 0 && (
         <div className="flex flex-wrap gap-2 mb-3">
-          {images.map((image) => (
-            <div
-              key={image.id}
-              className="relative group rounded-md border border-border overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all"
-              style={{ width: '64px', height: '64px' }}
-              title={image.filename}
-            >
-              {image.thumbnail ? (
-                <img
-                  src={image.thumbnail}
-                  alt={image.filename}
-                  className="w-full h-full object-cover"
-                />
-              ) : (
-                <div className="w-full h-full flex items-center justify-center bg-muted">
-                  <ImageIcon className="h-6 w-6 text-muted-foreground" />
-                </div>
-              )}
-              {/* Remove button */}
-              {!isSubmitting && (
-                <button
-                  type="button"
-                  className="absolute top-0.5 right-0.5 h-4 w-4 flex items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity"
-                  onClick={(e) => {
-                    e.stopPropagation();
-                    handleRemoveImage(image.id);
-                  }}
-                  aria-label={t('feedback.removeImage', 'Remove image')}
-                >
-                  <X className="h-3 w-3" />
-                </button>
-              )}
-            </div>
-          ))}
+          {images.map((image) => {
+            const isImage = image.mimeType.startsWith('image/');
+            return (
+              <div
+                key={image.id}
+                className="relative group rounded-md border border-border overflow-hidden cursor-pointer hover:ring-2 hover:ring-primary/50 transition-all"
+                style={{ width: isImage ? '64px' : 'auto', height: '64px', minWidth: isImage ? '64px' : '120px' }}
+                title={image.filename}
+              >
+                {isImage ? (
+                  // Image preview
+                  image.thumbnail ? (
+                    <img
+                      src={image.thumbnail}
+                      alt={image.filename}
+                      className="w-full h-full object-cover"
+                    />
+                  ) : (
+                    <div className="w-full h-full flex items-center justify-center bg-muted">
+                      <ImageIcon className="h-6 w-6 text-muted-foreground" />
+                    </div>
+                  )
+                ) : (
+                  // Non-image file display
+                  <div className="w-full h-full flex items-center gap-2 px-3 bg-muted">
+                    <FileText className="h-5 w-5 text-muted-foreground flex-shrink-0" />
+                    <span className="text-xs truncate max-w-[100px]">
+                      {image.filename}
+                    </span>
+                  </div>
+                )}
+                {/* Remove button */}
+                {!isSubmitting && (
+                  <button
+                    type="button"
+                    className="absolute top-0.5 right-0.5 h-4 w-4 flex items-center justify-center rounded-full bg-destructive text-destructive-foreground opacity-0 group-hover:opacity-100 transition-opacity"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleRemoveImage(image.id);
+                    }}
+                    aria-label={t('feedback.removeImage', 'Remove file')}
+                  >
+                    <X className="h-3 w-3" />
+                  </button>
+                )}
+              </div>
+            );
+          })}
         </div>
       )}
 

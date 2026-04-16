@@ -783,55 +783,80 @@ export function registerTaskExecutionHandlers(
         // Process images if provided
         let imageReferences = '';
         if (images && images.length > 0) {
-          const imagesDir = path.join(targetSpecDir, 'feedback_images');
+          const attachmentsDir = path.join(targetSpecDir, 'feedback_attachments');
           try {
-            if (!existsSync(imagesDir)) {
-              mkdirSync(imagesDir, { recursive: true });
+            if (!existsSync(attachmentsDir)) {
+              mkdirSync(attachmentsDir, { recursive: true });
             }
-            const savedImages: string[] = [];
+            const savedFiles: Array<{ path: string; isImage: boolean }> = [];
             for (const image of images) {
               try {
                 if (!image.data) {
-                  console.warn('[TASK_REVIEW] Skipping image with no data:', image.filename);
+                  console.warn('[TASK_REVIEW] Skipping file with no data:', image.filename);
                   continue;
                 }
                 // Server-side MIME type validation (defense in depth - frontend also validates)
-                // Reject missing mimeType to prevent bypass attacks
-                const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
-                if (!image.mimeType || !ALLOWED_MIME_TYPES.includes(image.mimeType)) {
-                  console.warn('[TASK_REVIEW] Skipping image with missing or disallowed MIME type:', image.mimeType);
+                // Allow common file types for feedback
+                const ALLOWED_MIME_TYPES = [
+                  // Images
+                  'image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml',
+                  // Text files
+                  'text/plain', 'text/markdown', 'text/csv', 'text/html', 'text/css', 'text/javascript',
+                  // Documents
+                  'application/json', 'application/xml', 'application/pdf',
+                  // Code files (often sent as text/plain or application/octet-stream)
+                  'application/octet-stream'
+                ];
+                const isImage = image.mimeType.startsWith('image/');
+                // For non-image files, be more lenient with MIME type validation
+                if (!isImage && image.mimeType && !ALLOWED_MIME_TYPES.includes(image.mimeType)) {
+                  console.warn('[TASK_REVIEW] Skipping file with disallowed MIME type:', image.mimeType);
                   continue;
                 }
                 // Sanitize filename to prevent path traversal attacks
                 const sanitizedFilename = path.basename(image.filename);
                 if (!sanitizedFilename || sanitizedFilename === '.' || sanitizedFilename === '..') {
-                  console.warn('[TASK_REVIEW] Skipping image with invalid filename:', image.filename);
+                  console.warn('[TASK_REVIEW] Skipping file with invalid filename:', image.filename);
                   continue;
                 }
-                // Remove data URL prefix if present (e.g., "data:image/png;base64," or "data:image/svg+xml;base64,")
-                const base64Data = image.data.replace(/^data:image\/[^;]+;base64,/, '');
-                const imageBuffer = Buffer.from(base64Data, 'base64');
-                const imagePath = path.join(imagesDir, sanitizedFilename);
-                // Verify the resolved path is within the images directory (defense in depth)
-                const resolvedPath = path.resolve(imagePath);
-                const resolvedImagesDir = path.resolve(imagesDir);
-                if (!resolvedPath.startsWith(resolvedImagesDir + path.sep)) {
-                  console.warn('[TASK_REVIEW] Skipping image with path outside target directory:', image.filename);
+                // Remove data URL prefix if present (e.g., "data:image/png;base64," or "data:text/plain;base64,")
+                const base64Data = image.data.replace(/^data:[^;]+;base64,/, '');
+                const fileBuffer = Buffer.from(base64Data, 'base64');
+                const filePath = path.join(attachmentsDir, sanitizedFilename);
+                // Verify the resolved path is within the attachments directory (defense in depth)
+                const resolvedPath = path.resolve(filePath);
+                const resolvedAttachmentsDir = path.resolve(attachmentsDir);
+                if (!resolvedPath.startsWith(resolvedAttachmentsDir + path.sep)) {
+                  console.warn('[TASK_REVIEW] Skipping file with path outside target directory:', image.filename);
                   continue;
                 }
-                writeFileSync(imagePath, imageBuffer);
-                savedImages.push(`feedback_images/${sanitizedFilename}`);
-                console.log('[TASK_REVIEW] Saved image:', sanitizedFilename);
-              } catch (imgError) {
-                console.error('[TASK_REVIEW] Failed to save image:', image.filename, imgError);
+                writeFileSync(filePath, fileBuffer);
+                savedFiles.push({
+                  path: `feedback_attachments/${sanitizedFilename}`,
+                  isImage
+                });
+                console.log('[TASK_REVIEW] Saved file:', sanitizedFilename);
+              } catch (fileError) {
+                console.error('[TASK_REVIEW] Failed to save file:', image.filename, fileError);
               }
             }
-            if (savedImages.length > 0) {
-              imageReferences = '\n\n## Reference Images\n\n' +
-                savedImages.map(imgPath => `![Feedback Image](${imgPath})`).join('\n\n');
+            if (savedFiles.length > 0) {
+              const imageFiles = savedFiles.filter(f => f.isImage);
+              const otherFiles = savedFiles.filter(f => !f.isImage);
+
+              let references = '';
+              if (imageFiles.length > 0) {
+                references += '\n\n## Reference Images\n\n' +
+                  imageFiles.map(f => `![Feedback Image](${f.path})`).join('\n\n');
+              }
+              if (otherFiles.length > 0) {
+                references += '\n\n## Attached Files\n\n' +
+                  otherFiles.map(f => `- [${path.basename(f.path)}](${f.path})`).join('\n');
+              }
+              imageReferences = references;
             }
           } catch (dirError) {
-            console.error('[TASK_REVIEW] Failed to create images directory:', dirError);
+            console.error('[TASK_REVIEW] Failed to create attachments directory:', dirError);
           }
         }
 
