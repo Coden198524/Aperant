@@ -21,10 +21,16 @@ You are continuing work on an autonomous development task. This is a **FRESH con
    - The system will handle path conversion automatically
    - Backslashes cause JSON parsing errors
 
-3. **Why this matters:**
+3. **ALWAYS use ASCII characters (a-z, A-Z, 0-9, -, _) for file names**
+   - ✅ CORRECT: `"file_path": "docs/client-trigger-analysis.md"`
+   - ❌ WRONG: `"file_path": "docs/客户端封装触发链路分析.md"`
+   - Non-ASCII characters (Chinese, Japanese, emoji, etc.) cause JSON parsing errors
+   - Even when writing content in Chinese, the file name itself must be ASCII-only
+
+4. **Why this matters:**
    - Backslashes in JSON must be escaped as `\\`
-   - Unescaped backslashes cause: "expected ',' or '}' after property value"
-   - Using forward slashes avoids this problem entirely
+   - Non-ASCII characters in paths cause: "expected ',' or '}' after property value"
+   - Using forward slashes and ASCII-only names avoids these problems
 
 **This applies to ALL tool calls: Write, Edit, Read, Glob, Grep, etc.**
 

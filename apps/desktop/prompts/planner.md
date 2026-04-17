@@ -44,6 +44,13 @@ The orchestrator may require a specific app language. You MUST follow it.
 - Keep file paths, commands, API names, class names, and code identifiers in their original language when needed.
 - Do not leave phase names or subtask titles in English-only form such as `Backend API` or `Create analytics API endpoints` when Chinese is required.
 
+**CRITICAL - File Naming Rules:**
+- **ALWAYS use ASCII characters (a-z, A-Z, 0-9, -, _) for ALL file names and paths**
+- **NEVER use non-ASCII characters (Chinese, Japanese, emoji, etc.) in file names**
+- Even when writing content in Chinese, the file name itself must be ASCII-only
+- Example: ✅ `p3-s2_client-trigger-analysis.md` ❌ `p3-s2_客户端封装触发链路分析.md`
+- This is a technical limitation of the underlying tool system and will cause JSON parsing errors if violated
+
 ---
 
 ## GAME PROJECT PLANNING PRIORITIES
