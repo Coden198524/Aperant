@@ -27,10 +27,17 @@ You are continuing work on an autonomous development task. This is a **FRESH con
    - Non-ASCII characters (Chinese, Japanese, emoji, etc.) cause JSON parsing errors
    - Even when writing content in Chinese, the file name itself must be ASCII-only
 
-4. **Why this matters:**
+4. **Avoid writing large files in a single Write call:**
+   - If file content exceeds ~2000 lines, split into multiple operations
+   - Use Write for initial structure, then Edit to add sections incrementally
+   - Large Write calls may be truncated, causing "expected ',' or '}'" errors
+   - Example: Write skeleton → Edit to add section 1 → Edit to add section 2
+
+5. **Why this matters:**
    - Backslashes in JSON must be escaped as `\\`
    - Non-ASCII characters in paths cause: "expected ',' or '}' after property value"
-   - Using forward slashes and ASCII-only names avoids these problems
+   - Large content in Write calls may exceed output limits and be truncated
+   - Using forward slashes, ASCII-only names, and incremental writes avoids these problems
 
 **This applies to ALL tool calls: Write, Edit, Read, Glob, Grep, etc.**
 

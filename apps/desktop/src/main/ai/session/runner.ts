@@ -439,6 +439,7 @@ async function executeStream(
     messages: aiMessages,
     tools: tools ?? {},
     ...(useOutputSchema ? { output: Output.object({ schema: config.outputSchema! }) } : {}),
+    maxOutputTokens: 8192, // Increase output token limit to prevent truncated tool calls
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
     ...((thinkingOptions || isResponsesModel || (useOutputSchema && isAnthropicModel) || promptCachingMetadata) ? {
