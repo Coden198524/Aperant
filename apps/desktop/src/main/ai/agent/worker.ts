@@ -61,7 +61,7 @@ import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 // Validation
 // =============================================================================
 
-const MAX_PARALLEL_SUBTASKS_PER_BATCH = 5;
+const MAX_PARALLEL_SUBTASKS_PER_BATCH = 1;
 
 if (!parentPort) {
   throw new Error('worker.ts must be run inside a worker_thread');
