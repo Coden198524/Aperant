@@ -165,7 +165,7 @@ export async function iterateSubtasks(
       filesToModify: subtask.files_to_modify,
       patternFiles: subtask.pattern_files,
       verification: subtask.verification,
-      status: subtask.status,
+      status: subtask.status as 'pending' | 'in_progress' | 'completed' | 'blocked' | 'stuck',
     };
 
     // Track attempts

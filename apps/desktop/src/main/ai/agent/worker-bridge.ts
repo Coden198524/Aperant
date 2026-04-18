@@ -14,7 +14,8 @@ import { Worker } from 'worker_threads';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
-import { app } from 'electron';
+import electron from 'electron';
+const { app } = electron;
 
 import type { AgentManagerEvents, ExecutionProgressData, ProcessType } from '../../agent/types';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
@@ -95,7 +96,16 @@ export class WorkerBridge extends EventEmitter {
     this.processType = config.processType;
     this.progressTracker = new ProgressTracker();
     this.executionProgressSequence = 0;
-    this.lastTokenUsage = null;
+
+    // Generate unique session ID for accurate cross-session token tracking
+    const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
+    this.lastTokenUsage = {
+      promptTokens: 0,
+      completionTokens: 0,
+      totalTokens: 0,
+      stepsExecuted: 0,
+      sessionId,
+    };
 
     const workerConfig: WorkerConfig = {
       taskId: config.taskId,
@@ -365,8 +375,22 @@ export class WorkerBridge extends EventEmitter {
 function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): TokenUsage {
   if (!previous) return incoming;
 
-  // Token counts are cumulative within a session - use Math.max to keep the latest total
-  // stepsExecuted should accumulate across multiple updates within the same session
+  // Session-based tracking: if sessionId differs, it's a new session → accumulate steps
+  // If sessionId is the same, it's an update within the same session → use Math.max()
+  const isNewSession = incoming.sessionId && previous.sessionId && incoming.sessionId !== previous.sessionId;
+
+  const prevSteps = previous.stepsExecuted ?? 0;
+  const incomingSteps = incoming.stepsExecuted ?? 0;
+
+  console.log('[worker-bridge] mergeTokenUsage:', {
+    prevSteps,
+    incomingSteps,
+    previousSessionId: previous.sessionId,
+    incomingSessionId: incoming.sessionId,
+    isNewSession,
+    result: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps),
+  });
+
   return {
     promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
     completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
@@ -374,6 +398,7 @@ function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): Tok
     thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
     cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
     cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
-    stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+    stepsExecuted: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps) || undefined,
+    sessionId: incoming.sessionId, // Always use the latest sessionId
   };
 }

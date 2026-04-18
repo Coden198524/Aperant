@@ -71,6 +71,7 @@ export interface TokenUsage {
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
   stepsExecuted?: number;  // Number of AI model requests (steps)
+  sessionId?: string;  // Unique ID for each AI session to track cross-session accumulation
 }
 
 // Task Log Types - for persistent, phase-based logging

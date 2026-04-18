@@ -402,18 +402,20 @@ async function executeStream(
     ? buildThinkingProviderOptions(modelId, config.thinkingLevel)
     : undefined;
 
-  // Check if model supports prompt caching (Anthropic only)
+  // Check if model supports prompt caching
   const supportsPromptCaching = (config.model as any)?.supportsPromptCaching === true;
 
-  // Build prompt caching metadata for Anthropic
-  const promptCachingMetadata = supportsPromptCaching ? {
-    anthropic: {
-      cacheControl: { type: 'ephemeral' as const }
-    }
-  } : undefined;
+  // Build prompt caching metadata based on provider
+  const promptCachingMetadata = supportsPromptCaching
+    ? config.provider === 'anthropic'
+      ? { anthropic: { cacheControl: { type: 'ephemeral' as const } } }
+      : config.provider === 'openai'
+        ? { openai: { cacheControl: { type: 'ephemeral' as const } } }
+        : undefined
+    : undefined;
 
   if (promptCachingMetadata) {
-    console.log('[SessionRunner] Prompt Caching: ENABLED (Anthropic ephemeral cache)');
+    console.log(`[SessionRunner] Prompt Caching: ENABLED (${config.provider} ephemeral cache)`);
   } else {
     console.log('[SessionRunner] Prompt Caching: DISABLED (model does not support caching)');
   }
@@ -439,7 +441,7 @@ async function executeStream(
     messages: aiMessages,
     tools: tools ?? {},
     ...(useOutputSchema ? { output: Output.object({ schema: config.outputSchema! }) } : {}),
-    maxOutputTokens: 8192, // Increase output token limit to prevent truncated tool calls
+    maxOutputTokens: 32768, // Increase output token limit to prevent truncated tool calls (quadrupled from 8192)
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
     ...((thinkingOptions || isResponsesModel || (useOutputSchema && isAnthropicModel) || promptCachingMetadata) ? {

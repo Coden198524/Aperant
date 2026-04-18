@@ -805,10 +805,8 @@ async function runBuildOrchestrator(
     language: session.language,
     abortSignal: abortController.signal,
 
-    // Disable subtask batch execution for now and run subtasks serially.
-    // The current product signal is that parallel subtasks add complexity
-    // without enough throughput gain, so prefer a single focused coder session.
-    enableBatchExecution: false,
+    // Enable subtask batch execution to process multiple subtasks in a single AI session
+    enableBatchExecution: true,
     batchSize: 'auto', // Auto-detect based on subtask dependencies
     maxBatchRetries: 2,
     maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,

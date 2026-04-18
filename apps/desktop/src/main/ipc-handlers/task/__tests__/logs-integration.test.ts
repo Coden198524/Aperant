@@ -5,7 +5,8 @@
  * logs are correctly loaded and forwarded to the renderer process.
  */
 import { describe, it, expect, vi, beforeEach, afterEach, type Mock } from 'vitest';
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import type { BrowserWindow } from 'electron';
 import path from 'path';
 import type { IPCResult, TaskLogs } from '../../../../shared/types';
 

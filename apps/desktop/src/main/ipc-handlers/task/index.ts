@@ -8,7 +8,7 @@
  * - Logs management (get, watch, unwatch)
  */
 
-import { BrowserWindow } from 'electron';
+import type { BrowserWindow } from 'electron';
 import { AgentManager } from '../../agent';
 import { registerTaskCRUDHandlers } from './crud-handlers';
 import { registerTaskExecutionHandlers } from './execution-handlers';

@@ -118,6 +118,16 @@ const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
   quick_spec: ['spec.md', 'implementation_plan.json'],
 };
 
+/** State file name for tracking spec creation progress */
+const SPEC_STATE_FILE = 'spec_state.json';
+
+/** Spec creation state for resume support */
+interface SpecState {
+  complexity?: ComplexityTier;
+  completedPhases: SpecPhase[];
+  lastUpdated: string;
+}
+
 /** Configuration for the spec orchestrator */
 export interface SpecOrchestratorConfig {
   /** Spec directory path */
@@ -248,6 +258,7 @@ export class SpecOrchestrator extends EventEmitter {
   private aborted = false;
   private assessment: ComplexityAssessment | null = null;
   private phaseSummaries: Record<string, string> = {};
+  private completedPhases: SpecPhase[] = [];
 
   constructor(config: SpecOrchestratorConfig) {
     super();
@@ -256,6 +267,40 @@ export class SpecOrchestrator extends EventEmitter {
     config.abortSignal?.addEventListener('abort', () => {
       this.aborted = true;
     });
+  }
+
+  /**
+   * Save current spec creation state to disk for resume support.
+   */
+  private async saveState(): Promise<void> {
+    try {
+      const state: SpecState = {
+        complexity: this.assessment?.complexity,
+        completedPhases: this.completedPhases,
+        lastUpdated: new Date().toISOString(),
+      };
+      const statePath = join(this.config.specDir, SPEC_STATE_FILE);
+      await writeFile(statePath, JSON.stringify(state, null, 2), 'utf-8');
+    } catch (error) {
+      // Non-fatal: state save failure shouldn't block execution
+      console.warn('[SpecOrchestrator] Failed to save state:', error);
+    }
+  }
+
+  /**
+   * Load spec creation state from disk to resume from last checkpoint.
+   * Returns null if no state file exists or if it's invalid.
+   */
+  private async loadState(): Promise<SpecState | null> {
+    try {
+      const statePath = join(this.config.specDir, SPEC_STATE_FILE);
+      await access(statePath);
+      const content = await readFile(statePath, 'utf-8');
+      const state = JSON.parse(content) as SpecState;
+      return state;
+    } catch {
+      return null;
+    }
   }
 
   /**
@@ -274,53 +319,107 @@ export class SpecOrchestrator extends EventEmitter {
 
     try {
       // ===================================================================
+      // Step 0: Try to restore state from previous run (resume support)
+      // ===================================================================
+      const savedState = await this.loadState();
+      if (savedState) {
+        this.emitTyped('log', `Resuming from saved state: ${savedState.completedPhases.length} phases completed`);
+        this.completedPhases = savedState.completedPhases;
+        phasesExecuted.push(...savedState.completedPhases);
+
+        if (savedState.complexity) {
+          this.assessment = {
+            complexity: savedState.complexity,
+            confidence: 0.9,
+            reasoning: 'Restored from saved state',
+          };
+        }
+      }
+
+      // ===================================================================
       // Step 1: Determine complexity (runs FIRST to gate the workflow)
       // ===================================================================
-      let complexity: ComplexityTier;
+      let complexity: ComplexityTier = 'standard';
 
-      // Fast-path heuristic: catch obviously simple tasks before expensive AI assessment
-      const heuristicResult = this.assessComplexityHeuristic(this.config.taskDescription ?? '');
-      if (heuristicResult) {
-        complexity = heuristicResult;
-        this.assessment = {
-          complexity: heuristicResult,
-          confidence: 0.9,
-          reasoning: `Heuristic: task description matches ${heuristicResult} pattern`,
-        };
-        this.emitTyped('log', `Complexity heuristic: ${heuristicResult} (skipping AI assessment)`);
-        phasesExecuted.push('complexity_assessment');
-      } else if (this.config.complexityOverride) {
-        complexity = this.config.complexityOverride;
-        this.emitTyped('log', `Complexity override: ${complexity}`);
-      } else if (this.config.useAiAssessment !== false) {
-        // Run AI complexity assessment as the first phase
-        if (this.aborted) {
-          return this.outcome(false, phasesExecuted, Date.now() - startTime, 'Cancelled');
-        }
+      // Skip complexity assessment if already completed
+      if (this.completedPhases.includes('complexity_assessment')) {
+        complexity = this.assessment?.complexity ?? 'standard';
+        this.emitTyped('log', `Skipping complexity assessment (already completed): ${complexity}`);
+      } else {
+        // Fast-path heuristic: catch obviously simple tasks before expensive AI assessment
+        const heuristicResult = this.assessComplexityHeuristic(this.config.taskDescription ?? '');
+        if (heuristicResult) {
+          complexity = heuristicResult;
+          this.assessment = {
+            complexity: heuristicResult,
+            confidence: 0.9,
+            reasoning: `Heuristic: task description matches ${heuristicResult} pattern`,
+          };
+          this.emitTyped('log', `Complexity heuristic: ${heuristicResult} (skipping AI assessment)`);
+          phasesExecuted.push('complexity_assessment');
+          this.completedPhases.push('complexity_assessment');
+          await this.saveState();
+        } else if (this.config.complexityOverride) {
+          complexity = this.config.complexityOverride;
+          this.emitTyped('log', `Complexity override: ${complexity}`);
+        } else if (this.config.useAiAssessment !== false) {
+          // Try to restore complexity assessment from file first (resume support)
+          const assessmentPath = join(this.config.specDir, 'complexity_assessment.json');
+          let restoredFromFile = false;
 
-        const assessResult = await this.runComplexityAssessment(1);
-        phasesExecuted.push('complexity_assessment');
-        await this.capturePhaseOutput('complexity_assessment');
+          try {
+            await access(assessmentPath);
+            const fileResult = await validateJsonFile(assessmentPath, ComplexityAssessmentSchema);
 
-        if (!assessResult.success) {
-          // Fall back to standard on assessment failure
+            if (fileResult.valid && fileResult.data) {
+              this.assessment = fileResult.data as ComplexityAssessment;
+              complexity = this.assessment.complexity;
+              this.emitTyped('log', `Restored complexity from file: ${complexity} (confidence: ${(this.assessment.confidence * 100).toFixed(0)}%)`);
+              phasesExecuted.push('complexity_assessment');
+              this.completedPhases.push('complexity_assessment');
+              await this.capturePhaseOutput('complexity_assessment');
+              await this.saveState();
+              restoredFromFile = true;
+            }
+          } catch {
+            // File doesn't exist or is invalid - will run AI assessment below
+          }
+
+          // Run AI complexity assessment if not restored from file
+          if (!restoredFromFile) {
+            if (this.aborted) {
+              return this.outcome(false, phasesExecuted, Date.now() - startTime, 'Cancelled');
+            }
+
+            const assessResult = await this.runComplexityAssessment(1);
+            phasesExecuted.push('complexity_assessment');
+            this.completedPhases.push('complexity_assessment');
+            await this.capturePhaseOutput('complexity_assessment');
+            await this.saveState();
+
+            if (!assessResult.success) {
+              // Fall back to standard on assessment failure
+              this.assessment = {
+                complexity: 'standard',
+                confidence: 0.5,
+                reasoning: 'Fallback: AI assessment failed',
+              };
+            }
+
+            complexity = this.assessment?.complexity ?? 'standard';
+          }
+        } else {
+          // Heuristic fallback
+          complexity = 'standard';
           this.assessment = {
             complexity: 'standard',
             confidence: 0.5,
-            reasoning: 'Fallback: AI assessment failed',
+            reasoning: 'Heuristic assessment (AI disabled)',
           };
+          phasesExecuted.push('complexity_assessment');
+          this.completedPhases.push('complexity_assessment');
+          await this.saveState();
         }
-
-        complexity = this.assessment?.complexity ?? 'standard';
-      } else {
-        // Heuristic fallback
-        complexity = 'standard';
-        this.assessment = {
-          complexity: 'standard',
-          confidence: 0.5,
-          reasoning: 'Heuristic assessment (AI disabled)',
-        };
-        phasesExecuted.push('complexity_assessment');
       }
 
       // ===================================================================
@@ -349,19 +448,30 @@ export class SpecOrchestrator extends EventEmitter {
       this.emitTyped('log', `Running ${complexity} workflow: ${phasesToRun.join(' → ')}`);
 
       for (const phase of phasesToRun) {
+        // Skip phases that were already completed
+        if (this.completedPhases.includes(phase)) {
+          this.emitTyped('log', `Skipping ${phase} (already completed)`);
+          continue;
+        }
+
         if (this.aborted) {
           return this.outcome(false, phasesExecuted, Date.now() - startTime, 'Cancelled');
         }
 
         const result = await this.runPhase(phase, phasesExecuted.length + 1, phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0));
         phasesExecuted.push(phase);
+        this.completedPhases.push(phase);
 
         if (!result.success) {
+          await this.saveState(); // Save state even on failure for resume
           return this.outcome(false, phasesExecuted, Date.now() - startTime, result.errors.join('; '));
         }
 
         // Capture phase outputs for injection into subsequent phases
         await this.capturePhaseOutput(phase);
+
+        // Save state after each successful phase
+        await this.saveState();
       }
 
       return this.outcome(true, phasesExecuted, Date.now() - startTime);

@@ -70,16 +70,36 @@ function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage)
     return incoming;
   }
 
-  // Accumulate token usage across multiple sessions (planning, coding, QA, fixes)
-  // Each session reports its own cumulative usage, so we add them together
+  // Session-based tracking: if sessionId differs, it's a new session → accumulate steps
+  // If sessionId is the same or missing, it's an update within the same session → use Math.max()
+  //
+  // This solves the problem where stopping and continuing a task would cause steps to explode:
+  // - Old approach: if incoming < previous, assume new session and accumulate
+  // - Problem: Every save triggered accumulation (1<74 add, 2<74 add, 3<74 add...)
+  // - New approach: Only accumulate when sessionId actually changes
+  const isNewSession = incoming.sessionId && previous.sessionId && incoming.sessionId !== previous.sessionId;
+
+  const prevSteps = previous.stepsExecuted ?? 0;
+  const incomingSteps = incoming.stepsExecuted ?? 0;
+
+  console.log('[plan-file-utils] mergeTokenUsage:', {
+    prevSteps,
+    incomingSteps,
+    previousSessionId: previous.sessionId,
+    incomingSessionId: incoming.sessionId,
+    isNewSession,
+    result: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps),
+  });
+
   return {
-    promptTokens: (previous.promptTokens ?? 0) + (incoming.promptTokens ?? 0),
-    completionTokens: (previous.completionTokens ?? 0) + (incoming.completionTokens ?? 0),
-    totalTokens: (previous.totalTokens ?? 0) + (incoming.totalTokens ?? 0),
-    thinkingTokens: ((previous.thinkingTokens ?? 0) + (incoming.thinkingTokens ?? 0)) || undefined,
-    cacheReadTokens: ((previous.cacheReadTokens ?? 0) + (incoming.cacheReadTokens ?? 0)) || undefined,
-    cacheCreationTokens: ((previous.cacheCreationTokens ?? 0) + (incoming.cacheCreationTokens ?? 0)) || undefined,
-    stepsExecuted: ((previous.stepsExecuted ?? 0) + (incoming.stepsExecuted ?? 0)) || undefined,
+    promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
+    completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
+    totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
+    thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
+    cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
+    cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
+    stepsExecuted: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps) || undefined,
+    sessionId: incoming.sessionId, // Always use the latest sessionId
   };
 }
 

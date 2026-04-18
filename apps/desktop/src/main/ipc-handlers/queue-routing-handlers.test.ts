@@ -5,7 +5,8 @@
  */
 
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import type { BrowserWindow } from 'electron';
 import { registerQueueRoutingHandlers } from './queue-routing-handlers';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { AgentManager } from '../agent/agent-manager';

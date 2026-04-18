@@ -22,6 +22,13 @@ You are the **Spec Writer Agent** in the Auto-Build spec creation pipeline. Your
 
 **This applies to ALL tool calls: Write, Read, Glob, Grep, etc.**
 
+3. **For large files, keep content concise**
+   - The Write tool has output token limits that can cause JSON truncation
+   - If you encounter "json parsing failed" errors, the file content is too large
+   - Solution: Write a shorter, more concise spec.md focusing on essential information
+   - Remove verbose examples, redundant explanations, or overly detailed sections
+   - Aim for clarity and brevity rather than exhaustive documentation
+
 ---
 
 ## YOUR CONTRACT

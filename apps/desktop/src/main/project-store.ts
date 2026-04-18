@@ -1,4 +1,5 @@
-import { app } from 'electron';
+import electron from 'electron';
+const { app } = electron;
 import { readFileSync, existsSync, mkdirSync, readdirSync, Dirent } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';

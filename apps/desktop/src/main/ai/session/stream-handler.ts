@@ -226,6 +226,20 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
     state.toolCallTimestamps.set(part.toolCallId, Date.now());
     // Store the tool name so we can include it in tool-result/tool-error events
     state.toolCallNames.set(part.toolCallId, part.toolName);
+
+    // Debug: Log tool call input for Write tool to diagnose JSON truncation
+    if (part.toolName === 'Write' && part.input) {
+      const input = part.input;
+      console.log('[StreamHandler] Write tool call:', {
+        toolCallId: part.toolCallId,
+        inputType: typeof input,
+        isObject: typeof input === 'object' && input !== null,
+        file_path: typeof input === 'object' && input !== null ? (input as Record<string, unknown>).file_path : undefined,
+        hasContent: typeof input === 'object' && input !== null ? 'content' in input : false,
+        contentLength: typeof input === 'object' && input !== null && typeof (input as Record<string, unknown>).content === 'string' ? ((input as Record<string, unknown>).content as string).length : 0,
+      });
+    }
+
     emit({
       type: 'tool-call',
       toolName: part.toolName,
@@ -257,6 +271,15 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
     state.toolCallNames.delete(part.toolCallId);
 
     const errorMessage = part.error instanceof Error ? part.error.message : String(part.error ?? 'Tool execution failed');
+
+    // Detect JSON truncation in Write tool calls
+    if (part.toolName === 'Write' && errorMessage.includes('json parsing failed')) {
+      console.error('[StreamHandler] Write tool JSON truncation detected:', {
+        toolCallId: part.toolCallId,
+        error: errorMessage,
+        suggestion: 'File content too large for single Write call. Consider using multiple smaller writes or appends.',
+      });
+    }
 
     emit({
       type: 'tool-result',

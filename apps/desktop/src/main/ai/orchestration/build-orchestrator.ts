@@ -115,6 +115,8 @@ export interface BuildOrchestratorConfig {
   getModel?: (agentType: AgentType) => Promise<import('ai').LanguageModel | undefined>;
   /** Quality improvement configuration */
   qualityConfig?: import('./quality-integration').QualityConfig;
+  /** Memory service for storing knowledge */
+  memoryService?: import('../memory/memory-service').MemoryServiceImpl;
 }
 
 /** Context passed to prompt generation */
@@ -140,7 +142,7 @@ export interface SubtaskInfo {
   filesToModify?: string[];
   patternFiles?: string[];
   verification?: string;
-  status: string;
+  status: 'pending' | 'in_progress' | 'completed' | 'blocked' | 'stuck';
 }
 
 /** Configuration passed to runSession callback */
@@ -526,6 +528,44 @@ export class BuildOrchestrator extends EventEmitter {
     if (this.config.enableBatchExecution) {
       this.emitTyped('log', translateLogMessage('Batch execution enabled - analyzing parallel opportunities', this.config.language));
       const { executeBatches } = await import('./batch-executor');
+      const { generateBatchPrompt } = await import('./batch-prompt-generator');
+
+      // Batch session handler: processes multiple subtasks in a single AI session
+      const runBatchSession = async (batch: SubtaskInfo[], attempt: number): Promise<SessionResult> => {
+        // Generate batch prompt
+        const batchPrompt = await generateBatchPrompt({
+          subtasks: batch,
+          specDir: this.config.specDir,
+          projectDir: this.config.projectDir,
+          attemptCount: attempt,
+          isContinuation: false,
+        });
+
+        // Inject memory context if available
+        const prompt = batchPrompt;
+        // TODO: Implement memory context injection when method is available
+        // if (this.config.memoryService) {
+        //   const injectionResult = await this.config.memoryService.injectMemoryContext(
+        //     batchPrompt,
+        //     this.config.projectDir,
+        //     'coding',
+        //   );
+        //   prompt = injectionResult.enhancedPrompt;
+        // }
+
+        return this.config.runSession({
+          agentType: 'coder',
+          phase: 'coding',
+          systemPrompt: prompt,
+          specDir: this.config.specDir,
+          projectDir: this.config.projectDir,
+          subtaskId: batch.map(s => s.id).join(','), // Multiple subtask IDs
+          sessionNumber: this.iteration,
+          abortSignal: this.config.abortSignal,
+          cliModel: this.config.cliModel,
+          cliThinking: this.config.cliThinking,
+        });
+      };
 
       const batchConfig: BatchExecutorConfig = {
         specDir: this.config.specDir,
@@ -536,13 +576,14 @@ export class BuildOrchestrator extends EventEmitter {
         executionMode: 'batch',
         maxConcurrentSubtasks: this.config.maxConcurrentSubtasks,
         abortSignal: this.config.abortSignal,
-        runSubtaskSession,
+        runBatchSession, // Use batch session instead of parallel subtask sessions
+        runSubtaskSession, // Fallback for serial execution
         onBatchStart: (batch, batchNum, totalBatches) => {
           this.iteration++;
           this.emitTyped('iteration-start', this.iteration, 'coding');
           this.emitTyped('log', `Starting batch ${batchNum}/${totalBatches}: ${batch.length} subtasks`);
         },
-        onSubtaskSessionComplete: (subtask, result) => {
+        onBatchSessionComplete: (batch, result) => {
           this.emitTyped('session-complete', result, 'coding');
         },
         onBatchComplete: (batch, result) => {

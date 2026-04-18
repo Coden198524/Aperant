@@ -1,5 +1,6 @@
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
-import { ipcMain, BrowserWindow } from 'electron';
+import { ipcMain } from 'electron';
+import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../../../shared/constants';
 
 vi.mock('electron', () => ({

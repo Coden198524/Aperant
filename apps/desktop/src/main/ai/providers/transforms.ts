@@ -188,6 +188,16 @@ export const PROMPT_CACHE_THRESHOLDS = {
     /** Minimum tokens for subsequent conversation cache breakpoints */
     subsequentBreakpoint: 4096,
   },
+  openai: {
+    /** Minimum tokens for tool definition caching (OpenAI requires 1024+) */
+    toolDefinitions: 1024,
+    /** Minimum tokens for system prompt caching (OpenAI requires 1024+) */
+    systemPrompt: 1024,
+    /** Minimum tokens for first conversation cache breakpoint */
+    firstBreakpoint: 1024,
+    /** Minimum tokens for subsequent conversation cache breakpoints */
+    subsequentBreakpoint: 1024,
+  },
 } as const;
 
 /** Content types that can be cache-tagged */
@@ -206,17 +216,18 @@ export function meetsCacheThreshold(
   contentType: CacheableContentType,
   estimatedTokens: number,
 ): boolean {
-  if (provider !== 'anthropic') {
-    // Only Anthropic has explicit caching thresholds
+  if (provider !== 'anthropic' && provider !== 'openai') {
+    // Only Anthropic and OpenAI have explicit caching thresholds
     return false;
   }
 
-  const threshold = PROMPT_CACHE_THRESHOLDS.anthropic[contentType];
+  const thresholds = PROMPT_CACHE_THRESHOLDS[provider];
+  const threshold = thresholds[contentType];
   return estimatedTokens >= threshold;
 }
 
 /**
- * Determine which cache breakpoints to apply for an Anthropic conversation.
+ * Determine which cache breakpoints to apply for a conversation.
  *
  * Returns an array of message indices that should receive cache_control
  * ephemeral tags, based on cumulative token counts meeting thresholds.
@@ -229,11 +240,12 @@ export function getCacheBreakpoints(
   provider: SupportedProvider,
   messageTokenCounts: number[],
 ): number[] {
-  if (provider !== 'anthropic') return [];
+  if (provider !== 'anthropic' && provider !== 'openai') return [];
 
   const breakpoints: number[] = [];
   let cumulativeTokens = 0;
-  const { firstBreakpoint, subsequentBreakpoint } = PROMPT_CACHE_THRESHOLDS.anthropic;
+  const thresholds = PROMPT_CACHE_THRESHOLDS[provider];
+  const { firstBreakpoint, subsequentBreakpoint } = thresholds;
   let nextThreshold = firstBreakpoint;
 
   for (let i = 0; i < messageTokenCounts.length; i++) {

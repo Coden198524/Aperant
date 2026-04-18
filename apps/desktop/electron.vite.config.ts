@@ -2,6 +2,8 @@ import { defineConfig, externalizeDepsPlugin } from 'electron-vite';
 import react from '@vitejs/plugin-react';
 import { resolve } from 'path';
 import { config as dotenvConfig } from 'dotenv';
+import { electronImportTransformPlugin } from './electron-import-transform-plugin';
+import { electronEsmFixPlugin } from '../../electron-esm-fix-plugin';
 
 // Load .env file for build-time constants (Sentry DSN, etc.)
 dotenvConfig({ path: resolve(__dirname, '.env') });
@@ -29,7 +31,9 @@ const embeddedKeys = {
 export default defineConfig({
   main: {
     define: { ...sentryDefines, ...embeddedKeys },
-    plugins: [externalizeDepsPlugin({
+    plugins: [
+      electronImportTransformPlugin(),
+      externalizeDepsPlugin({
       // Bundle these packages into the main process (they won't be in node_modules in packaged app)
       exclude: [
         'uuid',
@@ -75,7 +79,9 @@ export default defineConfig({
         '@openrouter/ai-sdk-provider',
         '@tavily/core',
       ]
-    })],
+    }),
+    electronEsmFixPlugin()
+  ],
     build: {
       rollupOptions: {
         input: {
@@ -87,7 +93,19 @@ export default defineConfig({
         // Native modules that must remain external (loaded from disk, not bundled).
         // @libsql/client is loaded lazily via globalThis.require() and resolved
         // from extraResources/node_modules via Module.globalPaths (see index.ts).
-        external: ['@lydell/node-pty']
+        // electron must be external to avoid ESM named export issues
+        external: ['@lydell/node-pty', 'electron'],
+        output: {
+          // Preserve dynamic imports for electron modules to avoid ESM export issues
+          manualChunks: undefined,
+          // Force electron to use default import only
+          paths: {
+            electron: 'electron'
+          },
+          // Prevent named export extraction from electron
+          interop: 'default',
+          externalLiveBindings: false,
+        }
       }
     }
   },

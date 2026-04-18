@@ -48,7 +48,8 @@ for (const envPath of possibleEnvPaths) {
   }
 }
 
-import { app, BrowserWindow, shell, nativeImage, session, screen, Menu, MenuItem } from 'electron';
+import electron from 'electron';
+const { app, BrowserWindow, shell, nativeImage, session, screen, Menu, MenuItem } = electron;
 import { join } from 'path';
 import { accessSync, readFileSync, writeFileSync, rmSync, cpSync } from 'fs';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
@@ -181,7 +182,7 @@ function getIconPath(): string {
 }
 
 // Keep a global reference of the window object to prevent garbage collection
-let mainWindow: BrowserWindow | null = null;
+let mainWindow: typeof BrowserWindow.prototype | null = null;
 let agentManager: AgentManager | null = null;
 let terminalManager: TerminalManager | null = null;
 const yunxiaoAutoSyncService = getYunxiaoAutoSyncService();

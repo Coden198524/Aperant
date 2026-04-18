@@ -378,14 +378,35 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
     }
 
     if (config.oauthTokenFilePath || (isResponsesApiModel(modelId) && isOfficialBaseUrl)) {
-      return (instance as ReturnType<typeof createOpenAI>).responses(modelId);
+      const model = (instance as ReturnType<typeof createOpenAI>).responses(modelId);
+
+      // Add prompt caching support for official OpenAI API
+      if (isOfficialBaseUrl) {
+        return {
+          ...model,
+          // Mark this model as supporting prompt caching
+          supportsPromptCaching: true,
+        } as LanguageModel;
+      }
+
+      return model;
     }
 
     if (shouldUseOpenAICompatibleChat(config)) {
       return createOpenAICompatibleChatModel(config, modelId);
     }
 
-    return (instance as ReturnType<typeof createOpenAI>).chat(modelId);
+    const model = (instance as ReturnType<typeof createOpenAI>).chat(modelId);
+
+    // Add prompt caching support for official OpenAI API
+    if (isOfficialBaseUrl) {
+      return {
+        ...model,
+        supportsPromptCaching: true,
+      } as LanguageModel;
+    }
+
+    return model;
   }
 
   if (config.provider === SupportedProvider.OpenAICompatible) {
