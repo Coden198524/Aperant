@@ -28,8 +28,10 @@ export function electronEsmFixPlugin(): Plugin {
 
           chunk.code = chunk.code.replace(electronImportRegex, (match, defaultImport, namedImports) => {
             modified = true;
-            // Split into default import + destructuring
-            const destructure = `const { ${namedImports.trim()} } = ${defaultImport};`;
+            // Convert TypeScript 'as' syntax to JavaScript ':' syntax in destructuring
+            // e.g., "app as app$8" -> "app: app$8"
+            const jsNamedImports = namedImports.trim().replace(/\s+as\s+/g, ': ');
+            const destructure = `const { ${jsNamedImports} } = ${defaultImport};`;
             return `import ${defaultImport} from "electron";\n${destructure}`;
           });
 
