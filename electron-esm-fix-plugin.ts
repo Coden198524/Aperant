@@ -2,9 +2,8 @@ import type { Plugin } from 'vite';
 
 /**
  * Vite plugin to fix Electron ESM named export issues
- * Converts: import electron, { app, BrowserWindow } from "electron"
- * To: import electron from "electron"; const { app, BrowserWindow } = electron;
- * Also removes: import * as electron from "electron" (namespace imports)
+ * Converts: import electron__default, { app, BrowserWindow } from "electron"
+ * To: import electron__default from "electron"; const { app, BrowserWindow } = electron__default;
  */
 export function electronEsmFixPlugin(): Plugin {
   return {
@@ -24,17 +23,13 @@ export function electronEsmFixPlugin(): Plugin {
           });
 
           // Match: import electron__default, { named, exports } from "electron"
-          const electronImportRegex = /import\s+(\w+)(?:,\s*\{([^}]+)\})?\s+from\s+["']electron["'];?/g;
+          // Capture the default import name and all named imports
+          const electronImportRegex = /import\s+(\w+),\s*\{([^}]+)\}\s+from\s+["']electron["'];?/g;
 
           chunk.code = chunk.code.replace(electronImportRegex, (match, defaultImport, namedImports) => {
-            if (!namedImports) {
-              // Only default import, no change needed
-              return match;
-            }
-
             modified = true;
             // Split into default import + destructuring
-            const destructure = `const {${namedImports}} = ${defaultImport};`;
+            const destructure = `const { ${namedImports.trim()} } = ${defaultImport};`;
             return `import ${defaultImport} from "electron";\n${destructure}`;
           });
 
