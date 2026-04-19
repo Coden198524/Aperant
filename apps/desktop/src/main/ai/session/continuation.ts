@@ -312,4 +312,11 @@ function addUsage(cumulative: TokenUsage, addition: TokenUsage): void {
   if (addition.cacheCreationTokens) {
     cumulative.cacheCreationTokens = (cumulative.cacheCreationTokens ?? 0) + addition.cacheCreationTokens;
   }
+  if (addition.stepsExecuted) {
+    cumulative.stepsExecuted = (cumulative.stepsExecuted ?? 0) + addition.stepsExecuted;
+  }
+  // Keep the latest sessionId
+  if (addition.sessionId) {
+    cumulative.sessionId = addition.sessionId;
+  }
 }
