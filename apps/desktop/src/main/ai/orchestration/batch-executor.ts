@@ -177,9 +177,11 @@ export async function executeBatches(
             DEFAULT_BATCH_CONFIG.contextManagement.safetyMargin
           )
         : config.batchSize;
+    // When using runBatchSession (batch processing), don't limit by maxConcurrentSubtasks
+    // maxConcurrentSubtasks only applies to parallel execution mode
     const batchSize = Math.max(
       1,
-      Math.min(requestedBatchSize, config.maxConcurrentSubtasks ?? requestedBatchSize),
+      config.runBatchSession ? requestedBatchSize : Math.min(requestedBatchSize, config.maxConcurrentSubtasks ?? requestedBatchSize),
     );
 
     log(`[BatchExecutor] Batch size: ${batchSize}`);

@@ -1,5 +1,10 @@
-import electron from 'electron';
-const { app } = electron;
+import { isMainThread } from 'worker_threads';
+
+// Conditionally import electron only in main thread
+let app: Electron.App | undefined;
+if (isMainThread) {
+  app = require('electron').app;
+}
 import { readFileSync, existsSync, mkdirSync, readdirSync, Dirent } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
@@ -91,6 +96,9 @@ export class ProjectStore {
   private readonly CACHE_TTL_MS = 3000; // 3 seconds TTL for task cache
 
   constructor() {
+    if (!app) {
+      throw new Error('ProjectStore can only be instantiated in main thread');
+    }
     // Store in app's userData directory
     const userDataPath = app.getPath('userData');
     const storeDir = path.join(userDataPath, 'store');
@@ -1015,5 +1023,5 @@ export class ProjectStore {
   }
 }
 
-// Singleton instance
-export const projectStore = new ProjectStore();
+// Singleton instance - only instantiate in main thread
+export const projectStore = isMainThread ? new ProjectStore() : (null as any as ProjectStore);

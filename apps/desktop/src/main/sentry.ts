@@ -10,10 +10,27 @@
  * - Usernames are masked from all file paths
  * - Project paths remain visible for debugging (this is expected)
  * - Tags, contexts, extra data, and user info are all sanitized
+ *
+ * IMPORTANT: This module must not be imported in worker threads as it accesses Electron APIs.
+ * All exports are no-ops when called from worker threads.
  */
 
-import * as Sentry from '@sentry/electron/main';
-import { app, ipcMain } from 'electron';
+import { isMainThread } from 'worker_threads';
+import type { ErrorEvent } from '@sentry/electron/main';
+
+// Conditionally import Sentry and Electron only in main thread
+// In worker threads, these will be null and all functions become no-ops
+let Sentry: typeof import('@sentry/electron/main') | undefined;
+let app: Electron.App | undefined;
+let ipcMain: Electron.IpcMain | undefined;
+
+if (isMainThread) {
+  // Dynamic imports to avoid executing Electron code in worker threads
+  Sentry = require('@sentry/electron/main');
+  const electronModule = require('electron');
+  app = electronModule.app;
+  ipcMain = electronModule.ipcMain;
+}
 import { readSettingsFile } from './settings-utils';
 import { DEFAULT_APP_SETTINGS } from '../shared/constants';
 import { IPC_CHANNELS } from '../shared/constants/ipc';
@@ -68,12 +85,9 @@ function getTracesSampleRate(): number {
     }
   }
   // Default: 10% in production, 0 in dev
-  // Guard against worker thread context where app is unavailable
-  try {
-    return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
-  } catch {
-    return 0;
-  }
+  // Return 0 in worker threads where app is unavailable
+  if (!app) return 0;
+  return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
 }
 
 /**
@@ -93,12 +107,9 @@ function getProfilesSampleRate(): number {
     }
   }
   // Default: 10% in production, 0 in dev
-  // Guard against worker thread context where app is unavailable
-  try {
-    return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
-  } catch {
-    return 0;
-  }
+  // Return 0 in worker threads where app is unavailable
+  if (!app) return 0;
+  return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
 }
 
 // Cache config so renderer can access it via IPC
@@ -111,6 +122,11 @@ let cachedProfilesSampleRate: number = 0;
  * Called early in app startup, before window creation
  */
 export function initSentryMain(): void {
+  // Skip initialization in worker threads - Sentry and Electron APIs are unavailable
+  if (!Sentry || !app || !ipcMain) {
+    return;
+  }
+
   // Get configuration from environment variables
   cachedDsn = getSentryDsn();
   cachedTracesSampleRate = getTracesSampleRate();
@@ -135,12 +151,12 @@ export function initSentryMain(): void {
     environment: app.isPackaged ? 'production' : 'development',
     release: `auto-claude@${app.getVersion()}`,
 
-    beforeSend(event: Sentry.ErrorEvent) {
+    beforeSend(event: ErrorEvent) {
       if (!sentryEnabledState) {
         return null;
       }
       // Process event with shared privacy utility
-      return processEvent(event as SentryErrorEvent) as Sentry.ErrorEvent;
+      return processEvent(event as SentryErrorEvent) as ErrorEvent;
     },
 
     // Sample rates from environment variables (default: 10% in production, 0 in dev)
@@ -195,6 +211,7 @@ export function setSentryEnabled(enabled: boolean): void {
  * Use this instead of raw `Sentry.addBreadcrumb()` to avoid try/catch boilerplate.
  */
 export function safeBreadcrumb(breadcrumb: SentryBreadcrumb): void {
+  if (!Sentry) return; // No-op in worker threads
   try {
     Sentry.addBreadcrumb(breadcrumb);
   } catch { /* Sentry not initialized */ }
@@ -205,6 +222,7 @@ export function safeBreadcrumb(breadcrumb: SentryBreadcrumb): void {
  * Use this instead of raw `Sentry.captureException()` to avoid try/catch boilerplate.
  */
 export function safeCaptureException(error: Error, context?: SentryCaptureContext): void {
+  if (!Sentry) return; // No-op in worker threads
   try {
     Sentry.captureException(error, context);
   } catch { /* Sentry not initialized */ }

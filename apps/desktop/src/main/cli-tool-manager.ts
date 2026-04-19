@@ -25,11 +25,17 @@ import { existsSync, readdirSync, promises as fsPromises } from 'fs';
 import path from 'path';
 import os from 'os';
 import { promisify } from 'util';
-import { app } from 'electron';
+import { isMainThread } from 'worker_threads';
 import { findExecutable, findExecutableAsync, getAugmentedEnv, getAugmentedEnvAsync, shouldUseShell, existsAsync } from './env-utils';
 import { isWindows, isMacOS, isUnix, joinPaths, getExecutableExtension } from './platform';
 import type { ToolDetectionResult } from '../shared/types';
 import { findHomebrewPython as findHomebrewPythonUtil } from './utils/homebrew-python';
+
+// Conditionally import electron only in main thread
+let app: Electron.App | undefined;
+if (isMainThread) {
+  app = require('electron').app;
+}
 
 const execFileAsync = promisify(execFile);
 
@@ -426,7 +432,7 @@ class CLIToolManager {
     }
 
     // 2. Bundled Python (packaged apps only)
-    if (app.isPackaged) {
+    if (app?.isPackaged) {
       const bundledPath = this.getBundledPythonPath();
       if (bundledPath) {
         const validation = this.validatePython(bundledPath);
@@ -1607,7 +1613,7 @@ class CLIToolManager {
     }
 
     // 2. Bundled Python (packaged apps only)
-    if (app.isPackaged) {
+    if (app?.isPackaged) {
       const bundledPath = this.getBundledPythonPath();
       if (bundledPath) {
         const validation = await this.validatePythonAsync(bundledPath);
@@ -1998,7 +2004,7 @@ class CLIToolManager {
    * @returns Path to bundled Python or null if not found
    */
   private getBundledPythonPath(): string | null {
-    if (!app.isPackaged) {
+    if (!app?.isPackaged) {
       return null;
     }
 

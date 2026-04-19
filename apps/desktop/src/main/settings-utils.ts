@@ -6,17 +6,28 @@
  *
  * NOTE: This module intentionally does NOT perform migrations or auto-detection.
  * Those are handled by the IPC handlers where they have full context.
+ *
+ * IMPORTANT: This module must not be imported in worker threads as it accesses Electron APIs.
  */
 
-import { app } from 'electron';
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { promises as fsPromises } from 'fs';
 import path from 'path';
+import { isMainThread } from 'worker_threads';
+
+// Conditionally import electron only in main thread
+let app: Electron.App | undefined;
+if (isMainThread) {
+  app = require('electron').app;
+}
 
 /**
  * Get the path to the settings file
  */
 export function getSettingsPath(): string {
+  if (!app) {
+    throw new Error('getSettingsPath() can only be called from main thread');
+  }
   return path.join(app.getPath('userData'), 'settings.json');
 }
 

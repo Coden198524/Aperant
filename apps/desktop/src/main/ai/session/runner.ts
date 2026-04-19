@@ -190,6 +190,7 @@ export async function runAgentSession(
 ): Promise<SessionResult> {
   const { onEvent, onAuthRefresh, onModelRefresh, tools, memoryContext, onAccountSwitch, currentAccountId } = options;
   const startTime = Date.now();
+  const sessionId = crypto.randomUUID();
 
   let authRetries = 0;
   let activeConfig = config;
@@ -198,7 +199,7 @@ export async function runAgentSession(
   // Retry loop for auth refresh and account switching
   while (authRetries <= MAX_AUTH_RETRIES) {
     try {
-      const result = await executeStream(activeConfig, tools, onEvent, memoryContext);
+      const result = await executeStream(activeConfig, tools, onEvent, memoryContext, sessionId);
       return {
         ...result,
         durationMs: Date.now() - startTime,
@@ -260,6 +261,7 @@ export async function runAgentSession(
             'auth_failure',
             sessionError,
             startTime,
+            sessionId,
           );
         }
         if (onModelRefresh) {
@@ -269,7 +271,7 @@ export async function runAgentSession(
       }
 
       // Non-retryable error or retries exhausted
-      return buildErrorResult(outcome, sessionError, startTime);
+      return buildErrorResult(outcome, sessionError, startTime, sessionId);
     }
   }
 
@@ -282,6 +284,7 @@ export async function runAgentSession(
       retryable: false,
     },
     startTime,
+    sessionId,
   );
 }
 
@@ -313,6 +316,7 @@ async function executeStream(
   tools: Record<string, AITool> | undefined,
   onEvent: SessionEventCallback | undefined,
   memoryContext: MemorySessionContext | undefined,
+  sessionId: string,
 ): Promise<Omit<SessionResult, 'durationMs'>> {
   const baseMaxSteps = config.maxSteps ?? DEFAULT_MAX_STEPS;
 
@@ -728,6 +732,7 @@ async function executeStream(
       totalUsage !== undefined
         ? (totalUsage.inputTokens ?? 0) + (totalUsage.outputTokens ?? 0)
         : summary.usage.totalTokens,
+    sessionId,
   };
 
   // Log token usage with cache information
@@ -775,6 +780,7 @@ function buildErrorResult(
   outcome: SessionOutcome,
   error: SessionError,
   startTime: number,
+  sessionId: string,
 ): SessionResult {
   return {
     outcome,
@@ -783,6 +789,7 @@ function buildErrorResult(
       promptTokens: 0,
       completionTokens: 0,
       totalTokens: 0,
+      sessionId,
     },
     error,
     messages: [],

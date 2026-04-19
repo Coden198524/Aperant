@@ -145,6 +145,8 @@ export interface TokenUsage {
   cacheReadTokens?: number;
   /** Cache creation tokens (Anthropic prompt caching) */
   cacheCreationTokens?: number;
+  /** Unique ID for each AI session to track cross-session accumulation */
+  sessionId?: string;
 }
 
 /** Structured error from a session */
