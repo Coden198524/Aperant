@@ -553,7 +553,7 @@ export class BuildOrchestrator extends EventEmitter {
         //   prompt = injectionResult.enhancedPrompt;
         // }
 
-        return this.config.runSession({
+        const result = await this.config.runSession({
           agentType: 'coder',
           phase: 'coding',
           systemPrompt: prompt,
@@ -565,6 +565,9 @@ export class BuildOrchestrator extends EventEmitter {
           cliModel: this.config.cliModel,
           cliThinking: this.config.cliThinking,
         });
+
+        console.log('[BuildOrchestrator] runBatchSession result.usage:', result.usage);
+        return result;
       };
 
       const batchConfig: BatchExecutorConfig = {
