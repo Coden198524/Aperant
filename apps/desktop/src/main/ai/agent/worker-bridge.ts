@@ -97,15 +97,8 @@ export class WorkerBridge extends EventEmitter {
     this.progressTracker = new ProgressTracker();
     this.executionProgressSequence = 0;
 
-    // Generate unique session ID for accurate cross-session token tracking
-    const sessionId = `${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    this.lastTokenUsage = {
-      promptTokens: 0,
-      completionTokens: 0,
-      totalTokens: 0,
-      stepsExecuted: 0,
-      sessionId,
-    };
+    // Initialize with null - will be populated when first usage data arrives from worker
+    this.lastTokenUsage = null;
 
     const workerConfig: WorkerConfig = {
       taskId: config.taskId,
