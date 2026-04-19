@@ -68,7 +68,12 @@ function getTracesSampleRate(): number {
     }
   }
   // Default: 10% in production, 0 in dev
-  return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
+  // Guard against worker thread context where app is unavailable
+  try {
+    return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
+  } catch {
+    return 0;
+  }
 }
 
 /**
@@ -88,7 +93,12 @@ function getProfilesSampleRate(): number {
     }
   }
   // Default: 10% in production, 0 in dev
-  return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
+  // Guard against worker thread context where app is unavailable
+  try {
+    return app.isPackaged ? PRODUCTION_TRACE_SAMPLE_RATE : 0;
+  } catch {
+    return 0;
+  }
 }
 
 // Cache config so renderer can access it via IPC

@@ -54,17 +54,17 @@ export function resolvePromptsDir(): string {
   if (_resolvedPromptsDir) return _resolvedPromptsDir;
 
   // Production: Electron bundles prompts into resources
+  // Skip this check in worker threads (process.resourcesPath is still available)
   try {
-    // Dynamically import electron to avoid issues in worker threads
-    // eslint-disable-next-line @typescript-eslint/no-require-imports
-    const { app } = require('electron') as typeof import('electron');
-    if (app?.isPackaged) {
+    // Check if we're in a packaged Electron app by testing process.resourcesPath
+    // This works in both main thread and worker threads
+    if (process.resourcesPath && existsSync(join(process.resourcesPath, 'prompts', 'planner.md'))) {
       const prodPath = join(process.resourcesPath, 'prompts');
       _resolvedPromptsDir = prodPath;
       return prodPath;
     }
   } catch {
-    // Not in Electron main process (e.g., worker thread or test environment)
+    // Not in Electron environment or prompts not found in resources
   }
 
   // Dev: traverse from __dirname up to find apps/desktop/prompts/

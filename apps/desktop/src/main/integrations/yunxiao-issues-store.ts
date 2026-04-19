@@ -198,16 +198,16 @@ export function updateYunxiaoIssueLocalFields(
   const existing = file.issues[issueIndex];
   const next: YunxiaoIssue = { ...existing };
 
-  if (Object.prototype.hasOwnProperty.call(updates, 'localCategory')) {
+  if (Object.hasOwn(updates, 'localCategory')) {
     next.localCategory = sanitizeText(updates.localCategory || '', 50) || undefined;
   }
-  if (Object.prototype.hasOwnProperty.call(updates, 'localSeverity')) {
+  if (Object.hasOwn(updates, 'localSeverity')) {
     next.localSeverity = updates.localSeverity;
   }
-  if (Object.prototype.hasOwnProperty.call(updates, 'localTags')) {
+  if (Object.hasOwn(updates, 'localTags')) {
     next.localTags = normalizeTags(updates.localTags);
   }
-  if (Object.prototype.hasOwnProperty.call(updates, 'localAnalysis')) {
+  if (Object.hasOwn(updates, 'localAnalysis')) {
     next.localAnalysis = sanitizeText(updates.localAnalysis || '', 20000, true) || undefined;
   }
 

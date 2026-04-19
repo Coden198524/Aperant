@@ -39,7 +39,8 @@ export function electronEsmFixPlugin(): Plugin {
 
           // Replace bare 'electron.' references with the actual default import name
           // This handles cases where code uses electron.utilityProcess, etc.
-          chunk.code = chunk.code.replace(/\belectron\./g, `${defaultImportName}.`);
+          // Use negative lookbehind to avoid replacing 'this.electron.' or 'obj.electron.'
+          chunk.code = chunk.code.replace(/(?<!\.)\belectron\./g, `${defaultImportName}.`);
 
           if (modified) {
             console.log(`[electron-esm-fix] Fixed Electron imports in ${fileName}`);
