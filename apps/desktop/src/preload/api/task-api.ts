@@ -88,6 +88,9 @@ export interface TaskAPI {
   ) => () => void;
   onTaskTokenUsage: (callback: (taskId: string, usage: TokenUsage, projectId?: string) => void) => () => void;
 
+  // Debug: Send log from renderer to main process
+  logToMain: (message: string) => void;
+
   // Task Phase Logs
   getTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs | null>>;
   clearTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs>>;
@@ -309,6 +312,11 @@ export const createTaskAPI = (): TaskAPI => ({
     return () => {
       ipcRenderer.removeListener(IPC_CHANNELS.TASK_TOKEN_USAGE, handler);
     };
+  },
+
+  // Debug: Send log from renderer to main process
+  logToMain: (message: string): void => {
+    ipcRenderer.send(IPC_CHANNELS.RENDERER_LOG, message);
   },
 
   // Task Phase Logs

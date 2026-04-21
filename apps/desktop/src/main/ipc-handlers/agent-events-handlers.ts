@@ -1,4 +1,5 @@
 import type { BrowserWindow } from "electron";
+import { ipcMain } from "electron";
 import path from "path";
 import { existsSync, readFileSync } from "fs";
 import { safeParseJson } from "../utils/json-repair";
@@ -36,6 +37,13 @@ export function registerAgenteventsHandlers(
   getMainWindow: () => BrowserWindow | null
 ): void {
   taskStateManager.configure(getMainWindow);
+
+  // ============================================
+  // Debug: Renderer → Main log bridge
+  // ============================================
+  ipcMain.on(IPC_CHANNELS.RENDERER_LOG, (_event, message: string) => {
+    console.log(`[RENDERER] ${message}`);
+  });
 
   // ============================================
   // Agent Manager Events → Renderer
@@ -364,7 +372,6 @@ export function registerAgenteventsHandlers(
   });
 
   agentManager.on("task-token-usage", (taskId: string, usage: TokenUsage, projectId?: string) => {
-    console.log(`[agent-events-handlers] Received task-token-usage for ${taskId}:`, usage);
     const { task, project } = findTaskAndProject(taskId, projectId);
     const taskProjectId = project?.id || projectId;
 
@@ -377,7 +384,6 @@ export function registerAgenteventsHandlers(
     );
 
     if (!task || !project) {
-      console.warn(`[agent-events-handlers] Task or project not found for token usage: ${taskId}`);
       return;
     }
 

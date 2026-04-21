@@ -55,7 +55,9 @@ let batchTimeout: NodeJS.Timeout | null = null;
 let storeActionsRef: StoreActions | null = null;
 
 function flushBatch(): void {
-  if (batchQueue.size === 0 || !storeActionsRef) return;
+  if (batchQueue.size === 0 || !storeActionsRef) {
+    return;
+  }
 
   const flushStart = performance.now();
   const updateCount = batchQueue.size;
@@ -289,7 +291,9 @@ export function useIpcListeners(): void {
 
     const cleanupTokenUsage = window.electronAPI.onTaskTokenUsage(
       (taskId: string, tokenUsage: TokenUsage, projectId?: string) => {
-        if (!isTaskForCurrentProject(projectId)) return;
+        if (!isTaskForCurrentProject(projectId)) {
+          return;
+        }
         queueUpdate(taskId, { tokenUsage });
       }
     );

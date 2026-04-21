@@ -61,6 +61,9 @@ export const IPC_CHANNELS = {
   TASK_EXECUTION_PROGRESS: 'task:executionProgress',
   TASK_TOKEN_USAGE: 'task:tokenUsage',
 
+  // Debug: Renderer -> Main log bridge
+  RENDERER_LOG: 'renderer:log',
+
   // Task phase logs (persistent, collapsible logs by phase)
   TASK_LOGS_GET: 'task:logsGet',           // Load logs from spec dir
   TASK_LOGS_CLEAR: 'task:logsClear',       // Clear logs for a task spec

@@ -56,6 +56,16 @@ export const writeTool = Tool.define({
       fs.mkdirSync(parentDir, { recursive: true });
     }
 
+    // Validate JSON files before writing
+    if (resolvedPath.endsWith('.json')) {
+      try {
+        JSON.parse(content);
+      } catch (jsonError) {
+        const errorMsg = jsonError instanceof Error ? jsonError.message : String(jsonError);
+        throw new Error(`Invalid JSON content: ${errorMsg}. Please ensure the JSON is properly formatted with escaped special characters.`);
+      }
+    }
+
     // Write the file
     fs.writeFileSync(resolvedPath, content, 'utf-8');
 

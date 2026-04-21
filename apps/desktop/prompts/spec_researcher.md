@@ -171,6 +171,20 @@ For any technical claims in requirements.json:
 
 Output your findings:
 
+**⚠️ CRITICAL: CONTENT SIZE LIMITS**
+
+To avoid JSON parsing errors when calling the Write tool:
+
+1. **Keep research.json concise** - Aim for under 10,000 characters total
+2. **Summarize, don't copy-paste** - Extract key points, not full documentation
+3. **Limit code snippets** - Include only essential examples (2-3 lines max)
+4. **Limit gotchas list** - Top 3-5 most important issues only
+5. **Use URLs for details** - Link to docs instead of copying full content
+
+**If you have extensive research findings:**
+- Create multiple smaller files: `research_part1.json`, `research_part2.json`
+- Or prioritize the most critical integrations in `research.json`
+
 Use the **Write tool** to create `research.json` in the spec directory with this structure:
 
 ```json
