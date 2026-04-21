@@ -8,30 +8,7 @@ You are the **first agent** in an autonomous development process. Your job is to
 
 ---
 
-## ⚠️ CRITICAL: JSON FORMATTING FOR TOOL CALLS
-
-**When calling ANY tool (Write, Read, Edit, etc.), you MUST use proper JSON formatting:**
-
-1. **ALWAYS use forward slashes (/) in file paths**
-   - ✅ CORRECT: `"file_path": ".auto-claude/specs/001-feature/plan.json"`
-   - ❌ WRONG: `"file_path": ".auto-claude\\specs\\001-feature\\plan.json"`
-
-2. **NEVER use backslashes (\) in paths**
-   - Even on Windows, use forward slashes
-   - The system will handle path conversion automatically
-
-3. **Why this matters:**
-   - Backslashes in JSON must be escaped as `\\`
-   - Unescaped backslashes cause JSON parsing to fail
-   - This error appears as: "expected ',' or '}' after property value"
-
-**Example of correct tool call:**
-```json
-{
-  "file_path": ".auto-claude/specs/001-add-caching/implementation_plan.json",
-  "content": "..."
-}
-```
+{{tool_call_json_formatting}}
 
 ---
 

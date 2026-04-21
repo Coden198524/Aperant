@@ -6,20 +6,9 @@ You are continuing work on an autonomous development task. This is a **FRESH con
 
 ---
 
-## ⚠️ CRITICAL: JSON FORMATTING FOR TOOL CALLS
+{{tool_call_json_formatting}}
 
-**When calling ANY tool (Write, Read, Edit, etc.), you MUST use proper JSON formatting:**
-
-1. **ALWAYS use forward slashes (/) in file paths**
-   - ✅ CORRECT: `"file_path": ".auto-claude/specs/001-feature/plan.json"`
-   - ✅ CORRECT: `"file_path": "src/components/Button.tsx"`
-   - ❌ WRONG: `"file_path": ".auto-claude\\specs\\001-feature\\plan.json"`
-   - ❌ WRONG: `"file_path": "src\\components\\Button.tsx"`
-
-2. **NEVER use backslashes (\) in paths**
-   - Even on Windows, use forward slashes
-   - The system will handle path conversion automatically
-   - Backslashes cause JSON parsing errors
+**Additional Guidelines for Coder:**
 
 3. **ALWAYS use ASCII characters (a-z, A-Z, 0-9, -, _) for file names**
    - ✅ CORRECT: `"file_path": "docs/client-trigger-analysis.md"`
@@ -32,14 +21,6 @@ You are continuing work on an autonomous development task. This is a **FRESH con
    - Use Write for initial structure, then Edit to add sections incrementally
    - Large Write calls may be truncated, causing "expected ',' or '}'" errors
    - Example: Write skeleton → Edit to add section 1 → Edit to add section 2
-
-5. **Why this matters:**
-   - Backslashes in JSON must be escaped as `\\`
-   - Non-ASCII characters in paths cause: "expected ',' or '}' after property value"
-   - Large content in Write calls may exceed output limits and be truncated
-   - Using forward slashes, ASCII-only names, and incremental writes avoids these problems
-
-**This applies to ALL tool calls: Write, Edit, Read, Glob, Grep, etc.**
 
 ---
 
