@@ -21,9 +21,6 @@ import {
   settingsMock
 } from './mocks';
 
-// Check if we're in a browser (not Electron)
-const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
-
 /**
  * Create mock electronAPI for browser
  * Aggregates all mock implementations from separate modules
@@ -34,7 +31,6 @@ const browserMockAPI: ElectronAPI = {
 
   // Task Operations
   ...taskMock,
-  onTaskTokenUsage: () => () => {},
 
   // Workspace Management
   ...workspaceMock,
@@ -459,6 +455,9 @@ const browserMockAPI: ElectronAPI = {
  * Initialize browser mock if not running in Electron
  */
 export function initBrowserMock(): void {
+  // Check at runtime, not at module load time
+  const isElectron = typeof window !== 'undefined' && window.electronAPI !== undefined;
+
   if (!isElectron) {
     console.warn('%c[Browser Mock] Initializing mock electronAPI for browser preview', 'color: #f0ad4e; font-weight: bold;');
     (window as Window & { electronAPI: ElectronAPI }).electronAPI = browserMockAPI;

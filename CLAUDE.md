@@ -130,7 +130,9 @@ Your context window will be automatically compacted as it approaches its limit, 
 
 **Electron path resolution** — For bug fixes in the Electron app, check path resolution differences between dev and production builds (`app.isPackaged`, `process.resourcesPath`). Paths that work in dev often break when Electron is bundled for production — verify both contexts. Use `app.getPath()` for system paths instead of hardcoding.
 
-**Native dependencies** — `node-pty` requires native compilation. Prebuilt binaries are downloaded automatically on install. If prebuilts aren't available for your Electron version, you'll need build tools (Visual Studio Build Tools on Windows, CMake on macOS/Linux). See [CONTRIBUTING.md](CONTRIBUTING.md#windows-users) for setup.
+**Native dependencies** — `@lydell/node-pty` requires native compilation. Prebuilt binaries are downloaded automatically on install. If prebuilts aren't available for your Electron version, you'll need build tools (Visual Studio Build Tools on Windows, CMake on macOS/Linux). See [CONTRIBUTING.md](CONTRIBUTING.md#windows-users) for setup.
+
+**Worker thread isolation** — Agent sessions run in worker threads to avoid blocking the main process. Be careful with Electron API access in workers — use `app.isPackaged` checks and avoid direct `electron.app` references. Worker crashes often stem from accessing main-process-only APIs.
 
 **HMR limitations** — Hot Module Replacement works for renderer code, but main process and IPC changes require server restart. Watch for stale module state if changes don't appear.
 
@@ -198,8 +200,10 @@ autonomous-coding/
 ### Setup & Installation
 ```bash
 npm run install:all              # Install all dependencies from root
-cd apps/desktop && npm install   # Install desktop app deps only
+cd apps/desktop && npm install   # Install desktop app deps only (runs postinstall script)
 ```
+
+**Note:** The postinstall script (`scripts/postinstall.cjs`) handles platform-specific setup for native dependencies.
 
 ### Development
 ```bash
@@ -319,7 +323,7 @@ Graph-based semantic memory accessed via a Python MCP sidecar (lives outside `ap
 
 ### Tech Stack
 
-React 19, TypeScript (strict), Electron 39, Vercel AI SDK v6, Zustand 5, Tailwind CSS v4, Radix UI, xterm.js 6, Vite 7, Vitest 4, Biome 2, Motion (Framer Motion)
+React 19, TypeScript (strict), Electron 40, Vercel AI SDK v6, Zustand 5, Tailwind CSS v4, Radix UI, xterm.js 6, Vite 7, Vitest 4, Biome 2, Motion (Framer Motion)
 
 ### Path Aliases (tsconfig.json)
 
@@ -623,13 +627,16 @@ Full build flow in `src/main/ai/orchestration/build-orchestrator.ts`:
 6. **Merge** — Integrate back to main branch
 
 **Batch vs. Serial Execution:**
-- **Batch mode** (default): Group independent subtasks, process in 2-4 batches
+- **Batch mode** (default): Group independent subtasks, process in 2-4 batches (max 4 per batch)
 - **Serial mode** (fallback): Execute subtasks one-by-one if conflicts detected
+- **Conflict detection** (`orchestration/conflict-detector.ts`): Analyzes `filesToModify` and `filesToCreate` to identify subtasks that touch the same files
 
 **Progress tracking** — Events emitted:
 - `orchestration-phase-update` — Phase changed
 - `execution-state-update` — Subtask completed
 - `orchestration-complete` — Build finished
+
+**Token usage tracking** — Each agent session has a `sessionId` for accurate token counting across continuation calls. The `stepsExecuted` counter persists through `addUsage()` calls to track multi-turn conversations.
 
 ## i18n Guidelines
 

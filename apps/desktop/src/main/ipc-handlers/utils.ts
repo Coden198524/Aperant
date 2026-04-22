@@ -118,6 +118,9 @@ export function safeSendToRenderer(
     }
 
     // All checks passed - safe to send
+    if (channel === 'task:tokenUsage') {
+      console.log(`[safeSendToRenderer] Sending ${channel} with args:`, args);
+    }
     mainWindow.webContents.send(channel, ...args);
     // On successful send, reset circuit breaker state (allow re-trigger after recovery)
     consecutiveDisposalErrors = 0;

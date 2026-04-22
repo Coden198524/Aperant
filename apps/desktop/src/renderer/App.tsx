@@ -108,6 +108,8 @@ function ProjectTabBarWithContext({
 }
 
 export function App() {
+  console.log('[App] App component rendering...');
+
   // Load IPC listeners for real-time updates
   useIpcListeners();
 

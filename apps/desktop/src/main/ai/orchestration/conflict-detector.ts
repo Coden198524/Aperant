@@ -8,7 +8,7 @@
 
 import type { SubtaskInfo, ConflictGraph } from './batch-types';
 
-const MAX_AUTO_BATCH_SIZE = 5;
+const MAX_AUTO_BATCH_SIZE = 4;
 
 // =============================================================================
 // Conflict Detection

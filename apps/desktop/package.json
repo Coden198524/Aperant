@@ -223,7 +223,9 @@
       "target": [
         "nsis",
         "zip"
-      ]
+      ],
+      "forceCodeSigning": false,
+      "signAndEditExecutable": false
     },
     "linux": {
       "icon": "resources/icons",

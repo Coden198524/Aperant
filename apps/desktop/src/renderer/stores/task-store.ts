@@ -599,14 +599,28 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   updateTaskTokenUsage: (taskId, usage) => {
     recordTaskActivity(taskId);
 
+    console.log(`[TaskStore.updateTaskTokenUsage] Called for ${taskId}:`, usage);
+
     set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
-      if (index === -1) return state;
+      if (index === -1) {
+        console.warn(`[TaskStore.updateTaskTokenUsage] Task not found: ${taskId}`);
+        return state;
+      }
+
+      const previousUsage = state.tasks[index].tokenUsage;
+      const mergedUsage = mergeTokenUsageForTask(previousUsage, usage);
+
+      console.log(`[TaskStore.updateTaskTokenUsage] Merging for ${taskId}:`, {
+        previous: previousUsage,
+        incoming: usage,
+        merged: mergedUsage
+      });
 
       return {
         tasks: updateTaskAtIndex(state.tasks, index, (t) => ({
           ...t,
-          tokenUsage: mergeTokenUsageForTask(t.tokenUsage, usage)
+          tokenUsage: mergedUsage
         }))
       };
     });

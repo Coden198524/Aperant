@@ -893,6 +893,7 @@ export class AgentProcessManager {
     });
 
     bridge.on('task-token-usage', (tId, usage, pId?: string) => {
+      console.log(`[AgentProcess] Forwarding task-token-usage for ${tId}:`, usage);
       this.emitter.emit('task-token-usage', tId, usage, pId);
     });
 

@@ -129,6 +129,7 @@ export function TaskLogs({
 }: TaskLogsProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const logOrder = useSettingsStore(s => s.settings.logOrder);
+  const [isRuntimeExpanded, setIsRuntimeExpanded] = useState(false);
   const runtimeLogs = useMemo(() => {
     const logs = buildDisplayRuntimeLogs(task.logs || []);
     return logOrder === 'reverse-chronological' ? [...logs].reverse() : logs;
@@ -162,30 +163,41 @@ export function TaskLogs({
               />
             ))}
             {shouldShowRuntimeLogs && (
-              <div className="rounded-lg border border-border bg-secondary/20 p-3">
-                <div className="mb-2 flex items-center gap-2">
-                  <Terminal className="h-4 w-4 text-muted-foreground" />
-                  <span className="text-sm font-medium">
-                    {t('tasks:logs.runtimeLabel', { defaultValue: 'Runtime' })}
-                  </span>
-                  <span className="text-xs text-muted-foreground">
-                    {t('tasks:logs.entriesCount', {
-                      count: runtimeLogs.length,
-                      defaultValue: '({{count}} entries)'
-                    })}
-                  </span>
-                </div>
-                <div className="space-y-1">
-                  {runtimeLogs.map((log, index) => (
-                    <div
-                      key={`${index}-${log.content.slice(0, 80)}`}
-                      className="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
-                    >
-                      {log.content}
+              <Collapsible open={isRuntimeExpanded} onOpenChange={setIsRuntimeExpanded}>
+                <CollapsibleTrigger asChild>
+                  <button className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/20 hover:bg-secondary/50 transition-colors">
+                    <div className="flex items-center gap-2">
+                      {isRuntimeExpanded ? (
+                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
+                      ) : (
+                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
+                      )}
+                      <Terminal className="h-4 w-4 text-muted-foreground" />
+                      <span className="text-sm font-medium">
+                        {t('tasks:logs.runtimeLabel', { defaultValue: 'Runtime' })}
+                      </span>
+                      <span className="text-xs text-muted-foreground">
+                        {t('tasks:logs.entriesCount', {
+                          count: runtimeLogs.length,
+                          defaultValue: '({{count}} entries)'
+                        })}
+                      </span>
                     </div>
-                  ))}
-                </div>
-              </div>
+                  </button>
+                </CollapsibleTrigger>
+                <CollapsibleContent>
+                  <div className="mt-1 ml-6 border-l-2 border-border pl-4 py-2 space-y-1">
+                    {runtimeLogs.map((log, index) => (
+                      <div
+                        key={`${index}-${log.content.slice(0, 80)}`}
+                        className="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
+                      >
+                        {log.content}
+                      </div>
+                    ))}
+                  </div>
+                </CollapsibleContent>
+              </Collapsible>
             )}
             <div ref={logsEndRef} />
           </>

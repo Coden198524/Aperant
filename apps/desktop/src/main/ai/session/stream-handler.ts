@@ -139,6 +139,84 @@ function createInitialState(): StreamHandlerState {
 }
 
 // =============================================================================
+// Tool Call Parameter Validation
+// =============================================================================
+
+/**
+ * Validates tool call parameters before execution to catch common issues
+ * that would cause failures during tool execution.
+ *
+ * Returns an error message if validation fails, or null if valid.
+ */
+function validateToolCallParams(toolName: string, input: unknown): string | null {
+  // Only validate if input is an object
+  if (typeof input !== 'object' || input === null) {
+    return `Tool '${toolName}' received invalid input type: ${typeof input}. Expected object.`;
+  }
+
+  const params = input as Record<string, unknown>;
+
+  // Validate Write tool parameters
+  if (toolName === 'Write') {
+    // Check for required file_path parameter
+    if (!params.file_path || typeof params.file_path !== 'string') {
+      return `Tool 'Write' missing required parameter 'file_path' or it's not a string.`;
+    }
+
+    // Check for required content parameter
+    if (!('content' in params)) {
+      return `Tool 'Write' missing required parameter 'content'.`;
+    }
+
+    const content = params.content;
+    if (typeof content !== 'string') {
+      return `Tool 'Write' parameter 'content' must be a string, got ${typeof content}.`;
+    }
+
+    // Check content size - warn if extremely large (>50KB)
+    const contentLength = content.length;
+    if (contentLength > 50000) {
+      console.warn(`[StreamHandler] Write tool content is very large (${contentLength} chars). This may cause performance issues.`);
+    }
+
+    // Validate JSON files have valid JSON content
+    const filePath = params.file_path as string;
+    if (filePath.endsWith('.json')) {
+      try {
+        JSON.parse(content);
+      } catch (error) {
+        const errorMsg = error instanceof Error ? error.message : String(error);
+        return `Tool 'Write' failed: Cannot write invalid JSON to ${filePath}. JSON parsing error: ${errorMsg}. The AI model generated malformed JSON - this usually happens when the content is too large and gets truncated. Please regenerate with smaller, more concise content.`;
+      }
+    }
+  }
+
+  // Validate Edit tool parameters
+  if (toolName === 'Edit') {
+    if (!params.file_path || typeof params.file_path !== 'string') {
+      return `Tool 'Edit' missing required parameter 'file_path' or it's not a string.`;
+    }
+    if (!params.old_string || typeof params.old_string !== 'string') {
+      return `Tool 'Edit' missing required parameter 'old_string' or it's not a string.`;
+    }
+    if (!params.new_string || typeof params.new_string !== 'string') {
+      return `Tool 'Edit' missing required parameter 'new_string' or it's not a string.`;
+    }
+  }
+
+  // Validate Read tool parameters
+  if (toolName === 'Read') {
+    if (!params.file_path || typeof params.file_path !== 'string') {
+      return `Tool 'Read' missing required parameter 'file_path' or it's not a string.`;
+    }
+  }
+
+  // Add more tool-specific validations as needed
+
+  return null; // Validation passed
+}
+
+// =============================================================================
 // Stream Handler
 // =============================================================================
 
@@ -226,6 +304,30 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
     state.toolCallTimestamps.set(part.toolCallId, Date.now());
     // Store the tool name so we can include it in tool-result/tool-error events
     state.toolCallNames.set(part.toolCallId, part.toolName);
+
+    // Pre-validate tool call parameters to catch issues before execution
+    const validationError = validateToolCallParams(part.toolName, part.input);
+    if (validationError) {
+      console.error('[StreamHandler] Tool call validation failed:', {
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        error: validationError,
+      });
+
+      // Emit as tool-error immediately instead of executing
+      emit({
+        type: 'tool-result',
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        result: validationError,
+        durationMs: 0,
+        isError: true,
+      });
+
+      const toolError = classifyToolError(part.toolName, part.toolCallId, validationError);
+      emit({ type: 'error', error: toolError });
+      return;
+    }
 
     // Debug: Log tool call input for Write tool to diagnose JSON truncation
     if (part.toolName === 'Write' && part.input) {
