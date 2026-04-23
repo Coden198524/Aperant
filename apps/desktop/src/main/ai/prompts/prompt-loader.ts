@@ -249,7 +249,15 @@ export function injectContext(promptTemplate: string, context: PromptContext): s
     sections.push(domainGuidance);
   }
 
-  // 6. Base prompt
+  // 6. Git push policy (based on branch detection)
+  if (context.autoPushToRemote !== undefined) {
+    const gitPushPolicy = buildGitPushPolicyHeader(context.autoPushToRemote);
+    if (gitPushPolicy) {
+      sections.push(gitPushPolicy);
+    }
+  }
+
+  // 7. Base prompt
   sections.push(promptTemplate);
 
   return sections.join('');
@@ -280,6 +288,29 @@ function buildDomainGuidanceHeader(): string {
     `When proposing plans or verification, include concrete checks for these areas where relevant.\n\n` +
     `---\n\n`
   );
+}
+
+/**
+ * Build Git push policy header based on branch detection.
+ *
+ * @param autoPushToRemote - Whether to allow automatic push to remote
+ * @returns Git push policy instruction
+ */
+function buildGitPushPolicyHeader(autoPushToRemote: boolean): string {
+  if (autoPushToRemote) {
+    return (
+      `## GIT PUSH POLICY\n\n` +
+      `**IMPORTANT**: After committing changes, run \`git push\` to push your commits to the remote repository.\n\n` +
+      `---\n\n`
+    );
+  } else {
+    return (
+      `## GIT PUSH POLICY\n\n` +
+      `**IMPORTANT**: Do NOT run \`git push\`. All work stays local until the user reviews and approves.\n` +
+      `The user will push to remote after reviewing your changes.\n\n` +
+      `---\n\n`
+    );
+  }
 }
 
 /**

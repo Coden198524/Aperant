@@ -1,6 +1,7 @@
 import { EventEmitter } from 'events';
 import path from 'path';
 import { existsSync, readdirSync, readFileSync } from 'fs';
+import { execSync } from 'child_process';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
@@ -44,6 +45,26 @@ const FAST_WORKFLOW_PHASE_STEP_BUDGETS = {
   coding: 120,
   qa: 40,
 } as const;
+
+/**
+ * Check if the current Git branch is a main/trunk branch.
+ * Main branches: main, master, develop, dev, trunk
+ */
+function isMainBranch(projectPath: string): boolean {
+  try {
+    const currentBranch = execSync('git branch --show-current', {
+      cwd: projectPath,
+      encoding: 'utf-8',
+    }).trim();
+
+    const mainBranches = ['main', 'master', 'develop', 'dev', 'trunk'];
+    return mainBranches.includes(currentBranch.toLowerCase());
+  } catch (error) {
+    console.warn('[AgentManager] Failed to detect Git branch:', error);
+    // Default to safe behavior (no push) if detection fails
+    return true;
+  }
+}
 
 /**
  * Main AgentManager - orchestrates agent process lifecycle
@@ -479,6 +500,7 @@ export class AgentManager extends EventEmitter {
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
       language: this.resolveAppLanguage(),
+      autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
         cwd: projectPath,
         projectDir: projectPath,
@@ -616,6 +638,7 @@ export class AgentManager extends EventEmitter {
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
       language: this.resolveAppLanguage(),
+      autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
         cwd: effectiveCwd,
         projectDir: effectiveProjectDir,
@@ -732,6 +755,7 @@ export class AgentManager extends EventEmitter {
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
       language: this.resolveAppLanguage(),
+      autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
         cwd: effectiveCwd,
         projectDir: effectiveProjectDir,

@@ -32,6 +32,8 @@ export interface PromptContext {
   recoveryHints?: string[];
   /** Phase-specific planning retry context */
   planningRetryContext?: string;
+  /** Whether to automatically push commits to remote during coding phase */
+  autoPushToRemote?: boolean;
 }
 
 // =============================================================================

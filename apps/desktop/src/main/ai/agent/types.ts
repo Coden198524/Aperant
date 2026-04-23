@@ -94,6 +94,8 @@ export interface SerializableSessionConfig {
   workflowMode?: TaskWorkflowMode;
   /** Preferred UI language from app settings */
   language?: SupportedLanguage;
+  /** Whether to automatically push commits to remote Git repository */
+  autoPushToRemote?: boolean;
   /** Tool context serialized fields */
   toolContext: {
     cwd: string;

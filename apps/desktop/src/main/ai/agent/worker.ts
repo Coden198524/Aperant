@@ -456,6 +456,7 @@ async function assemblePrompt(
     projectDir: session.projectDir,
     projectInstructions: cachedProjectInstructions,
     humanInput,
+    autoPushToRemote: session.autoPushToRemote,
   });
 
   let promptWithLanguage = appendLanguageRequirement(promptWithContext, session.language);
