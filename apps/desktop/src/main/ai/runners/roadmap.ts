@@ -174,6 +174,8 @@ export interface RoadmapConfig {
   enableCompetitorAnalysis?: boolean;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** User's preferred language for AI-generated content (e.g., 'en', 'zh') */
+  language?: string;
 }
 
 /** Result of a roadmap phase */
@@ -225,6 +227,7 @@ async function runDiscoveryPhase(
   projectIndexFile: string,
   refresh: boolean,
   client: SimpleClientResult,
+  language: string,
   abortSignal?: AbortSignal,
   onStream?: RoadmapStreamCallback,
 ): Promise<RoadmapPhaseResult> {
@@ -246,7 +249,10 @@ async function runDiscoveryPhase(
   let retryContext: string | undefined;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const contextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Project Directory**: ${projectDir}\n**Project Index**: ${projectIndexFile}\n**Output Directory**: ${outputDir}\n**Output File**: ${discoveryFile}\n\nUse the paths above when reading input files and writing output.`;
+    const languageInstruction = language === 'zh'
+      ? '\n\n**IMPORTANT - LANGUAGE REQUIREMENT**: You MUST generate ALL content in Chinese (Simplified Chinese). This includes project_name, target_audience descriptions, product_vision, feature descriptions, and all other text fields. Do NOT use English except for technical terms that have no Chinese equivalent.'
+      : '';
+    const contextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Project Directory**: ${projectDir}\n**Project Index**: ${projectIndexFile}\n**Output Directory**: ${outputDir}\n**Output File**: ${discoveryFile}\n${languageInstruction}\n\nUse the paths above when reading input files and writing output.`;
 
     const basePrompt = loadedDiscoveryPrompt
       ? loadedDiscoveryPrompt + contextBlock
@@ -386,6 +392,7 @@ async function runFeaturesPhase(
   projectIndexFile: string,
   refresh: boolean,
   client: SimpleClientResult,
+  language: string,
   abortSignal?: AbortSignal,
   onStream?: RoadmapStreamCallback,
 ): Promise<RoadmapPhaseResult> {
@@ -424,7 +431,10 @@ The following ${preservedFeatures.length} features already exist and will be pre
 Generate NEW features that complement these, do not duplicate them:
 ${preservedInfo}\n`;
     }
-    const featuresContextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Discovery File**: ${discoveryFile}\n**Project Index**: ${projectIndexFile}\n**Output File**: ${roadmapFile}\n${preservedSection}\nUse the paths above when reading input files and writing output. Write the complete roadmap JSON to the Output File path.`;
+    const languageInstruction = language === 'zh'
+      ? '\n\n**CRITICAL - LANGUAGE REQUIREMENT**: You MUST generate ALL roadmap content in Chinese (Simplified Chinese). This includes:\n- Feature titles (title field)\n- Feature descriptions (description field)\n- Feature rationale (rationale field)\n- User stories (user_stories array)\n- Acceptance criteria (acceptance_criteria array)\n- Phase names and descriptions\n- Milestone titles and descriptions\n- Vision statement\n- ALL other text content\n\nDo NOT use English except for:\n- JSON field names (keep as specified in the schema)\n- Technical identifiers (IDs like "feature-1", "phase-1")\n- Technical terms with no Chinese equivalent\n\nThis is a MANDATORY requirement. Content in English will be rejected.'
+      : '';
+    const featuresContextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Discovery File**: ${discoveryFile}\n**Project Index**: ${projectIndexFile}\n**Output File**: ${roadmapFile}\n${preservedSection}${languageInstruction}\n\nUse the paths above when reading input files and writing output. Write the complete roadmap JSON to the Output File path.`;
 
     const prompt = loadedFeaturesPrompt
       ? loadedFeaturesPrompt + featuresContextBlock
@@ -612,6 +622,7 @@ export async function runRoadmapGeneration(
     thinkingLevel = 'medium',
     refresh = false,
     abortSignal,
+    language = 'en',
   } = config;
 
   const outputDir = config.outputDir ?? join(projectDir, '.auto-claude', 'roadmap');
@@ -657,7 +668,7 @@ export async function runRoadmapGeneration(
   // Phase 1: Discovery
   onStream?.({ type: 'phase-start', phase: 'discovery' });
   const discoveryResult = await runDiscoveryPhase(
-    projectDir, outputDir, projectIndexFile, refresh, client, abortSignal, onStream,
+    projectDir, outputDir, projectIndexFile, refresh, client, language, abortSignal, onStream,
   );
   phases.push(discoveryResult);
   onStream?.({ type: 'phase-complete', phase: 'discovery', success: discoveryResult.success });
@@ -673,7 +684,7 @@ export async function runRoadmapGeneration(
   // Phase 2: Feature Generation
   onStream?.({ type: 'phase-start', phase: 'features' });
   const featuresResult = await runFeaturesPhase(
-    projectDir, outputDir, projectIndexFile, refresh, client, abortSignal, onStream,
+    projectDir, outputDir, projectIndexFile, refresh, client, language, abortSignal, onStream,
   );
   phases.push(featuresResult);
   onStream?.({ type: 'phase-complete', phase: 'features', success: featuresResult.success });

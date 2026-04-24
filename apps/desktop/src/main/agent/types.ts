@@ -48,6 +48,7 @@ export interface AgentManagerEvents {
 export interface RoadmapConfig {
   model?: string;          // Model shorthand or full model ID (e.g., gpt-5.4)
   thinkingLevel?: string;  // Thinking level (low, medium, high)
+  language?: string;       // User's preferred language for AI-generated content (e.g., 'en', 'zh')
 }
 
 export interface TaskExecutionOptions {

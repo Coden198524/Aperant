@@ -14,6 +14,7 @@ import { getClaudeProfileManager } from '../claude-profile-manager';
 import { readSettingsFile } from '../settings-utils';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 import type { SupportedTerminal } from '../../shared/types/settings';
+import log from 'electron-log/main.js';
 
 // Windows shell paths are now imported from the platform module via getWindowsShellPaths()
 
@@ -142,6 +143,76 @@ function getWindowsShell(preferredTerminal: SupportedTerminal | undefined): Wind
 }
 
 /**
+ * Get a valid working directory, with fallbacks for edge cases.
+ * In some environments (VMs, containers), os.homedir() may return invalid paths.
+ */
+function getValidCwd(requestedCwd: string): string {
+  log.info('[PtyManager] Resolving working directory, requested:', requestedCwd);
+
+  // Try the requested cwd first
+  if (requestedCwd && existsSync(requestedCwd)) {
+    log.info('[PtyManager] Using requested cwd:', requestedCwd);
+    return requestedCwd;
+  }
+
+  // Try home directory
+  const homeDir = os.homedir();
+  log.info('[PtyManager] Requested cwd not valid, trying home directory:', homeDir);
+  if (homeDir && existsSync(homeDir)) {
+    log.info('[PtyManager] Using home directory:', homeDir);
+    return homeDir;
+  }
+
+  // Windows fallbacks
+  if (isWindows()) {
+    log.warn('[PtyManager] Home directory not valid, trying Windows fallbacks');
+
+    // Try USERPROFILE
+    const userProfile = process.env.USERPROFILE;
+    if (userProfile && existsSync(userProfile)) {
+      log.info('[PtyManager] Using USERPROFILE:', userProfile);
+      return userProfile;
+    }
+
+    // Try HOMEDRIVE + HOMEPATH
+    const homeDrive = process.env.HOMEDRIVE;
+    const homePath = process.env.HOMEPATH;
+    if (homeDrive && homePath) {
+      const combinedPath = homeDrive + homePath;
+      if (existsSync(combinedPath)) {
+        log.info('[PtyManager] Using HOMEDRIVE+HOMEPATH:', combinedPath);
+        return combinedPath;
+      }
+    }
+
+    // Last resort: C:\
+    if (existsSync('C:\\')) {
+      log.warn('[PtyManager] All paths failed, falling back to C:\\');
+      return 'C:\\';
+    }
+  } else {
+    // Unix fallbacks
+    log.warn('[PtyManager] Home directory not valid, trying Unix fallbacks');
+
+    // Try /tmp
+    if (existsSync('/tmp')) {
+      log.info('[PtyManager] Using /tmp');
+      return '/tmp';
+    }
+
+    // Try /
+    if (existsSync('/')) {
+      log.warn('[PtyManager] All paths failed, falling back to /');
+      return '/';
+    }
+  }
+
+  // If all else fails, return the requested cwd and let pty.spawn fail with a clear error
+  log.error('[PtyManager] All directory fallbacks failed! Requested:', requestedCwd, 'Home:', homeDir);
+  return requestedCwd || homeDir;
+}
+
+/**
  * Spawn a new PTY process with appropriate shell and environment
  */
 export function spawnPtyProcess(
@@ -168,8 +239,21 @@ export function spawnPtyProcess(
 
   const shellArgs = isWindows() ? [] : ['-l'];
 
+  // Get a valid working directory with robust fallbacks
+  const validCwd = getValidCwd(cwd);
+
   debugLog('[PtyManager] Spawning shell:', shell, shellArgs, '(preferred:', preferredTerminal || 'system', ', shellType:', shellType, ')');
-  debugLog('[PtyManager] PTY dimensions requested - cols:', cols, 'rows:', rows, 'cwd:', cwd || os.homedir());
+  debugLog('[PtyManager] PTY dimensions requested - cols:', cols, 'rows:', rows);
+  debugLog('[PtyManager] CWD - requested:', cwd, 'resolved:', validCwd);
+
+  // Validate cwd before spawning
+  if (!existsSync(validCwd)) {
+    const errorMsg = `Cannot spawn PTY: working directory does not exist: ${validCwd}`;
+    log.error('[PtyManager]', errorMsg);
+    log.error('[PtyManager] Environment - USERPROFILE:', process.env.USERPROFILE, 'HOMEDRIVE:', process.env.HOMEDRIVE, 'HOMEPATH:', process.env.HOMEPATH);
+    debugError('[PtyManager]', errorMsg);
+    throw new Error(errorMsg);
+  }
 
   // Create a clean environment without DEBUG to prevent Claude Code from
   // enabling debug mode when the Electron app is run in development mode.
@@ -181,23 +265,35 @@ export function spawnPtyProcess(
   // without this, inherited CLAUDECODE triggers the nested session guard.
   const { DEBUG: _DEBUG, ANTHROPIC_API_KEY: _ANTHROPIC_API_KEY, CLAUDECODE: _CLAUDECODE, ...cleanEnv } = process.env;
 
-  const ptyProcess = pty.spawn(shell, shellArgs, {
-    name: 'xterm-256color',
-    cols,
-    rows,
-    cwd: cwd || os.homedir(),
-    env: {
-      ...cleanEnv,
-      ...profileEnv,
-      TERM: 'xterm-256color',
-      COLORTERM: 'truecolor',
-      // Suppress zsh's partial line indicator (%) that appears when output
-      // doesn't end with a newline. This prevents rendering artifacts in the terminal.
-      PROMPT_EOL_MARK: '',
-    },
-  });
+  try {
+    const ptyProcess = pty.spawn(shell, shellArgs, {
+      name: 'xterm-256color',
+      cols,
+      rows,
+      cwd: validCwd,
+      env: {
+        ...cleanEnv,
+        ...profileEnv,
+        TERM: 'xterm-256color',
+        COLORTERM: 'truecolor',
+        // Suppress zsh's partial line indicator (%) that appears when output
+        // doesn't end with a newline. This prevents rendering artifacts in the terminal.
+        PROMPT_EOL_MARK: '',
+      },
+    });
 
-  return { pty: ptyProcess, shellType };
+    log.info('[PtyManager] PTY spawned successfully, pid:', ptyProcess.pid);
+    debugLog('[PtyManager] PTY spawned successfully, pid:', ptyProcess.pid);
+    return { pty: ptyProcess, shellType };
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    log.error('[PtyManager] Failed to spawn PTY:', errorMsg);
+    log.error('[PtyManager] Shell:', shell, 'Args:', shellArgs, 'CWD:', validCwd);
+    log.error('[PtyManager] Error details:', error);
+    debugError('[PtyManager] Failed to spawn PTY:', errorMsg);
+    debugError('[PtyManager] Shell:', shell, 'Args:', shellArgs, 'CWD:', validCwd);
+    throw new Error(`Cannot create process: ${errorMsg}`);
+  }
 }
 
 /**

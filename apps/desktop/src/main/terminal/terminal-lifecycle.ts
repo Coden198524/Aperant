@@ -19,6 +19,7 @@ import { isWindows } from '../platform';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 import { safeSendToRenderer } from '../ipc-handlers/utils';
 import { getClaudeCodeEnv } from '../claude-code-settings';
+import log from 'electron-log/main.js';
 
 /**
  * Options for terminal restoration
@@ -87,15 +88,38 @@ export async function createTerminal(
     }
 
     // Validate cwd exists - if the directory doesn't exist (e.g., worktree removed),
-    // fall back to project path to prevent shell exit with code 1
+    // fall back to project path, then home directory to prevent shell exit with code 1
     let effectiveCwd = cwd;
     if (cwd && !existsSync(cwd)) {
-      debugLog('[TerminalLifecycle] Terminal cwd does not exist, falling back:', cwd, '->', projectPath || os.homedir());
-      effectiveCwd = projectPath || os.homedir();
+      log.warn('[TerminalLifecycle] Terminal cwd does not exist:', cwd);
+      debugLog('[TerminalLifecycle] Terminal cwd does not exist:', cwd);
+      effectiveCwd = undefined;
+    }
+
+    // If no valid cwd, try projectPath
+    if (!effectiveCwd && projectPath && existsSync(projectPath)) {
+      log.info('[TerminalLifecycle] Using projectPath as cwd:', projectPath);
+      debugLog('[TerminalLifecycle] Using projectPath as cwd:', projectPath);
+      effectiveCwd = projectPath;
+    }
+
+    // Final fallback to home directory
+    if (!effectiveCwd) {
+      effectiveCwd = os.homedir();
+      log.info('[TerminalLifecycle] Falling back to home directory:', effectiveCwd);
+      debugLog('[TerminalLifecycle] Falling back to home directory:', effectiveCwd);
+    }
+
+    // Verify the final cwd exists before spawning PTY
+    if (!existsSync(effectiveCwd)) {
+      const errorMsg = `Cannot create terminal: working directory does not exist: ${effectiveCwd}`;
+      log.error('[TerminalLifecycle]', errorMsg);
+      log.error('[TerminalLifecycle] Requested cwd:', cwd, 'ProjectPath:', projectPath);
+      throw new Error(errorMsg);
     }
 
     const { pty: ptyProcess, shellType } = PtyManager.spawnPtyProcess(
-      effectiveCwd || os.homedir(),
+      effectiveCwd,
       cols,
       rows,
       mergedEnv

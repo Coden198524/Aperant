@@ -26,6 +26,7 @@ import { writeFileWithRetry, readFileWithRetry } from "../utils/atomic-file";
 import { withFileLock } from "../utils/file-lock";
 import { getActiveProviderFeatureSettings } from "./feature-settings-helper";
 import { buildSpecId } from "./shared/spec-id";
+import { getAppLanguage } from "../app-language";
 
 /**
  * Read roadmap feature settings using per-provider resolution
@@ -218,6 +219,7 @@ export function registerRoadmapHandlers(
       const config: RoadmapConfig = {
         model: featureSettings.model,
         thinkingLevel: featureSettings.thinkingLevel,
+        language: getAppLanguage(),
       };
 
       debugLog("[Roadmap Handler] Generate request:", {
@@ -280,6 +282,7 @@ export function registerRoadmapHandlers(
       const config: RoadmapConfig = {
         model: featureSettings.model,
         thinkingLevel: featureSettings.thinkingLevel,
+        language: getAppLanguage(),
       };
 
       debugLog("[Roadmap Handler] Refresh request:", {
