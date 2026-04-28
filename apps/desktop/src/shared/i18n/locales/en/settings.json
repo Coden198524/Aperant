@@ -49,7 +49,7 @@
       "title": "Terminal Fonts",
       "description": "Customize terminal font appearance"
     },
-    "workflowOptimization": {
+    "workflow-optimization": {
       "title": "Workflow Optimization",
       "description": "Configure AI workflow performance and quality settings"
     }

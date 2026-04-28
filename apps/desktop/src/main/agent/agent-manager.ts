@@ -39,7 +39,7 @@ const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
   coding: 140,
   qa: 50,
 } as const;
-const FAST_WORKFLOW_PHASE_STEP_BUDGETS = {
+const AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS = {
   spec: 50,
   planning: 55,
   coding: 80,
@@ -472,7 +472,7 @@ export class AgentManager extends EventEmitter {
       this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`);
       return;
     }
-    const workflowMode = metadata?.workflowMode ?? 'safe';
+    const workflowMode = metadata?.workflowMode ?? 'conservative';
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'spec_orchestrator');
 
     // Build the serializable session config for the worker
@@ -587,7 +587,7 @@ export class AgentManager extends EventEmitter {
     // This matches the Python backend's WorktreeManager.create_worktree() behavior
     let worktreePath: string | null = null;
     let worktreeSpecDir = specDir;
-    const useWorktree = workflowMode !== 'fast' && options.useWorktree !== false; // Fast workflow runs directly for lower startup latency
+    const useWorktree = workflowMode !== 'aggressive' && options.useWorktree !== false; // Aggressive workflow runs directly for lower startup latency
     if (useWorktree) {
       try {
         const baseBranch = options.baseBranch ?? project?.settings?.mainBranch ?? 'main';
@@ -1172,12 +1172,12 @@ export class AgentManager extends EventEmitter {
       if (existsSync(metadataPath)) {
         const raw = readFileSync(metadataPath, 'utf-8');
         const metadata = JSON.parse(raw) as { workflowMode?: TaskWorkflowMode };
-        return metadata.workflowMode === 'fast' ? 'fast' : 'safe';
+        return metadata.workflowMode ?? 'conservative';
       }
     } catch {
       // Fall through
     }
-    return 'safe';
+    return 'conservative';
   }
 
   private resolveAppLanguage(): SerializableSessionConfig['language'] {
@@ -1288,10 +1288,10 @@ export class AgentManager extends EventEmitter {
     const agentMcpRemove = combinedEnv[`AGENT_MCP_${agentType}_REMOVE`];
     const customMcpServers = this.parseCustomMcpServers(combinedEnv.CUSTOM_MCP_SERVERS);
 
-    if (workflowMode === 'fast') {
+    if (workflowMode === 'aggressive') {
       return {
-        maxSteps: FAST_WORKFLOW_PHASE_STEP_BUDGETS.coding,
-        phaseStepBudgets: FAST_WORKFLOW_PHASE_STEP_BUDGETS,
+        maxSteps: AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS.coding,
+        phaseStepBudgets: AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS,
         mcpOptions: {
           context7Enabled: false,
           memoryEnabled: false,

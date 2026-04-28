@@ -336,12 +336,6 @@
     "classificationOptional": "分类（可选）",
     "requireReviewLabel": "编码前需要人工审核",
     "requireReviewDescription": "启用后，在编码阶段开始前会提示你审查规范和实施计划。你可以批准、要求修改或提供反馈。",
-    "workflowModeLabel": "快速工作流",
-    "workflowModeDescription": "针对小任务和聚焦修改，跳过部分重流程以提升速度。",
-    "workflowModeNotice": "快速工作流会减少 spec 分析、步数预算、MCP 上下文和 worktree 隔离。速度更快，但保守性更低。",
-    "fastModeLabel": "快速模式",
-    "fastModeDescription": "使用相同的 Opus 4.6 模型，但输出更快。每个 token 成本更高。",
-    "fastModeNotice": "需要在 Claude 订阅中启用“额外使用量”。",
     "description": "描述",
     "descriptionPlaceholder": "描述你想实现的功能、修复的缺陷或改进内容。请尽可能具体地说明需求、约束和预期行为。",
     "imageAddedSuccess": "图片添加成功！",
@@ -390,6 +384,26 @@
           "high": "高影响",
           "critical": "关键影响"
         }
+      }
+    },
+    "workflowOptimization": {
+      "label": "工作流优化",
+      "description": "为此任务选择优化级别。优化级别越高，执行速度越快，但质量检查越少。",
+      "recommended": "推荐",
+      "conservative": {
+        "title": "保守模式",
+        "description": "最大质量保证，全面检查。适用于生产发布和关键功能。",
+        "performance": "基准速度，最高质量（成功率 95-98%）"
+      },
+      "balanced": {
+        "title": "平衡模式",
+        "description": "速度与质量的良好平衡。适用于大多数开发任务。",
+        "performance": "快 40%，成本降低 45%（成功率 93-96%）"
+      },
+      "aggressive": {
+        "title": "激进模式",
+        "description": "最大速度，最少检查。适用于原型开发和简单任务。",
+        "performance": "快 60-70%，成本降低 65-75%（成功率 90-95%）"
       }
     }
   },

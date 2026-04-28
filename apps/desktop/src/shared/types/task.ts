@@ -166,7 +166,6 @@ export interface TaskDraft {
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
   workflowMode?: TaskWorkflowMode;
-  fastMode?: boolean;
   pushNewBranches?: boolean;
   savedAt: Date;
 }
@@ -175,7 +174,7 @@ export interface TaskDraft {
 export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex';
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TaskWorkflowMode = 'safe' | 'fast';
+export type TaskWorkflowMode = 'conservative' | 'balanced' | 'aggressive';
 // Re-export ThinkingLevel (defined in settings.ts) for convenience
 export type { ThinkingLevel };
 /** Model identifier — Claude shorthands or concrete model IDs from any provider */
@@ -255,8 +254,7 @@ export interface TaskMetadata {
   phaseModels?: PhaseModelConfig;  // Per-phase model configuration
   phaseThinking?: PhaseThinkingConfig;  // Per-phase thinking configuration
   phaseProviders?: Record<string, string>;  // Per-phase provider preference (cross-provider mode)
-  workflowMode?: TaskWorkflowMode;  // 'fast' uses a lighter-weight execution workflow
-  fastMode?: boolean;  // Fast Mode — faster Opus 4.6 output, higher cost per token
+  workflowMode?: TaskWorkflowMode;  // Workflow optimization level
 
   // Git/Worktree configuration
   baseBranch?: string;  // Override base branch for this task's worktree

@@ -133,20 +133,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(
     task.metadata?.requireReviewBeforeCoding ?? false
   );
-  const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>(task.metadata?.workflowMode ?? 'safe');
-
-  // Fast mode
-  const [fastMode, setFastMode] = useState(task.metadata?.fastMode ?? false);
-
-  // Show Fast Mode toggle when any phase uses an Opus model
-  const showFastModeToggle = useMemo(() => {
-    if (!isAnthropic) return false;
-    if (!phaseModels) return false;
-    return PHASE_KEYS.some(phase => FAST_MODE_MODELS.includes(phaseModels[phase]));
-  }, [isAnthropic, phaseModels]);
-
-  // Disable fast mode toggle for tasks that have moved past backlog
-  const isFastModeEditable = task.status === 'backlog';
+  const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>(task.metadata?.workflowMode ?? 'balanced');
 
   // Reset form when task changes or dialog opens
   useEffect(() => {
@@ -188,8 +175,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
 
       setImages(task.metadata?.attachedImages || []);
       setRequireReviewBeforeCoding(task.metadata?.requireReviewBeforeCoding ?? false);
-      setWorkflowMode(task.metadata?.workflowMode ?? 'safe');
-      setFastMode(task.metadata?.fastMode ?? false);
+      setWorkflowMode(task.metadata?.workflowMode ?? 'balanced');
       setError(null);
 
       // Auto-expand classification if it has content
@@ -234,8 +220,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
       model !== (task.metadata?.model || '') ||
       thinkingLevel !== (task.metadata?.thinkingLevel || '') ||
       requireReviewBeforeCoding !== (task.metadata?.requireReviewBeforeCoding ?? false) ||
-      workflowMode !== (task.metadata?.workflowMode ?? 'safe') ||
-      fastMode !== (task.metadata?.fastMode ?? false) ||
+      workflowMode !== (task.metadata?.workflowMode ?? 'balanced') ||
       JSON.stringify(images) !== JSON.stringify(task.metadata?.attachedImages || []) ||
       JSON.stringify(phaseModels) !== JSON.stringify(task.metadata?.phaseModels || DEFAULT_PHASE_MODELS) ||
       JSON.stringify(phaseThinking) !== JSON.stringify(task.metadata?.phaseThinking || DEFAULT_PHASE_THINKING);
@@ -266,7 +251,6 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     metadataUpdates.attachedImages = images.length > 0 ? images : [];
     metadataUpdates.requireReviewBeforeCoding = requireReviewBeforeCoding;
     metadataUpdates.workflowMode = workflowMode;
-    metadataUpdates.fastMode = fastMode;
 
     const success = await persistUpdateTask(task.id, {
       title: trimmedTitle,
@@ -348,9 +332,6 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
         onRequireReviewChange={setRequireReviewBeforeCoding}
         workflowMode={workflowMode}
         onWorkflowModeChange={setWorkflowMode}
-        fastMode={fastMode}
-        onFastModeChange={setFastMode}
-        showFastModeToggle={showFastModeToggle && isFastModeEditable}
         disabled={isSaving}
         error={error}
         onError={setError}

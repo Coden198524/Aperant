@@ -299,7 +299,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         sanitizeThinkingLevels(taskMetadata);
         const metadataPath = path.join(specDir, 'task_metadata.json');
         writeFileSync(metadataPath, JSON.stringify(taskMetadata, null, 2), 'utf-8');
-        console.warn(`[TASK_CREATE] [Fast Mode] ${taskMetadata.fastMode ? 'ENABLED' : 'disabled'} — written to task_metadata.json for spec ${specId}`);
+        console.warn(`[TASK_CREATE] [Workflow Mode] ${taskMetadata.workflowMode || 'balanced'} — written to task_metadata.json for spec ${specId}`);
       }
 
       // Create requirements.json with attached images

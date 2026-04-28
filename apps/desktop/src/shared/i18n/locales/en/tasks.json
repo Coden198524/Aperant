@@ -273,12 +273,26 @@
     "classificationOptional": "Classification (optional)",
     "requireReviewLabel": "Require human review before coding",
     "requireReviewDescription": "When enabled, you'll be prompted to review the spec and implementation plan before the coding phase begins. This allows you to approve, request changes, or provide feedback.",
-    "workflowModeLabel": "Fast Workflow",
-    "workflowModeDescription": "Skip heavy orchestration steps for small tasks and focused edits.",
-    "workflowModeNotice": "Fast workflow reduces spec analysis, step budgets, MCP context, and worktree isolation. It is faster, but less conservative.",
-    "fastModeLabel": "Fast Mode",
-    "fastModeDescription": "Same Opus 4.6 model with faster output. Higher cost per token.",
-    "fastModeNotice": "Requires \"extra usage\" enabled on your Claude subscription.",
+    "workflowOptimization": {
+      "label": "Workflow Optimization",
+      "description": "Choose the optimization level for this task. Higher optimization means faster execution but fewer quality checks.",
+      "recommended": "Recommended",
+      "conservative": {
+        "title": "Conservative",
+        "description": "Maximum quality assurance with comprehensive checks. Best for production releases and critical features.",
+        "performance": "Baseline speed, highest quality (95-98% success rate)"
+      },
+      "balanced": {
+        "title": "Balanced",
+        "description": "Good balance between speed and quality. Best for most development tasks.",
+        "performance": "40% faster, 45% lower cost (93-96% success rate)"
+      },
+      "aggressive": {
+        "title": "Aggressive",
+        "description": "Maximum speed with minimal checks. Best for prototyping and simple tasks.",
+        "performance": "60-70% faster, 65-75% lower cost (90-95% success rate)"
+      }
+    },
     "errors": {
       "descriptionRequired": "Please provide a description",
       "maxImagesReached": "Maximum of 5 images allowed",

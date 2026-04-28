@@ -53,7 +53,6 @@ import { AdvancedSettings } from './AdvancedSettings';
 import { DevToolsSettings } from './DevToolsSettings';
 import { DebugSettings } from './DebugSettings';
 import { TerminalFontSettings } from './terminal-font-settings/TerminalFontSettings';
-import { WorkflowOptimizationSettings } from './WorkflowOptimizationSettings';
 import { AccountSettings } from './AccountSettings';
 import { ProjectSelector } from './ProjectSelector';
 import { ProjectSettingsContent, ProjectSettingsSection } from './ProjectSettingsContent';
@@ -69,7 +68,7 @@ interface AppSettingsDialogProps {
 }
 
 // App-level settings sections
-export type AppSection = 'appearance' | 'display' | 'language' | 'devtools' | 'terminal-fonts' | 'workflow-optimization' | 'agent' | 'paths' | 'integrations' | 'accounts' | 'api-profiles' | 'updates' | 'notifications' | 'debug';
+export type AppSection = 'appearance' | 'display' | 'language' | 'devtools' | 'terminal-fonts' | 'agent' | 'paths' | 'integrations' | 'accounts' | 'api-profiles' | 'updates' | 'notifications' | 'debug';
 
 interface NavItemConfig<T extends string> {
   id: T;
@@ -82,7 +81,6 @@ const appNavItemsConfig: NavItemConfig<AppSection>[] = [
   { id: 'language', icon: Globe },
   { id: 'devtools', icon: Code },
   { id: 'terminal-fonts', icon: Terminal },
-  { id: 'workflow-optimization', icon: Zap },
   { id: 'agent', icon: Bot },
   { id: 'paths', icon: FolderOpen },
   { id: 'accounts', icon: Users },
@@ -195,8 +193,6 @@ export function AppSettingsDialog({ open, onOpenChange, initialSection, initialP
         return <DevToolsSettings settings={settings} onSettingsChange={setSettings} />;
       case 'terminal-fonts':
         return <TerminalFontSettings />;
-      case 'workflow-optimization':
-        return <WorkflowOptimizationSettings />;
       case 'agent':
         return <GeneralSettings settings={settings} onSettingsChange={setSettings} section="agent" />;
       case 'paths':

@@ -115,7 +115,6 @@ function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProp
     prevTask.executionProgress?.phaseProgress === nextTask.executionProgress?.phaseProgress &&
     prevTask.executionProgress?.currentSubtask === nextTask.executionProgress?.currentSubtask &&
     prevTask.subtasks.length === nextTask.subtasks.length &&
-    prevTask.metadata?.fastMode === nextTask.metadata?.fastMode &&
     prevTask.metadata?.category === nextTask.metadata?.category &&
     prevTask.metadata?.complexity === nextTask.metadata?.complexity &&
     prevTask.metadata?.archivedAt === nextTask.metadata?.archivedAt &&
@@ -599,14 +598,14 @@ export const TaskCard = memo(function TaskCard({
                 {reviewReasonInfo.label}
               </Badge>
             )}
-            {/* Fast Mode badge */}
-            {task.metadata?.fastMode && (
+            {/* Workflow Mode badge */}
+            {task.metadata?.workflowMode === 'aggressive' && (
               <Badge
                 variant="outline"
                 className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
               >
                 <Zap className="h-2.5 w-2.5" />
-                {t('metadata.fastMode')}
+                {t('metadata.workflowMode.aggressive')}
               </Badge>
             )}
             {/* Category badge with icon */}

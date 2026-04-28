@@ -48,8 +48,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
     !!task &&
     (
       task.metadata?.useWorktree === false ||
-      task.metadata?.workflowMode === 'fast' ||
-      task.metadata?.fastMode === true
+      task.metadata?.workflowMode === 'aggressive'
     );
 
   const isPlanReview =

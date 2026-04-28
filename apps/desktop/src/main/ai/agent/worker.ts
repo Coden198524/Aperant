@@ -56,6 +56,7 @@ import { runProjectIndexer } from '../project/project-indexer';
 import type { TaskWorkflowMode } from '../../../shared/types';
 import { FileContentCache } from '../tools/cache/file-cache';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
+import { OPTIMIZATION_PRESETS, type WorkflowConfig } from '../orchestration/workflow-config';
 
 // =============================================================================
 // Validation
@@ -90,7 +91,15 @@ function resolvePhaseStepBudget(
 function isFastWorkflow(
   session: SerializableSessionConfig,
 ): session is SerializableSessionConfig & { workflowMode: TaskWorkflowMode } {
-  return session.workflowMode === 'fast';
+  return session.workflowMode === 'aggressive';
+}
+
+/**
+ * Map task workflowMode to WorkflowConfig preset
+ */
+function getWorkflowConfigFromMode(mode?: TaskWorkflowMode): WorkflowConfig | undefined {
+  if (!mode) return undefined;
+  return OPTIMIZATION_PRESETS[mode as 'conservative' | 'balanced' | 'aggressive'];
 }
 
 // =============================================================================
@@ -811,6 +820,9 @@ async function runBuildOrchestrator(
     batchSize: 'auto', // Auto-detect based on subtask dependencies
     maxBatchRetries: 2,
     maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,
+
+    // Apply workflow optimization config based on task's workflowMode
+    workflowConfig: getWorkflowConfigFromMode(session.workflowMode),
 
     generatePrompt: async (agentType, _phase, context) => {
       const promptName = agentType === 'coder' ? 'coder' : agentType;

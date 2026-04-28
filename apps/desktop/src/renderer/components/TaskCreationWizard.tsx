@@ -31,8 +31,6 @@ import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
-  FAST_MODE_MODELS,
-  PHASE_KEYS,
   getProviderPreset
 } from '../../shared/constants';
 import { loadSettings, useSettingsStore } from '../stores/settings-store';
@@ -54,7 +52,7 @@ export function TaskCreationWizard({
 }: TaskCreationWizardProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const { settings } = useSettingsStore();
-  const { isAnthropic, provider: activeProvider } = useActiveProvider();
+  const { provider: activeProvider } = useActiveProvider();
   const [isSyncingSettings, setIsSyncingSettings] = useState(false);
 
   // Resolve per-provider settings (same chain as AgentProfileSettings)
@@ -145,17 +143,7 @@ export function TaskCreationWizard({
 
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
-  const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('safe');
-
-  // Fast mode
-  const [fastMode, setFastMode] = useState(false);
-
-  // Show Fast Mode toggle when any phase uses an Opus model
-  const showFastModeToggle = useMemo(() => {
-    if (!isAnthropic) return false;
-    if (!phaseModels) return false;
-    return PHASE_KEYS.some(phase => FAST_MODE_MODELS.includes(phaseModels[phase]));
-  }, [isAnthropic, phaseModels]);
+  const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('balanced');
 
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -220,8 +208,7 @@ export function TaskCreationWizard({
         setImages(draft.images);
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
-        setWorkflowMode(draft.workflowMode ?? 'safe');
-        setFastMode(draft.fastMode ?? false);
+        setWorkflowMode(draft.workflowMode ?? 'balanced');
         setPushNewBranches(draft.pushNewBranches ?? projectPushNewBranches);
         setIsDraftRestored(true);
 
@@ -245,8 +232,7 @@ export function TaskCreationWizard({
         setImages([]);
         setReferencedFiles([]);
         setRequireReviewBeforeCoding(false);
-        setWorkflowMode('safe');
-        setFastMode(false);
+        setWorkflowMode('balanced');
         setBaseBranch(PROJECT_DEFAULT_BRANCH);
         setUseWorktree(true);
         setPushNewBranches(projectPushNewBranches);
@@ -325,10 +311,9 @@ export function TaskCreationWizard({
     referencedFiles,
     requireReviewBeforeCoding,
     workflowMode,
-    fastMode,
     pushNewBranches,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, workflowMode, fastMode, pushNewBranches]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, workflowMode, pushNewBranches]);
 
   /**
    * Detect @ mention being typed and show autocomplete
@@ -539,7 +524,6 @@ export function TaskCreationWizard({
       // This preserves gitignored files (.env, configs) by not switching to origin
       if (isSelectedBranchLocal) metadata.useLocalBranch = true;
       if (!pushNewBranches) metadata.pushNewBranches = false;
-      metadata.fastMode = fastMode;
 
       const task = await createTask(projectId, title.trim(), description.trim(), metadata);
       if (task) {
@@ -571,7 +555,7 @@ export function TaskCreationWizard({
     setImages([]);
     setReferencedFiles([]);
     setRequireReviewBeforeCoding(false);
-    setFastMode(false);
+    setWorkflowMode('balanced');
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
     setUseWorktree(true);
     setPushNewBranches(projectPushNewBranches);
@@ -757,9 +741,6 @@ export function TaskCreationWizard({
           onRequireReviewChange={setRequireReviewBeforeCoding}
           workflowMode={workflowMode}
           onWorkflowModeChange={setWorkflowMode}
-          fastMode={fastMode}
-          onFastModeChange={setFastMode}
-          showFastModeToggle={showFastModeToggle}
           disabled={isCreating || isSyncingSettings}
           error={error}
           onError={setError}

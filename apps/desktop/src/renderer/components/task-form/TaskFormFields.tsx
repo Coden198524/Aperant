@@ -11,12 +11,11 @@
  */
 import { useRef, useState, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, Zap, Info, Gauge } from 'lucide-react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, Info, Gauge } from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
 import { Checkbox } from '../ui/checkbox';
-import { Switch } from '../ui/switch';
 import { Button } from '../ui/button';
 import { AgentProfileSelector } from '../AgentProfileSelector';
 import { ClassificationFields } from './ClassificationFields';
@@ -92,11 +91,6 @@ interface TaskFormFieldsProps {
   workflowMode?: TaskWorkflowMode;
   onWorkflowModeChange?: (value: TaskWorkflowMode) => void;
 
-  // Fast mode
-  fastMode?: boolean;
-  onFastModeChange?: (value: boolean) => void;
-  showFastModeToggle?: boolean;
-
   // Form state
   disabled?: boolean;
   error?: string | null;
@@ -146,11 +140,8 @@ export function TaskFormFields({
   onImagesChange,
   requireReviewBeforeCoding,
   onRequireReviewChange,
-  workflowMode = 'safe',
+  workflowMode = 'balanced',
   onWorkflowModeChange,
-  fastMode = false,
-  onFastModeChange,
-  showFastModeToggle = false,
   disabled = false,
   error,
   onError,
@@ -550,64 +541,75 @@ export function TaskFormFields({
         </div>
 
         {onWorkflowModeChange && (
-          <div className="rounded-lg border border-border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-sky-500/10 shrink-0">
-                  <Gauge className="h-5 w-5 text-sky-500" />
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-foreground">
-                    {t('tasks:form.workflowModeLabel')}
-                  </Label>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t('tasks:form.workflowModeDescription')}
-                  </p>
-                </div>
-              </div>
-              <Switch
-                checked={workflowMode === 'fast'}
-                onCheckedChange={(checked) => onWorkflowModeChange(checked ? 'fast' : 'safe')}
+          <div className="space-y-2">
+            <Label className="text-sm font-medium text-foreground">
+              {t('tasks:form.workflowOptimization.label')}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t('tasks:form.workflowOptimization.description')}
+            </p>
+            <div className="grid grid-cols-1 gap-2 mt-3">
+              {/* Conservative */}
+              <button
+                type="button"
+                onClick={() => onWorkflowModeChange('conservative')}
                 disabled={disabled}
-              />
-            </div>
-            <div className="mt-3 flex items-start gap-2 rounded-md bg-sky-500/5 border border-sky-500/20 p-2.5">
-              <Info className="h-3.5 w-3.5 text-sky-500 shrink-0 mt-0.5" />
-              <p className="text-[10px] text-sky-700 dark:text-sky-300">
-                {t('tasks:form.workflowModeNotice')}
-              </p>
-            </div>
-          </div>
-        )}
+                className={cn(
+                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
+                  workflowMode === 'conservative'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                )}
+              >
+                <div className="flex-1">
+                  <div className="font-medium text-sm">{t('tasks:form.workflowOptimization.conservative.title')}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.conservative.description')}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.conservative.performance')}</div>
+                </div>
+              </button>
 
-        {/* Fast Mode Toggle - shown when any phase uses an Opus model */}
-        {showFastModeToggle && onFastModeChange && (
-          <div className="rounded-lg border border-border bg-card p-4">
-            <div className="flex items-center justify-between">
-              <div className="flex items-start gap-3">
-                <div className="flex h-10 w-10 items-center justify-center rounded-lg bg-amber-500/10 shrink-0">
-                  <Zap className="h-5 w-5 text-amber-500" />
-                </div>
-                <div>
-                  <Label className="text-sm font-medium text-foreground">
-                    {t('tasks:form.fastModeLabel')}
-                  </Label>
-                  <p className="text-xs text-muted-foreground mt-0.5">
-                    {t('tasks:form.fastModeDescription')}
-                  </p>
-                </div>
-              </div>
-              <Switch
-                checked={fastMode}
-                onCheckedChange={onFastModeChange}
+              {/* Balanced (Recommended) */}
+              <button
+                type="button"
+                onClick={() => onWorkflowModeChange('balanced')}
                 disabled={disabled}
-              />
-            </div>
-            <div className="mt-3 flex items-start gap-2 rounded-md bg-amber-500/5 border border-amber-500/20 p-2.5">
-              <Info className="h-3.5 w-3.5 text-amber-500 shrink-0 mt-0.5" />
-              <p className="text-[10px] text-amber-600 dark:text-amber-400">
-                {t('tasks:form.fastModeNotice')}
-              </p>
+                className={cn(
+                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
+                  workflowMode === 'balanced'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                )}
+              >
+                <div className="flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="font-medium text-sm">{t('tasks:form.workflowOptimization.balanced.title')}</span>
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                      {t('tasks:form.workflowOptimization.recommended')}
+                    </span>
+                  </div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.balanced.description')}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.balanced.performance')}</div>
+                </div>
+              </button>
+
+              {/* Aggressive */}
+              <button
+                type="button"
+                onClick={() => onWorkflowModeChange('aggressive')}
+                disabled={disabled}
+                className={cn(
+                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
+                  workflowMode === 'aggressive'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                )}
+              >
+                <div className="flex-1">
+                  <div className="font-medium text-sm">{t('tasks:form.workflowOptimization.aggressive.title')}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.aggressive.description')}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.aggressive.performance')}</div>
+                </div>
+              </button>
             </div>
           </div>
         )}
