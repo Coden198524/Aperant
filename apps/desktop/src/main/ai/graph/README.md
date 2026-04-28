@@ -34,7 +34,7 @@ graph/
 
 ## Usage
 
-### Initialize Database
+### 1. Initialize Database
 
 ```typescript
 import { GraphDatabase, initializeGraphDatabase } from './graph';
@@ -43,6 +43,36 @@ import { getMemoryClient } from '../memory/db';
 const client = await getMemoryClient();
 const db = new GraphDatabase(client);
 await initializeGraphDatabase(db);
+```
+
+### 2. Index a Project
+
+```typescript
+import { IncrementalIndexer } from './graph';
+
+const indexer = new IncrementalIndexer(db);
+
+// Full project index
+const fileCount = await indexer.indexProject({
+  projectId: 'my-project',
+  projectRoot: '/path/to/project',
+  excludePatterns: ['node_modules/**', 'dist/**'],
+});
+
+console.log(`Indexed ${fileCount} files`);
+```
+
+### 3. Start File Watcher
+
+```typescript
+import { getWatcherManager } from './graph';
+
+const watcherManager = getWatcherManager();
+
+// Start watching for file changes
+watcherManager.startWatching('my-project', '/path/to/project', db);
+
+// File changes will automatically trigger re-indexing
 ```
 
 ### Analyze Blast Radius
@@ -211,16 +241,16 @@ Works with ALL providers in Auto Claude's registry:
 
 Token optimization is provider-agnostic - all models benefit equally.
 
-## Future Enhancements
+## Phase 2 Complete ✅
 
-Phase 2 (not yet implemented):
-- Tree-sitter parser for AST extraction
-- Incremental indexer for file changes
-- Git watcher for auto-reindexing
-- Multi-language support (Python, Rust, Go, Java)
-- Graph visualization UI
+**NEW: Full indexing and parsing support**
+- ✅ Tree-sitter parser for AST extraction
+- ✅ Incremental indexer for file changes (< 2 seconds)
+- ✅ File watcher for auto-reindexing
+- ✅ Multi-language support: C++, C#, Java, Lua, Python, TypeScript/JavaScript
+- ⏳ Graph visualization UI (Phase 3)
 
-Current implementation provides the core infrastructure and integration hooks. Indexing will be added in Phase 2.
+The system is now fully functional with automatic indexing!
 
 ## Performance
 

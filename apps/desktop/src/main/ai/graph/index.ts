@@ -92,6 +92,35 @@ export { BlastRadiusAnalyzer } from './analysis/blast-radius';
 export { ContextOptimizer } from './analysis/context-optimizer';
 
 // =============================================================================
+// Parser Exports
+// =============================================================================
+
+export { parseFile, type ParseResult } from './parser/tree-sitter-parser';
+export {
+	getLanguageConfig,
+	getLanguageName,
+	isLanguageSupported,
+	getSupportedExtensions,
+	isTestFile,
+	detectTestFramework,
+	LANGUAGE_REGISTRY,
+	EXTENSION_TO_LANGUAGE,
+} from './parser/language-registry';
+
+// =============================================================================
+// Indexer Exports
+// =============================================================================
+
+export {
+	IncrementalIndexer,
+	getChangedFilesSinceCommit,
+	getUnstagedChangedFiles,
+	FileWatcher,
+	WatcherManager,
+	getWatcherManager,
+} from './indexer';
+
+// =============================================================================
 // Integration Exports
 // =============================================================================
 
