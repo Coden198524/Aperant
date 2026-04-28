@@ -30,13 +30,13 @@ import type { SessionConfig, SessionResult, SessionMessage, TokenUsage } from '.
 const DEFAULT_MAX_CONTINUATIONS = 5;
 
 /** Maximum characters of conversation to send for summarization */
-const MAX_SUMMARY_INPUT_CHARS = 30_000;
+const MAX_SUMMARY_INPUT_CHARS = 20_000;
 
 /** Target summary length in words */
-const SUMMARY_TARGET_WORDS = 800;
+const SUMMARY_TARGET_WORDS = 500;
 
 /** Fallback: raw truncation length if summarization fails */
-const RAW_TRUNCATION_CHARS = 3000;
+const RAW_TRUNCATION_CHARS = 2000;
 
 const SUMMARIZER_SYSTEM_PROMPT =
   'You are a concise technical summarizer. Given a conversation between an AI agent ' +

@@ -193,10 +193,10 @@ describe('getThinkingKwargsForModel', () => {
 });
 
 describe('SPEC_PHASE_THINKING_LEVELS', () => {
-  it('should define heavy phases as high', () => {
-    expect(SPEC_PHASE_THINKING_LEVELS.discovery).toBe('high');
-    expect(SPEC_PHASE_THINKING_LEVELS.spec_writing).toBe('high');
-    expect(SPEC_PHASE_THINKING_LEVELS.self_critique).toBe('high');
+  it('should keep former heavy phases at medium by default', () => {
+    expect(SPEC_PHASE_THINKING_LEVELS.discovery).toBe('medium');
+    expect(SPEC_PHASE_THINKING_LEVELS.spec_writing).toBe('medium');
+    expect(SPEC_PHASE_THINKING_LEVELS.self_critique).toBe('medium');
   });
 
   it('should define light phases as medium', () => {
@@ -207,9 +207,9 @@ describe('SPEC_PHASE_THINKING_LEVELS', () => {
 });
 
 describe('getSpecPhaseThinkingBudget', () => {
-  it('should return high budget for heavy phases', () => {
-    expect(getSpecPhaseThinkingBudget('discovery')).toBe(16384);
-    expect(getSpecPhaseThinkingBudget('spec_writing')).toBe(16384);
+  it('should return medium budget for formerly heavy phases by default', () => {
+    expect(getSpecPhaseThinkingBudget('discovery')).toBe(4096);
+    expect(getSpecPhaseThinkingBudget('spec_writing')).toBe(4096);
   });
 
   it('should return medium budget for light phases', () => {

@@ -2,10 +2,10 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 export const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
-  spec: 120,
-  planning: 140,
-  coding: 220,
-  qa: 80,
+  spec: 80,
+  planning: 90,
+  coding: 140,
+  qa: 50,
 } as const;
 
 interface PlanLike {

@@ -48,16 +48,17 @@ export interface QualityConfig {
   projectId?: string;
 }
 
-// Default configuration - all features enabled
+// Default configuration - balanced optimization (core features only)
+// This aligns with the BALANCED_PRESET from workflow-config.ts
 const DEFAULT_CONFIG: Required<Omit<QualityConfig, 'memoryService' | 'projectId'>> = {
-  enablePreQASmokeTests: true,
-  enableIncrementalValidation: true,
-  enablePatternInjection: true,
-  enablePreImplementationChecklist: true,
-  enableSelfCritique: true,
-  enableContextAwareRecovery: true,
-  enableActiveMemoryLearning: true,
-  enableTieredQualityStandards: true,
+  enablePreQASmokeTests: false, // Disabled for balanced optimization
+  enableIncrementalValidation: true, // Core feature - keep enabled
+  enablePatternInjection: false, // Disabled for balanced optimization
+  enablePreImplementationChecklist: false, // Disabled for balanced optimization
+  enableSelfCritique: false, // Disabled - redundant with QA review
+  enableContextAwareRecovery: true, // Core feature - keep enabled
+  enableActiveMemoryLearning: true, // Core feature - keep enabled
+  enableTieredQualityStandards: false, // Disabled for balanced optimization
 };
 
 // =============================================================================

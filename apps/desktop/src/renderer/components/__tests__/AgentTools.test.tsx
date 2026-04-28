@@ -24,7 +24,7 @@ describe('AgentTools - Agent Profile Resolution', () => {
       expect(profile).toBeDefined();
       expect(profile?.id).toBe('auto');
       expect(profile?.name).toBe('Auto (Optimized)');
-      expect(profile?.model).toBe('opus');
+      expect(profile?.model).toBe('sonnet');
     });
 
     it('should find complex profile by ID', () => {
@@ -53,15 +53,15 @@ describe('AgentTools - Agent Profile Resolution', () => {
   });
 
   describe('Auto Profile Phase Configuration', () => {
-    it('should have Opus for all phases in auto profile', () => {
+    it('should have Sonnet for all phases in auto profile', () => {
       const profile = DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto');
       const phaseModels = profile?.phaseModels;
 
       expect(phaseModels).toBeDefined();
-      expect(phaseModels?.spec).toBe('opus');
-      expect(phaseModels?.planning).toBe('opus');
-      expect(phaseModels?.coding).toBe('opus');
-      expect(phaseModels?.qa).toBe('opus');
+      expect(phaseModels?.spec).toBe('sonnet');
+      expect(phaseModels?.planning).toBe('sonnet');
+      expect(phaseModels?.coding).toBe('sonnet');
+      expect(phaseModels?.qa).toBe('sonnet');
     });
 
     it('should have optimized thinking levels in auto profile', () => {
@@ -69,8 +69,8 @@ describe('AgentTools - Agent Profile Resolution', () => {
       const phaseThinking = profile?.phaseThinking;
 
       expect(phaseThinking).toBeDefined();
-      expect(phaseThinking?.spec).toBe('high');
-      expect(phaseThinking?.planning).toBe('high');
+      expect(phaseThinking?.spec).toBe('medium');
+      expect(phaseThinking?.planning).toBe('medium');
       expect(phaseThinking?.coding).toBe('low');
       expect(phaseThinking?.qa).toBe('low');
     });
@@ -110,11 +110,11 @@ describe('AgentTools - Agent Profile Resolution', () => {
       const profilePhaseModels = profile.phaseModels || DEFAULT_PHASE_MODELS;
       const phaseModels = customPhaseModels || profilePhaseModels;
 
-      // Should resolve to auto profile's opus models
-      expect(phaseModels.spec).toBe('opus');
-      expect(phaseModels.planning).toBe('opus');
-      expect(phaseModels.coding).toBe('opus');
-      expect(phaseModels.qa).toBe('opus');
+      // Should resolve to auto profile's cost-conscious Sonnet models
+      expect(phaseModels.spec).toBe('sonnet');
+      expect(phaseModels.planning).toBe('sonnet');
+      expect(phaseModels.coding).toBe('sonnet');
+      expect(phaseModels.qa).toBe('sonnet');
     });
 
     it('should use custom overrides when they exist', () => {
@@ -145,7 +145,7 @@ describe('AgentTools - Agent Profile Resolution', () => {
       const profile = DEFAULT_AGENT_PROFILES.find(p => p.id === effectiveProfileId) || DEFAULT_AGENT_PROFILES[0];
 
       expect(profile.id).toBe('auto');
-      expect(profile.model).toBe('opus');
+      expect(profile.model).toBe('sonnet');
     });
 
     it('should fall back to first profile when selected profile is not found', () => {
@@ -154,7 +154,7 @@ describe('AgentTools - Agent Profile Resolution', () => {
       const profile = DEFAULT_AGENT_PROFILES.find(p => p.id === selectedProfileId) || DEFAULT_AGENT_PROFILES[0];
 
       expect(profile.id).toBe('auto');
-      expect(profile.model).toBe('opus');
+      expect(profile.model).toBe('sonnet');
     });
   });
 
@@ -173,23 +173,23 @@ describe('AgentTools - Agent Profile Resolution', () => {
         { type: 'phase', phase: 'spec' },
         resolvedSettings
       );
-      expect(specAgent.model).toBe('opus');
-      expect(specAgent.thinking).toBe('high');
+      expect(specAgent.model).toBe('sonnet');
+      expect(specAgent.thinking).toBe('medium');
 
       // Planning phase agent
       const planningAgent = resolveAgentSettings(
         { type: 'phase', phase: 'planning' },
         resolvedSettings
       );
-      expect(planningAgent.model).toBe('opus');
-      expect(planningAgent.thinking).toBe('high');
+      expect(planningAgent.model).toBe('sonnet');
+      expect(planningAgent.thinking).toBe('medium');
 
       // Coding phase agent
       const codingAgent = resolveAgentSettings(
         { type: 'phase', phase: 'coding' },
         resolvedSettings
       );
-      expect(codingAgent.model).toBe('opus');
+      expect(codingAgent.model).toBe('sonnet');
       expect(codingAgent.thinking).toBe('low');
 
       // QA phase agent
@@ -197,7 +197,7 @@ describe('AgentTools - Agent Profile Resolution', () => {
         { type: 'phase', phase: 'qa' },
         resolvedSettings
       );
-      expect(qaAgent.model).toBe('opus');
+      expect(qaAgent.model).toBe('sonnet');
       expect(qaAgent.thinking).toBe('low');
     });
 
@@ -217,36 +217,36 @@ describe('AgentTools - Agent Profile Resolution', () => {
       expect(insightsAgent.model).toBe('sonnet');
       expect(insightsAgent.thinking).toBe('medium');
 
-      // Ideation feature agent (defaults to opus)
+      // Ideation feature agent (defaults to sonnet)
       const ideationAgent = resolveAgentSettings(
         { type: 'feature', feature: 'ideation' },
         resolvedSettings
       );
-      expect(ideationAgent.model).toBe('opus');
-      expect(ideationAgent.thinking).toBe('high');
+      expect(ideationAgent.model).toBe('sonnet');
+      expect(ideationAgent.thinking).toBe('medium');
 
-      // Roadmap feature agent (defaults to opus)
+      // Roadmap feature agent (defaults to sonnet)
       const roadmapAgent = resolveAgentSettings(
         { type: 'feature', feature: 'roadmap' },
         resolvedSettings
       );
-      expect(roadmapAgent.model).toBe('opus');
-      expect(roadmapAgent.thinking).toBe('high');
+      expect(roadmapAgent.model).toBe('sonnet');
+      expect(roadmapAgent.thinking).toBe('medium');
 
-      // GitHub Issues feature agent (defaults to opus)
+      // GitHub Issues feature agent (defaults to sonnet)
       const githubIssuesAgent = resolveAgentSettings(
         { type: 'feature', feature: 'githubIssues' },
         resolvedSettings
       );
-      expect(githubIssuesAgent.model).toBe('opus');
+      expect(githubIssuesAgent.model).toBe('sonnet');
       expect(githubIssuesAgent.thinking).toBe('medium');
 
-      // GitHub PRs feature agent (defaults to opus)
+      // GitHub PRs feature agent (defaults to sonnet)
       const githubPrsAgent = resolveAgentSettings(
         { type: 'feature', feature: 'githubPrs' },
         resolvedSettings
       );
-      expect(githubPrsAgent.model).toBe('opus');
+      expect(githubPrsAgent.model).toBe('sonnet');
       expect(githubPrsAgent.thinking).toBe('medium');
 
       // Utility feature agent (defaults to haiku)
@@ -277,9 +277,9 @@ describe('AgentTools - Agent Profile Resolution', () => {
   });
 
   describe('Bug Fix Regression Test (ACS-255)', () => {
-    it('should resolve to opus when auto profile is selected (not sonnet from defaults)', () => {
+    it('should resolve selected profile settings before falling back to defaults', () => {
       // This test verifies the fix for ACS-255:
-      // MCP Server Overview was showing Sonnet instead of Opus when Auto profile was selected
+      // MCP Server Overview should use the selected profile instead of raw defaults.
 
       const selectedProfileId = 'auto';
       const customPhaseModels = undefined; // No custom overrides
@@ -290,11 +290,11 @@ describe('AgentTools - Agent Profile Resolution', () => {
       const profilePhaseModels = profile.phaseModels || DEFAULT_PHASE_MODELS;
       const phaseModels = customPhaseModels || profilePhaseModels;
 
-      // Should be opus (from auto profile), NOT sonnet (from DEFAULT_PHASE_MODELS)
-      expect(phaseModels.spec).toBe('opus');
-      expect(phaseModels.planning).toBe('opus');
-      expect(phaseModels.coding).toBe('opus');
-      expect(phaseModels.qa).toBe('opus');
+      // Auto is now intentionally cost-conscious and matches Sonnet defaults.
+      expect(phaseModels.spec).toBe('sonnet');
+      expect(phaseModels.planning).toBe('sonnet');
+      expect(phaseModels.coding).toBe('sonnet');
+      expect(phaseModels.qa).toBe('sonnet');
     });
 
     it('should ensure DEFAULT_PHASE_MODELS is balanced (sonnet)', () => {

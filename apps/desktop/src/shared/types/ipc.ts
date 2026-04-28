@@ -1029,6 +1029,12 @@ export interface ElectronAPI {
 
   // Queue Routing API (rate limit recovery)
   queue: import('../../preload/api/queue-api').QueueAPI;
+
+  // Workflow Optimization API
+  getWorkflowMetrics: () => Promise<import('./workflow-optimization').WorkflowMetrics | null>;
+  clearWorkflowMetrics: () => Promise<void>;
+  getRecentRecords: (limit?: number) => Promise<any[]>;
+  compareOptimizationLevels: () => Promise<any>;
 }
 
 /** Platform information exposed via contextBridge for platform-specific behavior */

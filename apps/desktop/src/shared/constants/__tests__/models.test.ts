@@ -10,8 +10,8 @@ describe('getProviderPreset', () => {
   it('returns correct preset for known provider and presetId', () => {
     const result = getProviderPreset('anthropic', 'auto');
     expect(result).not.toBeNull();
-    expect(result?.primaryModel).toBe('opus');
-    expect(result?.primaryThinking).toBe('high');
+    expect(result?.primaryModel).toBe('sonnet');
+    expect(result?.primaryThinking).toBe('medium');
   });
 
   it('returns correct balanced preset for anthropic', () => {

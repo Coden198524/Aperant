@@ -25,10 +25,10 @@ const FEATURE_KEYS: readonly FeatureKey[] = [
  */
 const DEFAULT_MIXED_FEATURE_CONFIG: MixedFeatureConfig = {
   insights: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'medium' },
-  ideation: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'high' },
-  roadmap: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'high' },
-  githubIssues: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'medium' },
-  githubPrs: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'medium' },
+  ideation: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'medium' },
+  roadmap: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'medium' },
+  githubIssues: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'medium' },
+  githubPrs: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'medium' },
   utility: { provider: 'anthropic', modelId: 'haiku', thinkingLevel: 'low' },
   naming: { provider: 'anthropic', modelId: 'haiku', thinkingLevel: 'low' },
 };

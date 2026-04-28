@@ -121,9 +121,9 @@ export const DEFAULT_PHASE_MODELS: PhaseModelConfig = {
 /** Default phase thinking levels */
 export const DEFAULT_PHASE_THINKING: PhaseThinkingConfig = {
   spec: 'medium',
-  planning: 'high',
+  planning: 'medium',
   coding: 'medium',
-  qa: 'high',
+  qa: 'medium',
 };
 
 // ============================================

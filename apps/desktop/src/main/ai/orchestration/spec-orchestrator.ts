@@ -34,12 +34,14 @@ import {
 } from '../schema';
 import type { ZodSchema } from 'zod';
 import type { SessionResult } from '../session/types';
+import type { WorkflowConfig } from './workflow-config';
+import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
 
 // =============================================================================
 // Constants
 // =============================================================================
 
-/** Maximum retries for a single phase */
+/** Maximum retries for a single phase (configurable via WorkflowConfig) */
 const MAX_PHASE_RETRIES = 2;
 
 /** Maximum characters of a single phase output to carry forward */
@@ -150,6 +152,8 @@ export interface SpecOrchestratorConfig {
   language?: SupportedLanguage;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Workflow optimization configuration */
+  workflowConfig?: WorkflowConfig;
   /** Callback to generate the system prompt for a given agent type and phase */
   generatePrompt: (agentType: AgentType, phase: SpecPhase, context: SpecPromptContext) => Promise<string>;
   /** Callback to run an agent session */
@@ -263,6 +267,11 @@ export class SpecOrchestrator extends EventEmitter {
   constructor(config: SpecOrchestratorConfig) {
     super();
     this.config = config;
+
+    // Apply workflow configuration defaults
+    if (!this.config.workflowConfig) {
+      this.config.workflowConfig = DEFAULT_WORKFLOW_CONFIG;
+    }
 
     config.abortSignal?.addEventListener('abort', () => {
       this.aborted = true;
@@ -529,9 +538,13 @@ export class SpecOrchestrator extends EventEmitter {
     /** Set when a retry is needed because the model didn't call any tools */
     let toolUseRetryContext: string | undefined;
 
+    // Get retry limit from workflow config
+    const retryLimits = getRetryLimits(this.config.workflowConfig!);
+    const maxPhaseRetries = retryLimits.specPhase;
+
     this.emitTyped('phase-start', phase, phaseNumber, totalPhases);
 
-    for (let attempt = 0; attempt <= MAX_PHASE_RETRIES; attempt++) {
+    for (let attempt = 0; attempt <= maxPhaseRetries; attempt++) {
       if (this.aborted) {
         return { phase, success: false, errors: ['Cancelled'], retries: attempt };
       }
@@ -609,7 +622,7 @@ export class SpecOrchestrator extends EventEmitter {
           errors.push(detail);
           this.emitTyped('log', `Phase ${phase} output validation failed (attempt ${attempt + 1}): ${detail}`);
 
-          if (attempt < MAX_PHASE_RETRIES) {
+          if (attempt < maxPhaseRetries) {
             // Build a directive retry prompt when the model hallucinated tool usage.
             // This is common with Codex models that generate text claiming to have
             // written files without actually invoking the Write tool.
@@ -642,7 +655,7 @@ export class SpecOrchestrator extends EventEmitter {
         if (schemaValidation && !schemaValidation.valid) {
           errors.push(`Schema validation failed: ${schemaValidation.errors.join(', ')}`);
           this.emitTyped('log', `Phase ${phase} schema validation failed (attempt ${attempt + 1}): ${schemaValidation.errors.join(', ')}`);
-          if (attempt < MAX_PHASE_RETRIES) {
+          if (attempt < maxPhaseRetries) {
             // Build LLM-friendly error feedback so the agent knows what to fix
             const schemaHint = (phase === 'planning' || phase === 'quick_spec')
               ? IMPLEMENTATION_PLAN_SCHEMA_HINT
@@ -671,12 +684,12 @@ export class SpecOrchestrator extends EventEmitter {
         return { phase, success: false, errors, retries: attempt };
       }
 
-      if (attempt < MAX_PHASE_RETRIES) {
+      if (attempt < maxPhaseRetries) {
         this.emitTyped('log', `Phase ${phase} failed (attempt ${attempt + 1}), retrying...`);
       }
     }
 
-    const failResult: SpecPhaseResult = { phase, success: false, errors, retries: MAX_PHASE_RETRIES };
+    const failResult: SpecPhaseResult = { phase, success: false, errors, retries: maxPhaseRetries };
     this.emitTyped('phase-complete', phase, failResult);
     return failResult;
   }

@@ -39,6 +39,8 @@ import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
 import type { BatchExecutorConfig } from './batch-executor';
 import { translateLogMessage, translatePhaseMessage } from './log-messages';
+import type { WorkflowConfig } from './workflow-config';
+import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
 
 // =============================================================================
 // Constants
@@ -47,11 +49,11 @@ import { translateLogMessage, translatePhaseMessage } from './log-messages';
 /** Delay between iterations when auto-continuing (ms) */
 const AUTO_CONTINUE_DELAY_MS = 500;
 
-/** Maximum planning validation retries before failing */
-const MAX_PLANNING_VALIDATION_RETRIES = 3;
+/** Maximum planning validation retries before failing (configurable via WorkflowConfig) */
+const MAX_PLANNING_VALIDATION_RETRIES = 2; // Reduced from 3 to 2
 
-/** Maximum retries for a single subtask before marking stuck */
-const MAX_SUBTASK_RETRIES = 3;
+/** Maximum retries for a single subtask before marking stuck (configurable via WorkflowConfig) */
+const MAX_SUBTASK_RETRIES = 2; // Reduced from 3 to 2
 
 /** Delay before retrying after an error (ms) */
 const ERROR_RETRY_DELAY_MS = 5_000;
@@ -105,6 +107,8 @@ export interface BuildOrchestratorConfig {
   maxBatchRetries?: number;
   /** Hard cap on subtasks executed concurrently in a single batch */
   maxConcurrentSubtasks?: number;
+  /** Workflow optimization configuration */
+  workflowConfig?: WorkflowConfig;
   /** Callback to generate the system prompt for a given agent type and phase */
   generatePrompt: (agentType: AgentType, phase: BuildPhase, context: PromptContext) => Promise<string>;
   /** Callback to run an agent session */
@@ -242,6 +246,11 @@ export class BuildOrchestrator extends EventEmitter {
     super();
     this.config = config;
 
+    // Apply workflow configuration defaults
+    if (!this.config.workflowConfig) {
+      this.config.workflowConfig = DEFAULT_WORKFLOW_CONFIG;
+    }
+
     // Listen for abort
     config.abortSignal?.addEventListener('abort', () => {
       this.aborted = true;
@@ -344,7 +353,11 @@ export class BuildOrchestrator extends EventEmitter {
     let planningRetryContext: string | undefined;
     let validationFailures = 0;
 
-    for (let attempt = 0; attempt < MAX_PLANNING_VALIDATION_RETRIES + 1; attempt++) {
+    // Get retry limit from workflow config
+    const retryLimits = getRetryLimits(this.config.workflowConfig!);
+    const maxPlanningRetries = retryLimits.planning;
+
+    for (let attempt = 0; attempt < maxPlanningRetries + 1; attempt++) {
       if (this.aborted) {
         return { success: false, error: 'Build cancelled' };
       }
@@ -443,7 +456,7 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       // Lightweight repair failed or unavailable — fall back to full re-plan
-      if (validationFailures >= MAX_PLANNING_VALIDATION_RETRIES) {
+      if (validationFailures >= maxPlanningRetries) {
         return {
           success: false,
           error: `Implementation plan validation failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
@@ -468,6 +481,10 @@ export class BuildOrchestrator extends EventEmitter {
    */
   private async runCodingPhase(): Promise<{ success: boolean; error?: string }> {
     this.transitionPhase('coding', translatePhaseMessage('coding', 'Starting implementation', this.config.language));
+
+    // Get retry limit from workflow config
+    const retryLimits = getRetryLimits(this.config.workflowConfig!);
+    const maxSubtaskRetries = retryLimits.subtask;
 
     // Build common session runner for both serial and batch execution
     const runSubtaskSession = async (subtask: SubtaskInfo, attempt: number): Promise<SessionResult> => {
@@ -574,7 +591,7 @@ export class BuildOrchestrator extends EventEmitter {
         specDir: this.config.specDir,
         projectDir: this.config.projectDir,
         sourceSpecDir: this.config.sourceSpecDir,
-        maxRetries: this.config.maxBatchRetries ?? MAX_SUBTASK_RETRIES,
+        maxRetries: this.config.maxBatchRetries ?? maxSubtaskRetries,
         batchSize: this.config.batchSize ?? 'auto',
         executionMode: 'batch',
         maxConcurrentSubtasks: this.config.maxConcurrentSubtasks,
@@ -617,7 +634,7 @@ export class BuildOrchestrator extends EventEmitter {
         specDir: this.config.specDir,
         projectDir: this.config.projectDir,
         sourceSpecDir: this.config.sourceSpecDir,
-        maxRetries: MAX_SUBTASK_RETRIES,
+        maxRetries: maxSubtaskRetries,
         autoContinueDelayMs: AUTO_CONTINUE_DELAY_MS,
         abortSignal: this.config.abortSignal,
         onSubtaskStart: (subtask, attempt) => {
@@ -716,7 +733,9 @@ export class BuildOrchestrator extends EventEmitter {
     // QA review
     this.transitionPhase('qa_review', 'Running QA review');
 
-    const maxQACycles = this.config.maxIterations ?? 3;
+    // Get QA cycle limit from workflow config
+    const retryLimits = getRetryLimits(this.config.workflowConfig!);
+    const maxQACycles = this.config.maxIterations ?? retryLimits.qa;
     this.emitTyped('log', `Starting QA review loop (max ${maxQACycles} cycles)`);
 
     for (let cycle = 0; cycle < maxQACycles; cycle++) {

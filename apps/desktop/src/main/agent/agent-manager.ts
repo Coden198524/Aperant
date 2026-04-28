@@ -32,18 +32,18 @@ import type { ProviderAccount } from '../../shared/types/provider-account';
 import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
 import { buildProviderQueueResolutionErrorMessage } from './provider-queue-errors';
 
-const DEFAULT_SESSION_MAX_STEPS = 1000;
+const DEFAULT_SESSION_MAX_STEPS = 160;
 const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
-  spec: 120,
-  planning: 140,
-  coding: 220,
-  qa: 80,
+  spec: 80,
+  planning: 90,
+  coding: 140,
+  qa: 50,
 } as const;
 const FAST_WORKFLOW_PHASE_STEP_BUDGETS = {
-  spec: 80,
-  planning: 80,
-  coding: 120,
-  qa: 40,
+  spec: 50,
+  planning: 55,
+  coding: 80,
+  qa: 30,
 } as const;
 
 /**

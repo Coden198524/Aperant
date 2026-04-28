@@ -20,13 +20,13 @@ import { createSimpleClient } from '../client/factory';
 // ---------------------------------------------------------------------------
 
 /** Maximum input chars to send for summarization */
-const MAX_INPUT_CHARS = 15000;
+const MAX_INPUT_CHARS = 10000;
 
 /** Maximum chars per file before truncation */
-const MAX_FILE_CHARS = 10000;
+const MAX_FILE_CHARS = 6000;
 
 /** Default target summary length in words */
-const DEFAULT_TARGET_WORDS = 500;
+const DEFAULT_TARGET_WORDS = 300;
 
 /** Maps phases to the output files they produce */
 const PHASE_OUTPUT_FILES: Record<string, string[]> = {

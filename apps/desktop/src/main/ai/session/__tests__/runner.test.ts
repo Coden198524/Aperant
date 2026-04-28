@@ -317,7 +317,7 @@ describe('runAgentSession', () => {
     expect(callArgs.tools).toBe(tools);
   });
 
-  it('should use default maxSteps of 500 when not specified', async () => {
+  it('should use default maxSteps of 160 when not specified', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
     );
@@ -329,7 +329,29 @@ describe('runAgentSession', () => {
     await runAgentSession(config);
 
     const callArgs = mockStreamText.mock.calls[0][0];
-    expect(callArgs.stopWhen).toEqual({ type: 'stepCount', count: 500 });
+    expect(callArgs.stopWhen).toEqual({ type: 'stepCount', count: 160 });
+  });
+
+  it('should cap default output tokens below the previous 32768 limit', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({ agentType: 'coder', phase: 'coding' }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.maxOutputTokens).toBe(12000);
+  });
+
+  it('should use a lower output cap for QA sessions', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({ agentType: 'qa_reviewer', phase: 'qa' }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.maxOutputTokens).toBe(8000);
   });
 
   it('should keep system prompt for openai-compatible chat models even when model id is codex', async () => {

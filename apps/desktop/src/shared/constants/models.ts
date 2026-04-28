@@ -111,19 +111,19 @@ export const THINKING_LEVELS = [
 // Phase configurations for each preset profile
 // Each profile has its own default phase models and thinking levels
 
-// Auto (Optimized) - Opus with optimized thinking per phase
+// Auto (Optimized) - balanced defaults with lower thinking budgets
 export const AUTO_PHASE_MODELS: PhaseModelConfig = {
-  spec: 'opus',
-  planning: 'opus',
-  coding: 'opus',
-  qa: 'opus'
+  spec: 'sonnet',
+  planning: 'sonnet',
+  coding: 'sonnet',
+  qa: 'sonnet'
 };
 
 export const AUTO_PHASE_THINKING: import('../types/settings').PhaseThinkingConfig = {
-  spec: 'high',   // Deep thinking for comprehensive spec creation
-  planning: 'high',     // High thinking for planning complex features
-  coding: 'low',        // Faster coding iterations
-  qa: 'low'             // Efficient QA review
+  spec: 'medium',
+  planning: 'medium',
+  coding: 'low',
+  qa: 'low'
 };
 
 // Complex Tasks - Opus with high thinking across all phases
@@ -182,10 +182,10 @@ export const DEFAULT_PHASE_THINKING: import('../types/settings').PhaseThinkingCo
 // Default feature model configuration (for insights, ideation, roadmap, github, utility, naming)
 export const DEFAULT_FEATURE_MODELS: FeatureModelConfig = {
   insights: 'sonnet',     // Fast, responsive chat
-  ideation: 'opus',       // Creative ideation benefits from Opus
-  roadmap: 'opus',        // Strategic planning benefits from Opus
-  githubIssues: 'opus',   // Issue triage and analysis benefits from Opus
-  githubPrs: 'opus',      // PR review benefits from thorough Opus analysis
+  ideation: 'sonnet',     // Creative ideation with lower default cost
+  roadmap: 'sonnet',      // Strategic planning with lower default cost
+  githubIssues: 'sonnet', // Issue triage and analysis
+  githubPrs: 'sonnet',    // PR review
   utility: 'haiku',       // Fast utility operations (commit messages, merge resolution)
   naming: 'haiku'         // Fast, cheap model for task titles and terminal names
 };
@@ -193,8 +193,8 @@ export const DEFAULT_FEATURE_MODELS: FeatureModelConfig = {
 // Default feature thinking configuration
 export const DEFAULT_FEATURE_THINKING: FeatureThinkingConfig = {
   insights: 'medium',     // Balanced thinking for chat
-  ideation: 'high',       // Deep thinking for creative ideas
-  roadmap: 'high',        // Strategic thinking for roadmap
+  ideation: 'medium',     // Balanced thinking for creative ideas
+  roadmap: 'medium',      // Balanced thinking for roadmap
   githubIssues: 'medium', // Moderate thinking for issue analysis
   githubPrs: 'medium',    // Moderate thinking for PR review
   utility: 'low',         // Fast thinking for utility operations
@@ -258,9 +258,9 @@ export const DEFAULT_AGENT_PROFILES: AgentProfile[] = [
   {
     id: 'auto',
     name: 'Auto (Optimized)',
-    description: 'Uses Opus across all phases with optimized thinking levels',
-    model: 'opus',
-    thinkingLevel: 'high',
+    description: 'Uses balanced models with reduced thinking budgets by default',
+    model: 'sonnet',
+    thinkingLevel: 'medium',
     icon: 'Sparkles',
     phaseModels: AUTO_PHASE_MODELS,
     phaseThinking: AUTO_PHASE_THINKING
@@ -319,31 +319,31 @@ export interface ProviderPresetConfig {
  */
 export const PROVIDER_PRESET_DEFINITIONS: Partial<Record<BuiltinProvider, Record<string, ProviderPresetConfig>>> = {
   anthropic: {
-    auto:     { primaryModel: 'opus',   primaryThinking: 'high',   phaseModels: { spec: 'opus', planning: 'opus', coding: 'opus', qa: 'opus' },         phaseThinking: { spec: 'high', planning: 'high', coding: 'low', qa: 'low' } },
+    auto:     { primaryModel: 'sonnet', primaryThinking: 'medium', phaseModels: { spec: 'sonnet', planning: 'sonnet', coding: 'sonnet', qa: 'sonnet' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'low', qa: 'low' } },
     complex:  { primaryModel: 'opus',   primaryThinking: 'high',   phaseModels: { spec: 'opus', planning: 'opus', coding: 'opus', qa: 'opus' },         phaseThinking: { spec: 'high', planning: 'high', coding: 'high', qa: 'high' } },
     balanced: { primaryModel: 'sonnet', primaryThinking: 'medium', phaseModels: { spec: 'sonnet', planning: 'sonnet', coding: 'sonnet', qa: 'sonnet' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'medium', qa: 'medium' } },
     quick:    { primaryModel: 'haiku',  primaryThinking: 'low',    phaseModels: { spec: 'haiku', planning: 'haiku', coding: 'haiku', qa: 'haiku' },     phaseThinking: { spec: 'low', planning: 'low', coding: 'low', qa: 'low' } },
   },
   openai: {
-    auto:     { primaryModel: 'gpt-5.4', primaryThinking: 'high',   phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'high', planning: 'high', coding: 'low', qa: 'low' } },
+    auto:     { primaryModel: 'gpt-5.4', primaryThinking: 'medium', phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'low', qa: 'low' } },
     complex:  { primaryModel: 'gpt-5.4', primaryThinking: 'xhigh',  phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'xhigh', planning: 'xhigh', coding: 'xhigh', qa: 'xhigh' } },
     balanced: { primaryModel: 'gpt-5.4', primaryThinking: 'medium', phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'medium', qa: 'medium' } },
     quick:    { primaryModel: 'gpt-5.4', primaryThinking: 'low',    phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'low', planning: 'low', coding: 'low', qa: 'low' } },
   },
   'openai-compatible': {
-    auto:     { primaryModel: 'gpt-5.4', primaryThinking: 'high',   phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'high', planning: 'high', coding: 'low', qa: 'low' } },
+    auto:     { primaryModel: 'gpt-5.4', primaryThinking: 'medium', phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'low', qa: 'low' } },
     complex:  { primaryModel: 'gpt-5.4', primaryThinking: 'xhigh',  phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'xhigh', planning: 'xhigh', coding: 'xhigh', qa: 'xhigh' } },
     balanced: { primaryModel: 'gpt-5.4', primaryThinking: 'medium', phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'medium', qa: 'medium' } },
     quick:    { primaryModel: 'gpt-5.4', primaryThinking: 'low', phaseModels: { spec: 'gpt-5.4', planning: 'gpt-5.4', coding: 'gpt-5.4', qa: 'gpt-5.4' }, phaseThinking: { spec: 'low', planning: 'low', coding: 'low', qa: 'low' } },
   },
   google: {
-    auto:     { primaryModel: 'gemini-2.5-pro',       primaryThinking: 'high',   phaseModels: { spec: 'gemini-2.5-pro', planning: 'gemini-2.5-pro', coding: 'gemini-2.5-pro', qa: 'gemini-2.5-pro' },                         phaseThinking: { spec: 'high', planning: 'high', coding: 'low', qa: 'low' } },
+    auto:     { primaryModel: 'gemini-2.5-flash',     primaryThinking: 'medium', phaseModels: { spec: 'gemini-2.5-flash', planning: 'gemini-2.5-flash', coding: 'gemini-2.5-flash', qa: 'gemini-2.5-flash' },                 phaseThinking: { spec: 'medium', planning: 'medium', coding: 'low', qa: 'low' } },
     complex:  { primaryModel: 'gemini-2.5-pro',       primaryThinking: 'high',   phaseModels: { spec: 'gemini-2.5-pro', planning: 'gemini-2.5-pro', coding: 'gemini-2.5-pro', qa: 'gemini-2.5-pro' },                         phaseThinking: { spec: 'high', planning: 'high', coding: 'high', qa: 'high' } },
     balanced: { primaryModel: 'gemini-2.5-flash',     primaryThinking: 'medium', phaseModels: { spec: 'gemini-2.5-flash', planning: 'gemini-2.5-flash', coding: 'gemini-2.5-flash', qa: 'gemini-2.5-flash' },                 phaseThinking: { spec: 'medium', planning: 'medium', coding: 'medium', qa: 'medium' } },
     quick:    { primaryModel: 'gemini-2.5-flash-lite', primaryThinking: 'low',   phaseModels: { spec: 'gemini-2.5-flash-lite', planning: 'gemini-2.5-flash-lite', coding: 'gemini-2.5-flash-lite', qa: 'gemini-2.5-flash-lite' }, phaseThinking: { spec: 'low', planning: 'low', coding: 'low', qa: 'low' } },
   },
   xai: {
-    auto:     { primaryModel: 'grok-4-0709',  primaryThinking: 'high',   phaseModels: { spec: 'grok-4-0709', planning: 'grok-4-0709', coding: 'grok-4-0709', qa: 'grok-4-0709' },       phaseThinking: { spec: 'high', planning: 'high', coding: 'low', qa: 'low' } },
+    auto:     { primaryModel: 'grok-3-mini',  primaryThinking: 'medium', phaseModels: { spec: 'grok-3-mini', planning: 'grok-3-mini', coding: 'grok-3-mini', qa: 'grok-3-mini' },       phaseThinking: { spec: 'medium', planning: 'medium', coding: 'low', qa: 'low' } },
     complex:  { primaryModel: 'grok-4-0709',  primaryThinking: 'high',   phaseModels: { spec: 'grok-4-0709', planning: 'grok-4-0709', coding: 'grok-4-0709', qa: 'grok-4-0709' },       phaseThinking: { spec: 'high', planning: 'high', coding: 'high', qa: 'high' } },
     balanced: { primaryModel: 'grok-3-mini',  primaryThinking: 'medium', phaseModels: { spec: 'grok-3-mini', planning: 'grok-3-mini', coding: 'grok-3-mini', qa: 'grok-3-mini' },       phaseThinking: { spec: 'medium', planning: 'medium', coding: 'medium', qa: 'medium' } },
     quick:    { primaryModel: 'grok-3-mini',  primaryThinking: 'low',    phaseModels: { spec: 'grok-3-mini', planning: 'grok-3-mini', coding: 'grok-3-mini', qa: 'grok-3-mini' },       phaseThinking: { spec: 'low', planning: 'low', coding: 'low', qa: 'low' } },

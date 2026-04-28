@@ -48,6 +48,10 @@
     "terminal-fonts": {
       "title": "Terminal Fonts",
       "description": "Customize terminal font appearance"
+    },
+    "workflowOptimization": {
+      "title": "Workflow Optimization",
+      "description": "Configure AI workflow performance and quality settings"
     }
   },
   "apiProfiles": {
@@ -1220,6 +1224,70 @@
         "title": "Failed to save provider settings",
         "description": "An error occurred while saving your provider configuration."
       }
+    }
+  },
+  "workflowOptimization": {
+    "title": "Workflow Optimization",
+    "description": "Configure AI workflow performance and quality settings",
+    "optimizationLevel": "Optimization Level",
+    "performanceMetrics": "Performance Metrics",
+    "levels": {
+      "conservative": {
+        "name": "Conservative",
+        "description": "Maximum quality assurance with comprehensive checks. Best for production releases.",
+        "timeReduction": "0%",
+        "tokenReduction": "0%",
+        "successRate": "95-98%"
+      },
+      "balanced": {
+        "name": "Balanced",
+        "description": "Recommended balance between speed and quality. Best for most development tasks.",
+        "timeReduction": "35-45%",
+        "tokenReduction": "40-50%",
+        "successRate": "93-96%"
+      },
+      "aggressive": {
+        "name": "Aggressive",
+        "description": "Maximum speed with minimal checks. Best for prototyping and experiments.",
+        "timeReduction": "60-70%",
+        "tokenReduction": "65-75%",
+        "successRate": "90-95%"
+      }
+    },
+    "metrics": {
+      "totalTasks": "Total Tasks",
+      "avgTime": "Avg Time",
+      "avgTokens": "Avg Tokens",
+      "successRate": "Success Rate",
+      "byLevel": "By Optimization Level",
+      "tasks": "tasks"
+    },
+    "advanced": {
+      "title": "Advanced Settings",
+      "retryLimits": "Retry Limits",
+      "qualityChecks": "Quality Checks",
+      "specCreationMode": "Spec Creation Mode",
+      "retries": {
+        "planning": "Planning Retries",
+        "subtask": "Subtask Retries",
+        "qa": "QA Cycles",
+        "specPhase": "Spec Phase Retries"
+      },
+      "checks": {
+        "smokeTests": "Pre-QA Smoke Tests",
+        "patternInjection": "Pattern Injection",
+        "selfCritique": "Self-Critique",
+        "preImplementationChecklist": "Pre-Implementation Checklist",
+        "tieredQualityStandards": "Tiered Quality Standards"
+      },
+      "specModes": {
+        "auto": "Auto (Recommended)",
+        "phased": "Phased (Separate stages)",
+        "unified": "Unified (Single stage)"
+      }
+    },
+    "actions": {
+      "reset": "Reset to Defaults"
     }
   }
 }

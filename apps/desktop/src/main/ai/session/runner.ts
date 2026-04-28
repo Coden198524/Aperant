@@ -11,7 +11,7 @@
  * - `fullStream` for text-delta, tool-call, tool-result, reasoning events
  *
  * Handles:
- * - Token refresh mid-session (catch 401 → reactive refresh → retry)
+ * - Token refresh mid-session (catch 401 -> reactive refresh -> retry)
  * - Cancellation via AbortSignal
  * - Structured SessionResult with usage, outcome, messages
  * - Memory-aware step limits via calibration factor
@@ -46,14 +46,14 @@ import type { QueueResolvedAuth } from '../auth/types';
 /** Maximum number of auth refresh retries before giving up */
 const MAX_AUTH_RETRIES = 1;
 
-/** Default max steps if not specified in config — safety backstop for spinning agents */
-const DEFAULT_MAX_STEPS = 500;
+/** Default max steps if not specified in config - safety backstop for spinning agents */
+const DEFAULT_MAX_STEPS = 160;
 
-/** Context window usage threshold (90%) for reactive compaction warning */
-const CONTEXT_WINDOW_THRESHOLD = 0.90;
+/** Context window usage threshold (80%) for reactive compaction warning */
+const CONTEXT_WINDOW_THRESHOLD = 0.80;
 
-/** Context window usage threshold (95%) for hard abort — triggers continuation */
-const CONTEXT_WINDOW_ABORT_THRESHOLD = 0.95;
+/** Context window usage threshold (88%) for hard abort - triggers continuation */
+const CONTEXT_WINDOW_ABORT_THRESHOLD = 0.88;
 
 /** Unique reason string for context-window aborts (used in catch to distinguish from user cancel) */
 const CONTEXT_WINDOW_ABORT_REASON = '__context_window_exhausted__';
@@ -68,7 +68,7 @@ const CONVERGENCE_NUDGE_AGENT_TYPES = new Set<string>([
 
 /** Timeout for post-stream result promises (result.text, result.totalUsage).
  *  Some providers (e.g., OpenAI Codex) may not properly resolve these promises
- *  after the stream closes. 10 seconds is generous — these should resolve instantly
+ *  after the stream closes. 10 seconds is generous - these should resolve instantly
  *  since the stream has already been fully consumed. */
 const POST_STREAM_TIMEOUT_MS = 10_000;
 
@@ -227,7 +227,7 @@ export async function runAgentSession(
         if (newAuth) {
           console.log(`[SessionRunner] Switching to account ${newAuth.accountId} with model ${newAuth.resolvedModelId}`);
 
-          // Switch to new account — dynamic import to avoid circular deps
+          // Switch to new account - dynamic import to avoid circular deps
           const { createProvider } = await import('../providers/factory');
           activeConfig = {
             ...activeConfig,
@@ -245,7 +245,7 @@ export async function runAgentSession(
           activeAccountId = newAuth.accountId;
           continue;
         }
-        // No more accounts available — fall through to legacy retry
+        // No more accounts available - fall through to legacy retry
       }
 
       // Legacy auth refresh (single-provider token refresh)
@@ -302,6 +302,40 @@ export async function runAgentSession(
  */
 const MEMORY_INJECTION_WARMUP_STEPS = 5;
 
+/** Minimum gap between memory injections. Keeps repeated reminders from bloating context. */
+const MEMORY_INJECTION_INTERVAL_STEPS = 4;
+
+/** Stop active memory injection once the context window is moderately full. */
+const MEMORY_INJECTION_CONTEXT_THRESHOLD = 0.65;
+
+/** Default output token limits by phase. */
+const DEFAULT_MAX_OUTPUT_TOKENS = 12_000;
+const PHASE_MAX_OUTPUT_TOKENS: Partial<Record<NonNullable<SessionConfig['phase']>, number>> = {
+  spec: 16_000,
+  planning: 16_000,
+  coding: 12_000,
+  qa: 8_000,
+};
+
+const AGENT_MAX_OUTPUT_TOKENS: Partial<Record<string, number>> = {
+  spec_orchestrator: 16_000,
+  spec_writer: 16_000,
+  planner: 16_000,
+  build_orchestrator: 16_000,
+  coder: 12_000,
+  qa_reviewer: 8_000,
+  qa_fixer: 8_000,
+  commit_message: 2_000,
+  pr_template_filler: 4_000,
+  merge_resolver: 8_000,
+};
+
+function resolveMaxOutputTokens(config: SessionConfig): number {
+  return AGENT_MAX_OUTPUT_TOKENS[config.agentType]
+    ?? (config.phase ? PHASE_MAX_OUTPUT_TOKENS[config.phase] : undefined)
+    ?? DEFAULT_MAX_OUTPUT_TOKENS;
+}
+
 // =============================================================================
 // Stream Execution
 // =============================================================================
@@ -353,6 +387,7 @@ async function executeStream(
 
   // Per-step state for memory injection (only allocated when memory is active)
   const stepMemoryState = memoryContext ? new StepMemoryState() : null;
+  let lastMemoryInjectionStep = 0;
 
   // Convergence nudge: track whether we've already nudged the agent to wrap up
   let convergenceNudgeInjected = false;
@@ -424,7 +459,7 @@ async function executeStream(
     console.log('[SessionRunner] Prompt Caching: DISABLED (model does not support caching)');
   }
 
-  // Execute streamText — prepareStep is only added when memory context exists
+  // Execute streamText - prepareStep is only added when memory context exists
   //
   // IMPORTANT: Output.object() must NOT be combined with tools in the same streamText()
   // call. This is a known AI SDK limitation (GitHub #8354, #8984, #12016):
@@ -438,6 +473,7 @@ async function executeStream(
   // (validateAndNormalizeJsonFile + repairJsonWithLLM) handle the rest.
   const hasTools = tools != null && Object.keys(tools).length > 0;
   const useOutputSchema = config.outputSchema != null && !hasTools;
+  const maxOutputTokens = resolveMaxOutputTokens(config);
 
   const result = streamText({
     model: config.model,
@@ -445,7 +481,7 @@ async function executeStream(
     messages: aiMessages,
     tools: tools ?? {},
     ...(useOutputSchema ? { output: Output.object({ schema: config.outputSchema! }) } : {}),
-    maxOutputTokens: 32768, // Increase output token limit to prevent truncated tool calls (quadrupled from 8192)
+    maxOutputTokens,
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
     ...((thinkingOptions || isResponsesModel || (useOutputSchema && isAnthropicModel) || promptCachingMetadata) ? {
@@ -498,7 +534,7 @@ async function executeStream(
 
       // Convergence nudge: when 75%+ of step budget is used, remind agents
       // that produce file-based output (like QA reviewers) to write their verdict.
-      // This doesn't cap the agent — it redirects spinning agents back on task.
+      // This doesn't cap the agent - it redirects spinning agents back on task.
       if (
         !convergenceNudgeInjected &&
         maxSteps > 0 &&
@@ -510,7 +546,7 @@ async function executeStream(
         systemParts.push(
           `IMPORTANT: You have used ${stepNumber} of ${maxSteps} steps (${remaining} remaining). ` +
           `You must finalize your output now. Write your verdict/result to the appropriate file immediately. ` +
-          `Do not start new investigations — wrap up with the evidence you have.`,
+          `Do not start new investigations - wrap up with the evidence you have.`,
         );
       }
 
@@ -523,13 +559,18 @@ async function executeStream(
           return systemMessage ? { system: systemMessage } : {};
         }
 
-        // Skip memory injection if context window is tight (>80% usage)
+        // Skip memory injection if context window is tight.
         const contextUsage = contextWindowLimit > 0 && lastPromptTokens > 0
           ? lastPromptTokens / contextWindowLimit
           : 0;
 
-        if (contextUsage > 0.80) {
-          // Context window tight — skip memory injection to preserve space
+        if (contextUsage > MEMORY_INJECTION_CONTEXT_THRESHOLD) {
+          // Context window tight - skip memory injection to preserve space
+          memoryContext.proxy.onStepComplete(stepNumber);
+          return systemMessage ? { system: systemMessage } : {};
+        }
+
+        if (stepNumber - lastMemoryInjectionStep < MEMORY_INJECTION_INTERVAL_STEPS) {
           memoryContext.proxy.onStepComplete(stepNumber);
           return systemMessage ? { system: systemMessage } : {};
         }
@@ -547,6 +588,7 @@ async function executeStream(
         }
 
         stepMemoryState.markInjected(injection.memoryIds);
+        lastMemoryInjectionStep = stepNumber;
 
         const combinedSystem = systemMessage
           ? `${systemMessage}\n\n${injection.content}`
@@ -555,7 +597,7 @@ async function executeStream(
         return { system: combinedSystem };
       }
 
-      // No memory context — just return system message if applicable
+      // No memory context - just return system message if applicable
       return systemMessage ? { system: systemMessage } : {};
     },
     onStepFinish: (_stepResult) => {
@@ -604,7 +646,7 @@ async function executeStream(
         usage: summary.usage,
         error: {
           code: 'stream_timeout',
-          message: `Stream inactivity timeout — no data received from provider for ${STREAM_INACTIVITY_TIMEOUT_MS / 1000}s`,
+          message: `Stream inactivity timeout - no data received from provider for ${STREAM_INACTIVITY_TIMEOUT_MS / 1000}s`,
           retryable: true,
         },
         messages,
@@ -664,7 +706,7 @@ async function executeStream(
   try {
     responseText = await withTimeout(result.text, POST_STREAM_TIMEOUT_MS, 'result.text');
   } catch {
-    // Fall through — use empty text. The stream handler already captured
+    // Fall through - use empty text. The stream handler already captured
     // all text deltas, so this is just the final concatenated text.
   }
 
@@ -675,14 +717,14 @@ async function executeStream(
   let structuredOutput: Record<string, unknown> | undefined;
   if (config.outputSchema) {
     if (useOutputSchema) {
-      // Output.object() was active — extract from AI SDK result
+      // Output.object() was active - extract from AI SDK result
       try {
         const output = await withTimeout(result.output, POST_STREAM_TIMEOUT_MS, 'result.output');
         if (output) {
           structuredOutput = output as Record<string, unknown>;
         }
       } catch {
-        // Structured output extraction failed — non-fatal.
+        // Structured output extraction failed - non-fatal.
       }
     } else if (responseText) {
       // Tools were present so Output.object() was skipped.
@@ -700,7 +742,7 @@ async function executeStream(
           }
         }
       } catch {
-        // JSON parsing failed — non-fatal. Caller uses file-based validation.
+        // JSON parsing failed - non-fatal. Caller uses file-based validation.
       }
     }
   }
@@ -717,7 +759,7 @@ async function executeStream(
   try {
     totalUsage = await withTimeout(result.totalUsage, POST_STREAM_TIMEOUT_MS, 'result.totalUsage');
   } catch (err) {
-    // Fall through — use summary usage collected during stream iteration.
+    // Fall through - use summary usage collected during stream iteration.
   }
 
   // For models that don't return usage in finish-step (e.g., OpenAI Responses API),

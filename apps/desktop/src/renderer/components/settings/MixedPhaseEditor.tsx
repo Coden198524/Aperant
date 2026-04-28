@@ -11,13 +11,13 @@ import type { BuiltinProvider } from '@shared/types/provider-account';
 
 /**
  * Default config used when customMixedPhaseConfig is not set.
- * All phases use Anthropic/opus/high.
+ * All phases use Anthropic/Sonnet with moderate or low thinking.
  */
 const DEFAULT_MIXED_PHASE_CONFIG: MixedPhaseConfig = {
-  spec: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'high' },
-  planning: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'high' },
-  coding: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'high' },
-  qa: { provider: 'anthropic', modelId: 'opus', thinkingLevel: 'high' },
+  spec: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'medium' },
+  planning: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'medium' },
+  coding: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'low' },
+  qa: { provider: 'anthropic', modelId: 'sonnet', thinkingLevel: 'low' },
 };
 
 /**

@@ -34,9 +34,9 @@ import {
  */
 export const SPEC_PHASE_THINKING_LEVELS: Record<string, ThinkingLevel> = {
   // Heavy phases
-  discovery: 'high',
-  spec_writing: 'high',
-  self_critique: 'high',
+  discovery: 'medium',
+  spec_writing: 'medium',
+  self_critique: 'medium',
   // Light phases
   requirements: 'medium',
   research: 'medium',

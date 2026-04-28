@@ -71,6 +71,7 @@ import { isProfileAuthenticated } from './claude-profile/profile-utils';
 import { isMacOS, isWindows } from './platform';
 import { ptyDaemonClient } from './terminal/pty-daemon-client';
 import { getYunxiaoAutoSyncService } from './integrations/yunxiao-auto-sync';
+import { initializeMetricsTracking } from './ai/orchestration/metrics-tracker';
 import type { AppSettings, AuthFailureInfo } from '../shared/types';
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -407,7 +408,7 @@ if (isWindows()) {
 }
 
 // Initialize the application
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
   // Set app user model id for Windows
   electronApp.setAppUserModelId('com.aperant.app');
 
@@ -420,6 +421,14 @@ app.whenReady().then(() => {
 
   // Initialize app language from OS locale for main process i18n (context menus)
   initAppLanguage();
+
+  // Initialize workflow metrics tracking
+  try {
+    await initializeMetricsTracking();
+    console.log('[main] Workflow metrics tracking initialized');
+  } catch (error) {
+    console.warn('[main] Failed to initialize metrics tracking:', error);
+  }
 
   // Clean up stale update metadata from the old source updater system
   // This prevents version display desync after electron-updater installs a new version

@@ -414,7 +414,7 @@ export function getAgentProfileDescription(
 ): string {
   return t(`settings:agentProfile.profiles.${profileId}.description`, {
     defaultValue: {
-      auto: 'Uses Opus across all phases with optimized thinking levels',
+      auto: 'Uses balanced models with reduced thinking budgets by default',
       complex: 'Maximum capability for large or difficult tasks',
       balanced: 'Balanced capability, speed, and cost for everyday work',
       quick: 'Faster responses for small focused edits',
