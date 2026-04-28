@@ -94,7 +94,18 @@ export default defineConfig({
         // @libsql/client is loaded lazily via globalThis.require() and resolved
         // from extraResources/node_modules via Module.globalPaths (see index.ts).
         // electron must be external to avoid ESM named export issues
-        external: ['@lydell/node-pty', 'electron'],
+        // tree-sitter and language modules are optional (graceful degradation) and must be external
+        external: [
+          '@lydell/node-pty',
+          'electron',
+          'tree-sitter',
+          'tree-sitter-cpp',
+          'tree-sitter-c-sharp',
+          'tree-sitter-java',
+          'tree-sitter-lua',
+          'tree-sitter-python',
+          'tree-sitter-typescript'
+        ],
         output: {
           // Preserve dynamic imports for electron modules to avoid ESM export issues
           manualChunks: undefined,

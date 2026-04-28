@@ -47,6 +47,9 @@ import { getAgentConfig, type AgentType } from '../../config/agent-configs';
 import type { ToolContext } from '../../tools/types';
 import type { ToolRegistry } from '../../tools/registry';
 import type { SecurityProfile } from '../../security/bash-validator';
+import { optimizePRContext, isGraphAvailable, buildGraphAnalysisSummary } from '../../graph/integration/pr-review-hook';
+import { GraphDatabase } from '../../graph/database';
+import { getMemoryClient } from '../../memory/db';
 
 // =============================================================================
 // Types
@@ -88,6 +91,7 @@ export interface ParallelOrchestratorConfig {
   model?: ModelShorthand;
   thinkingLevel?: ThinkingLevel;
   fastMode?: boolean;
+  enableCodeGraph?: boolean;
 }
 
 // =============================================================================
@@ -392,6 +396,60 @@ export class ParallelOrchestratorReviewer {
     context: PRContext,
     abortSignal?: AbortSignal,
   ): Promise<ParallelOrchestratorResult> {
+    // 0. Optimize PR context with code graph if enabled
+    let optimizedContext = context;
+
+    if (this.config.enableCodeGraph) {
+      this.reportProgress({
+        phase: 'orchestrating',
+        progress: 25,
+        message: `[ParallelOrchestrator] Checking code graph availability...`,
+        prNumber: context.prNumber,
+      });
+
+      try {
+        const client = await getMemoryClient();
+        const db = new GraphDatabase(client);
+        const graphAvailable = await isGraphAvailable(this.config.projectDir, db);
+
+        if (graphAvailable) {
+          this.reportProgress({
+            phase: 'orchestrating',
+            progress: 27,
+            message: `[ParallelOrchestrator] Optimizing PR context with code graph...`,
+            prNumber: context.prNumber,
+          });
+
+          const optimizationResult = await optimizePRContext(context, this.config.projectDir, db);
+          optimizedContext = optimizationResult.optimizedContext;
+
+          const tokenSavings = optimizationResult.tokenSavings;
+          const savingsPercent = ((1 - tokenSavings) * 100).toFixed(1);
+
+          this.reportProgress({
+            phase: 'orchestrating',
+            progress: 29,
+            message: `[ParallelOrchestrator] Code graph optimization: ${savingsPercent}% tokens saved`,
+            prNumber: context.prNumber,
+          });
+        } else {
+          this.reportProgress({
+            phase: 'orchestrating',
+            progress: 29,
+            message: `[ParallelOrchestrator] Code graph not available, using full context`,
+            prNumber: context.prNumber,
+          });
+        }
+      } catch (error) {
+        this.reportProgress({
+          phase: 'orchestrating',
+          progress: 29,
+          message: `[ParallelOrchestrator] Code graph optimization failed: ${error instanceof Error ? error.message : 'unknown error'}`,
+          prNumber: context.prNumber,
+        });
+      }
+    }
+
     this.reportProgress({
       phase: 'orchestrating',
       progress: 30,
@@ -402,9 +460,9 @@ export class ParallelOrchestratorReviewer {
     const modelShorthand = this.config.model ?? 'sonnet';
     const thinkingLevel = this.config.thinkingLevel ?? 'medium';
 
-    // 1. Run all specialists in parallel
+    // 1. Run all specialists in parallel (using optimized context)
     const specialistPromises = SPECIALIST_CONFIGS.map((spec) =>
-      this.runSpecialist(spec, context, modelShorthand, thinkingLevel, abortSignal),
+      this.runSpecialist(spec, optimizedContext, modelShorthand, thinkingLevel, abortSignal),
     );
 
     const settledResults = await Promise.allSettled(specialistPromises);

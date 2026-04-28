@@ -1701,11 +1701,13 @@ async function runPRReview(
 
     sendProgress({ phase: "analyzing", prNumber, progress: 30, message: "Starting parallel orchestrator review..." });
 
+    const settings = readSettingsFile();
     const orchestratorConfig: ParallelOrchestratorConfig = {
       repo,
       projectDir: project.path,
       model: model as ModelShorthand,
       thinkingLevel: thinkingLevel as ThinkingLevel,
+      enableCodeGraph: settings?.enableCodeGraph === true,
     };
 
     const orchestrator = new ParallelOrchestratorReviewer(
