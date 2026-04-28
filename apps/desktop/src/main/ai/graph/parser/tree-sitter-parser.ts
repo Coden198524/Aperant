@@ -27,7 +27,7 @@ import {
 
 // Tree-sitter will be dynamically imported to avoid bundling issues
 let Parser: any;
-let parserCache: Map<string, any> = new Map();
+const parserCache: Map<string, any> = new Map();
 
 // =============================================================================
 // Parser Initialization
@@ -44,10 +44,9 @@ async function initializeParser(): Promise<void> {
 		const treeSitter = await import('tree-sitter');
 		Parser = treeSitter.default || treeSitter;
 	} catch (error) {
-		console.error('[TreeSitterParser] Failed to load tree-sitter:', error);
-		throw new Error(
-			'tree-sitter not installed. Run: npm install tree-sitter tree-sitter-cpp tree-sitter-c-sharp tree-sitter-java tree-sitter-lua tree-sitter-python tree-sitter-typescript',
-		);
+		console.warn('[TreeSitterParser] tree-sitter not available:', error);
+		// Don't throw - allow graceful degradation
+		Parser = null;
 	}
 }
 
@@ -56,6 +55,10 @@ async function initializeParser(): Promise<void> {
  */
 async function getParser(language: string): Promise<any> {
 	await initializeParser();
+
+	if (!Parser) {
+		throw new Error('tree-sitter not available');
+	}
 
 	if (parserCache.has(language)) {
 		return parserCache.get(language);
@@ -86,10 +89,11 @@ async function getParser(language: string): Promise<any> {
 				break;
 			case 'typescript':
 			case 'javascript':
-			case 'tsx':
+			case 'tsx': {
 				const tsModule = await import('tree-sitter-typescript');
 				languageModule = language === 'tsx' ? tsModule.tsx : tsModule.typescript;
 				break;
+			}
 			default:
 				throw new Error(`Unsupported language: ${language}`);
 		}
