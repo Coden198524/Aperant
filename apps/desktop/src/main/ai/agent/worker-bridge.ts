@@ -85,8 +85,9 @@ export class WorkerBridge extends EventEmitter {
    * The worker will immediately begin executing the agent session.
    *
    * @param config - Executor configuration (task ID, session params, etc.)
+   * @param initialTokenUsage - Optional initial token usage from previous sessions (restored from plan file)
    */
-  spawn(config: AgentExecutorConfig): void {
+  spawn(config: AgentExecutorConfig, initialTokenUsage?: TokenUsage | null): void {
     if (this.worker) {
       throw new Error('WorkerBridge already has an active worker. Call terminate() first.');
     }
@@ -97,8 +98,9 @@ export class WorkerBridge extends EventEmitter {
     this.progressTracker = new ProgressTracker();
     this.executionProgressSequence = 0;
 
-    // Initialize with null - will be populated when first usage data arrives from worker
-    this.lastTokenUsage = null;
+    // Initialize with historical token usage if provided (for task resume scenarios)
+    // Otherwise start from null - will be populated when first usage data arrives from worker
+    this.lastTokenUsage = initialTokenUsage ?? null;
 
     const workerConfig: WorkerConfig = {
       taskId: config.taskId,

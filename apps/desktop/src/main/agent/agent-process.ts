@@ -24,6 +24,7 @@ import { getAugmentedEnv } from '../env-utils';
 import { getToolInfo, getClaudeCliPathForSdk } from '../cli-tool-manager';
 import { killProcessGracefully, isWindows } from '../platform';
 import { debugLog } from '../../shared/utils/debug-logger';
+import type { TokenUsage } from '../../shared/types';
 
 /**
  * Type for supported CLI tools
@@ -937,7 +938,26 @@ export class AgentProcessManager {
         specDir: executorConfig.session.specDir,
         projectDir: executorConfig.session.projectDir,
       });
-      bridge.spawn(executorConfig);
+
+      // Load historical token usage from plan file for task resume scenarios
+      // This ensures token counts continue accumulating across multiple sessions
+      let initialTokenUsage: TokenUsage | null = null;
+      try {
+        const planPath = path.join(executorConfig.session.specDir, 'implementation_plan.json');
+        if (existsSync(planPath)) {
+          const planContent = readFileSync(planPath, 'utf-8');
+          const plan = JSON.parse(planContent);
+          if (plan.tokenUsage && typeof plan.tokenUsage === 'object') {
+            initialTokenUsage = plan.tokenUsage as TokenUsage;
+            console.log('[AgentProcess] Restored historical token usage from plan:', initialTokenUsage);
+          }
+        }
+      } catch (err) {
+        // Non-fatal - worker will start with null token usage
+        console.warn('[AgentProcess] Could not load historical token usage:', err);
+      }
+
+      bridge.spawn(executorConfig, initialTokenUsage);
       console.log('[AgentProcess] Worker thread spawned for task:', {
         taskId,
         processType,
