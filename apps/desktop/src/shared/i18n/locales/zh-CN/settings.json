@@ -246,6 +246,11 @@
       "description": "允许智能体在没有确认的情况下运行 Bash 命令（慎用）",
       "warning": "此模式会绕过 Claude 的权限系统。仅在你完全信任正在执行的代码时启用。"
     },
+    "codeGraph": {
+      "label": "代码图优化",
+      "description": "使用代码图分析优化 PR 审查，减少 token 使用量（5-10 倍）。分析代码依赖关系以聚焦相关变更。",
+      "enabled": "代码图将用于 PR 审查，以降低 API 成本并提高审查焦点。"
+    },
     "gpuAcceleration": {
       "label": "GPU 加速",
       "description": "在终端渲染中使用 WebGL（实验性，在开启多个终端时更快）",

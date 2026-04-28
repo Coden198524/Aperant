@@ -370,7 +370,7 @@ export class WorkerBridge extends EventEmitter {
 function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): TokenUsage {
   if (!previous) return incoming;
 
-  // Session-based tracking: if sessionId differs, it's a new session → accumulate steps
+  // Session-based tracking: if sessionId differs, it's a new session → accumulate
   // If sessionId is the same, it's an update within the same session → use Math.max()
   const isNewSession = incoming.sessionId && previous.sessionId && incoming.sessionId !== previous.sessionId;
 
@@ -386,6 +386,21 @@ function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): Tok
     result: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps),
   });
 
+  // For new sessions (task resume), accumulate token counts
+  // For same session updates, use Math.max to handle out-of-order events
+  if (isNewSession) {
+    return {
+      promptTokens: (previous.promptTokens ?? 0) + (incoming.promptTokens ?? 0),
+      completionTokens: (previous.completionTokens ?? 0) + (incoming.completionTokens ?? 0),
+      totalTokens: (previous.totalTokens ?? 0) + (incoming.totalTokens ?? 0),
+      thinkingTokens: ((previous.thinkingTokens ?? 0) + (incoming.thinkingTokens ?? 0)) || undefined,
+      cacheReadTokens: ((previous.cacheReadTokens ?? 0) + (incoming.cacheReadTokens ?? 0)) || undefined,
+      cacheCreationTokens: ((previous.cacheCreationTokens ?? 0) + (incoming.cacheCreationTokens ?? 0)) || undefined,
+      stepsExecuted: prevSteps + incomingSteps || undefined,
+      sessionId: incoming.sessionId, // Always use the latest sessionId
+    };
+  }
+
   return {
     promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
     completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
@@ -393,7 +408,7 @@ function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): Tok
     thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
     cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
     cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
-    stepsExecuted: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps) || undefined,
+    stepsExecuted: Math.max(prevSteps, incomingSteps) || undefined,
     sessionId: incoming.sessionId, // Always use the latest sessionId
   };
 }

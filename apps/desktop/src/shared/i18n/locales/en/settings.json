@@ -305,6 +305,11 @@
       "label": "YOLO Mode",
       "description": "Start Claude with --dangerously-skip-permissions flag, bypassing all safety prompts. Use with extreme caution.",
       "warning": "This mode bypasses Claude's permission system. Only enable if you fully trust the code being executed."
+    },
+    "codeGraph": {
+      "label": "Code Graph Optimization",
+      "description": "Use code graph analysis to optimize PR reviews by reducing token usage (5-10x reduction). Analyzes code dependencies to focus on relevant changes.",
+      "enabled": "Code graph will be used for PR reviews to reduce API costs and improve focus."
     }
   },
   "updates": {

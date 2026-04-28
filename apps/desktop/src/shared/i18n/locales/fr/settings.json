@@ -301,6 +301,11 @@
       "label": "Mode YOLO",
       "description": "Démarrer Claude avec le flag --dangerously-skip-permissions, contournant toutes les invites de sécurité. À utiliser avec une extrême prudence.",
       "warning": "Ce mode contourne le système de permissions de Claude. N'activez que si vous faites entièrement confiance au code exécuté."
+    },
+    "codeGraph": {
+      "label": "Optimisation du graphe de code",
+      "description": "Utiliser l'analyse du graphe de code pour optimiser les revues de PR en réduisant l'utilisation de tokens (réduction de 5 à 10x). Analyse les dépendances du code pour se concentrer sur les changements pertinents.",
+      "enabled": "Le graphe de code sera utilisé pour les revues de PR afin de réduire les coûts d'API et d'améliorer la concentration."
     }
   },
   "updates": {

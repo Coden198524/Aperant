@@ -10,6 +10,7 @@ export const IPC_CHANNELS = {
   PROJECT_LIST: 'project:list',
   PROJECT_UPDATE_SETTINGS: 'project:updateSettings',
   PROJECT_INITIALIZE: 'project:initialize',
+  PROJECT_INITIALIZE_GRAPH: 'project:initializeGraph',
   PROJECT_CHECK_VERSION: 'project:checkVersion',
   PROJECT_DETECT_REMOTE_PROVIDER: 'project:detectRemoteProvider',
 

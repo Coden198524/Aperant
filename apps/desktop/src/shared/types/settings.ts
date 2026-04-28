@@ -358,6 +358,8 @@ export interface AppSettings {
   sidebarCollapsed?: boolean;
   // GPU acceleration for terminal rendering (WebGL)
   gpuAcceleration?: GpuAcceleration;
+  // Code graph optimization for PR review and QA (reduces token usage by 5-10x)
+  enableCodeGraph?: boolean;
 }
 
 // GPU acceleration mode for terminal WebGL rendering

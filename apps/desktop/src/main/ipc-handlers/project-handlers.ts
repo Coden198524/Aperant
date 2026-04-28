@@ -23,6 +23,8 @@ import { getToolPath } from '../cli-tool-manager';
 import type { BrowserWindow } from 'electron';
 import { getIsolatedGitEnv } from '../utils/git-isolation';
 import { detectRemoteProviderFromUrl } from '../utils/remote-provider-detector';
+import { GraphDatabase } from '../ai/graph/database';
+import { getMemoryClient } from '../ai/memory/db';
 
 // ============================================
 // Git Helper Functions
@@ -389,6 +391,36 @@ export function registerProjectHandlers(
 
         return { success: result.success, data: result, error: result.error };
       } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROJECT_INITIALIZE_GRAPH,
+    async (_, projectId: string): Promise<IPCResult<{ initialized: boolean }>> => {
+      try {
+        const project = projectStore.getProject(projectId);
+        if (!project) {
+          return { success: false, error: 'Project not found' };
+        }
+
+        // Get memory client (shared database for all projects)
+        const client = await getMemoryClient();
+
+        // Initialize graph database schema (idempotent)
+        const graphDb = new GraphDatabase(client);
+        await graphDb.initialize();
+
+        return {
+          success: true,
+          data: { initialized: true }
+        };
+      } catch (error) {
+        console.error('[Graph Init] Failed to initialize graph database:', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error'

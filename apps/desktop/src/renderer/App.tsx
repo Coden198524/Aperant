@@ -136,6 +136,24 @@ export function App() {
   const settings = useSettingsStore((state) => state.settings);
   const settingsLoading = useSettingsStore((state) => state.isLoading);
 
+  // Wrapper for opening project tabs with graph initialization
+  const openProjectTabWithGraph = async (projectId: string) => {
+    // Open the tab first
+    openProjectTab(projectId);
+
+    // Initialize graph database if code graph is enabled
+    if (settings.enableCodeGraph) {
+      try {
+        const result = await window.electronAPI.initializeGraphDatabase(projectId);
+        if (!result.success) {
+          console.warn('[App] Failed to initialize graph database:', result.error);
+        }
+      } catch (error) {
+        console.warn('[App] Error initializing graph database:', error);
+      }
+    }
+  };
+
   // API Profile state
   const profiles = useSettingsStore((state) => state.profiles);
 
@@ -224,12 +242,12 @@ export function App() {
         console.warn('[App] No tabs persisted, opening project:', projectToOpen);
         // Verify the project exists before opening
         if (projects.some(p => p.id === projectToOpen)) {
-          openProjectTab(projectToOpen);
+          openProjectTabWithGraph(projectToOpen);
           setActiveProject(projectToOpen);
         } else {
           // Fallback to first project if stored IDs are invalid
           console.warn('[App] Project not found, falling back to first project:', projects[0].id);
-          openProjectTab(projects[0].id);
+          openProjectTabWithGraph(projects[0].id);
           setActiveProject(projects[0].id);
         }
         return;
@@ -240,13 +258,13 @@ export function App() {
       // (projectTabs creates a new array on every render)
       if (activeProjectId && !openProjectIds.includes(activeProjectId)) {
         console.warn('[App] Active project has no tab, opening:', activeProjectId);
-        openProjectTab(activeProjectId);
+        openProjectTabWithGraph(activeProjectId);
       }
       // If there's a selected project but no active project, make it active
       else if (selectedProjectId && !activeProjectId) {
         console.warn('[App] No active project, using selected:', selectedProjectId);
         setActiveProject(selectedProjectId);
-        openProjectTab(selectedProjectId);
+        openProjectTabWithGraph(selectedProjectId);
       } else {
         console.warn('[App] Tab state is valid, no action needed');
       }
@@ -417,7 +435,7 @@ export function App() {
           if (path) {
             const project = await addProject(path);
             if (project) {
-              openProjectTab(project.id);
+              openProjectTabWithGraph(project.id);
               if (!project.autoBuildPath) {
                 setPendingProject(project);
                 setInitError(null);
@@ -434,7 +452,7 @@ export function App() {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [activeView, openProjectTab]);
+  }, [activeView, openProjectTabWithGraph]);
 
   // Load tasks when project changes
   useEffect(() => {
@@ -647,7 +665,7 @@ export function App() {
   };
 
   const handleProjectAdded = (project: Project, needsInit: boolean) => {
-    openProjectTab(project.id);
+    openProjectTabWithGraph(project.id);
     if (needsInit) {
       setPendingProject(project);
       setInitError(null);
@@ -1038,7 +1056,7 @@ export function App() {
                 onNewProject={handleAddProject}
                 onOpenProject={handleAddProject}
                 onSelectProject={(projectId) => {
-                  openProjectTab(projectId);
+                  openProjectTabWithGraph(projectId);
                 }}
               />
             )}

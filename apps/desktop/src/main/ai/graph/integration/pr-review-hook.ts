@@ -22,8 +22,18 @@ import { BlastRadiusAnalyzer } from '../analysis/blast-radius';
 import { ContextOptimizer } from '../analysis/context-optimizer';
 
 // =============================================================================
-// Types (matching pr-review-engine.ts)
+// Types (re-export from pr-review-engine.ts to avoid duplication)
 // =============================================================================
+
+export interface AIBotComment {
+	commentId: number;
+	author: string;
+	toolName: string;
+	body: string;
+	file?: string;
+	line?: number;
+	createdAt: string;
+}
 
 export interface PRContext {
 	prNumber: number;
@@ -42,7 +52,7 @@ export interface PRContext {
 	labels: string[];
 	totalAdditions: number;
 	totalDeletions: number;
-	aiBotComments: unknown[];
+	aiBotComments: AIBotComment[];
 }
 
 export interface ChangedFile {

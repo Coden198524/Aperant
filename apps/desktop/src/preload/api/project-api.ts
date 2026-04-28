@@ -29,6 +29,7 @@ export interface ProjectAPI {
     settings: Partial<ProjectSettings>
   ) => Promise<IPCResult>;
   initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
+  initializeGraphDatabase: (projectId: string) => Promise<IPCResult<{ initialized: boolean }>>;
   checkProjectVersion: (projectId: string) => Promise<IPCResult<AutoBuildVersionInfo>>;
   detectProjectRemoteProvider: (projectPath: string) => Promise<IPCResult<{
     provider: 'github' | 'gitlab' | 'gitblit' | 'unknown';
@@ -162,6 +163,9 @@ export const createProjectAPI = (): ProjectAPI => ({
 
   initializeProject: (projectId: string): Promise<IPCResult<InitializationResult>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_INITIALIZE, projectId),
+
+  initializeGraphDatabase: (projectId: string): Promise<IPCResult<{ initialized: boolean }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_INITIALIZE_GRAPH, projectId),
 
   checkProjectVersion: (projectId: string): Promise<IPCResult<AutoBuildVersionInfo>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CHECK_VERSION, projectId),

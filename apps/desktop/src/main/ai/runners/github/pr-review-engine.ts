@@ -27,6 +27,14 @@ import {
   StructuralIssuesOutputSchema,
   AICommentTriagesOutputSchema,
 } from '../../schema/output/pr-review.output';
+import {
+  optimizePRContext,
+  buildGraphAnalysisSummary,
+  isGraphAvailable,
+  type OptimizedPRContext,
+} from '../../graph';
+import { getMemoryClient } from '../../memory/db';
+import { GraphDatabase } from '../../graph/database';
 
 // =============================================================================
 // Enums & Types
@@ -192,6 +200,8 @@ export interface PRReviewEngineConfig {
   thinkingLevel?: ThinkingLevel;
   fastMode?: boolean;
   useParallelOrchestrator?: boolean;
+  projectPath?: string;
+  enableCodeGraph?: boolean;
 }
 
 /** Result of multi-pass review. */
@@ -200,6 +210,15 @@ export interface MultiPassReviewResult {
   structuralIssues: StructuralIssue[];
   aiTriages: AICommentTriage[];
   scanResult: ScanResult;
+  graphAnalysis?: {
+    enabled: boolean;
+    summary: string;
+    tokenSavings?: {
+      before: number;
+      after: number;
+      reductionPercent: number;
+    };
+  };
 }
 
 // =============================================================================
@@ -626,14 +645,55 @@ export async function runMultiPassReview(
     progressCallback?.({ phase, progress, message, prNumber: context.prNumber });
   };
 
+  // Code Graph Optimization (if enabled)
+  let optimizedContext: PRContext | OptimizedPRContext = context;
+  let graphAnalysisSummary = '';
+
+  if (config.enableCodeGraph && config.projectPath) {
+    try {
+      reportProgress('graph_analysis', 10, 'Analyzing code graph for blast radius...');
+
+      const memoryClient = await getMemoryClient();
+      const graphDb = new GraphDatabase(memoryClient);
+      await graphDb.initialize();
+
+      // Use project path as project ID (normalize path)
+      const projectId = config.projectPath.replace(/\\/g, '/');
+
+      if (await isGraphAvailable(projectId, graphDb)) {
+        const { optimizedContext: optCtx, tokenSavings } = await optimizePRContext(
+          context,
+          projectId,
+          graphDb,
+        );
+
+        optimizedContext = optCtx;
+        graphAnalysisSummary = buildGraphAnalysisSummary(optCtx);
+
+        const reductionPercent = ((1 - tokenSavings) * 100).toFixed(1);
+        reportProgress(
+          'graph_analysis',
+          30,
+          `Code graph analysis complete — ${reductionPercent}% token reduction`,
+        );
+      } else {
+        reportProgress('graph_analysis', 30, 'Code graph not indexed, using full context');
+      }
+    } catch (error) {
+      // Graph analysis failed - continue with original context
+      console.warn('[PRReview] Code graph optimization failed:', error);
+      reportProgress('graph_analysis', 30, 'Code graph optimization failed, using full context');
+    }
+  }
+
   // Pass 1: Quick Scan
   reportProgress('quick_scan', 35, 'Pass 1/6: Quick Scan...');
-  const scanResult = (await runReviewPass(ReviewPass.QUICK_SCAN, context, config)) as ScanResult;
+  const scanResult = (await runReviewPass(ReviewPass.QUICK_SCAN, optimizedContext, config)) as ScanResult;
   const quickVerdict = scanResult.verdict ?? 'no issues';
   reportProgress('quick_scan', 40, `Quick Scan complete — verdict: ${quickVerdict}`);
 
-  const needsDeep = needsDeepAnalysis(scanResult, context);
-  const hasAIComments = context.aiBotComments.length > 0;
+  const needsDeep = needsDeepAnalysis(scanResult, optimizedContext);
+  const hasAIComments = optimizedContext.aiBotComments.length > 0;
 
   // Determine which parallel passes will run
   const passNames = ['Security', 'Quality', 'Structural'];
@@ -645,21 +705,21 @@ export async function runMultiPassReview(
   const tasks: Array<Promise<{ type: string; data: unknown }>> = [
     (async () => {
       reportProgress('security', 50, 'Security analysis started...');
-      const data = await runReviewPass(ReviewPass.SECURITY, context, config);
+      const data = await runReviewPass(ReviewPass.SECURITY, optimizedContext, config);
       const count = (data as PRReviewFinding[]).length;
       reportProgress('security', 60, `Security analysis complete — ${count} finding${count !== 1 ? 's' : ''}`);
       return { type: 'findings', data };
     })(),
     (async () => {
       reportProgress('quality', 50, 'Quality analysis started...');
-      const data = await runReviewPass(ReviewPass.QUALITY, context, config);
+      const data = await runReviewPass(ReviewPass.QUALITY, optimizedContext, config);
       const count = (data as PRReviewFinding[]).length;
       reportProgress('quality', 60, `Quality analysis complete — ${count} finding${count !== 1 ? 's' : ''}`);
       return { type: 'findings', data };
     })(),
     (async () => {
       reportProgress('structural', 50, 'Structural analysis started...');
-      const data = await runStructuralPass(context, config);
+      const data = await runStructuralPass(optimizedContext, config);
       const count = (data as StructuralIssue[]).length;
       reportProgress('structural', 60, `Structural analysis complete — ${count} issue${count !== 1 ? 's' : ''}`);
       return { type: 'structural', data };
@@ -669,8 +729,8 @@ export async function runMultiPassReview(
   if (hasAIComments) {
     tasks.push(
       (async () => {
-        reportProgress('analyzing', 50, `AI Comment Triage started (${context.aiBotComments.length} comments)...`);
-        const data = await runAITriagePass(context, config);
+        reportProgress('analyzing', 50, `AI Comment Triage started (${optimizedContext.aiBotComments.length} comments)...`);
+        const data = await runAITriagePass(optimizedContext, config);
         const count = (data as AICommentTriage[]).length;
         reportProgress('analyzing', 60, `AI Comment Triage complete — ${count} triaged`);
         return { type: 'ai_triage', data };
@@ -682,7 +742,7 @@ export async function runMultiPassReview(
     tasks.push(
       (async () => {
         reportProgress('deep_analysis', 50, 'Deep analysis started...');
-        const data = await runReviewPass(ReviewPass.DEEP_ANALYSIS, context, config);
+        const data = await runReviewPass(ReviewPass.DEEP_ANALYSIS, optimizedContext, config);
         const count = (data as PRReviewFinding[]).length;
         reportProgress('deep_analysis', 60, `Deep analysis complete — ${count} finding${count !== 1 ? 's' : ''}`);
         return { type: 'findings', data };
@@ -715,10 +775,20 @@ export async function runMultiPassReview(
     reportProgress('dedup', 90, `Deduplication complete — removed ${removed} duplicate${removed !== 1 ? 's' : ''}, ${uniqueFindings.length} unique findings`);
   }
 
+  // Build graph analysis info
+  const graphAnalysis = config.enableCodeGraph && graphAnalysisSummary
+    ? {
+        enabled: true,
+        summary: graphAnalysisSummary,
+        tokenSavings: (optimizedContext as OptimizedPRContext).graphAnalysis?.tokenSavings,
+      }
+    : undefined;
+
   return {
     findings: uniqueFindings,
     structuralIssues,
     aiTriages,
     scanResult,
+    graphAnalysis,
   };
 }

@@ -196,6 +196,7 @@ export interface ElectronAPI {
     getProjects: () => Promise<IPCResult<Project[]>>;
     updateProjectSettings: (projectId: string, settings: Partial<ProjectSettings>) => Promise<IPCResult>;
     initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
+    initializeGraphDatabase: (projectId: string) => Promise<IPCResult<{ initialized: boolean }>>;
     checkProjectVersion: (projectId: string) => Promise<IPCResult<AutoBuildVersionInfo>>;
     detectProjectRemoteProvider: (projectPath: string) => Promise<IPCResult<{
       provider: 'github' | 'gitlab' | 'gitblit' | 'unknown';

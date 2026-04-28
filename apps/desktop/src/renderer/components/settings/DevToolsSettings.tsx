@@ -1,6 +1,6 @@
 import { useEffect, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Code, Terminal, RefreshCw, Loader2, Check, FolderOpen, AlertTriangle } from 'lucide-react';
+import { Code, Terminal, RefreshCw, Loader2, Check, FolderOpen, AlertTriangle, Network } from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
@@ -499,6 +499,37 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
               }}
             />
           </div>
+        </div>
+
+        {/* Code Graph Optimization Toggle */}
+        <div className="space-y-3 rounded-md border border-blue-500/30 bg-blue-500/5 p-4">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <Network className="h-4 w-4 text-blue-500" />
+              <Label htmlFor="enable-code-graph" className="text-sm font-medium">
+                {t('devtools.codeGraph.label', 'Code Graph Optimization')}
+              </Label>
+            </div>
+            <Switch
+              id="enable-code-graph"
+              checked={settings.enableCodeGraph ?? false}
+              onCheckedChange={(checked) => {
+                onSettingsChange({
+                  ...settings,
+                  enableCodeGraph: checked
+                });
+              }}
+            />
+          </div>
+          <p className="text-xs text-muted-foreground">
+            {t('devtools.codeGraph.description', 'Use code graph analysis to optimize PR reviews by reducing token usage (5-10x reduction). Analyzes code dependencies to focus on relevant changes.')}
+          </p>
+          {settings.enableCodeGraph && (
+            <p className="text-xs text-blue-400 font-medium flex items-center gap-1">
+              <Network className="h-3 w-3" />
+              {t('devtools.codeGraph.enabled', 'Code graph will be used for PR reviews to reduce API costs and improve focus.')}
+            </p>
+          )}
         </div>
 
         {/* YOLO Mode Toggle */}
