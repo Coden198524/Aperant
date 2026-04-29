@@ -58,6 +58,11 @@ export interface TaskAPI {
   // Worktree Change Detection
   checkWorktreeChanges: (taskId: string, projectId?: string) => Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>>;
 
+  // Git Changes
+  getWorktreeChangedFiles: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
+  getWorktreeCommits: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number }>>>;
+  getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
+
   // Image Operations
   loadImageThumbnail: (projectPath: string, specId: string, imagePath: string) => Promise<IPCResult<string>>;
 
@@ -162,6 +167,16 @@ export const createTaskAPI = (): TaskAPI => ({
   // Worktree Change Detection
   checkWorktreeChanges: (taskId: string, projectId?: string): Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CHECK_WORKTREE_CHANGES, taskId, projectId),
+
+  // Git Changes
+  getWorktreeChangedFiles: (taskId: string, projectId?: string): Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_CHANGED_FILES, taskId, projectId),
+
+  getWorktreeCommits: (taskId: string, projectId?: string): Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number }>>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_COMMITS, taskId, projectId),
+
+  getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string): Promise<IPCResult<string>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_FILE_DIFF, taskId, filePath, projectId),
 
   // Image Operations
   loadImageThumbnail: (projectPath: string, specId: string, imagePath: string): Promise<IPCResult<string>> =>

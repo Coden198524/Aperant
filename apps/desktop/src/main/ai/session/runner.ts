@@ -417,7 +417,7 @@ async function executeStream(
     onEvent?.(event);
   };
 
-  const streamHandler = createStreamHandler(emitEvent);
+  const streamHandler = createStreamHandler(emitEvent, sessionId);
 
   // Build messages array for AI SDK (system prompt is separate)
   const aiMessages = config.initialMessages.map((msg) => ({

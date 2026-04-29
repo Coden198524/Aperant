@@ -49,6 +49,9 @@ export const IPC_CHANNELS = {
   TASK_WORKTREE_OPEN_IN_IDE: 'task:worktreeOpenInIDE',
   TASK_WORKTREE_OPEN_IN_TERMINAL: 'task:worktreeOpenInTerminal',
   TASK_WORKTREE_DETECT_TOOLS: 'task:worktreeDetectTools',  // Detect installed IDEs/terminals
+  TASK_WORKTREE_CHANGED_FILES: 'task:worktreeChangedFiles',  // Get list of changed files
+  TASK_WORKTREE_COMMITS: 'task:worktreeCommits',  // Get commit history
+  TASK_WORKTREE_FILE_DIFF: 'task:worktreeFileDiff',  // Get diff for specific file
   TASK_LIST_WORKTREES: 'task:listWorktrees',
   TASK_ARCHIVE: 'task:archive',
   TASK_UNARCHIVE: 'task:unarchive',

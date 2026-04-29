@@ -233,7 +233,7 @@ function validateToolCallParams(toolName: string, input: unknown): string | null
  * const summary = handler.getSummary();
  * ```
  */
-export function createStreamHandler(onEvent: SessionEventCallback) {
+export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: string) {
   const state = createInitialState();
 
   function emit(event: StreamEvent): void {
@@ -457,6 +457,7 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
       usage: {
         ...state.cumulativeUsage,
         stepsExecuted: state.stepNumber,
+        sessionId,
       },
     });
   }
@@ -474,7 +475,7 @@ export function createStreamHandler(onEvent: SessionEventCallback) {
     return {
       stepsExecuted: state.stepNumber,
       toolCallCount: state.toolCallCount,
-      usage: { ...state.cumulativeUsage },
+      usage: { ...state.cumulativeUsage, sessionId },
     };
   }
 

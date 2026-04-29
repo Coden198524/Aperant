@@ -44,6 +44,7 @@ import { TaskWarnings } from './TaskWarnings';
 import { TaskSubtasks } from './TaskSubtasks';
 import { TaskLogs } from './TaskLogs';
 import { TaskFiles } from './TaskFiles';
+import { TaskGitChanges } from './TaskGitChanges';
 import { TaskReview } from './TaskReview';
 import type { Task, TaskLogPhase, WorktreeCreatePROptions } from '../../../shared/types';
 
@@ -596,6 +597,12 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                       {t('tasks:files.tab')}
                     </TabsTrigger>
                   )}
+                  <TabsTrigger
+                    value="git"
+                    className="rounded-none border-b-2 border-transparent data-[state=active]:border-primary data-[state=active]:bg-transparent data-[state=active]:shadow-none px-4 py-2.5 text-sm"
+                  >
+                    {t('tasks:gitChanges.tab')}
+                  </TabsTrigger>
                 </TabsList>
 
                 {/* Overview Tab */}
@@ -706,6 +713,11 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                     <TaskFiles task={task} />
                   </TabsContent>
                 )}
+
+                {/* Git Changes Tab */}
+                <TabsContent value="git" className="flex-1 min-h-0 overflow-hidden mt-0">
+                  <TaskGitChanges task={task} />
+                </TabsContent>
               </Tabs>
             </div>
 

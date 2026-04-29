@@ -387,6 +387,22 @@ const browserMockAPI: ElectronAPI = {
     data: { hasChanges: false, changedFileCount: 0 }
   }),
 
+  // Git Changes
+  getWorktreeChangedFiles: async () => ({
+    success: true,
+    data: []
+  }),
+
+  getWorktreeCommits: async () => ({
+    success: true,
+    data: []
+  }),
+
+  getWorktreeFileDiff: async () => ({
+    success: true,
+    data: ''
+  }),
+
   // Terminal Worktree Operations
   createTerminalWorktree: async () => ({
     success: false,

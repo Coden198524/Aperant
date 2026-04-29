@@ -77,6 +77,7 @@ export class WorkerBridge extends EventEmitter {
   private processType: ProcessType = 'task-execution';
   private executionProgressSequence = 0;
   private lastTokenUsage: TokenUsage | null = null;
+  private historicalTokenUsage: TokenUsage | null = null; // Baseline from previous sessions
   private bufferedTextDeltaLog = '';
   private textDeltaFlushTimer: NodeJS.Timeout | null = null;
 
@@ -99,7 +100,8 @@ export class WorkerBridge extends EventEmitter {
     this.executionProgressSequence = 0;
 
     // Initialize with historical token usage if provided (for task resume scenarios)
-    // Otherwise start from null - will be populated when first usage data arrives from worker
+    // Store as both baseline and last usage
+    this.historicalTokenUsage = initialTokenUsage ?? null;
     this.lastTokenUsage = initialTokenUsage ?? null;
 
     const workerConfig: WorkerConfig = {
@@ -216,7 +218,17 @@ export class WorkerBridge extends EventEmitter {
         this.progressTracker.processEvent(message.data);
         this.emitProgressFromTracker(message.taskId, message.projectId);
         if (message.data.type === 'usage-update') {
-          this.lastTokenUsage = mergeTokenUsage(this.lastTokenUsage, message.data.usage);
+          console.log('[worker-bridge] Received usage-update, before merge:', {
+            lastTokenUsage: this.lastTokenUsage,
+            historicalTokenUsage: this.historicalTokenUsage,
+            incomingUsage: message.data.usage,
+          });
+          this.lastTokenUsage = mergeTokenUsage(
+            this.lastTokenUsage,
+            message.data.usage,
+            this.historicalTokenUsage,
+          );
+          console.log('[worker-bridge] After merge:', this.lastTokenUsage);
           this.emitTyped('task-token-usage', message.taskId, this.lastTokenUsage, message.projectId);
         }
         break;
@@ -228,7 +240,13 @@ export class WorkerBridge extends EventEmitter {
 
       case 'task-token-usage':
         this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
-        this.lastTokenUsage = mergeTokenUsage(this.lastTokenUsage, message.data);
+        console.log('[worker-bridge] Received task-token-usage, before merge:', {
+          lastTokenUsage: this.lastTokenUsage,
+          historicalTokenUsage: this.historicalTokenUsage,
+          incomingUsage: message.data,
+        });
+        this.lastTokenUsage = mergeTokenUsage(this.lastTokenUsage, message.data, this.historicalTokenUsage);
+        console.log('[worker-bridge] After merge:', this.lastTokenUsage);
         this.emitTyped('task-token-usage', message.taskId, this.lastTokenUsage, message.projectId);
         break;
 
@@ -300,10 +318,14 @@ export class WorkerBridge extends EventEmitter {
     const exitCode = result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window' ? 0 : 1;
 
     // Merge stepsExecuted into usage for frontend display
-    const usageWithSteps: TokenUsage = mergeTokenUsage(this.lastTokenUsage, {
-      ...result.usage,
-      stepsExecuted: result.stepsExecuted,
-    });
+    const usageWithSteps: TokenUsage = mergeTokenUsage(
+      this.lastTokenUsage,
+      {
+        ...result.usage,
+        stepsExecuted: result.stepsExecuted,
+      },
+      this.historicalTokenUsage,
+    );
     this.lastTokenUsage = usageWithSteps;
 
     this.emitTyped('task-token-usage', taskId, usageWithSteps, projectId);
@@ -367,12 +389,19 @@ export class WorkerBridge extends EventEmitter {
   }
 }
 
-function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): TokenUsage {
+function mergeTokenUsage(
+  previous: TokenUsage | null,
+  incoming: TokenUsage,
+  historical: TokenUsage | null = null,
+): TokenUsage {
   if (!previous) return incoming;
 
-  // Session-based tracking: if sessionId differs, it's a new session → accumulate
-  // If sessionId is the same, it's an update within the same session → use Math.max()
-  const isNewSession = incoming.sessionId && previous.sessionId && incoming.sessionId !== previous.sessionId;
+  // Determine if this is a new session
+  // Case 1: Both have sessionId and they differ
+  // Case 2: Previous has no sessionId (loaded from plan) but incoming has one
+  const isNewSession =
+    (incoming.sessionId && previous.sessionId && incoming.sessionId !== previous.sessionId) ||
+    (incoming.sessionId && !previous.sessionId);
 
   const prevSteps = previous.stepsExecuted ?? 0;
   const incomingSteps = incoming.stepsExecuted ?? 0;
@@ -382,33 +411,37 @@ function mergeTokenUsage(previous: TokenUsage | null, incoming: TokenUsage): Tok
     incomingSteps,
     previousSessionId: previous.sessionId,
     incomingSessionId: incoming.sessionId,
+    hasHistorical: !!historical,
     isNewSession,
-    result: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps),
   });
 
-  // For new sessions (task resume), accumulate token counts
-  // For same session updates, use Math.max to handle out-of-order events
-  if (isNewSession) {
+  // For new sessions: use historical baseline + current session values
+  // For same session updates: use Math.max to handle out-of-order events
+  if (isNewSession && historical) {
+    // New session detected: historical baseline + current session's cumulative values
     return {
-      promptTokens: (previous.promptTokens ?? 0) + (incoming.promptTokens ?? 0),
-      completionTokens: (previous.completionTokens ?? 0) + (incoming.completionTokens ?? 0),
-      totalTokens: (previous.totalTokens ?? 0) + (incoming.totalTokens ?? 0),
-      thinkingTokens: ((previous.thinkingTokens ?? 0) + (incoming.thinkingTokens ?? 0)) || undefined,
-      cacheReadTokens: ((previous.cacheReadTokens ?? 0) + (incoming.cacheReadTokens ?? 0)) || undefined,
-      cacheCreationTokens: ((previous.cacheCreationTokens ?? 0) + (incoming.cacheCreationTokens ?? 0)) || undefined,
-      stepsExecuted: prevSteps + incomingSteps || undefined,
-      sessionId: incoming.sessionId, // Always use the latest sessionId
+      promptTokens: (historical.promptTokens ?? 0) + (incoming.promptTokens ?? 0),
+      completionTokens: (historical.completionTokens ?? 0) + (incoming.completionTokens ?? 0),
+      totalTokens: (historical.totalTokens ?? 0) + (incoming.totalTokens ?? 0),
+      thinkingTokens: ((historical.thinkingTokens ?? 0) + (incoming.thinkingTokens ?? 0)) || undefined,
+      cacheReadTokens: ((historical.cacheReadTokens ?? 0) + (incoming.cacheReadTokens ?? 0)) || undefined,
+      cacheCreationTokens:
+        ((historical.cacheCreationTokens ?? 0) + (incoming.cacheCreationTokens ?? 0)) || undefined,
+      stepsExecuted: (historical.stepsExecuted ?? 0) + incomingSteps || undefined,
+      sessionId: incoming.sessionId,
     };
   }
 
+  // Same session or no historical baseline: use Math.max for idempotent updates
   return {
     promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
     completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
     totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
     thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
     cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
-    cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
+    cacheCreationTokens:
+      Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
     stepsExecuted: Math.max(prevSteps, incomingSteps) || undefined,
-    sessionId: incoming.sessionId, // Always use the latest sessionId
+    sessionId: incoming.sessionId,
   };
 }

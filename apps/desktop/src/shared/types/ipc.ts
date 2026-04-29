@@ -247,6 +247,11 @@ export interface ElectronAPI {
   // Worktree change detection
   checkWorktreeChanges: (taskId: string, projectId?: string) => Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>>;
 
+  // Git Changes
+  getWorktreeChangedFiles: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
+  getWorktreeCommits: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number }>>>;
+  getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
+
   // Workspace management (for human review)
   // Per-spec architecture: Each spec has its own worktree at .worktrees/{spec-name}/
   getWorktreeStatus: (taskId: string, projectId?: string) => Promise<IPCResult<WorktreeStatus>>;
