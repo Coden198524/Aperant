@@ -35,6 +35,7 @@ function getWorker(): EventEmitter & { postMessage: ReturnType<typeof vi.fn>; te
 }
 
 vi.mock('electron', () => ({
+  default: { app: { isPackaged: false } },
   app: { isPackaged: false },
 }));
 
@@ -264,6 +265,101 @@ describe('WorkerBridge', () => {
       getWorker().emit('message', msg);
 
       expect(handler).toHaveBeenCalledWith('task-123', streamEvent.usage, 'proj-456');
+    });
+
+    it('accumulates request counts across provider sessions in one worker', () => {
+      const handler = vi.fn();
+      bridge.on('task-token-usage', handler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: {
+          type: 'usage-update',
+          usage: {
+            promptTokens: 120,
+            completionTokens: 30,
+            totalTokens: 150,
+            stepsExecuted: 2,
+            sessionId: 'session-a',
+          },
+        } as never,
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      getWorker().emit('message', {
+        type: 'task-token-usage',
+        taskId: 'task-123',
+        data: {
+          promptTokens: 40,
+          completionTokens: 10,
+          totalTokens: 50,
+          stepsExecuted: 1,
+          sessionId: 'session-b',
+        },
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      expect(handler).toHaveBeenLastCalledWith('task-123', {
+        promptTokens: 160,
+        completionTokens: 40,
+        totalTokens: 200,
+        stepsExecuted: 3,
+        sessionId: 'session-b',
+      }, 'proj-456');
+    });
+
+    it('adds resumed session usage to the historical baseline only once', () => {
+      const handler = vi.fn();
+      bridge.on('task-token-usage', handler);
+      bridge.spawn(createConfig(), {
+        promptTokens: 1000,
+        completionTokens: 500,
+        totalTokens: 1500,
+        stepsExecuted: 10,
+        sessionId: 'old-session',
+      });
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: {
+          type: 'usage-update',
+          usage: {
+            promptTokens: 100,
+            completionTokens: 50,
+            totalTokens: 150,
+            stepsExecuted: 1,
+            sessionId: 'new-session',
+          },
+        } as never,
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        data: {
+          type: 'usage-update',
+          usage: {
+            promptTokens: 150,
+            completionTokens: 80,
+            totalTokens: 230,
+            stepsExecuted: 2,
+            sessionId: 'new-session',
+          },
+        } as never,
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      expect(handler).toHaveBeenLastCalledWith('task-123', {
+        promptTokens: 1150,
+        completionTokens: 580,
+        totalTokens: 1730,
+        stepsExecuted: 12,
+        sessionId: 'new-session',
+      }, 'proj-456');
     });
   });
 

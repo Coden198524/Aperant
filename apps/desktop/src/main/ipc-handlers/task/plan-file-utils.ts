@@ -39,7 +39,7 @@ async function withPlanLock<T>(planPath: string, operation: () => Promise<T>): P
   const currentLock = planLocks.get(planPath) || Promise.resolve();
 
   // Create a new promise that will resolve after our operation completes
-  let resolve: () => void;
+  let resolve: (() => void) | undefined;
   const newLock = new Promise<void>((r) => { resolve = r; });
   planLocks.set(planPath, newLock);
 
@@ -50,7 +50,7 @@ async function withPlanLock<T>(planPath: string, operation: () => Promise<T>): P
     return await operation();
   } finally {
     // Release the lock
-    resolve!();
+    resolve?.();
     // Clean up if this was the last operation
     if (planLocks.get(planPath) === newLock) {
       planLocks.delete(planPath);
@@ -70,15 +70,6 @@ function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage)
     return incoming;
   }
 
-  // Session-based tracking: if sessionId differs, it's a new session → accumulate steps
-  // If sessionId is the same or missing, it's an update within the same session → use Math.max()
-  //
-  // This solves the problem where stopping and continuing a task would cause steps to explode:
-  // - Old approach: if incoming < previous, assume new session and accumulate
-  // - Problem: Every save triggered accumulation (1<74 add, 2<74 add, 3<74 add...)
-  // - New approach: Only accumulate when sessionId actually changes
-  const isNewSession = incoming.sessionId && previous.sessionId && incoming.sessionId !== previous.sessionId;
-
   const prevSteps = previous.stepsExecuted ?? 0;
   const incomingSteps = incoming.stepsExecuted ?? 0;
 
@@ -87,10 +78,12 @@ function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage)
     incomingSteps,
     previousSessionId: previous.sessionId,
     incomingSessionId: incoming.sessionId,
-    isNewSession,
-    result: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps),
+    result: Math.max(prevSteps, incomingSteps),
   });
 
+  // WorkerBridge emits task-level cumulative usage, including any historical
+  // baseline loaded when a task is resumed. Persisting must be idempotent:
+  // adding again on sessionId changes double-counts requests after pause/resume.
   return {
     promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
     completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
@@ -98,7 +91,7 @@ function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage)
     thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
     cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
     cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
-    stepsExecuted: isNewSession ? prevSteps + incomingSteps : Math.max(prevSteps, incomingSteps) || undefined,
+    stepsExecuted: Math.max(prevSteps, incomingSteps) || undefined,
     sessionId: incoming.sessionId, // Always use the latest sessionId
   };
 }
