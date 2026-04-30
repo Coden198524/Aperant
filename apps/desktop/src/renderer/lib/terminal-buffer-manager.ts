@@ -15,7 +15,7 @@ class TerminalBufferManager {
   private static instance: TerminalBufferManager;
   private buffers = new Map<string, string>();
   private disposables = new Map<string, Disposable[]>();
-  private readonly MAX_BUFFER_SIZE = 100_000; // 100KB per terminal
+  private readonly MAX_BUFFER_SIZE = 10_000_000; // 10MB per terminal (increased for large AI responses)
 
   private constructor() {
     // Private constructor for singleton
