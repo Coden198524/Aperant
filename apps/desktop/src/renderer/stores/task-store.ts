@@ -1100,6 +1100,44 @@ export async function persistUpdateTask(
 }
 
 /**
+ * Delete a subtask from a task's implementation plan and update local state.
+ */
+export async function deleteSubtask(
+  taskId: string,
+  subtaskId: string
+): Promise<{ success: boolean; error?: string }> {
+  const store = useTaskStore.getState();
+  const task = store.tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+
+  try {
+    const result = await window.electronAPI.deleteSubtask(taskId, subtaskId, task?.projectId);
+
+    if (result.success && result.data) {
+      store.updateTask(taskId, {
+        title: result.data.title,
+        description: result.data.description,
+        status: result.data.status,
+        reviewReason: result.data.reviewReason,
+        subtasks: result.data.subtasks,
+        executionProgress: result.data.executionProgress,
+        updatedAt: new Date()
+      });
+      return { success: true };
+    }
+
+    return {
+      success: false,
+      error: result.error || 'Failed to delete subtask'
+    };
+  } catch (error) {
+    return {
+      success: false,
+      error: error instanceof Error ? error.message : 'Unknown error'
+    };
+  }
+}
+
+/**
  * Check if a task has an active running process
  */
 export async function checkTaskRunning(taskId: string): Promise<boolean> {

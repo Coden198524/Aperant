@@ -17,9 +17,23 @@ import { getToolPath } from '../../cli-tool-manager';
 import { getIsolatedGitEnv } from '../../utils/git-isolation';
 import { taskStateManager } from '../../task-state-manager';
 import { safeBreadcrumb } from '../../sentry';
+import { updatePlanFile } from './plan-file-utils';
 
 const TITLE_GENERATION_TIMEOUT_MS = 5000;
 const UNTITLED_TASK_FALLBACK = 'Untitled task';
+
+interface MutablePlanSubtask {
+  id?: string;
+}
+
+interface MutablePlanPhase {
+  subtasks?: MutablePlanSubtask[];
+  chunks?: MutablePlanSubtask[];
+}
+
+interface MutableImplementationPlan extends Record<string, unknown> {
+  phases?: MutablePlanPhase[];
+}
 
 /**
  * Sanitize thinking levels in task metadata in-place.
@@ -657,6 +671,110 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
 
         // Invalidate cache since a task was updated
         projectStore.invalidateTasksCache(project.id);
+
+        return { success: true, data: updatedTask };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+  );
+
+  /**
+   * Delete a subtask from implementation_plan.json.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_DELETE_SUBTASK,
+    async (
+      _,
+      taskId: string,
+      subtaskId: string,
+      projectId?: string
+    ): Promise<IPCResult<Task>> => {
+      try {
+        if (!subtaskId?.trim()) {
+          return { success: false, error: 'Subtask ID is required' };
+        }
+
+        const { task, project } = findTaskAndProject(taskId, projectId);
+
+        if (!task || !project) {
+          return { success: false, error: 'Task not found' };
+        }
+
+        if (task.status === 'in_progress') {
+          return { success: false, error: 'Cannot delete subtasks while the task is running' };
+        }
+
+        const specsBaseDir = getSpecsDir(project.autoBuildPath || '.auto-claude');
+        const specPaths = findAllSpecPaths(
+          project.path,
+          specsBaseDir,
+          task.specId,
+          '[TASK_DELETE_SUBTASK]'
+        );
+
+        if (specPaths.length === 0) {
+          return { success: false, error: 'Spec directory not found' };
+        }
+
+        let removedCount = 0;
+        let updatedAnyPlan = false;
+
+        for (const specPath of specPaths) {
+          const planPath = path.join(specPath, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+          const updatedPlan = await updatePlanFile<MutableImplementationPlan>(planPath, (plan) => {
+            if (!Array.isArray(plan.phases)) {
+              return plan;
+            }
+
+            for (const phase of plan.phases) {
+              const subtaskList = Array.isArray(phase.subtasks)
+                ? phase.subtasks
+                : Array.isArray(phase.chunks)
+                  ? phase.chunks
+                  : null;
+
+              if (!subtaskList) continue;
+
+              const beforeCount = subtaskList.length;
+              const remainingSubtasks = subtaskList.filter((subtask) => subtask.id !== subtaskId);
+              const removedFromPhase = beforeCount - remainingSubtasks.length;
+
+              if (removedFromPhase > 0) {
+                removedCount += removedFromPhase;
+                if (Array.isArray(phase.subtasks)) {
+                  phase.subtasks = remainingSubtasks;
+                } else {
+                  phase.chunks = remainingSubtasks;
+                }
+              }
+            }
+
+            return plan;
+          });
+
+          updatedAnyPlan = updatedAnyPlan || updatedPlan !== null;
+        }
+
+        if (!updatedAnyPlan) {
+          return { success: false, error: 'Implementation plan not found' };
+        }
+
+        if (removedCount === 0) {
+          return { success: false, error: 'Subtask not found' };
+        }
+
+        projectStore.invalidateTasksCache(project.id);
+        const updatedTask = projectStore
+          .getTasks(project.id)
+          .find((candidate) => candidate.id === task.id || candidate.specId === task.specId);
+
+        if (!updatedTask) {
+          return { success: false, error: 'Task not found after update' };
+        }
 
         return { success: true, data: updatedTask };
       } catch (error) {

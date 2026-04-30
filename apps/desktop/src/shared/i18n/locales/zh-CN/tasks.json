@@ -410,7 +410,12 @@
   "subtasks": {
     "untitled": "未命名子任务",
     "expandAll": "展开全部",
-    "collapseAll": "折叠全部"
+    "collapseAll": "折叠全部",
+    "deleteTooltip": "删除子任务",
+    "deleteDisabledRunning": "停止任务后才能删除子任务",
+    "deleteConfirm": "确定删除子任务“{{title}}”吗？这会从实现计划中移除它。",
+    "deleteAriaLabel": "删除子任务 {{title}}",
+    "deleteFailed": "删除子任务失败"
   },
   "bulkPR": {
     "selectAllInColumn": "选择当前列中的所有任务",

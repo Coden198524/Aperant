@@ -157,6 +157,22 @@ describe('IPC Bridge Integration', () => {
         expect(mockIpcRenderer.send).toHaveBeenCalledWith('task:stop', 'task-id', undefined);
       });
 
+      it('should have deleteSubtask method', async () => {
+        const deleteSubtask = electronAPI['deleteSubtask'] as (
+          taskId: string,
+          subtaskId: string,
+          projectId?: string
+        ) => Promise<unknown>;
+        await deleteSubtask('task-id', 'subtask-id', 'project-id');
+
+        expect(mockIpcRenderer.invoke).toHaveBeenCalledWith(
+          'task:deleteSubtask',
+          'task-id',
+          'subtask-id',
+          'project-id'
+        );
+      });
+
       it('should have submitReview method', async () => {
         const submitReview = electronAPI['submitReview'] as (
           id: string,
@@ -320,6 +336,7 @@ describe('IPC Bridge Integration', () => {
 
       expect(IPC_CHANNELS.TASK_LIST).toBe('task:list');
       expect(IPC_CHANNELS.TASK_CREATE).toBe('task:create');
+      expect(IPC_CHANNELS.TASK_DELETE_SUBTASK).toBe('task:deleteSubtask');
       expect(IPC_CHANNELS.TASK_START).toBe('task:start');
       expect(IPC_CHANNELS.TASK_STOP).toBe('task:stop');
       expect(IPC_CHANNELS.TASK_REVIEW).toBe('task:review');

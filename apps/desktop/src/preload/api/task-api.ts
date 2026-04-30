@@ -34,6 +34,7 @@ export interface TaskAPI {
     taskId: string,
     updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }
   ) => Promise<IPCResult<Task>>;
+  deleteSubtask: (taskId: string, subtaskId: string, projectId?: string) => Promise<IPCResult<Task>>;
   startTask: (taskId: string, options?: TaskStartOptions) => void;
   stopTask: (taskId: string, projectId?: string) => void;
   submitReview: (
@@ -129,6 +130,9 @@ export const createTaskAPI = (): TaskAPI => ({
     updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }
   ): Promise<IPCResult<Task>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_UPDATE, taskId, updates),
+
+  deleteSubtask: (taskId: string, subtaskId: string, projectId?: string): Promise<IPCResult<Task>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_DELETE_SUBTASK, taskId, subtaskId, projectId),
 
   startTask: (taskId: string, options?: TaskStartOptions): void =>
     ipcRenderer.send(IPC_CHANNELS.TASK_START, taskId, options),

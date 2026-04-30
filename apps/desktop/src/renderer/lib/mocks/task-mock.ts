@@ -29,6 +29,22 @@ export const taskMock = {
 
   deleteTask: async () => ({ success: true }),
 
+  deleteSubtask: async (_taskId: string, _subtaskId: string, _projectId?: string) => ({
+    success: true,
+    data: {
+      id: _taskId,
+      projectId: _projectId || 'mock-project-1',
+      specId: _taskId,
+      title: 'Mock Task',
+      description: 'Mock task description',
+      status: 'backlog' as const,
+      subtasks: [],
+      logs: [],
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+  }),
+
   updateTask: async (_taskId: string, updates: { title?: string; description?: string }) => ({
     success: true,
     data: {

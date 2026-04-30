@@ -1,10 +1,11 @@
 import { useState, useCallback } from 'react';
-import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown } from 'lucide-react';
+import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2 } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, calculateProgress } from '../../lib/utils';
 import { resolveActiveSubtaskIndex } from '../../lib/subtask-progress';
+import { deleteSubtask } from '../../stores/task-store';
 import type { Task } from '../../../shared/types';
 
 interface TaskSubtasksProps {
@@ -30,6 +31,8 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const { t } = useTranslation(['tasks']);
   const progress = calculateProgress(task.subtasks);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [deletingSubtaskId, setDeletingSubtaskId] = useState<string | null>(null);
+  const [deleteError, setDeleteError] = useState<string | null>(null);
   const isTaskRunning = task.status === 'in_progress' || task.executionProgress?.phase === 'coding';
   const activeSubtaskIndex = resolveActiveSubtaskIndex({
     subtasks: task.subtasks,
@@ -58,6 +61,32 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
       return new Set(task.subtasks.map(s => s.id));
     });
   }, [task.subtasks]);
+
+  const handleDeleteSubtask = useCallback(async (subtaskId: string, title: string) => {
+    if (isTaskRunning || deletingSubtaskId) return;
+
+    const confirmed = window.confirm(t('tasks:subtasks.deleteConfirm', {
+      title,
+      defaultValue: 'Delete subtask "{{title}}"? This removes it from the implementation plan.'
+    }));
+    if (!confirmed) return;
+
+    setDeletingSubtaskId(subtaskId);
+    setDeleteError(null);
+
+    const result = await deleteSubtask(task.id, subtaskId);
+    if (result.success) {
+      setExpandedIds(prev => {
+        const next = new Set(prev);
+        next.delete(subtaskId);
+        return next;
+      });
+    } else {
+      setDeleteError(result.error || t('tasks:subtasks.deleteFailed', 'Failed to delete subtask'));
+    }
+
+    setDeletingSubtaskId(null);
+  }, [deletingSubtaskId, isTaskRunning, t, task.id]);
 
   const allExpanded = expandedIds.size === task.subtasks.length && task.subtasks.length > 0;
 
@@ -96,6 +125,11 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
               </button>
             </div>
           </div>
+          {deleteError && (
+            <div className="rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              {deleteError}
+            </div>
+          )}
           {task.subtasks.map((subtask, index) => {
             const isExpanded = expandedIds.has(subtask.id);
             const hasDetails = (subtask.description && subtask.description !== subtask.title) ||
@@ -118,33 +152,63 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
                 )}
               >
                 {/* Collapsed header — always visible */}
-                <button
-                  type="button"
-                  onClick={() => toggleExpand(subtask.id)}
-                  className="flex items-center gap-2 w-full p-3 text-left cursor-pointer"
-                >
-                  <div className="shrink-0">
-                    {getSubtaskStatusIcon(subtask.status, isInProgress)}
-                  </div>
-                  <span className={cn(
-                    'text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0',
-                    subtask.status === 'completed' ? 'bg-success/20 text-success' :
-                    isInProgress ? 'bg-info/20 text-info' :
-                    subtask.status === 'failed' ? 'bg-destructive/20 text-destructive' :
-                    'bg-muted text-muted-foreground'
-                  )}>
-                    #{index + 1}
-                  </span>
-                  <span className="text-sm font-medium text-foreground flex-1 min-w-0 line-clamp-2">
-                    {subtask.title || t('tasks:subtasks.untitled')}
-                  </span>
-                  {hasDetails && (
-                    <ChevronRight className={cn(
-                      'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200',
-                      isExpanded && 'rotate-90'
-                    )} />
-                  )}
-                </button>
+                <div className="flex items-center gap-1 p-3">
+                  <button
+                    type="button"
+                    onClick={() => toggleExpand(subtask.id)}
+                    className="flex min-w-0 flex-1 items-center gap-2 text-left"
+                  >
+                    <div className="shrink-0">
+                      {getSubtaskStatusIcon(subtask.status, isInProgress)}
+                    </div>
+                    <span className={cn(
+                      'text-[10px] font-medium px-1.5 py-0.5 rounded-full shrink-0',
+                      subtask.status === 'completed' ? 'bg-success/20 text-success' :
+                      isInProgress ? 'bg-info/20 text-info' :
+                      subtask.status === 'failed' ? 'bg-destructive/20 text-destructive' :
+                      'bg-muted text-muted-foreground'
+                    )}>
+                      #{index + 1}
+                    </span>
+                    <span className="text-sm font-medium text-foreground flex-1 min-w-0 line-clamp-2">
+                      {subtask.title || t('tasks:subtasks.untitled')}
+                    </span>
+                    {hasDetails && (
+                      <ChevronRight className={cn(
+                        'h-4 w-4 shrink-0 text-muted-foreground transition-transform duration-200',
+                        isExpanded && 'rotate-90'
+                      )} />
+                    )}
+                  </button>
+                  <Tooltip>
+                    <TooltipTrigger asChild>
+                      <button
+                        type="button"
+                        onClick={() => handleDeleteSubtask(
+                          subtask.id,
+                          subtask.title || t('tasks:subtasks.untitled')
+                        )}
+                        disabled={isTaskRunning || deletingSubtaskId !== null}
+                        className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:cursor-not-allowed disabled:opacity-50"
+                        aria-label={t('tasks:subtasks.deleteAriaLabel', {
+                          title: subtask.title || t('tasks:subtasks.untitled'),
+                          defaultValue: 'Delete subtask {{title}}'
+                        })}
+                      >
+                        {deletingSubtaskId === subtask.id ? (
+                          <Loader2 className="h-4 w-4 animate-spin" />
+                        ) : (
+                          <Trash2 className="h-4 w-4" />
+                        )}
+                      </button>
+                    </TooltipTrigger>
+                    <TooltipContent side="left">
+                      {isTaskRunning
+                        ? t('tasks:subtasks.deleteDisabledRunning', 'Stop the task before deleting subtasks')
+                        : t('tasks:subtasks.deleteTooltip', 'Delete subtask')}
+                    </TooltipContent>
+                  </Tooltip>
+                </div>
 
                 {/* Expanded details */}
                 {isExpanded && hasDetails && (

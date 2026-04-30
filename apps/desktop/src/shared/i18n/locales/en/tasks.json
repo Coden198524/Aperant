@@ -359,7 +359,12 @@
   "subtasks": {
     "untitled": "Untitled subtask",
     "expandAll": "Expand all",
-    "collapseAll": "Collapse all"
+    "collapseAll": "Collapse all",
+    "deleteTooltip": "Delete subtask",
+    "deleteDisabledRunning": "Stop the task before deleting subtasks",
+    "deleteConfirm": "Delete subtask \"{{title}}\"? This removes it from the implementation plan.",
+    "deleteAriaLabel": "Delete subtask {{title}}",
+    "deleteFailed": "Failed to delete subtask"
   },
   "bulkPR": {
     "selectAllInColumn": "Select all tasks in column",

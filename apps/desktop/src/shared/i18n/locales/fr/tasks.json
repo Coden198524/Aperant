@@ -355,7 +355,12 @@
   "subtasks": {
     "untitled": "Sous-tâche sans titre",
     "expandAll": "Tout déplier",
-    "collapseAll": "Tout replier"
+    "collapseAll": "Tout replier",
+    "deleteTooltip": "Supprimer la sous-tâche",
+    "deleteDisabledRunning": "Arrêtez la tâche avant de supprimer des sous-tâches",
+    "deleteConfirm": "Supprimer la sous-tâche \"{{title}}\" ? Elle sera retirée du plan d'implémentation.",
+    "deleteAriaLabel": "Supprimer la sous-tâche {{title}}",
+    "deleteFailed": "Échec de la suppression de la sous-tâche"
   },
   "bulkPR": {
     "selectAllInColumn": "Sélectionner toutes les tâches de la colonne",
