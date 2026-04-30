@@ -243,7 +243,7 @@ export function injectContext(promptTemplate: string, context: PromptContext): s
     );
   }
 
-  // 5. Domain-specific guidance (defaults to game development for this product)
+  // 5. General software-development guidance
   const domainGuidance = buildDomainGuidanceHeader();
   if (domainGuidance) {
     sections.push(domainGuidance);
@@ -266,26 +266,26 @@ export function injectContext(promptTemplate: string, context: PromptContext): s
 /**
  * Build optional domain guidance header.
  *
- * Defaults to game-development guidance since this product primarily targets
- * game teams. Can be disabled or switched by setting APERANT_AGENT_DOMAIN.
+ * Defaults to general software-development guidance. Can be disabled by setting
+ * APERANT_AGENT_DOMAIN to "none".
  */
 function buildDomainGuidanceHeader(): string {
-  const domain = (process.env.APERANT_AGENT_DOMAIN ?? 'game').trim().toLowerCase();
-  if (!domain || domain === 'none' || domain === 'general') return '';
-  if (domain !== 'game' && domain !== 'gaming') return '';
+  const domain = (process.env.APERANT_AGENT_DOMAIN ?? 'general').trim().toLowerCase();
+  if (!domain || domain === 'none') return '';
 
   return (
-    `## DOMAIN FOCUS: GAME DEVELOPMENT (DEFAULT)\n\n` +
-    `Treat this as a game-production project unless the task clearly indicates otherwise.\n\n` +
+    `## DOMAIN FOCUS: GENERAL SOFTWARE DEVELOPMENT\n\n` +
+    `Treat this as a general software-development project unless the task, project instructions, or project profile indicate a more specific domain.\n\n` +
     `Prioritize:\n` +
-    `- Runtime performance and frame-time stability (CPU/GPU spikes, frame pacing, hitches)\n` +
-    `- Memory and asset budgets (VRAM/RAM pressure, texture/audio/mesh footprint)\n` +
-    `- Load-time and streaming behavior (scene transitions, async loading, stutter risk)\n` +
-    `- Input feel and responsiveness (latency, buffering, control consistency)\n` +
-    `- Determinism/sync safety for online gameplay (state drift, tick/order sensitivity)\n` +
-    `- Cross-platform behavior (PC/mobile/console differences, device constraints)\n` +
-    `- Telemetry/crash diagnostics and safe rollback paths for live operations\n\n` +
-    `When proposing plans or verification, include concrete checks for these areas where relevant.\n\n` +
+    `- Correctness against requirements and acceptance criteria\n` +
+    `- Fit with existing architecture, module boundaries, and local conventions\n` +
+    `- Security, privacy, permissions, and data integrity where relevant\n` +
+    `- Maintainability, readability, and minimizing unnecessary churn\n` +
+    `- Performance and resource usage appropriate to the affected paths\n` +
+    `- Reliability, error handling, observability, and safe rollback for production changes\n` +
+    `- Accessibility and usability for user-facing UI changes\n` +
+    `- Compatibility with supported runtimes, platforms, browsers, and dependency versions\n\n` +
+    `When proposing plans or verification, include concrete project-specific checks such as targeted tests, typecheck, lint, build, smoke tests, or manual verification.\n\n` +
     `---\n\n`
   );
 }

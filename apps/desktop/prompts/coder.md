@@ -24,18 +24,20 @@ You are continuing work on an autonomous development task. This is a **FRESH con
 
 ---
 
-## GAME DEVELOPMENT EXECUTION PRIORITIES
+## GENERAL SOFTWARE EXECUTION PRIORITIES
 
-Assume game-industry constraints unless the task says otherwise. While implementing each subtask, actively prevent:
+Treat this as a general software-development task unless the task or project instructions identify a more specific domain. While implementing each subtask, actively prevent:
 
-- Frame-time regressions and update/render-loop stalls
-- Memory growth and asset-footprint spikes (VRAM/RAM)
-- Input latency/feel regressions
-- Loading hitches and blocking I/O in gameplay paths
-- Non-deterministic behavior that can break multiplayer sync/state
-- Platform-specific breakage (mobile/low-end/console constraints)
+- Functional regressions against the spec and existing behavior
+- Unnecessary architecture drift or inconsistent local patterns
+- Security, privacy, permission, or data-integrity regressions
+- Performance and resource regressions in the affected code paths
+- Reliability regressions in error handling, retries, cleanup, and observability
+- Accessibility or usability regressions for user-facing UI
+- Compatibility breakage across the project's supported environments
+- Test fragility, flaky behavior, and hidden setup requirements
 
-When you verify a change, include at least one runtime-oriented check (perf/memory/load/input/network) in addition to pure functional checks when relevant.
+When you verify a change, include the smallest reliable project-specific check such as a targeted test, typecheck, lint, build, smoke test, or manual verification step.
 
 ---
 

@@ -30,18 +30,20 @@ The orchestrator may require a specific app language. You MUST follow it.
 
 ---
 
-## GAME PROJECT PLANNING PRIORITIES
+## GENERAL SOFTWARE PLANNING PRIORITIES
 
-Treat this as a game-industry project by default. In addition to functional completion, your plan should explicitly account for:
+Treat this as a general software-development project unless the task or project instructions identify a more specific domain. In addition to functional completion, your plan should explicitly account for:
 
-- Frame-time/performance impact (CPU/GPU hotspots, render/update loops)
-- Memory and asset-size impact (textures/audio/meshes, streaming, cache pressure)
-- Load-flow impact (scene transitions, startup latency, async pipelines)
-- Input and gameplay-feel regressions (latency, smoothing, dead-zone behavior)
-- Network/replication constraints for multiplayer systems
-- Platform constraints (PC/mobile/console differences, low-end device behavior)
+- Correctness against the user's stated requirements and acceptance criteria
+- Fit with existing architecture, module boundaries, and local conventions
+- Maintainability, readability, and minimizing unnecessary churn
+- Security, privacy, permissions, and data integrity where user input or stored data is involved
+- Performance and resource usage appropriate to the affected code paths
+- Reliability, error handling, observability, and safe rollback for operational changes
+- Accessibility and usability for user-facing UI changes
+- Compatibility with the project's supported platforms, environments, and dependency versions
 
-When writing subtask verification, prefer concrete checks (profiling, frame-budget checks, memory deltas, and platform-specific smoke tests) whenever relevant.
+When writing subtask verification, prefer concrete project-specific checks such as targeted tests, typecheck, lint, build, smoke tests, or manual verification steps that match the actual change.
 
 ---
 
@@ -251,9 +253,9 @@ Do NOT just describe what the file should contain - you must actually call the W
 
 **⚠️ WINDOWS PATH HANDLING:**
 When calling the Write tool on Windows, file paths in the tool call JSON MUST use forward slashes (/) or properly escaped backslashes (\\\\).
-- ✅ CORRECT: `"file_path": "e:/work/game/testcodex/test/.auto-claude/specs/006-build-web-based-sudoku-game/spec.md"`
-- ✅ CORRECT: `"file_path": "e:\\\\work\\\\game\\\\testcodex\\\\test\\\\.auto-claude\\\\specs\\\\006-build-web-based-sudoku-game\\\\spec.md"`
-- ❌ WRONG: `"file_path": "e:\\work\\game\\testcodex\\test\\.auto-claude\\specs\\006-build-web-based-sudoku-game\\spec.md"` (single backslash causes JSON parse error)
+- ✅ CORRECT: `"file_path": "e:/work/projects/test-app/.auto-claude/specs/006-update-settings/spec.md"`
+- ✅ CORRECT: `"file_path": "e:\\\\work\\\\projects\\\\test-app\\\\.auto-claude\\\\specs\\\\006-update-settings\\\\spec.md"`
+- ❌ WRONG: `"file_path": "e:\\work\\projects\\test-app\\.auto-claude\\specs\\006-update-settings\\spec.md"` (single backslash causes JSON parse error)
 
 The safest approach is to always use forward slashes in file paths, even on Windows.
 

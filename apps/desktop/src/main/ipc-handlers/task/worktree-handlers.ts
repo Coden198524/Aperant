@@ -3095,25 +3095,57 @@ export function registerWorktreeHandlers(
     IPC_CHANNELS.TASK_WORKTREE_CHANGED_FILES,
     async (_, taskId: string, projectId?: string): Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>> => {
       try {
+        console.log('[TASK_WORKTREE_CHANGED_FILES] Called with taskId:', taskId, 'projectId:', projectId);
         const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
+          console.log('[TASK_WORKTREE_CHANGED_FILES] Task or project not found');
           return { success: false, error: 'Task not found' };
         }
 
         const worktreePath = findTaskWorktree(project.path, task.specId);
+        console.log('[TASK_WORKTREE_CHANGED_FILES] Worktree path:', worktreePath);
         if (!worktreePath) {
-          return { success: true, data: [] };
+          console.log('[TASK_WORKTREE_CHANGED_FILES] Worktree not found for specId:', task.specId);
+          return { success: false, error: `Worktree not found for task ${task.specId}. The task may not have an active worktree.` };
         }
 
-        const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
-
-        // Get file status
-        const nameStatusResult = await execFileAsync(getToolPath('git'), ['diff', '--name-status', baseBranch], {
+        // Get current branch
+        const currentBranchResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
           cwd: worktreePath,
           encoding: 'utf-8',
           env: getIsolatedGitEnv(),
           timeout: WORKTREE_GIT_TIMEOUT_MS,
         });
+        const currentBranch = (currentBranchResult.stdout as string).trim();
+        console.log('[TASK_WORKTREE_CHANGED_FILES] Current branch:', currentBranch);
+
+        // Try to get upstream branch
+        let compareTarget = '';
+        try {
+          const upstreamResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', '@{upstream}'], {
+            cwd: worktreePath,
+            encoding: 'utf-8',
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          });
+          compareTarget = (upstreamResult.stdout as string).trim();
+          console.log('[TASK_WORKTREE_CHANGED_FILES] Upstream branch:', compareTarget);
+        } catch {
+          // No upstream, use main branch
+          const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
+          compareTarget = `origin/${baseBranch}`;
+          console.log('[TASK_WORKTREE_CHANGED_FILES] No upstream, using:', compareTarget);
+        }
+
+        // Get file status
+        const nameStatusResult = await execFileAsync(getToolPath('git'), ['diff', '--name-status', `${compareTarget}...HEAD`], {
+          cwd: worktreePath,
+          encoding: 'utf-8',
+          env: getIsolatedGitEnv(),
+          timeout: WORKTREE_GIT_TIMEOUT_MS,
+        });
+
+        console.log('[TASK_WORKTREE_CHANGED_FILES] Git diff output:', nameStatusResult.stdout);
 
         const files = (nameStatusResult.stdout as string)
           .trim()
@@ -3132,7 +3164,7 @@ export function registerWorktreeHandlers(
             try {
               const diffResult = await execFileAsync(
                 getToolPath('git'),
-                ['diff', '--numstat', baseBranch, '--', file.path],
+                ['diff', '--numstat', `${compareTarget}...HEAD`, '--', file.path],
                 {
                   cwd: worktreePath,
                   encoding: 'utf-8',
@@ -3152,6 +3184,7 @@ export function registerWorktreeHandlers(
           })
         );
 
+        console.log('[TASK_WORKTREE_CHANGED_FILES] Files with stats:', filesWithStats);
         return { success: true, data: filesWithStats };
       } catch (error) {
         console.error('[TASK_WORKTREE_CHANGED_FILES] Error:', error);
@@ -3177,15 +3210,38 @@ export function registerWorktreeHandlers(
 
         const worktreePath = findTaskWorktree(project.path, task.specId);
         if (!worktreePath) {
-          return { success: true, data: [] };
+          return { success: false, error: `Worktree not found for task ${task.specId}. The task may not have an active worktree.` };
         }
 
-        const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
+        // Get current branch
+        const currentBranchResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
+          cwd: worktreePath,
+          encoding: 'utf-8',
+          env: getIsolatedGitEnv(),
+          timeout: WORKTREE_GIT_TIMEOUT_MS,
+        });
+        const currentBranch = (currentBranchResult.stdout as string).trim();
+
+        // Try to get upstream branch
+        let compareTarget = '';
+        try {
+          const upstreamResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', '@{upstream}'], {
+            cwd: worktreePath,
+            encoding: 'utf-8',
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          });
+          compareTarget = (upstreamResult.stdout as string).trim();
+        } catch {
+          // No upstream, use main branch
+          const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
+          compareTarget = `origin/${baseBranch}`;
+        }
 
         // Get commit log
         const logResult = await execFileAsync(
           getToolPath('git'),
-          ['log', `${baseBranch}..HEAD`, '--pretty=format:%H%x00%h%x00%s%x00%an%x00%ar%x00%at', '--reverse'],
+          ['log', `${compareTarget}..HEAD`, '--pretty=format:%H%x00%h%x00%s%x00%an%x00%ar%x00%at', '--reverse'],
           {
             cwd: worktreePath,
             encoding: 'utf-8',
@@ -3238,12 +3294,35 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'No worktree found for this task' };
         }
 
-        const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
+        // Get current branch
+        const currentBranchResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
+          cwd: worktreePath,
+          encoding: 'utf-8',
+          env: getIsolatedGitEnv(),
+          timeout: WORKTREE_GIT_TIMEOUT_MS,
+        });
+        const currentBranch = (currentBranchResult.stdout as string).trim();
+
+        // Try to get upstream branch
+        let compareTarget = '';
+        try {
+          const upstreamResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', '@{upstream}'], {
+            cwd: worktreePath,
+            encoding: 'utf-8',
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          });
+          compareTarget = (upstreamResult.stdout as string).trim();
+        } catch {
+          // No upstream, use main branch
+          const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
+          compareTarget = `origin/${baseBranch}`;
+        }
 
         // Get diff for the file
         const diffResult = await execFileAsync(
           getToolPath('git'),
-          ['diff', '--no-color', '--unified=3', baseBranch, '--', filePath],
+          ['diff', '--no-color', '--unified=3', `${compareTarget}...HEAD`, '--', filePath],
           {
             cwd: worktreePath,
             encoding: 'utf-8',
@@ -3411,158 +3490,6 @@ export function registerWorktreeHandlers(
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to create PR'
-        };
-      }
-    }
-  );
-
-  /**
-   * Get list of changed files in the worktree with their status and line stats
-   */
-  ipcMain.handle(
-    IPC_CHANNELS.TASK_WORKTREE_CHANGED_FILES,
-    async (_event, taskId: string, projectId?: string): Promise<IPCResult<Array<{
-      path: string;
-      status: 'M' | 'A' | 'D';
-      additions: number;
-      deletions: number;
-    }>>> => {
-      try {
-        const { task, project } = findTaskAndProject(taskId, projectId);
-        if (!task || !project) {
-          return { success: false, error: 'Task not found' };
-        }
-
-        const worktreeDir = findTaskWorktree(project.path, task.specId);
-
-        if (!worktreeDir || !existsSync(worktreeDir)) {
-          return { success: true, data: [] };
-        }
-
-        // Get changed files using git diff
-        const result = execFileSync(
-          getToolPath('git'),
-          ['diff', '--name-status', 'HEAD'],
-          { cwd: worktreeDir, encoding: 'utf-8', timeout: WORKTREE_GIT_TIMEOUT_MS }
-        );
-
-        const files = result.trim().split('\n').filter(Boolean).map(line => {
-          const [status, filePath] = line.split('\t');
-
-          // Get additions/deletions for this file
-          const diffResult = execFileSync(
-            getToolPath('git'),
-            ['diff', 'HEAD', '--', filePath],
-            { cwd: worktreeDir, encoding: 'utf-8', timeout: WORKTREE_GIT_TIMEOUT_MS }
-          );
-
-          const stats = parsePatchStats(diffResult);
-
-          return {
-            path: filePath,
-            status: status as 'M' | 'A' | 'D',
-            additions: stats.additions,
-            deletions: stats.deletions
-          };
-        });
-
-        return { success: true, data: files };
-      } catch (error) {
-        console.error('[GET_WORKTREE_CHANGED_FILES] Error:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to get changed files'
-        };
-      }
-    }
-  );
-
-  /**
-   * Get commit history from base branch to HEAD in the worktree
-   */
-  ipcMain.handle(
-    IPC_CHANNELS.TASK_WORKTREE_COMMITS,
-    async (_event, taskId: string, projectId?: string): Promise<IPCResult<Array<{
-      hash: string;
-      shortHash: string;
-      message: string;
-      author: string;
-      date: string;
-      timestamp: number;
-    }>>> => {
-      try {
-        const { task, project } = findTaskAndProject(taskId, projectId);
-        if (!task || !project) {
-          return { success: false, error: 'Task not found' };
-        }
-
-        const worktreeDir = findTaskWorktree(project.path, task.specId);
-
-        if (!worktreeDir || !existsSync(worktreeDir)) {
-          return { success: true, data: [] };
-        }
-
-        // Get commit history with format: hash|shortHash|message|author|date|timestamp
-        const result = execFileSync(
-          getToolPath('git'),
-          ['log', '--pretty=format:%H|%h|%s|%an|%ar|%at', 'HEAD'],
-          { cwd: worktreeDir, encoding: 'utf-8', timeout: WORKTREE_GIT_TIMEOUT_MS }
-        );
-
-        const commits = result.trim().split('\n').filter(Boolean).map(line => {
-          const [hash, shortHash, message, author, date, timestamp] = line.split('|');
-          return {
-            hash,
-            shortHash,
-            message,
-            author,
-            date,
-            timestamp: parseInt(timestamp, 10)
-          };
-        });
-
-        return { success: true, data: commits };
-      } catch (error) {
-        console.error('[GET_WORKTREE_COMMITS] Error:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to get commits'
-        };
-      }
-    }
-  );
-
-  /**
-   * Get unified diff for a specific file
-   */
-  ipcMain.handle(
-    IPC_CHANNELS.TASK_WORKTREE_FILE_DIFF,
-    async (_event, taskId: string, filePath: string, projectId?: string): Promise<IPCResult<string>> => {
-      try {
-        const { task, project } = findTaskAndProject(taskId, projectId);
-        if (!task || !project) {
-          return { success: false, error: 'Task not found' };
-        }
-
-        const worktreeDir = findTaskWorktree(project.path, task.specId);
-
-        if (!worktreeDir || !existsSync(worktreeDir)) {
-          return { success: true, data: '' };
-        }
-
-        // Get diff for specific file
-        const result = execFileSync(
-          getToolPath('git'),
-          ['diff', 'HEAD', '--', filePath],
-          { cwd: worktreeDir, encoding: 'utf-8', timeout: WORKTREE_GIT_TIMEOUT_MS }
-        );
-
-        return { success: true, data: result };
-      } catch (error) {
-        console.error('[GET_WORKTREE_FILE_DIFF] Error:', error);
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to get file diff'
         };
       }
     }

@@ -50,6 +50,13 @@ import type { ExecutionPhase } from '../../../shared/constants/phase-protocol';
 import { getPhaseThinking } from '../config/phase-config';
 import { TaskLogWriter } from '../logging/task-log-writer';
 import { loadProjectInstructions, injectContext } from '../prompts/prompt-loader';
+import {
+  buildProjectPromptProfileSection,
+  initializeProjectPromptProfile,
+  loadProjectPromptOverride,
+  loadProjectPromptProfile,
+  type ProjectPromptProfile,
+} from '../prompts/project-prompt-profile';
 import { createMcpClientsForAgent, mergeMcpTools, closeAllMcpClients } from '../mcp/client';
 import type { McpClientResult } from '../mcp/types';
 import { runProjectIndexer } from '../project/project-indexer';
@@ -388,6 +395,9 @@ async function runContinuableSessionWithGatewayFallback(
 
 let cachedProjectInstructions: string | null | undefined;
 let cachedProjectInstructionsSource: string | null = null;
+let cachedProjectPromptProfile: ProjectPromptProfile | null | undefined;
+let cachedProjectPromptProfileDir: string | null = null;
+const loggedProjectPromptOverrides = new Set<string>();
 
 function getLanguageRequirement(language: SerializableSessionConfig['language']): string | null {
   switch (language) {
@@ -424,6 +434,37 @@ function appendLanguageRequirement(
   return `${content}\n\n## OUTPUT LANGUAGE REQUIREMENT\n${requirement}`;
 }
 
+function getPromptProfileProjectDir(session: SerializableSessionConfig): string {
+  return session.sourceProjectDir ?? session.projectDir;
+}
+
+function getProjectPromptProfile(session: SerializableSessionConfig): ProjectPromptProfile | null {
+  const profileProjectDir = getPromptProfileProjectDir(session);
+  if (
+    cachedProjectPromptProfile !== undefined &&
+    cachedProjectPromptProfileDir === profileProjectDir
+  ) {
+    return cachedProjectPromptProfile;
+  }
+
+  cachedProjectPromptProfileDir = profileProjectDir;
+  cachedProjectPromptProfile = loadProjectPromptProfile(profileProjectDir);
+
+  if (!cachedProjectPromptProfile) {
+    try {
+      cachedProjectPromptProfile = initializeProjectPromptProfile(profileProjectDir, { overwrite: false });
+      postLog(
+        `Project prompt profile generated (${cachedProjectPromptProfile.project.size}, ${cachedProjectPromptProfile.workflow.promptIntensity})`,
+      );
+    } catch (error) {
+      cachedProjectPromptProfile = null;
+      postLog(`Project prompt profile unavailable: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  return cachedProjectPromptProfile;
+}
+
 /**
  * Assemble a full system prompt by loading the base prompt and injecting
  * project instructions (AGENTS.md or CLAUDE.md fallback). Provider-agnostic —
@@ -433,7 +474,15 @@ async function assemblePrompt(
   promptName: string,
   session: SerializableSessionConfig,
 ): Promise<string> {
-  const basePrompt = loadPrompt(promptName)
+  const profileProjectDir = getPromptProfileProjectDir(session);
+  const projectOverride = loadProjectPromptOverride(profileProjectDir, promptName);
+  if (projectOverride && !loggedProjectPromptOverrides.has(projectOverride.path)) {
+    loggedProjectPromptOverrides.add(projectOverride.path);
+    postLog(`Using project-specific prompt override: ${projectOverride.path}`);
+  }
+
+  const basePrompt = projectOverride?.content
+    ?? loadPrompt(promptName)
     ?? buildFallbackPrompt(promptName as AgentType, session.specDir, session.projectDir);
 
   // Load project instructions once per worker lifetime
@@ -460,13 +509,18 @@ async function assemblePrompt(
     }
   }
 
-  const promptWithContext = injectContext(basePrompt, {
+  let promptWithContext = injectContext(basePrompt, {
     specDir: session.specDir,
     projectDir: session.projectDir,
     projectInstructions: cachedProjectInstructions,
     humanInput,
     autoPushToRemote: session.autoPushToRemote,
   });
+
+  const projectPromptProfile = getProjectPromptProfile(session);
+  if (projectPromptProfile && !projectOverride) {
+    promptWithContext += `\n\n${buildProjectPromptProfileSection(projectPromptProfile)}`;
+  }
 
   let promptWithLanguage = appendLanguageRequirement(promptWithContext, session.language);
   if (promptName === 'planner' || promptName === 'followup_planner' || promptName === 'spec_quick') {

@@ -64,6 +64,7 @@ function getFileStatusLabel(status: string, t: (key: string) => string) {
 }
 
 export function TaskGitChanges({ task }: TaskGitChangesProps) {
+  console.log('[TaskGitChanges] Component mounted/rendered with task:', task.id, task.projectId);
   const { t } = useTranslation(['tasks']);
 
   // State for files
@@ -83,18 +84,32 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
 
+  // Filter out files from specific directories
+  const shouldFilterFile = (filePath: string): boolean => {
+    const excludedPrefixes = ['.autoclaude/', '.codex/', '.claude/', '.auto-claude/'];
+    const excludedDotDirs = filePath.split('/').some(part => part.startsWith('.') && part.endsWith('d'));
+    return excludedPrefixes.some(prefix => filePath.startsWith(prefix)) || excludedDotDirs;
+  };
+
   // Load changed files
   const loadFiles = useCallback(async () => {
+    console.log('[TaskGitChanges] Loading files for task:', task.id, 'project:', task.projectId);
     setIsLoadingFiles(true);
     setFilesError(null);
 
     try {
       const result = await window.electronAPI.getWorktreeChangedFiles(task.id, task.projectId);
+      console.log('[TaskGitChanges] Files result:', result);
       if (!result.success || !result.data) {
         throw new Error(result.error || 'Failed to load changed files');
       }
-      setFiles(result.data);
+      console.log('[TaskGitChanges] Files loaded:', result.data.length);
+      // Filter out excluded directories
+      const filteredFiles = result.data.filter((file: GitFile) => !shouldFilterFile(file.path));
+      console.log('[TaskGitChanges] Files after filtering:', filteredFiles.length);
+      setFiles(filteredFiles);
     } catch (err) {
+      console.error('[TaskGitChanges] Error loading files:', err);
       setFilesError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoadingFiles(false);
@@ -103,20 +118,24 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
 
   // Load commit history
   const loadCommits = useCallback(async () => {
+    console.log('[TaskGitChanges] Loading commits for task:', task.id, 'project:', task.projectId);
     setIsLoadingCommits(true);
     setCommitsError(null);
 
     try {
       const result = await window.electronAPI.getWorktreeCommits(task.id, task.projectId);
+      console.log('[TaskGitChanges] Commits result:', result);
       if (!result.success || !result.data) {
         throw new Error(result.error || 'Failed to load commits');
       }
+      console.log('[TaskGitChanges] Commits loaded:', result.data.length);
       setCommits(result.data);
       // Auto-select first commit if available
       if (result.data.length > 0 && !selectedCommit) {
         setSelectedCommit(result.data[0].hash);
       }
     } catch (err) {
+      console.error('[TaskGitChanges] Error loading commits:', err);
       setCommitsError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoadingCommits(false);
@@ -145,6 +164,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
 
   // Load data on mount
   useEffect(() => {
+    console.log('[TaskGitChanges] useEffect triggered - loading files and commits');
     loadFiles();
     loadCommits();
   }, [loadFiles, loadCommits]);
@@ -215,28 +235,67 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
 
     // Parse and render diff with syntax highlighting
     const lines = diff.split('\n');
+    let oldLineNum = 0;
+    let newLineNum = 0;
+
     return (
       <div className="p-4">
-        <pre className="text-xs font-mono">
+        <div className="text-xs font-mono border border-border rounded-md overflow-hidden">
           {lines.map((line, idx) => {
             let className = 'text-foreground';
-            if (line.startsWith('+') && !line.startsWith('+++')) {
+            let showLineNumbers = true;
+            let oldNum = '';
+            let newNum = '';
+
+            if (line.startsWith('@@')) {
+              // Parse hunk header to get line numbers
+              const match = line.match(/@@ -(\d+),?\d* \+(\d+),?\d* @@/);
+              if (match) {
+                oldLineNum = parseInt(match[1], 10);
+                newLineNum = parseInt(match[2], 10);
+              }
+              className = 'text-blue-600 dark:text-blue-400 font-semibold bg-blue-500/10';
+              showLineNumbers = false;
+            } else if (line.startsWith('+') && !line.startsWith('+++')) {
               className = 'text-green-600 dark:text-green-400 bg-green-500/10';
+              newNum = String(newLineNum);
+              newLineNum++;
             } else if (line.startsWith('-') && !line.startsWith('---')) {
               className = 'text-red-600 dark:text-red-400 bg-red-500/10';
-            } else if (line.startsWith('@@')) {
-              className = 'text-blue-600 dark:text-blue-400 font-semibold';
+              oldNum = String(oldLineNum);
+              oldLineNum++;
             } else if (line.startsWith('diff') || line.startsWith('index') || line.startsWith('---') || line.startsWith('+++')) {
-              className = 'text-muted-foreground';
+              className = 'text-muted-foreground bg-muted/30';
+              showLineNumbers = false;
+            } else if (line.trim() !== '') {
+              // Context line
+              oldNum = String(oldLineNum);
+              newNum = String(newLineNum);
+              oldLineNum++;
+              newLineNum++;
+            } else {
+              showLineNumbers = false;
             }
 
             return (
-              <div key={idx} className={cn('px-2 py-0.5', className)}>
-                {line || ' '}
+              <div key={idx} className={cn('flex', className)}>
+                {showLineNumbers && (
+                  <>
+                    <div className="w-12 px-2 py-0.5 text-right text-muted-foreground/50 select-none border-r border-border/50 shrink-0">
+                      {oldNum}
+                    </div>
+                    <div className="w-12 px-2 py-0.5 text-right text-muted-foreground/50 select-none border-r border-border/50 shrink-0">
+                      {newNum}
+                    </div>
+                  </>
+                )}
+                <div className={cn('flex-1 px-2 py-0.5', !showLineNumbers && 'pl-4')}>
+                  {line || ' '}
+                </div>
               </div>
             );
           })}
-        </pre>
+        </div>
       </div>
     );
   };
@@ -276,9 +335,9 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
               ) : filesError ? (
-                <div className="text-center py-4">
+                <div className="text-center py-4 px-2">
                   <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
-                  <p className="text-xs text-destructive">{filesError}</p>
+                  <p className="text-xs text-destructive break-words">{filesError}</p>
                 </div>
               ) : files.length === 0 ? (
                 <div className="text-center py-8">
@@ -298,6 +357,12 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                     )}
                   >
                     {getFileStatusIcon(file.status)}
+                    <Badge
+                      variant={file.status === 'A' ? 'default' : file.status === 'D' ? 'destructive' : 'secondary'}
+                      className="text-[10px] px-1 py-0 h-4 min-w-[16px] justify-center"
+                    >
+                      {file.status}
+                    </Badge>
                     <div className="flex-1 min-w-0">
                       <div className="text-xs font-medium truncate">
                         {file.path.split('/').pop()}
@@ -338,9 +403,9 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                   <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
                 </div>
               ) : commitsError ? (
-                <div className="text-center py-4">
+                <div className="text-center py-4 px-2">
                   <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
-                  <p className="text-xs text-destructive">{commitsError}</p>
+                  <p className="text-xs text-destructive break-words">{commitsError}</p>
                 </div>
               ) : commits.length === 0 ? (
                 <div className="text-center py-8">

@@ -72,31 +72,38 @@ export function findTaskWorktree(projectPath: string, specId: string): string | 
 
   const normalizedProject = path.resolve(projectPath);
 
-  // Check new path first
-  const newPath = path.join(projectPath, TASK_WORKTREE_DIR, specId);
-  const resolvedNewPath = path.resolve(newPath);
+  // Check Auto Claude app path first (.auto-claude/worktrees/tasks/{specId})
+  const autoClaudePath = path.join(projectPath, TASK_WORKTREE_DIR, specId);
+  const resolvedAutoClaudePath = path.resolve(autoClaudePath);
 
-  // Validate path stays within project (defense against path traversal)
-  if (!isPathWithinBase(resolvedNewPath, normalizedProject)) {
+  if (!isPathWithinBase(resolvedAutoClaudePath, normalizedProject)) {
     console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project`);
     return null;
   }
 
-  if (existsSync(resolvedNewPath)) return resolvedNewPath;
+  if (existsSync(resolvedAutoClaudePath)) {
+    console.log('[worktree-paths] Found worktree at:', resolvedAutoClaudePath);
+    return resolvedAutoClaudePath;
+  }
 
-  // Legacy fallback
+  // Legacy fallback (.worktrees/{specId})
   const legacyPath = path.join(projectPath, LEGACY_WORKTREE_DIR, specId);
   const resolvedLegacyPath = path.resolve(legacyPath);
 
-  // Validate legacy path as well
   if (!isPathWithinBase(resolvedLegacyPath, normalizedProject)) {
     console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project (legacy)`);
     return null;
   }
 
-  if (existsSync(resolvedLegacyPath)) return resolvedLegacyPath;
+  if (existsSync(resolvedLegacyPath)) {
+    console.log('[worktree-paths] Found worktree at:', resolvedLegacyPath);
+    return resolvedLegacyPath;
+  }
 
-  return null;
+  // If not in .auto-claude or legacy paths, assume development is happening
+  // directly on a git branch in the project root
+  console.log('[worktree-paths] No dedicated worktree found, using project root:', normalizedProject);
+  return normalizedProject;
 }
 
 /**

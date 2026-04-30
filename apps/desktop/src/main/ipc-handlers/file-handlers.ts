@@ -5,8 +5,9 @@ import path from 'path';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { IPCResult, FileNode } from '../../shared/types';
 
-// Maximum file size to read (1MB)
+// Maximum file size to read (10MB for JSON files, 1MB for others)
 const MAX_FILE_SIZE = 1024 * 1024;
+const MAX_JSON_FILE_SIZE = 10 * 1024 * 1024;
 
 /**
  * Validates and normalizes a file path for safe reading.
@@ -97,20 +98,34 @@ export function registerFileHandlers(): void {
     IPC_CHANNELS.FILE_EXPLORER_READ,
     async (_, filePath: string): Promise<IPCResult<string>> => {
       try {
+        console.log('[FILE_EXPLORER_READ] Reading file:', filePath);
+
         // Validate and normalize path
         const validation = validatePath(filePath);
         if (!validation.valid) {
+          console.error('[FILE_EXPLORER_READ] Path validation failed:', validation.error);
           return { success: false, error: validation.error };
         }
         const safePath = validation.path;
+        console.log('[FILE_EXPLORER_READ] Normalized path:', safePath);
+
+        // Determine max size based on file type
+        const isJsonFile = safePath.toLowerCase().endsWith('.json');
+        const maxSize = isJsonFile ? MAX_JSON_FILE_SIZE : MAX_FILE_SIZE;
 
         // Use async file read to avoid blocking; check size after reading to avoid TOCTOU
         const content = await readFile(safePath, 'utf-8');
-        if (Buffer.byteLength(content, 'utf-8') > MAX_FILE_SIZE) {
-          return { success: false, error: 'File too large (max 1MB)' };
+        const fileSize = Buffer.byteLength(content, 'utf-8');
+        console.log('[FILE_EXPLORER_READ] File read successfully, size:', fileSize);
+
+        if (fileSize > maxSize) {
+          const maxSizeMB = maxSize / (1024 * 1024);
+          console.error('[FILE_EXPLORER_READ] File too large');
+          return { success: false, error: `File too large (max ${maxSizeMB}MB)` };
         }
         return { success: true, data: content };
       } catch (error) {
+        console.error('[FILE_EXPLORER_READ] Error reading file:', error);
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to read file'

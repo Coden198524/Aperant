@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } fr
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { getToolPath } from './cli-tool-manager';
+import { initializeProjectPromptProfile } from './ai/prompts/project-prompt-profile';
 
 /**
  * Debug logging - only logs when DEBUG=true or in development mode
@@ -225,7 +226,8 @@ const DATA_DIRECTORIES = [
   'specs',
   'ideation',
   'insights',
-  'roadmap'
+  'roadmap',
+  'prompts'
 ];
 
 /**
@@ -326,6 +328,14 @@ export function initializeProject(projectPath: string): InitializationResult {
     // Update .gitignore to exclude .auto-claude/
     ensureGitignoreEntries(projectPath, GITIGNORE_ENTRIES);
 
+    try {
+      initializeProjectPromptProfile(projectPath, { overwrite: true });
+    } catch (error) {
+      debug('Prompt profile generation failed (non-fatal)', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
     debug('Initialization complete');
     return { success: true };
   } catch (error) {
@@ -361,6 +371,15 @@ export function ensureDataDirectories(projectPath: string): InitializationResult
         writeFileSync(path.join(dirPath, '.gitkeep'), '', 'utf-8');
       }
     }
+
+    try {
+      initializeProjectPromptProfile(projectPath, { overwrite: false });
+    } catch (error) {
+      debug('Prompt profile backfill failed (non-fatal)', {
+        error: error instanceof Error ? error.message : String(error)
+      });
+    }
+
     return { success: true };
   } catch (error) {
     return {
