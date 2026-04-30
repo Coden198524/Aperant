@@ -48,6 +48,20 @@ export const projectMock = {
     }
   }),
 
+  refreshProjectPrompts: async () => ({
+    success: true,
+    data: {
+      updatedAt: new Date().toISOString(),
+      projectSize: 'small',
+      promptIntensity: 'lightweight',
+      specStyle: 'quick',
+      sourceFileCount: 12,
+      generatedPrompts: ['spec_quick', 'planner', 'coder', 'qa_reviewer', 'qa_fixer'],
+      languages: ['typescript'],
+      frameworks: ['react']
+    }
+  }),
+
   detectProjectRemoteProvider: async () => ({
     success: true,
     data: null

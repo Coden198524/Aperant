@@ -21,7 +21,8 @@ import { AVAILABLE_MODELS } from '../../../shared/constants';
 import type {
   Project,
   ProjectSettings as ProjectSettingsType,
-  AutoBuildVersionInfo
+  AutoBuildVersionInfo,
+  PromptProfileRefreshResult
 } from '../../../shared/types';
 
 interface GeneralSettingsProps {
@@ -31,7 +32,10 @@ interface GeneralSettingsProps {
   versionInfo: AutoBuildVersionInfo | null;
   isCheckingVersion: boolean;
   isUpdating: boolean;
+  isRefreshingPrompts: boolean;
+  promptRefreshResult: PromptProfileRefreshResult | null;
   handleInitialize: () => Promise<void>;
+  handleRefreshPrompts: () => Promise<void>;
 }
 
 export function GeneralSettings({
@@ -41,7 +45,10 @@ export function GeneralSettings({
   versionInfo,
   isCheckingVersion,
   isUpdating,
-  handleInitialize
+  isRefreshingPrompts,
+  promptRefreshResult,
+  handleInitialize,
+  handleRefreshPrompts
 }: GeneralSettingsProps) {
   const { t } = useTranslation(['settings']);
 
@@ -127,6 +134,53 @@ export function GeneralSettings({
                   })}
               </div>
             )}
+            <div className="flex flex-col gap-3 rounded-md border border-border bg-background/70 p-3 sm:flex-row sm:items-start sm:justify-between">
+              <div className="space-y-1">
+                <p className="text-sm font-medium text-foreground">
+                  {t('projectSections.general.autoBuild.projectPromptsTitle', {
+                    defaultValue: 'Project prompts'
+                  })}
+                </p>
+                <p className="text-xs text-muted-foreground">
+                  {t('projectSections.general.autoBuild.projectPromptsDescription', {
+                    defaultValue: 'Regenerate prompts from the latest project files, dependencies, and scripts.'
+                  })}
+                </p>
+                {promptRefreshResult && (
+                  <p className="text-xs text-success">
+                    {t('projectSections.general.autoBuild.projectPromptsUpdated', {
+                      defaultValue: 'Updated: {{size}} project, {{intensity}} workflow.',
+                      size: promptRefreshResult.projectSize,
+                      intensity: promptRefreshResult.promptIntensity
+                    })}
+                  </p>
+                )}
+              </div>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                onClick={handleRefreshPrompts}
+                disabled={isUpdating || isRefreshingPrompts}
+                className="w-full shrink-0 sm:w-auto"
+              >
+                {isRefreshingPrompts ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    {t('projectSections.general.autoBuild.projectPromptsRefreshing', {
+                      defaultValue: 'Updating...'
+                    })}
+                  </>
+                ) : (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4" />
+                    {t('projectSections.general.autoBuild.projectPromptsRefresh', {
+                      defaultValue: 'Update prompts'
+                    })}
+                  </>
+                )}
+              </Button>
+            </div>
           </div>
         )}
       </section>

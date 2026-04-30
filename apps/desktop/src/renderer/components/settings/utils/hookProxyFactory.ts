@@ -20,6 +20,8 @@ export function createHookProxy(
     get versionInfo() { return hookRef.current.versionInfo; },
     get isCheckingVersion() { return hookRef.current.isCheckingVersion; },
     get isUpdating() { return hookRef.current.isUpdating; },
+    get isRefreshingPrompts() { return hookRef.current.isRefreshingPrompts; },
+    get promptRefreshResult() { return hookRef.current.promptRefreshResult; },
     get envConfig() { return hookRef.current.envConfig; },
     get setEnvConfig() { return hookRef.current.setEnvConfig; },
     get isLoadingEnv() { return hookRef.current.isLoadingEnv; },
@@ -53,6 +55,7 @@ export function createHookProxy(
     get yunxiaoConnectionStatus() { return hookRef.current.yunxiaoConnectionStatus; },
     get isCheckingYunxiao() { return hookRef.current.isCheckingYunxiao; },
     get handleInitialize() { return hookRef.current.handleInitialize; },
+    get handleRefreshPrompts() { return hookRef.current.handleRefreshPrompts; },
     get handleSave() { return hookRef.current.handleSave; },
   };
 }

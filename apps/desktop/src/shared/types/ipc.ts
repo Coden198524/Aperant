@@ -24,7 +24,8 @@ import type {
   GitStatus,
   CustomMcpServer,
   McpHealthCheckResult,
-  McpTestConnectionResult
+  McpTestConnectionResult,
+  PromptProfileRefreshResult
 } from './project';
 import type { ScreenshotSource } from './screenshot';
 import type {
@@ -198,6 +199,7 @@ export interface ElectronAPI {
     initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
     initializeGraphDatabase: (projectId: string) => Promise<IPCResult<{ initialized: boolean }>>;
     checkProjectVersion: (projectId: string) => Promise<IPCResult<AutoBuildVersionInfo>>;
+    refreshProjectPrompts: (projectId: string) => Promise<IPCResult<PromptProfileRefreshResult>>;
     detectProjectRemoteProvider: (projectPath: string) => Promise<IPCResult<{
       provider: 'github' | 'gitlab' | 'gitblit' | 'unknown';
       remoteUrl: string;

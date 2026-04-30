@@ -6,6 +6,7 @@ import type {
   IPCResult,
   InitializationResult,
   AutoBuildVersionInfo,
+  PromptProfileRefreshResult,
   ProjectEnvConfig,
   GitStatus,
   KanbanPreferences,
@@ -31,6 +32,7 @@ export interface ProjectAPI {
   initializeProject: (projectId: string) => Promise<IPCResult<InitializationResult>>;
   initializeGraphDatabase: (projectId: string) => Promise<IPCResult<{ initialized: boolean }>>;
   checkProjectVersion: (projectId: string) => Promise<IPCResult<AutoBuildVersionInfo>>;
+  refreshProjectPrompts: (projectId: string) => Promise<IPCResult<PromptProfileRefreshResult>>;
   detectProjectRemoteProvider: (projectPath: string) => Promise<IPCResult<{
     provider: 'github' | 'gitlab' | 'gitblit' | 'unknown';
     remoteUrl: string;
@@ -169,6 +171,9 @@ export const createProjectAPI = (): ProjectAPI => ({
 
   checkProjectVersion: (projectId: string): Promise<IPCResult<AutoBuildVersionInfo>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROJECT_CHECK_VERSION, projectId),
+
+  refreshProjectPrompts: (projectId: string): Promise<IPCResult<PromptProfileRefreshResult>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.PROJECT_REFRESH_PROMPTS, projectId),
 
   detectProjectRemoteProvider: (
     projectPath: string

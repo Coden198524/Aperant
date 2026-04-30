@@ -1,5 +1,12 @@
 import { create } from 'zustand';
-import type { Project, ProjectSettings, AutoBuildVersionInfo, InitializationResult } from '../../shared/types';
+import type {
+  Project,
+  ProjectSettings,
+  AutoBuildVersionInfo,
+  InitializationResult,
+  PromptProfileRefreshResult,
+  IPCResult
+} from '../../shared/types';
 
 // localStorage keys for persisting project state (legacy - now using IPC)
 const LAST_SELECTED_PROJECT_KEY = 'lastSelectedProjectId';
@@ -453,5 +460,31 @@ export async function initializeProject(
     console.error('[ProjectStore] Exception during initializeProject:', error);
     store.setError(error instanceof Error ? error.message : 'Unknown error');
     return null;
+  }
+}
+
+/**
+ * Refresh the project-specific prompt profile from the latest project files.
+ */
+export async function refreshProjectPrompts(
+  projectId: string
+): Promise<IPCResult<PromptProfileRefreshResult>> {
+  const store = useProjectStore.getState();
+
+  try {
+    const result = await window.electronAPI.refreshProjectPrompts(projectId);
+    if (result.success && result.data) {
+      return result;
+    }
+
+    store.setError(result.error || 'Failed to refresh project prompts');
+    return {
+      success: false,
+      error: result.error || 'Failed to refresh project prompts'
+    };
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    store.setError(message);
+    return { success: false, error: message };
   }
 }

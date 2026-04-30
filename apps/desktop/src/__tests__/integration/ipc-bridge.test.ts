@@ -93,6 +93,18 @@ describe('IPC Bridge Integration', () => {
           { model: 'sonnet' }
         );
       });
+
+      it('should have refreshProjectPrompts method', async () => {
+        const refreshProjectPrompts = electronAPI['refreshProjectPrompts'] as (
+          id: string
+        ) => Promise<unknown>;
+        await refreshProjectPrompts('project-id');
+
+        expect(mockIpcRenderer.invoke).toHaveBeenCalledWith(
+          'project:refreshPrompts',
+          'project-id'
+        );
+      });
     });
 
     describe('Task operations', () => {
@@ -142,7 +154,7 @@ describe('IPC Bridge Integration', () => {
         const stopTask = electronAPI['stopTask'] as (id: string) => void;
         stopTask('task-id');
 
-        expect(mockIpcRenderer.send).toHaveBeenCalledWith('task:stop', 'task-id');
+        expect(mockIpcRenderer.send).toHaveBeenCalledWith('task:stop', 'task-id', undefined);
       });
 
       it('should have submitReview method', async () => {
@@ -159,6 +171,7 @@ describe('IPC Bridge Integration', () => {
           'task-id',
           false,
           'Needs more work',
+          undefined,
           undefined
         );
       });
@@ -303,6 +316,7 @@ describe('IPC Bridge Integration', () => {
       expect(IPC_CHANNELS.PROJECT_REMOVE).toBe('project:remove');
       expect(IPC_CHANNELS.PROJECT_LIST).toBe('project:list');
       expect(IPC_CHANNELS.PROJECT_UPDATE_SETTINGS).toBe('project:updateSettings');
+      expect(IPC_CHANNELS.PROJECT_REFRESH_PROMPTS).toBe('project:refreshPrompts');
 
       expect(IPC_CHANNELS.TASK_LIST).toBe('task:list');
       expect(IPC_CHANNELS.TASK_CREATE).toBe('task:create');

@@ -89,6 +89,7 @@ if (typeof window !== 'undefined') {
     removeProject: vi.fn(),
     getProjects: vi.fn(),
     updateProjectSettings: vi.fn(),
+    refreshProjectPrompts: vi.fn(),
     getTasks: vi.fn(),
     createTask: vi.fn(),
     startTask: vi.fn(),

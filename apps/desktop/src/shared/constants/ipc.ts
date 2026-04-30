@@ -12,6 +12,7 @@ export const IPC_CHANNELS = {
   PROJECT_INITIALIZE: 'project:initialize',
   PROJECT_INITIALIZE_GRAPH: 'project:initializeGraph',
   PROJECT_CHECK_VERSION: 'project:checkVersion',
+  PROJECT_REFRESH_PROMPTS: 'project:refreshPrompts',
   PROJECT_DETECT_REMOTE_PROVIDER: 'project:detectRemoteProvider',
 
   // Tab state operations (persisted in main process)

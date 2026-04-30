@@ -479,6 +479,17 @@ export interface InitializationResult {
   error?: string;
 }
 
+export interface PromptProfileRefreshResult {
+  updatedAt: string;
+  projectSize: string;
+  promptIntensity: string;
+  specStyle: string;
+  sourceFileCount: number;
+  generatedPrompts: string[];
+  languages: string[];
+  frameworks: string[];
+}
+
 export interface GitStatus {
   isGitRepo: boolean;
   hasCommits: boolean;

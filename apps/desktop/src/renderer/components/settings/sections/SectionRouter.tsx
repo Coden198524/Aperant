@@ -1,5 +1,15 @@
 import { useTranslation } from 'react-i18next';
-import type { Project, ProjectSettings as ProjectSettingsType, AutoBuildVersionInfo, ProjectEnvConfig, LinearSyncStatus, YunxiaoSyncStatus, GitHubSyncStatus, GitLabSyncStatus } from '../../../../shared/types';
+import type {
+  Project,
+  ProjectSettings as ProjectSettingsType,
+  AutoBuildVersionInfo,
+  ProjectEnvConfig,
+  LinearSyncStatus,
+  YunxiaoSyncStatus,
+  GitHubSyncStatus,
+  GitLabSyncStatus,
+  PromptProfileRefreshResult
+} from '../../../../shared/types';
 import { SettingsSection } from '../SettingsSection';
 import { GeneralSettings } from '../../project-settings/GeneralSettings';
 import { SecuritySettings } from '../../project-settings/SecuritySettings';
@@ -19,6 +29,8 @@ interface SectionRouterProps {
   versionInfo: AutoBuildVersionInfo | null;
   isCheckingVersion: boolean;
   isUpdating: boolean;
+  isRefreshingPrompts: boolean;
+  promptRefreshResult: PromptProfileRefreshResult | null;
   envConfig: ProjectEnvConfig | null;
   isLoadingEnv: boolean;
   envError: string | null;
@@ -42,6 +54,7 @@ interface SectionRouterProps {
   yunxiaoConnectionStatus: YunxiaoSyncStatus | null;
   isCheckingYunxiao: boolean;
   handleInitialize: () => Promise<void>;
+  handleRefreshPrompts: () => Promise<void>;
   onOpenLinearImport: () => void;
   onOpenYunxiaoImport: () => void;
 }
@@ -58,6 +71,8 @@ export function SectionRouter({
   versionInfo,
   isCheckingVersion,
   isUpdating,
+  isRefreshingPrompts,
+  promptRefreshResult,
   envConfig,
   isLoadingEnv,
   envError,
@@ -81,6 +96,7 @@ export function SectionRouter({
   yunxiaoConnectionStatus,
   isCheckingYunxiao,
   handleInitialize,
+  handleRefreshPrompts,
   onOpenLinearImport,
   onOpenYunxiaoImport
 }: SectionRouterProps) {
@@ -100,7 +116,10 @@ export function SectionRouter({
             versionInfo={versionInfo}
             isCheckingVersion={isCheckingVersion}
             isUpdating={isUpdating}
+            isRefreshingPrompts={isRefreshingPrompts}
+            promptRefreshResult={promptRefreshResult}
             handleInitialize={handleInitialize}
+            handleRefreshPrompts={handleRefreshPrompts}
           />
         </SettingsSection>
       );

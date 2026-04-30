@@ -106,6 +106,23 @@ describe('project prompt profile', () => {
     expect(readFileSync(coderPath, 'utf-8')).toContain('PROJECT-SPECIFIC PROMPT');
   });
 
+  it('removes stale generated prompt overrides when a refreshed profile no longer needs them', () => {
+    const projectDir = makeProject();
+    initializeProjectPromptProfile(projectDir, { overwrite: true });
+
+    const coderPath = join(projectDir, '.auto-claude', 'prompts', 'coder.md');
+    expect(existsSync(coderPath)).toBe(true);
+
+    for (let i = 0; i < 45; i += 1) {
+      writeFileSync(join(projectDir, 'src', `module-${i}.ts`), `export const value${i} = ${i};\n`, 'utf-8');
+    }
+
+    const profile = initializeProjectPromptProfile(projectDir, { overwrite: true });
+
+    expect(profile.workflow.promptIntensity).toBe('standard');
+    expect(existsSync(coderPath)).toBe(false);
+  });
+
   it('refreshes stale generated prompts when the profile version changes', () => {
     const projectDir = makeProject();
     initializeProjectPromptProfile(projectDir, { overwrite: true });

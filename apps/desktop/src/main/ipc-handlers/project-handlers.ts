@@ -9,7 +9,8 @@ import type {
   InitializationResult,
   AutoBuildVersionInfo,
   GitStatus,
-  GitBranchDetail
+  GitBranchDetail,
+  PromptProfileRefreshResult
 } from '../../shared/types';
 import { projectStore } from '../project-store';
 import {
@@ -25,6 +26,7 @@ import { getIsolatedGitEnv } from '../utils/git-isolation';
 import { detectRemoteProviderFromUrl } from '../utils/remote-provider-detector';
 import { GraphDatabase } from '../ai/graph/database';
 import { getMemoryClient } from '../ai/memory/db';
+import { initializeProjectPromptProfile } from '../ai/prompts/project-prompt-profile';
 
 // ============================================
 // Git Helper Functions
@@ -445,6 +447,43 @@ export function registerProjectHandlers(
           data: {
             isInitialized: isInitialized(project.path),
             updateAvailable: false // No updates for .auto-claude - it's just data
+          }
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Unknown error'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.PROJECT_REFRESH_PROMPTS,
+    async (_, projectId: string): Promise<IPCResult<PromptProfileRefreshResult>> => {
+      try {
+        const project = projectStore.getProject(projectId);
+        if (!project) {
+          return { success: false, error: 'Project not found' };
+        }
+
+        if (!isInitialized(project.path)) {
+          return { success: false, error: 'Project is not initialized' };
+        }
+
+        const profile = initializeProjectPromptProfile(project.path, { overwrite: true });
+
+        return {
+          success: true,
+          data: {
+            updatedAt: profile.generatedAt,
+            projectSize: profile.project.size,
+            promptIntensity: profile.workflow.promptIntensity,
+            specStyle: profile.workflow.specStyle,
+            sourceFileCount: profile.project.sourceFileCount,
+            generatedPrompts: profile.promptOverrides.generated,
+            languages: profile.project.languages,
+            frameworks: profile.project.frameworks
           }
         };
       } catch (error) {

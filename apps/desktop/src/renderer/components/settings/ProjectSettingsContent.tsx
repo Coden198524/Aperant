@@ -81,6 +81,8 @@ function ProjectSettingsContentInner({
     versionInfo,
     isCheckingVersion,
     isUpdating,
+    isRefreshingPrompts,
+    promptRefreshResult,
     envConfig,
     isLoadingEnv,
     envError,
@@ -110,6 +112,7 @@ function ProjectSettingsContentInner({
     yunxiaoConnectionStatus,
     isCheckingYunxiao,
     handleInitialize,
+    handleRefreshPrompts,
     error
   } = hook;
 
@@ -135,6 +138,8 @@ function ProjectSettingsContentInner({
         versionInfo={versionInfo}
         isCheckingVersion={isCheckingVersion}
         isUpdating={isUpdating}
+        isRefreshingPrompts={isRefreshingPrompts}
+        promptRefreshResult={promptRefreshResult}
         envConfig={envConfig}
         isLoadingEnv={isLoadingEnv}
         envError={envError}
@@ -158,6 +163,7 @@ function ProjectSettingsContentInner({
         yunxiaoConnectionStatus={yunxiaoConnectionStatus}
         isCheckingYunxiao={isCheckingYunxiao}
         handleInitialize={handleInitialize}
+        handleRefreshPrompts={handleRefreshPrompts}
         onOpenLinearImport={() => setShowLinearImportModal(true)}
         onOpenYunxiaoImport={() => setShowYunxiaoImportModal(true)}
       />

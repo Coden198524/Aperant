@@ -2,7 +2,8 @@ import { useState, useEffect, useRef } from 'react';
 import {
   updateProjectSettings,
   checkProjectVersion,
-  initializeProject
+  initializeProject,
+  refreshProjectPrompts
 } from '../../../stores/project-store';
 import { checkGitHubConnection as checkGitHubConnectionGlobal } from '../../../stores/github';
 import { setProjectEnvConfig } from '../../../stores/project-env-store';
@@ -14,7 +15,8 @@ import type {
   LinearSyncStatus,
   YunxiaoSyncStatus,
   GitHubSyncStatus,
-  GitLabSyncStatus
+  GitLabSyncStatus,
+  PromptProfileRefreshResult
 } from '../../../../shared/types';
 
 export interface UseProjectSettingsReturn {
@@ -29,6 +31,8 @@ export interface UseProjectSettingsReturn {
   versionInfo: AutoBuildVersionInfo | null;
   isCheckingVersion: boolean;
   isUpdating: boolean;
+  isRefreshingPrompts: boolean;
+  promptRefreshResult: PromptProfileRefreshResult | null;
 
   // Environment config
   envConfig: ProjectEnvConfig | null;
@@ -76,6 +80,7 @@ export interface UseProjectSettingsReturn {
 
   // Actions
   handleInitialize: () => Promise<void>;
+  handleRefreshPrompts: () => Promise<void>;
   handleSave: (onClose: () => void) => Promise<void>;
 }
 
@@ -89,6 +94,8 @@ export function useProjectSettings(
   const [versionInfo, setVersionInfo] = useState<AutoBuildVersionInfo | null>(null);
   const [isCheckingVersion, setIsCheckingVersion] = useState(false);
   const [isUpdating, setIsUpdating] = useState(false);
+  const [isRefreshingPrompts, setIsRefreshingPrompts] = useState(false);
+  const [promptRefreshResult, setPromptRefreshResult] = useState<PromptProfileRefreshResult | null>(null);
 
   // Environment configuration state
   // NOTE: We maintain local envConfig state AND update the global project-env-store.
@@ -138,6 +145,7 @@ export function useProjectSettings(
   // Reset settings when project changes
   useEffect(() => {
     setSettings(project.settings);
+    setPromptRefreshResult(null);
   }, [project]);
 
   // Check version when dialog opens
@@ -343,6 +351,25 @@ export function useProjectSettings(
     }
   };
 
+  const handleRefreshPrompts = async () => {
+    setIsRefreshingPrompts(true);
+    setError(null);
+    setPromptRefreshResult(null);
+
+    try {
+      const result = await refreshProjectPrompts(project.id);
+      if (result.success && result.data) {
+        setPromptRefreshResult(result.data);
+      } else {
+        setError(result.error || 'Failed to refresh project prompts');
+      }
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setIsRefreshingPrompts(false);
+    }
+  };
+
   const handleSave = async (onClose: () => void) => {
     setIsSaving(true);
     setError(null);
@@ -418,6 +445,8 @@ export function useProjectSettings(
     versionInfo,
     isCheckingVersion,
     isUpdating,
+    isRefreshingPrompts,
+    promptRefreshResult,
     envConfig,
     setEnvConfig,
     isLoadingEnv,
@@ -451,6 +480,7 @@ export function useProjectSettings(
     yunxiaoConnectionStatus,
     isCheckingYunxiao,
     handleInitialize,
+    handleRefreshPrompts,
     handleSave
   };
 }

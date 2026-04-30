@@ -15,6 +15,7 @@ import {
   readFileSync,
   readdirSync,
   statSync,
+  unlinkSync,
   writeFileSync,
 } from 'node:fs';
 import {
@@ -745,6 +746,17 @@ export function initializeProjectPromptProfile(
   const promptOverrides = generateProjectPromptOverrides(profile);
   const promptsDir = join(projectPath, PROJECT_PROMPTS_PATH);
   mkdirSync(promptsDir, { recursive: true });
+
+  if (options.overwrite) {
+    const managedPromptNames = new Set(Object.keys(promptOverrides));
+    for (const promptName of LIGHTWEIGHT_PROMPT_NAMES) {
+      if (managedPromptNames.has(promptName)) continue;
+      const promptPath = join(promptsDir, `${promptName}.md`);
+      if (existsSync(promptPath) && isGeneratedProjectPrompt(promptPath)) {
+        unlinkSync(promptPath);
+      }
+    }
+  }
 
   for (const [promptName, content] of Object.entries(promptOverrides)) {
     const promptPath = join(promptsDir, `${promptName}.md`);
