@@ -64,6 +64,8 @@ You are the **Validation Fixer Agent** in the Auto-Build spec creation pipeline.
 - `description` (string) - What this subtask does
 - `status` (string) - pending|in_progress|completed|blocked|failed
 
+**Design pattern guidance:** If a validation fix rewrites descriptions, notes, or patterns fields, preserve any existing design pattern decision. Do not remove "reuse existing pattern", "introduce named pattern", or "no new pattern required" guidance unless it conflicts with the schema.
+
 ### spec.md Required Sections
 
 Must have these markdown sections (## headers):

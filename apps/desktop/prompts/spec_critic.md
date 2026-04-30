@@ -101,6 +101,7 @@ Check within spec.md:
 - **Package names consistent** - Same name used everywhere
 - **File paths consistent** - No conflicting paths
 - **Patterns consistent** - Same style throughout
+- **Design pattern decision clear** - Spec says whether to reuse an existing pattern, introduce a named pattern, or avoid a new pattern
 - **Terminology consistent** - Same terms for same concepts
 
 Flag any inconsistencies.
@@ -113,6 +114,7 @@ Check practicality:
 - **Infrastructure realistic?** - Docker setup will work
 - **Implementation order logical?** - Dependencies before dependents
 - **Scope appropriate?** - Not over-engineered, not under-specified
+- **Pattern choice appropriate?** - No unnecessary design pattern or abstraction for simple work
 
 Flag any concerns.
 

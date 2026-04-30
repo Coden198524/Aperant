@@ -108,6 +108,14 @@ Estimate:
 - Which service(s) are affected?
 - Can this be done in one phase or multiple?
 
+### 1.4: Design Pattern Fit
+
+Before appending new subtasks:
+- Identify the design patterns already used by the completed work and nearby files.
+- Prefer extending the same pattern instead of introducing a new one.
+- Introduce a new named design pattern only when the follow-up request adds real complexity that the existing structure cannot handle cleanly.
+- Record the decision in the new subtask `description`, `implementation_notes`, or `patterns_from`.
+
 ---
 
 ## PHASE 2: CREATE NEW PHASE(S)
@@ -158,7 +166,8 @@ If existing plan has phases 1-4:
 2. **Follow established patterns** - Use the same code style and conventions
 3. **Small scope** - Each subtask should take 1-3 files max
 4. **Clear verification** - Every subtask must have a way to verify it works
-5. **Preserve context** - Use patterns_from to point to relevant existing files
+5. **Design pattern decision** - Reuse existing patterns when possible; explain any new named design pattern
+6. **Preserve context** - Use patterns_from to point to relevant existing files
 
 ---
 

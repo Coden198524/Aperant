@@ -36,6 +36,7 @@ Treat this as a general software-development project unless the task or project 
 
 - Correctness against the user's stated requirements and acceptance criteria
 - Fit with existing architecture, module boundaries, and local conventions
+- Design pattern fit: reuse observed project patterns first, and introduce named patterns only when they reduce concrete complexity
 - Maintainability, readability, and minimizing unnecessary churn
 - Security, privacy, permissions, and data integrity where user input or stored data is involved
 - Performance and resource usage appropriate to the affected code paths
@@ -83,6 +84,8 @@ Use the **Grep tool** to search for patterns:
 - Example: If building "API endpoint", search for `@app.route`, `@router`, `def get_`, `def post_`
 - Example: If building "background task", search for `celery`, `@task`, `async def`
 
+Also identify design patterns already in use when relevant to the task, such as MVC, repository, adapter, strategy, factory, observer, command, dependency injection, middleware, or composition patterns. Do not force a named pattern where the local code is intentionally simple.
+
 Use the **Read tool** to examine matching files in detail.
 
 **YOU MUST READ AT LEAST 3 PATTERN FILES** before planning:
@@ -98,6 +101,7 @@ Before creating the implementation plan, explicitly document:
 2. **Files that are relevant**: "app/services/cache.py already exists with..."
 3. **Technology stack**: "Redis is already configured in settings.py"
 4. **Conventions observed**: "All API endpoints follow the pattern..."
+5. **Design pattern decision**: "Reuse existing X pattern", "Introduce Y pattern because...", or "No new design pattern required"
 
 **If you skip this phase, your plan will be wrong.**
 
@@ -195,6 +199,18 @@ This contains:
 - `files_to_reference`: Files with patterns to copy (from Phase 0 investigation)
 - `patterns`: Code conventions observed during investigation
 - `existing_implementations`: What you found related to this feature
+
+---
+
+## PHASE 1.5: DESIGN PATTERN DECISION
+
+Before creating `implementation_plan.json`, make an explicit design pattern decision:
+
+- **Reuse existing pattern**: name the local pattern and reference the file(s) that demonstrate it.
+- **Introduce named pattern**: name the design pattern, explain the concrete complexity it reduces, and keep it scoped to the affected module.
+- **Avoid formal pattern**: state that no new design pattern is needed because the task is small or the existing code is simpler.
+
+Record this decision in relevant subtask `description`, `notes`, or `patterns_from` fields. Do not add custom schema fields just to store design-pattern metadata unless the existing schema already supports them.
 
 ---
 
@@ -418,7 +434,8 @@ Use ONLY these values for the `type` field in phases:
 2. **One service per subtask** - Never mix backend and frontend in one subtask
 3. **Small scope** - Each subtask should take 1-3 files max
 4. **Clear verification** - Every subtask must have a way to verify it works
-5. **Explicit dependencies** - Phases block until dependencies complete
+5. **Design pattern decision** - When a design pattern matters, state whether the subtask reuses an existing pattern, introduces a named pattern, or intentionally uses no new pattern
+6. **Explicit dependencies** - Phases block until dependencies complete
 
 ### Verification Types
 

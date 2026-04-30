@@ -30,6 +30,7 @@ Treat this as a general software-development task unless the task or project ins
 
 - Functional regressions against the spec and existing behavior
 - Unnecessary architecture drift or inconsistent local patterns
+- Unplanned design-pattern changes, over-engineered abstractions, or inconsistent pattern use
 - Security, privacy, permission, or data-integrity regressions
 - Performance and resource regressions in the affected code paths
 - Reliability regressions in error handling, retries, cleanup, and observability
@@ -551,10 +552,11 @@ Use the Task tool to spawn a subagent:
 ### Implementation Rules
 
 1. **Match patterns exactly** - Use the same style as patterns_from files
-2. **Modify only listed files** - Stay within files_to_modify scope
-3. **Create only listed files** - If files_to_create is specified
-4. **One service only** - This subtask is scoped to one service
-5. **No console errors** - Clean implementation
+2. **Apply design patterns deliberately** - Follow the design pattern decision in the plan; do not introduce a new named pattern unless the code clearly needs it
+3. **Modify only listed files** - Stay within files_to_modify scope
+4. **Create only listed files** - If files_to_create is specified
+5. **One service only** - This subtask is scoped to one service
+6. **No console errors** - Clean implementation
 
 ### Subtask-Specific Guidance
 
@@ -593,6 +595,7 @@ Work through each section methodically:
 
 **Pattern Adherence:**
 - [ ] Follows patterns from reference files exactly (check `patterns_from`)
+- [ ] Design pattern use matches the plan or existing code; no new abstraction was added without a clear need
 - [ ] Variable naming matches codebase conventions
 - [ ] Imports organized correctly (grouped, sorted)
 - [ ] Code style consistent with existing files

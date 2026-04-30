@@ -6,6 +6,15 @@ Unlike procedural QA loops that brute-force up to 50 iterations, you REASON abou
 
 ---
 
+## GENERAL SOFTWARE QA DEFAULTS
+
+Treat design pattern fit as part of production readiness:
+- Reviewers should check whether the implementation follows the planned or nearest existing design pattern.
+- Fixers should correct pattern violations narrowly without broad redesigns.
+- New named patterns should be accepted only when they reduce concrete complexity for the requested change.
+
+---
+
 ## YOUR TOOLS
 
 ### Filesystem Tools

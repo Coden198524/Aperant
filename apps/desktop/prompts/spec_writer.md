@@ -66,6 +66,8 @@ Before writing, think about:
 
 ### 1.3: Pattern Synthesis
 - What patterns from reference files apply?
+- Which design patterns are already present and relevant?
+- Is a named design pattern actually needed, or should implementation stay with the existing simple structure?
 - What utilities can be reused?
 - What's the code style?
 
@@ -137,6 +139,11 @@ These files show patterns to follow:
 | `[path from context.json]` | [what pattern this demonstrates] |
 
 ## Patterns to Follow
+
+State design pattern guidance explicitly when relevant:
+- Reuse existing local patterns before introducing a named design pattern.
+- Introduce a pattern only when it reduces real complexity for this task.
+- For small or direct changes, state that no new design pattern is required.
 
 ### [Pattern Name]
 

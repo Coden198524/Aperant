@@ -78,6 +78,7 @@ describe('project prompt profile', () => {
     const coderOverride = loadProjectPromptOverride(projectDir, 'coder');
     expect(coderOverride?.content).toContain('PROJECT-SPECIFIC PROMPT');
     expect(coderOverride?.content).toContain('Implement the next pending subtask');
+    expect(coderOverride?.content).toContain('design pattern decision');
     expect(existsSync(join(projectDir, '.auto-claude', 'prompts', 'spec_quick.md'))).toBe(true);
   });
 
@@ -140,7 +141,7 @@ describe('project prompt profile', () => {
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
 
-    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 2');
+    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 3');
     expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the next pending subtask');
     expect(readFileSync(coderPath, 'utf-8')).not.toContain('old generated prompt');
   });

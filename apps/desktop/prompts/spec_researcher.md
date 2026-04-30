@@ -88,6 +88,7 @@ Input: {
 - "api" or "reference" - For function signatures
 - "configuration" or "config" - For environment variables and options
 - "examples" - For common usage patterns
+- "architecture" or "design patterns" - Only when the integration has recommended patterns relevant to the task
 - Specific feature topics relevant to your task
 
 #### Step 3: Document Findings
@@ -97,8 +98,9 @@ For each integration, extract from Context7:
 2. **Import statements** - How to import in code
 3. **Initialization code** - Setup patterns
 4. **Key API functions** - Function signatures you'll need
-5. **Configuration options** - Environment variables, config files
-6. **Common gotchas** - Issues mentioned in docs
+5. **Recommended design patterns** - Officially documented patterns when relevant, without forcing them into simple tasks
+6. **Configuration options** - Environment variables, config files
+7. **Common gotchas** - Issues mentioned in docs
 
 ### 1.2: Use Web Search (for supplementary research)
 

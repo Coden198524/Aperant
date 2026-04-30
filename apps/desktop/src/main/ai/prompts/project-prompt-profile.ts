@@ -30,7 +30,7 @@ import {
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 2;
+export const PROJECT_PROMPT_PROFILE_VERSION = 3;
 export const PROJECT_PROMPT_PROFILE_PATH = join('.auto-claude', 'prompt_profile.json');
 export const PROJECT_PROMPTS_PATH = join('.auto-claude', 'prompts');
 
@@ -506,6 +506,12 @@ Do not modify project source code in this phase.
 3. Write a short \`spec.md\` with overview, scope, files, change details, and success criteria.
 4. Write \`implementation_plan.json\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
 
+## DESIGN PATTERN GUIDANCE
+
+- Reuse the existing local design pattern if the touched files clearly use one.
+- Do not introduce a new named design pattern for a simple task unless it is already present nearby and necessary.
+- In \`spec.md\` notes or the subtask \`description\`, record "follow existing [pattern]" or "no new design pattern required" when relevant.
+
 ## IMPLEMENTATION PLAN SHAPE
 
 \`\`\`json
@@ -578,10 +584,18 @@ Use the Write tool to create \`implementation_plan.json\` in the spec directory.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
 4. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
 
+## DESIGN PATTERN DECISION
+
+- Identify design patterns already used in the relevant files, such as repository, adapter, strategy, factory, observer, command, dependency injection, middleware, or composition.
+- Prefer reusing the existing project pattern over introducing a new one.
+- Introduce a named design pattern only when it reduces concrete complexity, and keep it scoped to the affected module.
+- If no formal pattern is needed, say so in the relevant subtask description or notes.
+
 ## PLAN REQUIREMENTS
 
 - Use \`phases[].subtasks[]\`.
 - Each subtask needs \`id\`, \`title\`, \`description\`, \`status: "pending"\`, file lists, and verification.
+- When a design pattern matters, include the decision in subtask \`description\`, \`notes\`, or \`patterns_from\`.
 - Prefer targeted verification commands:
 ${formatCommands([
   ...profile.commands.typecheck,
@@ -627,6 +641,7 @@ ${formatCommands(profile.commands.typecheck)}
 - Work on one subtask at a time.
 - Keep changes scoped to the subtask.
 - Do not perform broad rewrites for small tasks.
+- Follow the design pattern decision in the plan or the nearest existing code; do not add unplanned named patterns unless clearly necessary.
 - Preserve user changes unrelated to the subtask.
 - All new file names and paths must use ASCII characters.
 `;
@@ -670,6 +685,7 @@ ${formatCommands(profile.commands.typecheck)}
 ## REVIEW STANDARD
 
 - For small project changes, do not block on missing heavyweight artifacts that were not required by the spec.
+- Verify design pattern fit: the implementation should follow the plan or nearest existing pattern without unnecessary abstractions or inconsistent pattern mixing.
 - If no automated command exists, document the manual verification performed or the reason it was skipped.
 - Match review depth to the project profile and task risk instead of applying heavyweight domain-specific requirements by default.
 `;
@@ -706,6 +722,7 @@ ${formatCommands(profile.commands.typecheck)}
 ## RULES
 
 - Do not redesign or refactor unrelated code while fixing QA findings.
+- Fix design pattern issues narrowly by aligning the affected code with the planned or existing pattern.
 - Keep the fix scoped and easy for the next QA pass to verify.
 - All new file names and paths must use ASCII characters.
 `;

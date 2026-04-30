@@ -114,6 +114,7 @@ Ask targeted questions:
 2. **"Are there any edge cases I should know about?"**
 3. **"What does success look like? How will you know it works?"**
 4. **"Any constraints?"** (performance, compatibility, etc.)
+5. **"Any architecture or design pattern preferences?"** (only ask if the task appears architectural or the user mentioned patterns)
 
 Collect answers.
 

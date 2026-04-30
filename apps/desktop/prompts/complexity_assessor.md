@@ -73,6 +73,7 @@ Determine the type of work being requested:
 - Very small, well-defined changes
 - Single file modifications
 - No architectural decisions needed
+- No new design pattern or abstraction should be introduced
 - Examples: "Fix typo", "Update button color", "Change error message"
 
 ---
@@ -101,6 +102,7 @@ Determine the type of work being requested:
 - 2+ external integrations
 - Infrastructure changes (Docker, databases, queues)
 - New architectural patterns
+- New named design patterns or pattern migrations that affect module boundaries
 - Greenfield features requiring research
 - Examples: new integrations (Stripe, Auth0), database migrations, new services
 
@@ -114,6 +116,7 @@ Analyze the task against these dimensions:
 - How many files will likely be touched?
 - How many services are involved?
 - Is this a localized change or cross-cutting?
+- Does it require a design pattern decision, or should it stay with existing local patterns?
 
 ### 2. Integration Analysis
 - Does this involve external services/APIs?

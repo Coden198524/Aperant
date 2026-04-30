@@ -44,6 +44,15 @@ That's it. No deep analysis needed. **Do NOT scan the entire project** — the p
 
 ---
 
+## DESIGN PATTERN GUIDANCE
+
+For simple tasks, design pattern use should stay lightweight:
+- Reuse the existing local design pattern if the touched files clearly use one.
+- Do not introduce a new named design pattern unless it is already present nearby and is necessary for the requested change.
+- In `spec.md` notes or the subtask `description`, record the pattern decision when relevant: "follow existing [pattern]" or "no new design pattern required".
+
+---
+
 ## PHASE 2: CREATE MINIMAL SPEC
 
 Use the **Write tool** to create `spec.md` in the spec directory:
@@ -161,8 +170,9 @@ Ready for implementation.
 2. **KEEP IT SIMPLE** - No research, no deep analysis, no extensive planning
 3. **BE CONCISE** - Short spec, simple plan, one subtask if possible
 4. **USE EXACT SCHEMA** - The implementation_plan.json MUST use `phases[].subtasks[]` structure
-5. **DON'T OVER-ENGINEER** - This is a simple task, treat it simply
-6. **DON'T READ EVERYTHING** - Only read the specific files needed for the change
+5. **USE PATTERNS DELIBERATELY** - Prefer existing local patterns and avoid new abstractions for simple work
+6. **DON'T OVER-ENGINEER** - This is a simple task, treat it simply
+7. **DON'T READ EVERYTHING** - Only read the specific files needed for the change
 
 ---
 

@@ -23,6 +23,7 @@ When fixing QA findings, prioritize corrections that protect:
 - UI accessibility, layout stability, and interaction states
 - Compatibility with supported runtimes, platforms, browsers, and dependency versions
 - Maintainability and consistency with existing code patterns
+- Design pattern alignment with the plan and surrounding implementation
 
 Do not treat these as optional polish when the issue can affect correctness, user trust, or production stability.
 
@@ -40,6 +41,9 @@ All your code changes, documentation additions, and new files must go into the *
 
 ### Fix CODE issues with CODE, not documentation
 If QA reports a missing test, write the test. If QA reports a code bug, fix the code. Don't write a markdown document explaining why the code is fine — write the code that makes it fine.
+
+### Fix design pattern issues narrowly
+If QA flags a design pattern issue, align the affected code with the planned or existing pattern. Do not redesign unrelated modules or introduce a broader pattern migration unless QA explicitly requires it.
 
 ### NEVER disagree with the QA Reviewer
 The QA Reviewer is the authority on what needs to be fixed. If they say a regex is too permissive, tighten the regex. If they say a test is missing, write the test. Do NOT decide the reviewer is wrong and skip the fix — that wastes a QA cycle and the reviewer will just fail you again with the same issue. Your job is to implement fixes, not to second-guess the review.
@@ -269,6 +273,7 @@ Apply the fix as described in `QA_FIX_REQUEST.md`.
 - Don't refactor surrounding code
 - Don't add features
 - Match existing patterns
+- Preserve the design pattern decision from the plan or QA report
 - Test after each fix
 
 ### 3.4: Verify the Fix Locally

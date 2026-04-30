@@ -12,6 +12,7 @@ Treat each task as a general software-development project unless the task or pro
 
 - Correctness against the user's requirements and acceptance criteria
 - Architecture fit with existing modules, services, and conventions
+- Design pattern fit: reuse observed project patterns first and avoid named patterns that do not reduce real complexity
 - Security, privacy, permissions, and data-integrity risks where relevant
 - Performance and resource impact appropriate to the affected paths
 - Reliability, error handling, observability, and safe rollback for production changes
@@ -19,7 +20,7 @@ Treat each task as a general software-development project unless the task or pro
 - Compatibility with supported runtimes, platforms, browsers, and dependency versions
 - Focused validation using the project's available build, test, lint, typecheck, smoke, or manual checks
 
-When delegating to subagents, ask for risks and validation steps that match the actual project type and task scope.
+When delegating to subagents, ask for risks, design pattern decisions, and validation steps that match the actual project type and task scope.
 
 ---
 

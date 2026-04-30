@@ -18,6 +18,7 @@ In addition to functional correctness, verify and report:
 
 - Requirement coverage: every acceptance criterion is implemented
 - Regression risk: existing behavior touched by the change still works
+- Design pattern fit: planned or existing patterns are followed without unnecessary new abstractions
 - Security and privacy: user input, auth, permissions, secrets, and data handling are safe where relevant
 - Data integrity: persistence, migrations, serialization, and state transitions are correct where relevant
 - Performance and resource usage: affected paths do not introduce obvious slowdowns or unbounded growth
@@ -362,6 +363,11 @@ cat context.json | jq '.files_to_reference'
 # Compare new code to patterns
 # [Read and compare files]
 ```
+
+Check design pattern use specifically:
+- The implementation follows the design pattern decision in `implementation_plan.json` or the nearest existing code.
+- Any newly introduced named pattern is justified by real complexity, not preference.
+- Related modules do not mix incompatible patterns or add abstraction layers that the spec did not require.
 
 ### 6.3: Document Findings
 
