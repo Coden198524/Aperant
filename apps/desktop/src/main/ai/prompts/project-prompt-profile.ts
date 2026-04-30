@@ -136,7 +136,7 @@ const SOURCE_EXTENSIONS = new Set([
   '.svelte',
 ]);
 
-const LIGHTWEIGHT_PROMPT_NAMES = [
+const PROJECT_PROMPT_NAMES = [
   'spec_quick',
   'planner',
   'coder',
@@ -405,10 +405,6 @@ export function generateProjectPromptProfile(projectPath: string): ProjectPrompt
   };
   appendNonNodeCommands(resolvedProjectPath, commands, frameworks);
 
-  const generated = workflow.promptIntensity === 'lightweight'
-    ? [...LIGHTWEIGHT_PROMPT_NAMES]
-    : [];
-
   return {
     version: PROJECT_PROMPT_PROFILE_VERSION,
     generatedAt: new Date().toISOString(),
@@ -433,7 +429,7 @@ export function generateProjectPromptProfile(projectPath: string): ProjectPrompt
       typecheck: uniqueSorted(commands.typecheck),
     },
     promptOverrides: {
-      generated,
+      generated: [...PROJECT_PROMPT_NAMES],
       directory: PROJECT_PROMPTS_PATH,
     },
   };
@@ -447,6 +443,17 @@ function formatList(values: string[], fallback = 'none detected'): string {
 function formatCommands(commands: string[]): string {
   if (commands.length === 0) return 'none detected';
   return commands.slice(0, 4).map((command) => `- ${command}`).join('\n');
+}
+
+function getSpecLengthGuidance(profile: ProjectPromptProfile): string {
+  switch (profile.workflow.specStyle) {
+    case 'quick':
+      return 'Keep `spec.md` concise: normally 20-60 lines.';
+    case 'standard':
+      return 'Keep `spec.md` focused but complete: normally 40-100 lines.';
+    default:
+      return 'Write enough `spec.md` detail to cover cross-module behavior, dependencies, validation, and risk.';
+  }
 }
 
 function buildGeneratedHeader(profile: ProjectPromptProfile, promptName: string): string {
@@ -482,7 +489,7 @@ function buildSpecQuickPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the Quick Spec Agent for a small project. Create only the spec and plan needed for the current task.
+You are the Spec Agent for this project. Create only the spec and plan needed for the current task.
 
 ## OUTPUTS
 
@@ -546,7 +553,7 @@ ${formatCommands(profile.commands.typecheck)}
 
 ## RULES
 
-- Keep \`spec.md\` concise: normally 20-60 lines.
+- ${getSpecLengthGuidance(profile)}
 - Do not do research unless the task explicitly introduces unfamiliar external technology.
 - Use existing project conventions and commands from the profile when possible.
 - All file names and paths must use ASCII characters.
@@ -705,10 +712,6 @@ ${formatCommands(profile.commands.typecheck)}
 }
 
 export function generateProjectPromptOverrides(profile: ProjectPromptProfile): Record<string, string> {
-  if (profile.workflow.promptIntensity !== 'lightweight') {
-    return {};
-  }
-
   return {
     spec_quick: buildSpecQuickPrompt(profile),
     planner: buildPlannerPrompt(profile),
@@ -749,7 +752,7 @@ export function initializeProjectPromptProfile(
 
   if (options.overwrite) {
     const managedPromptNames = new Set(Object.keys(promptOverrides));
-    for (const promptName of LIGHTWEIGHT_PROMPT_NAMES) {
+    for (const promptName of PROJECT_PROMPT_NAMES) {
       if (managedPromptNames.has(promptName)) continue;
       const promptPath = join(promptsDir, `${promptName}.md`);
       if (existsSync(promptPath) && isGeneratedProjectPrompt(promptPath)) {

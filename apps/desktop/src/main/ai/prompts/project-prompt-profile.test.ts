@@ -106,7 +106,7 @@ describe('project prompt profile', () => {
     expect(readFileSync(coderPath, 'utf-8')).toContain('PROJECT-SPECIFIC PROMPT');
   });
 
-  it('removes stale generated prompt overrides when a refreshed profile no longer needs them', () => {
+  it('keeps generated prompt overrides when a refreshed profile uses standard workflow', () => {
     const projectDir = makeProject();
     initializeProjectPromptProfile(projectDir, { overwrite: true });
 
@@ -120,7 +120,8 @@ describe('project prompt profile', () => {
     const profile = initializeProjectPromptProfile(projectDir, { overwrite: true });
 
     expect(profile.workflow.promptIntensity).toBe('standard');
-    expect(existsSync(coderPath)).toBe(false);
+    expect(existsSync(coderPath)).toBe(true);
+    expect(readFileSync(coderPath, 'utf-8')).toContain('Workflow intensity: standard');
   });
 
   it('refreshes stale generated prompts when the profile version changes', () => {
