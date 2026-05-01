@@ -11,7 +11,7 @@
  * defined in phase-protocol.ts.
  */
 
-import { readFile, writeFile, unlink } from 'node:fs/promises';
+import { readFile, unlink } from 'node:fs/promises';
 import { join } from 'node:path';
 import { EventEmitter } from 'events';
 
@@ -31,10 +31,11 @@ import {
   validateImplementationPlanLanguage,
   repairJsonWithLLM,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
-  compactImplementationPlan,
-  compactImplementationPlanFile,
+  writeImplementationPlanFiles,
+  rewriteImplementationPlanFiles,
+  loadImplementationPlanFromFiles,
+  saveImplementationPlanToFiles,
 } from '../schema';
-import { safeParseJson } from '../../utils/json-repair';
 import type { SessionResult } from '../session/types';
 import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
@@ -456,14 +457,12 @@ export class BuildOrchestrator extends EventEmitter {
       // If the provider returned structured output via constrained decoding,
       // write it to the plan file — this is guaranteed to match the schema.
       if (result.structuredOutput) {
-        const structuredPlanPath = join(this.config.specDir, 'implementation_plan.json');
         try {
-          const compacted = compactImplementationPlan(result.structuredOutput);
-          await writeFile(structuredPlanPath, JSON.stringify(compacted?.plan ?? result.structuredOutput, null, 2));
-          const compactionNote = compacted?.changed
-            ? ` (${compacted.originalSubtaskCount} -> ${compacted.compactedSubtaskCount} subtasks)`
+          const writeResult = await writeImplementationPlanFiles(this.config.specDir, result.structuredOutput);
+          const splitNote = writeResult?.split
+            ? ` split into ${writeResult.filesWritten.length - 1} phase files`
             : '';
-          this.emitTyped('log', translateLogMessage(`Wrote compact implementation plan from structured output${compactionNote}`, this.config.language));
+          this.emitTyped('log', translateLogMessage(`Wrote compact implementation plan from structured output${splitNote}`, this.config.language));
         } catch {
           // Non-fatal — fall through to file-based validation
         }
@@ -473,13 +472,16 @@ export class BuildOrchestrator extends EventEmitter {
       // Zod coercion handles LLM field name variations (title→description,
       // subtask_id→id, status normalization, etc.) and writes back canonical data.
       const planPath = join(this.config.specDir, 'implementation_plan.json');
-      const compaction = await compactImplementationPlanFile(planPath);
-      if (compaction.valid && compaction.changed) {
-        this.emitTyped('log', `Compacted implementation plan before validation (${compaction.originalSubtaskCount} -> ${compaction.compactedSubtaskCount} subtasks)`);
+      const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
+      if (rewrite?.split) {
+        this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
       }
       const validation = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
-      const languageErrors = validation.valid && validation.data
-        ? validateImplementationPlanLanguage(validation.data, this.config.language)
+      const hydratedPlan = validation.valid
+        ? await loadImplementationPlanFromFiles(this.config.specDir)
+        : null;
+      const languageErrors = validation.valid && hydratedPlan
+        ? validateImplementationPlanLanguage(hydratedPlan as never, this.config.language)
         : [];
       const validationErrors = validation.valid
         ? languageErrors
@@ -955,10 +957,8 @@ export class BuildOrchestrator extends EventEmitter {
    * all statuses must be "pending" for the coding phase to execute.
    */
   private async resetSubtaskStatuses(): Promise<void> {
-    const planPath = join(this.config.specDir, 'implementation_plan.json');
     try {
-      const raw = await readFile(planPath, 'utf-8');
-      const plan = safeParseJson<ImplementationPlan>(raw);
+      const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
       if (!plan) return;
       let updated = false;
 
@@ -973,7 +973,7 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       if (updated) {
-        await writeFile(planPath, JSON.stringify(plan, null, 2));
+        await saveImplementationPlanToFiles(this.config.specDir, plan as never);
         this.emitTyped('log', 'Reset all subtask statuses to "pending" after planning');
       }
     } catch {
@@ -998,10 +998,8 @@ export class BuildOrchestrator extends EventEmitter {
    * Missing, malformed, or empty plans are treated as needing planning.
    */
   private async shouldRunPlanningPhase(): Promise<boolean> {
-    const planPath = join(this.config.specDir, 'implementation_plan.json');
     try {
-      const raw = await readFile(planPath, 'utf-8');
-      const plan = safeParseJson<ImplementationPlan>(raw);
+      const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
       if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) {
         return true;
       }
@@ -1016,10 +1014,8 @@ export class BuildOrchestrator extends EventEmitter {
    * Check if all subtasks in the implementation plan are completed.
    */
   private async isBuildComplete(): Promise<boolean> {
-    const planPath = join(this.config.specDir, 'implementation_plan.json');
     try {
-      const raw = await readFile(planPath, 'utf-8');
-      const plan = safeParseJson<ImplementationPlan>(raw);
+      const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
       if (!plan) return false;
 
       for (const phase of plan.phases) {

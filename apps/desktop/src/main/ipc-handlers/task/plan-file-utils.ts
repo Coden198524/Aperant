@@ -25,6 +25,10 @@ import { projectStore } from '../../project-store';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
 import { writeFileAtomicSync } from '../../utils/atomic-file';
 import { safeParseJson } from '../../utils/json-repair';
+import {
+  loadImplementationPlanFromFilesSync,
+  saveImplementationPlanToFilesSync,
+} from '../../ai/schema/plan-shards';
 
 // In-memory locks for plan file operations
 // Key: plan file path, Value: Promise chain for serializing operations
@@ -460,8 +464,7 @@ export async function updatePlanFile<T extends Record<string, unknown>>(
     try {
       console.warn(`[plan-file-utils] Reading implementation_plan.json for update`, { planPath });
       // Read file directly without existence check to avoid TOCTOU race condition
-      const planContent = readFileSync(planPath, 'utf-8');
-      const plan = safeParseJson<T>(planContent);
+      const plan = loadImplementationPlanFromFilesSync(planPath) as T | null;
       if (!plan) {
         console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - update skipped`);
         return null;
@@ -471,7 +474,7 @@ export async function updatePlanFile<T extends Record<string, unknown>>(
       // Add updated_at timestamp - use type assertion since T extends Record<string, unknown>
       (updatedPlan as Record<string, unknown>).updated_at = new Date().toISOString();
 
-      writeFileAtomicSync(planPath, JSON.stringify(updatedPlan, null, 2));
+      saveImplementationPlanToFilesSync(planPath, updatedPlan);
       console.warn(`[plan-file-utils] Successfully updated implementation_plan.json`);
       return updatedPlan;
     } catch (err) {
@@ -557,8 +560,7 @@ export async function resetStuckSubtasks(planPath: string, projectId?: string): 
       console.log(`[plan-file-utils] Reading implementation_plan.json to reset stuck subtasks`, { planPath });
 
       // Read file directly without existence check to avoid TOCTOU race condition
-      const planContent = readFileSync(planPath, 'utf-8');
-      const plan = safeParseJson<Record<string, unknown>>(planContent);
+      const plan = loadImplementationPlanFromFilesSync(planPath);
       if (!plan) {
         console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - subtask reset skipped`);
         return { success: false, resetCount: 0 };
@@ -589,7 +591,7 @@ export async function resetStuckSubtasks(planPath: string, projectId?: string): 
       // Only write if we actually reset something
       if (resetCount > 0) {
         plan.updated_at = new Date().toISOString();
-        writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+        saveImplementationPlanToFilesSync(planPath, plan);
         console.log(`[plan-file-utils] Successfully reset ${resetCount} stuck subtask(s) in implementation_plan.json`);
 
         // Invalidate tasks cache since subtask status changed
@@ -676,17 +678,16 @@ export function syncPlanPhasesToMainSync(
   projectId?: string
 ): boolean {
   try {
-    const planContent = readFileSync(mainPlanPath, 'utf-8');
-    const plan = safeParseJson<Record<string, unknown>>(planContent);
+    const plan = loadImplementationPlanFromFilesSync(mainPlanPath);
     if (!plan) {
       console.warn(`[plan-file-utils] Unrepairable JSON in ${mainPlanPath} - phase sync skipped`);
       return false;
     }
 
-    plan.phases = phases;
+    plan.phases = phases as never;
     plan.updated_at = new Date().toISOString();
 
-    writeFileAtomicSync(mainPlanPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(mainPlanPath, plan);
 
     if (projectId) {
       projectStore.invalidateTasksCache(projectId);
@@ -713,12 +714,7 @@ export function syncPlanPhasesToMainSync(
 export function hasPlanWithSubtasks(project: Project, task: Task): boolean {
   try {
     const planPath = getPlanPath(project, task);
-    const planContent = readFileSync(planPath, 'utf-8');
-    if (!planContent) {
-      return false;
-    }
-
-    const plan = safeParseJson<Record<string, unknown>>(planContent);
+    const plan = loadImplementationPlanFromFilesSync(planPath);
     if (!plan) return false;
     // A plan exists if it has phases with subtasks (totalCount > 0)
     const phases = plan.phases as Array<{ subtasks?: Array<unknown> }> | undefined;

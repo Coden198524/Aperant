@@ -31,8 +31,9 @@ import {
   ImplementationPlanOutputSchema,
   buildValidationRetryPrompt,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
-  compactImplementationPlan,
-  compactImplementationPlanFile,
+  writeImplementationPlanFiles,
+  rewriteImplementationPlanFiles,
+  loadImplementationPlanFromFiles,
 } from '../schema';
 import type { ZodSchema } from 'zod';
 import type { SessionResult } from '../session/types';
@@ -725,14 +726,12 @@ export class SpecOrchestrator extends EventEmitter {
         // write it to implementation_plan.json — this is guaranteed to match the
         // schema, overriding whatever the agent wrote via the Write tool.
         if (isPlanningPhase && result.structuredOutput) {
-          const planPath = join(this.config.specDir, 'implementation_plan.json');
           try {
-            const compacted = compactImplementationPlan(result.structuredOutput);
-            await writeFile(planPath, JSON.stringify(compacted?.plan ?? result.structuredOutput, null, 2));
-            const compactionNote = compacted?.changed
-              ? ` (${compacted.originalSubtaskCount} -> ${compacted.compactedSubtaskCount} subtasks)`
+            const writeResult = await writeImplementationPlanFiles(this.config.specDir, result.structuredOutput);
+            const splitNote = writeResult?.split
+              ? ` split into ${writeResult.filesWritten.length - 1} phase files`
               : '';
-            this.emitTyped('log', `Wrote compact implementation plan from structured output${compactionNote}`);
+            this.emitTyped('log', `Wrote compact implementation plan from structured output${splitNote}`);
           } catch (writeErr) {
             this.emitTyped('log', `Failed to write structured output plan: ${writeErr}`);
           }
@@ -947,13 +946,16 @@ export class SpecOrchestrator extends EventEmitter {
     if (phase === 'planning' || phase === 'quick_spec') {
       const planPath = join(this.config.specDir, 'implementation_plan.json');
       try {
-        const compaction = await compactImplementationPlanFile(planPath);
-        if (compaction.valid && compaction.changed) {
-          this.emitTyped('log', `Compacted implementation plan before validation (${compaction.originalSubtaskCount} -> ${compaction.compactedSubtaskCount} subtasks)`);
+        const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
+        if (rewrite?.split) {
+          this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
         }
         const result = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
-        const languageErrors = result.valid && result.data
-          ? validateImplementationPlanLanguage(result.data, this.config.language)
+        const hydratedPlan = result.valid
+          ? await loadImplementationPlanFromFiles(this.config.specDir)
+          : null;
+        const languageErrors = result.valid && hydratedPlan
+          ? validateImplementationPlanLanguage(hydratedPlan as never, this.config.language)
           : [];
         return {
           valid: result.valid && languageErrors.length === 0,

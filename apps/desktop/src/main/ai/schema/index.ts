@@ -32,6 +32,19 @@ export {
 } from './plan-compaction';
 
 export {
+  PLAN_SHARD_SUBTASK_THRESHOLD,
+  writeImplementationPlanFiles,
+  rewriteImplementationPlanFiles,
+  loadImplementationPlanFromFiles,
+  loadImplementationPlanFromFilesSync,
+  saveImplementationPlanToFiles,
+  saveImplementationPlanToFilesSync,
+  listImplementationPlanWatchFiles,
+  type ShardableImplementationPlan,
+  type WriteImplementationPlanFilesResult,
+} from './plan-shards';
+
+export {
   ComplexityAssessmentSchema,
   type ValidatedComplexityAssessment,
 } from './complexity-assessment';

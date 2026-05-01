@@ -1,9 +1,12 @@
 import chokidar, { FSWatcher } from 'chokidar';
-import { readFileSync, existsSync } from 'fs';
+import { existsSync } from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
 import type { ImplementationPlan } from '../shared/types';
-import { safeParseJson } from './utils/json-repair';
+import {
+  listImplementationPlanWatchFiles,
+  loadImplementationPlanFromFilesSync,
+} from './ai/schema/plan-shards';
 
 interface WatcherInfo {
   key: string;
@@ -71,6 +74,7 @@ export class FileWatcher extends EventEmitter {
       }
 
       const planPath = path.join(specDir, 'implementation_plan.json');
+      const watchFiles = listImplementationPlanWatchFiles(specDir);
 
       // Check if plan file exists
       if (!existsSync(planPath)) {
@@ -79,7 +83,7 @@ export class FileWatcher extends EventEmitter {
       }
 
       // Create watcher with settings to handle frequent writes
-      const watcher = chokidar.watch(planPath, {
+      const watcher = chokidar.watch(watchFiles.length > 0 ? watchFiles : planPath, {
         persistent: true,
         ignoreInitial: true,
         awaitWriteFinish: {
@@ -107,8 +111,7 @@ export class FileWatcher extends EventEmitter {
       // Handle file changes
       watcher.on('change', () => {
         try {
-          const content = readFileSync(planPath, 'utf-8');
-          const plan = safeParseJson<ImplementationPlan>(content);
+          const plan = loadImplementationPlanFromFilesSync(planPath) as ImplementationPlan | null;
           if (plan) {
             this.emit('progress', taskId, this.normalizePlanStatuses(plan), projectId);
           }
@@ -126,8 +129,7 @@ export class FileWatcher extends EventEmitter {
 
       // Read and emit initial state
       try {
-        const content = readFileSync(planPath, 'utf-8');
-        const plan = safeParseJson<ImplementationPlan>(content);
+        const plan = loadImplementationPlanFromFilesSync(planPath) as ImplementationPlan | null;
         if (plan) {
           this.emit('progress', taskId, this.normalizePlanStatuses(plan), projectId);
         }
@@ -217,8 +219,7 @@ export class FileWatcher extends EventEmitter {
     if (!watcherInfo) return null;
 
     try {
-      const content = readFileSync(watcherInfo.planPath, 'utf-8');
-      const plan = safeParseJson<ImplementationPlan>(content);
+      const plan = loadImplementationPlanFromFilesSync(watcherInfo.planPath) as ImplementationPlan | null;
       if (!plan) return null;
       return this.normalizePlanStatuses(plan);
     } catch {

@@ -6,8 +6,6 @@
  * error recovery, and fallback to serial execution.
  */
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import type {
   BatchExecutorResult,
   BatchResult,
@@ -16,7 +14,6 @@ import type {
 } from './batch-types';
 import { DEFAULT_BATCH_CONFIG } from './batch-types';
 import type { SessionResult } from '../session/types';
-import { safeParseJson } from '../../utils/json-repair';
 import {
   detectFileConflicts,
   groupConflictingSubtasks,
@@ -32,7 +29,10 @@ import {
 } from './pause-handler';
 import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig } from './subtask-iterator';
-import { updatePlanFile } from '../../ipc-handlers/task/plan-file-utils';
+import {
+  loadImplementationPlanFromFiles,
+  saveImplementationPlanToFiles,
+} from '../schema/plan-shards';
 
 // =============================================================================
 // Constants
@@ -112,8 +112,6 @@ interface PlanSubtask {
   pattern_files?: string[];
   verification?: string;
 }
-
-type MutableImplementationPlan = ImplementationPlan & Record<string, unknown>;
 
 // =============================================================================
 // Main Executor
@@ -417,15 +415,7 @@ async function fallbackToSerial(
  * @returns Implementation plan or null
  */
 async function loadImplementationPlan(specDir: string): Promise<ImplementationPlan | null> {
-  const planPath = join(specDir, 'implementation_plan.json');
-
-  try {
-    const content = await readFile(planPath, 'utf-8');
-    const plan = safeParseJson<ImplementationPlan>(content);
-    return plan;
-  } catch {
-    return null;
-  }
+  return loadImplementationPlanFromFiles(specDir) as Promise<ImplementationPlan | null>;
 }
 
 async function resetRoundInProgressSubtasks(
@@ -448,11 +438,7 @@ async function resetRoundInProgressSubtasks(
     return;
   }
 
-  const planPath = join(specDir, 'implementation_plan.json');
-  await updatePlanFile<MutableImplementationPlan>(planPath, (currentPlan) => ({
-    ...currentPlan,
-    phases: plan.phases,
-  }));
+  await saveImplementationPlanToFiles(specDir, plan as never);
   log?.('[BatchExecutor] Reset stale in_progress subtasks to pending before batching');
 }
 
@@ -460,32 +446,33 @@ async function syncActiveBatchSubtasks(
   specDir: string,
   activeSubtaskIds: string[],
 ): Promise<void> {
-  const planPath = join(specDir, 'implementation_plan.json');
   const activeIds = new Set(activeSubtaskIds);
 
   try {
-    await updatePlanFile<MutableImplementationPlan>(planPath, (plan) => {
-      let updated = false;
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) return;
 
-      for (const phase of plan.phases ?? []) {
-        for (const subtask of phase.subtasks ?? []) {
-          if (activeIds.has(subtask.id)) {
-            if (subtask.status !== 'in_progress') {
-              subtask.status = 'in_progress';
-              updated = true;
-            }
-            continue;
-          }
-
-          if (subtask.status === 'in_progress') {
-            subtask.status = 'pending';
+    let updated = false;
+    for (const phase of plan.phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (activeIds.has(subtask.id)) {
+          if (subtask.status !== 'in_progress') {
+            subtask.status = 'in_progress';
             updated = true;
           }
+          continue;
+        }
+
+        if (subtask.status === 'in_progress') {
+          subtask.status = 'pending';
+          updated = true;
         }
       }
+    }
 
-      return updated ? plan : plan;
-    });
+    if (updated) {
+      await saveImplementationPlanToFiles(specDir, plan as never);
+    }
   } catch {
     // Non-fatal: the orchestrator will reconcile on the next round.
   }
@@ -685,23 +672,22 @@ async function updateSubtaskStatuses(
     return;
   }
 
-  const planPath = join(specDir, 'implementation_plan.json');
   try {
     const targetIds = new Set(subtaskIds);
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) return;
 
-    await updatePlanFile<MutableImplementationPlan>(planPath, (plan) => {
-      for (const phase of plan.phases ?? []) {
-        for (const subtask of phase.subtasks ?? []) {
-          if (!targetIds.has(subtask.id)) {
-            continue;
-          }
-          if (subtask.status !== status) {
-            subtask.status = status;
-          }
+    for (const phase of plan.phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (!targetIds.has(subtask.id)) {
+          continue;
+        }
+        if (subtask.status !== status) {
+          subtask.status = status;
         }
       }
-      return plan;
-    });
+    }
+    await saveImplementationPlanToFiles(specDir, plan as never);
   } catch {
     // Non-fatal: the orchestrator will retry or reconcile on the next round.
   }

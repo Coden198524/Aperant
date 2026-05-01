@@ -125,8 +125,12 @@ function coercePhase(input: unknown): unknown {
 
   const phaseId = raw.id ?? raw.phase_id ?? (raw.phase !== undefined ? String(raw.phase) : undefined);
 
-  // Resolve subtasks from known aliases
+  // Resolve subtasks from known aliases. Split plans keep subtask details in
+  // phase files and intentionally leave this array empty in the index plan.
   let subtasks = raw.subtasks ?? raw.chunks ?? raw.tasks ?? undefined;
+  if (!subtasks && typeof raw.subtasks_file === 'string') {
+    subtasks = [];
+  }
 
   // Coerce string/number subtask items to objects.
   // Many LLMs write tasks as simple string arrays instead of subtask objects:
@@ -170,13 +174,19 @@ export const PlanPhaseSchema = z.preprocess(coercePhase, z.object({
   id: z.union([z.string(), z.number().transform(String)]).optional(),
   phase: z.number().optional(),
   name: z.string({ message: 'Phase must have a "name" (or "title") field' }),
-  subtasks: z.array(PlanSubtaskSchema, { message: 'Phase must have a "subtasks" array' }).min(1, 'Phase must have at least one subtask'),
+  subtasks: z.array(PlanSubtaskSchema, { message: 'Phase must have a "subtasks" array' }),
+  subtasks_file: z.string().optional(),
+  subtask_count: z.number().optional(),
   depends_on: z.array(z.union([z.string(), z.number()])).optional(),
 }).passthrough())
   // Ensure at least one of id or phase is present
   .refine(
     (phase) => phase.id !== undefined || phase.phase !== undefined,
     { message: 'Phase must have either "id" or "phase" field' }
+  )
+  .refine(
+    (phase) => phase.subtasks.length > 0 || typeof phase.subtasks_file === 'string',
+    { message: 'Phase must have at least one subtask or a subtasks_file reference' }
   );
 
 // =============================================================================

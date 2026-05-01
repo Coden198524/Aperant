@@ -6,10 +6,8 @@
  * for progress markers and verifying against implementation_plan.json.
  */
 
-import { readFile } from 'node:fs/promises';
-import { join } from 'node:path';
 import type { BatchProgress } from './batch-types';
-import { safeParseJson } from '../../utils/json-repair';
+import { loadImplementationPlanFromFiles } from '../schema/plan-shards';
 
 // =============================================================================
 // Progress Marker Parsing
@@ -61,11 +59,8 @@ export class BatchProgressTracker {
    * @returns Progress information from the file
    */
   async verifyProgress(specDir: string): Promise<BatchProgress> {
-    const planPath = join(specDir, 'implementation_plan.json');
-
     try {
-      const content = await readFile(planPath, 'utf-8');
-      const plan = safeParseJson(content);
+      const plan = await loadImplementationPlanFromFiles(specDir);
 
       if (!plan || typeof plan !== 'object' || !('phases' in plan)) {
         throw new Error('Invalid implementation plan format');

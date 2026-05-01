@@ -14,8 +14,10 @@ import { z } from 'zod/v3';
 
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
-import { writeFileAtomic } from '../../../utils/atomic-file';
-import { safeParseJson } from '../../../utils/json-repair';
+import {
+  loadImplementationPlanFromFiles,
+  saveImplementationPlanToFiles,
+} from '../../schema/plan-shards';
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -93,8 +95,7 @@ export const updateSubtaskStatusTool = Tool.define({
       return 'Error: implementation_plan.json not found';
     }
 
-    const planContent = fs.readFileSync(planFile, 'utf-8');
-    const plan = safeParseJson<ImplementationPlan>(planContent);
+    const plan = await loadImplementationPlanFromFiles(context.specDir) as ImplementationPlan | null;
     if (!plan) {
       return 'Error: implementation_plan.json contains unrepairable JSON';
     }
@@ -104,7 +105,7 @@ export const updateSubtaskStatusTool = Tool.define({
       return `Error: Subtask '${subtask_id}' not found in implementation plan`;
     }
 
-    await writeFileAtomic(planFile, JSON.stringify(plan, null, 2), { encoding: 'utf-8' });
+    await saveImplementationPlanToFiles(context.specDir, plan as never);
 
     return `Successfully updated subtask '${subtask_id}' to status '${status}'`;
   },

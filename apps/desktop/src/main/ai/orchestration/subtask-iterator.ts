@@ -7,10 +7,10 @@
  * the coder agent session, and tracks completion/retry/stuck state.
  */
 
-import { readFile, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-
-import { safeParseJson } from '../../utils/json-repair';
+import {
+  loadImplementationPlanFromFiles,
+  saveImplementationPlanToFiles,
+} from '../schema/plan-shards';
 import type { ExtractedInsights, InsightExtractionConfig } from '../runners/insight-extractor';
 import { extractSessionInsights } from '../runners/insight-extractor';
 import type { SessionResult } from '../session/types';
@@ -388,10 +388,8 @@ async function ensureSubtaskMarkedCompleted(
   specDir: string,
   subtaskId: string,
 ): Promise<void> {
-  const planPath = join(specDir, 'implementation_plan.json');
   try {
-    const raw = await readFile(planPath, 'utf-8');
-    const plan = safeParseJson<ImplementationPlan>(raw);
+    const plan = await loadImplementationPlan(specDir);
     if (!plan) return; // JSON corrupt beyond repair
     let updated = false;
 
@@ -415,7 +413,7 @@ async function ensureSubtaskMarkedCompleted(
     }
 
     if (updated) {
-      await writeFile(planPath, JSON.stringify(plan, null, 2));
+      await saveImplementationPlanToFiles(specDir, plan as never);
     }
   } catch {
     // Non-fatal: if we can't update the plan the loop will retry or mark stuck
@@ -426,10 +424,8 @@ async function markSubtaskInProgress(
   specDir: string,
   subtaskId: string,
 ): Promise<void> {
-  const planPath = join(specDir, 'implementation_plan.json');
   try {
-    const raw = await readFile(planPath, 'utf-8');
-    const plan = safeParseJson<ImplementationPlan>(raw);
+    const plan = await loadImplementationPlan(specDir);
     if (!plan) {
       return;
     }
@@ -452,7 +448,7 @@ async function markSubtaskInProgress(
     }
 
     if (updated) {
-      await writeFile(planPath, JSON.stringify(plan, null, 2));
+      await saveImplementationPlanToFiles(specDir, plan as never);
     }
   } catch {
     // Non-fatal: the session can still run even if progress persistence fails
@@ -476,10 +472,8 @@ export async function restampExecutionPhase(
   specDir: string,
   phase: string,
 ): Promise<void> {
-  const planPath = join(specDir, 'implementation_plan.json');
   try {
-    const raw = await readFile(planPath, 'utf-8');
-    const plan = safeParseJson<Record<string, unknown>>(raw);
+    const plan = await loadImplementationPlanFromFiles(specDir);
     if (!plan) {
       console.warn(`[restampExecutionPhase] Could not parse implementation_plan.json in ${specDir} — skipping restamp`);
       return;
@@ -488,7 +482,7 @@ export async function restampExecutionPhase(
     if (plan.executionPhase !== phase) {
       plan.executionPhase = phase;
       plan.updated_at = new Date().toISOString();
-      await writeFile(planPath, JSON.stringify(plan, null, 2));
+      await saveImplementationPlanToFiles(specDir, plan as never);
     }
   } catch {
     // Non-fatal
@@ -505,21 +499,16 @@ async function syncPhasesToMain(
   mainSpecDir: string,
 ): Promise<void> {
   try {
-    const worktreePlanPath = join(worktreeSpecDir, 'implementation_plan.json');
-    const mainPlanPath = join(mainSpecDir, 'implementation_plan.json');
-
-    const worktreeRaw = await readFile(worktreePlanPath, 'utf-8');
-    const worktreePlan = safeParseJson<ImplementationPlan>(worktreeRaw);
+    const worktreePlan = await loadImplementationPlan(worktreeSpecDir);
     if (!worktreePlan?.phases) return;
 
-    const mainRaw = await readFile(mainPlanPath, 'utf-8');
-    const mainPlan = safeParseJson<Record<string, unknown>>(mainRaw);
+    const mainPlan = await loadImplementationPlanFromFiles(mainSpecDir);
     if (!mainPlan) return;
 
-    mainPlan.phases = worktreePlan.phases;
+    mainPlan.phases = worktreePlan.phases as never;
     mainPlan.updated_at = new Date().toISOString();
 
-    await writeFile(mainPlanPath, JSON.stringify(mainPlan, null, 2));
+    await saveImplementationPlanToFiles(mainSpecDir, mainPlan);
   } catch (err) {
     // Non-fatal: the exit handler will do a final definitive sync.
     // Log so we can diagnose subtask-status-not-updating issues.
@@ -535,15 +524,10 @@ async function syncExecutionStateToMain(
   mainSpecDir: string,
 ): Promise<void> {
   try {
-    const worktreePlanPath = join(worktreeSpecDir, 'implementation_plan.json');
-    const mainPlanPath = join(mainSpecDir, 'implementation_plan.json');
-
-    const worktreeRaw = await readFile(worktreePlanPath, 'utf-8');
-    const worktreePlan = safeParseJson<Record<string, unknown>>(worktreeRaw);
+    const worktreePlan = await loadImplementationPlanFromFiles(worktreeSpecDir);
     if (!worktreePlan) return;
 
-    const mainRaw = await readFile(mainPlanPath, 'utf-8');
-    const mainPlan = safeParseJson<Record<string, unknown>>(mainRaw);
+    const mainPlan = await loadImplementationPlanFromFiles(mainSpecDir);
     if (!mainPlan) return;
 
     mainPlan.phases = worktreePlan.phases;
@@ -552,7 +536,7 @@ async function syncExecutionStateToMain(
     }
     mainPlan.updated_at = new Date().toISOString();
 
-    await writeFile(mainPlanPath, JSON.stringify(mainPlan, null, 2));
+    await saveImplementationPlanToFiles(mainSpecDir, mainPlan);
   } catch (err) {
     console.warn(
       `[syncExecutionStateToMain] Failed to sync execution state from ${worktreeSpecDir} to ${mainSpecDir}:`,
@@ -571,13 +555,7 @@ async function syncExecutionStateToMain(
 async function loadImplementationPlan(
   specDir: string,
 ): Promise<ImplementationPlan | null> {
-  const planPath = join(specDir, 'implementation_plan.json');
-  try {
-    const raw = await readFile(planPath, 'utf-8');
-    return safeParseJson<ImplementationPlan>(raw);
-  } catch {
-    return null;
-  }
+  return loadImplementationPlanFromFiles(specDir) as Promise<ImplementationPlan | null>;
 }
 
 /**

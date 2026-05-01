@@ -91,6 +91,7 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).toContain('PLAN SIZE LIMITS');
     expect(plannerOverride?.content).toContain('about 24 subtasks or fewer');
     expect(plannerOverride?.content).toContain('do not omit necessary subtasks');
+    expect(plannerOverride?.content).toContain('split it into phase plan files automatically');
     expect(plannerOverride?.content).toContain('Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`');
   });
 
@@ -153,7 +154,7 @@ describe('project prompt profile', () => {
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
 
-    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 7');
+    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 8');
     expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the next pending subtask');
     expect(readFileSync(coderPath, 'utf-8')).not.toContain('old generated prompt');
   });

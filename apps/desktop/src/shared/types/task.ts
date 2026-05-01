@@ -297,6 +297,13 @@ export interface ImplementationPlan {
   feature?: string;  // Some plans use 'feature', some use 'title'
   title?: string;    // Alternative to 'feature' for task name
   workflow_type: string;
+  split_plan?: boolean;
+  plan_files?: Array<{
+    phase_id: string;
+    phase_name: string;
+    file: string;
+    subtask_count: number;
+  }>;
   services_involved?: string[];
   phases: Phase[];
   final_acceptance: string[];
@@ -324,6 +331,9 @@ export interface Phase {
   name: string;
   type: string;
   subtasks: PlanSubtask[];
+  subtasks_file?: string;
+  subtask_count?: number;
+  status_counts?: Record<string, number>;
   depends_on?: number[];
 }
 

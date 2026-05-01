@@ -270,6 +270,7 @@ Rules:
 - If the task is genuinely complex, do not omit necessary subtasks just to hit the normal target. Preserve all required work items and make each subtask description shorter instead.
 - Keep `title` under 120 characters and `description` under 700 characters.
 - Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`, research notes, copied source, large examples, or long analysis. Put only the smallest useful verification step on each subtask.
+- For very large plans, still return one complete JSON object. The orchestrator will split it into phase plan files automatically after validation.
 
 Based on the workflow type and services involved, create the implementation plan.
 
@@ -512,6 +513,7 @@ Before returning the final JSON, verify:
 3. Large plans use shorter descriptions rather than fewer required subtasks
 4. No top-level `summary`, `verification_strategy`, `qa_acceptance`, or long analysis fields
 5. Every subtask is directly executable and has a concise verification step
+6. Do not manually create phase files; the orchestrator handles plan splitting
 
 ---
 

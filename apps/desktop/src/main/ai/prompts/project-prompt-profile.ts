@@ -30,7 +30,7 @@ import {
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 7;
+export const PROJECT_PROMPT_PROFILE_VERSION = 8;
 export const PROJECT_PROMPT_PROFILE_PATH = join('.autocode', 'prompt_profile.json');
 export const PROJECT_PROMPTS_PATH = join('.autocode', 'prompts');
 
@@ -622,6 +622,7 @@ ${buildToolCallJsonGuidance()}
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 - Put verification on each subtask using the smallest relevant command or manual check.
+- For very large plans, still return one complete JSON object. The orchestrator will split it into phase plan files automatically.
 
 ## DESIGN PATTERN DECISION
 
