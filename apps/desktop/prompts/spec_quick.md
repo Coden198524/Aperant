@@ -63,6 +63,8 @@ For simple tasks, design pattern use should stay lightweight:
 
 Use the **Write tool** to create `spec.md` in the spec directory:
 
+Keep this first write small enough that the Write tool JSON closes correctly. A simple `spec.md` should be 20-50 lines. If the Write tool reports JSON parsing failure, retry with an even shorter 20-40 line version that keeps the required headings and omits optional notes.
+
 ```markdown
 # Quick Spec: [Task Name]
 

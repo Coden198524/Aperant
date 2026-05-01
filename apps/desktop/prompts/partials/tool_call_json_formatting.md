@@ -30,6 +30,7 @@ Examples:
 
 **Symptoms of content truncation:**
 - Error: "json parsing failed: text: {\"file_path\": \"...\", \"content\": \"..." (incomplete JSON)
+- Error: "json parsing failed: text: {\"file_path\": \".../spec.md\"" (the JSON stopped before `"content"`)
 - The error shows the JSON was cut off before the closing `}`
 
 **Solutions:**
@@ -40,8 +41,11 @@ Examples:
 5. **Link to sources** - Use URLs instead of copying full content
 
 **If you get "json parsing failed" on a Write tool call:**
-- The content parameter is too large
+- Do not repeat the same malformed call
+- Retry with one valid JSON object that includes BOTH keys: `{"file_path":"e:/work/project/.autocode/specs/001/spec.md","content":"# ...\n..."}`
+- If the error text stops immediately after `"file_path"`, your tool JSON omitted or truncated the `"content"` key
 - Reduce the content size and try again
-- Consider splitting into multiple smaller writes
+- For `spec.md`, write a compact 20-60 line spec first; do not copy large context blocks, full source files, long code blocks, or large tables
+- Consider splitting large outputs into multiple smaller writes only when the orchestrator explicitly allows those files
 
 This applies to ALL tool calls that accept file paths or large content parameters.

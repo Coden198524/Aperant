@@ -77,6 +77,8 @@ Before writing, think about:
 
 Use the **Write tool** to create `spec.md` in the spec directory with this EXACT template structure:
 
+**Keep the first write compact.** Create a complete but concise spec first (about 60-120 lines for normal tasks). Do not paste large prior context, full source files, long code blocks, or large tables into `spec.md`. If the Write tool reports JSON parsing failure, retry with a shorter 20-60 line spec that still includes the required section headings.
+
 ```markdown
 # Specification: [Task Name from requirements.json]
 

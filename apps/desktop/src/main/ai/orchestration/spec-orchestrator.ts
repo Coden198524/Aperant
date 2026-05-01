@@ -245,6 +245,59 @@ interface ComplexityAssessment {
   needs_self_critique?: boolean;
 }
 
+export function isWriteToolJsonFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  const mentionsWriteTool = lower.includes("tool 'write'") ||
+    lower.includes('tool write') ||
+    lower.includes('invalid input for tool write');
+  const mentionsJsonOrInputFailure = lower.includes('json parsing failed') ||
+    lower.includes('received invalid input type') ||
+    lower.includes('invalid input');
+
+  return mentionsWriteTool && mentionsJsonOrInputFailure;
+}
+
+export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string): string {
+  const normalizedSpecDir = specDir.replace(/\\/g, '/');
+  const targetFiles = (PHASE_OUTPUTS[phase] ?? ['output file'])
+    .map((file) => `${normalizedSpecDir}/${file}`)
+    .join(', ');
+
+  const phaseSpecificGuidance = phase === 'spec_writing' || phase === 'quick_spec' || phase === 'self_critique'
+    ? [
+        'For spec.md, write a compact 20-60 line version first.',
+        'Do not copy large context blocks, full source files, long code blocks, or large tables into spec.md.',
+      ]
+    : phase === 'planning'
+      ? [
+          'For implementation_plan.json, keep descriptions concise and create only the subtasks needed for this task.',
+          'Do not embed source code, long analysis, or copied documentation in JSON fields.',
+        ]
+      : [
+          'Keep JSON or markdown content concise and include only information needed by the next phase.',
+        ];
+
+  return [
+    'CRITICAL - RETRY WRITE TOOL WITH VALID JSON',
+    '',
+    'Your previous Write tool call was rejected before execution because the tool input JSON was incomplete, malformed, or passed as the wrong type.',
+    'Do not repeat the same tool call.',
+    '',
+    'Required Write tool input shape:',
+    `{"file_path":"${targetFiles.split(', ')[0]}","content":"..."}`,
+    '',
+    'Rules for the retry:',
+    `- Use the Write tool to create: ${targetFiles}`,
+    '- Pass a JSON object, not a string containing JSON.',
+    '- Include BOTH required keys in the same object: file_path and content.',
+    '- For multiple required files, call Write once per file with a separate valid object.',
+    '- Use forward slashes in file_path, including Windows paths.',
+    '- Keep each Write content short enough that the JSON closes correctly.',
+    '- If the previous error text ended after "file_path", that means the content key was omitted or the tool JSON was truncated.',
+    ...phaseSpecificGuidance.map((line) => `- ${line}`),
+  ].join('\n');
+}
+
 // =============================================================================
 // SpecOrchestrator
 // =============================================================================
@@ -685,7 +738,13 @@ export class SpecOrchestrator extends EventEmitter {
       }
 
       if (attempt < maxPhaseRetries) {
-        this.emitTyped('log', `Phase ${phase} failed (attempt ${attempt + 1}), retrying...`);
+        if (isWriteToolJsonFailure(errorMsg)) {
+          schemaRetryContext = undefined;
+          toolUseRetryContext = buildWriteToolJsonRetryPrompt(phase, this.config.specDir);
+          this.emitTyped('log', `Phase ${phase} Write tool JSON failed (attempt ${attempt + 1}), retrying with compact Write guidance...`);
+        } else {
+          this.emitTyped('log', `Phase ${phase} failed (attempt ${attempt + 1}), retrying...`);
+        }
       }
     }
 
