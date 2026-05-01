@@ -403,6 +403,16 @@ const browserMockAPI: ElectronAPI = {
     data: ''
   }),
 
+  getWorktreeCommitFiles: async () => ({
+    success: true,
+    data: []
+  }),
+
+  getWorktreeCommitFileDiff: async () => ({
+    success: true,
+    data: ''
+  }),
+
   // Terminal Worktree Operations
   createTerminalWorktree: async () => ({
     success: false,

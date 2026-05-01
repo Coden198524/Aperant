@@ -10,12 +10,13 @@ import {
   Loader2,
   AlertCircle,
   RefreshCw,
-  ChevronRight
+  Copy
 } from 'lucide-react';
 import { ScrollArea } from '../ui/scroll-area';
 import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { cn } from '../../lib/utils';
+import { useToast } from '../../hooks/use-toast';
 import type { Task } from '../../../shared/types';
 
 interface TaskGitChangesProps {
@@ -39,6 +40,12 @@ interface GitCommit {
   parents?: string[];
   refs?: string[];
   isMerge?: boolean;
+}
+
+interface CommitFileStats {
+  filesChanged: number;
+  additions: number;
+  deletions: number;
 }
 
 interface CommitGraphRow {
@@ -231,7 +238,6 @@ function CommitGraph({ row, selected }: { row: CommitGraphRow; selected: boolean
   );
 }
 
-// Get icon and color for file status
 function getFileStatusIcon(status: string) {
   switch (status) {
     case 'A':
@@ -243,99 +249,108 @@ function getFileStatusIcon(status: string) {
   }
 }
 
-export function TaskGitChanges({ task }: TaskGitChangesProps) {
-  console.log('[TaskGitChanges] Component mounted/rendered with task:', task.id, task.projectId);
-  const { t } = useTranslation(['tasks']);
+function getFileStatusLabel(status: string, t: (key: string) => string) {
+  switch (status) {
+    case 'A':
+      return t('tasks:gitChanges.added');
+    case 'D':
+      return t('tasks:gitChanges.deleted');
+    default:
+      return t('tasks:gitChanges.modified');
+  }
+}
 
-  // State for files
-  const [files, setFiles] = useState<GitFile[]>([]);
-  const [isLoadingFiles, setIsLoadingFiles] = useState(false);
-  const [filesError, setFilesError] = useState<string | null>(null);
+export function TaskGitChanges({ task }: TaskGitChangesProps) {
+  const { t } = useTranslation(['tasks']);
+  const { toast } = useToast();
 
   // State for commits
   const [commits, setCommits] = useState<GitCommit[]>([]);
   const [isLoadingCommits, setIsLoadingCommits] = useState(false);
   const [commitsError, setCommitsError] = useState<string | null>(null);
+  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
+
+  // State for commit files
+  const [commitFiles, setCommitFiles] = useState<GitFile[]>([]);
+  const [isLoadingCommitFiles, setIsLoadingCommitFiles] = useState(false);
+  const [commitFilesError, setCommitFilesError] = useState<string | null>(null);
+  const [commitFileStats, setCommitFileStats] = useState<Map<string, CommitFileStats>>(new Map());
 
   // State for diff
   const [selectedFile, setSelectedFile] = useState<string | null>(null);
-  const [selectedCommit, setSelectedCommit] = useState<string | null>(null);
   const [diff, setDiff] = useState<string | null>(null);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+
   const commitGraphRows = useMemo(() => buildCommitGraphRows(commits), [commits]);
-  const selectedGitFile = useMemo(
-    () => files.find((file) => file.path === selectedFile),
-    [files, selectedFile]
-  );
-
-  // Filter out files from specific directories
-  const shouldFilterFile = useCallback((filePath: string): boolean => {
-    const excludedPrefixes = ['.autoclaude/', '.codex/', '.claude/', '.autocode/'];
-    const excludedDotDirs = filePath.split('/').some(part => part.startsWith('.') && part.endsWith('d'));
-    return excludedPrefixes.some(prefix => filePath.startsWith(prefix)) || excludedDotDirs;
-  }, []);
-
-  // Load changed files
-  const loadFiles = useCallback(async () => {
-    console.log('[TaskGitChanges] Loading files for task:', task.id, 'project:', task.projectId);
-    setIsLoadingFiles(true);
-    setFilesError(null);
-
-    try {
-      const result = await window.electronAPI.getWorktreeChangedFiles(task.id, task.projectId);
-      console.log('[TaskGitChanges] Files result:', result);
-      if (!result.success || !result.data) {
-        throw new Error(result.error || 'Failed to load changed files');
-      }
-      console.log('[TaskGitChanges] Files loaded:', result.data.length);
-      // Filter out excluded directories
-      const filteredFiles = result.data.filter((file: GitFile) => !shouldFilterFile(file.path));
-      console.log('[TaskGitChanges] Files after filtering:', filteredFiles.length);
-      setFiles(filteredFiles);
-    } catch (err) {
-      console.error('[TaskGitChanges] Error loading files:', err);
-      setFilesError(err instanceof Error ? err.message : 'Unknown error');
-    } finally {
-      setIsLoadingFiles(false);
-    }
-  }, [task.id, task.projectId, shouldFilterFile]);
 
   // Load commit history
   const loadCommits = useCallback(async () => {
-    console.log('[TaskGitChanges] Loading commits for task:', task.id, 'project:', task.projectId);
     setIsLoadingCommits(true);
     setCommitsError(null);
 
     try {
       const result = await window.electronAPI.getWorktreeCommits(task.id, task.projectId);
-      console.log('[TaskGitChanges] Commits result:', result);
       if (!result.success || !result.data) {
         throw new Error(result.error || 'Failed to load commits');
       }
-      console.log('[TaskGitChanges] Commits loaded:', result.data.length);
       setCommits(result.data);
+
       // Auto-select first commit if available
       if (result.data.length > 0 && !selectedCommit) {
         setSelectedCommit(result.data[0].hash);
       }
     } catch (err) {
-      console.error('[TaskGitChanges] Error loading commits:', err);
       setCommitsError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoadingCommits(false);
     }
   }, [task.id, task.projectId, selectedCommit]);
 
-  // Load diff for selected file
-  const loadDiff = useCallback(async (filePath: string) => {
+  // Load files for selected commit
+  const loadCommitFiles = useCallback(async (commitHash: string) => {
+    setIsLoadingCommitFiles(true);
+    setCommitFilesError(null);
+    setCommitFiles([]);
+    setSelectedFile(null);
+
+    try {
+      const result = await window.electronAPI.getWorktreeCommitFiles(task.id, commitHash, task.projectId);
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Failed to load commit files');
+      }
+
+      setCommitFiles(result.data);
+
+      // Calculate stats for this commit
+      const stats: CommitFileStats = {
+        filesChanged: result.data.length,
+        additions: result.data.reduce((sum: number, file: GitFile) => sum + file.additions, 0),
+        deletions: result.data.reduce((sum: number, file: GitFile) => sum + file.deletions, 0)
+      };
+
+      setCommitFileStats(prev => new Map(prev).set(commitHash, stats));
+
+      // Auto-select first file
+      if (result.data.length > 0) {
+        setSelectedFile(result.data[0].path);
+      }
+    } catch (err) {
+      setCommitFilesError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setIsLoadingCommitFiles(false);
+    }
+  }, [task.id, task.projectId]);
+
+  // Load diff for selected file in selected commit
+  const loadDiff = useCallback(async (commitHash: string, filePath: string) => {
     setSelectedFile(filePath);
     setIsLoadingDiff(true);
     setDiffError(null);
     setDiff(null);
 
     try {
-      const result = await window.electronAPI.getWorktreeFileDiff(task.id, filePath, task.projectId);
+      const result = await window.electronAPI.getWorktreeCommitFileDiff(task.id, commitHash, filePath, task.projectId);
       if (!result.success || result.data === undefined) {
         throw new Error(result.error || 'Failed to load diff');
       }
@@ -347,28 +362,38 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     }
   }, [task.id, task.projectId]);
 
-  // Load data on mount
+  // Load commits on mount
   useEffect(() => {
-    console.log('[TaskGitChanges] useEffect triggered - loading files and commits');
-    loadFiles();
     loadCommits();
-  }, [loadFiles, loadCommits]);
+  }, [loadCommits]);
 
-  // Auto-select first file when files are loaded
+  // Load files when commit is selected
   useEffect(() => {
-    if (files.length > 0 && selectedFile === null) {
-      loadDiff(files[0].path);
+    if (selectedCommit) {
+      loadCommitFiles(selectedCommit);
     }
-  }, [files, selectedFile, loadDiff]);
+  }, [selectedCommit, loadCommitFiles]);
 
-  // Refresh all data
-  const handleRefresh = () => {
-    loadFiles();
-    loadCommits();
-    if (selectedFile) {
-      loadDiff(selectedFile);
+  // Load diff when file is selected
+  useEffect(() => {
+    if (selectedCommit && selectedFile) {
+      loadDiff(selectedCommit, selectedFile);
     }
-  };
+  }, [selectedCommit, selectedFile, loadDiff]);
+
+  // Copy commit hash to clipboard
+  const copyCommitHash = useCallback(async (hash: string, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await navigator.clipboard.writeText(hash);
+      toast({
+        title: t('tasks:gitChanges.hashCopied'),
+        duration: 2000
+      });
+    } catch (err) {
+      console.error('Failed to copy hash:', err);
+    }
+  }, [toast, t]);
 
   // Render diff content
   const renderDiff = () => {
@@ -400,7 +425,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => selectedFile && loadDiff(selectedFile)}
+              onClick={() => selectedCommit && selectedFile && loadDiff(selectedCommit, selectedFile)}
             >
               <RefreshCw className="h-3 w-3 mr-1" />
               {t('tasks:files.retry')}
@@ -485,120 +510,57 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     );
   };
 
+  const selectedFileData = useMemo(
+    () => commitFiles.find((file) => file.path === selectedFile),
+    [commitFiles, selectedFile]
+  );
+
   return (
     <div className="h-full flex">
-      {/* Left sidebar - Files and Commits */}
-      <div className="w-80 border-r border-border flex flex-col">
-        {/* Files section - 30% height */}
-        <div className="h-[30%] border-b border-border flex flex-col">
-          <div className="px-3 py-2 border-b border-border flex items-center justify-between bg-muted/30">
-            <div className="flex items-center gap-2">
-              <FileText className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                {t('tasks:gitChanges.files')}
-              </span>
-              {files.length > 0 && (
-                <Badge variant="secondary" className="text-xs">
-                  {files.length}
-                </Badge>
-              )}
-            </div>
-            <Button
-              variant="ghost"
-              size="icon"
-              className="h-6 w-6"
-              onClick={handleRefresh}
-              disabled={isLoadingFiles}
-            >
-              <RefreshCw className={cn("h-3 w-3", isLoadingFiles && "animate-spin")} />
-            </Button>
+      {/* Left column - Commits list with graph */}
+      <div className="w-[320px] border-r border-border flex flex-col shrink-0">
+        <div className="px-3 py-2 border-b border-border flex items-center justify-between bg-muted/30">
+          <div className="flex items-center gap-2">
+            <GitBranch className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {t('tasks:gitChanges.commits')}
+            </span>
+            {commits.length > 0 && (
+              <Badge variant="secondary" className="text-xs">
+                {commits.length}
+              </Badge>
+            )}
           </div>
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-1">
-              {isLoadingFiles ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : filesError ? (
-                <div className="text-center py-4 px-2">
-                  <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
-                  <p className="text-xs text-destructive break-words">{filesError}</p>
-                </div>
-              ) : files.length === 0 ? (
-                <div className="text-center py-8">
-                  <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
-                  <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.noChanges')}</p>
-                </div>
-              ) : (
-                files.map((file) => (
-                  <button
-                    key={file.path}
-                    type="button"
-                    onClick={() => loadDiff(file.path)}
-                    className={cn(
-                      'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors',
-                      'hover:bg-secondary/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
-                      selectedFile === file.path && 'bg-secondary'
-                    )}
-                  >
-                    {getFileStatusIcon(file.status)}
-                    <Badge
-                      variant={file.status === 'A' ? 'default' : file.status === 'D' ? 'destructive' : 'secondary'}
-                      className="text-[10px] px-1 py-0 h-4 min-w-[16px] justify-center"
-                    >
-                      {file.status}
-                    </Badge>
-                    <div className="flex-1 min-w-0">
-                      <div className="text-xs font-medium truncate">
-                        {file.path.split('/').pop()}
-                      </div>
-                      <div className="text-[10px] text-muted-foreground truncate">
-                        {file.path}
-                      </div>
-                    </div>
-                    {selectedFile === file.path && (
-                      <ChevronRight className="h-3 w-3 text-muted-foreground shrink-0" />
-                    )}
-                  </button>
-                ))
-              )}
-            </div>
-          </ScrollArea>
+          <Button
+            variant="ghost"
+            size="icon"
+            className="h-6 w-6"
+            onClick={loadCommits}
+            disabled={isLoadingCommits}
+          >
+            <RefreshCw className={cn("h-3 w-3", isLoadingCommits && "animate-spin")} />
+          </Button>
         </div>
-
-        {/* Commits section - 70% height */}
-        <div className="flex-1 min-h-0 flex flex-col">
-          <div className="px-3 py-2 border-b border-border flex items-center justify-between bg-muted/30">
-            <div className="flex items-center gap-2">
-              <GitBranch className="h-4 w-4 text-muted-foreground" />
-              <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-                {t('tasks:gitChanges.commits')}
-              </span>
-              {commits.length > 0 && (
-                <Badge variant="secondary" className="text-xs">
-                  {commits.length}
-                </Badge>
-              )}
-            </div>
-          </div>
-          <ScrollArea className="flex-1">
-            <div className="p-2 space-y-2">
-              {isLoadingCommits ? (
-                <div className="flex items-center justify-center py-8">
-                  <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
-                </div>
-              ) : commitsError ? (
-                <div className="text-center py-4 px-2">
-                  <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
-                  <p className="text-xs text-destructive break-words">{commitsError}</p>
-                </div>
-              ) : commits.length === 0 ? (
-                <div className="text-center py-8">
-                  <GitCommitIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
-                  <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.noCommits')}</p>
-                </div>
-              ) : (
-                commits.map((commit, idx) => (
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-2">
+            {isLoadingCommits ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : commitsError ? (
+              <div className="text-center py-4 px-2">
+                <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
+                <p className="text-xs text-destructive break-words">{commitsError}</p>
+              </div>
+            ) : commits.length === 0 ? (
+              <div className="text-center py-8">
+                <GitCommitIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.noCommits')}</p>
+              </div>
+            ) : (
+              commits.map((commit, idx) => {
+                const stats = commitFileStats.get(commit.hash);
+                return (
                   <button
                     key={commit.hash}
                     type="button"
@@ -633,40 +595,134 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                             ))}
                           </div>
                         )}
-                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
-                          <code className="font-mono">{commit.shortHash}</code>
+                        <div className="flex items-center gap-2 text-[10px] text-muted-foreground mb-0.5">
+                          <button
+                            type="button"
+                            onClick={(e) => copyCommitHash(commit.hash, e)}
+                            className="font-mono hover:text-foreground transition-colors flex items-center gap-1 group"
+                            title={t('tasks:gitChanges.copyHash')}
+                          >
+                            <code>{commit.shortHash}</code>
+                            <Copy className="h-2.5 w-2.5 opacity-0 group-hover:opacity-100 transition-opacity" />
+                          </button>
                           <span aria-hidden="true">|</span>
                           <span className="truncate">{commit.author}</span>
                         </div>
-                        <div className="text-[10px] text-muted-foreground mt-0.5">
+                        <div className="text-[10px] text-muted-foreground">
                           {commit.date}
                         </div>
+                        {stats && (
+                          <div className="flex items-center gap-2 text-[10px] mt-1 pt-1 border-t border-border/50">
+                            <span className="text-muted-foreground">
+                              {t('tasks:gitChanges.filesChanged', { count: stats.filesChanged })}
+                            </span>
+                            <span className="text-green-600 dark:text-green-400">
+                              +{stats.additions}
+                            </span>
+                            <span className="text-red-600 dark:text-red-400">
+                              -{stats.deletions}
+                            </span>
+                          </div>
+                        )}
                       </div>
                     </div>
                   </button>
-                ))
-              )}
-            </div>
-          </ScrollArea>
-        </div>
+                );
+              })
+            )}
+          </div>
+        </ScrollArea>
       </div>
 
-      {/* Right side - Diff viewer */}
-      <div className="flex-1 min-w-0 flex flex-col">
-        {selectedFile && (
-          <div className="px-4 py-2 border-b border-border flex items-center gap-2 shrink-0 bg-muted/30">
-            {selectedGitFile && getFileStatusIcon(selectedGitFile.status)}
-            <span className="text-sm font-medium flex-1 truncate">{selectedFile}</span>
-            {selectedGitFile && (
-              <div className="flex items-center gap-2 text-xs text-muted-foreground">
-                <span className="text-green-600 dark:text-green-400">
-                  +{selectedGitFile.additions}
-                </span>
-                <span className="text-red-600 dark:text-red-400">
-                  -{selectedGitFile.deletions}
-                </span>
-              </div>
+      {/* Middle column - Files list */}
+      <div className="w-[280px] border-r border-border flex flex-col shrink-0">
+        <div className="px-3 py-2 border-b border-border flex items-center justify-between bg-muted/30">
+          <div className="flex items-center gap-2">
+            <FileText className="h-4 w-4 text-muted-foreground" />
+            <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+              {t('tasks:gitChanges.commitFiles')}
+            </span>
+            {commitFiles.length > 0 && (
+              <Badge variant="secondary" className="text-xs">
+                {commitFiles.length}
+              </Badge>
             )}
+          </div>
+        </div>
+        <ScrollArea className="flex-1">
+          <div className="p-2 space-y-1">
+            {!selectedCommit ? (
+              <div className="text-center py-8">
+                <GitCommitIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.selectCommit')}</p>
+              </div>
+            ) : isLoadingCommitFiles ? (
+              <div className="flex items-center justify-center py-8">
+                <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
+              </div>
+            ) : commitFilesError ? (
+              <div className="text-center py-4 px-2">
+                <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
+                <p className="text-xs text-destructive break-words">{commitFilesError}</p>
+              </div>
+            ) : commitFiles.length === 0 ? (
+              <div className="text-center py-8">
+                <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
+                <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.noChanges')}</p>
+              </div>
+            ) : (
+              commitFiles.map((file) => (
+                <button
+                  key={file.path}
+                  type="button"
+                  onClick={() => setSelectedFile(file.path)}
+                  className={cn(
+                    'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors',
+                    'hover:bg-secondary/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
+                    selectedFile === file.path && 'bg-secondary'
+                  )}
+                >
+                  {getFileStatusIcon(file.status)}
+                  <Badge
+                    variant={file.status === 'A' ? 'default' : file.status === 'D' ? 'destructive' : 'secondary'}
+                    className="text-[10px] px-1 py-0 h-4 min-w-[16px] justify-center"
+                    title={getFileStatusLabel(file.status, t)}
+                  >
+                    {file.status}
+                  </Badge>
+                  <div className="flex-1 min-w-0">
+                    <div className="text-xs font-medium truncate">
+                      {file.path.split('/').pop()}
+                    </div>
+                    <div className="text-[10px] text-muted-foreground truncate">
+                      {file.path}
+                    </div>
+                  </div>
+                  <div className="flex items-center gap-1 text-[10px] shrink-0">
+                    <span className="text-green-600 dark:text-green-400">+{file.additions}</span>
+                    <span className="text-red-600 dark:text-red-400">-{file.deletions}</span>
+                  </div>
+                </button>
+              ))
+            )}
+          </div>
+        </ScrollArea>
+      </div>
+
+      {/* Right column - Diff viewer */}
+      <div className="flex-1 min-w-0 flex flex-col">
+        {selectedFile && selectedFileData && (
+          <div className="px-4 py-2 border-b border-border flex items-center gap-2 shrink-0 bg-muted/30">
+            {getFileStatusIcon(selectedFileData.status)}
+            <span className="text-sm font-medium flex-1 truncate">{selectedFile}</span>
+            <div className="flex items-center gap-2 text-xs text-muted-foreground">
+              <span className="text-green-600 dark:text-green-400">
+                +{selectedFileData.additions}
+              </span>
+              <span className="text-red-600 dark:text-red-400">
+                -{selectedFileData.deletions}
+              </span>
+            </div>
           </div>
         )}
         <ScrollArea className="flex-1">
