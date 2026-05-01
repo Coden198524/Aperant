@@ -88,6 +88,8 @@ const WRITE_TOOL_INPUT_ERROR_PATTERNS = [
   'parameter \'content\' must be a string',
 ] as const;
 
+const MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION = 2;
+
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
   return (
@@ -145,7 +147,18 @@ function isWriteToolInputErrorMessage(message: string): boolean {
   return WRITE_TOOL_INPUT_ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
 }
 
-function getFatalWriteToolInputError(part: FullStreamPart): Error | null {
+interface WriteToolInputFailure {
+  message: string;
+  filePath?: string;
+}
+
+function extractMalformedWritePath(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined;
+  const match = input.match(/"file_path"\s*:\s*"([^"]+)"/);
+  return match?.[1]?.replace(/\\/g, '/');
+}
+
+function getWriteToolInputFailure(part: FullStreamPart): WriteToolInputFailure | null {
   const toolName = typeof (part as { toolName?: unknown }).toolName === 'string'
     ? (part as { toolName: string }).toolName
     : undefined;
@@ -153,12 +166,18 @@ function getFatalWriteToolInputError(part: FullStreamPart): Error | null {
   if (part.type === 'tool-call' && toolName === 'Write') {
     const input = (part as { input?: unknown }).input;
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-      return new Error(`Tool 'Write' input JSON failed: received invalid input type ${typeof input}; expected object with file_path and content.`);
+      return {
+        message: `received invalid input type ${typeof input}; expected object with file_path and content`,
+        filePath: extractMalformedWritePath(input),
+      };
     }
 
     const params = input as Record<string, unknown>;
     if (typeof params.file_path !== 'string' || typeof params.content !== 'string') {
-      return new Error(`Tool 'Write' input JSON failed: expected object with string file_path and string content.`);
+      return {
+        message: 'expected object with string file_path and string content',
+        filePath: typeof params.file_path === 'string' ? params.file_path.replace(/\\/g, '/') : undefined,
+      };
     }
   }
 
@@ -171,7 +190,31 @@ function getFatalWriteToolInputError(part: FullStreamPart): Error | null {
     return null;
   }
 
-  return new Error(`Tool 'Write' input JSON failed: ${message}`);
+  return {
+    message,
+    filePath: extractMalformedWritePath((part as { input?: unknown }).input),
+  };
+}
+
+function buildWriteToolInputCorrectionPrompt(failure: WriteToolInputFailure): string {
+  const target = failure.filePath ?? 'the required output file';
+  return [
+    'CRITICAL TOOL CALL CORRECTION - WRITE TOOL',
+    '',
+    `Your previous Write tool call failed before execution: ${failure.message}`,
+    '',
+    'For the next action, call the Write tool with an OBJECT, not a string.',
+    'Do not wrap the JSON object in quotes. Do not output the object as markdown text.',
+    '',
+    'Required Write arguments shape:',
+    `{"file_path":"${target}","content":"# ...\\n..."}`,
+    '',
+    'Rules:',
+    '- Include both keys in the same object: file_path and content.',
+    '- Use forward slashes in file_path.',
+    '- Keep content compact so the tool-call JSON closes correctly.',
+    '- For spec.md, write a short complete spec first; avoid long code blocks, copied source files, or large tables.',
+  ].join('\n');
 }
 
 function tryParseJson(text: string): unknown {
@@ -489,6 +532,8 @@ async function executeStream(
   // Per-step state for memory injection (only allocated when memory is active)
   const stepMemoryState = memoryContext ? new StepMemoryState() : null;
   let lastMemoryInjectionStep = 0;
+  let writeToolInputFailureCount = 0;
+  let writeToolInputCorrectionPrompt: string | undefined;
 
   // Convergence nudge: track whether we've already nudged the agent to wrap up
   let convergenceNudgeInjected = false;
@@ -619,6 +664,11 @@ async function executeStream(
       // Collect system messages to inject between steps
       const systemParts: string[] = [];
 
+      if (writeToolInputCorrectionPrompt) {
+        systemParts.push(writeToolInputCorrectionPrompt);
+        writeToolInputCorrectionPrompt = undefined;
+      }
+
       // Context window guard: inject compaction warning when approaching limit
       if (
         contextWindowLimit > 0 &&
@@ -725,9 +775,20 @@ async function executeStream(
       resetStreamInactivityTimer(); // Reset on each part
       streamHandler.processPart(part as FullStreamPart);
 
-      const writeToolInputError = getFatalWriteToolInputError(part as FullStreamPart);
-      if (writeToolInputError) {
-        throw writeToolInputError;
+      const writeToolInputFailure = getWriteToolInputFailure(part as FullStreamPart);
+      if (writeToolInputFailure) {
+        writeToolInputFailureCount += 1;
+        if (writeToolInputFailureCount >= MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION) {
+          throw new Error(`Tool 'Write' input JSON failed after ${writeToolInputFailureCount} attempts: ${writeToolInputFailure.message}`);
+        }
+        writeToolInputCorrectionPrompt = buildWriteToolInputCorrectionPrompt(writeToolInputFailure);
+      } else if (
+        part.type === 'tool-result' &&
+        typeof (part as { toolName?: unknown }).toolName === 'string' &&
+        (part as { toolName: string }).toolName === 'Write'
+      ) {
+        writeToolInputFailureCount = 0;
+        writeToolInputCorrectionPrompt = undefined;
       }
 
       // Some providers surface request failures as `error` parts instead of

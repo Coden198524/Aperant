@@ -222,26 +222,41 @@ describe('runAgentSession', () => {
     expect(result.error!.code).toBe('model_not_found');
   });
 
-  it('should fail fast on malformed Write tool input instead of looping', async () => {
-    mockStreamText.mockReturnValue(
-      createMockStreamResult(
-        [
-          {
-            type: 'tool-error',
-            toolName: 'Write',
-            toolCallId: 'c1',
-            input: '{"file_path": "e:/work/project/.autocode/specs/001/spec.md"',
-            error: 'invalid input for tool write: json parsing failed',
-          },
-        ],
-        { text: '', totalUsage: { inputTokens: 20, outputTokens: 10 } },
-      ),
-    );
+  it('should inject correction after malformed Write input and fail on repeat', async () => {
+    let injectedSystem = '';
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        yield {
+          type: 'tool-error',
+          toolName: 'Write',
+          toolCallId: 'c1',
+          input: '{"file_path": "e:/work/project/.autocode/specs/001/spec.md"',
+          error: 'invalid input for tool write: json parsing failed',
+        };
+
+        const retryPrompt = await args.prepareStep({ stepNumber: 2 });
+        injectedSystem = retryPrompt.system ?? '';
+
+        yield {
+          type: 'tool-error',
+          toolName: 'Write',
+          toolCallId: 'c2',
+          input: '{"file_path": "e:/work/project/.autocode/specs/001/spec.md"',
+          error: 'tool \'write\' received invalid input type: string. expected object.',
+        };
+      })(),
+      text: Promise.resolve(''),
+      totalUsage: Promise.resolve({ inputTokens: 20, outputTokens: 10 }),
+    }));
 
     const result = await runAgentSession(createMockConfig());
 
     expect(result.outcome).toBe('error');
     expect(result.error!.message).toContain('tool \'write\' input json failed');
+    expect(injectedSystem).toContain('CRITICAL TOOL CALL CORRECTION');
+    expect(injectedSystem).toContain('e:/work/project/.autocode/specs/001/spec.md');
   });
 
   // ===========================================================================
