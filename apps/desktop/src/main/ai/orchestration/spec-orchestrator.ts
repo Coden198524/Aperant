@@ -273,7 +273,8 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       '- Do NOT wrap the JSON in a markdown fence.',
       '- Do NOT add prose before or after the JSON.',
       '- Keep descriptions concise and create only the subtasks needed for this task.',
-      '- Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
+      '- Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
+      '- For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
       '- Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
       '- Do not embed source code, long analysis, or copied documentation in JSON fields.',
     ].join('\n');
@@ -355,12 +356,13 @@ function buildPlanStructuredOutputValidationRetryPrompt(
     '3. Do NOT wrap the JSON in a markdown fence.',
     '4. Do NOT add prose before or after the JSON.',
     '5. Use phases[].subtasks[] with concise pending subtasks.',
-    '6. Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
-    '7. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
+    '6. Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
+    '7. For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
+    '8. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   );
 
   if (phase === 'quick_spec') {
-    lines.push('8. If spec.md is missing, use Write only for spec.md before returning the final plan JSON.');
+    lines.push('9. If spec.md is missing, use Write only for spec.md before returning the final plan JSON.');
   }
 
   return lines.join('\n');

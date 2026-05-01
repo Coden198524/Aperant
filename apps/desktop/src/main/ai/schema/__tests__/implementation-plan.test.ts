@@ -181,7 +181,7 @@ describe('PlanSubtaskSchema', () => {
 });
 
 describe('compactImplementationPlan', () => {
-  it('strips bulky optional sections and caps plan size', () => {
+  it('strips bulky optional sections and preserves all executable subtasks', () => {
     const longDescription = 'Update the module. '.repeat(100);
     const rawPlan = {
       feature: 'A very large planning request '.repeat(20),
@@ -215,7 +215,7 @@ describe('compactImplementationPlan', () => {
       throw new Error('Expected plan compaction to succeed');
     }
     expect(result.originalSubtaskCount).toBe(60);
-    expect(result.compactedSubtaskCount).toBeLessThanOrEqual(24);
+    expect(result.compactedSubtaskCount).toBe(60);
     expect(result.plan.summary).toBeUndefined();
     expect(result.plan.verification_strategy).toBeUndefined();
     expect(result.plan.qa_acceptance).toBeUndefined();
@@ -230,10 +230,10 @@ describe('compactImplementationPlan', () => {
         }>;
       }>;
     };
-    expect(compacted.phases).toHaveLength(3);
-    expect(compacted.phases[0].subtasks).toHaveLength(8);
+    expect(compacted.phases).toHaveLength(6);
+    expect(compacted.phases[0].subtasks).toHaveLength(10);
     expect(compacted.phases[0].subtasks[0].title.length).toBeLessThanOrEqual(120);
-    expect(compacted.phases[0].subtasks[0].description.length).toBeLessThanOrEqual(700);
+    expect(compacted.phases[0].subtasks[0].description.length).toBeLessThanOrEqual(450);
     expect(compacted.phases[0].subtasks[0].files_to_modify.length).toBeLessThanOrEqual(12);
     expect(compacted.phases[0].subtasks[0].verification?.run?.length).toBeLessThanOrEqual(300);
     expect(ImplementationPlanSchema.safeParse(result.plan).success).toBe(true);

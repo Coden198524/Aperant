@@ -83,6 +83,28 @@ describe('ImplementationPlanOutputSchema', () => {
       }],
     })).toThrow();
   });
+
+  it('should accept large plans when each subtask stays concise', () => {
+    const result = ImplementationPlanOutputSchema.parse({
+      feature: 'Large refactor',
+      workflow_type: 'refactor',
+      phases: Array.from({ length: 6 }, (_, phaseIndex) => ({
+        id: `phase-${phaseIndex + 1}`,
+        name: `Phase ${phaseIndex + 1}`,
+        subtasks: Array.from({ length: 10 }, (_, subtaskIndex) => ({
+          id: `${phaseIndex + 1}-${subtaskIndex + 1}`,
+          title: `Task ${phaseIndex + 1}-${subtaskIndex + 1}`,
+          description: 'Concise implementation step',
+          status: 'pending',
+          files_to_create: [],
+          files_to_modify: ['src/app.ts'],
+        })),
+      })),
+    });
+
+    expect(result.phases).toHaveLength(6);
+    expect(result.phases[0].subtasks).toHaveLength(10);
+  });
 });
 
 describe('QASignoffOutputSchema', () => {

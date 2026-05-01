@@ -531,7 +531,7 @@ ${buildToolCallJsonGuidance()}
 ## PLAN SIZE LIMITS
 
 - Use exactly 1 phase for simple tasks unless there is a real dependency split.
-- Use 1-${profile.workflow.maxRecommendedSubtasks} subtasks.
+- Use 1-${profile.workflow.maxRecommendedSubtasks} subtasks for simple tasks; if the task is no longer simple, keep all necessary subtasks and make each one concise.
 - Keep each \`title\` under 120 characters and each \`description\` under 500 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 
@@ -617,8 +617,8 @@ ${buildToolCallJsonGuidance()}
 
 ## PLAN SIZE LIMITS
 
-- Use at most 4 phases.
-- Use at most 24 subtasks total and at most 8 subtasks per phase.
+- Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.
+- If the task is genuinely complex, do not omit necessary subtasks just to hit the normal target. Preserve all required work items and make each subtask description shorter instead.
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 - Put verification on each subtask using the smallest relevant command or manual check.

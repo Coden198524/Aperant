@@ -266,7 +266,8 @@ Rules:
 - Final response must be only the JSON object, with no markdown fence and no explanatory text.
 - Do not call Write for `implementation_plan.json`.
 - Keep descriptions concise; do not embed source code, copied documentation, or long analysis in JSON fields.
-- Keep the plan compact: at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.
+- Keep the plan compact: normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.
+- If the task is genuinely complex, do not omit necessary subtasks just to hit the normal target. Preserve all required work items and make each subtask description shorter instead.
 - Keep `title` under 120 characters and `description` under 700 characters.
 - Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`, research notes, copied source, large examples, or long analysis. Put only the smallest useful verification step on each subtask.
 
@@ -506,9 +507,9 @@ Use the smallest relevant command or manual check. Security, E2E, and full-suite
 ## PHASE 4: REVIEW PLAN SIZE
 
 Before returning the final JSON, verify:
-1. At most 4 phases
-2. At most 24 subtasks total
-3. At most 8 subtasks in any phase
+1. Normal-sized tasks stay near 4 phases / 24 subtasks or fewer
+2. Genuinely complex tasks keep all necessary subtasks instead of dropping work
+3. Large plans use shorter descriptions rather than fewer required subtasks
 4. No top-level `summary`, `verification_strategy`, `qa_acceptance`, or long analysis fields
 5. Every subtask is directly executable and has a concise verification step
 
@@ -519,7 +520,7 @@ Before returning the final JSON, verify:
 Before proceeding to PHASE 5, verify you have:
 1. ✅ Created the complete implementation_plan.json structure
 2. ✅ Prepared it as the final response JSON object
-3. ✅ Kept the plan within the phase and subtask limits
+3. ✅ Kept normal plans compact or preserved all required subtasks for complex plans
 4. ✅ Kept every description concise
 5. ✅ Omitted top-level summary, verification_strategy, and qa_acceptance sections
 

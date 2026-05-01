@@ -23,13 +23,13 @@ const SubtaskOutputSchema = z.object({
 const PhaseOutputSchema = z.object({
   id: z.string().max(80),
   name: z.string().max(120),
-  subtasks: z.array(SubtaskOutputSchema).min(1).max(8),
+  subtasks: z.array(SubtaskOutputSchema).min(1),
 });
 
 export const ImplementationPlanOutputSchema = z.object({
   feature: z.string().max(240),
   workflow_type: z.string().max(40),
-  phases: z.array(PhaseOutputSchema).min(1).max(4),
+  phases: z.array(PhaseOutputSchema).min(1),
 });
 
 export type ImplementationPlanOutput = z.infer<typeof ImplementationPlanOutputSchema>;

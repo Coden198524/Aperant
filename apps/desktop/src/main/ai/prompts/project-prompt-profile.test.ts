@@ -89,7 +89,8 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).toContain('final response JSON object');
     expect(plannerOverride?.content).toContain('Do NOT call Write for `implementation_plan.json`');
     expect(plannerOverride?.content).toContain('PLAN SIZE LIMITS');
-    expect(plannerOverride?.content).toContain('at most 24 subtasks total');
+    expect(plannerOverride?.content).toContain('about 24 subtasks or fewer');
+    expect(plannerOverride?.content).toContain('do not omit necessary subtasks');
     expect(plannerOverride?.content).toContain('Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`');
   });
 

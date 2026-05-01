@@ -22,9 +22,9 @@ import {
 type PlanCompactionLimits = Required<PlanCompactionOptions>;
 
 export const PLAN_COMPACTION_LIMITS: PlanCompactionLimits = {
-  maxPhases: 4,
-  maxTotalSubtasks: 24,
-  maxSubtasksPerPhase: 8,
+  maxPhases: Number.MAX_SAFE_INTEGER,
+  maxTotalSubtasks: Number.MAX_SAFE_INTEGER,
+  maxSubtasksPerPhase: Number.MAX_SAFE_INTEGER,
   maxFeatureChars: 240,
   maxPhaseNameChars: 120,
   maxSubtaskTitleChars: 120,
@@ -120,6 +120,19 @@ function toStringArray(value: unknown, maxItems: number, maxChars: number): stri
 
 function countSubtasks(plan: ValidatedImplementationPlan): number {
   return plan.phases.reduce((total, phase) => total + phase.subtasks.length, 0);
+}
+
+function getEffectiveDescriptionLimit(totalSubtasks: number, limits: PlanCompactionLimits): number {
+  if (totalSubtasks > 120) {
+    return Math.min(limits.maxSubtaskDescriptionChars, 220);
+  }
+  if (totalSubtasks > 60) {
+    return Math.min(limits.maxSubtaskDescriptionChars, 320);
+  }
+  if (totalSubtasks > 24) {
+    return Math.min(limits.maxSubtaskDescriptionChars, 450);
+  }
+  return limits.maxSubtaskDescriptionChars;
 }
 
 function getRecord(value: unknown): Record<string, unknown> {
@@ -230,15 +243,19 @@ export function compactImplementationPlan(
   const sourcePlan = parsed.data;
   const originalPhaseCount = sourcePlan.phases.length;
   const originalSubtaskCount = countSubtasks(sourcePlan);
+  const effectiveLimits = {
+    ...limits,
+    maxSubtaskDescriptionChars: getEffectiveDescriptionLimit(originalSubtaskCount, limits),
+  };
   const compactedPhases: Record<string, unknown>[] = [];
-  let remainingSubtasks = limits.maxTotalSubtasks;
+  let remainingSubtasks = effectiveLimits.maxTotalSubtasks;
 
-  for (const phase of sourcePlan.phases.slice(0, limits.maxPhases)) {
+  for (const phase of sourcePlan.phases.slice(0, effectiveLimits.maxPhases)) {
     if (remainingSubtasks <= 0) {
       break;
     }
 
-    const compactedPhase = compactPhase(phase, compactedPhases.length, limits, remainingSubtasks);
+    const compactedPhase = compactPhase(phase, compactedPhases.length, effectiveLimits, remainingSubtasks);
     if (!compactedPhase) {
       continue;
     }

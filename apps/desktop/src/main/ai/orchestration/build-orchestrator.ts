@@ -80,7 +80,8 @@ function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string 
     'Do NOT wrap the JSON in a markdown fence.',
     'Do NOT add prose before or after the JSON.',
     'Keep descriptions concise so the final JSON is valid and schema-compatible.',
-    'Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
+    'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
+    'For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
     'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
@@ -100,7 +101,8 @@ function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): s
     'Do NOT call the Write tool for implementation_plan.json.',
     'Do NOT wrap the JSON in a markdown fence.',
     'Do NOT add prose before or after the JSON.',
-    'Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
+    'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
+    'For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
     'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
