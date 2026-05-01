@@ -21,10 +21,19 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
   it('builds compact retry guidance with normalized paths', () => {
     const prompt = buildWriteToolJsonRetryPrompt('quick_spec', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('CRITICAL - RETRY WRITE TOOL WITH VALID JSON');
+    expect(prompt).toContain('CRITICAL - RETRY WITH SPLIT OUTPUTS');
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/spec.md');
-    expect(prompt).toContain('file_path and content');
+    expect(prompt).toContain('Do NOT call Write for implementation_plan.json');
+    expect(prompt).toContain('final response JSON object');
     expect(prompt).toContain('20-60 line');
     expect(prompt).not.toContain('\\');
+  });
+
+  it('tells planner retries to return final JSON instead of using Write', () => {
+    const prompt = buildWriteToolJsonRetryPrompt('planning', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
+
+    expect(prompt).toContain('DO NOT USE WRITE FOR implementation_plan.json');
+    expect(prompt).toContain('final response JSON object');
+    expect(prompt).not.toContain('Required Write tool input shape');
   });
 });

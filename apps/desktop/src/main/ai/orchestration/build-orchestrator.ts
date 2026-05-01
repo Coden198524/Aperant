@@ -30,7 +30,6 @@ import {
   validateAndNormalizeJsonFile,
   validateImplementationPlanLanguage,
   repairJsonWithLLM,
-  buildValidationRetryPrompt,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
 } from '../schema';
 import { safeParseJson } from '../../utils/json-repair';
@@ -57,6 +56,48 @@ const MAX_SUBTASK_RETRIES = 2; // Reduced from 3 to 2
 
 /** Delay before retrying after an error (ms) */
 const ERROR_RETRY_DELAY_MS = 5_000;
+
+function isWriteToolPlanOutputFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes("tool 'write'") &&
+    (lower.includes('implementation_plan.json') ||
+      lower.includes('input json failed') ||
+      lower.includes('json parsing failed') ||
+      lower.includes('invalid input') ||
+      lower.includes('received invalid input type'));
+}
+
+function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string {
+  return [
+    'CRITICAL - DO NOT USE WRITE FOR implementation_plan.json',
+    '',
+    `Previous planning attempt failed because the model tried to call Write incorrectly: ${errorMessage}`,
+    '',
+    'Retry by returning the implementation plan as the final response JSON object.',
+    'Do NOT call the Write tool for implementation_plan.json.',
+    'Do NOT wrap the JSON in a markdown fence.',
+    'Do NOT add prose before or after the JSON.',
+    'Keep descriptions concise so the final JSON is valid and schema-compatible.',
+  ].join('\n');
+}
+
+function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): string {
+  return [
+    'CRITICAL - RETURN CORRECTED PLAN AS FINAL JSON',
+    '',
+    'The previous implementation plan JSON was missing or invalid.',
+    '',
+    'Errors:',
+    ...errors.map((error) => `- ${error}`),
+    '',
+    IMPLEMENTATION_PLAN_SCHEMA_HINT,
+    '',
+    'Retry by returning the corrected implementation plan as the final response JSON object.',
+    'Do NOT call the Write tool for implementation_plan.json.',
+    'Do NOT wrap the JSON in a markdown fence.',
+    'Do NOT add prose before or after the JSON.',
+  ].join('\n');
+}
 
 // =============================================================================
 // Types
@@ -390,8 +431,18 @@ export class BuildOrchestrator extends EventEmitter {
         return { success: false, error: 'Build cancelled' };
       }
 
-      if (result.outcome === 'error' || result.outcome === 'auth_failure' || result.outcome === 'rate_limited') {
+      if (result.outcome === 'auth_failure' || result.outcome === 'rate_limited') {
         return { success: false, error: result.error?.message ?? 'Planning session failed' };
+      }
+
+      if (result.outcome === 'error') {
+        const errorMessage = result.error?.message ?? 'Planning session failed';
+        if (attempt < maxPlanningRetries && isWriteToolPlanOutputFailure(errorMessage)) {
+          planningRetryContext = buildPlanningStructuredOutputRetryPrompt(errorMessage);
+          this.emitTyped('log', 'Planning attempted malformed Write for implementation_plan.json; retrying with structured-output-only guidance...');
+          continue;
+        }
+        return { success: false, error: errorMessage };
       }
 
       // If the provider returned structured output via constrained decoding,
@@ -464,11 +515,7 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       // Build retry context for the full re-plan (last resort)
-      planningRetryContext = buildValidationRetryPrompt(
-        'implementation_plan.json',
-        validationErrors,
-        IMPLEMENTATION_PLAN_SCHEMA_HINT,
-      );
+      planningRetryContext = buildPlanningStructuredOutputValidationRetryPrompt(validationErrors);
 
       this.emitTyped('log', `Falling back to full re-plan (attempt ${validationFailures + 1})...`);
     }

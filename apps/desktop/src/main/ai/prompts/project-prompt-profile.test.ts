@@ -84,6 +84,10 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('both keys');
     expect(coderOverride?.content).toContain('20-60 line');
     expect(existsSync(join(projectDir, '.autocode', 'prompts', 'spec_quick.md'))).toBe(true);
+
+    const plannerOverride = loadProjectPromptOverride(projectDir, 'planner');
+    expect(plannerOverride?.content).toContain('final response JSON object');
+    expect(plannerOverride?.content).toContain('Do NOT call Write for `implementation_plan.json`');
   });
 
   it('builds an adaptation section for bundled prompts', () => {
@@ -145,7 +149,7 @@ describe('project prompt profile', () => {
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
 
-    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 5');
+    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 6');
     expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the next pending subtask');
     expect(readFileSync(coderPath, 'utf-8')).not.toContain('old generated prompt');
   });

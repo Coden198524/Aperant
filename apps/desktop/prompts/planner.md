@@ -4,7 +4,7 @@ You are the **first agent** in an autonomous development process. Your job is to
 
 **Key Principle**: Subtasks, not tests. Implementation order matters. Each subtask is a unit of work scoped to one service.
 
-**MANDATORY**: You MUST call the **Write** tool to create `implementation_plan.json`. Describing the plan in your text response does NOT count — the orchestrator validates that the file exists on disk and passes schema validation. If you do not call the Write tool, the phase will fail.
+**MANDATORY OUTPUT**: Return the implementation plan as your final response JSON object. Do NOT call the Write tool for `implementation_plan.json`; the orchestrator validates your final structured JSON and writes the file to disk. Use Write only for small supporting files such as `project_index.json` or `context.json` when those files are missing.
 
 ---
 
@@ -258,22 +258,14 @@ Minimal overhead - just subtasks, no phases.
 
 ## PHASE 3: CREATE implementation_plan.json
 
-**🚨 CRITICAL: YOU MUST USE THE WRITE TOOL TO CREATE THIS FILE 🚨**
+**CRITICAL: DO NOT USE THE WRITE TOOL FOR THIS FILE.**
 
-You MUST use the Write tool to save the implementation plan to `implementation_plan.json`.
-Do NOT just describe what the file should contain - you must actually call the Write tool with the complete JSON content.
+Return the complete implementation plan as your final response JSON object. The orchestrator will write that validated structured output to `implementation_plan.json`.
 
-**Required action:** Call the Write tool with:
-- file_path: `implementation_plan.json` (in the spec directory)
-- content: The complete JSON plan structure shown below
-
-**⚠️ WINDOWS PATH HANDLING:**
-When calling the Write tool on Windows, file paths in the tool call JSON MUST use forward slashes (/) or properly escaped backslashes (\\\\).
-- ✅ CORRECT: `"file_path": "e:/work/projects/test-app/.autocode/specs/006-update-settings/spec.md"`
-- ✅ CORRECT: `"file_path": "e:\\\\work\\\\projects\\\\test-app\\\\.autocode\\\\specs\\\\006-update-settings\\\\spec.md"`
-- ❌ WRONG: `"file_path": "e:\\work\\projects\\test-app\\.autocode\\specs\\006-update-settings\\spec.md"` (single backslash causes JSON parse error)
-
-The safest approach is to always use forward slashes in file paths, even on Windows.
+Rules:
+- Final response must be only the JSON object, with no markdown fence and no explanatory text.
+- Do not call Write for `implementation_plan.json`.
+- Keep descriptions concise; do not embed source code, copied documentation, or long analysis in JSON fields.
 
 Based on the workflow type and services involved, create the implementation plan.
 
@@ -721,12 +713,12 @@ Include parallelism analysis, verification strategy, and QA configuration in the
 
 Before proceeding to PHASE 5, verify you have:
 1. ✅ Created the complete implementation_plan.json structure
-2. ✅ Used the Write tool to save it (not just described it)
+2. ✅ Prepared it as the final response JSON object
 3. ✅ Added the summary section with parallelism analysis
 4. ✅ Added the verification_strategy section
 5. ✅ Added the qa_acceptance section
 
-If you have NOT used the Write tool yet, STOP and do it now!
+Do not use Write for `implementation_plan.json`.
 
 ---
 
@@ -973,7 +965,7 @@ If you skipped investigation, your plan will:
 
 1. First, complete PHASE 0 (Deep Codebase Investigation)
 2. Then, read/create the context files in PHASE 1
-3. Create implementation_plan.json based on your findings
+3. Create the implementation plan JSON based on your findings and return it as the final response
 4. Create init.sh and build-progress.txt
 5. Commit planning files and **STOP**
 

@@ -259,23 +259,50 @@ export function isWriteToolJsonFailure(message: string): boolean {
 
 export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string): string {
   const normalizedSpecDir = specDir.replace(/\\/g, '/');
+  if (phase === 'planning') {
+    return [
+      'CRITICAL - DO NOT USE WRITE FOR implementation_plan.json',
+      '',
+      'Your previous Write tool call was rejected before execution.',
+      'Retry by returning the complete implementation plan as the final response JSON object.',
+      '',
+      'Rules for the retry:',
+      '- Do NOT call the Write tool for implementation_plan.json.',
+      '- Do NOT wrap the JSON in a markdown fence.',
+      '- Do NOT add prose before or after the JSON.',
+      '- Keep descriptions concise and create only the subtasks needed for this task.',
+      '- Do not embed source code, long analysis, or copied documentation in JSON fields.',
+    ].join('\n');
+  }
+
+  if (phase === 'quick_spec') {
+    return [
+      'CRITICAL - RETRY WITH SPLIT OUTPUTS',
+      '',
+      'Your previous Write tool call was rejected before execution.',
+      '',
+      'Rules for the retry:',
+      `- Use the Write tool only for: ${normalizedSpecDir}/spec.md`,
+      '- Do NOT call Write for implementation_plan.json.',
+      '- Return the implementation plan as the final response JSON object.',
+      '- For spec.md, write a compact 20-60 line version first.',
+      '- Keep the final JSON concise and schema-compatible.',
+      '- Do not wrap the final JSON in a markdown fence or add prose after it.',
+    ].join('\n');
+  }
+
   const targetFiles = (PHASE_OUTPUTS[phase] ?? ['output file'])
     .map((file) => `${normalizedSpecDir}/${file}`)
     .join(', ');
 
-  const phaseSpecificGuidance = phase === 'spec_writing' || phase === 'quick_spec' || phase === 'self_critique'
+  const phaseSpecificGuidance = phase === 'spec_writing' || phase === 'self_critique'
     ? [
         'For spec.md, write a compact 20-60 line version first.',
         'Do not copy large context blocks, full source files, long code blocks, or large tables into spec.md.',
       ]
-    : phase === 'planning'
-      ? [
-          'For implementation_plan.json, keep descriptions concise and create only the subtasks needed for this task.',
-          'Do not embed source code, long analysis, or copied documentation in JSON fields.',
-        ]
-      : [
-          'Keep JSON or markdown content concise and include only information needed by the next phase.',
-        ];
+    : [
+        'Keep JSON or markdown content concise and include only information needed by the next phase.',
+      ];
 
   return [
     'CRITICAL - RETRY WRITE TOOL WITH VALID JSON',
@@ -296,6 +323,41 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
     '- If the previous error text ended after "file_path", that means the content key was omitted or the tool JSON was truncated.',
     ...phaseSpecificGuidance.map((line) => `- ${line}`),
   ].join('\n');
+}
+
+function buildPlanStructuredOutputValidationRetryPrompt(
+  phase: SpecPhase,
+  errors: string[],
+  schemaHint?: string,
+): string {
+  const lines = [
+    '## IMPLEMENTATION PLAN STRUCTURED OUTPUT ERRORS',
+    '',
+    'The implementation plan JSON from your previous response was missing or invalid.',
+    '',
+    '### Errors found:',
+    ...errors.map((error) => `- ${error}`),
+    '',
+  ];
+
+  if (schemaHint) {
+    lines.push('### Required schema:', schemaHint, '');
+  }
+
+  lines.push(
+    '### How to fix:',
+    '1. Return the corrected implementation plan as the final response JSON object.',
+    '2. Do NOT call Write for implementation_plan.json.',
+    '3. Do NOT wrap the JSON in a markdown fence.',
+    '4. Do NOT add prose before or after the JSON.',
+    '5. Use phases[].subtasks[] with concise pending subtasks.',
+  );
+
+  if (phase === 'quick_spec') {
+    lines.push('6. If spec.md is missing, use Write only for spec.md before returning the final plan JSON.');
+  }
+
+  return lines.join('\n');
 }
 
 // =============================================================================
@@ -676,6 +738,11 @@ export class SpecOrchestrator extends EventEmitter {
           this.emitTyped('log', `Phase ${phase} output validation failed (attempt ${attempt + 1}): ${detail}`);
 
           if (attempt < maxPhaseRetries) {
+            if (isPlanningPhase && missingFiles.includes('implementation_plan.json')) {
+              toolUseRetryContext = buildWriteToolJsonRetryPrompt(phase, this.config.specDir);
+              continue;
+            }
+
             // Build a directive retry prompt when the model hallucinated tool usage.
             // This is common with Codex models that generate text claiming to have
             // written files without actually invoking the Write tool.
@@ -713,11 +780,13 @@ export class SpecOrchestrator extends EventEmitter {
             const schemaHint = (phase === 'planning' || phase === 'quick_spec')
               ? IMPLEMENTATION_PLAN_SCHEMA_HINT
               : undefined;
-            schemaRetryContext = buildValidationRetryPrompt(
-              phase === 'quick_spec' ? 'implementation_plan.json' : PHASE_OUTPUTS[phase]?.[0] ?? 'output file',
-              schemaValidation.errors,
-              schemaHint,
-            );
+            schemaRetryContext = isPlanningPhase
+              ? buildPlanStructuredOutputValidationRetryPrompt(phase, schemaValidation.errors, schemaHint)
+              : buildValidationRetryPrompt(
+                  PHASE_OUTPUTS[phase]?.[0] ?? 'output file',
+                  schemaValidation.errors,
+                  schemaHint,
+                );
             continue; // Retry with error feedback
           }
           break;

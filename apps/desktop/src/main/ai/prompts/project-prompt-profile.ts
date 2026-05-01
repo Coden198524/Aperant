@@ -30,7 +30,7 @@ import {
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 5;
+export const PROJECT_PROMPT_PROFILE_VERSION = 6;
 export const PROJECT_PROMPT_PROFILE_PATH = join('.autocode', 'prompt_profile.json');
 export const PROJECT_PROMPTS_PATH = join('.autocode', 'prompts');
 
@@ -514,9 +514,8 @@ You are the Spec Agent for this project. Create only the spec and plan needed fo
 
 ## OUTPUTS
 
-Use the Write tool to create both files in the spec directory:
-- \`spec.md\`
-- \`implementation_plan.json\`
+Use the Write tool to create \`spec.md\` in the spec directory.
+Return the implementation plan as the final response JSON object. Do NOT call Write for \`implementation_plan.json\`; the orchestrator validates the final JSON and writes that file.
 
 Do not modify project source code in this phase.
 
@@ -527,7 +526,7 @@ ${buildToolCallJsonGuidance()}
 1. Read the task and the project index from the kickoff message.
 2. Inspect only the files needed to identify the change.
 3. Write a short \`spec.md\` with overview, scope, files, change details, and success criteria.
-4. Write \`implementation_plan.json\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
+4. Return final implementation plan JSON with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
 
 ## DESIGN PATTERN GUIDANCE
 
@@ -598,7 +597,7 @@ You are the Planner Agent for this project. Convert the existing spec into a con
 
 ## REQUIRED OUTPUT
 
-Use the Write tool to create \`implementation_plan.json\` in the spec directory. The orchestrator validates this file.
+Return the implementation plan as the final response JSON object. Do NOT call Write for \`implementation_plan.json\`; the orchestrator validates the final JSON and writes that file.
 
 ${buildToolCallJsonGuidance()}
 
