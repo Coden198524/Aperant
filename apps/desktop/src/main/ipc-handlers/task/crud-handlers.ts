@@ -367,7 +367,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
    *
    * Note: Worktree cleanup uses manual deletion instead of `git worktree remove --force`
    * because the latter fails on Windows when the directory contains untracked files
-   * (node_modules, build artifacts, etc.). See: https://github.com/AndyMik90/Auto-Claude/issues/1539
+   * (node_modules, build artifacts, etc.). See: https://github.com/AndyMik90/Autocode/issues/1539
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_DELETE,
@@ -500,7 +500,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           return { success: false, error: 'Task not found' };
         }
 
-        const autoBuildDir = project.autoBuildPath || '.auto-claude';
+        const autoBuildDir = project.autoBuildPath || '.autocode';
         const specDir = path.join(project.path, autoBuildDir, 'specs', task.specId);
 
         if (!existsSync(specDir)) {
@@ -708,7 +708,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           return { success: false, error: 'Cannot delete subtasks while the task is running' };
         }
 
-        const specsBaseDir = getSpecsDir(project.autoBuildPath || '.auto-claude');
+        const specsBaseDir = getSpecsDir(project.autoBuildPath || '.autocode');
         const specPaths = findAllSpecPaths(
           project.path,
           specsBaseDir,
@@ -816,7 +816,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           console.error(`[IPC] TASK_LOAD_IMAGE_THUMBNAIL: Unknown project: "${projectPath}"`);
           return { success: false, error: 'Unknown project' };
         }
-        const autoBuildPath = project.autoBuildPath || '.auto-claude';
+        const autoBuildPath = project.autoBuildPath || '.autocode';
 
         // Build full path to the image
         const specsDir = getSpecsDir(autoBuildPath);

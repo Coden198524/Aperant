@@ -183,7 +183,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -199,7 +199,7 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
       IPC_CHANNELS.TASK_ERROR,
       '001-fast-task',
-      'Git repository required. Please run "git init" in your project directory. Aperant uses git worktrees for isolated builds.',
+      'Git repository required. Please run "git init" in your project directory. Autocode uses git worktrees for isolated builds.',
       'project-fast',
     );
   });
@@ -222,7 +222,7 @@ describe('registerTaskExecutionHandlers', () => {
     const project = {
       id: 'project-fast',
       path: 'E:/Work/FastProject',
-      autoBuildPath: '.auto-claude',
+      autoBuildPath: '.autocode',
       settings: {},
     };
 
@@ -258,7 +258,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -292,7 +292,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -358,7 +358,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -415,7 +415,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -455,7 +455,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -503,7 +503,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -571,7 +571,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -638,7 +638,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });
@@ -685,7 +685,7 @@ describe('registerTaskExecutionHandlers', () => {
       project: {
         id: 'project-fast',
         path: 'E:/Work/FastProject',
-        autoBuildPath: '.auto-claude',
+        autoBuildPath: '.autocode',
         settings: {},
       },
     });

@@ -504,8 +504,25 @@
     "deletePermanently": "永久删除",
     "deleting": "正在删除..."
   },
-  "referenceImages": {
-    "title": "参考图像（可选）",
-    "description": "添加视觉参考（如屏幕截图或设计图），以帮助 AI 理解您的要求。"
+  "gitChanges": {
+    "tab": "Git 变更",
+    "title": "Git 变更",
+    "files": "已变更文件",
+    "commits": "提交历史",
+    "diff": "差异",
+    "noChanges": "无变更",
+    "noCommits": "暂无提交",
+    "selectFile": "选择文件以查看差异",
+    "loading": "加载中...",
+    "errorLoading": "加载 Git 数据失败",
+    "modified": "已修改",
+    "added": "已添加",
+    "deleted": "已删除",
+    "fileCount": "{{count}} 个文件已变更",
+    "commitFiles": "提交文件",
+    "selectCommit": "选择提交以查看文件",
+    "copyHash": "复制提交哈希",
+    "hashCopied": "哈希已复制",
+    "filesChanged": "{{count}} 个文件已变更"
   }
 }

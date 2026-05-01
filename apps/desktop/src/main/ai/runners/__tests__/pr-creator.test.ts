@@ -33,11 +33,11 @@ import { createPR } from '../github/pr-creator';
 function baseConfig(overrides: Partial<Parameters<typeof createPR>[0]> = {}) {
   return {
     projectDir: '/project',
-    worktreePath: '/project/.auto-claude/worktrees/tasks/002-task',
+    worktreePath: '/project/.autocode/worktrees/tasks/002-task',
     specId: '002-task',
-    branchName: 'auto-claude/002-task',
+    branchName: 'autocode/002-task',
     baseBranch: 'master',
-    title: 'auto-claude: 002-task',
+    title: 'autocode: 002-task',
     ghPath: 'gh',
     gitPath: 'git',
     ...overrides,
@@ -71,7 +71,7 @@ describe('createPR', () => {
 
     expect(result).toEqual({
       success: false,
-      error: 'No commits found between master and auto-claude/002-task. Commit your task changes before creating a PR.',
+      error: 'No commits found between master and autocode/002-task. Commit your task changes before creating a PR.',
     });
     expect(mockExecFileSync).not.toHaveBeenCalledWith(
       'gh',
@@ -101,7 +101,7 @@ describe('createPR', () => {
         return 'src/app.ts\n';
       }
       if (args[0] === 'commit') {
-        return '[auto-claude/002-task abc123] feat: update 002-task';
+        return '[autocode/002-task abc123] feat: update 002-task';
       }
       if (args[0] === 'push') {
         return '';
@@ -134,7 +134,7 @@ describe('createPR', () => {
     expect(mockExecFileSync).toHaveBeenCalledWith(
       'git',
       ['commit', '-m', 'feat: update 002-task'],
-      expect.objectContaining({ cwd: '/project/.auto-claude/worktrees/tasks/002-task' }),
+      expect.objectContaining({ cwd: '/project/.autocode/worktrees/tasks/002-task' }),
     );
   });
 });

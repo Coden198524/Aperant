@@ -24,7 +24,7 @@ export class FetchBrowseProvider implements BrowseProvider {
       const response = await fetch(url, {
         signal: controller.signal,
         headers: {
-          'User-Agent': 'AutoClaude/1.0',
+          'User-Agent': 'Autocode/1.0',
           Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
         },
       });

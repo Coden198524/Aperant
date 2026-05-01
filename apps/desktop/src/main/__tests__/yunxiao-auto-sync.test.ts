@@ -79,12 +79,12 @@ describe('YunxiaoAutoSyncService', () => {
   let project: Project;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(path.join(os.tmpdir(), 'aperant-yunxiao-sync-'));
+    tempDir = mkdtempSync(path.join(os.tmpdir(), 'autocode-yunxiao-sync-'));
     project = {
       id: 'project-1',
       name: 'Test Project',
       path: tempDir,
-      autoBuildPath: '.auto-claude',
+      autoBuildPath: '.autocode',
       settings: {} as Project['settings'],
       createdAt: new Date(),
       updatedAt: new Date()

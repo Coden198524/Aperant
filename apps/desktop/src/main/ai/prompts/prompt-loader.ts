@@ -120,7 +120,33 @@ export function loadPrompt(promptName: string): string {
     );
   }
 
-  return readFileSync(promptPath, 'utf-8');
+  return expandPromptPartials(readFileSync(promptPath, 'utf-8'), promptsDir);
+}
+
+function expandPromptPartials(
+  content: string,
+  promptsDir: string,
+  seen = new Set<string>(),
+): string {
+  return content.replace(/\{\{([a-zA-Z0-9_-]+)\}\}/g, (match, partialName: string) => {
+    const partialPath = join(promptsDir, 'partials', `${partialName}.md`);
+    if (!existsSync(partialPath) || seen.has(partialName)) {
+      return match;
+    }
+
+    try {
+      seen.add(partialName);
+      return expandPromptPartials(readFileSync(partialPath, 'utf-8'), promptsDir, seen);
+    } catch {
+      return match;
+    } finally {
+      seen.delete(partialName);
+    }
+  });
+}
+
+function formatPathForPrompt(filePath: string | undefined): string | undefined {
+  return filePath?.replace(/\\/g, '/');
 }
 
 /**
@@ -267,10 +293,10 @@ export function injectContext(promptTemplate: string, context: PromptContext): s
  * Build optional domain guidance header.
  *
  * Defaults to general software-development guidance. Can be disabled by setting
- * APERANT_AGENT_DOMAIN to "none".
+ * AUTOCODE_AGENT_DOMAIN to "none".
  */
 function buildDomainGuidanceHeader(): string {
-  const domain = (process.env.APERANT_AGENT_DOMAIN ?? 'general').trim().toLowerCase();
+  const domain = (process.env.AUTOCODE_AGENT_DOMAIN ?? 'general').trim().toLowerCase();
   if (!domain || domain === 'none') return '';
 
   return (
@@ -319,15 +345,18 @@ function buildGitPushPolicyHeader(autoPushToRemote: boolean): string {
 function buildSpecLocationHeader(context: PromptContext): string {
   if (!context.specDir) return '';
 
+  const specDir = formatPathForPrompt(context.specDir);
+  const projectDir = formatPathForPrompt(context.projectDir);
+
   return (
     `## SPEC LOCATION\n\n` +
     `Your spec and progress files are located at:\n` +
-    `- Spec: \`${context.specDir}/spec.md\`\n` +
-    `- Implementation plan: \`${context.specDir}/implementation_plan.json\`\n` +
-    `- Progress notes: \`${context.specDir}/build-progress.txt\`\n` +
-    `- QA report output: \`${context.specDir}/qa_report.md\`\n` +
-    `- Fix request output: \`${context.specDir}/QA_FIX_REQUEST.md\`\n\n` +
-    `The project root is: \`${context.projectDir}\`\n\n` +
+    `- Spec: \`${specDir}/spec.md\`\n` +
+    `- Implementation plan: \`${specDir}/implementation_plan.json\`\n` +
+    `- Progress notes: \`${specDir}/build-progress.txt\`\n` +
+    `- QA report output: \`${specDir}/qa_report.md\`\n` +
+    `- Fix request output: \`${specDir}/QA_FIX_REQUEST.md\`\n\n` +
+    `The project root is: \`${projectDir}\`\n\n` +
     `---\n\n`
   );
 }
@@ -466,10 +495,10 @@ function validateBranchName(branch: string | null | undefined): string | null {
 // =============================================================================
 
 /**
- * Load project_index.json from the project's .auto-claude directory.
+ * Load project_index.json from the project's .autocode directory.
  */
 export function loadProjectIndex(projectDir: string): Record<string, unknown> {
-  const indexPath = join(projectDir, '.auto-claude', 'project_index.json');
+  const indexPath = join(projectDir, '.autocode', 'project_index.json');
   if (!existsSync(indexPath)) return {};
   try {
     return JSON.parse(readFileSync(indexPath, 'utf-8')) as Record<string, unknown>;

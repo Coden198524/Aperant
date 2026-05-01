@@ -91,8 +91,8 @@ const orchestrator = new BuildOrchestrator({
 ### 方法 2：通过环境变量（待实现）
 
 ```bash
-export APERANT_BATCH_EXECUTION=true
-export APERANT_BATCH_SIZE=auto
+export AUTOCODE_BATCH_EXECUTION=true
+export AUTOCODE_BATCH_SIZE=auto
 ```
 
 ### 方法 3：通过 UI 设置（待实现）

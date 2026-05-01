@@ -231,7 +231,7 @@ Total: 25,000 tokens (44% reduction)
 
 ## Provider Support
 
-Works with ALL providers in Auto Claude's registry:
+Works with ALL providers in Autocode's registry:
 - ✅ Anthropic (Claude 3.5, Claude 4)
 - ✅ OpenAI (GPT-4, GPT-5, Codex, o1)
 - ✅ Google (Gemini)

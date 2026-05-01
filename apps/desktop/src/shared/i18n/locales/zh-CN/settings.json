@@ -7,7 +7,7 @@
   "sections": {
     "appearance": {
       "title": "外观",
-      "description": "自定义 Aperant 的外观"
+      "description": "自定义 Autocode 的外观"
     },
     "display": {
       "title": "显示",
@@ -35,7 +35,7 @@
     },
     "updates": {
       "title": "更新",
-      "description": "Aperant 更新"
+      "description": "Autocode 更新"
     },
     "notifications": {
       "title": "通知",
@@ -214,14 +214,14 @@
     "tabTerminalFonts": "终端字体",
     "ide": {
       "label": "首选 IDE",
-      "description": "Aperant 会在此编辑器中打开工作树",
+      "description": "Autocode 会在此编辑器中打开工作树",
       "placeholder": "选择 IDE...",
       "customPath": "自定义 IDE 路径",
       "customPathPlaceholder": "/path/to/your/ide"
     },
     "terminal": {
       "label": "首选终端",
-      "description": "Aperant 会在此终端中打开会话",
+      "description": "Autocode 会在此终端中打开会话",
       "placeholder": "选择终端...",
       "customPath": "自定义终端路径",
       "customPathPlaceholder": "/path/to/your/terminal"
@@ -265,7 +265,7 @@
     "otherAgentSettingsDescription": "额外的智能体配置选项",
     "agentFramework": "智能体框架",
     "agentFrameworkDescription": "用于自主任务的编码框架",
-    "agentFrameworkAutoClaude": "Aperant",
+    "agentFrameworkAutocode": "Autocode",
     "aiTerminalNaming": "AI 终端命名",
     "aiTerminalNamingDescription": "根据命令自动重命名终端（使用 AI Naming 模型）",
     "featureModelSettings": "功能模型设置",
@@ -300,9 +300,9 @@
     "sourceBundled": "内置",
     "sourceFallback": "回退",
     "notDetected": "未检测到",
-    "autoClaudePath": "Aperant 路径",
-    "autoClaudePathDescription": "项目中 auto-claude 目录的相对路径",
-    "autoClaudePathPlaceholder": "auto-claude（默认）",
+    "autoClaudePath": "Autocode 路径",
+    "autoClaudePathDescription": "项目中 autocode 目录的相对路径",
+    "autoClaudePathPlaceholder": "autocode（默认）",
     "autoNameTerminals": "自动命名终端",
     "autoNameTerminalsDescription": "基于终端活动使用 AI 生成描述性的终端标签名称",
     "sourceSystem": "系统",
@@ -312,7 +312,7 @@
   },
   "theme": {
     "title": "外观",
-    "description": "自定义 Aperant 的外观",
+    "description": "自定义 Autocode 的外观",
     "mode": "模式",
     "modeDescription": "在浅色与深色主题之间选择",
     "light": "浅色",
@@ -385,7 +385,7 @@
   },
   "updates": {
     "title": "更新",
-    "description": "管理 Aperant 更新",
+    "description": "管理 Autocode 更新",
     "appUpdateReady": "应用更新已就绪",
     "newVersion": "新版本",
     "released": "发布时间",
@@ -402,7 +402,7 @@
     "unableToCheck": "无法检查更新",
     "checkForUpdates": "检查更新",
     "autoUpdateProjects": "自动更新项目",
-    "autoUpdateProjectsDescription": "当有新版本可用时，自动更新项目中的 Aperant",
+    "autoUpdateProjectsDescription": "当有新版本可用时，自动更新项目中的 Autocode",
     "betaUpdates": "测试版更新",
     "betaUpdatesDescription": "接收包含新功能的预发布测试版（稳定性可能较差）",
     "stableDowngradeAvailable": "有可用稳定版本",
@@ -410,7 +410,7 @@
     "stableVersion": "稳定版本",
     "downloadStableVersion": "下载稳定版本",
     "readOnlyVolumeTitle": "无法从磁盘映像安装",
-    "readOnlyVolumeDescription": "Aperant 当前运行于只读磁盘映像（DMG）中。请将应用拖到“应用程序”文件夹，并从那里重新启动以安装更新。",
+    "readOnlyVolumeDescription": "Autocode 当前运行于只读磁盘映像（DMG）中。请将应用拖到“应用程序”文件夹，并从那里重新启动以安装更新。",
     "downloadError": "下载更新失败"
   },
   "notifications": {
@@ -968,7 +968,7 @@
     "description": "访问日志和调试信息以协助排障",
     "errorReporting": {
       "label": "匿名错误上报",
-      "description": "发送崩溃报告以帮助改进 Aperant。不会收集个人数据或代码。"
+      "description": "发送崩溃报告以帮助改进 Autocode。不会收集个人数据或代码。"
     },
     "openLogsFolder": "打开日志文件夹",
     "copyDebugInfo": "复制调试信息",
@@ -1075,7 +1075,7 @@
     "noProjectSelected": "未选择项目",
     "noProjectSelectedDescription": "请从下拉列表中选择一个项目，以查看并配置 MCP 服务器。",
     "projectNotInitialized": "项目尚未初始化",
-    "projectNotInitializedDescription": "请先为此项目初始化 Aperant，之后才能配置 MCP 服务器。",
+    "projectNotInitializedDescription": "请先为此项目初始化 Autocode，之后才能配置 MCP 服务器。",
     "browserAutomation": "浏览器自动化（仅 QA 智能体）",
     "alwaysEnabled": "始终启用",
     "addServer": "添加服务器",
@@ -1117,7 +1117,7 @@
         "description": "用于测试的网页浏览器自动化"
       },
       "autoClaude": {
-        "name": "Aperant 工具",
+        "name": "Autocode 工具",
         "description": "构建进度跟踪"
       }
     },

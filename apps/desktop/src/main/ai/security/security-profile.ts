@@ -2,7 +2,7 @@
  * Security Profile Management
  * ============================
  *
- * Loads and caches project security profiles from .auto-claude/ config.
+ * Loads and caches project security profiles from .autocode/ config.
  * Provides SecurityProfile instances consumed by bash-validator.ts.
  *
  * NOTE: With the denylist security model, SecurityProfile command sets are no
@@ -23,8 +23,8 @@ import type { SecurityProfile } from './bash-validator';
 // Constants
 // ---------------------------------------------------------------------------
 
-const PROFILE_FILENAME = '.auto-claude-security.json';
-const ALLOWLIST_FILENAME = '.auto-claude-allowlist';
+const PROFILE_FILENAME = '.autocode-security.json';
+const ALLOWLIST_FILENAME = '.autocode-allowlist';
 
 // ---------------------------------------------------------------------------
 // Cache state

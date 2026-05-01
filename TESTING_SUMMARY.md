@@ -78,9 +78,9 @@ SETUP_TEST_PROJECT.bat
 bash SETUP_TEST_PROJECT.sh
 ```
 
-### 第 2 步：启动 Auto Claude
+### 第 2 步：启动 Autocode
 
-1. 打开 Auto Claude 应用
+1. 打开 Autocode 应用
 2. 选择或创建一个项目
 3. 点击 "New Task" 按钮
 
@@ -336,7 +336,7 @@ Batch complete: 2/2 subtasks finished
 
 **下一步:**
 1. 运行 `SETUP_TEST_PROJECT.bat/sh` 创建测试项目
-2. 在 Auto Claude 中创建测试任务
+2. 在 Autocode 中创建测试任务
 3. 监控执行日志验证批量处理
 4. 验证生成的代码正确性
 5. 收集性能数据

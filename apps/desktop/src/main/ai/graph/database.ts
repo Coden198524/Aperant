@@ -8,7 +8,7 @@
  * - Closure table (transitive dependency queries)
  * - Incremental updates (staleness tracking)
  *
- * Integrates with Auto Claude's existing memory database infrastructure.
+ * Integrates with Autocode's existing memory database infrastructure.
  */
 
 import { createHash } from 'node:crypto';

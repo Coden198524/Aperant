@@ -111,7 +111,7 @@ AI SDK Stream
    - 确认 `[SessionRunner] Final usage:` 显示非0值
    - 确认 `[Worker] Sending task-token-usage` 被调用
 4. 检查UI上的token显示
-5. 检查 `.auto-claude/specs/*/implementation_plan.json` 中的 `tokenUsage` 字段
+5. 检查 `.autocode/specs/*/implementation_plan.json` 中的 `tokenUsage` 字段
 
 ## 预期结果
 

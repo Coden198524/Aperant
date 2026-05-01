@@ -14,8 +14,8 @@ import type { FileMatch } from './types.js';
 /** Directories that should never be searched. */
 const SKIP_DIRS = new Set([
   'node_modules', '.git', '__pycache__', '.venv', 'venv', 'dist', 'build',
-  '.next', '.nuxt', 'target', 'vendor', '.idea', '.vscode', 'auto-claude',
-  '.auto-claude', '.pytest_cache', '.mypy_cache', 'coverage', '.turbo', '.cache',
+  '.next', '.nuxt', 'target', 'vendor', '.idea', '.vscode', 'autocode',
+  '.autocode', '.pytest_cache', '.mypy_cache', 'coverage', '.turbo', '.cache',
   'out',
 ]);
 

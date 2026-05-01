@@ -1,8 +1,8 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   GitBranch,
-  GitCommit,
+  GitCommit as GitCommitIcon,
   FileText,
   FilePlus,
   FileX,
@@ -36,6 +36,199 @@ interface GitCommit {
   author: string;
   date: string;
   timestamp: number;
+  parents?: string[];
+  refs?: string[];
+  isMerge?: boolean;
+}
+
+interface CommitGraphRow {
+  commit: GitCommit;
+  lanesBefore: string[];
+  lanesAfter: string[];
+  laneIndex: number;
+  parentLaneIndexes: number[];
+  isNewLane: boolean;
+  laneCount: number;
+}
+
+const GRAPH_ROW_HEIGHT = 72;
+const GRAPH_DOT_Y = 20;
+const GRAPH_LANE_WIDTH = 12;
+const GRAPH_X_PADDING = 10;
+const GRAPH_COLORS = [
+  '#3b82f6',
+  '#22c55e',
+  '#f59e0b',
+  '#ef4444',
+  '#a855f7',
+  '#06b6d4',
+  '#ec4899',
+  '#84cc16'
+];
+
+function getGraphColor(hash: string | undefined, laneIndex: number): string {
+  if (!hash) return GRAPH_COLORS[laneIndex % GRAPH_COLORS.length];
+
+  let value = 0;
+  for (let i = 0; i < hash.length; i++) {
+    value = (value + hash.charCodeAt(i) * (i + 1)) % GRAPH_COLORS.length;
+  }
+  return GRAPH_COLORS[value];
+}
+
+function buildCommitGraphRows(commits: GitCommit[]): CommitGraphRow[] {
+  const visibleHashes = new Set(commits.map((commit) => commit.hash));
+  let lanes: string[] = [];
+
+  return commits.map((commit) => {
+    let lanesBefore = lanes.slice();
+    let laneIndex = lanesBefore.indexOf(commit.hash);
+    let isNewLane = false;
+
+    if (laneIndex === -1) {
+      laneIndex = lanesBefore.length;
+      lanesBefore = [...lanesBefore, commit.hash];
+      lanes = lanesBefore.slice();
+      isNewLane = true;
+    }
+
+    const visibleParents = (commit.parents ?? []).filter((parent) => visibleHashes.has(parent));
+    const lanesAfter = lanesBefore.filter((_, index) => index !== laneIndex);
+    let insertAt = laneIndex;
+
+    for (const parent of visibleParents) {
+      const existingLane = lanesAfter.indexOf(parent);
+      if (existingLane !== -1) {
+        continue;
+      }
+
+      const safeInsertAt = Math.min(insertAt, lanesAfter.length);
+      lanesAfter.splice(safeInsertAt, 0, parent);
+      insertAt = safeInsertAt + 1;
+    }
+
+    lanes = lanesAfter.filter((hash, index, list) => hash && list.indexOf(hash) === index);
+
+    const parentLaneIndexes = visibleParents
+      .map((parent) => lanes.indexOf(parent))
+      .filter((index) => index >= 0);
+
+    return {
+      commit,
+      lanesBefore,
+      lanesAfter: lanes.slice(),
+      laneIndex,
+      parentLaneIndexes,
+      isNewLane,
+      laneCount: Math.max(lanesBefore.length, lanes.length, laneIndex + 1, 1)
+    };
+  });
+}
+
+function formatGitRef(ref: string): string {
+  return ref.replace(/^HEAD -> /, '').replace(/^tag: /, '');
+}
+
+function CommitGraph({ row, selected }: { row: CommitGraphRow; selected: boolean }) {
+  const width = Math.max(36, GRAPH_X_PADDING * 2 + row.laneCount * GRAPH_LANE_WIDTH);
+  const laneX = (index: number) => GRAPH_X_PADDING + index * GRAPH_LANE_WIDTH;
+  const commitColor = getGraphColor(row.commit.hash, row.laneIndex);
+  const visibleParents = row.parentLaneIndexes.map((laneIndex) => ({
+    laneIndex,
+    hash: row.lanesAfter[laneIndex]
+  }));
+  const unchangedLanes = row.lanesBefore
+    .map((hash, laneIndex) => ({ hash, laneIndex }))
+    .filter(({ hash, laneIndex }) => laneIndex !== row.laneIndex && row.lanesAfter.includes(hash));
+
+  return (
+    <svg
+      aria-hidden="true"
+      width={width}
+      height={GRAPH_ROW_HEIGHT}
+      viewBox={`0 0 ${width} ${GRAPH_ROW_HEIGHT}`}
+      className="shrink-0 overflow-visible"
+    >
+      {unchangedLanes.map(({ hash, laneIndex }) => (
+        <line
+          key={`lane-${hash}-${laneIndex}`}
+          x1={laneX(laneIndex)}
+          y1={0}
+          x2={laneX(laneIndex)}
+          y2={GRAPH_ROW_HEIGHT}
+          stroke={getGraphColor(hash, laneIndex)}
+          strokeWidth="2"
+          strokeLinecap="round"
+          opacity="0.7"
+        />
+      ))}
+
+      {!row.isNewLane && (
+        <line
+          x1={laneX(row.laneIndex)}
+          y1={0}
+          x2={laneX(row.laneIndex)}
+          y2={GRAPH_DOT_Y}
+          stroke={commitColor}
+          strokeWidth="2"
+          strokeLinecap="round"
+          opacity="0.8"
+        />
+      )}
+
+      {visibleParents.map(({ laneIndex, hash }) => {
+        const parentColor = getGraphColor(hash, laneIndex);
+        if (laneIndex === row.laneIndex) {
+          return (
+            <line
+              key={`parent-${hash}-${laneIndex}`}
+              x1={laneX(row.laneIndex)}
+              y1={GRAPH_DOT_Y}
+              x2={laneX(laneIndex)}
+              y2={GRAPH_ROW_HEIGHT}
+              stroke={parentColor}
+              strokeWidth="2"
+              strokeLinecap="round"
+              opacity="0.85"
+            />
+          );
+        }
+
+        return (
+          <path
+            key={`parent-${hash}-${laneIndex}`}
+            d={`M ${laneX(row.laneIndex)} ${GRAPH_DOT_Y} C ${laneX(row.laneIndex)} ${GRAPH_DOT_Y + 20}, ${laneX(laneIndex)} ${GRAPH_ROW_HEIGHT - 22}, ${laneX(laneIndex)} ${GRAPH_ROW_HEIGHT}`}
+            fill="none"
+            stroke={parentColor}
+            strokeWidth="2"
+            strokeLinecap="round"
+            opacity="0.85"
+          />
+        );
+      })}
+
+      {row.commit.isMerge && (
+        <circle
+          cx={laneX(row.laneIndex)}
+          cy={GRAPH_DOT_Y}
+          r="7"
+          fill="none"
+          stroke={commitColor}
+          strokeWidth="1.5"
+          opacity="0.7"
+        />
+      )}
+
+      <circle
+        cx={laneX(row.laneIndex)}
+        cy={GRAPH_DOT_Y}
+        r={selected ? 5.5 : 4.5}
+        fill={commitColor}
+        stroke="hsl(var(--card))"
+        strokeWidth={selected ? 3 : 2.5}
+      />
+    </svg>
+  );
 }
 
 // Get icon and color for file status
@@ -45,21 +238,8 @@ function getFileStatusIcon(status: string) {
       return <FilePlus className="h-4 w-4 text-green-500" />;
     case 'D':
       return <FileX className="h-4 w-4 text-red-500" />;
-    case 'M':
     default:
       return <FileDiff className="h-4 w-4 text-amber-500" />;
-  }
-}
-
-function getFileStatusLabel(status: string, t: (key: string) => string) {
-  switch (status) {
-    case 'A':
-      return t('tasks:gitChanges.added');
-    case 'D':
-      return t('tasks:gitChanges.deleted');
-    case 'M':
-    default:
-      return t('tasks:gitChanges.modified');
   }
 }
 
@@ -83,13 +263,18 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
   const [diff, setDiff] = useState<string | null>(null);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const commitGraphRows = useMemo(() => buildCommitGraphRows(commits), [commits]);
+  const selectedGitFile = useMemo(
+    () => files.find((file) => file.path === selectedFile),
+    [files, selectedFile]
+  );
 
   // Filter out files from specific directories
-  const shouldFilterFile = (filePath: string): boolean => {
-    const excludedPrefixes = ['.autoclaude/', '.codex/', '.claude/', '.auto-claude/'];
+  const shouldFilterFile = useCallback((filePath: string): boolean => {
+    const excludedPrefixes = ['.autoclaude/', '.codex/', '.claude/', '.autocode/'];
     const excludedDotDirs = filePath.split('/').some(part => part.startsWith('.') && part.endsWith('d'));
     return excludedPrefixes.some(prefix => filePath.startsWith(prefix)) || excludedDotDirs;
-  };
+  }, []);
 
   // Load changed files
   const loadFiles = useCallback(async () => {
@@ -114,7 +299,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     } finally {
       setIsLoadingFiles(false);
     }
-  }, [task.id, task.projectId]);
+  }, [task.id, task.projectId, shouldFilterFile]);
 
   // Load commit history
   const loadCommits = useCallback(async () => {
@@ -409,34 +594,48 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                 </div>
               ) : commits.length === 0 ? (
                 <div className="text-center py-8">
-                  <GitCommit className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
+                  <GitCommitIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
                   <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.noCommits')}</p>
                 </div>
               ) : (
                 commits.map((commit, idx) => (
-                  <div
+                  <button
                     key={commit.hash}
+                    type="button"
+                    onClick={() => setSelectedCommit(commit.hash)}
                     className={cn(
-                      'relative px-3 py-2 rounded-md border transition-colors',
+                      'relative w-full px-3 py-2 rounded-md border text-left transition-colors',
+                      'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
                       selectedCommit === commit.hash
                         ? 'bg-secondary border-primary'
                         : 'bg-card border-border hover:bg-secondary/50'
                     )}
                   >
-                    {/* Git graph line */}
-                    {idx < commits.length - 1 && (
-                      <div className="absolute left-[13px] top-[32px] bottom-[-8px] w-[2px] bg-border" />
-                    )}
-
                     <div className="flex items-start gap-2">
-                      <GitCommit className="h-4 w-4 text-primary shrink-0 mt-0.5 relative z-10 bg-card" />
+                      <CommitGraph row={commitGraphRows[idx]} selected={selectedCommit === commit.hash} />
                       <div className="flex-1 min-w-0">
-                        <div className="text-xs font-medium text-foreground mb-1 line-clamp-2">
-                          {commit.message}
+                        <div className="flex items-start gap-2 mb-1">
+                          <div className="text-xs font-medium text-foreground line-clamp-2 flex-1 min-w-0">
+                            {commit.message}
+                          </div>
+                          {commit.isMerge && (
+                            <Badge variant="outline" className="h-4 px-1 text-[10px] shrink-0">
+                              merge
+                            </Badge>
+                          )}
                         </div>
+                        {(commit.refs ?? []).length > 0 && (
+                          <div className="flex flex-wrap gap-1 mb-1">
+                            {(commit.refs ?? []).map(formatGitRef).filter((ref) => ref && ref !== 'HEAD').slice(0, 2).map((ref) => (
+                              <Badge key={ref} variant="secondary" className="max-w-[120px] truncate px-1 py-0 text-[10px]">
+                                {ref}
+                              </Badge>
+                            ))}
+                          </div>
+                        )}
                         <div className="flex items-center gap-2 text-[10px] text-muted-foreground">
                           <code className="font-mono">{commit.shortHash}</code>
-                          <span>•</span>
+                          <span aria-hidden="true">|</span>
                           <span className="truncate">{commit.author}</span>
                         </div>
                         <div className="text-[10px] text-muted-foreground mt-0.5">
@@ -444,7 +643,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                         </div>
                       </div>
                     </div>
-                  </div>
+                  </button>
                 ))
               )}
             </div>
@@ -456,15 +655,15 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
       <div className="flex-1 min-w-0 flex flex-col">
         {selectedFile && (
           <div className="px-4 py-2 border-b border-border flex items-center gap-2 shrink-0 bg-muted/30">
-            {files.find(f => f.path === selectedFile) && getFileStatusIcon(files.find(f => f.path === selectedFile)!.status)}
+            {selectedGitFile && getFileStatusIcon(selectedGitFile.status)}
             <span className="text-sm font-medium flex-1 truncate">{selectedFile}</span>
-            {files.find(f => f.path === selectedFile) && (
+            {selectedGitFile && (
               <div className="flex items-center gap-2 text-xs text-muted-foreground">
                 <span className="text-green-600 dark:text-green-400">
-                  +{files.find(f => f.path === selectedFile)!.additions}
+                  +{selectedGitFile.additions}
                 </span>
                 <span className="text-red-600 dark:text-red-400">
-                  -{files.find(f => f.path === selectedFile)!.deletions}
+                  -{selectedGitFile.deletions}
                 </span>
               </div>
             )}

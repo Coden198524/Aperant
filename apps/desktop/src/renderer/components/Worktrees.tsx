@@ -480,7 +480,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
             {t('common:worktreesView.title', { defaultValue: 'Worktrees' })}
           </h2>
           <p className="text-sm text-muted-foreground mt-1">
-            {t('common:worktreesView.description', { defaultValue: 'Manage isolated workspaces for your Aperant tasks' })}
+            {t('common:worktreesView.description', { defaultValue: 'Manage isolated workspaces for your Autocode tasks' })}
           </p>
         </div>
         <div className="flex items-center gap-2">
@@ -572,7 +572,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
           </h3>
           <p className="text-sm text-muted-foreground mt-2 max-w-md">
             {t('common:worktreesView.emptyDescription', {
-              defaultValue: 'Worktrees are created automatically when Aperant builds features. You can also create terminal worktrees from the Agent Terminals tab.'
+              defaultValue: 'Worktrees are created automatically when Autocode builds features. You can also create terminal worktrees from the Agent Terminals tab.'
             })}
           </p>
         </div>

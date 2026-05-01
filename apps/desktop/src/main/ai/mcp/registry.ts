@@ -42,7 +42,7 @@ function isBuiltinServerId(serverId: string): serverId is McpServerId {
     || serverId === 'memory'
     || serverId === 'electron'
     || serverId === 'puppeteer'
-    || serverId === 'auto-claude'
+    || serverId === 'autocode'
   );
 }
 
@@ -235,19 +235,19 @@ const PUPPETEER_SERVER: McpServerConfig = {
 };
 
 /**
- * Auto-Claude MCP server - custom build management tools.
+ * Autocode MCP server - custom build management tools.
  * Used by planner, coder, and QA agents for build progress tracking.
  */
-function createAutoClaudeServer(specDir: string): McpServerConfig {
+function createAutocodeServer(specDir: string): McpServerConfig {
   return {
-    id: 'auto-claude',
-    name: 'Aperant',
+    id: 'autocode',
+    name: 'Autocode',
     description: 'Build management tools (progress tracking, session context)',
     enabledByDefault: true,
     transport: {
       type: 'stdio',
       command: 'node',
-      args: ['auto-claude-mcp-server.js'],
+      args: ['autocode-mcp-server.js'],
       env: { SPEC_DIR: specDir },
     },
   };
@@ -259,7 +259,7 @@ function createAutoClaudeServer(specDir: string): McpServerConfig {
 
 /** Options for resolving MCP server configurations */
 export interface McpRegistryOptions {
-  /** Spec directory for auto-claude MCP server */
+  /** Spec directory for autocode MCP server */
   specDir?: string;
   /** Memory MCP server URL (if enabled) */
   memoryMcpUrl?: string;
@@ -319,7 +319,7 @@ export function getMcpServerConfig(
           || server.transport.command;
         const args = parseYunxiaoMcpArgs(options.env?.YUNXIAO_MCP_ARGS);
         const npmCache = options.env?.YUNXIAO_MCP_NPM_CACHE
-          || path.join(process.env.LOCALAPPDATA || process.env.TEMP || process.cwd(), 'Aperant', 'mcp-cache', 'yunxiao-npm');
+          || path.join(process.env.LOCALAPPDATA || process.env.TEMP || process.cwd(), 'Autocode', 'mcp-cache', 'yunxiao-npm');
 
         const injectedEnv: Record<string, string> = {
           ...server.transport.env,
@@ -363,9 +363,9 @@ export function getMcpServerConfig(
     case 'puppeteer':
       return PUPPETEER_SERVER;
 
-    case 'auto-claude': {
+    case 'autocode': {
       const specDir = options.specDir ?? '';
-      return createAutoClaudeServer(specDir);
+      return createAutocodeServer(specDir);
     }
 
     default:

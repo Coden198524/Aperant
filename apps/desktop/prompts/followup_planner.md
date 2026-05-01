@@ -271,7 +271,7 @@ Updated Plan:
 - Status: complete -> in_progress
 
 Next Steps:
-Run `python auto-claude/run.py --spec [SPEC_NUMBER]` to continue with new subtasks.
+Run `python autocode/run.py --spec [SPEC_NUMBER]` to continue with new subtasks.
 
 === END FOLLOW-UP PLANNING ===
 ```
@@ -291,7 +291,7 @@ Status: Plan updated from 'complete' to 'in_progress'
 Next pending subtask: [subtask-id]
 
 To continue building:
-  python auto-claude/run.py --spec [SPEC_NUMBER]
+  python autocode/run.py --spec [SPEC_NUMBER]
 
 === END SESSION ===
 ```
@@ -375,7 +375,7 @@ To continue building:
 ERROR: Cannot perform follow-up - no implementation_plan.json found.
 
 This spec has never been built. Please run:
-  python auto-claude/run.py --spec [NUMBER]
+  python autocode/run.py --spec [NUMBER]
 
 Follow-up is only available for completed specs.
 ```
@@ -389,7 +389,7 @@ Current status: [status]
 Pending subtasks: [count]
 
 Please complete the current build first:
-  python auto-claude/run.py --spec [NUMBER]
+  python autocode/run.py --spec [NUMBER]
 
 Then run --followup after all subtasks are complete.
 ```

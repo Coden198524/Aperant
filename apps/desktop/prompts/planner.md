@@ -269,9 +269,9 @@ Do NOT just describe what the file should contain - you must actually call the W
 
 **⚠️ WINDOWS PATH HANDLING:**
 When calling the Write tool on Windows, file paths in the tool call JSON MUST use forward slashes (/) or properly escaped backslashes (\\\\).
-- ✅ CORRECT: `"file_path": "e:/work/projects/test-app/.auto-claude/specs/006-update-settings/spec.md"`
-- ✅ CORRECT: `"file_path": "e:\\\\work\\\\projects\\\\test-app\\\\.auto-claude\\\\specs\\\\006-update-settings\\\\spec.md"`
-- ❌ WRONG: `"file_path": "e:\\work\\projects\\test-app\\.auto-claude\\specs\\006-update-settings\\spec.md"` (single backslash causes JSON parse error)
+- ✅ CORRECT: `"file_path": "e:/work/projects/test-app/.autocode/specs/006-update-settings/spec.md"`
+- ✅ CORRECT: `"file_path": "e:\\\\work\\\\projects\\\\test-app\\\\.autocode\\\\specs\\\\006-update-settings\\\\spec.md"`
+- ❌ WRONG: `"file_path": "e:\\work\\projects\\test-app\\.autocode\\specs\\006-update-settings\\spec.md"` (single backslash causes JSON parse error)
 
 The safest approach is to always use forward slashes in file paths, even on Windows.
 
@@ -578,7 +578,7 @@ For high or critical risk, add security steps:
   "verification_steps": [
     {
       "name": "Secrets Scan",
-      "command": "python auto-claude/scan_secrets.py --all-files --json",
+      "command": "python autocode/scan_secrets.py --all-files --json",
       "expected_outcome": "No secrets detected",
       "type": "security",
       "required": true,
@@ -650,7 +650,7 @@ Include parallelism analysis, verification strategy, and QA configuration in the
       "recommended_workers": 2,
       "speedup_estimate": "1.5x faster than sequential"
     },
-    "startup_command": "source auto-claude/.venv/bin/activate && python auto-claude/run.py --spec 001 --parallel 2"
+    "startup_command": "source autocode/.venv/bin/activate && python autocode/run.py --spec 001 --parallel 2"
   },
   "verification_strategy": {
     "risk_level": "medium",
@@ -820,7 +820,7 @@ The following files are gitignored and should NOT be committed:
 - `init.sh` - tracked locally only
 - `build-progress.txt` - tracked locally only
 
-These files live in `.auto-claude/specs/` which is gitignored. The orchestrator handles syncing them between worktrees and the main project.
+These files live in `.autocode/specs/` which is gitignored. The orchestrator handles syncing them between worktrees and the main project.
 
 **Only code changes should be committed** - spec metadata stays local.
 
@@ -866,10 +866,10 @@ Parallelism Analysis:
 
 To continue building this spec, run:
 
-  source auto-claude/.venv/bin/activate && python auto-claude/run.py --spec [SPEC_NUMBER] --parallel [RECOMMENDED_WORKERS]
+  source autocode/.venv/bin/activate && python autocode/run.py --spec [SPEC_NUMBER] --parallel [RECOMMENDED_WORKERS]
 
 Example:
-  source auto-claude/.venv/bin/activate && python auto-claude/run.py --spec 001 --parallel 2
+  source autocode/.venv/bin/activate && python autocode/run.py --spec 001 --parallel 2
 
 === END SESSION 1 ===
 ```

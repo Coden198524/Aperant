@@ -133,7 +133,7 @@ export function GeneralSettings({ settings, onSettingsChange, section }: General
                   <SelectValue />
                 </SelectTrigger>
                 <SelectContent>
-                  <SelectItem value="auto-claude">{t('general.agentFrameworkAutoClaude')}</SelectItem>
+                  <SelectItem value="autocode">{t('general.agentFrameworkAutocode')}</SelectItem>
                 </SelectContent>
               </Select>
             </div>

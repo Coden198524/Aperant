@@ -130,7 +130,7 @@ const VALID_ROADMAP_JSON = JSON.stringify({
 function baseConfig(overrides: Partial<RoadmapConfig> = {}): RoadmapConfig {
   return {
     projectDir: '/project',
-    outputDir: '/project/.auto-claude/roadmap',
+    outputDir: '/project/.autocode/roadmap',
     ...overrides,
   };
 }
@@ -380,7 +380,7 @@ describe('runRoadmapGeneration', () => {
     });
     mockStreamText.mockReturnValue(makeStream([]));
 
-    await runRoadmapGeneration(baseConfig({ outputDir: '/project/.auto-claude/roadmap' }));
+    await runRoadmapGeneration(baseConfig({ outputDir: '/project/.autocode/roadmap' }));
 
     expect(mockMkdirSync).toHaveBeenCalledWith(
       expect.stringContaining('roadmap'),
@@ -402,7 +402,7 @@ describe('runRoadmapGeneration', () => {
     expect(result.success).toBe(true);
     expect(mockRunProjectIndexer).toHaveBeenCalledWith(
       '/project',
-      expect.stringContaining('.auto-claude'),
+      expect.stringContaining('.autocode'),
     );
   });
 
@@ -509,7 +509,7 @@ describe('runRoadmapGeneration', () => {
 
     // mkdirSync should have been called with the default path
     expect(mockMkdirSync).toHaveBeenCalledWith(
-      expect.stringContaining('.auto-claude'),
+      expect.stringContaining('.autocode'),
       expect.anything(),
     );
   });

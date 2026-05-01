@@ -108,6 +108,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     try {
       const result = await window.electronAPI.saveAPIProfile(profile);
       if (result.success && result.data) {
+        const savedProfile = result.data;
         // Re-fetch profiles from backend to get authoritative activeProfileId
         // (backend only auto-activates the first profile)
         try {
@@ -121,14 +122,14 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           } else {
             // Fallback: add profile locally but don't assume activeProfileId
             set((state) => ({
-              profiles: [...state.profiles, result.data!],
+              profiles: [...state.profiles, savedProfile],
               profilesLoading: false
             }));
           }
         } catch {
           // Fallback on fetch error: add profile locally
           set((state) => ({
-            profiles: [...state.profiles, result.data!],
+            profiles: [...state.profiles, savedProfile],
             profilesLoading: false
           }));
         }
@@ -153,9 +154,10 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     try {
       const result = await window.electronAPI.updateAPIProfile(profile);
       if (result.success && result.data) {
+        const updatedProfile = result.data;
         set((state) => ({
           profiles: state.profiles.map((p) =>
-            p.id === result.data?.id ? result.data! : p
+            p.id === updatedProfile.id ? updatedProfile : p
           ),
           profilesLoading: false
         }));
@@ -334,7 +336,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   addProviderAccount: async (account: Omit<ProviderAccount, 'id' | 'createdAt' | 'updatedAt'>): Promise<IPCResult<ProviderAccount>> => {
     const result = await window.electronAPI.saveProviderAccount(account);
     if (result.success && result.data) {
-      const newAccount = result.data!;
+      const newAccount = result.data;
       set(state => ({
         providerAccounts: [...state.providerAccounts, newAccount],
         settings: {
@@ -353,8 +355,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   updateProviderAccount: async (id: string, updates: Partial<ProviderAccount>): Promise<IPCResult<ProviderAccount>> => {
     const result = await window.electronAPI.updateProviderAccount(id, updates);
     if (result.success && result.data) {
+      const updatedAccount = result.data;
       set(state => ({
-        providerAccounts: state.providerAccounts.map(a => a.id === id ? result.data! : a)
+        providerAccounts: state.providerAccounts.map(a => a.id === id ? updatedAccount : a)
       }));
     }
     return result;
@@ -399,8 +402,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     const result = await window.electronAPI.saveModelOverrides(overrides);
     if (result.success) {
       set(state => ({
-        // eslint-disable-next-line @typescript-eslint/no-explicit-any
-        settings: { ...state.settings, modelOverrides: overrides as any }
+        settings: { ...state.settings, modelOverrides: overrides as AppSettings['modelOverrides'] }
       }));
     }
     return result;
@@ -430,7 +432,7 @@ async function migrateOnboardingCompleted(settings: AppSettings): Promise<AppSet
   }
 
   // NEW: Check ~/.claude.json for hasCompletedOnboarding
-  // This allows Auto-Claude to respect Claude Code's onboarding status
+  // This allows Autocode to respect Claude Code's onboarding status
   try {
     const claudeCodeResult = await window.electronAPI.getClaudeCodeOnboardingStatus();
     if (claudeCodeResult.success && claudeCodeResult.data?.hasCompletedOnboarding) {

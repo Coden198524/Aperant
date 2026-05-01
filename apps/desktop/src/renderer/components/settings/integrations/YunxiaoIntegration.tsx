@@ -222,7 +222,7 @@ export function YunxiaoIntegration({
                 })}
               </Label>
               <Input
-                placeholder="C:\\Users\\<you>\\AppData\\Roaming\\Aperant\\mcp-cache\\yunxiao-npm"
+                placeholder="C:\\Users\\<you>\\AppData\\Roaming\\Autocode\\mcp-cache\\yunxiao-npm"
                 value={envConfig.yunxiaoMcpNpmCache || ''}
                 onChange={(event) => updateEnvConfig({ yunxiaoMcpNpmCache: event.target.value })}
               />

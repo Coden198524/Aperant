@@ -7,13 +7,16 @@
 
 import path from 'path';
 import { existsSync } from 'fs';
+import { LEGACY_PROJECT_DATA_DIR_NAME, PROJECT_DATA_DIR_NAME } from '../shared/constants';
 
 // Path constants for worktree directories
-export const TASK_WORKTREE_DIR = '.auto-claude/worktrees/tasks';
-export const TERMINAL_WORKTREE_DIR = '.auto-claude/worktrees/terminal';
+export const TASK_WORKTREE_DIR = `${PROJECT_DATA_DIR_NAME}/worktrees/tasks`;
+export const LEGACY_TASK_WORKTREE_DIR = `${LEGACY_PROJECT_DATA_DIR_NAME}/worktrees/tasks`;
+export const TERMINAL_WORKTREE_DIR = `${PROJECT_DATA_DIR_NAME}/worktrees/terminal`;
+export const LEGACY_TERMINAL_WORKTREE_DIR = `${LEGACY_PROJECT_DATA_DIR_NAME}/worktrees/terminal`;
 
 // Metadata directories (separate from git worktrees to avoid uncommitted files)
-export const TERMINAL_WORKTREE_METADATA_DIR = '.auto-claude/terminal/metadata';
+export const TERMINAL_WORKTREE_METADATA_DIR = `${PROJECT_DATA_DIR_NAME}/terminal/metadata`;
 
 // Legacy path for backwards compatibility
 export const LEGACY_WORKTREE_DIR = '.worktrees';
@@ -72,18 +75,31 @@ export function findTaskWorktree(projectPath: string, specId: string): string | 
 
   const normalizedProject = path.resolve(projectPath);
 
-  // Check Auto Claude app path first (.auto-claude/worktrees/tasks/{specId})
+  // Check Autocode app path first (.autocode/worktrees/tasks/{specId})
   const autoClaudePath = path.join(projectPath, TASK_WORKTREE_DIR, specId);
-  const resolvedAutoClaudePath = path.resolve(autoClaudePath);
+  const resolvedAutocodePath = path.resolve(autoClaudePath);
 
-  if (!isPathWithinBase(resolvedAutoClaudePath, normalizedProject)) {
+  if (!isPathWithinBase(resolvedAutocodePath, normalizedProject)) {
     console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project`);
     return null;
   }
 
-  if (existsSync(resolvedAutoClaudePath)) {
-    console.log('[worktree-paths] Found worktree at:', resolvedAutoClaudePath);
-    return resolvedAutoClaudePath;
+  if (existsSync(resolvedAutocodePath)) {
+    console.log('[worktree-paths] Found worktree at:', resolvedAutocodePath);
+    return resolvedAutocodePath;
+  }
+
+  const legacyDataPath = path.join(projectPath, LEGACY_TASK_WORKTREE_DIR, specId);
+  const resolvedLegacyDataPath = path.resolve(legacyDataPath);
+
+  if (!isPathWithinBase(resolvedLegacyDataPath, normalizedProject)) {
+    console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project (legacy data dir)`);
+    return null;
+  }
+
+  if (existsSync(resolvedLegacyDataPath)) {
+    console.log('[worktree-paths] Found legacy data-dir worktree at:', resolvedLegacyDataPath);
+    return resolvedLegacyDataPath;
   }
 
   // Legacy fallback (.worktrees/{specId})
@@ -100,7 +116,7 @@ export function findTaskWorktree(projectPath: string, specId: string): string | 
     return resolvedLegacyPath;
   }
 
-  // If not in .auto-claude or legacy paths, assume development is happening
+  // If not in .autocode or legacy paths, assume development is happening
   // directly on a git branch in the project root
   console.log('[worktree-paths] No dedicated worktree found, using project root:', normalizedProject);
   return normalizedProject;
@@ -160,6 +176,16 @@ export function findTerminalWorktree(projectPath: string, name: string): string 
   }
 
   if (existsSync(resolvedNewPath)) return resolvedNewPath;
+
+  const legacyDataPath = path.join(projectPath, LEGACY_TERMINAL_WORKTREE_DIR, name);
+  const resolvedLegacyDataPath = path.resolve(legacyDataPath);
+
+  if (!isPathWithinBase(resolvedLegacyDataPath, normalizedProject)) {
+    console.error(`[worktree-paths] Path traversal detected: name "${name}" resolves outside project (legacy data dir)`);
+    return null;
+  }
+
+  if (existsSync(resolvedLegacyDataPath)) return resolvedLegacyDataPath;
 
   // Legacy fallback (terminal worktrees used terminal-{name} prefix)
   const legacyPath = path.join(projectPath, LEGACY_WORKTREE_DIR, `terminal-${name}`);

@@ -2,13 +2,13 @@
 
 This file provides guidance to Claude Code when working with this repository.
 
-Auto Claude is an autonomous multi-agent coding framework that plans, builds, and validates software for you. It's a TypeScript-first Electron desktop application with a self-contained AI agent layer (Vercel AI SDK v6). A lightweight Python sidecar provides the optional Graphiti memory system.
+Autocode is an autonomous multi-agent coding framework that plans, builds, and validates software for you. It's a TypeScript-first Electron desktop application with a self-contained AI agent layer (Vercel AI SDK v6). A lightweight Python sidecar provides the optional Graphiti memory system.
 
 > **Deep-dive reference:** [ARCHITECTURE.md](shared_docs/ARCHITECTURE.md) | **Frontend contributing:** [apps/desktop/CONTRIBUTING.md](apps/desktop/CONTRIBUTING.md)
 
 ## Product Overview
 
-Auto Claude is a desktop application (+ CLI) where users describe a goal and AI agents autonomously handle planning, implementation, and QA validation. All work happens in isolated git worktrees so the main branch stays safe.
+Autocode is a desktop application (+ CLI) where users describe a goal and AI agents autonomously handle planning, implementation, and QA validation. All work happens in isolated git worktrees so the main branch stays safe.
 
 **Core workflow:** User creates a task → Spec creation pipeline assesses complexity and writes a specification → Planner agent breaks it into subtasks → Coder agent implements (can spawn parallel subagents) → QA reviewer validates → QA fixer resolves issues → User reviews and merges.
 
@@ -25,7 +25,7 @@ Auto Claude is a desktop application (+ CLI) where users describe a goal and AI 
 - **Memory System** — Graphiti-based knowledge graph retains insights across sessions
 - **Isolated Workspaces** — Git worktree isolation for every build; AI-powered semantic merge
 - **Flexible Authentication** — Use a Claude Code subscription (OAuth) or API profiles with any Anthropic-compatible endpoint (e.g., Anthropic API, z.ai for GLM models)
-- **Multi-Account Swapping** — Register multiple Claude accounts; when one hits a rate limit, Auto Claude automatically switches to an available account
+- **Multi-Account Swapping** — Register multiple Claude accounts; when one hits a rate limit, Autocode automatically switches to an available account
 - **Cross-Platform** — Native desktop app for Windows, macOS, and Linux with auto-updates
 
 ## Critical Rules
@@ -112,12 +112,12 @@ Your context window will be automatically compacted as it approaches its limit, 
 
 **Main Process:**
 - Run with `npm run dev:debug` to enable verbose logging
-- Check `~/.config/aperant/logs/` for production logs (platform-specific)
+- Check `~/.config/autocode/logs/` for production logs (platform-specific)
 - Use `console.log` for dev-only debugging (not visible in bundled app)
 - Use Sentry integration for production error tracking
 
 **Agent Sessions:**
-- Check `.auto-claude/specs/XXX-name/` for spec output and logs
+- Check `.autocode/specs/XXX-name/` for spec output and logs
 - Review `src/main/ai/session/error-classifier.ts` for error handling patterns
 - Monitor worker thread execution via `src/main/agent/worker-bridge.ts`
 
@@ -136,16 +136,16 @@ Your context window will be automatically compacted as it approaches its limit, 
 
 **HMR limitations** — Hot Module Replacement works for renderer code, but main process and IPC changes require server restart. Watch for stale module state if changes don't appear.
 
-**Memory system communication** — Graphiti (memory system) runs as a separate MCP sidecar process. Connection failures are silent; check logs at `.auto-claude/logs/mcp.log` if memory features don't work.
+**Memory system communication** — Graphiti (memory system) runs as a separate MCP sidecar process. Connection failures are silent; check logs at `.autocode/logs/mcp.log` if memory features don't work.
 
 **i18n missing keys** — Dev mode logs warnings for missing translation keys. Ensure ALL new UI text is added to BOTH `en/*.json` and `fr/*.json` or the app won't render properly for French users.
 
 ### Resetting PR Review State
 
-To fully clear all PR review data so reviews run fresh, delete/reset these three things in `.auto-claude/github/`:
+To fully clear all PR review data so reviews run fresh, delete/reset these three things in `.autocode/github/`:
 
-1. `rm .auto-claude/github/pr/logs_*.json` — review log files
-2. `rm .auto-claude/github/pr/review_*.json` — review result files
+1. `rm .autocode/github/pr/logs_*.json` — review log files
+2. `rm .autocode/github/pr/review_*.json` — review result files
 3. Reset `pr/index.json` to `{"reviews": [], "last_updated": null}`
 4. Reset `bot_detection_state.json` to `{"reviewed_commits": {}}` — this is the gatekeeper; without clearing it, the bot detector skips already-seen commits
 
@@ -313,7 +313,7 @@ const readTool = tool({
 
 ### Spec Directory Structure
 
-Each spec in `.auto-claude/specs/XXX-name/` contains: `spec.md`, `requirements.json`, `context.json`, `implementation_plan.json`, `qa_report.md`, `QA_FIX_REQUEST.md`
+Each spec in `.autocode/specs/XXX-name/` contains: `spec.md`, `requirements.json`, `context.json`, `implementation_plan.json`, `qa_report.md`, `QA_FIX_REQUEST.md`
 
 ### Memory System (Graphiti)
 
@@ -556,10 +556,10 @@ const { tasks, activeTask, setActiveTask } = useTaskStore();
 
 ## Spec System Architecture
 
-Specs are the record of work. Each spec in `.auto-claude/specs/XXX-task-name/` is immutable once complete:
+Specs are the record of work. Each spec in `.autocode/specs/XXX-task-name/` is immutable once complete:
 
 ```
-.auto-claude/specs/001-build-calculator/
+.autocode/specs/001-build-calculator/
 ├── spec.md                  ← User requirements (input)
 ├── requirements.json        ← Parsed requirements
 ├── context.json            ← Project context snapshot
@@ -579,7 +579,7 @@ Specs are the record of work. Each spec in `.auto-claude/specs/XXX-task-name/` i
 **Accessing spec data:**
 ```typescript
 // Load spec
-const specPath = join(projectDir, '.auto-claude/specs/001-task-name');
+const specPath = join(projectDir, '.autocode/specs/001-task-name');
 const spec = JSON.parse(readFileSync(join(specPath, 'spec.json'), 'utf8'));
 const plan = JSON.parse(readFileSync(join(specPath, 'implementation_plan.json'), 'utf8'));
 ```
@@ -691,5 +691,5 @@ npm run dev        # Development mode with HMR
 npm run dev:debug  # Debug mode with verbose output
 npm run dev:mcp    # Electron MCP server for AI debugging
 
-# Project data: .auto-claude/specs/ (gitignored)
+# Project data: .autocode/specs/ (gitignored)
 ```

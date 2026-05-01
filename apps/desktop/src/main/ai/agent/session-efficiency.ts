@@ -42,7 +42,11 @@ function toStringArray(value: unknown): string[] {
 }
 
 function formatBulletList(items: string[]): string {
-  return items.map((item) => `- \`${item}\``).join('\n');
+  return items.map((item) => `- \`${formatPathForPrompt(item)}\``).join('\n');
+}
+
+function formatPathForPrompt(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
 }
 
 function formatVerification(verification: string | VerificationLike | undefined): string | null {
@@ -182,9 +186,11 @@ export function buildFocusedCoderKickoffMessageFromContext(
   subtaskId: string,
   context: CoderKickoffSubtaskContext | null,
 ): string {
+  const promptSpecDir = formatPathForPrompt(specDir);
+  const promptProjectDir = formatPathForPrompt(projectDir);
   const lines: string[] = [
-    `Implement ONLY subtask "${subtaskId}" from ${specDir}/implementation_plan.json.`,
-    `Project root: ${projectDir}.`,
+    `Implement ONLY subtask "${subtaskId}" from ${promptSpecDir}/implementation_plan.json.`,
+    `Project root: ${promptProjectDir}.`,
   ];
 
   if (context) {
@@ -201,7 +207,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
     }
   } else {
     lines.push('');
-    lines.push(`Read ${specDir}/implementation_plan.json, locate subtask "${subtaskId}", and implement only that subtask.`);
+    lines.push(`Read ${promptSpecDir}/implementation_plan.json, locate subtask "${subtaskId}", and implement only that subtask.`);
   }
 
   lines.push('');

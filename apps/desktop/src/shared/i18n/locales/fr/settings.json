@@ -7,7 +7,7 @@
   "sections": {
     "appearance": {
       "title": "Apparence",
-      "description": "Personnalisez l'apparence de Aperant"
+      "description": "Personnalisez l'apparence de Autocode"
     },
     "display": {
       "title": "Affichage",
@@ -35,7 +35,7 @@
     },
     "updates": {
       "title": "Mises à jour",
-      "description": "Mises à jour Aperant"
+      "description": "Mises à jour Autocode"
     },
     "notifications": {
       "title": "Notifications",
@@ -209,7 +209,7 @@
     "otherAgentSettingsDescription": "Options de configuration supplémentaires de l'agent",
     "agentFramework": "Framework de l'agent",
     "agentFrameworkDescription": "Le framework de codage utilisé pour les tâches autonomes",
-    "agentFrameworkAutoClaude": "Aperant",
+    "agentFrameworkAutocode": "Autocode",
     "aiTerminalNaming": "Nommage IA des terminaux",
     "aiTerminalNamingDescription": "Nommer automatiquement les terminaux en fonction des commandes (utilise le modèle de nommage IA)",
     "featureModelSettings": "Paramètres du modèle de fonctionnalité",
@@ -244,15 +244,15 @@
     "sourceBundled": "Intégré",
     "sourceFallback": "Valeur par défaut",
     "notDetected": "Non détecté",
-    "autoClaudePath": "Chemin Aperant",
-    "autoClaudePathDescription": "Chemin relatif vers le répertoire auto-claude dans les projets",
-    "autoClaudePathPlaceholder": "auto-claude (par défaut)",
+    "autoClaudePath": "Chemin Autocode",
+    "autoClaudePathDescription": "Chemin relatif vers le répertoire autocode dans les projets",
+    "autoClaudePathPlaceholder": "autocode (par défaut)",
     "autoNameTerminals": "Nommer automatiquement les terminaux",
     "autoNameTerminalsDescription": "Utiliser l'IA pour générer des noms descriptifs pour les onglets de terminal en fonction de leur activité"
   },
   "theme": {
     "title": "Apparence",
-    "description": "Personnalisez l'apparence de Aperant",
+    "description": "Personnalisez l'apparence de Autocode",
     "mode": "Mode",
     "modeDescription": "Choisir entre les thèmes clair et sombre",
     "light": "Clair",
@@ -270,14 +270,14 @@
     "tabTerminalFonts": "Polices de terminal",
     "ide": {
       "label": "IDE préféré",
-      "description": "Aperant ouvrira les worktrees dans cet éditeur",
+      "description": "Autocode ouvrira les worktrees dans cet éditeur",
       "placeholder": "Sélectionner un IDE...",
       "customPath": "Chemin IDE personnalisé",
       "customPathPlaceholder": "/chemin/vers/votre/ide"
     },
     "terminal": {
       "label": "Terminal préféré",
-      "description": "Aperant ouvrira les sessions terminal ici",
+      "description": "Autocode ouvrira les sessions terminal ici",
       "placeholder": "Sélectionner un terminal...",
       "customPath": "Chemin terminal personnalisé",
       "customPathPlaceholder": "/chemin/vers/votre/terminal"
@@ -310,7 +310,7 @@
   },
   "updates": {
     "title": "Mises à jour",
-    "description": "Gérer les mises à jour de Aperant",
+    "description": "Gérer les mises à jour de Autocode",
     "appUpdateReady": "Mise à jour de l'app prête",
     "newVersion": "Nouvelle version",
     "released": "Publiée le",
@@ -327,7 +327,7 @@
     "unableToCheck": "Impossible de vérifier les mises à jour",
     "checkForUpdates": "Vérifier les mises à jour",
     "autoUpdateProjects": "Mise à jour automatique des projets",
-    "autoUpdateProjectsDescription": "Mettre à jour automatiquement Aperant dans les projets quand une nouvelle version est disponible",
+    "autoUpdateProjectsDescription": "Mettre à jour automatiquement Autocode dans les projets quand une nouvelle version est disponible",
     "betaUpdates": "Mises à jour bêta",
     "betaUpdatesDescription": "Recevoir les versions bêta pré-release avec de nouvelles fonctionnalités (peut être moins stable)",
     "stableDowngradeAvailable": "Version stable disponible",
@@ -335,7 +335,7 @@
     "stableVersion": "Version stable",
     "downloadStableVersion": "Télécharger la version stable",
     "readOnlyVolumeTitle": "Impossible d'installer depuis l'image disque",
-    "readOnlyVolumeDescription": "Aperant s'exécute depuis une image disque en lecture seule (DMG). Veuillez glisser l'application dans votre dossier Applications et la relancer depuis cet emplacement pour installer les mises à jour.",
+    "readOnlyVolumeDescription": "Autocode s'exécute depuis une image disque en lecture seule (DMG). Veuillez glisser l'application dans votre dossier Applications et la relancer depuis cet emplacement pour installer les mises à jour.",
     "downloadError": "Échec du téléchargement de la mise à jour"
   },
   "notifications": {
@@ -426,7 +426,7 @@
       },
       "workflow": {
         "title": "Fonctionnement",
-        "description": "Les demandes de revue GitBlit sont bas\u00e9es sur des tickets. Aperant cr\u00e9e la premi\u00e8re proposition comme ticket GitBlit et met \u00e0 jour les patchsets suivants lorsqu'un identifiant de ticket est connu.",
+        "description": "Les demandes de revue GitBlit sont bas\u00e9es sur des tickets. Autocode cr\u00e9e la premi\u00e8re proposition comme ticket GitBlit et met \u00e0 jour les patchsets suivants lorsqu'un identifiant de ticket est connu.",
         "create": "Les nouvelles demandes de revue sont envoy\u00e9es vers refs/for/<branch>.",
         "update": "Les soumissions suivantes r\u00e9utilisent refs/for/<ticket> lorsque la t\u00e2che est d\u00e9j\u00e0 li\u00e9e \u00e0 un ticket GitBlit."
       }
@@ -892,7 +892,7 @@
     "description": "Accédez aux logs et informations de débogage pour le dépannage",
     "errorReporting": {
       "label": "Rapports d'erreurs anonymes",
-      "description": "Envoyer des rapports de crash pour améliorer Aperant. Aucune donnée personnelle ni code n'est collecté."
+      "description": "Envoyer des rapports de crash pour améliorer Autocode. Aucune donnée personnelle ni code n'est collecté."
     },
     "openLogsFolder": "Ouvrir le dossier des logs",
     "copyDebugInfo": "Copier les infos de débogage",
@@ -922,7 +922,7 @@
     "noProjectSelected": "Aucun projet sélectionné",
     "noProjectSelectedDescription": "Sélectionnez un projet dans le menu déroulant pour voir et configurer les serveurs MCP.",
     "projectNotInitialized": "Projet non initialisé",
-    "projectNotInitializedDescription": "Initialisez Aperant pour ce projet pour configurer les serveurs MCP.",
+    "projectNotInitializedDescription": "Initialisez Autocode pour ce projet pour configurer les serveurs MCP.",
     "browserAutomation": "Automatisation du navigateur (agents QA uniquement)",
     "alwaysEnabled": "toujours activé",
     "addServer": "Ajouter un serveur",
@@ -964,7 +964,7 @@
         "description": "Automatisation du navigateur web pour les tests"
       },
       "autoClaude": {
-        "name": "Outils Aperant",
+        "name": "Outils Autocode",
         "description": "Suivi de la progression du build"
       }
     },

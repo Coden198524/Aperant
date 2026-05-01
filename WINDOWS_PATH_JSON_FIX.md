@@ -2,11 +2,11 @@
 
 ## 问题描述
 
-用户报告在使用 Aperant 时经常遇到以下错误：
+用户报告在使用 Autocode 时经常遇到以下错误：
 
 ```
 Tool 'Write' failed: invalid input for tool write: json parsing failed
-text: {"file_path": "e:\\work\\game\\testcodex\\test\\.auto-claude\\specs\\006-build-web-based-sudoku-game\\spec.md"
+text: {"file_path": "e:\\work\\game\\testcodex\\test\\.autocode\\specs\\006-build-web-based-sudoku-game\\spec.md"
 error message: expected ',' or '}' after property value in json at position 110
 ```
 

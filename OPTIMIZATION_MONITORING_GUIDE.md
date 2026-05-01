@@ -103,7 +103,7 @@ WARNING: You are approaching the context window limit (94.6% used, 189,234 of 20
 如果从终端启动应用：
 
 ```bash
-cd E:\Work\Aperant
+cd E:\Work\Autocode
 npm run dev
 ```
 
@@ -112,9 +112,9 @@ npm run dev
 ### 方法 3: 日志文件
 
 应用日志可能保存在：
-- Windows: `%APPDATA%\aperant\logs\`
-- macOS: `~/Library/Logs/aperant/`
-- Linux: `~/.config/aperant/logs/`
+- Windows: `%APPDATA%\autocode\logs\`
+- macOS: `~/Library/Logs/autocode/`
+- Linux: `~/.config/autocode/logs/`
 
 ---
 

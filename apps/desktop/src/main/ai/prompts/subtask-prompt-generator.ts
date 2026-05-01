@@ -28,8 +28,8 @@ import type {
 
 /** Patterns to detect worktree isolation */
 const WORKTREE_PATH_PATTERNS = [
-  /[/\\]\.auto-claude[/\\]worktrees[/\\]tasks[/\\]/,
-  /[/\\]\.auto-claude[/\\]github[/\\]pr[/\\]worktrees[/\\]/,
+  /[/\\]\.autocode[/\\]worktrees[/\\]tasks[/\\]/,
+  /[/\\]\.autocode[/\\]github[/\\]pr[/\\]worktrees[/\\]/,
   /[/\\]\.worktrees[/\\]/,
 ];
 
@@ -106,7 +106,7 @@ function getRelativeSpecPath(specDir: string, projectDir: string): string {
 
   // Fallback: just use the spec dir name
   const parts = resolvedSpec.split(/[/\\]/);
-  return `./auto-claude/specs/${parts[parts.length - 1]}`;
+  return `./autocode/specs/${parts[parts.length - 1]}`;
 }
 
 /**
@@ -331,7 +331,7 @@ export async function generateSubtaskPrompt(config: SubtaskPromptConfig): Promis
     `5. **Commit your changes:**\n` +
     `   \`\`\`bash\n` +
     `   git add .\n` +
-    `   git commit -m "auto-claude: ${subtask.id} - ${subtask.description.slice(0, 50)}"\n` +
+    `   git commit -m "autocode: ${subtask.id} - ${subtask.description.slice(0, 50)}"\n` +
     `   \`\`\`\n` +
     `6. **Update the plan** - set this subtask's status to "completed" in implementation_plan.json\n\n` +
     `## Quality Checklist\n\n` +

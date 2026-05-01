@@ -159,7 +159,7 @@ Batch complete: 2/2 subtasks finished
 ## 测试步骤
 
 ### 第 1 步：创建新任务
-1. 打开 Auto Claude 应用
+1. 打开 Autocode 应用
 2. 点击 "New Task"
 3. 填写以下信息：
    - **标题**: "Build a Simple CLI Calculator"

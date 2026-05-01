@@ -101,6 +101,10 @@ function isFastWorkflow(
   return session.workflowMode === 'aggressive';
 }
 
+function formatPathForPrompt(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
+}
+
 /**
  * Map task workflowMode to WorkflowConfig preset
  */
@@ -260,13 +264,35 @@ function loadPrompt(promptName: string): string | null {
     const promptPath = join(base, `${promptName}.md`);
     try {
       if (existsSync(promptPath)) {
-        return readFileSync(promptPath, 'utf-8');
+        return expandPromptPartials(readFileSync(promptPath, 'utf-8'), base);
       }
     } catch {
       // Try next
     }
   }
   return null;
+}
+
+function expandPromptPartials(
+  content: string,
+  promptsDir: string,
+  seen = new Set<string>(),
+): string {
+  return content.replace(/\{\{([a-zA-Z0-9_-]+)\}\}/g, (match, partialName: string) => {
+    const partialPath = join(promptsDir, 'partials', `${partialName}.md`);
+    if (!existsSync(partialPath) || seen.has(partialName)) {
+      return match;
+    }
+
+    try {
+      seen.add(partialName);
+      return expandPromptPartials(readFileSync(partialPath, 'utf-8'), promptsDir, seen);
+    } catch {
+      return match;
+    } finally {
+      seen.delete(partialName);
+    }
+  });
 }
 
 // =============================================================================
@@ -475,6 +501,7 @@ async function assemblePrompt(
   session: SerializableSessionConfig,
 ): Promise<string> {
   const profileProjectDir = getPromptProfileProjectDir(session);
+  const projectPromptProfile = getProjectPromptProfile(session);
   const projectOverride = loadProjectPromptOverride(profileProjectDir, promptName);
   if (projectOverride && !loggedProjectPromptOverrides.has(projectOverride.path)) {
     loggedProjectPromptOverrides.add(projectOverride.path);
@@ -517,7 +544,6 @@ async function assemblePrompt(
     autoPushToRemote: session.autoPushToRemote,
   });
 
-  const projectPromptProfile = getProjectPromptProfile(session);
   if (projectPromptProfile && !projectOverride) {
     promptWithContext += `\n\n${buildProjectPromptProfileSection(projectPromptProfile)}`;
   }
@@ -1387,10 +1413,12 @@ async function runAgenticSpecOrchestrator(
   const systemPrompt = await assemblePrompt('spec_orchestrator_agentic', session);
 
   // Build the kickoff message
+  const promptSpecDir = formatPathForPrompt(session.specDir);
+  const promptProjectDir = formatPathForPrompt(session.projectDir);
   const kickoffParts = [
     `Create a complete specification for the following task:\n\n${taskDescription}\n`,
-    `\nSpec directory: ${session.specDir}`,
-    `\nProject directory: ${session.projectDir}`,
+    `\nSpec directory: ${promptSpecDir}`,
+    `\nProject directory: ${promptProjectDir}`,
   ];
 
   if (projectIndexContent) {
@@ -1515,40 +1543,43 @@ function buildSpecKickoffMessage(
   specPhase?: string,
   language?: SerializableSessionConfig['language'],
 ): string {
+  const promptSpecDir = formatPathForPrompt(specDir);
+  const promptProjectDir = formatPathForPrompt(projectDir);
+
   // Build the base task-specific message
   let baseMessage: string;
 
   // Spec phase takes priority over agentType for kickoff routing
   // (e.g., complexity_assessment uses spec_gatherer agentType but needs a different kickoff)
   if (specPhase === 'complexity_assessment') {
-    baseMessage = `Assess the complexity of the following task and write your assessment to ${specDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${projectDir}. Determine if this is a SIMPLE, STANDARD, or COMPLEX task based on the scope of changes required.\n\nIMPORTANT: This is the FIRST phase of the spec pipeline. No spec.md or other spec files exist yet — do NOT attempt to read them. Assess complexity based on the task description and the project structure at ${projectDir} only.`;
+    baseMessage = `Assess the complexity of the following task and write your assessment to ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Determine if this is a SIMPLE, STANDARD, or COMPLEX task based on the scope of changes required.\n\nIMPORTANT: This is the FIRST phase of the spec pipeline. No spec.md or other spec files exist yet — do NOT attempt to read them. Assess complexity based on the task description and the project structure at ${promptProjectDir} only.`;
   } else switch (agentType) {
     case 'spec_discovery':
-      baseMessage = `Analyze the project structure at ${projectDir} to understand the codebase architecture, tech stack, and conventions. Write your findings to ${specDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${projectDir} directly.`;
+      baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Write your findings to ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
       break;
     case 'spec_gatherer':
-      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${projectDir}. Write requirements to ${specDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Derive requirements from the task description and the project source code at ${projectDir}.`;
+      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Write requirements to ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Derive requirements from the task description and the project source code at ${promptProjectDir}.`;
       break;
     case 'spec_researcher':
-      baseMessage = `Research implementation approaches for: ${taskDescription}. Review relevant code in ${projectDir} and document your findings in ${specDir}/research.json.`;
+      baseMessage = `Research implementation approaches for: ${taskDescription}. Review relevant code in ${promptProjectDir} and document your findings in ${promptSpecDir}/research.json.`;
       break;
     case 'spec_writer':
-      baseMessage = `Write the specification for: ${taskDescription}. Write spec.md to ${specDir}. Project root: ${projectDir}.`;
+      baseMessage = `Write the specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}.`;
       break;
     case 'planner':
-      baseMessage = `Create a detailed implementation plan for: ${taskDescription}. Read the spec at ${specDir}/spec.md and create ${specDir}/implementation_plan.json with concrete coding subtasks. Project root: ${projectDir}.`;
+      baseMessage = `Create a detailed implementation plan for: ${taskDescription}. Read the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.json with concrete coding subtasks. Project root: ${promptProjectDir}.`;
       break;
     case 'spec_critic':
-      baseMessage = `Review and critique the specification at ${specDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${specDir}/spec.md with improvements.`;
+      baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
       break;
     case 'spec_context':
-      baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${projectDir} and write context to ${specDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${projectDir} directly.`;
+      baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and write context to ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
       break;
     case 'spec_validation':
-      baseMessage = `Validate that ${specDir}/spec.md and ${specDir}/implementation_plan.json are complete, consistent, and ready for implementation. Fix any issues found.`;
+      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.json are complete, consistent, and ready for implementation. Fix any issues found.`;
       break;
     default:
-      baseMessage = `Complete the spec creation task described in your system prompt. Task: ${taskDescription}. Spec directory: ${specDir}. Project directory: ${projectDir}`;
+      baseMessage = `Complete the spec creation task described in your system prompt. Task: ${taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
   }
 
   // Inject accumulated context from prior phases
@@ -1588,30 +1619,32 @@ function buildKickoffMessage(
   subtaskId?: string,
   language?: SerializableSessionConfig['language'],
 ): string {
+  const promptSpecDir = formatPathForPrompt(specDir);
+  const promptProjectDir = formatPathForPrompt(projectDir);
   let baseMessage: string;
   switch (agentType) {
     case 'planner':
-      baseMessage = `Read the spec at ${specDir}/spec.md and create a detailed implementation plan at ${specDir}/implementation_plan.json. Project root: ${projectDir}`;
+      baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed implementation plan at ${promptSpecDir}/implementation_plan.json. Project root: ${promptProjectDir}`;
       break;
     case 'coder':
       if (subtaskId) {
         baseMessage = buildFocusedCoderKickoffMessage(
-          specDir,
-          projectDir,
+          promptSpecDir,
+          promptProjectDir,
           subtaskId,
         );
       } else {
-        baseMessage = `Read ${specDir}/implementation_plan.json and implement the next pending subtask. Project root: ${projectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+        baseMessage = `Read ${promptSpecDir}/implementation_plan.json and implement the next pending subtask. Project root: ${promptProjectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
       }
       break;
     case 'qa_reviewer':
-      baseMessage = `Review the implementation in ${projectDir} against the specification in ${specDir}/spec.md. Write your findings to ${specDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+      baseMessage = `Review the implementation in ${promptProjectDir} against the specification in ${promptSpecDir}/spec.md. Write your findings to ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
       break;
     case 'qa_fixer':
-      baseMessage = `Read ${specDir}/qa_report.md for the issues found by QA review. Fix all issues in ${projectDir}. After fixing, update ${specDir}/qa_report.md to indicate fixes have been applied.`;
+      baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/qa_report.md to indicate fixes have been applied.`;
       break;
     default:
-      baseMessage = `Complete the task described in your system prompt. Spec directory: ${specDir}. Project directory: ${projectDir}`;
+      baseMessage = `Complete the task described in your system prompt. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
       break;
   }
 
@@ -1630,17 +1663,19 @@ function buildKickoffMessage(
  * Build a minimal fallback prompt when the prompts directory is not found.
  */
 function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: string): string {
+  const promptSpecDir = formatPathForPrompt(specDir);
+  const promptProjectDir = formatPathForPrompt(projectDir);
   switch (agentType) {
     case 'planner':
-      return `You are a planning agent. Read spec.md in ${specDir} and create implementation_plan.json with phases and subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending". If the system prompt specifies an app language, localize all user-facing planning fields such as feature, phase names, subtask titles, and subtask descriptions to that language.`;
+      return `You are a planning agent. Read spec.md in ${promptSpecDir} and create implementation_plan.json with phases and subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending". If the system prompt specifies an app language, localize all user-facing planning fields such as feature, phase names, subtask titles, and subtask descriptions to that language.`;
     case 'coder':
-      return `You are a coding agent. Implement the current pending subtask from implementation_plan.json in ${specDir}. Project root: ${projectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+      return `You are a coding agent. Implement the current pending subtask from implementation_plan.json in ${promptSpecDir}. Project root: ${promptProjectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
     case 'qa_reviewer':
-      return `You are a QA reviewer. Review the implementation in ${projectDir} against the spec in ${specDir}/spec.md. Write your findings to ${specDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
+      return `You are a QA reviewer. Review the implementation in ${promptProjectDir} against the spec in ${promptSpecDir}/spec.md. Write your findings to ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
     case 'qa_fixer':
-      return `You are a QA fixer. Read ${specDir}/qa_report.md for the issues found by QA review. Fix the issues in ${projectDir}. After fixing, update ${specDir}/implementation_plan.json qa_signoff status to "fixes_applied".`;
+      return `You are a QA fixer. Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix the issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/implementation_plan.json qa_signoff status to "fixes_applied".`;
     default:
-      return `You are an AI agent. Complete the task described in ${specDir}/spec.md for the project at ${projectDir}.`;
+      return `You are an AI agent. Complete the task described in ${promptSpecDir}/spec.md for the project at ${promptProjectDir}.`;
   }
 }
 

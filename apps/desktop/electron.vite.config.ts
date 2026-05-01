@@ -159,11 +159,11 @@ export default defineConfig({
           '**/node_modules/**',
           '**/.git/**',
           '**/.worktrees/**',
-          '**/.auto-claude/**',
+          '**/.autocode/**',
           '**/out/**',
           // Ignore the parent autonomous-coding directory's worktrees
           resolve(__dirname, '../.worktrees/**'),
-          resolve(__dirname, '../.auto-claude/**'),
+          resolve(__dirname, '../.autocode/**'),
         ]
       }
     }

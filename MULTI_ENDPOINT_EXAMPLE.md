@@ -6,7 +6,7 @@
 
 ## 配置示例
 
-在 `C:/Users/LS/AppData/Roaming/aperant/settings.json` 中配置多个账户：
+在 `C:/Users/LS/AppData/Roaming/autocode/settings.json` 中配置多个账户：
 
 ```json
 {

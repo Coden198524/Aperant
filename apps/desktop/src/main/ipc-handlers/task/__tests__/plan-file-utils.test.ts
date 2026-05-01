@@ -17,7 +17,7 @@ describe('plan-file-utils token usage persistence', () => {
   let planPath: string;
 
   beforeEach(() => {
-    tempDir = mkdtempSync(path.join(tmpdir(), 'aperant-plan-token-'));
+    tempDir = mkdtempSync(path.join(tmpdir(), 'autocode-plan-token-'));
     planPath = path.join(tempDir, 'implementation_plan.json');
   });
 

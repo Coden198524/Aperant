@@ -1,23 +1,23 @@
 {
   "initialize": {
-    "title": "初始化 Aperant",
-    "description": "当前项目尚未初始化 Aperant。要现在开始设置吗？",
+    "title": "初始化 Autocode",
+    "description": "当前项目尚未初始化 Autocode。要现在开始设置吗？",
     "willDo": "这将：",
-    "createFolder": "在你的项目中创建一个 .auto-claude 文件夹",
-    "copyFramework": "复制 Aperant 框架文件",
+    "createFolder": "在你的项目中创建一个 .autocode 文件夹",
+    "copyFramework": "复制 Autocode 框架文件",
     "setupSpecs": "为你的任务设置 specs 目录",
     "sourcePathNotConfigured": "未配置源路径",
-    "sourcePathNotConfiguredDescription": "在初始化之前，请在应用设置中设置 Aperant 源路径。",
+    "sourcePathNotConfiguredDescription": "在初始化之前，请在应用设置中设置 Autocode 源路径。",
     "initFailed": "初始化失败",
-    "initFailedDescription": "无法初始化 Aperant。请重试。"
+    "initFailedDescription": "无法初始化 Autocode。请重试。"
   },
   "gitSetup": {
     "title": "需要 Git 仓库",
-    "description": "Aperant 使用 git 在隔离的工作区中安全地构建功能",
+    "description": "Autocode 使用 git 在隔离的工作区中安全地构建功能",
     "notGitRepo": "此文件夹不是 git 仓库",
     "noCommits": "Git 仓库没有提交",
-    "needsInit": "在 Aperant 管理你的代码之前，需要初始化 Git。",
-    "needsCommit": "Aperant 需要至少一个提交才能创建工作区。",
+    "needsInit": "在 Autocode 管理你的代码之前，需要初始化 Git。",
+    "needsCommit": "Autocode 需要至少一个提交才能创建工作区。",
     "willSetup": "我们将为你设置 git：",
     "initRepo": "初始化一个新的 git 仓库",
     "createCommit": "使用你当前的文件创建一个初始提交",
@@ -25,25 +25,25 @@
     "settingUp": "正在设置 Git",
     "initializingRepo": "正在初始化 git 仓库并创建初始提交...",
     "success": "Git 已初始化",
-    "readyToUse": "你的项目现在可以配合 Aperant 使用了！"
+    "readyToUse": "你的项目现在可以配合 Autocode 使用了！"
   },
   "githubSetup": {
     "connectTitle": "连接到 GitHub",
-    "connectDescription": "Aperant 需要 GitHub 来管理你的代码分支并保持任务更新。",
+    "connectDescription": "Autocode 需要 GitHub 来管理你的代码分支并保持任务更新。",
     "claudeTitle": "连接到 Claude AI",
-    "claudeDescription": "Aperant 使用 Claude AI 提供智能功能，如路线图生成、任务自动化和创意。",
+    "claudeDescription": "Autocode 使用 Claude AI 提供智能功能，如路线图生成、任务自动化和创意。",
     "aiProviderTitle": "连接 AI",
     "aiProviderDescription": "添加 AI 提供商账户，以启用路线图生成、任务自动化和创意等功能。",
     "aiProviderReady": "你已经至少配置了一个 AI 提供商账户，可以继续下一步。",
     "skipForNow": "暂时跳过",
     "continue": "继续",
     "selectRepo": "选择仓库",
-    "repoDescription": "Aperant 将使用此仓库来管理任务分支并保持代码更新。",
+    "repoDescription": "Autocode 将使用此仓库来管理任务分支并保持代码更新。",
     "selectBranch": "选择基准分支",
-    "branchDescription": "选择 Aperant 应用作创建任务分支基准的分支。",
+    "branchDescription": "选择 Autocode 应用作创建任务分支基准的分支。",
     "whyBranch": "为什么要选择分支？",
-    "branchExplanation": "Aperant 为每个任务创建隔离的工作区。选择正确的基准分支可确保你的任务从主开发线的最新代码开始。",
-    "ready": "Aperant 已准备就绪！你现在可以创建自动基于 {{branchName}} 分支的任务。",
+    "branchExplanation": "Autocode 为每个任务创建隔离的工作区。选择正确的基准分支可确保你的任务从主开发线的最新代码开始。",
+    "ready": "Autocode 已准备就绪！你现在可以创建自动基于 {{branchName}} 分支的任务。",
     "createRepoAriaLabel": "在 GitHub 上创建新仓库",
     "linkRepoAriaLabel": "链接到现有仓库",
     "goBackAriaLabel": "返回仓库选择",
@@ -53,9 +53,9 @@
   },
   "worktrees": {
     "title": "工作区",
-    "description": "为你的 Aperant 任务管理隔离的工作区",
+    "description": "为你的 Autocode 任务管理隔离的工作区",
     "empty": "无工作区",
-    "emptyDescription": "当 Aperant 构建功能时会自动创建工作区。它们为每个任务提供隔离的工作环境。",
+    "emptyDescription": "当 Autocode 构建功能时会自动创建工作区。它们为每个任务提供隔离的工作环境。",
     "merge": "合并工作区",
     "mergeDescription": "将此工作区的更改合并到基准分支。",
     "delete": "删除工作区？",
@@ -77,7 +77,7 @@
     "errorDescription": "清理工作区失败。请重试。"
   },
   "update": {
-    "title": "Aperant",
+    "title": "Autocode",
     "projectInitialized": "项目已初始化。"
   },
   "addFeature": {
@@ -156,7 +156,7 @@
   },
   "appUpdate": {
     "title": "有可用的应用更新",
-    "description": "新版本的 Aperant 已准备好下载",
+    "description": "新版本的 Autocode 已准备好下载",
     "newVersion": "新版本",
     "released": "发布于",
     "downloading": "正在下载...",
@@ -169,7 +169,7 @@
     "claudeCodeChangelog": "查看 Claude Code 更新日志",
     "claudeCodeChangelogAriaLabel": "查看 Claude Code 更新日志（在新窗口中打开）",
     "readOnlyVolumeTitle": "无法从磁盘镜像安装",
-    "readOnlyVolumeDescription": "请在更新前将 Aperant 移动到“应用程序”文件夹。"
+    "readOnlyVolumeDescription": "请在更新前将 Autocode 移动到“应用程序”文件夹。"
   },
   "addCompetitor": {
     "title": "添加竞争对手",

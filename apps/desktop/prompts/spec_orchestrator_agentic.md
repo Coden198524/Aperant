@@ -6,6 +6,10 @@ Unlike procedural orchestrators, you REASON about each step and adapt your strat
 
 ---
 
+{{tool_call_json_formatting}}
+
+---
+
 ## GENERAL SOFTWARE DEFAULTS
 
 Treat each task as a general software-development project unless the task or project instructions identify a more specific domain. Optimize the spec pipeline for:

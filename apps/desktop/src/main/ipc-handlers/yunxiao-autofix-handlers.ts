@@ -66,7 +66,7 @@ interface PersistedYunxiaoBatch {
 const projectAutoFixChains = new Map<string, Promise<void>>();
 
 function getYunxiaoDir(project: Project): string {
-  return path.join(project.path, '.auto-claude', 'yunxiao');
+  return path.join(project.path, '.autocode', 'yunxiao');
 }
 
 function getQueueDir(project: Project): string {

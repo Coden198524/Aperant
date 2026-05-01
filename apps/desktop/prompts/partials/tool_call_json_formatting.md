@@ -2,6 +2,10 @@
 
 When calling tools like Write, Edit, Read, Glob, or Grep, the tool call parameters MUST be valid JSON.
 
+Tool inputs must be JSON objects, not strings that contain JSON.
+- Correct: `{"file_path": "e:/work/project/spec.md", "content": "..."}`
+- Wrong: `"{\"file_path\": \"e:/work/project/spec.md\", \"content\": \"...\"}"`
+
 ### 1. Windows Path Handling
 
 On Windows systems, file paths in tool call JSON MUST use forward slashes (/) or properly escaped backslashes (\\\\).
@@ -16,7 +20,7 @@ Examples:
 
 **Why this matters:**
 - Single backslashes in JSON strings are escape characters (e.g., `\n` = newline, `\t` = tab)
-- `e:\work\test\.auto-claude\specs\006\spec.md` becomes invalid JSON because `\w`, `\t`, `\a`, `\s` are not valid escape sequences
+- `e:\work\test\.autocode\specs\006\spec.md` becomes invalid JSON because `\w`, `\t`, `\a`, `\s` are not valid escape sequences
 - The AI SDK will reject the tool call with "json parsing failed" error
 - Use forward slashes to avoid this issue entirely
 

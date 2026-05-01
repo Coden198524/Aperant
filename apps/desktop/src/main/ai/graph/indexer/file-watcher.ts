@@ -3,7 +3,7 @@
  * =============
  *
  * Watches for file changes and triggers incremental graph updates.
- * Integrates with Auto Claude's existing file watcher system.
+ * Integrates with Autocode's existing file watcher system.
  *
  * Features:
  * - Watch for file saves (create, modify, delete)

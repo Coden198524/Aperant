@@ -40,8 +40,8 @@ import type {
 // Constants
 // ---------------------------------------------------------------------------
 
-const PROFILE_FILENAME = '.auto-claude-security.json';
-const CUSTOM_ALLOWLIST_FILENAME = '.auto-claude-allowlist';
+const PROFILE_FILENAME = '.autocode-security.json';
+const CUSTOM_ALLOWLIST_FILENAME = '.autocode-allowlist';
 
 const HASH_FILES = [
   'package.json',

@@ -1,8 +1,9 @@
-import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync, readFileSync, appendFileSync, renameSync } from 'fs';
 import path from 'path';
 import { execFileSync } from 'child_process';
 import { getToolPath } from './cli-tool-manager';
 import { initializeProjectPromptProfile } from './ai/prompts/project-prompt-profile';
+import { LEGACY_PROJECT_DATA_DIR_NAME, PROJECT_DATA_DIR_NAME } from '../shared/constants';
 
 /**
  * Debug logging - only logs when DEBUG=true or in development mode
@@ -156,7 +157,7 @@ export function initializeGit(projectPath: string): InitializationResult {
 /**
  * Entries to add to .gitignore when initializing a project
  */
-const GITIGNORE_ENTRIES = ['.auto-claude/'];
+const GITIGNORE_ENTRIES = [`${PROJECT_DATA_DIR_NAME}/`, `${LEGACY_PROJECT_DATA_DIR_NAME}/`];
 
 /**
  * Ensure entries exist in the project's .gitignore file.
@@ -206,21 +207,21 @@ function ensureGitignoreEntries(projectPath: string, entries: string[]): void {
       appendContent += '\n';
     }
 
-    appendContent += '\n# Aperant data directory\n';
+    appendContent += '\n# Autocode data directory\n';
     for (const entry of entriesToAdd) {
       appendContent += entry + '\n';
     }
 
     appendFileSync(gitignorePath, appendContent);
   } else {
-    writeFileSync(gitignorePath, '# Aperant data directory\n' + entriesToAdd.join('\n') + '\n', 'utf-8');
+    writeFileSync(gitignorePath, '# Autocode data directory\n' + entriesToAdd.join('\n') + '\n', 'utf-8');
   }
 
   debug('Added entries to .gitignore', { entries: entriesToAdd });
 }
 
 /**
- * Data directories created in .auto-claude for each project
+ * Data directories created in .autocode for each project
  */
 const DATA_DIRECTORIES = [
   'specs',
@@ -229,6 +230,44 @@ const DATA_DIRECTORIES = [
   'roadmap',
   'prompts'
 ];
+
+function getProjectDataPath(projectPath: string): string {
+  return path.join(projectPath, PROJECT_DATA_DIR_NAME);
+}
+
+function getLegacyProjectDataPath(projectPath: string): string {
+  return path.join(projectPath, LEGACY_PROJECT_DATA_DIR_NAME);
+}
+
+function migrateLegacyProjectDataDirectory(projectPath: string): boolean {
+  const dataPath = getProjectDataPath(projectPath);
+  const legacyPath = getLegacyProjectDataPath(projectPath);
+
+  if (existsSync(dataPath) || !existsSync(legacyPath)) {
+    return existsSync(dataPath);
+  }
+
+  try {
+    renameSync(legacyPath, dataPath);
+    debug('Migrated legacy project data directory', { from: legacyPath, to: dataPath });
+    return true;
+  } catch (error) {
+    debug('Could not migrate legacy project data directory', {
+      from: legacyPath,
+      to: dataPath,
+      error: error instanceof Error ? error.message : String(error)
+    });
+    return false;
+  }
+}
+
+function resolveProjectDataPath(projectPath: string): string | null {
+  const dataPath = getProjectDataPath(projectPath);
+  if (existsSync(dataPath)) return dataPath;
+  if (migrateLegacyProjectDataDirectory(projectPath)) return dataPath;
+  const legacyPath = getLegacyProjectDataPath(projectPath);
+  return existsSync(legacyPath) ? legacyPath : null;
+}
 
 /**
  * Result of initialization operation
@@ -261,17 +300,16 @@ export function getLocalSourcePath(projectPath: string): string | null {
 }
 
 /**
- * Check if project is initialized (has .auto-claude directory)
+ * Check if project is initialized (has .autocode directory)
  */
 export function isInitialized(projectPath: string): boolean {
-  const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
-  return existsSync(dotAutoBuildPath);
+  return resolveProjectDataPath(projectPath) !== null;
 }
 
 /**
- * Initialize auto-claude data directory in a project.
+ * Initialize autocode data directory in a project.
  *
- * Creates .auto-claude/ with data directories (specs, ideation, insights, roadmap).
+ * Creates .autocode/ with data directories (specs, ideation, insights, roadmap).
  * The framework code runs from the source repo - only data is stored here.
  *
  * Requires:
@@ -290,31 +328,39 @@ export function initializeProject(projectPath: string): InitializationResult {
     };
   }
 
-  // Check git status - Aperant requires git for worktree-based builds
+  // Check git status - Autocode requires git for worktree-based builds
   const gitStatus = checkGitStatus(projectPath);
   if (!gitStatus.isGitRepo || !gitStatus.hasCommits) {
     debug('Git check failed', { gitStatus });
     return {
       success: false,
-      error: gitStatus.error || 'Git repository required. Aperant uses git worktrees for isolated builds.'
+      error: gitStatus.error || 'Git repository required. Autocode uses git worktrees for isolated builds.'
     };
   }
 
   // Check if already initialized
-  const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
+  const dotAutoBuildPath = getProjectDataPath(projectPath);
+  const legacyAutoBuildPath = getLegacyProjectDataPath(projectPath);
 
   if (existsSync(dotAutoBuildPath)) {
-    debug('Already initialized - .auto-claude exists');
+    debug('Already initialized - .autocode exists');
     return {
       success: false,
-      error: 'Project already has auto-claude initialized (.auto-claude exists)'
+      error: 'Project already has autocode initialized (.autocode exists)'
+    };
+  }
+
+  if (existsSync(legacyAutoBuildPath) && !migrateLegacyProjectDataDirectory(projectPath)) {
+    return {
+      success: false,
+      error: `Project has legacy data directory (${LEGACY_PROJECT_DATA_DIR_NAME}) but it could not be migrated to ${PROJECT_DATA_DIR_NAME}`
     };
   }
 
   try {
-    debug('Creating .auto-claude data directory', { dotAutoBuildPath });
+    debug('Creating .autocode data directory', { dotAutoBuildPath });
 
-    // Create the .auto-claude directory
+    // Create the .autocode directory
     mkdirSync(dotAutoBuildPath, { recursive: true });
 
     // Create data directories
@@ -325,7 +371,7 @@ export function initializeProject(projectPath: string): InitializationResult {
       writeFileSync(path.join(dirPath, '.gitkeep'), '', 'utf-8');
     }
 
-    // Update .gitignore to exclude .auto-claude/
+    // Update .gitignore to exclude .autocode/
     ensureGitignoreEntries(projectPath, GITIGNORE_ENTRIES);
 
     try {
@@ -349,13 +395,13 @@ export function initializeProject(projectPath: string): InitializationResult {
 }
 
 /**
- * Ensure all data directories exist in .auto-claude.
+ * Ensure all data directories exist in .autocode.
  * Useful if new directories are added in future versions.
  */
 export function ensureDataDirectories(projectPath: string): InitializationResult {
-  const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
+  const dotAutoBuildPath = resolveProjectDataPath(projectPath);
 
-  if (!existsSync(dotAutoBuildPath)) {
+  if (!dotAutoBuildPath) {
     return {
       success: false,
       error: 'Project not initialized. Run initialize first.'
@@ -390,22 +436,32 @@ export function ensureDataDirectories(projectPath: string): InitializationResult
 }
 
 /**
- * Get the auto-claude folder path for a project.
+ * Get the autocode folder path for a project.
  *
- * IMPORTANT: Only .auto-claude/ is considered a valid "installed" auto-claude.
- * The auto-claude/ folder (if it exists) is the SOURCE CODE being developed,
- * not an installation. This allows Aperant to be used to develop itself.
+ * IMPORTANT: Only .autocode/ is considered a valid "installed" autocode.
+ * The autocode/ folder (if it exists) is the SOURCE CODE being developed,
+ * not an installation. This allows Autocode to be used to develop itself.
  */
 export function getAutoBuildPath(projectPath: string): string | null {
-  const dotAutoBuildPath = path.join(projectPath, '.auto-claude');
+  const dotAutoBuildPath = getProjectDataPath(projectPath);
+  const legacyAutoBuildPath = getLegacyProjectDataPath(projectPath);
 
-  debug('getAutoBuildPath called', { projectPath, dotAutoBuildPath });
+  debug('getAutoBuildPath called', { projectPath, dotAutoBuildPath, legacyAutoBuildPath });
 
   if (existsSync(dotAutoBuildPath)) {
-    debug('Returning .auto-claude (installed version)');
-    return '.auto-claude';
+    debug('Returning .autocode (installed version)');
+    return PROJECT_DATA_DIR_NAME;
   }
 
-  debug('No .auto-claude folder found - project not initialized');
+  if (existsSync(legacyAutoBuildPath)) {
+    if (migrateLegacyProjectDataDirectory(projectPath)) {
+      debug('Returning .autocode after legacy migration');
+      return PROJECT_DATA_DIR_NAME;
+    }
+    debug('Returning legacy .auto-claude path because migration failed');
+    return LEGACY_PROJECT_DATA_DIR_NAME;
+  }
+
+  debug('No .autocode folder found - project not initialized');
   return null;
 }

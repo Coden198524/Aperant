@@ -196,7 +196,7 @@ export async function startCodexOAuthFlow(): Promise<CodexAuthResult> {
   authUrl.searchParams.set('state', state);
   authUrl.searchParams.set('code_challenge', codeChallenge);
   authUrl.searchParams.set('code_challenge_method', 'S256');
-  authUrl.searchParams.set('originator', 'auto-claude');
+  authUrl.searchParams.set('originator', 'autocode');
   authUrl.searchParams.set('codex_cli_simplified_flow', 'true');
 
   debugLog('Built authorization URL', { url: authUrl.toString() });
@@ -253,7 +253,7 @@ export async function startCodexOAuthFlow(): Promise<CodexAuthResult> {
 <body style="font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; background: #1a1a1a; color: #e0e0e0;">
   <div style="text-align: center;">
     <h2 style="color: #4ade80;">Authentication successful!</h2>
-    <p>You can close this tab and return to Aperant.</p>
+    <p>You can close this tab and return to Autocode.</p>
   </div>
 </body>
 </html>`;

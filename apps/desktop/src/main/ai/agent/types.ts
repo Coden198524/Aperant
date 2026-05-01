@@ -85,7 +85,7 @@ export interface SerializableSessionConfig {
     agentMcpRemove?: string;
     /** User-defined custom MCP servers from CUSTOM_MCP_SERVERS */
     customMcpServers?: CustomMcpServer[];
-    /** Project-level MCP env vars from .auto-claude/.env */
+    /** Project-level MCP env vars from .autocode/.env */
     mcpEnv?: Record<string, string>;
   };
   /** Enable agentic orchestration mode where the AI drives the pipeline via SpawnSubagent tool */

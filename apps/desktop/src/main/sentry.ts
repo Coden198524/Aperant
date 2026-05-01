@@ -24,7 +24,9 @@ let Sentry: typeof import('@sentry/electron/main') | undefined;
 let app: Electron.App | undefined;
 let ipcMain: Electron.IpcMain | undefined;
 
-if (isMainThread) {
+const isTestEnvironment = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+
+if (isMainThread && !isTestEnvironment) {
   // Dynamic imports to avoid executing Electron code in worker threads
   Sentry = require('@sentry/electron/main');
   const electronModule = require('electron');
@@ -149,7 +151,7 @@ export function initSentryMain(): void {
   Sentry.init({
     dsn: cachedDsn,
     environment: app.isPackaged ? 'production' : 'development',
-    release: `auto-claude@${app.getVersion()}`,
+    release: `autocode@${app.getVersion()}`,
 
     beforeSend(event: ErrorEvent) {
       if (!sentryEnabledState) {

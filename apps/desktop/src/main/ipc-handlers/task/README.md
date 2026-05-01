@@ -131,7 +131,7 @@ registerTaskHandlers(agentManager, pythonEnvManager, getMainWindow);
 - `../../task-log-service` - Log service
 - `../../title-generator` - AI title generation
 - `../../python-env-manager` - Python environment
-- `../../auto-claude-updater` - Source paths
+- `../../autocode-updater` - Source paths
 - `../../rate-limit-detector` - Profile environment
 
 ## Architecture Notes
@@ -139,7 +139,7 @@ registerTaskHandlers(agentManager, pythonEnvManager, getMainWindow);
 ### Worktree Architecture
 Each task spec has its own isolated worktree at `.worktrees/{spec-name}/`:
 - Enables safe parallel development
-- Each spec has dedicated branch: `auto-claude/{spec-name}`
+- Each spec has dedicated branch: `autocode/{spec-name}`
 - Branches stay local until user explicitly pushes
 - User reviews in worktree before merging to main
 

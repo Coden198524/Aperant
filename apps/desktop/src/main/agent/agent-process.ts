@@ -506,7 +506,7 @@ export class AgentProcessManager {
   }
 
   /**
-   * Load environment variables from project's .auto-claude/.env file
+   * Load environment variables from project's .autocode/.env file
    * This contains frontend-configured settings like memory configuration
    */
   private loadProjectEnv(projectPath: string): Record<string, string> {
@@ -523,7 +523,7 @@ export class AgentProcessManager {
   }
 
   /**
-   * Load environment variables from auto-claude .env file
+   * Load environment variables from autocode .env file
    */
   loadAutoBuildEnv(): Record<string, string> {
     if (!this.autoBuildSourcePath) {
@@ -1088,7 +1088,7 @@ export class AgentProcessManager {
    * Priority (later sources override earlier):
    * 1. App-wide memory settings from settings.json (NEW - enables memory from onboarding)
    * 2. Auto-build source .env (prompts directory) - default values
-   * 3. Project's .auto-claude/.env - Frontend-configured settings (memory, integrations)
+   * 3. Project's .autocode/.env - Frontend-configured settings (memory, integrations)
    * 4. Project settings (useClaudeMd) - Runtime overrides
    */
   getCombinedEnv(projectPath: string): Record<string, string> {

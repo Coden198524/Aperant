@@ -18,9 +18,9 @@ insights-service.ts (186 lines)
 ## Module Responsibilities
 
 ### InsightsConfig (`config.ts`)
-- Manages Python and auto-claude source path configuration
-- Detects auto-claude installation automatically
-- Loads environment variables from auto-claude .env file
+- Manages Python and autocode source path configuration
+- Detects autocode installation automatically
+- Loads environment variables from autocode .env file
 - Provides complete process environment with profile support
 
 ### InsightsPaths (`paths.ts`)

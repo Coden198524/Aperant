@@ -16,11 +16,19 @@ export function electronEsmFixPlugin(): Plugin {
         if (chunk.type === 'chunk' && fileName.endsWith('.js')) {
           let modified = false;
           let defaultImportName = 'electron__default';
+          const hasElectronImport = /from\s+["']electron["']/.test(chunk.code);
+          const defaultOnlyImport = chunk.code.match(/import\s+(\w+)\s+from\s+["']electron["'];?/);
+          if (defaultOnlyImport) {
+            defaultImportName = defaultOnlyImport[1];
+          }
 
-          // Remove namespace imports: import * as electron from "electron"
-          chunk.code = chunk.code.replace(/import\s+\*\s+as\s+\w+\s+from\s+["']electron["'];?\n?/g, () => {
+          // Convert namespace imports: import * as electron from "electron"
+          chunk.code = chunk.code.replace(/import\s+\*\s+as\s+(\w+)\s+from\s+["']electron["'];?\n?/g, (_match, namespaceImport) => {
             modified = true;
-            return '';
+            if (defaultOnlyImport) {
+              return `const ${namespaceImport} = ${defaultImportName};\n`;
+            }
+            return `import ${defaultImportName} from "electron";\nconst ${namespaceImport} = ${defaultImportName};\n`;
           });
 
           // Match: import electron__default, { named, exports } from "electron"
@@ -40,7 +48,9 @@ export function electronEsmFixPlugin(): Plugin {
           // Replace bare 'electron.' references with the actual default import name
           // This handles cases where code uses electron.utilityProcess, etc.
           // Use negative lookbehind to avoid replacing 'this.electron.' or 'obj.electron.'
-          chunk.code = chunk.code.replace(/(?<!\.)\belectron\./g, `${defaultImportName}.`);
+          if (hasElectronImport) {
+            chunk.code = chunk.code.replace(/(?<!\.)\belectron\./g, `${defaultImportName}.`);
+          }
 
           if (modified) {
             console.log(`[electron-esm-fix] Fixed Electron imports in ${fileName}`);

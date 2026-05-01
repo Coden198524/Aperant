@@ -36,9 +36,9 @@ export const GIT_BRANCH_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$|^[a-zA
 /**
  * Validates a detected branch name and returns the safe branch to delete.
  *
- * Why `auto-claude/` prefix is considered safe:
- * - All task worktrees use branches named `auto-claude/{specId}`
- * - This pattern is controlled by Auto-Claude, not user input
+ * Why `autocode/` prefix is considered safe:
+ * - All task worktrees use branches named `autocode/{specId}`
+ * - This pattern is controlled by Autocode, not user input
  * - If detected branch matches this pattern, it's a valid task branch
  * - If it doesn't match (e.g., `main`, `develop`, `feature/xxx`), it's likely
  *   the main project's branch being incorrectly detected from a corrupted worktree
@@ -69,9 +69,9 @@ export function validateWorktreeBranch(
     };
   }
 
-  // Matches auto-claude pattern with valid specId (not just "auto-claude/")
+  // Matches autocode pattern with valid specId (not just "autocode/")
   // The specId must be non-empty for this to be a valid task branch
-  if (detectedBranch.startsWith('auto-claude/') && detectedBranch.length > 'auto-claude/'.length) {
+  if (detectedBranch.startsWith('autocode/') && detectedBranch.length > 'autocode/'.length) {
     return {
       branchToDelete: detectedBranch,
       usedFallback: false,
@@ -1514,7 +1514,7 @@ function getEffectiveBaseBranch(projectPath: string, specId: string, projectMain
   }
 
   // 1. Try task metadata baseBranch
-  const specDir = path.join(projectPath, '.auto-claude', 'specs', specId);
+  const specDir = path.join(projectPath, '.autocode', 'specs', specId);
   const taskBaseBranch = getTaskBaseBranch(specDir);
   if (taskBaseBranch) {
     return taskBaseBranch;
@@ -1552,7 +1552,7 @@ interface GitBlitProjectConfig {
 }
 
 function getGitBlitProjectConfig(projectPath: string, autoBuildPath?: string): GitBlitProjectConfig {
-  const envPath = path.join(projectPath, autoBuildPath || '.auto-claude', '.env');
+  const envPath = path.join(projectPath, autoBuildPath || '.autocode', '.env');
   if (!existsSync(envPath)) {
     return { enabled: false };
   }
@@ -1820,7 +1820,7 @@ export function registerWorktreeHandlers(
 ): void {
   /**
    * Get the worktree status for a task
-   * Per-spec architecture: Each spec has its own worktree at .auto-claude/worktrees/tasks/{spec-name}/
+   * Per-spec architecture: Each spec has its own worktree at .autocode/worktrees/tasks/{spec-name}/
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_STATUS,
@@ -1831,7 +1831,7 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Task not found' };
         }
 
-        // Find worktree at .auto-claude/worktrees/tasks/{spec-name}/
+        // Find worktree at .autocode/worktrees/tasks/{spec-name}/
         const worktreePath = findTaskWorktree(project.path, task.specId);
 
         if (!worktreePath) {
@@ -1945,7 +1945,7 @@ export function registerWorktreeHandlers(
 
   /**
    * Get the diff for a task's worktree
-   * Per-spec architecture: Each spec has its own worktree at .auto-claude/worktrees/tasks/{spec-name}/
+   * Per-spec architecture: Each spec has its own worktree at .autocode/worktrees/tasks/{spec-name}/
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_DIFF,
@@ -1956,7 +1956,7 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Task not found' };
         }
 
-        // Find worktree at .auto-claude/worktrees/tasks/{spec-name}/
+        // Find worktree at .autocode/worktrees/tasks/{spec-name}/
         const worktreePath = findTaskWorktree(project.path, task.specId);
 
         if (!worktreePath) {
@@ -2095,7 +2095,7 @@ export function registerWorktreeHandlers(
 
         debug('Found task:', task.specId, 'project:', project.path);
 
-        const specDir = path.join(project.path, project.autoBuildPath || '.auto-claude', 'specs', task.specId);
+        const specDir = path.join(project.path, project.autoBuildPath || '.autocode', 'specs', task.specId);
         const worktreePath = findTaskWorktree(project.path, task.specId);
 
         // Auto-fix any misconfigured bare repo before merge operation
@@ -2139,7 +2139,7 @@ export function registerWorktreeHandlers(
         const aiResolverFn = createMergeResolverFn(modelShorthand, 'low');
 
         // Create the merge orchestrator
-        const storageDir = path.join(project.path, project.autoBuildPath || '.auto-claude');
+        const storageDir = path.join(project.path, project.autoBuildPath || '.autocode');
         const orchestrator = new MergeOrchestrator({
           projectDir: project.path,
           storageDir,
@@ -2234,7 +2234,7 @@ export function registerWorktreeHandlers(
 
                     if (!hasActualStagedChanges) {
                       // Check if worktree branch was already merged (merge commit exists)
-                      const specBranch = `auto-claude/${task.specId}`;
+                      const specBranch = `autocode/${task.specId}`;
                       try {
                         // Check if current branch contains all commits from spec branch
                         // git merge-base --is-ancestor returns exit code 0 if true, 1 if false
@@ -2377,7 +2377,7 @@ export function registerWorktreeHandlers(
               ];
               // Add worktree plan path if worktree exists
               if (worktreePath) {
-                const worktreeSpecDir = path.join(worktreePath, project.autoBuildPath || '.auto-claude', 'specs', task.specId);
+                const worktreeSpecDir = path.join(worktreePath, project.autoBuildPath || '.autocode', 'specs', task.specId);
                 planPaths.push({ path: path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), isMain: false });
               }
 
@@ -2545,7 +2545,7 @@ export function registerWorktreeHandlers(
         // 1. Task metadata baseBranch (explicit task-level override)
         // 2. Project settings mainBranch (project-level default)
         // 3. Default to 'main'
-        const specDir = path.join(project.path, project.autoBuildPath || '.auto-claude', 'specs', task.specId);
+        const specDir = path.join(project.path, project.autoBuildPath || '.autocode', 'specs', task.specId);
         const taskBaseBranch = getTaskBaseBranch(specDir);
         const projectMainBranch = project.settings?.mainBranch;
         const effectiveBaseBranch = taskBaseBranch || projectMainBranch || 'main';
@@ -2554,7 +2554,7 @@ export function registerWorktreeHandlers(
 
         // Run preview using the TypeScript MergeOrchestrator in dry-run mode
         // (no AI resolver needed for preview — only conflict detection and analysis)
-        const storageDir = path.join(project.path, project.autoBuildPath || '.auto-claude');
+        const storageDir = path.join(project.path, project.autoBuildPath || '.autocode');
         const orchestrator = new MergeOrchestrator({
           projectDir: project.path,
           storageDir,
@@ -2627,11 +2627,11 @@ export function registerWorktreeHandlers(
 
   /**
    * Discard the worktree changes
-   * Per-spec architecture: Each spec has its own worktree at .auto-claude/worktrees/tasks/{spec-name}/
+   * Per-spec architecture: Each spec has its own worktree at .autocode/worktrees/tasks/{spec-name}/
    *
    * Note: Uses the shared cleanupWorktree utility which handles Windows-specific issues
    * where `git worktree remove --force` fails when the directory contains untracked files.
-   * See: https://github.com/AndyMik90/Auto-Claude/issues/1539
+   * See: https://github.com/AndyMik90/Autocode/issues/1539
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_DISCARD,
@@ -2642,7 +2642,7 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Task not found' };
         }
 
-        // Find worktree at .auto-claude/worktrees/tasks/{spec-name}/
+        // Find worktree at .autocode/worktrees/tasks/{spec-name}/
         const worktreePath = findTaskWorktree(project.path, task.specId);
 
         if (!worktreePath) {
@@ -2734,7 +2734,7 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Project path is invalid' };
         }
 
-        // Find worktree at .auto-claude/worktrees/tasks/{spec-name}/
+        // Find worktree at .autocode/worktrees/tasks/{spec-name}/
         const worktreePath = findTaskWorktree(project.path, specName);
 
         if (!worktreePath) {
@@ -2782,7 +2782,7 @@ export function registerWorktreeHandlers(
 
   /**
    * List all spec worktrees for a project
-   * Per-spec architecture: Each spec has its own worktree at .auto-claude/worktrees/tasks/{spec-name}/
+   * Per-spec architecture: Each spec has its own worktree at .autocode/worktrees/tasks/{spec-name}/
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_LIST_WORKTREES,
@@ -2811,7 +2811,7 @@ export function registerWorktreeHandlers(
         // Used for orphan detection - worktrees without a matching task are orphaned
         const tasks = projectStore.getTasks(projectId);
         // Track if task lookup was successful (empty array with existing specs dir = lookup failed)
-        const mainSpecsDir = path.join(project.path, '.auto-claude', 'specs');
+        const mainSpecsDir = path.join(project.path, '.autocode', 'specs');
         const taskLookupSuccessful = tasks.length > 0 || !existsSync(mainSpecsDir);
 
         // Helper to process a single worktree entry (async)
@@ -3201,7 +3201,7 @@ export function registerWorktreeHandlers(
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_COMMITS,
-    async (_, taskId: string, projectId?: string): Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number }>>> => {
+    async (_, taskId: string, projectId?: string): Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number; parents: string[]; refs: string[]; isMerge: boolean }>>> => {
       try {
         const { task, project } = findTaskAndProject(taskId, projectId);
         if (!task || !project) {
@@ -3241,7 +3241,7 @@ export function registerWorktreeHandlers(
         // Get commit log
         const logResult = await execFileAsync(
           getToolPath('git'),
-          ['log', `${compareTarget}..HEAD`, '--pretty=format:%H%x00%h%x00%s%x00%an%x00%ar%x00%at', '--reverse'],
+          ['log', `${compareTarget}..HEAD`, '--topo-order', '--pretty=format:%H%x00%h%x00%s%x00%an%x00%ar%x00%at%x00%P%x00%D'],
           {
             cwd: worktreePath,
             encoding: 'utf-8',
@@ -3255,7 +3255,11 @@ export function registerWorktreeHandlers(
           .split('\n')
           .filter(Boolean)
           .map((line: string) => {
-            const [hash, shortHash, message, author, date, timestamp] = line.split('\x00');
+            const [hash, shortHash, message, author, date, timestamp, parentsRaw, refsRaw] = line.split('\x00');
+            const parents = parentsRaw ? parentsRaw.split(' ').filter(Boolean) : [];
+            const refs = refsRaw
+              ? refsRaw.split(',').map((ref) => ref.trim()).filter(Boolean)
+              : [];
             return {
               hash: hash || '',
               shortHash: shortHash || '',
@@ -3263,6 +3267,9 @@ export function registerWorktreeHandlers(
               author: author || '',
               date: date || '',
               timestamp: parseInt(timestamp || '0', 10),
+              parents,
+              refs,
+              isMerge: parents.length > 1,
             };
           });
 
@@ -3342,6 +3349,135 @@ export function registerWorktreeHandlers(
     }
   );
 
+  /**
+   * Get list of files changed in a specific commit
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORKTREE_COMMIT_FILES,
+    async (_, taskId: string, commitHash: string, projectId?: string): Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>> => {
+      try {
+        console.log('[TASK_WORKTREE_COMMIT_FILES] Called with taskId:', taskId, 'commitHash:', commitHash, 'projectId:', projectId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
+        if (!task || !project) {
+          console.log('[TASK_WORKTREE_COMMIT_FILES] Task or project not found');
+          return { success: false, error: 'Task not found' };
+        }
+
+        const worktreePath = findTaskWorktree(project.path, task.specId);
+        console.log('[TASK_WORKTREE_COMMIT_FILES] Worktree path:', worktreePath);
+        if (!worktreePath) {
+          console.log('[TASK_WORKTREE_COMMIT_FILES] Worktree not found for specId:', task.specId);
+          return { success: false, error: `Worktree not found for task ${task.specId}. The task may not have an active worktree.` };
+        }
+
+        // Get file status for the commit
+        const nameStatusResult = await execFileAsync(
+          getToolPath('git'),
+          ['diff', '--name-status', `${commitHash}^`, commitHash],
+          {
+            cwd: worktreePath,
+            encoding: 'utf-8',
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          }
+        );
+
+        console.log('[TASK_WORKTREE_COMMIT_FILES] Git diff output:', nameStatusResult.stdout);
+
+        const files = (nameStatusResult.stdout as string)
+          .trim()
+          .split('\n')
+          .filter(Boolean)
+          .map((line: string) => {
+            const [status, ...pathParts] = line.split('\t');
+            const path = pathParts.join('\t');
+            const statusCode = status?.[0] as 'M' | 'A' | 'D';
+            return { path, status: statusCode || 'M', additions: 0, deletions: 0 };
+          });
+
+        // Get stats for each file
+        const filesWithStats = await Promise.all(
+          files.map(async (file) => {
+            try {
+              const diffResult = await execFileAsync(
+                getToolPath('git'),
+                ['diff', '--numstat', `${commitHash}^`, commitHash, '--', file.path],
+                {
+                  cwd: worktreePath,
+                  encoding: 'utf-8',
+                  env: getIsolatedGitEnv(),
+                  timeout: WORKTREE_GIT_TIMEOUT_MS,
+                }
+              );
+              const stats = (diffResult.stdout as string).trim().split('\t');
+              return {
+                ...file,
+                additions: parseInt(stats[0] || '0', 10) || 0,
+                deletions: parseInt(stats[1] || '0', 10) || 0,
+              };
+            } catch {
+              return file;
+            }
+          })
+        );
+
+        console.log('[TASK_WORKTREE_COMMIT_FILES] Files with stats:', filesWithStats);
+        return { success: true, data: filesWithStats };
+      } catch (error) {
+        console.error('[TASK_WORKTREE_COMMIT_FILES] Error:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get commit files',
+        };
+      }
+    }
+  );
+
+  /**
+   * Get diff for a specific file in a specific commit
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_WORKTREE_COMMIT_FILE_DIFF,
+    async (_, taskId: string, commitHash: string, filePath: string, projectId?: string): Promise<IPCResult<string>> => {
+      try {
+        console.log('[TASK_WORKTREE_COMMIT_FILE_DIFF] Called with taskId:', taskId, 'commitHash:', commitHash, 'filePath:', filePath, 'projectId:', projectId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
+        if (!task || !project) {
+          console.log('[TASK_WORKTREE_COMMIT_FILE_DIFF] Task or project not found');
+          return { success: false, error: 'Task not found' };
+        }
+
+        const worktreePath = findTaskWorktree(project.path, task.specId);
+        console.log('[TASK_WORKTREE_COMMIT_FILE_DIFF] Worktree path:', worktreePath);
+        if (!worktreePath) {
+          console.log('[TASK_WORKTREE_COMMIT_FILE_DIFF] Worktree not found for specId:', task.specId);
+          return { success: false, error: 'No worktree found for this task' };
+        }
+
+        // Get diff for the file in the specific commit
+        const diffResult = await execFileAsync(
+          getToolPath('git'),
+          ['diff', '--no-color', '--unified=3', `${commitHash}^`, commitHash, '--', filePath],
+          {
+            cwd: worktreePath,
+            encoding: 'utf-8',
+            env: getIsolatedGitEnv(),
+            timeout: WORKTREE_GIT_TIMEOUT_MS,
+          }
+        );
+
+        console.log('[TASK_WORKTREE_COMMIT_FILE_DIFF] Diff result length:', (diffResult.stdout as string).length);
+        return { success: true, data: (diffResult.stdout as string) || '' };
+      } catch (error) {
+        console.error('[TASK_WORKTREE_COMMIT_FILE_DIFF] Error:', error);
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get commit file diff',
+        };
+      }
+    }
+  );
+
   ipcMain.handle(
     IPC_CHANNELS.TASK_WORKTREE_CREATE_PR,
     async (_, taskId: string, options?: WorktreeCreatePROptions, projectId?: string): Promise<IPCResult<WorktreeCreatePRResult>> => {
@@ -3363,7 +3499,7 @@ export function registerWorktreeHandlers(
 
         debug('Found task:', task.specId, 'project:', project.path);
 
-        const specDir = path.join(project.path, project.autoBuildPath || '.auto-claude', 'specs', task.specId);
+        const specDir = path.join(project.path, project.autoBuildPath || '.autocode', 'specs', task.specId);
 
         // Use EAFP pattern - try to read specDir and catch ENOENT
         try {
@@ -3403,8 +3539,8 @@ export function registerWorktreeHandlers(
           task.specId,
           project.settings?.mainBranch,
         );
-        const branchName = `auto-claude/${task.specId}`;
-        const prTitle = options?.title || `auto-claude: ${task.specId}`;
+        const branchName = `autocode/${task.specId}`;
+        const prTitle = options?.title || `autocode: ${task.specId}`;
         debug('Using base branch for PR creation:', baseBranch);
 
         const gitblitConfig = getGitBlitProjectConfig(project.path, project.autoBuildPath);

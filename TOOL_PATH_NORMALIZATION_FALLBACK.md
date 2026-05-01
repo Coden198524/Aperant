@@ -6,7 +6,7 @@
 
 ```
 Tool 'Write' failed: invalid input for tool write: json parsing failed
-text: {"file_path": "e:\\work\\game\\testcodex\\test\\.auto-claude\\specs\\...
+text: {"file_path": "e:\\work\\game\\testcodex\\test\\.autocode\\specs\\...
 error message: expected ',' or '}' after property value in json at position 120
 ```
 

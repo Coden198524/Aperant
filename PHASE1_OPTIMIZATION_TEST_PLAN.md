@@ -92,7 +92,7 @@ npm run dev
 
 ### 1. 启动应用
 ```bash
-cd E:\Work\Aperant
+cd E:\Work\Autocode
 npm run dev
 ```
 

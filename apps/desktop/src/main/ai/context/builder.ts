@@ -33,7 +33,7 @@ import type {
 // ---------------------------------------------------------------------------
 
 function loadProjectIndex(projectDir: string): ProjectIndex {
-  const indexFile = path.join(projectDir, '.auto-claude', 'project_index.json');
+  const indexFile = path.join(projectDir, '.autocode', 'project_index.json');
   if (fs.existsSync(indexFile)) {
     try {
       return JSON.parse(fs.readFileSync(indexFile, 'utf8')) as ProjectIndex;

@@ -188,7 +188,12 @@
     "modified": "Modified",
     "added": "Added",
     "deleted": "Deleted",
-    "fileCount": "{{count}} file(s) changed"
+    "fileCount": "{{count}} file(s) changed",
+    "commitFiles": "Commit Files",
+    "selectCommit": "Select a commit to view files",
+    "copyHash": "Copy commit hash",
+    "hashCopied": "Hash copied",
+    "filesChanged": "{{count}} file(s) changed"
   },
   "metadata": {
     "fastMode": "Fast",

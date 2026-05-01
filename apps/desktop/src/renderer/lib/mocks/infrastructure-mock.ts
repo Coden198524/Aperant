@@ -3,6 +3,8 @@
  * Updated for LadybugDB (embedded database, no Docker required)
  */
 
+const noop = (): void => undefined;
+
 export const infrastructureMock = {
   // Memory Infrastructure Operations (LadybugDB)
   getMemoryInfrastructureStatus: async () => ({
@@ -10,7 +12,7 @@ export const infrastructureMock = {
     data: {
       memory: {
         kuzuInstalled: true,
-        databasePath: '~/.auto-claude/graphs',
+        databasePath: '~/.autocode/graphs',
         databaseExists: true,
         databases: ['auto_claude_memory']
       },
@@ -98,11 +100,14 @@ export const infrastructureMock = {
      percentage: number;
    }) => void) => {
      // Store callback for test verification
-     (window as any).__downloadProgressCallback = callback;
+     const mockWindow = window as Window & {
+       __downloadProgressCallback?: typeof callback;
+     };
+     mockWindow.__downloadProgressCallback = callback;
 
      // Return cleanup function
      return () => {
-       delete (window as any).__downloadProgressCallback;
+       delete mockWindow.__downloadProgressCallback;
      };
    },
 
@@ -139,13 +144,13 @@ export const infrastructureMock = {
 
   deleteMultipleIdeas: async () => ({ success: true }),
 
-  onIdeationProgress: () => () => {},
-  onIdeationLog: () => () => {},
-  onIdeationComplete: () => () => {},
-  onIdeationError: () => () => {},
-  onIdeationStopped: () => () => {},
-  onIdeationTypeComplete: () => () => {},
-  onIdeationTypeFailed: () => () => {},
+  onIdeationProgress: () => noop,
+  onIdeationLog: () => noop,
+  onIdeationComplete: () => noop,
+  onIdeationError: () => noop,
+  onIdeationStopped: () => noop,
+  onIdeationTypeComplete: () => noop,
+  onIdeationTypeFailed: () => noop,
 
   // Shell Operations
   openExternal: async (url: string) => {

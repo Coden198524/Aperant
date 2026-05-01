@@ -61,8 +61,10 @@ export interface TaskAPI {
 
   // Git Changes
   getWorktreeChangedFiles: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
-  getWorktreeCommits: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number }>>>;
+  getWorktreeCommits: (taskId: string, projectId?: string) => Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number; parents?: string[]; refs?: string[]; isMerge?: boolean }>>>;
   getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
+  getWorktreeCommitFiles: (taskId: string, commitHash: string, projectId?: string) => Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>>;
+  getWorktreeCommitFileDiff: (taskId: string, commitHash: string, filePath: string, projectId?: string) => Promise<IPCResult<string>>;
 
   // Image Operations
   loadImageThumbnail: (projectPath: string, specId: string, imagePath: string) => Promise<IPCResult<string>>;
@@ -176,11 +178,17 @@ export const createTaskAPI = (): TaskAPI => ({
   getWorktreeChangedFiles: (taskId: string, projectId?: string): Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_CHANGED_FILES, taskId, projectId),
 
-  getWorktreeCommits: (taskId: string, projectId?: string): Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number }>>> =>
+  getWorktreeCommits: (taskId: string, projectId?: string): Promise<IPCResult<Array<{ hash: string; shortHash: string; message: string; author: string; date: string; timestamp: number; parents?: string[]; refs?: string[]; isMerge?: boolean }>>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_COMMITS, taskId, projectId),
 
   getWorktreeFileDiff: (taskId: string, filePath: string, projectId?: string): Promise<IPCResult<string>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_FILE_DIFF, taskId, filePath, projectId),
+
+  getWorktreeCommitFiles: (taskId: string, commitHash: string, projectId?: string): Promise<IPCResult<Array<{ path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }>>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_COMMIT_FILES, taskId, commitHash, projectId),
+
+  getWorktreeCommitFileDiff: (taskId: string, commitHash: string, filePath: string, projectId?: string): Promise<IPCResult<string>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_WORKTREE_COMMIT_FILE_DIFF, taskId, commitHash, filePath, projectId),
 
   // Image Operations
   loadImageThumbnail: (projectPath: string, specId: string, imagePath: string): Promise<IPCResult<string>> =>

@@ -87,11 +87,11 @@ describe('AGENT_CONFIGS', () => {
     expect(config.thinkingDefault).toBe('low');
   });
 
-  it('should configure planner with memory and auto-claude MCP', () => {
+  it('should configure planner with memory and autocode MCP', () => {
     const config = AGENT_CONFIGS.planner;
     expect(config.mcpServers).toContain('context7');
     expect(config.mcpServers).toContain('memory');
-    expect(config.mcpServers).toContain('auto-claude');
+    expect(config.mcpServers).toContain('autocode');
     expect(config.mcpServersOptional).toContain('linear');
     expect(config.mcpServersOptional).toContain('yunxiao');
     expect(config.thinkingDefault).toBe('high');
@@ -199,7 +199,7 @@ describe('mapMcpServerName', () => {
     expect(mapMcpServerName('graphiti-memory')).toBe('memory');
     expect(mapMcpServerName('linear')).toBe('linear');
     expect(mapMcpServerName('yunxiao')).toBe('yunxiao');
-    expect(mapMcpServerName('auto-claude')).toBe('auto-claude');
+    expect(mapMcpServerName('autocode')).toBe('autocode');
   });
 
   it('should return null for unknown names', () => {
@@ -317,12 +317,12 @@ describe('getRequiredMcpServers', () => {
     expect(servers).toContain('yunxiao');
   });
 
-  it('should not expose auto-claude as an external MCP server anymore', () => {
+  it('should not expose autocode as an external MCP server anymore', () => {
     const servers = getRequiredMcpServers('coder', {
       memoryEnabled: true,
-      agentMcpRemove: 'auto-claude,memory',
+      agentMcpRemove: 'autocode,memory',
     });
-    expect(servers).not.toContain('auto-claude');
+    expect(servers).not.toContain('autocode');
     expect(servers).not.toContain('memory');
   });
 });

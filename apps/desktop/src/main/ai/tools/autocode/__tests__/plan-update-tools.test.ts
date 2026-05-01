@@ -31,7 +31,7 @@ const baseContext: ToolContext = {
   },
 } as unknown as ToolContext;
 
-describe('Auto-Claude plan update tools', () => {
+describe('Autocode plan update tools', () => {
   beforeEach(() => {
     mockExistsSync.mockReset();
     mockExistsSync.mockReturnValue(true);

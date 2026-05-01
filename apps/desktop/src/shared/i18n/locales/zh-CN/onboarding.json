@@ -1,11 +1,11 @@
 {
   "wizard": {
     "title": "设置向导",
-    "description": "用几个简单步骤完成 Aperant 环境配置",
+    "description": "用几个简单步骤完成 Autocode 环境配置",
     "helpText": "这个向导会帮助你快速完成环境设置。你可以连接 Claude Code、Codex 或兼容的 API 提供商，配置记忆功能，并创建第一个任务。"
   },
   "welcome": {
-    "title": "欢迎使用 Aperant",
+    "title": "欢迎使用 Autocode",
     "subtitle": "借助 AI 智能体自主构建软件",
     "getStarted": "开始使用",
     "skip": "跳过设置",
@@ -16,7 +16,7 @@
       },
       "specDriven": {
         "title": "规格驱动工作流",
-        "description": "先定义清晰的任务规格，再由 Aperant 负责实现流程"
+        "description": "先定义清晰的任务规格，再由 Autocode 负责实现流程"
       },
       "memory": {
         "title": "记忆与上下文",
@@ -92,19 +92,19 @@
   },
   "devtools": {
     "title": "开发工具",
-    "description": "选择你在 Aperant 工作树中使用的 IDE、终端和 CLI",
+    "description": "选择你在 Autocode 工作树中使用的 IDE、终端和 CLI",
     "detecting": "正在检测已安装工具...",
     "detectAgain": "重新检测",
     "whyConfigure": "为什么要配置这些工具？",
-    "whyConfigureDescription": "当 Aperant 在隔离工作树中构建功能时，你可以直接用偏好的 IDE 或终端打开它们，进行测试和审查。",
+    "whyConfigureDescription": "当 Autocode 在隔离工作树中构建功能时，你可以直接用偏好的 IDE 或终端打开它们，进行测试和审查。",
     "ide": {
       "label": "首选 IDE",
-      "description": "Aperant 会在此编辑器中打开工作树",
+      "description": "Autocode 会在此编辑器中打开工作树",
       "customPath": "自定义 IDE 路径"
     },
     "terminal": {
       "label": "首选终端",
-      "description": "Aperant 会在此终端中打开会话",
+      "description": "Autocode 会在此终端中打开会话",
       "customPath": "自定义终端路径"
     },
     "cli": {
@@ -120,7 +120,7 @@
   "memory": {
     "title": "记忆",
     "description": "为智能体配置跨会话持久记忆",
-    "contextDescription": "Aperant Memory 可以在编码会话之间记住上下文",
+    "contextDescription": "Autocode Memory 可以在编码会话之间记住上下文",
     "enableMemory": "启用记忆",
     "enableMemoryDescription": "使用内置数据库提供跨会话持久记忆",
     "memoryDisabledInfo": "当前未启用记忆。会话洞察只会保存在本地文件中。启用后可获得持久上下文与语义搜索。",
@@ -180,7 +180,7 @@
     "done": "完成"
   },
   "privacy": {
-    "title": "帮助改进 Aperant",
+    "title": "帮助改进 Autocode",
     "subtitle": "匿名错误上报可以帮助我们更快修复问题",
     "whatWeCollect": {
       "title": "我们会收集什么",
@@ -206,7 +206,7 @@
     "detecting": "正在检查 Claude Code 安装情况...",
     "info": {
       "title": "什么是 Claude Code？",
-      "description": "Claude Code 是 Anthropic 官方提供的 CLI，可为 Aperant 的部分 AI 功能提供认证与模型访问能力。"
+      "description": "Claude Code 是 Anthropic 官方提供的 CLI，可为 Autocode 的部分 AI 功能提供认证与模型访问能力。"
     },
     "status": {
       "installed": "已安装",
@@ -246,13 +246,13 @@
   },
   "completion": {
     "title": "一切就绪！",
-    "subtitle": "Aperant 已准备好帮助您构建出色的软件",
+    "subtitle": "Autocode 已准备好帮助您构建出色的软件",
     "setupComplete": "设置完成",
     "setupCompleteDescription": "您的环境已配置并就绪。您可以立即开始创建任务，或按照自己的步调探索应用程序。",
     "whatsNext": "接下来要做什么？",
     "createTask": {
       "title": "创建任务",
-      "description": "从创建第一个任务开始，查看 Aperant 的实际操作。",
+      "description": "从创建第一个任务开始，查看 Autocode 的实际操作。",
       "action": "打开任务创建器"
     },
     "customizeSettings": {

@@ -25,7 +25,7 @@ function makeProject(): string {
   const projectDir = mkdtempSync(join(tmpdir(), 'prompt-profile-test-'));
   tempDirs.push(projectDir);
   mkdirSync(join(projectDir, 'src'), { recursive: true });
-  mkdirSync(join(projectDir, '.auto-claude'), { recursive: true });
+  mkdirSync(join(projectDir, '.autocode'), { recursive: true });
   writeFileSync(join(projectDir, 'package-lock.json'), '{}\n', 'utf-8');
   writeFileSync(
     join(projectDir, 'package.json'),
@@ -79,7 +79,9 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('PROJECT-SPECIFIC PROMPT');
     expect(coderOverride?.content).toContain('Implement the next pending subtask');
     expect(coderOverride?.content).toContain('design pattern decision');
-    expect(existsSync(join(projectDir, '.auto-claude', 'prompts', 'spec_quick.md'))).toBe(true);
+    expect(coderOverride?.content).toContain('TOOL CALL JSON SAFETY');
+    expect(coderOverride?.content).toContain('forward slashes');
+    expect(existsSync(join(projectDir, '.autocode', 'prompts', 'spec_quick.md'))).toBe(true);
   });
 
   it('builds an adaptation section for bundled prompts', () => {
@@ -97,7 +99,7 @@ describe('project prompt profile', () => {
     const projectDir = makeProject();
     initializeProjectPromptProfile(projectDir, { overwrite: true });
 
-    const coderPath = join(projectDir, '.auto-claude', 'prompts', 'coder.md');
+    const coderPath = join(projectDir, '.autocode', 'prompts', 'coder.md');
     writeFileSync(coderPath, 'custom coder prompt\n', 'utf-8');
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
@@ -111,7 +113,7 @@ describe('project prompt profile', () => {
     const projectDir = makeProject();
     initializeProjectPromptProfile(projectDir, { overwrite: true });
 
-    const coderPath = join(projectDir, '.auto-claude', 'prompts', 'coder.md');
+    const coderPath = join(projectDir, '.autocode', 'prompts', 'coder.md');
     expect(existsSync(coderPath)).toBe(true);
 
     for (let i = 0; i < 45; i += 1) {
@@ -129,8 +131,8 @@ describe('project prompt profile', () => {
     const projectDir = makeProject();
     initializeProjectPromptProfile(projectDir, { overwrite: true });
 
-    const profilePath = join(projectDir, '.auto-claude', 'prompt_profile.json');
-    const coderPath = join(projectDir, '.auto-claude', 'prompts', 'coder.md');
+    const profilePath = join(projectDir, '.autocode', 'prompt_profile.json');
+    const coderPath = join(projectDir, '.autocode', 'prompts', 'coder.md');
 
     writeFileSync(profilePath, JSON.stringify({ version: 1, project: {}, workflow: {} }), 'utf-8');
     writeFileSync(
@@ -141,7 +143,7 @@ describe('project prompt profile', () => {
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
 
-    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 3');
+    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 4');
     expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the next pending subtask');
     expect(readFileSync(coderPath, 'utf-8')).not.toContain('old generated prompt');
   });

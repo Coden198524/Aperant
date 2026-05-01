@@ -11,7 +11,7 @@
  * - Base tools: Core file operations (Read, Write, Edit, etc.)
  * - Web tools: Documentation and research (WebFetch, WebSearch)
  * - MCP tools: External integrations (Context7, Linear, Memory, etc.)
- * - Auto-Claude tools: Custom build management tools
+ * - Autocode tools: Custom build management tools
  */
 
 import type { ThinkingLevel } from './types';
@@ -36,15 +36,15 @@ const ALL_BUILTIN_TOOLS = [...BASE_READ_TOOLS, ...BASE_WRITE_TOOLS, ...WEB_TOOLS
 const SPEC_TOOLS = [...BASE_READ_TOOLS, 'Write', ...WEB_TOOLS] as const;
 
 // =============================================================================
-// Auto-Claude MCP Tools (Custom build management)
+// Autocode MCP Tools (Custom build management)
 // =============================================================================
 
-const TOOL_UPDATE_SUBTASK_STATUS = 'mcp__auto-claude__update_subtask_status';
-const TOOL_GET_BUILD_PROGRESS = 'mcp__auto-claude__get_build_progress';
-const TOOL_RECORD_DISCOVERY = 'mcp__auto-claude__record_discovery';
-const TOOL_RECORD_GOTCHA = 'mcp__auto-claude__record_gotcha';
-const TOOL_GET_SESSION_CONTEXT = 'mcp__auto-claude__get_session_context';
-const TOOL_UPDATE_QA_STATUS = 'mcp__auto-claude__update_qa_status';
+const TOOL_UPDATE_SUBTASK_STATUS = 'mcp__autocode__update_subtask_status';
+const TOOL_GET_BUILD_PROGRESS = 'mcp__autocode__get_build_progress';
+const TOOL_RECORD_DISCOVERY = 'mcp__autocode__record_discovery';
+const TOOL_RECORD_GOTCHA = 'mcp__autocode__record_gotcha';
+const TOOL_GET_SESSION_CONTEXT = 'mcp__autocode__get_session_context';
+const TOOL_UPDATE_QA_STATUS = 'mcp__autocode__update_qa_status';
 
 // =============================================================================
 // External MCP Tools
@@ -160,7 +160,7 @@ export interface AgentConfig {
   mcpServers: readonly string[];
   /** Optional MCP servers (conditionally enabled) */
   mcpServersOptional?: readonly string[];
-  /** Auto-Claude MCP tools this agent can use */
+  /** Autocode MCP tools this agent can use */
   autoClaudeTools: readonly string[];
   /** Default thinking level for this agent */
   thinkingDefault: ThinkingLevel;
@@ -246,7 +246,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
    */
   build_orchestrator: {
     tools: [...ALL_BUILTIN_TOOLS, 'SpawnSubagent'],
-    mcpServers: ['context7', 'memory', 'auto-claude'],
+    mcpServers: ['context7', 'memory', 'autocode'],
     mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_GET_BUILD_PROGRESS,
@@ -263,7 +263,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   // ═══════════════════════════════════════════════════════════════════════
   planner: {
     tools: [...ALL_BUILTIN_TOOLS],
-    mcpServers: ['context7', 'memory', 'auto-claude'],
+    mcpServers: ['context7', 'memory', 'autocode'],
     mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_GET_BUILD_PROGRESS,
@@ -274,7 +274,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   },
   coder: {
     tools: [...ALL_BUILTIN_TOOLS],
-    mcpServers: ['context7', 'memory', 'auto-claude'],
+    mcpServers: ['context7', 'memory', 'autocode'],
     mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_UPDATE_SUBTASK_STATUS,
@@ -293,7 +293,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   // ═══════════════════════════════════════════════════════════════════════
   qa_reviewer: {
     tools: [...ALL_BUILTIN_TOOLS],
-    mcpServers: ['context7', 'memory', 'auto-claude', 'browser'],
+    mcpServers: ['context7', 'memory', 'autocode', 'browser'],
     mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_GET_BUILD_PROGRESS,
@@ -304,7 +304,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
   },
   qa_fixer: {
     tools: [...ALL_BUILTIN_TOOLS],
-    mcpServers: ['context7', 'memory', 'auto-claude', 'browser'],
+    mcpServers: ['context7', 'memory', 'autocode', 'browser'],
     mcpServersOptional: ['linear', 'yunxiao'],
     autoClaudeTools: [
       TOOL_UPDATE_SUBTASK_STATUS,
@@ -486,7 +486,7 @@ const MCP_SERVER_NAME_MAP: Record<string, string> = {
   yunxiao: 'yunxiao',
   electron: 'electron',
   puppeteer: 'puppeteer',
-  'auto-claude': 'auto-claude',
+  'autocode': 'autocode',
 };
 
 /**
@@ -555,7 +555,7 @@ export function getRequiredMcpServers(
   options: McpServerResolveOptions = {},
 ): string[] {
   const config = getAgentConfig(agentType);
-  const servers = [...config.mcpServers].filter((server) => server !== 'auto-claude');
+  const servers = [...config.mcpServers].filter((server) => server !== 'autocode');
 
   // Filter context7 if explicitly disabled
   if (options.context7Enabled === false) {
@@ -602,11 +602,11 @@ export function getRequiredMcpServers(
     }
   }
 
-  // Apply per-agent MCP removals (never remove auto-claude)
+  // Apply per-agent MCP removals (never remove autocode)
   if (options.agentMcpRemove) {
     for (const name of options.agentMcpRemove.split(',')) {
       const mapped = mapMcpServerName(name.trim(), options.customServerIds);
-      if (mapped && mapped !== 'auto-claude') {
+      if (mapped && mapped !== 'autocode') {
         const idx = servers.indexOf(mapped);
         if (idx !== -1) servers.splice(idx, 1);
       }

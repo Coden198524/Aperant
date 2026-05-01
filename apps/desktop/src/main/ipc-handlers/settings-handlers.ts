@@ -209,7 +209,7 @@ async function migrateToProviderAccounts(settings: AppSettings): Promise<{ chang
 }
 
 /**
- * Auto-detect the auto-claude prompts path relative to the app location.
+ * Auto-detect the autocode prompts path relative to the app location.
  * Works across platforms (macOS, Windows, Linux) in both dev and production modes.
  * Prompts live in apps/desktop/prompts/ (dev) or extraResources/prompts (prod).
  */
@@ -269,7 +269,7 @@ const detectAutoBuildSourcePath = (): string | null => {
     }
   }
 
-  console.warn('[detectAutoBuildSourcePath] Could not auto-detect Aperant prompts path. Please configure manually in settings.');
+  console.warn('[detectAutoBuildSourcePath] Could not auto-detect Autocode prompts path. Please configure manually in settings.');
   console.warn('[detectAutoBuildSourcePath] Set DEBUG=1 environment variable for detailed path checking.');
   return null;
 };
@@ -381,7 +381,7 @@ export function registerSettingsHandlers(
       // Migration: Clear CLI tool paths that are from a different platform
       // Fixes issue where Windows paths persisted on macOS (and vice versa)
       // when settings were synced/transferred between platforms
-      // See: https://github.com/AndyMik90/Auto-Claude/issues/XXX
+      // See: https://github.com/AndyMik90/Autocode/issues/XXX
       const pathFields = ['pythonPath', 'gitPath', 'githubCLIPath', 'gitlabCLIPath', 'claudePath', 'autoBuildPath'] as const;
       for (const field of pathFields) {
         const pathValue = settings[field];
@@ -550,7 +550,7 @@ export function registerSettingsHandlers(
 
   /**
    * Read ~/.claude.json to check if Claude Code onboarding is complete.
-   * This allows Auto-Claude to respect Claude Code's onboarding status and
+   * This allows Autocode to respect Claude Code's onboarding status and
    * avoid showing the onboarding wizard to users who have already completed it.
    */
   ipcMain.handle(

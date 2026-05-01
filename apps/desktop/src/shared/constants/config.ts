@@ -32,7 +32,7 @@ export const DEFAULT_APP_SETTINGS = {
   theme: 'dark' as const,
   colorTheme: 'default' as const,
   defaultModel: 'opus',
-  agentFramework: 'auto-claude',
+  agentFramework: 'autocode',
   pythonPath: undefined as string | undefined,
   gitPath: undefined as string | undefined,
   githubCLIPath: undefined as string | undefined,
@@ -95,12 +95,19 @@ export const DEFAULT_PROJECT_SETTINGS = {
 // Auto Build File Paths
 // ============================================
 
+export const PROJECT_DATA_DIR_NAME = '.autocode';
+export const LEGACY_PROJECT_DATA_DIR_NAME = '.auto-claude';
+
+export function normalizeProjectDataDirName(autoBuildPath: string | undefined): string {
+  return autoBuildPath || PROJECT_DATA_DIR_NAME;
+}
+
 // File paths relative to project
-// IMPORTANT: All paths use .auto-claude/ (the installed instance), NOT auto-claude/ (source code)
+// IMPORTANT: All paths use .autocode/ (the installed instance), NOT autocode/ (source code)
 export const AUTO_BUILD_PATHS = {
-  SPECS_DIR: '.auto-claude/specs',
-  ROADMAP_DIR: '.auto-claude/roadmap',
-  IDEATION_DIR: '.auto-claude/ideation',
+  SPECS_DIR: `${PROJECT_DATA_DIR_NAME}/specs`,
+  ROADMAP_DIR: `${PROJECT_DATA_DIR_NAME}/roadmap`,
+  IDEATION_DIR: `${PROJECT_DATA_DIR_NAME}/ideation`,
   IMPLEMENTATION_PLAN: 'implementation_plan.json',
   SPEC_FILE: 'spec.md',
   QA_REPORT: 'qa_report.md',
@@ -114,15 +121,15 @@ export const AUTO_BUILD_PATHS = {
   MANUAL_COMPETITORS: 'manual_competitors.json',
   IDEATION_FILE: 'ideation.json',
   IDEATION_CONTEXT: 'ideation_context.json',
-  PROJECT_INDEX: '.auto-claude/project_index.json',
+  PROJECT_INDEX: `${PROJECT_DATA_DIR_NAME}/project_index.json`,
   MEMORY_STATE: '.memory_state.json'
 } as const;
 
 /**
  * Get the specs directory path.
- * All specs go to .auto-claude/specs/ (the project's data directory).
+ * All specs go to .autocode/specs/ (the project's data directory).
  */
 export function getSpecsDir(autoBuildPath: string | undefined): string {
-  const basePath = autoBuildPath || '.auto-claude';
+  const basePath = normalizeProjectDataDirName(autoBuildPath);
   return `${basePath}/specs`;
 }

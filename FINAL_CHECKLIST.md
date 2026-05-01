@@ -173,7 +173,7 @@
 ### 应用启动
 ```bash
 # 1. 进入项目目录
-cd E:\Work\Aperant\apps\desktop
+cd E:\Work\Autocode\apps\desktop
 
 # 2. 安装依赖（如果需要）
 npm install
@@ -190,11 +190,11 @@ npm start
 ```bash
 # 1. 创建测试项目
 # Windows:
-E:\Work\Aperant\SETUP_TEST_PROJECT.bat
+E:\Work\Autocode\SETUP_TEST_PROJECT.bat
 # Linux/Mac:
-bash E:\Work\Aperant\SETUP_TEST_PROJECT.sh
+bash E:\Work\Autocode\SETUP_TEST_PROJECT.sh
 
-# 2. 在 Auto Claude 中创建新任务
+# 2. 在 Autocode 中创建新任务
 # 标题: Build a Simple CLI Calculator
 # 参考: PARALLEL_EXECUTION_TEST_SPEC.md
 
@@ -314,7 +314,7 @@ npm test
 
 **检查时间**: 2026-04-12
 
-**检查人员**: Auto Claude
+**检查人员**: Autocode
 
 **状态**: ✅ 所有检查项通过
 

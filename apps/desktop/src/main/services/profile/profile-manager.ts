@@ -1,7 +1,7 @@
 /**
  * Profile Manager - File I/O for API profiles
  *
- * Handles loading and saving profiles.json from the auto-claude directory.
+ * Handles loading and saving profiles.json from the autocode directory.
  * Provides graceful handling for missing or corrupted files.
  * Uses file locking to prevent race conditions in concurrent operations.
  */
@@ -14,11 +14,19 @@ import * as lockfile from 'proper-lockfile';
 import type { APIProfile, ProfilesFile } from '@shared/types/profile';
 
 /**
- * Get the path to profiles.json in the auto-claude directory
+ * Get the path to profiles.json in the autocode directory
  */
 export function getProfilesFilePath(): string {
   const userDataPath = app.getPath('userData');
-  return path.join(userDataPath, 'auto-claude', 'profiles.json');
+  return path.join(userDataPath, 'autocode', 'profiles.json');
+}
+
+function getLegacyProfilesFilePaths(): string[] {
+  const userDataPath = app.getPath('userData');
+  return [
+    path.join(userDataPath, 'auto-claude', 'profiles.json'),
+    path.join(userDataPath, 'aperant', 'profiles.json'),
+  ];
 }
 
 /**
@@ -89,28 +97,28 @@ function getDefaultProfilesFile(): ProfilesFile {
  * Returns default empty profiles file if file doesn't exist or is corrupted
  */
 export async function loadProfilesFile(): Promise<ProfilesFile> {
-  const filePath = getProfilesFilePath();
+  const filePaths = [getProfilesFilePath(), ...getLegacyProfilesFilePaths()];
 
-  try {
-    const content = await fs.readFile(filePath, 'utf-8');
-    const data = JSON.parse(content);
+  for (const filePath of filePaths) {
+    try {
+      const content = await fs.readFile(filePath, 'utf-8');
+      const data = JSON.parse(content);
 
-    // Validate parsed data structure
-    if (isValidProfilesFile(data)) {
-      return data;
+      // Validate parsed data structure
+      if (isValidProfilesFile(data)) {
+        return data;
+      }
+    } catch {
+      // Try next candidate.
     }
-
-    // Validation failed - return default
-    return getDefaultProfilesFile();
-  } catch {
-    // File doesn't exist or read/parse error - return default
-    return getDefaultProfilesFile();
   }
+
+  return getDefaultProfilesFile();
 }
 
 /**
  * Save profiles.json to disk
- * Creates the auto-claude directory if it doesn't exist
+ * Creates the autocode directory if it doesn't exist
  * Ensures secure file permissions (user read/write only)
  */
 export async function saveProfilesFile(data: ProfilesFile): Promise<void> {

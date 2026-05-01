@@ -1,9 +1,11 @@
 import { isMainThread } from 'worker_threads';
+import electron from 'electron';
 
-// Conditionally import electron only in main thread
+// Only expose Electron app where ProjectStore is expected to run.
 let app: Electron.App | undefined;
-if (isMainThread) {
-  app = require('electron').app;
+const isProjectStoreRuntime = isMainThread || process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+if (isProjectStoreRuntime) {
+  app = electron.app;
 }
 import { readFileSync, existsSync, mkdirSync, readdirSync, Dirent } from 'fs';
 import path from 'path';
@@ -121,13 +123,18 @@ export class ProjectStore {
         const content = readFileSync(this.storePath, 'utf-8');
         const data = JSON.parse(content);
         // Convert date strings back to Date objects and normalize paths to absolute
-        data.projects = data.projects.map((p: Project) => ({
-          ...p,
-          // Ensure project.path is always absolute (critical for dev mode path resolution)
-          path: ensureAbsolutePath(p.path),
-          createdAt: new Date(p.createdAt),
-          updatedAt: new Date(p.updatedAt)
-        }));
+        data.projects = data.projects.map((p: Project) => {
+          const absolutePath = ensureAbsolutePath(p.path);
+          const detectedAutoBuildPath = getAutoBuildPath(absolutePath);
+          return {
+            ...p,
+            // Ensure project.path is always absolute (critical for dev mode path resolution)
+            path: absolutePath,
+            autoBuildPath: detectedAutoBuildPath ?? p.autoBuildPath,
+            createdAt: new Date(p.createdAt),
+            updatedAt: new Date(p.updatedAt)
+          };
+        });
         return data;
       } catch {
         return { projects: [], settings: {} };
@@ -154,10 +161,10 @@ export class ProjectStore {
     // Check if project already exists (using absolute path for comparison)
     const existing = this.data.projects.find((p) => p.path === absolutePath);
     if (existing) {
-      // Validate that .auto-claude folder still exists for existing project
+      // Validate that .autocode folder still exists for existing project
       // If manually deleted, reset autoBuildPath so UI prompts for reinitialization
       if (existing.autoBuildPath && !isInitialized(existing.path)) {
-        console.warn(`[ProjectStore] .auto-claude folder was deleted for project "${existing.name}" - resetting autoBuildPath`);
+        console.warn(`[ProjectStore] .autocode folder was deleted for project "${existing.name}" - resetting autoBuildPath`);
         existing.autoBuildPath = '';
         existing.updatedAt = new Date();
         this.save();
@@ -168,7 +175,7 @@ export class ProjectStore {
     // Derive name from path if not provided
     const projectName = name || path.basename(absolutePath);
 
-    // Determine auto-claude path (supports both 'auto-claude' and '.auto-claude')
+    // Determine autocode path (supports both 'autocode' and '.autocode')
     const autoBuildPath = getAutoBuildPath(absolutePath) || '';
 
     const project: Project = {
@@ -270,11 +277,11 @@ export class ProjectStore {
   }
 
   /**
-   * Validate all projects to ensure their .auto-claude folders still exist.
+   * Validate all projects to ensure their .autocode folders still exist.
    * If a project has autoBuildPath set but the folder was deleted,
    * reset autoBuildPath to empty string so the UI prompts for reinitialization.
    *
-   * @returns Array of project IDs that were reset due to missing .auto-claude folder
+   * @returns Array of project IDs that were reset due to missing .autocode folder
    */
   validateProjects(): string[] {
     const resetProjectIds: string[] = [];
@@ -292,9 +299,9 @@ export class ProjectStore {
         continue; // Don't reset - let user handle this case
       }
 
-      // Check if .auto-claude folder still exists
+      // Check if .autocode folder still exists
       if (!isInitialized(project.path)) {
-        console.warn(`[ProjectStore] .auto-claude folder missing for project "${project.name}" at ${project.path}`);
+        console.warn(`[ProjectStore] .autocode folder missing for project "${project.name}" at ${project.path}`);
         project.autoBuildPath = '';
         project.updatedAt = new Date();
         resetProjectIds.push(project.id);
@@ -304,7 +311,7 @@ export class ProjectStore {
 
     if (hasChanges) {
       this.save();
-      console.warn(`[ProjectStore] Reset ${resetProjectIds.length} project(s) due to missing .auto-claude folder`);
+      console.warn(`[ProjectStore] Reset ${resetProjectIds.length} project(s) due to missing .autocode folder`);
     }
 
     return resetProjectIds;
@@ -1024,4 +1031,4 @@ export class ProjectStore {
 }
 
 // Singleton instance - only instantiate in main thread
-export const projectStore = isMainThread ? new ProjectStore() : (null as any as ProjectStore);
+export const projectStore = isProjectStoreRuntime ? new ProjectStore() : (null as any as ProjectStore);

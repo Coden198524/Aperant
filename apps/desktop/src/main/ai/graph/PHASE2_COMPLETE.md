@@ -271,4 +271,4 @@ Phase 2 is complete! The code graph system now has:
 - ✅ Token optimization (5-10x reduction)
 - ✅ Provider-agnostic (works with all AI models)
 
-The system is production-ready and can be integrated into Auto Claude's workflows immediately.
+The system is production-ready and can be integrated into Autocode's workflows immediately.

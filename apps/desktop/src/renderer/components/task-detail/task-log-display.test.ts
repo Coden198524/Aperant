@@ -15,14 +15,14 @@ describe('task-log-display', () => {
   it('merges adjacent streamed text entries into a single display block', () => {
     const entries: TaskLogEntry[] = [
       createTextEntry('2026-04-14T14:59:01.000Z', '已完成项目结构分析，并将结果写入：\n\n`E:\\Work\\Game'),
-      createTextEntry('2026-04-14T14:59:02.000Z', '\\SSLM\\.auto-claude\\specs\\005-task\\'),
+      createTextEntry('2026-04-14T14:59:02.000Z', '\\SSLM\\.autocode\\specs\\005-task\\'),
       createTextEntry('2026-04-14T14:59:03.000Z', 'context.json`'),
     ];
 
     const displayEntries = buildDisplayLogEntries(entries);
 
     expect(displayEntries).toHaveLength(1);
-    expect(displayEntries[0].content).toContain('E:\\Work\\Game\\SSLM\\.auto-claude\\specs\\005-task\\context.json');
+    expect(displayEntries[0].content).toContain('E:\\Work\\Game\\SSLM\\.autocode\\specs\\005-task\\context.json');
     expect(displayEntries[0].mergedEntryCount).toBe(3);
     expect(displayEntries[0].mergedEndTimestamp).toBe('2026-04-14T14:59:03.000Z');
   });

@@ -593,7 +593,7 @@ export async function withYunxiaoClient<T>(
   fn: (client: Client) => Promise<T>
 ): Promise<T> {
   const client = new Client({
-    name: 'aperant-yunxiao',
+    name: 'autocode-yunxiao',
     version: '1.0.0'
   });
   const transport = createYunxiaoTransport(config);

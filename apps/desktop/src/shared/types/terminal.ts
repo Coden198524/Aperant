@@ -205,7 +205,7 @@ export interface RetryWithProfileRequest {
 export interface TerminalWorktreeConfig {
   /** Unique worktree name (used as directory name) */
   name: string;
-  /** Path to the worktree directory (.auto-claude/worktrees/terminal/{name}/) */
+  /** Path to the worktree directory (.autocode/worktrees/terminal/{name}/) */
   worktreePath: string;
   /** Git branch name (terminal/{name}) - empty if no branch created */
   branchName: string;
@@ -259,8 +259,8 @@ export interface TerminalWorktreeResult {
 }
 
 /**
- * Information about a worktree not managed by Auto Claude
- * Discovered via `git worktree list` excluding Auto Claude paths
+ * Information about a worktree not managed by Autocode
+ * Discovered via `git worktree list` excluding Autocode paths
  */
 export interface OtherWorktreeInfo {
   /** Full path to the worktree */

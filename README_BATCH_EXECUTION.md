@@ -2,7 +2,7 @@
 
 ## 项目概述
 
-批量执行系统是 Auto Claude 的一个关键优化，允许在单个 AI 会话中并行处理多个子任务，从而显著提升任务执行速度。
+批量执行系统是 Autocode 的一个关键优化，允许在单个 AI 会话中并行处理多个子任务，从而显著提升任务执行速度。
 
 ## 核心特性
 
@@ -51,7 +51,7 @@ bash SETUP_TEST_PROJECT.sh
 ```
 
 ### 2. 创建任务
-在 Auto Claude 中创建:
+在 Autocode 中创建:
 - **标题**: Build a Simple CLI Calculator
 - **参考**: PARALLEL_EXECUTION_TEST_SPEC.md
 
@@ -166,7 +166,7 @@ A: 确保任务有足够的独立子任务。只有 1-2 个子任务的任务看
 ## 🚀 下一步
 
 1. 运行初始化脚本创建测试项目
-2. 在 Auto Claude 中创建测试任务
+2. 在 Autocode 中创建测试任务
 3. 监控批量执行日志
 4. 验证性能改进
 5. 收集反馈和数据

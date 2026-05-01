@@ -50,7 +50,7 @@ interface GitHubSetupModalProps {
 type SetupStep = 'github-auth' | 'claude-auth' | 'repo-confirm' | 'repo' | 'branch' | 'complete';
 
 /**
- * Setup Modal - Required setup flow after Auto Claude initialization
+ * Setup Modal - Required setup flow after Autocode initialization
  *
  * Flow:
  * 1. Authenticate with GitHub (via gh CLI OAuth) - for repo operations
@@ -875,7 +875,7 @@ export function GitHubSetupModal({
                   {t('githubSetup.branchPatternPrefix', {
                     defaultValue: 'All tasks will be created from branches like'
                   })}{' '}
-                  <code className="px-1 bg-muted rounded">auto-claude/task-name</code>
+                  <code className="px-1 bg-muted rounded">autocode/task-name</code>
                   {selectedBranch && (
                     <>
                       {' '}
@@ -942,7 +942,7 @@ export function GitHubSetupModal({
               <p className="text-sm text-muted-foreground text-center">
                 {t('githubSetup.ready', {
                   branchName: selectedBranch,
-                  defaultValue: 'Aperant is ready to use! You can now create tasks that will be automatically based on the {{branchName}} branch.'
+                  defaultValue: 'Autocode is ready to use! You can now create tasks that will be automatically based on the {{branchName}} branch.'
                 })}
               </p>
             </div>

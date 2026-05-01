@@ -108,7 +108,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       const mockLogs: TaskLogs = {
@@ -165,9 +165,9 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       expect(result.data).toEqual(mockLogs);
       expect(projectStore.getProject).toHaveBeenCalledWith('project-123');
       expect(taskLogService.loadLogs).toHaveBeenCalledWith(
-        path.join('/absolute/path/to/project', '.auto-claude/specs', '001-test-task'),
+        path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task'),
         '/absolute/path/to/project',
-        '.auto-claude/specs',
+        '.autocode/specs',
         '001-test-task'
       );
     });
@@ -180,7 +180,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: './relative/path',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       const mockLogs: TaskLogs = {
@@ -235,7 +235,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);
@@ -257,7 +257,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);
@@ -281,7 +281,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);
@@ -306,7 +306,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       const existingLogs: TaskLogs = {
@@ -349,7 +349,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       expect(result.success).toBe(true);
       expect(result.data).toEqual(clearedLogs);
       expect(mkdirSync).toHaveBeenCalledWith(
-        path.join('/absolute/path/to/project', '.auto-claude/specs', '001-test-task'),
+        path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task'),
         { recursive: true }
       );
       expect(writeFileSync).toHaveBeenCalledTimes(1);
@@ -369,12 +369,12 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);
       (findTaskWorktree as Mock).mockReturnValue(
-        '/absolute/path/to/project/.auto-claude/worktrees/tasks/001-test-task'
+        '/absolute/path/to/project/.autocode/worktrees/tasks/001-test-task'
       );
       (taskLogService.loadLogs as Mock)
         .mockReturnValueOnce(null)
@@ -395,12 +395,12 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       expect(result.success).toBe(true);
       expect(writeFileSync).toHaveBeenCalledTimes(2);
       expect(writeFileSync).toHaveBeenCalledWith(
-        path.join('/absolute/path/to/project', '.auto-claude/specs', '001-test-task', 'task_logs.json'),
+        path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task', 'task_logs.json'),
         expect.any(String),
         'utf-8'
       );
       expect(writeFileSync).toHaveBeenCalledWith(
-        path.join('/absolute/path/to/project/.auto-claude/worktrees/tasks/001-test-task', '.auto-claude/specs', '001-test-task', 'task_logs.json'),
+        path.join('/absolute/path/to/project/.autocode/worktrees/tasks/001-test-task', '.autocode/specs', '001-test-task', 'task_logs.json'),
         expect.any(String),
         'utf-8'
       );
@@ -436,7 +436,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);
@@ -448,9 +448,9 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       expect(result.success).toBe(true);
       expect(taskLogService.startWatching).toHaveBeenCalledWith(
         '001-test-task',
-        path.join('/absolute/path/to/project', '.auto-claude/specs', '001-test-task'),
+        path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task'),
         '/absolute/path/to/project',
-        '.auto-claude/specs'
+        '.autocode/specs'
       );
     });
 
@@ -481,7 +481,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);
@@ -493,9 +493,9 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       expect(result.success).toBe(true);
       expect(taskLogService.startWatching).toHaveBeenCalledWith(
         'nonexistent-spec',
-        path.join('/absolute/path/to/project', '.auto-claude/specs', 'nonexistent-spec'),
+        path.join('/absolute/path/to/project', '.autocode/specs', 'nonexistent-spec'),
         '/absolute/path/to/project',
-        '.auto-claude/specs'
+        '.autocode/specs'
       );
     });
 
@@ -507,7 +507,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);
@@ -560,7 +560,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProjectRelative = {
         id: 'project-123',
         path: './my-project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProjectRelative);
@@ -601,7 +601,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const mockProject = {
         id: 'project-123',
         path: '/absolute/path/to/project',
-        autoBuildPath: '.auto-claude'
+        autoBuildPath: '.autocode'
       };
 
       (projectStore.getProject as Mock).mockReturnValue(mockProject);

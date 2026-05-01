@@ -1,11 +1,11 @@
 /**
- * Auto-Claude Custom Tools
+ * Autocode Custom Tools
  * ========================
  *
- * Barrel export for all auto-claude builtin tools.
+ * Barrel export for all autocode builtin tools.
  * These replace the Python tools_pkg/tools/* implementations.
  *
- * Tool names follow the mcp__auto-claude__* convention to match the
+ * Tool names follow the mcp__autocode__* convention to match the
  * TOOL_* constants in registry.ts and AGENT_CONFIGS autoClaudeTools arrays.
  */
 

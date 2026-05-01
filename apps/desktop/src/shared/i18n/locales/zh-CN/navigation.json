@@ -32,7 +32,7 @@
     "help": "帮助与反馈"
   },
   "messages": {
-    "initializeToCreateTasks": "初始化 Aperant 后即可创建任务"
+    "initializeToCreateTasks": "初始化 Autocode 后即可创建任务"
   },
   "updateBanner": {
     "title": "可用更新",

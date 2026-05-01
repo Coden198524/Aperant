@@ -148,7 +148,7 @@ export class AgentManager extends EventEmitter {
   }
 
   /**
-   * Configure paths for Python and auto-claude source
+   * Configure paths for Python and autocode source
    */
   configure(pythonPath?: string, autoBuildSourcePath?: string): void {
     this.processManager.configure(pythonPath, autoBuildSourcePath);
@@ -476,7 +476,7 @@ export class AgentManager extends EventEmitter {
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'spec_orchestrator');
 
     // Build the serializable session config for the worker
-    const resolvedSpecDir = specDir ?? path.join(projectPath, '.auto-claude', 'specs', taskId);
+    const resolvedSpecDir = specDir ?? path.join(projectPath, '.autocode', 'specs', taskId);
     const sessionConfig: SerializableSessionConfig = {
       agentType: 'spec_orchestrator' as const,
       systemPrompt,

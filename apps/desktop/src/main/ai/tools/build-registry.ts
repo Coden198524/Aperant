@@ -25,7 +25,7 @@ import {
   recordGotchaTool,
   getSessionContextTool,
   updateQaStatusTool,
-} from './auto-claude';
+} from './autocode';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asDefined = (t: unknown): DefinedTool => t as DefinedTool;
@@ -44,11 +44,11 @@ export function buildToolRegistry(): ToolRegistry {
   registry.registerTool('WebFetch', asDefined(webFetchTool));
   registry.registerTool('WebSearch', asDefined(webSearchTool));
   registry.registerTool('SpawnSubagent', asDefined(spawnSubagentTool));
-  registry.registerTool('mcp__auto-claude__update_subtask_status', asDefined(updateSubtaskStatusTool));
-  registry.registerTool('mcp__auto-claude__get_build_progress', asDefined(getBuildProgressTool));
-  registry.registerTool('mcp__auto-claude__record_discovery', asDefined(recordDiscoveryTool));
-  registry.registerTool('mcp__auto-claude__record_gotcha', asDefined(recordGotchaTool));
-  registry.registerTool('mcp__auto-claude__get_session_context', asDefined(getSessionContextTool));
-  registry.registerTool('mcp__auto-claude__update_qa_status', asDefined(updateQaStatusTool));
+  registry.registerTool('mcp__autocode__update_subtask_status', asDefined(updateSubtaskStatusTool));
+  registry.registerTool('mcp__autocode__get_build_progress', asDefined(getBuildProgressTool));
+  registry.registerTool('mcp__autocode__record_discovery', asDefined(recordDiscoveryTool));
+  registry.registerTool('mcp__autocode__record_gotcha', asDefined(recordGotchaTool));
+  registry.registerTool('mcp__autocode__get_session_context', asDefined(getSessionContextTool));
+  registry.registerTool('mcp__autocode__update_qa_status', asDefined(updateQaStatusTool));
   return registry;
 }

@@ -62,8 +62,8 @@ describe('useTaskDetail', () => {
       success: true,
       data: {
         exists: true,
-        worktreePath: 'E:/repo/.auto-claude/worktrees/tasks/001-test-task',
-        branch: 'auto-claude/001-test-task',
+        worktreePath: 'E:/repo/.autocode/worktrees/tasks/001-test-task',
+        branch: 'autocode/001-test-task',
         baseBranch: 'develop',
         commitCount: 1,
         filesChanged: 2,

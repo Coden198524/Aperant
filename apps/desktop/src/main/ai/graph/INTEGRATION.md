@@ -1,6 +1,6 @@
 # Integration Guide: Code Graph System
 
-This guide shows how to integrate the code graph system into Auto Claude's existing workflows.
+This guide shows how to integrate the code graph system into Autocode's existing workflows.
 
 ## Overview
 
@@ -375,7 +375,7 @@ If graph includes too many irrelevant files:
 
 ## Summary
 
-The code graph system is now integrated into Auto Claude's core workflows:
+The code graph system is now integrated into Autocode's core workflows:
 
 - ✅ **PR Review**: 5-10x token reduction via blast radius analysis
 - ✅ **QA Agents**: Smart test selection (skip irrelevant tests)

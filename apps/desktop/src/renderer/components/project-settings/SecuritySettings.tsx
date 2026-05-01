@@ -548,7 +548,7 @@ export function SecuritySettings({
                 </Label>
                 <p className="text-xs text-muted-foreground">
                   {t('projectSections.memory.settings.database.nameDescription', {
-                    defaultValue: 'Stored in ~/.auto-claude/memories/'
+                    defaultValue: 'Stored in ~/.autocode/memories/'
                   })}
                 </p>
                 <Input
@@ -566,11 +566,11 @@ export function SecuritySettings({
                 </Label>
                 <p className="text-xs text-muted-foreground">
                   {t('projectSections.memory.settings.database.pathDescription', {
-                    defaultValue: 'Custom storage location. Default: ~/.auto-claude/memories/'
+                    defaultValue: 'Custom storage location. Default: ~/.autocode/memories/'
                   })}
                 </p>
                 <Input
-                  placeholder="~/.auto-claude/memories"
+                  placeholder="~/.autocode/memories"
                   value={envConfig.memoryDbPath || ''}
                   onChange={(e) => updateEnvConfig({ memoryDbPath: e.target.value || undefined })}
                 />

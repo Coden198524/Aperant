@@ -38,7 +38,7 @@ function runGit(
 }
 
 function extractSpecSummary(projectDir: string, specId: string): string {
-  const specFile = join(projectDir, '.auto-claude', 'specs', specId, 'spec.md');
+  const specFile = join(projectDir, '.autocode', 'specs', specId, 'spec.md');
   if (!existsSync(specFile)) {
     return '';
   }

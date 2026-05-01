@@ -176,7 +176,7 @@ PR 包含 50 个更改的文件:
 
 ## 🔌 提供商支持
 
-适用于 Auto Claude 注册表中的所有 AI 提供商：
+适用于 Autocode 注册表中的所有 AI 提供商：
 - ✅ Anthropic (Claude 3.5, Claude 4)
 - ✅ OpenAI (GPT-4, GPT-5, Codex, o1)
 - ✅ Google (Gemini)
@@ -467,7 +467,7 @@ PR 包含 50 个更改的文件:
 
 ## 🔌 提供商支持
 
-适用于 Auto Claude 注册表中的所有 AI 提供商：
+适用于 Autocode 注册表中的所有 AI 提供商：
 - ✅ Anthropic (Claude 3.5, Claude 4)
 - ✅ OpenAI (GPT-4, GPT-5, Codex, o1)
 - ✅ Google (Gemini)

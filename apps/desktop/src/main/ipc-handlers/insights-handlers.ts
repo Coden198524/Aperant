@@ -134,7 +134,7 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
       }
 
       if (!project.autoBuildPath) {
-        return { success: false, error: "Aperant not initialized for this project" };
+        return { success: false, error: "Autocode not initialized for this project" };
       }
 
       try {

@@ -30,9 +30,9 @@ import {
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 3;
-export const PROJECT_PROMPT_PROFILE_PATH = join('.auto-claude', 'prompt_profile.json');
-export const PROJECT_PROMPTS_PATH = join('.auto-claude', 'prompts');
+export const PROJECT_PROMPT_PROFILE_VERSION = 4;
+export const PROJECT_PROMPT_PROFILE_PATH = join('.autocode', 'prompt_profile.json');
+export const PROJECT_PROMPTS_PATH = join('.autocode', 'prompts');
 
 type ProjectSize = 'small' | 'medium' | 'large';
 type PromptIntensity = 'lightweight' | 'standard' | 'thorough';
@@ -89,7 +89,7 @@ interface PackageManifestInfo {
 }
 
 const EXCLUDED_DIRECTORIES = new Set([
-  '.auto-claude',
+  '.autocode',
   '.git',
   '.hg',
   '.svn',
@@ -463,7 +463,7 @@ function buildGeneratedHeader(profile: ProjectPromptProfile, promptName: string)
 
   return `## PROJECT-SPECIFIC PROMPT (GENERATED)
 
-This prompt was generated from the bundled \`${promptName}\` template when Aperant initialized this project.
+This prompt was generated from the bundled \`${promptName}\` template when Autocode initialized this project.
 
 Project profile:
 - Name: ${profile.project.name}
@@ -484,6 +484,24 @@ If this prompt conflicts with a generic bundled prompt, this generated project-s
 ---`;
 }
 
+function buildToolCallJsonGuidance(): string {
+  return `## TOOL CALL JSON SAFETY
+
+When calling Write, Edit, Read, Glob, or Grep, pass a JSON object as the tool input. Never pass a raw string.
+
+Path rules:
+- Use forward slashes in every file path, including Windows paths.
+- Correct: \`"file_path": "e:/work/autocode/.autocode/specs/002/spec.md"\`
+- Wrong: \`"file_path": "e:\\work\\autocode\\.autocode\\specs\\002\\spec.md"\`
+- If a full Windows path is provided in the kickoff message, convert backslashes to forward slashes before using it in a tool call.
+
+Write rules:
+- Keep each Write content concise enough that the tool-call JSON can close properly.
+- For larger markdown files, write a focused complete version instead of copying large context blocks.
+- For existing files, prefer Edit when only a small section changes.
+`;
+}
+
 function buildSpecQuickPrompt(profile: ProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'spec_quick')}
 
@@ -498,6 +516,8 @@ Use the Write tool to create both files in the spec directory:
 - \`implementation_plan.json\`
 
 Do not modify project source code in this phase.
+
+${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
@@ -577,6 +597,8 @@ You are the Planner Agent for this project. Convert the existing spec into a con
 
 Use the Write tool to create \`implementation_plan.json\` in the spec directory. The orchestrator validates this file.
 
+${buildToolCallJsonGuidance()}
+
 ## PROCESS
 
 1. Read \`spec.md\`.
@@ -613,6 +635,8 @@ function buildCoderPrompt(profile: ProjectPromptProfile): string {
 ## ROLE
 
 You are the Coding Agent. Implement the next pending subtask in \`implementation_plan.json\`.
+
+${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
@@ -660,6 +684,8 @@ Write \`qa_report.md\` in the spec directory with one of these exact status line
 - \`Status: PASSED\`
 - \`Status: FAILED\`
 
+${buildToolCallJsonGuidance()}
+
 ## PROCESS
 
 1. Read \`spec.md\` and \`implementation_plan.json\`.
@@ -697,6 +723,8 @@ function buildQaFixerPrompt(profile: ProjectPromptProfile): string {
 ## ROLE
 
 You are the QA Fixer. Fix the concrete issues in \`qa_report.md\` and prepare the task for re-review.
+
+${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
@@ -751,7 +779,7 @@ export function initializeProjectPromptProfile(
   projectPath: string,
   options: { overwrite?: boolean } = {},
 ): ProjectPromptProfile {
-  const autoClaudeDir = join(projectPath, '.auto-claude');
+  const autoClaudeDir = join(projectPath, '.autocode');
   mkdirSync(autoClaudeDir, { recursive: true });
 
   const existingProfile = options.overwrite ? null : loadProjectPromptProfile(projectPath);

@@ -121,7 +121,7 @@ echo.
 echo Project location: %TEST_PROJECT_DIR%
 echo.
 echo Next steps:
-echo 1. Open Auto Claude application
+echo 1. Open Autocode application
 echo 2. Create a new task with this description:
 echo.
 echo    Title: Build a Simple CLI Calculator

@@ -180,7 +180,7 @@ export function App() {
   const [skippedInitProjectId, setSkippedInitProjectId] = useState<string | null>(null);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
 
-  // GitHub setup state (shown after Auto Claude init)
+  // GitHub setup state (shown after Autocode init)
   const [showGitHubSetup, setShowGitHubSetup] = useState(false);
   const [gitHubSetupProject, setGitHubSetupProject] = useState<Project | null>(null);
 
@@ -397,7 +397,7 @@ export function App() {
     setInitError(null);
   }, []);
 
-  // Check if selected project needs initialization (e.g., .auto-claude folder was deleted)
+  // Check if selected project needs initialization (e.g., .autocode folder was deleted)
   useEffect(() => {
     // Don't show dialog while initialization is in progress
     if (isInitializing) return;
@@ -770,7 +770,7 @@ export function App() {
       } else {
         // Initialization failed - show error but keep dialog open
         console.warn('[InitDialog] Initialization failed, showing error');
-        const errorMessage = result?.error || 'Failed to initialize Aperant. Please try again.';
+        const errorMessage = result?.error || 'Failed to initialize Autocode. Please try again.';
         setInitError(errorMessage);
         setIsInitializing(false);
       }
@@ -1110,7 +1110,7 @@ export function App() {
           onProjectAdded={handleProjectAdded}
         />
 
-        {/* Initialize Auto Claude Dialog */}
+        {/* Initialize Autocode Dialog */}
         <Dialog open={showInitDialog} onOpenChange={(open) => {
           console.warn('[InitDialog] onOpenChange called', { open, pendingProject: !!pendingProject, isInitializing, initSuccess });
           // Only trigger skip if user manually closed the dialog
@@ -1189,7 +1189,7 @@ export function App() {
           </DialogContent>
         </Dialog>
 
-        {/* GitHub Setup Modal - shows after Auto Claude init to configure GitHub */}
+        {/* GitHub Setup Modal - shows after Autocode init to configure GitHub */}
         {gitHubSetupProject && (
           <GitHubSetupModal
             open={showGitHubSetup}

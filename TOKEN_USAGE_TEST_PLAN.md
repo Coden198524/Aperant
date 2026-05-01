@@ -121,7 +121,7 @@ npm run dev
 
 ### 5. 检查持久化数据
 
-打开 `.auto-claude/specs/001-test-task/implementation_plan.json`，检查 `tokenUsage` 字段：
+打开 `.autocode/specs/001-test-task/implementation_plan.json`，检查 `tokenUsage` 字段：
 
 ```json
 {

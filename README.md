@@ -1,13 +1,13 @@
-# Aperant (formerly Auto Claude)
+# Autocode
 
 **Autonomous multi-agent coding framework that plans, builds, and validates software for you.**
 
-![Aperant Kanban Board](.github/assets/Auto-Claude-Kanban.png)
+![Autocode Kanban Board](.github/assets/Autocode-Kanban.png)
 
 [![License](https://img.shields.io/badge/license-AGPL--3.0-green?style=flat-square)](./agpl-3.0.txt)
 [![Discord](https://img.shields.io/badge/Discord-Join%20Community-5865F2?style=flat-square&logo=discord&logoColor=white)](https://discord.gg/KCXaPBr4Dj)
 [![YouTube](https://img.shields.io/badge/YouTube-Subscribe-FF0000?style=flat-square&logo=youtube&logoColor=white)](https://www.youtube.com/@AndreMikalsen)
-[![CI](https://img.shields.io/github/actions/workflow/status/AndyMik90/Auto-Claude/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/AndyMik90/Auto-Claude/actions)
+[![CI](https://img.shields.io/github/actions/workflow/status/AndyMik90/Autocode/ci.yml?branch=main&style=flat-square&label=CI)](https://github.com/AndyMik90/Autocode/actions)
 [![Mentioned in Awesome Claude Code](https://awesome.re/mentioned-badge-flat.svg)](https://github.com/hesreallyhim/awesome-claude-code)
 
 ---
@@ -17,37 +17,37 @@
 ### Stable Release
 
 <!-- STABLE_VERSION_BADGE -->
-[![Stable](https://img.shields.io/badge/stable-2.7.6-blue?style=flat-square)](https://github.com/AndyMik90/Auto-Claude/releases/tag/v2.7.6)
+[![Stable](https://img.shields.io/badge/stable-2.7.6-blue?style=flat-square)](https://github.com/AndyMik90/Autocode/releases/tag/v2.7.6)
 <!-- STABLE_VERSION_BADGE_END -->
 
 <!-- STABLE_DOWNLOADS -->
 | Platform | Download |
 |----------|----------|
-| **Windows** | [Auto-Claude-2.7.6-win32-x64.exe](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.7.6/Auto-Claude-2.7.6-win32-x64.exe) |
-| **macOS (Apple Silicon)** | [Auto-Claude-2.7.6-darwin-arm64.dmg](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.7.6/Auto-Claude-2.7.6-darwin-arm64.dmg) |
-| **macOS (Intel)** | [Auto-Claude-2.7.6-darwin-x64.dmg](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.7.6/Auto-Claude-2.7.6-darwin-x64.dmg) |
-| **Linux** | [Auto-Claude-2.7.6-linux-x86_64.AppImage](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.7.6/Auto-Claude-2.7.6-linux-x86_64.AppImage) |
-| **Linux (Debian)** | [Auto-Claude-2.7.6-linux-amd64.deb](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.7.6/Auto-Claude-2.7.6-linux-amd64.deb) |
-| **Linux (Flatpak)** | [Auto-Claude-2.7.6-linux-x86_64.flatpak](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.7.6/Auto-Claude-2.7.6-linux-x86_64.flatpak) |
+| **Windows** | [Autocode-2.7.6-win32-x64.exe](https://github.com/AndyMik90/Autocode/releases/download/v2.7.6/Autocode-2.7.6-win32-x64.exe) |
+| **macOS (Apple Silicon)** | [Autocode-2.7.6-darwin-arm64.dmg](https://github.com/AndyMik90/Autocode/releases/download/v2.7.6/Autocode-2.7.6-darwin-arm64.dmg) |
+| **macOS (Intel)** | [Autocode-2.7.6-darwin-x64.dmg](https://github.com/AndyMik90/Autocode/releases/download/v2.7.6/Autocode-2.7.6-darwin-x64.dmg) |
+| **Linux** | [Autocode-2.7.6-linux-x86_64.AppImage](https://github.com/AndyMik90/Autocode/releases/download/v2.7.6/Autocode-2.7.6-linux-x86_64.AppImage) |
+| **Linux (Debian)** | [Autocode-2.7.6-linux-amd64.deb](https://github.com/AndyMik90/Autocode/releases/download/v2.7.6/Autocode-2.7.6-linux-amd64.deb) |
+| **Linux (Flatpak)** | [Autocode-2.7.6-linux-x86_64.flatpak](https://github.com/AndyMik90/Autocode/releases/download/v2.7.6/Autocode-2.7.6-linux-x86_64.flatpak) |
 <!-- STABLE_DOWNLOADS_END -->
 
 ### Beta Release
 
-> ⚠️ Beta releases may contain bugs and breaking changes. [View all releases](https://github.com/AndyMik90/Auto-Claude/releases)
+> ⚠️ Beta releases may contain bugs and breaking changes. [View all releases](https://github.com/AndyMik90/Autocode/releases)
 
 <!-- BETA_VERSION_BADGE -->
-[![Beta](https://img.shields.io/badge/beta-2.8.0--beta.6-orange?style=flat-square)](https://github.com/AndyMik90/Auto-Claude/releases/tag/v2.8.0-beta.6)
+[![Beta](https://img.shields.io/badge/beta-2.8.0--beta.6-orange?style=flat-square)](https://github.com/AndyMik90/Autocode/releases/tag/v2.8.0-beta.6)
 <!-- BETA_VERSION_BADGE_END -->
 
 <!-- BETA_DOWNLOADS -->
 | Platform | Download |
 |----------|----------|
-| **Windows** | [Aperant-2.8.0-beta.5-win32-x64.exe](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.8.0-beta.5/Aperant-2.8.0-beta.5-win32-x64.exe) |
-| **macOS (Apple Silicon)** | [Aperant-2.8.0-beta.5-darwin-arm64.dmg](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.8.0-beta.5/Aperant-2.8.0-beta.5-darwin-arm64.dmg) |
-| **macOS (Intel)** | [Aperant-2.8.0-beta.5-darwin-x64.dmg](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.8.0-beta.5/Aperant-2.8.0-beta.5-darwin-x64.dmg) |
-| **Linux** | [Aperant-2.8.0-beta.5-linux-x86_64.AppImage](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.8.0-beta.5/Aperant-2.8.0-beta.5-linux-x86_64.AppImage) |
-| **Linux (Debian)** | [Aperant-2.8.0-beta.5-linux-amd64.deb](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.8.0-beta.5/Aperant-2.8.0-beta.5-linux-amd64.deb) |
-| **Linux (Flatpak)** | [Aperant-2.8.0-beta.5-linux-x86_64.flatpak](https://github.com/AndyMik90/Auto-Claude/releases/download/v2.8.0-beta.5/Aperant-2.8.0-beta.5-linux-x86_64.flatpak) |
+| **Windows** | [Autocode-2.8.0-beta.6-win32-x64.exe](https://github.com/AndyMik90/Autocode/releases/download/v2.8.0-beta.6/Autocode-2.8.0-beta.6-win32-x64.exe) |
+| **macOS (Apple Silicon)** | [Autocode-2.8.0-beta.6-darwin-arm64.dmg](https://github.com/AndyMik90/Autocode/releases/download/v2.8.0-beta.6/Autocode-2.8.0-beta.6-darwin-arm64.dmg) |
+| **macOS (Intel)** | [Autocode-2.8.0-beta.6-darwin-x64.dmg](https://github.com/AndyMik90/Autocode/releases/download/v2.8.0-beta.6/Autocode-2.8.0-beta.6-darwin-x64.dmg) |
+| **Linux** | [Autocode-2.8.0-beta.6-linux-x86_64.AppImage](https://github.com/AndyMik90/Autocode/releases/download/v2.8.0-beta.6/Autocode-2.8.0-beta.6-linux-x86_64.AppImage) |
+| **Linux (Debian)** | [Autocode-2.8.0-beta.6-linux-amd64.deb](https://github.com/AndyMik90/Autocode/releases/download/v2.8.0-beta.6/Autocode-2.8.0-beta.6-linux-amd64.deb) |
+| **Linux (Flatpak)** | [Autocode-2.8.0-beta.6-linux-x86_64.flatpak](https://github.com/AndyMik90/Autocode/releases/download/v2.8.0-beta.6/Autocode-2.8.0-beta.6-linux-x86_64.flatpak) |
 <!-- BETA_DOWNLOADS_END -->
 
 > All releases include SHA256 checksums and VirusTotal scan results for security verification.
@@ -97,12 +97,12 @@ Visual task management from planning through completion. Create tasks and monito
 ### Agent Terminals
 AI-powered terminals with one-click task context injection. Spawn multiple agents for parallel work.
 
-![Agent Terminals](.github/assets/Auto-Claude-Agents-terminals.png)
+![Agent Terminals](.github/assets/Autocode-Agents-terminals.png)
 
 ### Roadmap
 AI-assisted feature planning with competitor analysis and audience targeting.
 
-![Roadmap](.github/assets/Auto-Claude-roadmap.png)
+![Roadmap](.github/assets/Autocode-roadmap.png)
 
 ### Additional Features
 - **Insights** - Chat interface for exploring your codebase
@@ -114,7 +114,7 @@ AI-assisted feature planning with competitor analysis and audience targeting.
 ## Project Structure
 
 ```
-Aperant/
+Autocode/
 ├── apps/
 │   └── desktop/     # Electron desktop application (TypeScript AI agent layer + UI)
 ├── guides/          # Additional documentation
@@ -133,7 +133,7 @@ For Linux-specific builds (Flatpak, AppImage), see [guides/linux.md](guides/linu
 
 ## Security
 
-Aperant uses a three-layer security model:
+Autocode uses a three-layer security model:
 
 1. **OS Sandbox** - Bash commands run in isolation
 2. **Filesystem Restrictions** - Operations limited to project directory
@@ -176,8 +176,8 @@ We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for:
 ## Community
 
 - **Discord** - [Join our community](https://discord.gg/KCXaPBr4Dj)
-- **Issues** - [Report bugs or request features](https://github.com/AndyMik90/Auto-Claude/issues)
-- **Discussions** - [Ask questions](https://github.com/AndyMik90/Auto-Claude/discussions)
+- **Issues** - [Report bugs or request features](https://github.com/AndyMik90/Autocode/issues)
+- **Discussions** - [Ask questions](https://github.com/AndyMik90/Autocode/discussions)
 
 ---
 
@@ -185,7 +185,7 @@ We welcome contributions! Please read [CONTRIBUTING.md](CONTRIBUTING.md) for:
 
 **AGPL-3.0** - GNU Affero General Public License v3.0
 
-Aperant is free to use. If you modify and distribute it, or run it as a service, your code must also be open source under AGPL-3.0.
+Autocode is free to use. If you modify and distribute it, or run it as a service, your code must also be open source under AGPL-3.0.
 
 Commercial licensing available for closed-source use cases.
 
@@ -193,6 +193,6 @@ Commercial licensing available for closed-source use cases.
 
 ## Star History
 
-[![GitHub Repo stars](https://img.shields.io/github/stars/AndyMik90/Auto-Claude?style=social)](https://github.com/AndyMik90/Auto-Claude/stargazers)
+[![GitHub Repo stars](https://img.shields.io/github/stars/AndyMik90/Autocode?style=social)](https://github.com/AndyMik90/Autocode/stargazers)
 
-[![Star History Chart](https://api.star-history.com/svg?repos=AndyMik90/Auto-Claude&type=Date)](https://star-history.com/#AndyMik90/Auto-Claude&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=AndyMik90/Autocode&type=Date)](https://star-history.com/#AndyMik90/Autocode&Date)

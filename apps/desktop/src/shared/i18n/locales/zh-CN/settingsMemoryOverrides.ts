@@ -26,9 +26,9 @@ export const zhCNSettingsMemoryOverrides = {
         },
         database: {
           nameLabel: '\u6570\u636e\u5e93\u540d\u79f0',
-          nameDescription: '\u5b58\u50a8\u4e8e ~/.auto-claude/memories/',
+          nameDescription: '\u5b58\u50a8\u4e8e ~/.autocode/memories/',
           pathLabel: '\u6570\u636e\u5e93\u8def\u5f84\uff08\u53ef\u9009\uff09',
-          pathDescription: '\u81ea\u5b9a\u4e49\u5b58\u50a8\u4f4d\u7f6e\u3002\u9ed8\u8ba4\uff1a~/.auto-claude/memories/'
+          pathDescription: '\u81ea\u5b9a\u4e49\u5b58\u50a8\u4f4d\u7f6e\u3002\u9ed8\u8ba4\uff1a~/.autocode/memories/'
         },
         placeholders: {
           openaiApiKey: 'sk-...',

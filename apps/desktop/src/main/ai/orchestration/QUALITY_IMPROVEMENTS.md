@@ -1,6 +1,6 @@
 # Code Quality Improvements - Integration Guide
 
-本文档说明如何集成新的代码质量提升功能到现有的 Auto Claude 系统中。
+本文档说明如何集成新的代码质量提升功能到现有的 Autocode 系统中。
 
 ## 已实施的功能
 

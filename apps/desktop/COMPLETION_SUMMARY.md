@@ -245,17 +245,17 @@ The feature is **fully implemented** and ready for QA review:
 ## Documentation
 
 - **Verification Summary:** `VERIFICATION_SUMMARY.md`
-- **Build Progress:** `.auto-claude/specs/049-customizable-agent-terminal-fonts-with-os-specific/build-progress.txt`
-- **Implementation Plan:** `.auto-claude/specs/049-customizable-agent-terminal-fonts-with-os-specific/implementation_plan.json`
+- **Build Progress:** `.autocode/specs/049-customizable-agent-terminal-fonts-with-os-specific/build-progress.txt`
+- **Implementation Plan:** `.autocode/specs/049-customizable-agent-terminal-fonts-with-os-specific/implementation_plan.json`
 
 ---
 
 ## Commits
 
 Latest commits for this subtask:
-- `84681ae6` - auto-claude: subtask-4-4 - End-to-end verification complete
-- `c8910bb2` - auto-claude: subtask-4-3 - Add i18n translation keys
-- `0e498afc` - auto-claude: subtask-4-2 - Add 'terminal-fonts' section to AppSettings.tsx
-- `d9eca2f8` - auto-claude: subtask-4-1 - Add settings button to TerminalGrid.tsx
+- `84681ae6` - autocode: subtask-4-4 - End-to-end verification complete
+- `c8910bb2` - autocode: subtask-4-3 - Add i18n translation keys
+- `0e498afc` - autocode: subtask-4-2 - Add 'terminal-fonts' section to AppSettings.tsx
+- `d9eca2f8` - autocode: subtask-4-1 - Add settings button to TerminalGrid.tsx
 
 **Total branch commits:** 17 (all feature implementation commits)

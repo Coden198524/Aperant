@@ -162,7 +162,7 @@ function buildFallbackDiscovery(
 export interface RoadmapConfig {
   /** Project directory path */
   projectDir: string;
-  /** Output directory for roadmap files (defaults to .auto-claude/roadmap/) */
+  /** Output directory for roadmap files (defaults to .autocode/roadmap/) */
   outputDir?: string;
   /** Model shorthand or full model ID (defaults to 'sonnet') */
   modelShorthand?: ModelShorthand | string;
@@ -625,8 +625,8 @@ export async function runRoadmapGeneration(
     language = 'en',
   } = config;
 
-  const outputDir = config.outputDir ?? join(projectDir, '.auto-claude', 'roadmap');
-  const projectIndexFile = join(projectDir, '.auto-claude', 'project_index.json');
+  const outputDir = config.outputDir ?? join(projectDir, '.autocode', 'roadmap');
+  const projectIndexFile = join(projectDir, '.autocode', 'project_index.json');
 
   // Ensure output directory exists
   if (!existsSync(outputDir)) {
@@ -647,7 +647,7 @@ export async function runRoadmapGeneration(
   const toolContext: ToolContext = {
     cwd: projectDir,
     projectDir,
-    specDir: join(projectDir, '.auto-claude', 'specs'),
+    specDir: join(projectDir, '.autocode', 'specs'),
     securityProfile: null as unknown as SecurityProfile,
     abortSignal,
   };

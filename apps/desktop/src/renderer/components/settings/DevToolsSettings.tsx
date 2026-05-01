@@ -317,7 +317,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            {t('devtools.ide.description', 'Aperant will open worktrees in this editor')}
+            {t('devtools.ide.description', 'Autocode will open worktrees in this editor')}
           </p>
 
           {/* Custom IDE Path */}
@@ -379,7 +379,7 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
             </SelectContent>
           </Select>
           <p className="text-xs text-muted-foreground">
-            {t('devtools.terminal.description', 'Aperant will open terminal sessions here')}
+            {t('devtools.terminal.description', 'Autocode will open terminal sessions here')}
           </p>
 
           {/* Custom Terminal Path */}

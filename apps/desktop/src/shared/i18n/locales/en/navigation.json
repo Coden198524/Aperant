@@ -32,7 +32,7 @@
     "help": "Help & Feedback"
   },
   "messages": {
-    "initializeToCreateTasks": "Initialize Aperant to create tasks"
+    "initializeToCreateTasks": "Initialize Autocode to create tasks"
   },
   "updateBanner": {
     "title": "Update Available",

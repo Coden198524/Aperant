@@ -33,7 +33,7 @@ describe('ProgressTracker', () => {
         type: 'tool-call',
         toolName: 'Write',
         toolCallId: 'c1',
-        args: { file_path: '/project/.auto-claude/specs/001/implementation_plan.json' },
+        args: { file_path: '/project/.autocode/specs/001/implementation_plan.json' },
       });
 
       expect(result).not.toBeNull();
@@ -49,7 +49,7 @@ describe('ProgressTracker', () => {
         type: 'tool-call',
         toolName: 'Edit',
         toolCallId: 'c1',
-        args: { file_path: '/project/.auto-claude/specs/001/implementation_plan.json' },
+        args: { file_path: '/project/.autocode/specs/001/implementation_plan.json' },
       });
 
       expect(result).toBeNull();

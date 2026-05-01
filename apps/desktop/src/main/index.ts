@@ -23,7 +23,7 @@ if (process.resourcesPath) {
 
 // Load .env file FIRST before any other imports that might use process.env
 import { config } from 'dotenv';
-import { resolve, dirname } from 'path';
+import { resolve, dirname, basename } from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync } from 'fs';
 
@@ -51,7 +51,7 @@ for (const envPath of possibleEnvPaths) {
 import electron from 'electron';
 const { app, BrowserWindow, shell, nativeImage, session, screen, Menu, MenuItem } = electron;
 import { join } from 'path';
-import { accessSync, readFileSync, writeFileSync, rmSync, cpSync } from 'fs';
+import { accessSync, readFileSync, writeFileSync, rmSync, cpSync, mkdirSync, readdirSync } from 'fs';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';
 import { setupIpcHandlers } from './ipc-setup';
 import { AgentManager } from './agent';
@@ -74,20 +74,85 @@ import { getYunxiaoAutoSyncService } from './integrations/yunxiao-auto-sync';
 import { initializeMetricsTracking } from './ai/orchestration/metrics-tracker';
 import type { AppSettings, AuthFailureInfo } from '../shared/types';
 
+const USER_DATA_MIGRATION_SKIP_NAMES = new Set([
+  'Cache',
+  'Code Cache',
+  'Crashpad',
+  'DawnCache',
+  'DawnGraphiteCache',
+  'DawnWebGPUCache',
+  'GPUCache',
+  'GrShaderCache',
+  'logs',
+  'Session Storage',
+  'Shared Dictionary',
+  'SharedStorage',
+  'ShaderCache',
+  'Temp',
+  'tmp',
+  '.migrated-autocode'
+]);
+
+function shouldCopyUserDataMigrationPath(sourcePath: string): boolean {
+  return !USER_DATA_MIGRATION_SKIP_NAMES.has(basename(sourcePath));
+}
+
+function migrateLegacyUserData(legacyUserData: string, newUserData: string, migrationMarker: string): void {
+  mkdirSync(newUserData, { recursive: true });
+
+  let copiedEntries = 0;
+  let skippedEntries = 0;
+
+  for (const entry of readdirSync(legacyUserData, { withFileTypes: true })) {
+    if (USER_DATA_MIGRATION_SKIP_NAMES.has(entry.name)) {
+      skippedEntries += 1;
+      continue;
+    }
+
+    const sourcePath = join(legacyUserData, entry.name);
+    const targetPath = join(newUserData, entry.name);
+
+    try {
+      cpSync(sourcePath, targetPath, {
+        recursive: true,
+        force: false,
+        errorOnExist: false,
+        filter: shouldCopyUserDataMigrationPath
+      });
+      copiedEntries += 1;
+    } catch (err) {
+      const code = (err as NodeJS.ErrnoException).code;
+      if (code === 'EACCES' || code === 'EPERM' || code === 'EBUSY') {
+        skippedEntries += 1;
+        console.warn(`[main] Skipped locked userData migration entry: ${sourcePath}`);
+        continue;
+      }
+      throw err;
+    }
+  }
+
+  writeFileSync(migrationMarker, new Date().toISOString());
+  console.warn(
+    `[main] Migrated userData from ${legacyUserData} to ${newUserData} ` +
+      `(copied=${copiedEntries}, skipped=${skippedEntries})`
+  );
+}
+
 // ─────────────────────────────────────────────────────────────────────────────
-// Migrate userData from old app name (auto-claude-ui → aperant)
+// Migrate userData from old app name (autocode-ui → autocode)
 // Must run before any code accesses app.getPath('userData')
 // ─────────────────────────────────────────────────────────────────────────────
 {
   const newUserData = app.getPath('userData');
-  const oldUserData = join(dirname(newUserData), 'auto-claude-ui');
-  if (existsSync(oldUserData) && !existsSync(join(newUserData, '.migrated'))) {
+  const legacyUserDataNames = ['Aperant', 'aperant', 'auto-claude-ui'];
+  const migrationMarker = join(newUserData, '.migrated-autocode');
+  const legacyUserData = legacyUserDataNames
+    .map((name) => join(dirname(newUserData), name))
+    .find((candidate) => candidate !== newUserData && existsSync(candidate));
+
+  if (legacyUserData && !existsSync(migrationMarker)) {
     try {
-      // Copy all files from old location to new (don't move — keeps old as backup)
-      cpSync(oldUserData, newUserData, { recursive: true, force: false, errorOnExist: false });
-      // Mark as migrated so we don't repeat
-      writeFileSync(join(newUserData, '.migrated'), new Date().toISOString());
-      console.warn('[main] Migrated userData from auto-claude-ui to aperant');
+      migrateLegacyUserData(legacyUserData, newUserData, migrationMarker);
     } catch (err) {
       console.warn('[main] userData migration failed (non-fatal):', err);
     }
@@ -144,6 +209,8 @@ function loadSettingsSync(): AppSettings {
 function cleanupStaleUpdateMetadata(): void {
   const userData = app.getPath('userData');
   const stalePaths = [
+    join(userData, 'autocode-source'),
+    join(userData, 'aperant-source'),
     join(userData, 'auto-claude-source'),
     join(userData, 'backend-source'),
   ];
@@ -394,10 +461,10 @@ function createWindow(): void {
 }
 
 // Set app name before ready (for dock tooltip on macOS in dev mode)
-app.setName('Aperant');
+app.setName('Autocode');
 if (isMacOS()) {
   // Force the name to appear in dock on macOS
-  app.name = 'Aperant';
+  app.name = 'Autocode';
 }
 
 // Fix Windows GPU cache permission errors (0x5 Access Denied)
@@ -410,7 +477,7 @@ if (isWindows()) {
 // Initialize the application
 app.whenReady().then(async () => {
   // Set app user model id for Windows
-  electronApp.setAppUserModelId('com.aperant.app');
+  electronApp.setAppUserModelId('com.autocode.app');
 
   // Clear cache on Windows to prevent permission errors from stale cache
   if (isWindows()) {
@@ -456,7 +523,7 @@ app.whenReady().then(async () => {
   // Initialize agent manager
   agentManager = new AgentManager();
 
-  // Load settings and configure agent manager with Python and auto-claude paths
+  // Load settings and configure agent manager with Python and autocode paths
   // Uses EAFP pattern (try/catch) instead of LBYL (existsSync) to avoid TOCTOU race conditions
   const settingsPath = join(app.getPath('userData'), 'settings.json');
   try {
@@ -477,11 +544,11 @@ app.whenReady().then(async () => {
 
       if (!plannerExists) {
         // Migration: Try to fix stale paths from old project structure
-        // Old structure: /path/to/project/auto-claude or apps/backend
+        // Old structure: /path/to/project/autocode or apps/backend
         // New structure: /path/to/project/apps/desktop/prompts
         let migrated = false;
         const possibleCorrections = [
-          join(validAutoBuildPath.replace(/[/\\]auto-claude[/\\]*$/, ''), 'apps', 'desktop', 'prompts'),
+          join(validAutoBuildPath.replace(/[/\\]autocode[/\\]*$/, ''), 'apps', 'desktop', 'prompts'),
           join(validAutoBuildPath.replace(/[/\\]backend[/\\]*$/, ''), 'desktop', 'prompts'),
         ];
         for (const correctedPath of possibleCorrections) {

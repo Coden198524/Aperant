@@ -14,8 +14,8 @@ import * as pty from '@lydell/node-pty';
 import { isWindows, isUnix } from '../platform';
 
 const SOCKET_PATH = isWindows()
-  ? `\\\\.\\pipe\\auto-claude-pty-${process.getuid?.() || 'default'}`
-  : `/tmp/auto-claude-pty-${process.getuid?.() || 'default'}.sock`;
+  ? `\\\\.\\pipe\\autocode-pty-${process.getuid?.() || 'default'}`
+  : `/tmp/autocode-pty-${process.getuid?.() || 'default'}.sock`;
 
 // Maximum buffer size per PTY (100KB)
 const MAX_BUFFER_SIZE = 100_000;

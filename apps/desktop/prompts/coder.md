@@ -48,7 +48,7 @@ When you verify a change, include the smallest reliable project-specific check s
 environment at the start of each prompt in the "YOUR ENVIRONMENT" section. Pay close attention to:
 
 - **Working Directory**: This is your root - all paths are relative to here
-- **Spec Location**: Where your spec files live (usually `./auto-claude/specs/{spec-name}/`)
+- **Spec Location**: Where your spec files live (usually `./autocode/specs/{spec-name}/`)
 - **Isolation Mode**: If present, you are in an isolated worktree (see below)
 
 **RULES:**
@@ -93,9 +93,9 @@ You may see absolute paths like `/e/projects/myapp/prod/src/file.ts` in:
 ```bash
 # Verify you're still in the worktree
 pwd
-# Should show: .../.auto-claude/worktrees/tasks/{spec-name}/
+# Should show: .../.autocode/worktrees/tasks/{spec-name}/
 # Or (legacy): .../.worktrees/{spec-name}/
-# Or (PR review): .../.auto-claude/github/pr/worktrees/{pr-number}/
+# Or (PR review): .../.autocode/github/pr/worktrees/{pr-number}/
 # NOT: /path/to/main/project
 ```
 
@@ -176,7 +176,7 @@ pwd && ls -la
 find . -name "implementation_plan.json" -type f 2>/dev/null | head -5
 
 # 3. Set SPEC_DIR based on what you find (example - adjust path as needed)
-SPEC_DIR="./auto-claude/specs/YOUR-SPEC-NAME"  # Replace with actual path from step 2
+SPEC_DIR="./autocode/specs/YOUR-SPEC-NAME"  # Replace with actual path from step 2
 
 # 4. Read the implementation plan (your main source of truth)
 cat "$SPEC_DIR/implementation_plan.json"
@@ -829,7 +829,7 @@ The system **automatically scans for secrets** before every commit. If secrets a
    api_key = os.environ.get("API_KEY")
    ```
 3. **Update .env.example** - Add placeholder for the new variable
-4. **Re-stage and retry** - `git add . ':!.auto-claude' && git commit ...`
+4. **Re-stage and retry** - `git add . ':!.autocode' && git commit ...`
 
 **If it's a false positive:**
 - Add the file pattern to `.secretsignore` in the project root
@@ -841,22 +841,22 @@ The system **automatically scans for secrets** before every commit. If secrets a
 # FIRST: Make sure you're in the working directory root (check YOUR ENVIRONMENT section at top)
 pwd  # Should match your working directory
 
-# Add all files EXCEPT .auto-claude directory (spec files should never be committed)
-git add . ':!.auto-claude'
+# Add all files EXCEPT .autocode directory (spec files should never be committed)
+git add . ':!.autocode'
 
 # If git add fails with "pathspec did not match", you have a path problem:
 # 1. Run pwd to see where you are
 # 2. Run git status to see what git sees
 # 3. Adjust your paths accordingly
 
-git commit -m "auto-claude: Complete [subtask-id] - [subtask description]
+git commit -m "autocode: Complete [subtask-id] - [subtask description]
 
 - Files modified: [list]
 - Verification: [type] - passed
 - Phase progress: [X]/[Y] subtasks complete"
 ```
 
-**CRITICAL**: The `:!.auto-claude` pathspec exclusion ensures spec files are NEVER committed.
+**CRITICAL**: The `:!.autocode` pathspec exclusion ensures spec files are NEVER committed.
 These are internal tracking files that must stay local.
 
 ### DO NOT Push to Remote
@@ -889,7 +889,7 @@ Next phase (if applicable): [phase-name]
 === END SESSION N ===
 ```
 
-**Note:** The `build-progress.txt` file is in `.auto-claude/specs/` which is gitignored.
+**Note:** The `build-progress.txt` file is in `.autocode/specs/` which is gitignored.
 Do NOT try to commit it - the framework tracks progress automatically.
 
 ---
@@ -919,7 +919,7 @@ All subtasks completed!
 Workflow type: [type]
 Total phases: [N]
 Total subtasks: [N]
-Branch: auto-claude/[feature-name]
+Branch: autocode/[feature-name]
 
 Ready for human review and merge.
 ```

@@ -260,12 +260,12 @@ describe('getRequiredMcpServers (registry)', () => {
     expect(servers).toContain('context7');
   });
 
-  it('should not expose auto-claude as an external MCP server in tool registry resolution', () => {
+  it('should not expose autocode as an external MCP server in tool registry resolution', () => {
     const servers = getRequiredMcpServers('coder', {
       memoryEnabled: true,
-      mcpConfig: { AGENT_MCP_coder_REMOVE: 'auto-claude,memory' },
+      mcpConfig: { AGENT_MCP_coder_REMOVE: 'autocode,memory' },
     });
-    expect(servers).not.toContain('auto-claude');
+    expect(servers).not.toContain('autocode');
     expect(servers).not.toContain('memory');
   });
 });

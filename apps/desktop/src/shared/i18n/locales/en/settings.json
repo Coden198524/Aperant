@@ -7,7 +7,7 @@
   "sections": {
     "appearance": {
       "title": "Appearance",
-      "description": "Customize how Aperant looks"
+      "description": "Customize how Autocode looks"
     },
     "display": {
       "title": "Display",
@@ -35,7 +35,7 @@
     },
     "updates": {
       "title": "Updates",
-      "description": "Aperant updates"
+      "description": "Autocode updates"
     },
     "notifications": {
       "title": "Notifications",
@@ -213,7 +213,7 @@
     "otherAgentSettingsDescription": "Additional agent configuration options",
     "agentFramework": "Agent Framework",
     "agentFrameworkDescription": "The coding framework used for autonomous tasks",
-    "agentFrameworkAutoClaude": "Aperant",
+    "agentFrameworkAutocode": "Autocode",
     "aiTerminalNaming": "AI Terminal Naming",
     "aiTerminalNamingDescription": "Automatically name terminals based on commands (uses AI Naming model)",
     "featureModelSettings": "Feature Model Settings",
@@ -248,15 +248,15 @@
     "sourceBundled": "Bundled",
     "sourceFallback": "Fallback",
     "notDetected": "Not detected",
-    "autoClaudePath": "Aperant Path",
-    "autoClaudePathDescription": "Relative path to auto-claude directory in projects",
-    "autoClaudePathPlaceholder": "auto-claude (default)",
+    "autoClaudePath": "Autocode Path",
+    "autoClaudePathDescription": "Relative path to autocode directory in projects",
+    "autoClaudePathPlaceholder": "autocode (default)",
     "autoNameTerminals": "Automatically name terminals",
     "autoNameTerminalsDescription": "Use AI to generate descriptive names for terminal tabs based on their activity"
   },
   "theme": {
     "title": "Appearance",
-    "description": "Customize how Aperant looks",
+    "description": "Customize how Autocode looks",
     "mode": "Mode",
     "modeDescription": "Choose between light and dark themes",
     "light": "Light",
@@ -274,14 +274,14 @@
     "tabTerminalFonts": "Terminal Fonts",
     "ide": {
       "label": "Preferred IDE",
-      "description": "Aperant will open worktrees in this editor",
+      "description": "Autocode will open worktrees in this editor",
       "placeholder": "Select IDE...",
       "customPath": "Custom IDE Path",
       "customPathPlaceholder": "/path/to/your/ide"
     },
     "terminal": {
       "label": "Preferred Terminal",
-      "description": "Aperant will open terminal sessions here",
+      "description": "Autocode will open terminal sessions here",
       "placeholder": "Select terminal...",
       "customPath": "Custom Terminal Path",
       "customPathPlaceholder": "/path/to/your/terminal"
@@ -314,7 +314,7 @@
   },
   "updates": {
     "title": "Updates",
-    "description": "Manage Aperant updates",
+    "description": "Manage Autocode updates",
     "appUpdateReady": "App Update Ready",
     "newVersion": "New Version",
     "released": "Released",
@@ -331,7 +331,7 @@
     "unableToCheck": "Unable to check for updates",
     "checkForUpdates": "Check for Updates",
     "autoUpdateProjects": "Auto-Update Projects",
-    "autoUpdateProjectsDescription": "Automatically update Aperant in projects when a new version is available",
+    "autoUpdateProjectsDescription": "Automatically update Autocode in projects when a new version is available",
     "betaUpdates": "Beta Updates",
     "betaUpdatesDescription": "Receive pre-release beta versions with new features (may be less stable)",
     "stableDowngradeAvailable": "Stable Version Available",
@@ -339,7 +339,7 @@
     "stableVersion": "Stable Version",
     "downloadStableVersion": "Download Stable Version",
     "readOnlyVolumeTitle": "Cannot Install from Disk Image",
-    "readOnlyVolumeDescription": "Aperant is running from a read-only disk image (DMG). Please drag the app to your Applications folder and relaunch it from there to install updates.",
+    "readOnlyVolumeDescription": "Autocode is running from a read-only disk image (DMG). Please drag the app to your Applications folder and relaunch it from there to install updates.",
     "downloadError": "Failed to download update"
   },
   "notifications": {
@@ -430,7 +430,7 @@
       },
       "workflow": {
         "title": "How it works",
-        "description": "GitBlit review requests are ticket-based. Aperant creates the first proposal as a GitBlit ticket and updates later patchsets when a ticket id is known.",
+        "description": "GitBlit review requests are ticket-based. Autocode creates the first proposal as a GitBlit ticket and updates later patchsets when a ticket id is known.",
         "create": "New review requests are submitted to refs/for/<branch>.",
         "update": "Later submissions reuse refs/for/<ticket> when the task is already linked to a GitBlit ticket."
       }
@@ -896,7 +896,7 @@
     "description": "Access logs and debug information for troubleshooting",
     "errorReporting": {
       "label": "Anonymous Error Reporting",
-      "description": "Send crash reports to help improve Aperant. No personal data or code is collected."
+      "description": "Send crash reports to help improve Autocode. No personal data or code is collected."
     },
     "openLogsFolder": "Open Logs Folder",
     "copyDebugInfo": "Copy Debug Info",
@@ -926,7 +926,7 @@
     "noProjectSelected": "No Project Selected",
     "noProjectSelectedDescription": "Select a project from the dropdown to view and configure MCP servers.",
     "projectNotInitialized": "Project Not Initialized",
-    "projectNotInitializedDescription": "Initialize Aperant for this project to configure MCP servers.",
+    "projectNotInitializedDescription": "Initialize Autocode for this project to configure MCP servers.",
     "browserAutomation": "Browser Automation (QA agents only)",
     "alwaysEnabled": "always enabled",
     "addServer": "Add Server",
@@ -968,7 +968,7 @@
         "description": "Web browser automation for testing"
       },
       "autoClaude": {
-        "name": "Aperant Tools",
+        "name": "Autocode Tools",
         "description": "Build progress tracking"
       }
     },

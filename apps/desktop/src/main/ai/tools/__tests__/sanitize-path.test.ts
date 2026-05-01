@@ -9,22 +9,22 @@ import { sanitizeFilePathArg } from '../define';
 describe('sanitizeFilePathArg', () => {
   it('should normalize Windows backslashes to forward slashes', () => {
     const input = {
-      file_path: 'E:\\Work\\Game\\TestCodex\\test\\.auto-claude\\specs\\006-build-web-based-sudoku-game\\spec.md',
+      file_path: 'E:\\Work\\Game\\TestCodex\\test\\.autocode\\specs\\006-build-web-based-sudoku-game\\spec.md',
     };
 
     sanitizeFilePathArg(input);
 
-    expect(input.file_path).toBe('E:/Work/Game/TestCodex/test/.auto-claude/specs/006-build-web-based-sudoku-game/spec.md');
+    expect(input.file_path).toBe('E:/Work/Game/TestCodex/test/.autocode/specs/006-build-web-based-sudoku-game/spec.md');
   });
 
   it('should handle mixed slashes', () => {
     const input = {
-      file_path: 'E:\\Work\\Game/TestCodex\\test/.auto-claude/specs/file.ts',
+      file_path: 'E:\\Work\\Game/TestCodex\\test/.autocode/specs/file.ts',
     };
 
     sanitizeFilePathArg(input);
 
-    expect(input.file_path).toBe('E:/Work/Game/TestCodex/test/.auto-claude/specs/file.ts');
+    expect(input.file_path).toBe('E:/Work/Game/TestCodex/test/.autocode/specs/file.ts');
   });
 
   it('should strip trailing JSON artifacts', () => {
@@ -59,12 +59,12 @@ describe('sanitizeFilePathArg', () => {
 
   it('should handle paths with forward slashes only', () => {
     const input = {
-      file_path: 'E:/Work/Game/TestCodex/test/.auto-claude/specs/file.ts',
+      file_path: 'E:/Work/Game/TestCodex/test/.autocode/specs/file.ts',
     };
 
     sanitizeFilePathArg(input);
 
-    expect(input.file_path).toBe('E:/Work/Game/TestCodex/test/.auto-claude/specs/file.ts');
+    expect(input.file_path).toBe('E:/Work/Game/TestCodex/test/.autocode/specs/file.ts');
   });
 
   it('should do nothing if file_path is not a string', () => {

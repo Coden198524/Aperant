@@ -54,7 +54,7 @@
  *
  * ## Provider Support
  *
- * Works with ALL AI providers in Auto Claude:
+ * Works with ALL AI providers in Autocode:
  * - Anthropic (Claude)
  * - OpenAI (GPT, Codex, o1)
  * - Google (Gemini)

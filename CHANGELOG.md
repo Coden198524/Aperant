@@ -4,7 +4,7 @@
 
 - **Fixed ERR_MODULE_NOT_FOUND on startup** — Resolved crash on launch where `@openrouter/ai-sdk-provider`, `@ai-sdk/mcp`, `@modelcontextprotocol/sdk`, and `@tavily/core` were missing in production builds. These packages were hoisted to root `node_modules` by npm workspaces but not included in the Electron bundle. (#1944)
 
-- **Fixed .aperant directory not gitignored** — Added `.aperant/` to `.gitignore` after the project directory rename from `.auto-claude`
+- **Fixed .autocode directory not gitignored** — Added `.autocode/` to `.gitignore` after the project directory rename from `.autocode`
 
 ## 2.7.6 - Stability & Feature Enhancements
 
@@ -56,7 +56,7 @@
 
 - **Integrations** — Fixed Ollama infinite subprocess spawning, Graphiti import paths, OpenRouter API URL suffix, and GitLab authentication bugs
 
-- **Settings & configuration** — Corrected .auto-claude path discovery timeout, z.AI China preset URL, log order sorting, and onboarding completion state persistence
+- **Settings & configuration** — Corrected .autocode path discovery timeout, z.AI China preset URL, log order sorting, and onboarding completion state persistence
 
 ### 📚 Documentation
 
@@ -82,11 +82,11 @@
 - fix: cap terminal paste size to 1MB to prevent GPU context exhaustion by @AndyMik90 in 7b0f3a2c0
 - fix: prevent OOM, orphaned agents, and unbounded growth during overnight builds (#1813) by @Andy in 4091d1d4b
 - docs: add instructions for resetting PR review state in CLAUDE.md by @AndyMik90 in ecb615802
-- auto-claude: 217-investigate-symlink-issues-in-work-tree-creation-f (#1808) by @Andy in ae13ce14c
-- auto-claude: 218-enable-claude-code-features-in-worktree-terminals (#1809) by @Andy in e3b219288
-- auto-claude: 219-investigate-and-fix-authentication-subscription-sy (#1810) by @Andy in 6204d5fc2
+- autocode: 217-investigate-symlink-issues-in-work-tree-creation-f (#1808) by @Andy in ae13ce14c
+- autocode: 218-enable-claude-code-features-in-worktree-terminals (#1809) by @Andy in e3b219288
+- autocode: 219-investigate-and-fix-authentication-subscription-sy (#1810) by @Andy in 6204d5fc2
 - feat(roadmap): add expand/collapse functionality for phase features (#1796) by @Burak in f735f0b49
-- auto-claude: 216-display-ongoing-pr-review-logs-in-progress (#1807) by @Andy in a4870fa0c
+- autocode: 216-display-ongoing-pr-review-logs-in-progress (#1807) by @Andy in a4870fa0c
 - fix(pr-review): reduce structured output failures and preserve findings in recovery (#1806) by @Andy in f1b8cd3a7
 - fix(sentry): enable Sentry for Python subprocesses and add diagnostic instrumentation (#1804) by @Andy in 4d4234378
 - fix(pr-review): add three-tier recovery for structured output validation failure (#1797) by @Andy in d1fbccde3
@@ -103,8 +103,8 @@
 - fix(qa): enforce visual verification for UI changes and inject startup commands (#1784) by @Andy in f149a7fbd
 - fix(plan-files): use atomic writes to prevent 0-byte corruption (#1785) by @Andy in c2245b812
 - fix(terminal): make worktree dropdown scrollable and show all items by @AndyMik90 in 950da45e4
-- auto-claude: subtask-1-1 - Add adaptive thinking badge to thinking level label (#1782) by @Andy in 25acf2826
-- auto-claude: subtask-1-1 - Add overflow-hidden and break-words to subtask cards by @AndyMik90 in 39aa08872
+- autocode: subtask-1-1 - Add adaptive thinking badge to thinking level label (#1782) by @Andy in 25acf2826
+- autocode: subtask-1-1 - Add overflow-hidden and break-words to subtask cards by @AndyMik90 in 39aa08872
 - refactor(app-updater): disable automatic downloads and allow intentional downgrades by @AndyMik90 in 8de8039db
 - fix(auth): detect auth errors in AI response text and prevent retry loops (#1776) by @Andy in f4788e4af
 - test: achieve 100% coverage for backend core workspace module (#1774) by @StillKnotKnown in 3f95765cf
@@ -114,30 +114,30 @@
 - fix(worktree): remove auto-commit on deletion and add uncommitted changes warning by @AndyMik90 in cec8e65ee
 - Smart PR Status Polling System (#1766) by @Andy in 48d5f7a32
 - feat: simplify thinking system and remove opus-1m model variant (#1760) by @Andy in bb7e18937
-- auto-claude: 203-fix-pr-review-ui-update-issue (#1732) by @Andy in 7589f8e4f
-- auto-claude: subtask-2-1 - Create isAPIProfileAuthenticated() function to val (#1745) by @Andy in 57e38a692
-- auto-claude: 202-fix-kanban-board-scaling-collisions (#1731) by @Andy in d09ebb850
-- auto-claude: 204-fix-pr-review-ui-not-updating-without-manual-navig (#1734) by @Andy in 087091cef
-- auto-claude: 203-fix-ui-not-updating-during-pr-review-operations (#1733) by @Andy in f085c08bd
-- auto-claude: 205-fix-insights-chat-only-shows-last-task-suggestion- (#1735) by @Andy in f121f9cdd
-- auto-claude: 197-roadmap-generation-stuck-at-50-file-locking-race-c (#1746) by @Andy in f41f15e59
-- auto-claude: 193-fix-update-context7-mcp-tool-name-from-get-library (#1744) by @Andy in bdff9141a
-- auto-claude: 192-changelog-generation-multiple-critical-bugs-tasks- (#1725) by @Andy in 8c9a504df
-- auto-claude: 194-bug-rate-limit-during-task-execution-causes-subtas (#1726) by @Andy in 8a7443d24
-- auto-claude: 201-bug-pr-review-logs-and-analysis (#1730) by @Andy in e0d53adb4
-- auto-claude: 196-fix-worktrees-dialog-auto-close-race-condition-and (#1727) by @Andy in 323b0d3be
-- auto-claude: 199-bug-logs-disappear-after-restart (#1728) by @Andy in d639f6ef8
-- auto-claude: 198-critical-oauth-token-revocation-causes-infinite-40 (#1747) by @Andy in 4438c0b10
+- autocode: 203-fix-pr-review-ui-update-issue (#1732) by @Andy in 7589f8e4f
+- autocode: subtask-2-1 - Create isAPIProfileAuthenticated() function to val (#1745) by @Andy in 57e38a692
+- autocode: 202-fix-kanban-board-scaling-collisions (#1731) by @Andy in d09ebb850
+- autocode: 204-fix-pr-review-ui-not-updating-without-manual-navig (#1734) by @Andy in 087091cef
+- autocode: 203-fix-ui-not-updating-during-pr-review-operations (#1733) by @Andy in f085c08bd
+- autocode: 205-fix-insights-chat-only-shows-last-task-suggestion- (#1735) by @Andy in f121f9cdd
+- autocode: 197-roadmap-generation-stuck-at-50-file-locking-race-c (#1746) by @Andy in f41f15e59
+- autocode: 193-fix-update-context7-mcp-tool-name-from-get-library (#1744) by @Andy in bdff9141a
+- autocode: 192-changelog-generation-multiple-critical-bugs-tasks- (#1725) by @Andy in 8c9a504df
+- autocode: 194-bug-rate-limit-during-task-execution-causes-subtas (#1726) by @Andy in 8a7443d24
+- autocode: 201-bug-pr-review-logs-and-analysis (#1730) by @Andy in e0d53adb4
+- autocode: 196-fix-worktrees-dialog-auto-close-race-condition-and (#1727) by @Andy in 323b0d3be
+- autocode: 199-bug-logs-disappear-after-restart (#1728) by @Andy in d639f6ef8
+- autocode: 198-critical-oauth-token-revocation-causes-infinite-40 (#1747) by @Andy in 4438c0b10
 - Fix Panel Constraints Error During Terminal Exit (#1757) by @Andy in 32bf353da
-- auto-claude: 190-bug-context-page-crash-multiple-root-causes-when-v (#1724) by @Andy in 2db36982f
+- autocode: 190-bug-context-page-crash-multiple-root-causes-when-v (#1724) by @Andy in 2db36982f
 - feat: add search/filter to WorktreeSelector dropdown (#1754) by @Andy in 09f059ca3
 - fix(terminal): push worktree branch to remote with tracking on creation (#1753) by @Andy in b5de0d9ff
-- auto-claude: 189-subtask-execution-stuck-in-infinite-retry-loop-whe (#1723) by @Andy in 445da186c
-- auto-claude: 188-terminal-claude-sessions-require-manual-click-to-r (#1743) by @Andy in f8499e965
-- auto-claude: 200-bug-changelog-and-release-generation (#1729) by @Andy in 826583b82
+- autocode: 189-subtask-execution-stuck-in-infinite-retry-loop-whe (#1723) by @Andy in 445da186c
+- autocode: 188-terminal-claude-sessions-require-manual-click-to-r (#1743) by @Andy in f8499e965
+- autocode: 200-bug-changelog-and-release-generation (#1729) by @Andy in 826583b82
 - fix(terminal): use each terminal's cwd for invoke Claude all button (#1756) by @Andy in ac4fe4f42
 - feat(terminal): read Claude Code CLI settings and inject env vars into PTY sessions (#1750) by @Andy in 152e54093
-- fix: correct .auto-claude path mismatch causing discovery phase timeout (#1748) by @VDT-91 in 2c2a8a754
+- fix: correct .autocode path mismatch causing discovery phase timeout (#1748) by @VDT-91 in 2c2a8a754
 - fix: remove incorrect /v1 suffix from OpenRouter API URL (#1749) by @StillKnotKnown in 7e799ee57
 - fix: prevent terminal worktree crash with race condition fixes (#1586) (#1658) by @VDT-91 in 216b58bcf
 - fix: correct log order sorting and add configurable log order setting (#1720) by @Burak in 2e2b82365
@@ -147,15 +147,15 @@
 - feat: unified operation registry for intelligent auth/rate limit recovery (#1698) by @Andy in 6d0222fa9
 - fix: Prevent stale worktree data from overriding correct task status (#1710) by @Burak in fe08c644c
 - feat: add subscriptionType and rateLimitTier to ClaudeProfile (#1688) by @Andy in a5e3cc9a2
-- auto-claude: subtask-1-1 - Add useTaskStore import and update task state after successful PR creation (#1683) by @Andy in 4587162e4
-- auto-claude: 182-implement-pagination-and-filtering-for-github-pr-l (#1654) by @Andy in b4e6b2fe4
-- auto-claude: 181-add-expand-button-for-long-task-descriptions (#1653) by @Andy in d9cd300fe
+- autocode: subtask-1-1 - Add useTaskStore import and update task state after successful PR creation (#1683) by @Andy in 4587162e4
+- autocode: 182-implement-pagination-and-filtering-for-github-pr-l (#1654) by @Andy in b4e6b2fe4
+- autocode: 181-add-expand-button-for-long-task-descriptions (#1653) by @Andy in d9cd300fe
 - fix(terminal): resolve text alignment issues on expand/minimize (#1650) by @VDT-91 in f5a7e26d9
 - fix(windows): use full path to where.exe for reliable executable lookup (#1659) by @VDT-91 in 5f63daa3c
 - fix: resolve ideation stuck at 3/6 types bug (#1660) by @VDT-91 in e6e8da17c
 - Clarify Local and Origin Branch Distinction (#1652) by @Andy in 9317148b6
-- auto-claude: 186-set-default-dark-mode-on-startup (#1656) by @Andy in 473020621
-- auto-claude: subtask-1-1 - Add min-h-0 to enable scrolling in Roadmap tabs (#1655) by @Andy in ae703be9f
+- autocode: 186-set-default-dark-mode-on-startup (#1656) by @Andy in 473020621
+- autocode: subtask-1-1 - Add min-h-0 to enable scrolling in Roadmap tabs (#1655) by @Andy in ae703be9f
 - fix: XState status lifecycle & cross-project contamination fixes (#1647) by @kaigler in 5293fb399
 - refactor(frontend): complete XState task state machine migration (#1338) (#1575) by @kaigler in e2f9abadb
 - Merge conflict resolution progress bar and log viewer (#1620) by @Andy in d16be3077
@@ -169,7 +169,7 @@
 - Fix pty.node SIGABRT crash on macOS shutdown (#1619) by @Andy in f355e09d7
 - fix(merge): use git merge for diverged branches with progress tracking (#1605) by @Andy in bde2ca4b2
 - Surface Billing/Credit Exhaustion Errors to UI (Issue #1580) (#1617) by @Andy in 7bf12e856
-- auto-claude: subtask-1-1 - Change $teamId type from ID! to String! in the team query (#1627) by @Andy in 54d0cd2f4
+- autocode: subtask-1-1 - Change $teamId type from ID! to String! in the team query (#1627) by @Andy in 54d0cd2f4
 - fix(auth): support API profile mode without OAuth requirement (#1616) by @StillKnotKnown in f8cc63af4
 - fix: agent retry loop for tool concurrency errors (#1546) [v3] (#1606) by @Michael Ludlow in 0aea4fb5e
 - fix(queue): enforce max parallel tasks and auto-refresh UI (#1594) by @Andy in 4070a4c29
@@ -177,16 +177,16 @@
 - feat(pr-review): evidence-based validation and trigger-driven exploration (#1593) by @Andy in bfc232825
 - fix(ui): smart auto-scroll for Insights streaming responses (#1591) by @kaigler in eee97e7ea
 - fix(changelog): validate Claude CLI exists before generation (#1305) by @kaigler in c1f24c07f
-- auto-claude: subtask-1-1 - Add min-w-0 class to subtask title row flex container (#1578) by @Andy in 286591c02
-- auto-claude: subtask-1-1 - Remove Popover wrapper and related functionality from ClaudeCodeStatusBadge (#1566) by @Andy in 8d18cc81a
+- autocode: subtask-1-1 - Add min-w-0 class to subtask title row flex container (#1578) by @Andy in 286591c02
+- autocode: subtask-1-1 - Remove Popover wrapper and related functionality from ClaudeCodeStatusBadge (#1566) by @Andy in 8d18cc81a
 - fix(claude-profile): preserve subscriptionType and rateLimitTier during token refresh (#1556) by @Andy in 52e426a48
-- auto-claude: subtask-1-1 - Update cancelReview callback to handle both success and failure cases (#1551) by @Andy in d8f00fe5a
+- autocode: subtask-1-1 - Update cancelReview callback to handle both success and failure cases (#1551) by @Andy in d8f00fe5a
 - fix(backend): prioritize git remote detection over env var for repo (#1555) by @Andy in 9b07ed464
 - fix(backend): handle detached HEAD state when pushing branch for PR creation (#1560) by @Andy in 2b72694d0
 - fix: add explicit UTF-8 encoding across all Electron main process I/O (#1554) by @Andy in 4243530e9
 - fix(backend): pass OAuth token to Python subprocess for authentication by @AndyMik90 in 6f1002dd7
 - perf(frontend): async parallel worktree listing to prevent UI freezes (#1553) by @Andy in 399a7e736
-- auto-claude: subtask-1-1 - Remove amber lock indicator line from kanban resize handle (#1557) by @Andy in 83a64b88e
+- autocode: subtask-1-1 - Remove amber lock indicator line from kanban resize handle (#1557) by @Andy in 83a64b88e
 - fix(frontend): resolve TerminalFontSettings infinite re-render loop (#1536) by @StillKnotKnown in 1c6266025
 - fix(frontend): respect hasCompletedOnboarding from ~/.claude.json (#1537) by @StillKnotKnown in 1860c2c43
 - fix: prevent planner from generating invalid verification types (#1388) (#1529) by @kaigler in 94d941333
@@ -204,28 +204,28 @@
 - Fix terminal content resizing on expansion (#1512) by @Andy in 9f6c0026b
 - Restore Terminal Session History on App Restart (#1515) by @Andy in 63e2847fc
 - Move Reference Images Above Task Title & Fix Image Display Issues (#1513) by @Andy in b269ac305
-- auto-claude: 143-fix-github-integration-ui-refresh-issues (#1467) by @Andy in aa2cb4fa6
+- autocode: 143-fix-github-integration-ui-refresh-issues (#1467) by @Andy in aa2cb4fa6
 - feat: Multi-profile account swapping with token refresh and queue routing (#1496) by @Andy in 1e72c8d77
 - Simplified Testing Strategy for Regression Prevention (#1379) by @Andy in ae4e48e8b
-- auto-claude: 152-persist-tasks-during-roadmap-regeneration (#1463) by @Andy in 9bd3d7e3b
+- autocode: 152-persist-tasks-during-roadmap-regeneration (#1463) by @Andy in 9bd3d7e3b
 - Debug Kanban Memory & Add Sentry Monitoring (#1380) by @Andy in bc5f550ee
-- auto-claude: 147-remove-outdated-compatibility-shims (#1465) by @Andy in 53111dbb9
-- auto-claude: 162-fix-worktree-error-on-repeated-task-starts (#1453) by @Andy in b955badf7
-- auto-claude: 155-fix-pr-list-diff-display-metrics (#1458) by @Andy in 31f116db5
-- auto-claude: 151-fix-pr-review-agent-token-refresh-on-account-swap (#1456) by @Andy in d081af042
-- auto-claude: 148-add-progress-persistence-and-status-indicators (#1464) by @Andy in 4937d5745
-- auto-claude: 154-fix-task-modal-conflict-check-status-refresh (#1462) by @Andy in 0299009df
-- auto-claude: 153-widen-kanban-columns-and-add-collapse-feature (#1457) by @Andy in d65973075
-- auto-claude: subtask-1-1 - Add filter after map operation to remove empty str (#1466) by @Andy in 783f0fe0e
+- autocode: 147-remove-outdated-compatibility-shims (#1465) by @Andy in 53111dbb9
+- autocode: 162-fix-worktree-error-on-repeated-task-starts (#1453) by @Andy in b955badf7
+- autocode: 155-fix-pr-list-diff-display-metrics (#1458) by @Andy in 31f116db5
+- autocode: 151-fix-pr-review-agent-token-refresh-on-account-swap (#1456) by @Andy in d081af042
+- autocode: 148-add-progress-persistence-and-status-indicators (#1464) by @Andy in 4937d5745
+- autocode: 154-fix-task-modal-conflict-check-status-refresh (#1462) by @Andy in 0299009df
+- autocode: 153-widen-kanban-columns-and-add-collapse-feature (#1457) by @Andy in d65973075
+- autocode: subtask-1-1 - Add filter after map operation to remove empty str (#1466) by @Andy in 783f0fe0e
 - fix: add formatReleaseNotes helper for markdown changelog rendering (#1468) by @Andy in 43a97e1b3
 - feat(sidebar): add collapsible sidebar toggle (#1501) by @Michael Ludlow in d17c17887
 - fix(auth): check .credentials.json for Linux profile authentication (#1492) by @StillKnotKnown in 8d2f66291
-- auto-claude: subtask-1-1 - Replace ReleaseNotesRenderer with ReactMarkdown (#1454) by @Andy in 1185a558c
-- auto-claude: 156-fix-electron-app-version-detection-bug (#1459) by @Andy in 9a3b48c25
-- auto-claude: subtask-1-1 - Add --no-track flag to git worktree add command (#1455) by @Andy in 0c2990815
-- auto-claude: subtask-1-1 - Change task.specId to taskId in 3 startSpecCreation calls (#1461) by @Andy in 91edc0e14
+- autocode: subtask-1-1 - Replace ReleaseNotesRenderer with ReactMarkdown (#1454) by @Andy in 1185a558c
+- autocode: 156-fix-electron-app-version-detection-bug (#1459) by @Andy in 9a3b48c25
+- autocode: subtask-1-1 - Add --no-track flag to git worktree add command (#1455) by @Andy in 0c2990815
+- autocode: subtask-1-1 - Change task.specId to taskId in 3 startSpecCreation calls (#1461) by @Andy in 91edc0e14
 - fix(onboarding): align MemoryStep layout with Settings MemoryBackendSection (#1445) by @Michael Ludlow in e9de26d59
-- auto-claude: subtask-1-1 - Add metadata?.requireReviewBeforeCoding check (#1460) by @Andy in 426d56571
+- autocode: subtask-1-1 - Add metadata?.requireReviewBeforeCoding check (#1460) by @Andy in 426d56571
 - fix: use API profile environment variables for task title generation (#1471) by @JoshuaRileyDev in c5a0f042d
 - fix(auth): Long-lived OAuth authentication with multi-profile usage display (#1443) by @Andy in 12e788417
 - feat: Add screenshot capture to task creation modal (#1429) by @JoshuaRileyDev in 1a2a1b1fc
@@ -528,13 +528,13 @@
 - Fix GitHub Issues/PRs Infinite Scroll Auto-Fetch (#1239) by @Andy in b74b628b
 - Add bulk delete functionality to worktree overview (#1208) by @Andy in 8833feb2
 - Fix GitHub PR State Management - Follow-up Review Trigger Bug (#1238) by @Andy in 76f07720
-- auto-claude: subtask-1-1 - Add useEffect hook to reset expandedTerminalId when projectPath changes (#1240) by @Andy in d1131080
+- autocode: subtask-1-1 - Add useEffect hook to reset expandedTerminalId when projectPath changes (#1240) by @Andy in d1131080
 - Fix Terminal Output Freezing on Project Switch (#1241) by @Andy in 193d2ed9
 - Add Update Branch Button to PR Detail View (#1242) by @Andy in 87c84073
 - Bulk Select All & Create PR for Human Review Column (#1248) by @Andy in 715202b8
 - fix(windows): resolve pywin32 DLL loading failure on Python 3.8+ (#1244) by @VDT-91 in cb786cac
 - fix(gh-cli): use get_gh_executable() and pass GITHUB_CLI_PATH from GUI (ACS-321) (#1232) by @StillKnotKnown in 14fbc2eb
-- auto-claude: subtask-1-1 - Replace Select with Combobox for branch selection (#1250) by @Andy in ed45ece5
+- autocode: subtask-1-1 - Replace Select with Combobox for branch selection (#1250) by @Andy in ed45ece5
 - fix(sentry): add exception handling for malformed DSN during Sentry initialization by @AndyMik90 in 4f86742b
 - dev dependecnies using npm install all by @AndyMik90 in e52a1ba4
 - hotfix/dev-dependency-missing by @AndyMik90 in a0033b1e
@@ -1049,7 +1049,7 @@
 
 - Stop running process when task status changes away from in_progress
 
-- Remove legacy path from auto-claude source detection
+- Remove legacy path from autocode source detection
 
 - Resolve Python environment race condition
 
@@ -1285,7 +1285,7 @@
 - feat: Add UI scale feature with 75-200% range (#125) by @Enes Cingöz in 6951251b
 - fix(task): stop running process when task status changes away from in_progress by @AndyMik90 in 30e7536b
 - Fix/linear 400 error by @Andy in 220faf0f
-- fix: remove legacy path from auto-claude source detection (#148) by @Joris Slagter in f96c6301
+- fix: remove legacy path from autocode source detection (#148) by @Joris Slagter in f96c6301
 - fix: resolve Python environment race condition (#142) by @Joris Slagter in ebd8340d
 - Feat: Ollama download progress tracking with new apps structure (#141) by @rayBlock in df779530
 - Feature/apps restructure v2.7.2 (#138) by @Andy in 0adaddac
@@ -1439,7 +1439,7 @@
 
 - Stopped running process when task status changes away from in_progress
 
-- Removed legacy path from auto-claude source detection
+- Removed legacy path from autocode source detection
 
 - Resolved Python environment race condition
 
@@ -1565,7 +1565,7 @@
 - feat: Add UI scale feature with 75-200% range (#125) by @Enes Cingöz in 6951251b
 - fix(task): stop running process when task status changes away from in_progress by @AndyMik90 in 30e7536b
 - Fix/linear 400 error by @Andy in 220faf0f
-- fix: remove legacy path from auto-claude source detection (#148) by @Joris Slagter in f96c6301
+- fix: remove legacy path from autocode source detection (#148) by @Joris Slagter in f96c6301
 - fix: resolve Python environment race condition (#142) by @Joris Slagter in ebd8340d
 - Feat: Ollama download progress tracking with new apps structure (#141) by @rayBlock in df779530
 - Feature/apps restructure v2.7.2 (#138) by @Andy in 0adaddac
@@ -1661,7 +1661,7 @@
 
 - Preview panel now receives projectPath prop correctly for image component functionality
 
-- Default database path unified to ~/.auto-claude/memories for consistency
+- Default database path unified to ~/.autocode/memories for consistency
 
 - @lydell/node-pty build scripts compatibility improved for pnpm v10
 
@@ -1699,7 +1699,7 @@
 
 - fix(merge): use stored baseBranch from task metadata for merge operations by @AndyMik90 in 8d56474
 
-- fix: unify default database path to ~/.auto-claude/memories by @AndyMik90 in 684e3f9
+- fix: unify default database path to ~/.autocode/memories by @AndyMik90 in 684e3f9
 
 - fix(ui): fix tab persistence and scope terminal shortcuts by @AndyMik90 in 2d1168b
 
@@ -1777,7 +1777,7 @@
 
 - fix(ui): improve Ollama UX in memory settings by @AndyMik90 in dea1711
 
-- auto-claude: subtask-1-1 - Add projectPath prop to PreviewPanel and implement custom img component by @AndyMik90 in e6529e0
+- autocode: subtask-1-1 - Add projectPath prop to PreviewPanel and implement custom img component by @AndyMik90 in e6529e0
 
 - Project tab persistence and github org init on project creation by @AndyMik90 in ae1dac9
 
@@ -1952,7 +1952,7 @@
 
 ### ✨ New Features
 
-- Required GitHub setup flow after Auto Claude initialization to ensure proper configuration
+- Required GitHub setup flow after Autocode initialization to ensure proper configuration
 - Atomic log saving mechanism to prevent log file corruption during concurrent operations
 - Per-session model and thinking level selection in insights management
 - Multi-auth token support and ANTHROPIC_BASE_URL passthrough for flexible authentication
@@ -1985,8 +1985,8 @@
 ### 🔧 Other Changes
 
 - Code cleanup and test fixture updates
-- Removed redundant auto-claude/specs directory structure
-- Untracked .auto-claude directory to respect gitignore rules
+- Removed redundant autocode/specs directory structure
+- Untracked .autocode directory to respect gitignore rules
 
 ---
 
@@ -2001,9 +2001,9 @@
 - feat: enhance stage-only merge handling with verification checks by @AndyMik90 in 7153558
 - feat: introduce phase configuration module and enhance agent profiles by @AndyMik90 in 2672528
 - fix: preserve roadmap generation state when switching projects by @AndyMik90 in 569e921
-- feat: add required GitHub setup flow after Auto Claude initialization by @AndyMik90 in 03ccce5
-- chore: remove redundant auto-claude/specs directory by @AndyMik90 in 64d5170
-- chore: untrack .auto-claude directory (should be gitignored) by @AndyMik90 in 0710c13
+- feat: add required GitHub setup flow after Autocode initialization by @AndyMik90 in 03ccce5
+- chore: remove redundant autocode/specs directory by @AndyMik90 in 64d5170
+- chore: untrack .autocode directory (should be gitignored) by @AndyMik90 in 0710c13
 - fix: prevent dialog skip during project initialization by @AndyMik90 in 56cedec
 - feat: enhance merge workflow by detecting current branch by @AndyMik90 in c0c8067
 - fix: update model IDs for Sonnet and Haiku by @AndyMik90 in 059315d
@@ -2104,15 +2104,15 @@
 
 - Update TaskReview component to refine conditional rendering for staged tasks, ensuring proper display when staging is unsuccessful by @AndyMik90 in 1a2b7a1
 
-- auto-claude: subtask-2-3 - Refine visual drop zone feedback to be more subtle by @AndyMik90 in 6cff442
+- autocode: subtask-2-3 - Refine visual drop zone feedback to be more subtle by @AndyMik90 in 6cff442
 
-- auto-claude: subtask-2-1 - Remove showFiles auto-expand on draft restore by @AndyMik90 in 12bf69d
+- autocode: subtask-2-1 - Remove showFiles auto-expand on draft restore by @AndyMik90 in 12bf69d
 
-- auto-claude: subtask-1-3 - Create an always-visible referenced files section by @AndyMik90 in 3818b46
+- autocode: subtask-1-3 - Create an always-visible referenced files section by @AndyMik90 in 3818b46
 
-- auto-claude: subtask-1-2 - Add drop zone wrapper around main modal content area by @AndyMik90 in 219b66d
+- autocode: subtask-1-2 - Add drop zone wrapper around main modal content area by @AndyMik90 in 219b66d
 
-- auto-claude: subtask-1-1 - Remove Reference Files toggle button by @AndyMik90 in 4e63e85
+- autocode: subtask-1-1 - Remove Reference Files toggle button by @AndyMik90 in 4e63e85
 
 ## 2.4.0 - Enhanced Cross-Platform Experience with OAuth & Auto-Updates
 
@@ -2207,7 +2207,7 @@ Bug Fixes:
 
 - fix: fix to spec runner paths by @AndyMik90 in 9babdc2
 
-- feat: auto-claude: subtask-1-1 - Restructure SortableFeatureCard badge layout by @AndyMik90 in dc886dc
+- feat: autocode: subtask-1-1 - Restructure SortableFeatureCard badge layout by @AndyMik90 in dc886dc
 
 ## 2.3.1 - Linux Compatibility Fix
 
@@ -2343,7 +2343,7 @@ Bug Fixes:
 
 - Enhanced onboarding wizard completion logic and step progression
 
-- Updated README to clarify Auto Claude's role as an AI coding companion
+- Updated README to clarify Autocode's role as an AI coding companion
 
 ### 🐛 Bug Fixes
 
@@ -2355,7 +2355,7 @@ Bug Fixes:
 
 ### 🔧 Other Changes
 
-- Removed .auto-claude and _bmad-output from git tracking (already in .gitignore)
+- Removed .autocode and _bmad-output from git tracking (already in .gitignore)
 
 - Updated Python versions in CI workflows
 
@@ -2398,7 +2398,7 @@ Bug Fixes:
 - improve: Getting ready for BMAD integration by @AndyMik90 in b94eb65
 - improve: Enhance AI resolver and debugging output by @AndyMik90 in bf787ad
 - improve: Integrate profile environment for OAuth token in task handlers by @AndyMik90 in 01e801a
-- chore: Remove .auto-claude from tracking (already in .gitignore) by @AndyMik90 in 87f353c
+- chore: Remove .autocode from tracking (already in .gitignore) by @AndyMik90 in 87f353c
 - chore: Update Python versions in CI workflows by @AndyMik90 in 43a338c
 - chore: Linting gods pleased now? by @AndyMik90 in 6aea4bb
 - chore: Linting and test fixes by @AndyMik90 in 140f11f
@@ -2416,7 +2416,7 @@ Bug Fixes:
 - chore: merge orcehstrator logic by @AndyMik90 in e8b6669
 - chore: Electron UI fix for merge orcehstrator by @AndyMik90 in e08ab62
 - chore: Frontend lints by @AndyMik90 in 488bbfa
-- docs: Revise README.md to enhance clarity and focus on Auto Claude's capabilities by @AndyMik90 in f9ef7ea
+- docs: Revise README.md to enhance clarity and focus on Autocode's capabilities by @AndyMik90 in f9ef7ea
 - qa: Sign off - all verification passed by @AndyMik90 in b3f4803
 - qa: Rejected - fixes required by @AndyMik90 in 5e56890
 - qa: subtask-6-2 - Run existing tests to verify no regressions by @AndyMik90 in 5f989a4
@@ -2483,7 +2483,7 @@ Bug Fixes:
 - Updated project-store.ts to use proper Dirent type for specDirs variable
 - Refactored codebase for better code quality
 - Removed worktree-worker logic in favor of Claude Code's internal agent system
-- Removed obsolete security configuration file (.auto-claude-security.json)
+- Removed obsolete security configuration file (.autocode-security.json)
 
 ### Documentation
 - Added CONTRIBUTING.md with development guidelines

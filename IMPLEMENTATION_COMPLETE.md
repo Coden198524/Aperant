@@ -156,7 +156,7 @@ bash SETUP_TEST_PROJECT.sh
 
 ### 2. 创建测试任务
 
-在 Auto Claude 中创建任务：
+在 Autocode 中创建任务：
 - **标题**: "Build a Simple CLI Calculator"
 - **描述**: 参考 `PARALLEL_EXECUTION_TEST_SPEC.md`
 - **位置**: `~/test-calculator-project`
@@ -368,4 +368,4 @@ npm run dev add 5 3  # Result: 8
 
 **版本**: 1.0.0
 
-**贡献者**: Auto Claude Team
+**贡献者**: Autocode Team

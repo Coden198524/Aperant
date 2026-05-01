@@ -12,10 +12,10 @@ import { describe, expect, it } from 'vitest';
 import { GIT_BRANCH_REGEX, validateWorktreeBranch } from '../worktree-handlers';
 
 describe('GIT_BRANCH_REGEX', () => {
-  it('should accept valid auto-claude branch names', () => {
-    expect(GIT_BRANCH_REGEX.test('auto-claude/my-feature')).toBe(true);
-    expect(GIT_BRANCH_REGEX.test('auto-claude/123-fix-bug')).toBe(true);
-    expect(GIT_BRANCH_REGEX.test('auto-claude/feature_with_underscore')).toBe(true);
+  it('should accept valid autocode branch names', () => {
+    expect(GIT_BRANCH_REGEX.test('autocode/my-feature')).toBe(true);
+    expect(GIT_BRANCH_REGEX.test('autocode/123-fix-bug')).toBe(true);
+    expect(GIT_BRANCH_REGEX.test('autocode/feature_with_underscore')).toBe(true);
   });
 
   it('should accept valid feature branch names', () => {
@@ -46,28 +46,28 @@ describe('GIT_BRANCH_REGEX', () => {
 });
 
 describe('validateWorktreeBranch', () => {
-  const expectedBranch = 'auto-claude/my-feature-123';
+  const expectedBranch = 'autocode/my-feature-123';
 
   describe('exact match scenarios', () => {
     it('should use detected branch when it matches expected exactly', () => {
-      const result = validateWorktreeBranch('auto-claude/my-feature-123', expectedBranch);
-      expect(result.branchToDelete).toBe('auto-claude/my-feature-123');
+      const result = validateWorktreeBranch('autocode/my-feature-123', expectedBranch);
+      expect(result.branchToDelete).toBe('autocode/my-feature-123');
       expect(result.usedFallback).toBe(false);
       expect(result.reason).toBe('exact_match');
     });
   });
 
   describe('pattern match scenarios', () => {
-    it('should allow other auto-claude branches (specId renamed)', () => {
-      const result = validateWorktreeBranch('auto-claude/renamed-feature', expectedBranch);
-      expect(result.branchToDelete).toBe('auto-claude/renamed-feature');
+    it('should allow other autocode branches (specId renamed)', () => {
+      const result = validateWorktreeBranch('autocode/renamed-feature', expectedBranch);
+      expect(result.branchToDelete).toBe('autocode/renamed-feature');
       expect(result.usedFallback).toBe(false);
       expect(result.reason).toBe('pattern_match');
     });
 
-    it('should allow auto-claude branches with different formats', () => {
-      const result = validateWorktreeBranch('auto-claude/001-task', expectedBranch);
-      expect(result.branchToDelete).toBe('auto-claude/001-task');
+    it('should allow autocode branches with different formats', () => {
+      const result = validateWorktreeBranch('autocode/001-task', expectedBranch);
+      expect(result.branchToDelete).toBe('autocode/001-task');
       expect(result.usedFallback).toBe(false);
       expect(result.reason).toBe('pattern_match');
     });
@@ -142,17 +142,17 @@ describe('validateWorktreeBranch', () => {
       expect(result.reason).toBe('invalid_pattern');
     });
 
-    it('should handle branch that starts with auto-claude but is malformed', () => {
-      // "auto-claude" without a slash should still be rejected
-      const result = validateWorktreeBranch('auto-claude', expectedBranch);
+    it('should handle branch that starts with autocode but is malformed', () => {
+      // "autocode" without a slash should still be rejected
+      const result = validateWorktreeBranch('autocode', expectedBranch);
       expect(result.branchToDelete).toBe(expectedBranch);
       expect(result.usedFallback).toBe(true);
       expect(result.reason).toBe('invalid_pattern');
     });
 
-    it('should reject auto-claude/ with no suffix (invalid branch name)', () => {
-      // "auto-claude/" alone is not a valid branch name - needs actual specId
-      const result = validateWorktreeBranch('auto-claude/', expectedBranch);
+    it('should reject autocode/ with no suffix (invalid branch name)', () => {
+      // "autocode/" alone is not a valid branch name - needs actual specId
+      const result = validateWorktreeBranch('autocode/', expectedBranch);
       expect(result.branchToDelete).toBe(expectedBranch);
       expect(result.usedFallback).toBe(true);
       expect(result.reason).toBe('invalid_pattern');

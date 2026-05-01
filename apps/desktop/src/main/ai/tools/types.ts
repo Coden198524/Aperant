@@ -26,7 +26,7 @@ export interface ToolContext {
   projectDir: string;
   /** Additional filesystem roots the tool may access alongside projectDir */
   allowedPathRoots?: string[];
-  /** Spec directory for the current task (e.g., .auto-claude/specs/001-feature/) */
+  /** Spec directory for the current task (e.g., .autocode/specs/001-feature/) */
   specDir: string;
   /** Security profile governing command allowlists */
   securityProfile: SecurityProfile;

@@ -86,7 +86,7 @@ describe('registerTaskCRUDHandlers', () => {
   const project = {
     id: 'project-1',
     path: 'E:/Work/TestProject',
-    autoBuildPath: '.auto-claude',
+    autoBuildPath: '.autocode',
   } as Project;
 
   const task = {
@@ -127,13 +127,13 @@ describe('registerTaskCRUDHandlers', () => {
     const { updatePlanFile } = await import('../plan-file-utils');
     const { projectStore } = await import('../../../project-store');
 
-    const mainSpecPath = path.join(project.path, '.auto-claude', 'specs', task.specId);
+    const mainSpecPath = path.join(project.path, '.autocode', 'specs', task.specId);
     const worktreeSpecPath = path.join(
       project.path,
       '..',
       'worktrees',
       task.specId,
-      '.auto-claude',
+      '.autocode',
       'specs',
       task.specId
     );
@@ -191,7 +191,7 @@ describe('registerTaskCRUDHandlers', () => {
     expect(findTaskAndProject).toHaveBeenCalledWith(task.id, project.id);
     expect(findAllSpecPaths).toHaveBeenCalledWith(
       project.path,
-      '.auto-claude/specs',
+      '.autocode/specs',
       task.specId,
       '[TASK_DELETE_SUBTASK]'
     );

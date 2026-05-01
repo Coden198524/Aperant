@@ -18,7 +18,7 @@ Migrated task status management from scattered decision logic across multiple ha
 This PR includes changes that depend on the Windows authentication fix. We could not complete end-to-end testing without this fix in place. If a different solution is implemented for #1525, we can remove these changes and resubmit.
 
 ### 2. spec_runner.py Project Detection Fix
-**Issue:** #1570 - spec_runner.py incorrectly detects auto-claude project as source directory
+**Issue:** #1570 - spec_runner.py incorrectly detects autocode project as source directory
 
 We encountered and fixed this bug during development as it was blocking our test workflow. The fix is included in this PR.
 

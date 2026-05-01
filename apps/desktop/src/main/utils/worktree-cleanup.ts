@@ -12,7 +12,7 @@
  * 2. Prunes git's internal worktree references
  * 3. Optionally deletes the associated branch
  *
- * Related issue: https://github.com/AndyMik90/Auto-Claude/issues/1539
+ * Related issue: https://github.com/AndyMik90/Autocode/issues/1539
  */
 
 import { execFileSync } from 'child_process';
@@ -85,8 +85,8 @@ function getWorktreeBranch(worktreePath: string, specId: string, timeout: number
     return explicitBranchName;
   }
 
-  // Fall back to the naming convention: auto-claude/{spec-id}
-  return `auto-claude/${specId}`;
+  // Fall back to the naming convention: autocode/{spec-id}
+  return `autocode/${specId}`;
 }
 
 /**
@@ -163,7 +163,7 @@ async function deleteDirectoryWithRetry(
  * @example
  * ```typescript
  * const result = await cleanupWorktree({
- *   worktreePath: 'C:/projects/my-app/.auto-claude/worktrees/tasks/001-feature',
+ *   worktreePath: 'C:/projects/my-app/.autocode/worktrees/tasks/001-feature',
  *   projectPath: 'C:/projects/my-app',
  *   specId: '001-feature',
  *   logPrefix: '[TASK_DELETE]'
@@ -191,7 +191,7 @@ export async function cleanupWorktree(options: WorktreeCleanupOptions): Promise<
 
   // Security: Validate that worktreePath is within the expected worktree directories
   // This prevents path traversal attacks and accidental deletion of wrong directories
-  // Supports both task worktrees (.auto-claude/worktrees/tasks) and terminal worktrees (.auto-claude/worktrees/terminal)
+  // Supports both task worktrees (.autocode/worktrees/tasks) and terminal worktrees (.autocode/worktrees/terminal)
   const taskBase = getTaskWorktreeDir(projectPath);
   const terminalBase = getTerminalWorktreeDir(projectPath);
   const isValidPath = isPathWithinBase(worktreePath, taskBase) || isPathWithinBase(worktreePath, terminalBase);

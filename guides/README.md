@@ -1,6 +1,6 @@
-# Auto Claude Guides
+# Autocode Guides
 
-Detailed documentation for Auto Claude setup and usage.
+Detailed documentation for Autocode setup and usage.
 
 ## Available Guides
 

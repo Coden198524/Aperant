@@ -2,7 +2,7 @@
 
 ## 🎯 Project Goal
 
-将 [code-review-graph](https://github.com/Coden198524/code-review-graph) 的功能移植到 Auto Claude，优化 token 使用，支持所有大模型（不仅限于 Claude）。
+将 [code-review-graph](https://github.com/Coden198524/code-review-graph) 的功能移植到 Autocode，优化 token 使用，支持所有大模型（不仅限于 Claude）。
 
 ## ✅ 已完成
 
