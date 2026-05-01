@@ -19,6 +19,7 @@
 
 import { streamText, stepCountIs, Output } from 'ai';
 import type { Tool as AITool } from 'ai';
+import type { LanguageModelV3ToolCall } from '@ai-sdk/provider';
 import type { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
 import { StepMemoryState } from '../memory/injection/step-memory-state';
 import { buildMemoryAwareStopCondition } from '../memory/injection/memory-stop-condition';
@@ -78,6 +79,15 @@ const POST_STREAM_TIMEOUT_MS = 10_000;
  *  (observed with OpenAI Codex via chatgpt.com/backend-api/codex/responses). */
 const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes - increased for complex planning tasks
 
+const WRITE_TOOL_INPUT_ERROR_PATTERNS = [
+  'json parsing failed',
+  'received invalid input type',
+  'expected object',
+  'invalid input for tool write',
+  'missing required parameter',
+  'parameter \'content\' must be a string',
+] as const;
+
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
   return (
@@ -115,6 +125,97 @@ function isOpenAIResponsesTransport(
 
   // Fallback for tests or provider implementations that only expose model IDs.
   return isResponsesApiModel(modelId);
+}
+
+function getErrorText(error: unknown): string {
+  if (error instanceof Error) return error.message;
+  if (typeof error === 'string') return error;
+  if (error && typeof error === 'object') {
+    try {
+      return JSON.stringify(error);
+    } catch {
+      return String(error);
+    }
+  }
+  return String(error);
+}
+
+function isWriteToolInputErrorMessage(message: string): boolean {
+  const lower = message.toLowerCase();
+  return WRITE_TOOL_INPUT_ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
+}
+
+function getFatalWriteToolInputError(part: FullStreamPart): Error | null {
+  const toolName = typeof (part as { toolName?: unknown }).toolName === 'string'
+    ? (part as { toolName: string }).toolName
+    : undefined;
+
+  if (part.type === 'tool-call' && toolName === 'Write') {
+    const input = (part as { input?: unknown }).input;
+    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
+      return new Error(`Tool 'Write' input JSON failed: received invalid input type ${typeof input}; expected object with file_path and content.`);
+    }
+
+    const params = input as Record<string, unknown>;
+    if (typeof params.file_path !== 'string' || typeof params.content !== 'string') {
+      return new Error(`Tool 'Write' input JSON failed: expected object with string file_path and string content.`);
+    }
+  }
+
+  if (part.type !== 'tool-error' || toolName !== 'Write') {
+    return null;
+  }
+
+  const message = getErrorText((part as { error?: unknown }).error);
+  if (!isWriteToolInputErrorMessage(message)) {
+    return null;
+  }
+
+  return new Error(`Tool 'Write' input JSON failed: ${message}`);
+}
+
+function tryParseJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return undefined;
+  }
+}
+
+function repairWriteToolInput(rawInput: string): string | null {
+  const parsed = tryParseJson(rawInput);
+  const candidate = typeof parsed === 'string' ? tryParseJson(parsed) : parsed;
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
+    return null;
+  }
+
+  const input = candidate as Record<string, unknown>;
+  if (typeof input.file_path !== 'string' || typeof input.content !== 'string') {
+    return null;
+  }
+
+  return JSON.stringify({
+    file_path: input.file_path.replace(/\\/g, '/'),
+    content: input.content,
+  });
+}
+
+async function repairMalformedToolCall(options: {
+  toolCall: LanguageModelV3ToolCall;
+}): Promise<LanguageModelV3ToolCall | null> {
+  if (options.toolCall.toolName !== 'Write') {
+    return null;
+  }
+
+  const repairedInput = repairWriteToolInput(options.toolCall.input);
+  if (!repairedInput) {
+    return null;
+  }
+
+  return {
+    ...options.toolCall,
+    input: repairedInput,
+  };
 }
 
 // =============================================================================
@@ -502,6 +603,7 @@ async function executeStream(
     ...(promptCachingMetadata ? {
       experimental_providerMetadata: promptCachingMetadata,
     } : {}),
+    experimental_repairToolCall: repairMalformedToolCall,
     prepareStep: async ({ stepNumber }) => {
       // Hard abort: if we're at 95%+ of context window, stop the session
       // so the continuation wrapper can checkpoint and resume.
@@ -622,6 +724,11 @@ async function executeStream(
     for await (const part of result.fullStream) {
       resetStreamInactivityTimer(); // Reset on each part
       streamHandler.processPart(part as FullStreamPart);
+
+      const writeToolInputError = getFatalWriteToolInputError(part as FullStreamPart);
+      if (writeToolInputError) {
+        throw writeToolInputError;
+      }
 
       // Some providers surface request failures as `error` parts instead of
       // throwing from the async iterator. Treat these as fatal for the current

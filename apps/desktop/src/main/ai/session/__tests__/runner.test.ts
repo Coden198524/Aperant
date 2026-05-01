@@ -222,6 +222,28 @@ describe('runAgentSession', () => {
     expect(result.error!.code).toBe('model_not_found');
   });
 
+  it('should fail fast on malformed Write tool input instead of looping', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [
+          {
+            type: 'tool-error',
+            toolName: 'Write',
+            toolCallId: 'c1',
+            input: '{"file_path": "e:/work/project/.autocode/specs/001/spec.md"',
+            error: 'invalid input for tool write: json parsing failed',
+          },
+        ],
+        { text: '', totalUsage: { inputTokens: 20, outputTokens: 10 } },
+      ),
+    );
+
+    const result = await runAgentSession(createMockConfig());
+
+    expect(result.outcome).toBe('error');
+    expect(result.error!.message).toContain('tool \'write\' input json failed');
+  });
+
   // ===========================================================================
   // Auth retry
   // ===========================================================================
@@ -315,6 +337,33 @@ describe('runAgentSession', () => {
     const callArgs = mockStreamText.mock.calls[0][0];
     expect(callArgs.system).toBe('Be helpful');
     expect(callArgs.tools).toBe(tools);
+  });
+
+  it('should repair double-encoded Write tool JSON when content is present', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig());
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    const repair = callArgs.experimental_repairToolCall;
+    const repaired = await repair({
+      toolCall: {
+        type: 'tool-call',
+        toolCallId: 'c1',
+        toolName: 'Write',
+        input: JSON.stringify(JSON.stringify({
+          file_path: 'E:\\Work\\Project\\.autocode\\specs\\001\\spec.md',
+          content: '# Spec\n',
+        })),
+      },
+    });
+
+    expect(JSON.parse(repaired.input)).toEqual({
+      file_path: 'E:/Work/Project/.autocode/specs/001/spec.md',
+      content: '# Spec\n',
+    });
   });
 
   it('should use default maxSteps of 160 when not specified', async () => {
