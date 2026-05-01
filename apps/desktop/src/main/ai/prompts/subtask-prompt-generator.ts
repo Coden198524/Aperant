@@ -10,7 +10,7 @@
  * and keeps the agent focused on ONE task.
  */
 
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 
@@ -544,9 +544,7 @@ function collectFiles(
     if (results.length >= maxCount || depth > 8) return;
 
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const fs = require('node:fs') as typeof import('node:fs');
-      const entries = fs.readdirSync(currentDir, { withFileTypes: true });
+      const entries = readdirSync(currentDir, { withFileTypes: true });
 
       for (const entry of entries) {
         if (results.length >= maxCount) break;

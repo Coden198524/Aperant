@@ -13,6 +13,7 @@
  */
 
 import { existsSync, readFileSync } from 'fs';
+import { createRequire } from 'module';
 import { homedir } from 'os';
 import path from 'path';
 import { isWindows, isMacOS } from '../platform';
@@ -21,6 +22,7 @@ import { mergeClaudeCodeSettings } from './merger';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 
 const LOG_PREFIX = '[ClaudeCodeSettings]';
+const requireFromModule = createRequire(import.meta.url);
 
 /**
  * Check if a value is a plain object (not null, not array, not other special object types)
@@ -201,7 +203,7 @@ function getUserConfigDir(): string {
   // the case where ClaudeProfileManager hasn't been initialized yet.
   try {
     // Dynamic require to avoid circular dependency at module load time
-    const { getClaudeProfileManager } = require('../claude-profile-manager');
+    const { getClaudeProfileManager } = requireFromModule('../claude-profile-manager') as typeof import('../claude-profile-manager');
     const manager = getClaudeProfileManager();
     if (manager.isInitialized()) {
       const activeProfile = manager.getActiveProfile();

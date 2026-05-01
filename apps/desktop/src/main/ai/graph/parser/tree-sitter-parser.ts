@@ -17,6 +17,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { CodeGraphNode, CodeGraphEdge, GraphNodeType, GraphEdgeType } from '../types';
 import {
 	getLanguageConfig,
@@ -453,9 +454,7 @@ function findChildByType(node: any, types: string[]): any | null {
  * Generate a unique node ID.
  */
 function generateNodeId(projectId: string, filePath: string, label: string, type: string): string {
-	const crypto = require('node:crypto');
-	return crypto
-		.createHash('sha256')
+	return createHash('sha256')
 		.update(`${projectId}:${filePath}:${label}:${type}`)
 		.digest('hex')
 		.slice(0, 16);
@@ -471,9 +470,7 @@ function createEdge(
 	type: GraphEdgeType,
 	metadata: Record<string, unknown> = {},
 ): CodeGraphEdge {
-	const crypto = require('node:crypto');
-	const id = crypto
-		.createHash('sha256')
+	const id = createHash('sha256')
 		.update(`${projectId}:${fromId}:${toId}:${type}`)
 		.digest('hex')
 		.slice(0, 16);

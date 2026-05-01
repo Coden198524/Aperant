@@ -2381,8 +2381,6 @@ export function registerWorktreeHandlers(
                 planPaths.push({ path: path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), isMain: false });
               }
 
-              const { promises: fsPromises } = require('fs');
-
               // Update plan file with retry logic for transient failures
               // Uses EAFP pattern (try/catch) instead of LBYL (existsSync check) to avoid TOCTOU race conditions
               const updatePlanWithRetry = async (planPath: string, isMain: boolean): Promise<boolean> => {
@@ -3026,7 +3024,6 @@ export function registerWorktreeHandlers(
         const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
 
         // Use EAFP pattern (try/catch) instead of LBYL (existsSync check) to avoid TOCTOU race conditions
-        const { promises: fsPromises } = require('fs');
         const isFileNotFound = (err: unknown): boolean =>
           !!(err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT');
 

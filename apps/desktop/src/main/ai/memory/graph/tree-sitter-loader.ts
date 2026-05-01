@@ -6,6 +6,7 @@
  */
 
 import { Parser, Language } from 'web-tree-sitter';
+import { createRequire } from 'module';
 import { join } from 'path';
 
 const GRAMMAR_FILES: Record<string, string> = {
@@ -17,6 +18,8 @@ const GRAMMAR_FILES: Record<string, string> = {
   java: 'tree-sitter-java.wasm',
   javascript: 'tree-sitter-javascript.wasm',
 };
+
+const requireFromModule = createRequire(import.meta.url);
 
 export class TreeSitterLoader {
   private static instance: TreeSitterLoader | null = null;
@@ -33,8 +36,7 @@ export class TreeSitterLoader {
   private getWasmDir(): string {
     // Lazy import to avoid issues in test environments
     try {
-      // eslint-disable-next-line @typescript-eslint/no-require-imports
-      const { app } = require('electron') as typeof import('electron');
+      const { app } = requireFromModule('electron') as typeof import('electron');
       if (app.isPackaged) {
         return join(process.resourcesPath, 'grammars');
       }

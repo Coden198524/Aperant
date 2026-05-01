@@ -16,6 +16,7 @@
  */
 
 import { isMainThread } from 'worker_threads';
+import { createRequire } from 'module';
 import type { ErrorEvent } from '@sentry/electron/main';
 
 // Conditionally import Sentry and Electron only in main thread
@@ -24,12 +25,13 @@ let Sentry: typeof import('@sentry/electron/main') | undefined;
 let app: Electron.App | undefined;
 let ipcMain: Electron.IpcMain | undefined;
 
+const requireFromModule = createRequire(import.meta.url);
 const isTestEnvironment = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
 
 if (isMainThread && !isTestEnvironment) {
   // Dynamic imports to avoid executing Electron code in worker threads
-  Sentry = require('@sentry/electron/main');
-  const electronModule = require('electron');
+  Sentry = requireFromModule('@sentry/electron/main') as typeof import('@sentry/electron/main');
+  const electronModule = requireFromModule('electron') as typeof import('electron');
   app = electronModule.app;
   ipcMain = electronModule.ipcMain;
 }

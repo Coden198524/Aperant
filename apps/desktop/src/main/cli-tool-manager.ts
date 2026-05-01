@@ -22,6 +22,7 @@
 
 import { execFileSync, execFile, type ExecFileOptionsWithStringEncoding, type ExecFileSyncOptions } from 'child_process';
 import { existsSync, readdirSync, promises as fsPromises } from 'fs';
+import { createRequire } from 'module';
 import path from 'path';
 import os from 'os';
 import { promisify } from 'util';
@@ -32,9 +33,11 @@ import type { ToolDetectionResult } from '../shared/types';
 import { findHomebrewPython as findHomebrewPythonUtil } from './utils/homebrew-python';
 
 // Conditionally import electron only in main thread
+const requireFromModule = createRequire(import.meta.url);
 let app: Electron.App | undefined;
 if (isMainThread) {
-  app = require('electron').app;
+  const { app: electronApp } = requireFromModule('electron') as typeof import('electron');
+  app = electronApp;
 }
 
 const execFileAsync = promisify(execFile);

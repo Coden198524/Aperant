@@ -12,13 +12,16 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { promises as fsPromises } from 'fs';
+import { createRequire } from 'module';
 import path from 'path';
 import { isMainThread } from 'worker_threads';
 
 // Conditionally import electron only in main thread
+const requireFromModule = createRequire(import.meta.url);
 let app: Electron.App | undefined;
 if (isMainThread) {
-  app = require('electron').app;
+  const { app: electronApp } = requireFromModule('electron') as typeof import('electron');
+  app = electronApp;
 }
 
 /**

@@ -860,7 +860,7 @@ export class ClaudeProfileManager {
     // Expand ~ to home directory for the environment variable
     const expandedConfigDir = normalizeWindowsPath(
       profile.configDir.startsWith('~')
-        ? profile.configDir.replace(/^~/, require('os').homedir())
+        ? profile.configDir.replace(/^~/, homedir())
         : profile.configDir
     );
 
