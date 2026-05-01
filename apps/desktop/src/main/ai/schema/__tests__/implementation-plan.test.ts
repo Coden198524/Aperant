@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from 'vitest';
 import { ImplementationPlanSchema, PlanSubtaskSchema, PlanPhaseSchema } from '../implementation-plan';
+import { compactImplementationPlan } from '../plan-compaction';
 
 describe('PlanSubtaskSchema', () => {
   it('validates a canonical subtask with title and description', () => {
@@ -176,6 +177,66 @@ describe('PlanSubtaskSchema', () => {
     if (result.success) {
       expect((result.data as Record<string, unknown>).deliverable).toBe('A working feature');
     }
+  });
+});
+
+describe('compactImplementationPlan', () => {
+  it('strips bulky optional sections and caps plan size', () => {
+    const longDescription = 'Update the module. '.repeat(100);
+    const rawPlan = {
+      feature: 'A very large planning request '.repeat(20),
+      workflow_type: 'feature',
+      summary: { analysis: 'large summary'.repeat(500) },
+      verification_strategy: { reasoning: 'large strategy'.repeat(500) },
+      qa_acceptance: { checks: ['large qa'.repeat(500)] },
+      phases: Array.from({ length: 6 }, (_, phaseIndex) => ({
+        id: `phase-${phaseIndex + 1}`,
+        name: `Phase ${phaseIndex + 1} ${'details '.repeat(40)}`,
+        acceptance_criteria: ['extra'.repeat(500)],
+        subtasks: Array.from({ length: 10 }, (_, subtaskIndex) => ({
+          id: `${phaseIndex + 1}-${subtaskIndex + 1}`,
+          title: `Implement part ${phaseIndex + 1}-${subtaskIndex + 1} ${'details '.repeat(40)}`,
+          description: longDescription,
+          status: 'pending',
+          files_to_modify: Array.from({ length: 20 }, (_, fileIndex) => `src/very/long/path/${phaseIndex}/${subtaskIndex}/${fileIndex}/file.ts`),
+          verification: {
+            type: 'command',
+            command: `npm test -- ${'very-long-filter '.repeat(80)}`,
+          },
+          notes: 'large notes'.repeat(500),
+        })),
+      })),
+    };
+
+    const result = compactImplementationPlan(rawPlan);
+
+    expect(result).not.toBeNull();
+    if (!result) {
+      throw new Error('Expected plan compaction to succeed');
+    }
+    expect(result.originalSubtaskCount).toBe(60);
+    expect(result.compactedSubtaskCount).toBeLessThanOrEqual(24);
+    expect(result.plan.summary).toBeUndefined();
+    expect(result.plan.verification_strategy).toBeUndefined();
+    expect(result.plan.qa_acceptance).toBeUndefined();
+
+    const compacted = result.plan as {
+      phases: Array<{
+        subtasks: Array<{
+          title: string;
+          description: string;
+          files_to_modify: string[];
+          verification?: { run?: string };
+        }>;
+      }>;
+    };
+    expect(compacted.phases).toHaveLength(3);
+    expect(compacted.phases[0].subtasks).toHaveLength(8);
+    expect(compacted.phases[0].subtasks[0].title.length).toBeLessThanOrEqual(120);
+    expect(compacted.phases[0].subtasks[0].description.length).toBeLessThanOrEqual(700);
+    expect(compacted.phases[0].subtasks[0].files_to_modify.length).toBeLessThanOrEqual(12);
+    expect(compacted.phases[0].subtasks[0].verification?.run?.length).toBeLessThanOrEqual(300);
+    expect(ImplementationPlanSchema.safeParse(result.plan).success).toBe(true);
   });
 });
 

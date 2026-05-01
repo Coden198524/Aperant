@@ -31,6 +31,8 @@ import {
   ImplementationPlanOutputSchema,
   buildValidationRetryPrompt,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
+  compactImplementationPlan,
+  compactImplementationPlanFile,
 } from '../schema';
 import type { ZodSchema } from 'zod';
 import type { SessionResult } from '../session/types';
@@ -271,6 +273,8 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       '- Do NOT wrap the JSON in a markdown fence.',
       '- Do NOT add prose before or after the JSON.',
       '- Keep descriptions concise and create only the subtasks needed for this task.',
+      '- Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
+      '- Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
       '- Do not embed source code, long analysis, or copied documentation in JSON fields.',
     ].join('\n');
   }
@@ -351,10 +355,12 @@ function buildPlanStructuredOutputValidationRetryPrompt(
     '3. Do NOT wrap the JSON in a markdown fence.',
     '4. Do NOT add prose before or after the JSON.',
     '5. Use phases[].subtasks[] with concise pending subtasks.',
+    '6. Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
+    '7. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   );
 
   if (phase === 'quick_spec') {
-    lines.push('6. If spec.md is missing, use Write only for spec.md before returning the final plan JSON.');
+    lines.push('8. If spec.md is missing, use Write only for spec.md before returning the final plan JSON.');
   }
 
   return lines.join('\n');
@@ -719,8 +725,12 @@ export class SpecOrchestrator extends EventEmitter {
         if (isPlanningPhase && result.structuredOutput) {
           const planPath = join(this.config.specDir, 'implementation_plan.json');
           try {
-            await writeFile(planPath, JSON.stringify(result.structuredOutput, null, 2));
-            this.emitTyped('log', `Wrote implementation plan from structured output (schema-guaranteed)`);
+            const compacted = compactImplementationPlan(result.structuredOutput);
+            await writeFile(planPath, JSON.stringify(compacted?.plan ?? result.structuredOutput, null, 2));
+            const compactionNote = compacted?.changed
+              ? ` (${compacted.originalSubtaskCount} -> ${compacted.compactedSubtaskCount} subtasks)`
+              : '';
+            this.emitTyped('log', `Wrote compact implementation plan from structured output${compactionNote}`);
           } catch (writeErr) {
             this.emitTyped('log', `Failed to write structured output plan: ${writeErr}`);
           }
@@ -935,6 +945,10 @@ export class SpecOrchestrator extends EventEmitter {
     if (phase === 'planning' || phase === 'quick_spec') {
       const planPath = join(this.config.specDir, 'implementation_plan.json');
       try {
+        const compaction = await compactImplementationPlanFile(planPath);
+        if (compaction.valid && compaction.changed) {
+          this.emitTyped('log', `Compacted implementation plan before validation (${compaction.originalSubtaskCount} -> ${compaction.compactedSubtaskCount} subtasks)`);
+        }
         const result = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
         const languageErrors = result.valid && result.data
           ? validateImplementationPlanLanguage(result.data, this.config.language)

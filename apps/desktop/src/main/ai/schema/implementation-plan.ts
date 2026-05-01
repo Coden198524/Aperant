@@ -88,6 +88,13 @@ function coerceSubtask(input: unknown): unknown {
           type: (raw.verification as Record<string, unknown>).type
             ?? (raw.verification as Record<string, unknown>).method
             ?? undefined,
+          run: (raw.verification as Record<string, unknown>).run
+            ?? (raw.verification as Record<string, unknown>).command
+            ?? (raw.verification as Record<string, unknown>).instructions
+            ?? undefined,
+          scenario: (raw.verification as Record<string, unknown>).scenario
+            ?? (raw.verification as Record<string, unknown>).description
+            ?? undefined,
         }
       : raw.verification,
   };

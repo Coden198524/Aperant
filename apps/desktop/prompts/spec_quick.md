@@ -115,6 +115,12 @@ Return the implementation plan as your final response JSON object. Do NOT call t
 
 **IMPORTANT: You MUST use this exact JSON structure with `phases` containing `subtasks`:**
 
+**Plan size limits for simple tasks:**
+- Use exactly 1 phase unless the task truly needs a dependency split.
+- Use 1-5 subtasks.
+- Keep each `title` under 120 characters and each `description` under 500 characters.
+- Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`, research notes, copied source, or long analysis.
+
 ```json
 {
   "feature": "[task name]",

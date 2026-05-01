@@ -31,6 +31,8 @@ import {
   validateImplementationPlanLanguage,
   repairJsonWithLLM,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
+  compactImplementationPlan,
+  compactImplementationPlanFile,
 } from '../schema';
 import { safeParseJson } from '../../utils/json-repair';
 import type { SessionResult } from '../session/types';
@@ -78,6 +80,8 @@ function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string 
     'Do NOT wrap the JSON in a markdown fence.',
     'Do NOT add prose before or after the JSON.',
     'Keep descriptions concise so the final JSON is valid and schema-compatible.',
+    'Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
+    'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
 
@@ -96,6 +100,8 @@ function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): s
     'Do NOT call the Write tool for implementation_plan.json.',
     'Do NOT wrap the JSON in a markdown fence.',
     'Do NOT add prose before or after the JSON.',
+    'Use at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.',
+    'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
 
@@ -450,8 +456,12 @@ export class BuildOrchestrator extends EventEmitter {
       if (result.structuredOutput) {
         const structuredPlanPath = join(this.config.specDir, 'implementation_plan.json');
         try {
-          await writeFile(structuredPlanPath, JSON.stringify(result.structuredOutput, null, 2));
-          this.emitTyped('log', translateLogMessage('Wrote implementation plan from structured output (schema-guaranteed)', this.config.language));
+          const compacted = compactImplementationPlan(result.structuredOutput);
+          await writeFile(structuredPlanPath, JSON.stringify(compacted?.plan ?? result.structuredOutput, null, 2));
+          const compactionNote = compacted?.changed
+            ? ` (${compacted.originalSubtaskCount} -> ${compacted.compactedSubtaskCount} subtasks)`
+            : '';
+          this.emitTyped('log', translateLogMessage(`Wrote compact implementation plan from structured output${compactionNote}`, this.config.language));
         } catch {
           // Non-fatal — fall through to file-based validation
         }
@@ -461,6 +471,10 @@ export class BuildOrchestrator extends EventEmitter {
       // Zod coercion handles LLM field name variations (title→description,
       // subtask_id→id, status normalization, etc.) and writes back canonical data.
       const planPath = join(this.config.specDir, 'implementation_plan.json');
+      const compaction = await compactImplementationPlanFile(planPath);
+      if (compaction.valid && compaction.changed) {
+        this.emitTyped('log', `Compacted implementation plan before validation (${compaction.originalSubtaskCount} -> ${compaction.compactedSubtaskCount} subtasks)`);
+      }
       const validation = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
       const languageErrors = validation.valid && validation.data
         ? validateImplementationPlanLanguage(validation.data, this.config.language)

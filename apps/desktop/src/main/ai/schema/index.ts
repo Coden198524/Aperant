@@ -24,6 +24,14 @@ export {
 export { validateImplementationPlanLanguage } from './plan-language';
 
 export {
+  PLAN_COMPACTION_LIMITS,
+  compactImplementationPlan,
+  compactImplementationPlanFile,
+  type PlanCompactionOptions,
+  type PlanCompactionResult,
+} from './plan-compaction';
+
+export {
   ComplexityAssessmentSchema,
   type ValidatedComplexityAssessment,
 } from './complexity-assessment';

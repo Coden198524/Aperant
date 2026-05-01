@@ -12,24 +12,24 @@
 import { z } from 'zod';
 
 const SubtaskOutputSchema = z.object({
-  id: z.string(),
-  title: z.string(),
-  description: z.string(),
+  id: z.string().max(80),
+  title: z.string().max(120),
+  description: z.string().max(700),
   status: z.enum(['pending', 'in_progress', 'completed', 'blocked', 'failed']),
-  files_to_create: z.array(z.string()),
-  files_to_modify: z.array(z.string()),
+  files_to_create: z.array(z.string().max(240)).max(12),
+  files_to_modify: z.array(z.string().max(240)).max(12),
 });
 
 const PhaseOutputSchema = z.object({
-  id: z.string(),
-  name: z.string(),
-  subtasks: z.array(SubtaskOutputSchema),
+  id: z.string().max(80),
+  name: z.string().max(120),
+  subtasks: z.array(SubtaskOutputSchema).min(1).max(8),
 });
 
 export const ImplementationPlanOutputSchema = z.object({
-  feature: z.string(),
-  workflow_type: z.string(),
-  phases: z.array(PhaseOutputSchema).min(1),
+  feature: z.string().max(240),
+  workflow_type: z.string().max(40),
+  phases: z.array(PhaseOutputSchema).min(1).max(4),
 });
 
 export type ImplementationPlanOutput = z.infer<typeof ImplementationPlanOutputSchema>;

@@ -266,6 +266,9 @@ Rules:
 - Final response must be only the JSON object, with no markdown fence and no explanatory text.
 - Do not call Write for `implementation_plan.json`.
 - Keep descriptions concise; do not embed source code, copied documentation, or long analysis in JSON fields.
+- Keep the plan compact: at most 4 phases, at most 24 subtasks total, and at most 8 subtasks per phase.
+- Keep `title` under 120 characters and `description` under 700 characters.
+- Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`, research notes, copied source, large examples, or long analysis. Put only the smallest useful verification step on each subtask.
 
 Based on the workflow type and services involved, create the implementation plan.
 
@@ -482,230 +485,32 @@ Use ONLY these values for the `type` field in phases:
 
 ---
 
-## PHASE 3.5: DEFINE VERIFICATION STRATEGY
+## PHASE 3.5: KEEP VERIFICATION COMPACT
 
-After creating the phases and subtasks, define the verification strategy based on the task's complexity assessment.
-
-### Read Complexity Assessment
-
-If `complexity_assessment.json` exists in the spec directory, use the **Read tool** to read it.
-
-Look for the `validation_recommendations` section:
-- `risk_level`: trivial, low, medium, high, critical
-- `skip_validation`: Whether validation can be skipped entirely
-- `test_types_required`: What types of tests to create/run
-- `security_scan_required`: Whether security scanning is needed
-- `staging_deployment_required`: Whether staging deployment is needed
-
-### Verification Strategy by Risk Level
-
-| Risk Level | Test Requirements | Security | Staging |
-|------------|-------------------|----------|---------|
-| **trivial** | Skip validation (docs/typos only) | No | No |
-| **low** | Unit tests only | No | No |
-| **medium** | Unit + Integration tests | No | No |
-| **high** | Unit + Integration + E2E | Yes | Maybe |
-| **critical** | Full test suite + Manual review | Yes | Yes |
-
-### Add verification_strategy to implementation_plan.json
-
-Include this section in your implementation plan:
+Do not add a top-level verification strategy or QA configuration to `implementation_plan.json`.
+Each subtask should carry only one concise verification object:
 
 ```json
 {
-  "verification_strategy": {
-    "risk_level": "[from complexity_assessment or default: medium]",
-    "skip_validation": false,
-    "test_creation_phase": "post_implementation",
-    "test_types_required": ["unit", "integration"],
-    "security_scanning_required": false,
-    "staging_deployment_required": false,
-    "acceptance_criteria": [
-      "All existing tests pass",
-      "New code has test coverage",
-      "No security vulnerabilities detected"
-    ],
-    "verification_steps": [
-      {
-        "name": "Unit Tests",
-        "command": "pytest tests/",
-        "expected_outcome": "All tests pass",
-        "type": "test",
-        "required": true,
-        "blocking": true
-      },
-      {
-        "name": "Integration Tests",
-        "command": "pytest tests/integration/",
-        "expected_outcome": "All integration tests pass",
-        "type": "test",
-        "required": true,
-        "blocking": true
-      }
-    ],
-    "reasoning": "Medium risk change requires unit and integration test coverage"
+  "verification": {
+    "type": "command",
+    "run": "npm test"
   }
 }
 ```
 
-### Project-Specific Verification Commands
-
-Adapt verification steps based on project type (from `project_index.json`):
-
-| Project Type | Unit Test Command | Integration Command | E2E Command |
-|--------------|-------------------|---------------------|-------------|
-| **Python (pytest)** | `pytest tests/` | `pytest tests/integration/` | `pytest tests/e2e/` |
-| **Node.js (Jest)** | `npm test` | `npm run test:integration` | `npm run test:e2e` |
-| **React/Vue/Next** | `npm test` | `npm run test:integration` | `npx playwright test` |
-| **Rust** | `cargo test` | `cargo test --features integration` | N/A |
-| **Go** | `go test ./...` | `go test -tags=integration ./...` | N/A |
-| **Ruby** | `bundle exec rspec` | `bundle exec rspec spec/integration/` | N/A |
-
-### Security Scanning (High+ Risk)
-
-For high or critical risk, add security steps:
-
-```json
-{
-  "verification_steps": [
-    {
-      "name": "Secrets Scan",
-      "command": "python autocode/scan_secrets.py --all-files --json",
-      "expected_outcome": "No secrets detected",
-      "type": "security",
-      "required": true,
-      "blocking": true
-    },
-    {
-      "name": "SAST Scan (Python)",
-      "command": "bandit -r src/ -f json",
-      "expected_outcome": "No high severity issues",
-      "type": "security",
-      "required": true,
-      "blocking": true
-    }
-  ]
-}
-```
-
-### Trivial Risk - Skip Validation
-
-If complexity_assessment indicates `skip_validation: true` (documentation-only changes):
-
-```json
-{
-  "verification_strategy": {
-    "risk_level": "trivial",
-    "skip_validation": true,
-    "reasoning": "Documentation-only change - no functional code modified"
-  }
-}
-```
+Use the smallest relevant command or manual check. Security, E2E, and full-suite commands belong only on high-risk subtasks that truly need them.
 
 ---
 
-## PHASE 4: ANALYZE PARALLELISM OPPORTUNITIES
+## PHASE 4: REVIEW PLAN SIZE
 
-After creating the phases, analyze which can run in parallel:
-
-### Parallelism Rules
-
-Two phases can run in parallel if:
-1. They have **the same dependencies** (or compatible dependency sets)
-2. They **don't modify the same files**
-3. They are in **different services** (e.g., frontend vs worker)
-
-### Analysis Steps
-
-1. **Find parallel groups**: Phases with identical `depends_on` arrays
-2. **Check file conflicts**: Ensure no overlapping `files_to_modify` or `files_to_create`
-3. **Count max parallel workers**: Maximum parallelizable phases at any point
-
-### Add to Summary
-
-Include parallelism analysis, verification strategy, and QA configuration in the `summary` section:
-
-```json
-{
-  "summary": {
-    "total_phases": 6,
-    "total_subtasks": 10,
-    "services_involved": ["database", "frontend", "worker"],
-    "parallelism": {
-      "max_parallel_phases": 2,
-      "parallel_groups": [
-        {
-          "phases": ["phase-4-display", "phase-5-save"],
-          "reason": "Both depend only on phase-3, different file sets"
-        }
-      ],
-      "recommended_workers": 2,
-      "speedup_estimate": "1.5x faster than sequential"
-    },
-    "startup_command": "source autocode/.venv/bin/activate && python autocode/run.py --spec 001 --parallel 2"
-  },
-  "verification_strategy": {
-    "risk_level": "medium",
-    "skip_validation": false,
-    "test_creation_phase": "post_implementation",
-    "test_types_required": ["unit", "integration"],
-    "security_scanning_required": false,
-    "staging_deployment_required": false,
-    "acceptance_criteria": [
-      "All existing tests pass",
-      "New code has test coverage",
-      "No security vulnerabilities detected"
-    ],
-    "verification_steps": [
-      {
-        "name": "Unit Tests",
-        "command": "pytest tests/",
-        "expected_outcome": "All tests pass",
-        "type": "test",
-        "required": true,
-        "blocking": true
-      }
-    ],
-    "reasoning": "Medium risk requires unit and integration tests"
-  },
-  "qa_acceptance": {
-    "unit_tests": {
-      "required": true,
-      "commands": ["pytest tests/", "npm test"],
-      "minimum_coverage": null
-    },
-    "integration_tests": {
-      "required": true,
-      "commands": ["pytest tests/integration/"],
-      "services_to_test": ["backend", "worker"]
-    },
-    "e2e_tests": {
-      "required": false,
-      "commands": ["npx playwright test"],
-      "flows": ["user-login", "create-item"]
-    },
-    "browser_verification": {
-      "required": true,
-      "pages": [
-        {"url": "http://localhost:3000/", "checks": ["renders", "no-console-errors"]}
-      ]
-    },
-    "database_verification": {
-      "required": true,
-      "checks": ["migrations-exist", "migrations-applied", "schema-valid"]
-    }
-  },
-  "qa_signoff": null
-}
-```
-
-### Determining Recommended Workers
-
-- **1 worker**: Sequential phases, file conflicts, or investigation workflows
-- **2 workers**: 2 independent phases at some point (common case)
-- **3+ workers**: Large projects with 3+ services working independently
-
-**Conservative default**: If unsure, recommend 1 worker. Parallel execution adds complexity.
+Before returning the final JSON, verify:
+1. At most 4 phases
+2. At most 24 subtasks total
+3. At most 8 subtasks in any phase
+4. No top-level `summary`, `verification_strategy`, `qa_acceptance`, or long analysis fields
+5. Every subtask is directly executable and has a concise verification step
 
 ---
 
@@ -714,9 +519,9 @@ Include parallelism analysis, verification strategy, and QA configuration in the
 Before proceeding to PHASE 5, verify you have:
 1. ✅ Created the complete implementation_plan.json structure
 2. ✅ Prepared it as the final response JSON object
-3. ✅ Added the summary section with parallelism analysis
-4. ✅ Added the verification_strategy section
-5. ✅ Added the qa_acceptance section
+3. ✅ Kept the plan within the phase and subtask limits
+4. ✅ Kept every description concise
+5. ✅ Omitted top-level summary, verification_strategy, and qa_acceptance sections
 
 Do not use Write for `implementation_plan.json`.
 

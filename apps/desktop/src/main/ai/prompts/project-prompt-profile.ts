@@ -30,7 +30,7 @@ import {
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 6;
+export const PROJECT_PROMPT_PROFILE_VERSION = 7;
 export const PROJECT_PROMPT_PROFILE_PATH = join('.autocode', 'prompt_profile.json');
 export const PROJECT_PROMPTS_PATH = join('.autocode', 'prompts');
 
@@ -528,6 +528,13 @@ ${buildToolCallJsonGuidance()}
 3. Write a short \`spec.md\` with overview, scope, files, change details, and success criteria.
 4. Return final implementation plan JSON with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
 
+## PLAN SIZE LIMITS
+
+- Use exactly 1 phase for simple tasks unless there is a real dependency split.
+- Use 1-${profile.workflow.maxRecommendedSubtasks} subtasks.
+- Keep each \`title\` under 120 characters and each \`description\` under 500 characters.
+- Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
+
 ## DESIGN PATTERN GUIDANCE
 
 - Reuse the existing local design pattern if the touched files clearly use one.
@@ -607,6 +614,14 @@ ${buildToolCallJsonGuidance()}
 2. Read \`requirements.json\` and \`context.json\` if present.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
 4. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
+
+## PLAN SIZE LIMITS
+
+- Use at most 4 phases.
+- Use at most 24 subtasks total and at most 8 subtasks per phase.
+- Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
+- Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
+- Put verification on each subtask using the smallest relevant command or manual check.
 
 ## DESIGN PATTERN DECISION
 

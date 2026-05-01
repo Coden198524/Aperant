@@ -88,6 +88,9 @@ describe('project prompt profile', () => {
     const plannerOverride = loadProjectPromptOverride(projectDir, 'planner');
     expect(plannerOverride?.content).toContain('final response JSON object');
     expect(plannerOverride?.content).toContain('Do NOT call Write for `implementation_plan.json`');
+    expect(plannerOverride?.content).toContain('PLAN SIZE LIMITS');
+    expect(plannerOverride?.content).toContain('at most 24 subtasks total');
+    expect(plannerOverride?.content).toContain('Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`');
   });
 
   it('builds an adaptation section for bundled prompts', () => {
@@ -149,7 +152,7 @@ describe('project prompt profile', () => {
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
 
-    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 6');
+    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 7');
     expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the next pending subtask');
     expect(readFileSync(coderPath, 'utf-8')).not.toContain('old generated prompt');
   });
