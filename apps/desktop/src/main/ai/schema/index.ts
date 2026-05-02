@@ -115,4 +115,10 @@ export {
   type TriageResultOutput,
   ExtractedInsightsOutputSchema,
   type ExtractedInsightsOutput,
+  SpecContextOutputSchema,
+  type SpecContextOutput,
+  RequirementsOutputSchema,
+  type RequirementsOutput,
+  ResearchOutputSchema,
+  type ResearchOutput,
 } from './output';

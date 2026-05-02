@@ -59,6 +59,15 @@ export {
   type ExtractedInsightsOutput,
 } from './insight-extractor.output';
 
+export {
+  SpecContextOutputSchema,
+  RequirementsOutputSchema,
+  ResearchOutputSchema,
+  type SpecContextOutput,
+  type RequirementsOutput,
+  type ResearchOutput,
+} from './spec-phase.output';
+
 import type { ZodSchema } from 'zod';
 import { ComplexityAssessmentOutputSchema } from './complexity-assessment.output';
 

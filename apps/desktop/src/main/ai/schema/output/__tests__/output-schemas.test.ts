@@ -3,6 +3,9 @@ import {
   ComplexityAssessmentOutputSchema,
   ImplementationPlanOutputSchema,
   QASignoffOutputSchema,
+  SpecContextOutputSchema,
+  RequirementsOutputSchema,
+  ResearchOutputSchema,
 } from '../index';
 
 describe('ComplexityAssessmentOutputSchema', () => {
@@ -135,5 +138,84 @@ describe('QASignoffOutputSchema', () => {
       status: 'passed', // not in enum
       issues_found: [],
     })).toThrow();
+  });
+});
+
+describe('Spec phase output schemas', () => {
+  it('accepts compact context output', () => {
+    const result = SpecContextOutputSchema.parse({
+      task_description: 'Refactor renderer pipeline',
+      scoped_services: ['Renderer'],
+      architecture_summary: 'Renderer owns frame graph setup and pass execution.',
+      files_to_modify: [{
+        path: 'Source/Renderer/Renderer.cpp',
+        reason: 'Main orchestration point',
+        change_needed: 'Route pass execution through render graph',
+      }],
+      files_to_reference: [{
+        path: 'Source/Renderer/RenderTask.cpp',
+        reason: 'Existing render task pattern',
+        pattern: 'Use existing task lifecycle hooks',
+      }],
+      design_patterns: [{
+        name: 'Builder',
+        existing_usage: 'Render tasks are configured before execution',
+        files: ['Source/Renderer/RenderTask.cpp'],
+        guidance: 'Reuse builder-style setup for graph nodes',
+      }],
+      implementation_notes: ['Keep pass ordering deterministic'],
+      risks: ['Render pass dependencies may be implicit'],
+      verification_suggestions: ['Run renderer unit tests'],
+      created_at: '2026-05-02T00:00:00.000Z',
+    });
+
+    expect(result.files_to_modify[0].path).toBe('Source/Renderer/Renderer.cpp');
+  });
+
+  it('accepts requirements output', () => {
+    const result = RequirementsOutputSchema.parse({
+      task_description: 'Add task deletion',
+      workflow_type: 'feature',
+      services_involved: ['desktop'],
+      user_requirements: ['Allow deleting unnecessary subtasks'],
+      acceptance_criteria: ['Deleted subtasks no longer execute'],
+      constraints: ['Do not delete completed source changes'],
+      created_at: '2026-05-02T00:00:00.000Z',
+    });
+
+    expect(result.workflow_type).toBe('feature');
+  });
+
+  it('accepts research output', () => {
+    const result = ResearchOutputSchema.parse({
+      integrations_researched: [{
+        name: 'RenderGraph',
+        type: 'architecture',
+        verified_package: {
+          name: 'internal',
+          install_command: 'none',
+          version: 'n/a',
+          verified: true,
+        },
+        api_patterns: {
+          imports: [],
+          initialization: 'Create graph before pass execution',
+          key_functions: ['compile()', 'execute()'],
+          verified_against: 'project source',
+        },
+        configuration: {
+          env_vars: [],
+          config_files: [],
+          dependencies: [],
+        },
+        gotchas: ['Resource lifetime must be explicit'],
+        research_sources: ['Source/Renderer'],
+      }],
+      unverified_claims: [],
+      recommendations: ['Prototype one pass first'],
+      created_at: '2026-05-02T00:00:00.000Z',
+    });
+
+    expect(result.integrations_researched).toHaveLength(1);
   });
 });

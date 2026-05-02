@@ -34,6 +34,9 @@ import {
   writeImplementationPlanFiles,
   rewriteImplementationPlanFiles,
   loadImplementationPlanFromFiles,
+  SpecContextOutputSchema,
+  RequirementsOutputSchema,
+  ResearchOutputSchema,
 } from '../schema';
 import type { ZodSchema } from 'zod';
 import type { SessionResult } from '../session/types';
@@ -121,6 +124,13 @@ const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
   self_critique: ['spec.md'],
   planning: ['implementation_plan.json'],
   quick_spec: ['spec.md', 'implementation_plan.json'],
+};
+
+const STRUCTURED_JSON_PHASE_OUTPUTS: Partial<Record<SpecPhase, string>> = {
+  discovery: 'context.json',
+  requirements: 'requirements.json',
+  research: 'research.json',
+  context: 'context.json',
 };
 
 /** State file name for tracking spec creation progress */
@@ -297,6 +307,11 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
     ].join('\n');
   }
 
+  const structuredJsonFile = STRUCTURED_JSON_PHASE_OUTPUTS[phase];
+  if (structuredJsonFile) {
+    return buildStructuredJsonOutputRetryPrompt(phase, normalizedSpecDir, structuredJsonFile);
+  }
+
   const targetFiles = (PHASE_OUTPUTS[phase] ?? ['output file'])
     .map((file) => `${normalizedSpecDir}/${file}`)
     .join(', ');
@@ -329,6 +344,72 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
     '- If the previous error text ended after "file_path", that means the content key was omitted or the tool JSON was truncated.',
     ...phaseSpecificGuidance.map((line) => `- ${line}`),
   ].join('\n');
+}
+
+function buildStructuredJsonOutputRetryPrompt(
+  phase: SpecPhase,
+  normalizedSpecDir: string,
+  fileName: string,
+): string {
+  const phaseGuidance: Partial<Record<SpecPhase, string[]>> = {
+    discovery: [
+      'Summarize only the files and patterns directly relevant to the task.',
+      'Include files_to_modify, files_to_reference, scoped_services, design_patterns, implementation_notes, risks, and verification_suggestions.',
+    ],
+    context: [
+      'Focus on task-specific architecture, files, patterns, risks, and verification suggestions.',
+      'Do not copy source code or broad repository inventories.',
+    ],
+    requirements: [
+      'Include task_description, workflow_type, services_involved, user_requirements, acceptance_criteria, constraints, and created_at.',
+      'Keep each requirement and criterion short and actionable.',
+    ],
+    research: [
+      'Include concise verified findings only; link to sources instead of copying documentation.',
+      'Keep code snippets out of JSON unless they are one-line API examples.',
+    ],
+  };
+
+  return [
+    `CRITICAL - RETURN ${fileName} AS FINAL JSON`,
+    '',
+    'Your previous Write tool call was rejected before execution because the tool input JSON was incomplete, malformed, or passed as the wrong type.',
+    'Do NOT call the Write tool again for this JSON file.',
+    '',
+    `Return the complete ${fileName} content as the final response JSON object.`,
+    'The orchestrator will validate that final JSON and write it to disk.',
+    '',
+    'Rules for the retry:',
+    `- Do NOT call Write for ${normalizedSpecDir}/${fileName}.`,
+    '- Do NOT wrap the JSON in a markdown fence.',
+    '- Do NOT add prose before or after the JSON.',
+    '- Use forward slashes in any file paths.',
+    '- Keep the JSON compact so it can be parsed reliably.',
+    '- Prefer summaries and exact file paths over copied source code, large tables, or long analysis.',
+    ...(phaseGuidance[phase] ?? []).map((line) => `- ${line}`),
+  ].join('\n');
+}
+
+function getStructuredJsonOutputSchema(phase: SpecPhase): ZodSchema | undefined {
+  switch (phase) {
+    case 'discovery':
+    case 'context':
+      return SpecContextOutputSchema;
+    case 'requirements':
+      return RequirementsOutputSchema;
+    case 'research':
+      return ResearchOutputSchema;
+    default:
+      return undefined;
+  }
+}
+
+async function writeStructuredJsonOutput(
+  specDir: string,
+  fileName: string,
+  data: Record<string, unknown>,
+): Promise<void> {
+  await writeFile(join(specDir, fileName), `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
 }
 
 function buildPlanStructuredOutputValidationRetryPrompt(
@@ -697,7 +778,10 @@ export class SpecOrchestrator extends EventEmitter {
       // to guarantee the implementation plan matches the schema. The structured
       // output is generated as a final step after all tool calls complete.
       const isPlanningPhase = phase === 'planning' || phase === 'quick_spec';
-      const outputSchema = isPlanningPhase ? ImplementationPlanOutputSchema : undefined;
+      const structuredJsonFile = STRUCTURED_JSON_PHASE_OUTPUTS[phase];
+      const outputSchema = isPlanningPhase
+        ? ImplementationPlanOutputSchema
+        : getStructuredJsonOutputSchema(phase);
 
       const result = await this.config.runSession({
         agentType,
@@ -736,6 +820,14 @@ export class SpecOrchestrator extends EventEmitter {
             this.emitTyped('log', `Failed to write structured output plan: ${writeErr}`);
           }
         }
+        if (structuredJsonFile && result.structuredOutput) {
+          try {
+            await writeStructuredJsonOutput(this.config.specDir, structuredJsonFile, result.structuredOutput);
+            this.emitTyped('log', `Wrote ${structuredJsonFile} from structured output`);
+          } catch (writeErr) {
+            this.emitTyped('log', `Failed to write structured ${structuredJsonFile}: ${writeErr}`);
+          }
+        }
         // Validate that expected output files were actually created.
         // Some models (e.g., GLM-5, Codex) may complete a session without calling
         // any tools, producing no output files despite a successful stream.
@@ -749,6 +841,15 @@ export class SpecOrchestrator extends EventEmitter {
           this.emitTyped('log', `Phase ${phase} output validation failed (attempt ${attempt + 1}): ${detail}`);
 
           if (attempt < maxPhaseRetries) {
+            if (structuredJsonFile && missingFiles.includes(structuredJsonFile)) {
+              toolUseRetryContext = buildStructuredJsonOutputRetryPrompt(
+                phase,
+                this.config.specDir.replace(/\\/g, '/'),
+                structuredJsonFile,
+              );
+              continue;
+            }
+
             if (isPlanningPhase && missingFiles.includes('implementation_plan.json')) {
               toolUseRetryContext = buildWriteToolJsonRetryPrompt(phase, this.config.specDir);
               continue;

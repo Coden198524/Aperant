@@ -27,6 +27,8 @@ const EXPECTED_PROMPT_FILES = [
   'followup_planner.md',
   'qa_reviewer.md',
   'qa_fixer.md',
+  'spec_discovery.md',
+  'spec_context.md',
   'spec_gatherer.md',
   'spec_researcher.md',
   'spec_writer.md',

@@ -36,4 +36,14 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     expect(prompt).toContain('final response JSON object');
     expect(prompt).not.toContain('Required Write tool input shape');
   });
+
+  it('tells context retries to return final JSON instead of using Write', () => {
+    const prompt = buildWriteToolJsonRetryPrompt('discovery', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
+
+    expect(prompt).toContain('RETURN context.json AS FINAL JSON');
+    expect(prompt).toContain('Do NOT call Write for E:/Work/Project/.autocode/specs/001-task/context.json');
+    expect(prompt).toContain('files_to_modify');
+    expect(prompt).not.toContain('Required Write tool input shape');
+    expect(prompt).not.toContain('\\');
+  });
 });
