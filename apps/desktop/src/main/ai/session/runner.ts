@@ -213,7 +213,8 @@ function buildWriteToolInputCorrectionPrompt(failure: WriteToolInputFailure): st
     '- Include both keys in the same object: file_path and content.',
     '- Use forward slashes in file_path.',
     '- Keep content compact so the tool-call JSON closes correctly.',
-    '- For spec.md, write a short complete spec first; avoid long code blocks, copied source files, or large tables.',
+    '- If the target file already exists and you are making a small correction, use the Edit tool instead of rewriting it with Write.',
+    '- For spec.md, use Edit for targeted fixes. Only use Write to create a missing short spec; avoid long code blocks, copied source files, or large tables.',
   ].join('\n');
 }
 

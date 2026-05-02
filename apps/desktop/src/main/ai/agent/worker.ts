@@ -63,6 +63,7 @@ import { runProjectIndexer } from '../project/project-indexer';
 import type { TaskWorkflowMode } from '../../../shared/types';
 import { FileContentCache } from '../tools/cache/file-cache';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
+import { specPhaseToPromptName } from './spec-phase-prompts';
 import { OPTIMIZATION_PRESETS, type WorkflowConfig } from '../orchestration/workflow-config';
 
 // =============================================================================
@@ -1509,27 +1510,6 @@ async function runAgenticSpecOrchestrator(
 }
 
 /**
- * Map a SpecPhase to the prompt file name to load.
- * Falls back to the closest available prompt when a phase-specific one doesn't exist.
- */
-function specPhaseToPromptName(phase: SpecPhase): string {
-  switch (phase) {
-    case 'discovery': return 'spec_discovery';
-    case 'requirements': return 'spec_gatherer';
-    case 'complexity_assessment': return 'complexity_assessor';
-    case 'research': return 'spec_researcher';
-    case 'context': return 'spec_context';
-    case 'historical_context': return 'spec_context';
-    case 'spec_writing': return 'spec_writer';
-    case 'self_critique': return 'spec_critic';
-    case 'planning': return 'planner';
-    case 'quick_spec': return 'spec_quick';
-    case 'validation': return 'spec_writer';
-    default: return 'spec_writer';
-  }
-}
-
-/**
  * Build a kickoff user message for a spec phase session.
  * Includes accumulated context from prior phases to eliminate redundant file reads.
  */
@@ -1576,7 +1556,7 @@ function buildSpecKickoffMessage(
       baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and write context to ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
       break;
     case 'spec_validation':
-      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.json are complete, consistent, and ready for implementation. Fix any issues found.`;
+      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.json are complete, consistent, and ready for implementation. Fix any issues found. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
       break;
     default:
       baseMessage = `Complete the spec creation task described in your system prompt. Task: ${taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;

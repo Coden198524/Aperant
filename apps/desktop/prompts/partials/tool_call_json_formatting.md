@@ -45,7 +45,8 @@ Examples:
 - Retry with one valid JSON object that includes BOTH keys: `{"file_path":"e:/work/project/.autocode/specs/001/spec.md","content":"# ...\n..."}`
 - If the error text stops immediately after `"file_path"`, your tool JSON omitted or truncated the `"content"` key
 - Reduce the content size and try again
-- For `spec.md`, write a compact 20-60 line spec first; do not copy large context blocks, full source files, long code blocks, or large tables
+- For an existing `spec.md`, prefer Edit for targeted corrections instead of rewriting the whole file with Write
+- For a missing `spec.md`, write a compact 20-60 line spec first; do not copy large context blocks, full source files, long code blocks, or large tables
 - Consider splitting large outputs into multiple smaller writes only when the orchestrator explicitly allows those files
 
 This applies to ALL tool calls that accept file paths or large content parameters.

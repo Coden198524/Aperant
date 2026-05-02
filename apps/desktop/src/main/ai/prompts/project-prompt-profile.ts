@@ -30,7 +30,7 @@ import {
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 9;
+export const PROJECT_PROMPT_PROFILE_VERSION = 10;
 export const PROJECT_PROMPT_PROFILE_PATH = join('.autocode', 'prompt_profile.json');
 export const PROJECT_PROMPTS_PATH = join('.autocode', 'prompts');
 
@@ -500,7 +500,8 @@ Write rules:
 - Every Write call must be one object with both keys: \`{"file_path":"...","content":"..."}\`.
 - If an error shows JSON ending after \`"file_path"\`, the \`"content"\` key was omitted or the tool-call JSON was truncated; retry with shorter content.
 - For larger markdown files, write a focused complete version instead of copying large context blocks.
-- For \`spec.md\`, write a compact 20-60 line version first instead of a long document.
+- For an existing \`spec.md\`, prefer Edit for targeted corrections instead of rewriting the whole file with Write.
+- For a missing \`spec.md\`, write a compact 20-60 line version first instead of a long document.
 - For existing files, prefer Edit when only a small section changes.
 `;
 }
