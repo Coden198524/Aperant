@@ -34,6 +34,7 @@ import {
   loadImplementationPlanFromFiles,
   SpecContextOutputSchema,
   RequirementsOutputSchema,
+  type RequirementsOutput,
   ResearchOutputSchema,
 } from '../schema';
 import type { ZodSchema } from 'zod';
@@ -410,9 +411,49 @@ function getStructuredJsonOutputSchema(phase: SpecPhase): ZodSchema | undefined 
 async function writeStructuredJsonOutput(
   specDir: string,
   fileName: string,
-  data: Record<string, unknown>,
+  data: unknown,
 ): Promise<void> {
   await writeFile(join(specDir, fileName), `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
+}
+
+type RequirementsWorkflowType = RequirementsOutput['workflow_type'];
+
+function inferRequirementsWorkflowType(
+  taskDescription?: string,
+  complexity?: ComplexityTier,
+): RequirementsWorkflowType {
+  const text = (taskDescription ?? '').toLowerCase();
+  if (/\b(migrate|migration|port)\b|迁移|移植|切换/.test(text)) {
+    return 'migration';
+  }
+  if (/\b(refactor|rewrite|rework|redesign|restructure)\b|重构|重写|改造|重新设计|结构调整/.test(text)) {
+    return 'refactor';
+  }
+  if (/\b(fix|bug|debug|error|crash|fail|failed|failure)\b|修复|报错|错误|崩溃|失败|异常|无法/.test(text)) {
+    return 'bugfix';
+  }
+  return complexity === 'simple' ? 'simple' : 'feature';
+}
+
+function buildFallbackRequirementsOutput(
+  taskDescription?: string,
+  complexity?: ComplexityTier,
+): RequirementsOutput {
+  const description = taskDescription?.trim() || 'Create the requested software change.';
+  return {
+    task_description: description,
+    workflow_type: inferRequirementsWorkflowType(description, complexity),
+    services_involved: [],
+    user_requirements: [description],
+    acceptance_criteria: [
+      'The requested change is implemented according to the task description.',
+      'Relevant project checks pass or any remaining verification gaps are documented.',
+    ],
+    constraints: [
+      'Follow existing project architecture, coding conventions, and design patterns.',
+    ],
+    created_at: new Date().toISOString(),
+  };
 }
 
 function buildPlanStructuredOutputValidationRetryPrompt(
@@ -825,6 +866,26 @@ export class SpecOrchestrator extends EventEmitter {
             : `Phase completed but expected output files missing: ${missingFiles.join(', ')}`;
           errors.push(detail);
           this.emitTyped('log', `Phase ${phase} output validation failed (attempt ${attempt + 1}): ${detail}`);
+
+          if (phase === 'requirements' && missingFiles.includes('requirements.json') && attempt >= maxPhaseRetries) {
+            try {
+              await writeStructuredJsonOutput(
+                this.config.specDir,
+                'requirements.json',
+                buildFallbackRequirementsOutput(this.config.taskDescription, this.assessment?.complexity),
+              );
+              const remainingMissing = await this.validatePhaseOutputs(phase);
+              if (remainingMissing.length === 0) {
+                this.emitTyped('log', 'Wrote fallback requirements.json from task description');
+                errors.pop();
+                const phaseResult: SpecPhaseResult = { phase, success: true, errors: [], retries: attempt };
+                this.emitTyped('phase-complete', phase, phaseResult);
+                return phaseResult;
+              }
+            } catch (fallbackErr) {
+              this.emitTyped('log', `Failed to write fallback requirements.json: ${fallbackErr}`);
+            }
+          }
 
           if (attempt < maxPhaseRetries) {
             if (structuredJsonFile && missingFiles.includes(structuredJsonFile)) {

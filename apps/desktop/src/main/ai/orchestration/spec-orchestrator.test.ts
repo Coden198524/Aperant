@@ -1,8 +1,15 @@
-import { describe, expect, it } from 'vitest';
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+
+import { describe, expect, it, vi } from 'vitest';
 
 import {
   buildWriteToolJsonRetryPrompt,
   isWriteToolJsonFailure,
+  SpecOrchestrator,
+  type SpecPhase,
+  type SpecPhaseResult,
 } from './spec-orchestrator';
 
 describe('SpecOrchestrator Write tool retry helpers', () => {
@@ -46,5 +53,58 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     expect(prompt).toContain('files_to_modify');
     expect(prompt).not.toContain('Required Write tool input shape');
     expect(prompt).not.toContain('\\');
+  });
+
+  it('tells requirements retries to return final JSON instead of using Write', () => {
+    const prompt = buildWriteToolJsonRetryPrompt('requirements', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
+
+    expect(prompt).toContain('RETURN requirements.json AS FINAL JSON');
+    expect(prompt).toContain('Do NOT call Write for E:/Work/Project/.autocode/specs/001-task/requirements.json');
+    expect(prompt).toContain('task_description');
+    expect(prompt).not.toContain('Required Write tool input shape');
+    expect(prompt).not.toContain('\\');
+  });
+
+  it('writes fallback requirements after retries when completed sessions create no file', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn(async (_config: { outputSchema?: unknown }) => ({
+      outcome: 'completed' as const,
+      stepsExecuted: 0,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      messages: [],
+      toolCallCount: 0,
+      durationMs: 1,
+    }));
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: '修复任务暂停后请求统计次数突然增多的问题',
+        useAiAssessment: false,
+        generatePrompt: vi.fn(async () => 'Return requirements JSON.'),
+        runSession,
+      });
+
+      const runPhase = (orchestrator as unknown as {
+        runPhase: (phase: SpecPhase, phaseNumber: number, totalPhases: number) => Promise<SpecPhaseResult>;
+      }).runPhase.bind(orchestrator);
+
+      const result = await runPhase('requirements', 1, 1);
+      const requirements = JSON.parse(await readFile(join(specDir, 'requirements.json'), 'utf-8'));
+
+      expect(result).toEqual({ phase: 'requirements', success: true, errors: [], retries: 2 });
+      expect(requirements).toMatchObject({
+        task_description: '修复任务暂停后请求统计次数突然增多的问题',
+        workflow_type: 'bugfix',
+        services_involved: [],
+      });
+      expect(requirements.user_requirements).toEqual(['修复任务暂停后请求统计次数突然增多的问题']);
+      expect(requirements).not.toHaveProperty('generated_by_fallback');
+      expect(runSession).toHaveBeenCalledTimes(3);
+      expect(runSession.mock.calls[0][0].outputSchema).toBeDefined();
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
   });
 });

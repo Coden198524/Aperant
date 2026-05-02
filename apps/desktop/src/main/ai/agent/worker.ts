@@ -1535,13 +1535,13 @@ function buildSpecKickoffMessage(
     baseMessage = `Assess the complexity of the following task and write your assessment to ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Determine if this is a SIMPLE, STANDARD, or COMPLEX task based on the scope of changes required.\n\nIMPORTANT: This is the FIRST phase of the spec pipeline. No spec.md or other spec files exist yet — do NOT attempt to read them. Assess complexity based on the task description and the project structure at ${promptProjectDir} only.`;
   } else switch (agentType) {
     case 'spec_discovery':
-      baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Write your findings to ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
+      baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Return the complete context.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
       break;
     case 'spec_gatherer':
-      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Write requirements to ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Derive requirements from the task description and the project source code at ${promptProjectDir}.`;
+      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return the complete requirements.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Derive requirements from the task description and the project source code at ${promptProjectDir}.`;
       break;
     case 'spec_researcher':
-      baseMessage = `Research implementation approaches for: ${taskDescription}. Review relevant code in ${promptProjectDir} and document your findings in ${promptSpecDir}/research.json.`;
+      baseMessage = `Research implementation approaches for: ${taskDescription}. Review relevant code in ${promptProjectDir} and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.`;
       break;
     case 'spec_writer':
       baseMessage = `Write the specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}.`;
@@ -1553,7 +1553,7 @@ function buildSpecKickoffMessage(
       baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
       break;
     case 'spec_context':
-      baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and write context to ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
+      baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and return the complete context.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
       break;
     case 'spec_validation':
       baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.json are complete, consistent, and ready for implementation. Fix any issues found. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
