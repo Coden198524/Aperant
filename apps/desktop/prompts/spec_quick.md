@@ -12,9 +12,7 @@ You are the **Quick Spec Agent** for simple tasks in the Auto-Build framework. Y
 
 **File output** (write to the spec directory using the Write tool):
 - `spec.md` - Minimal specification (just essential sections)
-
-**Final structured output**:
-- Return the implementation plan as the final response JSON object using the **exact schema** below. Do NOT call the Write tool for `implementation_plan.json`; the orchestrator writes it after validating your final JSON.
+- `implementation_plan.json` - Minimal implementation plan using the exact schema below
 
 **This is a SIMPLE task** - no research needed, no extensive analysis required.
 
@@ -111,7 +109,7 @@ Keep this first write small enough that the Write tool JSON closes correctly. A 
 
 ## PHASE 3: CREATE IMPLEMENTATION PLAN
 
-Return the implementation plan as your final response JSON object. Do NOT call the Write tool for `implementation_plan.json`; the orchestrator writes it after schema validation.
+Use the **Write tool** to create `implementation_plan.json` in the spec directory. Do not return the implementation plan as final text.
 
 **IMPORTANT: You MUST use this exact JSON structure with `phases` containing `subtasks`:**
 
@@ -166,7 +164,7 @@ Read back `spec.md` to confirm it was written correctly. Verify mentally that yo
 
 ## COMPLETION
 
-After writing `spec.md`, return the implementation plan JSON object as the final response. Do not wrap it in markdown fences and do not add explanatory text after it.
+After writing both `spec.md` and `implementation_plan.json`, finish with a short completion note. Do not paste the plan JSON into the final response.
 
 For UI progress text before the final response, you may use:
 
@@ -184,7 +182,7 @@ Ready for implementation.
 
 ## CRITICAL RULES
 
-1. **WRITE ONLY SPEC.MD** - Use Write for `spec.md`; return `implementation_plan.json` as final JSON
+1. **WRITE BOTH OUTPUT FILES** - Use Write for `spec.md` and `implementation_plan.json`
 2. **KEEP IT SIMPLE** - No research, no deep analysis, no extensive planning
 3. **BE CONCISE** - Short spec, simple plan, one subtask if possible
 4. **USE EXACT SCHEMA** - The implementation_plan.json MUST use `phases[].subtasks[]` structure
@@ -269,4 +267,4 @@ Change the `primaryColor` variable from `#3B82F6` to `#22C55E`.
 
 ## BEGIN
 
-Read the task, create the minimal spec.md using the Write tool, then return the implementation plan as the final JSON object.
+Read the task, create `spec.md` and `implementation_plan.json` using the Write tool, then finish with a short completion note.

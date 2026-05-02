@@ -28,10 +28,8 @@ import {
   ImplementationPlanSchema,
   validateImplementationPlanLanguage,
   ComplexityAssessmentOutputSchema,
-  ImplementationPlanOutputSchema,
   buildValidationRetryPrompt,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
-  writeImplementationPlanFiles,
   rewriteImplementationPlanFiles,
   loadImplementationPlanFromFiles,
   SpecContextOutputSchema,
@@ -274,36 +272,41 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
   const normalizedSpecDir = specDir.replace(/\\/g, '/');
   if (phase === 'planning') {
     return [
-      'CRITICAL - DO NOT USE WRITE FOR implementation_plan.json',
+      'CRITICAL - RETRY IMPLEMENTATION PLAN WITH WRITE TOOL',
       '',
       'Your previous Write tool call was rejected before execution.',
-      'Retry by returning the complete implementation plan as the final response JSON object.',
+      'Retry by writing smaller implementation plan files instead of returning one giant JSON response.',
       '',
       'Rules for the retry:',
-      '- Do NOT call the Write tool for implementation_plan.json.',
-      '- Do NOT wrap the JSON in a markdown fence.',
-      '- Do NOT add prose before or after the JSON.',
-      '- Keep descriptions concise and create only the subtasks needed for this task.',
-      '- Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-      '- For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
-      '- Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
+      `- Use the Write tool to create ${normalizedSpecDir}/implementation_plan.json.`,
+      '- Pass a JSON object, not a string containing JSON.',
+      '- Include BOTH required keys in the same object: file_path and content.',
+      '- Use forward slashes in file_path, including Windows paths.',
+      '- Keep each Write content short enough that the JSON closes correctly.',
+      '- If the plan is large, write implementation_plan.phase-1.json, implementation_plan.phase-2.json, etc. first.',
+      '- Then write a compact implementation_plan.json index with split_plan, plan_files, and phases that reference subtasks_file.',
+      '- Keep descriptions concise and preserve necessary subtasks by splitting into files, not by dropping work.',
       '- Do not embed source code, long analysis, or copied documentation in JSON fields.',
+      '',
+      'Required Write tool input shape:',
+      `{"file_path":"${normalizedSpecDir}/implementation_plan.json","content":"..."}`,
     ].join('\n');
   }
 
   if (phase === 'quick_spec') {
     return [
-      'CRITICAL - RETRY WITH SPLIT OUTPUTS',
+      'CRITICAL - RETRY QUICK SPEC FILE WRITES',
       '',
       'Your previous Write tool call was rejected before execution.',
       '',
       'Rules for the retry:',
-      `- Use the Write tool only for: ${normalizedSpecDir}/spec.md`,
-      '- Do NOT call Write for implementation_plan.json.',
-      '- Return the implementation plan as the final response JSON object.',
+      `- Use the Write tool to create ${normalizedSpecDir}/spec.md.`,
+      `- Use the Write tool to create ${normalizedSpecDir}/implementation_plan.json.`,
+      '- Pass a JSON object, not a string containing JSON.',
+      '- Include BOTH required keys in each Write object: file_path and content.',
       '- For spec.md, write a compact 20-60 line version first.',
-      '- Keep the final JSON concise and schema-compatible.',
-      '- Do not wrap the final JSON in a markdown fence or add prose after it.',
+      '- Keep implementation_plan.json concise and schema-compatible.',
+      '- Do not paste the implementation plan into the final response.',
     ].join('\n');
   }
 
@@ -418,9 +421,9 @@ function buildPlanStructuredOutputValidationRetryPrompt(
   schemaHint?: string,
 ): string {
   const lines = [
-    '## IMPLEMENTATION PLAN STRUCTURED OUTPUT ERRORS',
+    '## IMPLEMENTATION PLAN FILE VALIDATION ERRORS',
     '',
-    'The implementation plan JSON from your previous response was missing or invalid.',
+    'The implementation plan file written by your previous attempt was missing or invalid.',
     '',
     '### Errors found:',
     ...errors.map((error) => `- ${error}`),
@@ -433,18 +436,17 @@ function buildPlanStructuredOutputValidationRetryPrompt(
 
   lines.push(
     '### How to fix:',
-    '1. Return the corrected implementation plan as the final response JSON object.',
-    '2. Do NOT call Write for implementation_plan.json.',
-    '3. Do NOT wrap the JSON in a markdown fence.',
-    '4. Do NOT add prose before or after the JSON.',
-    '5. Use phases[].subtasks[] with concise pending subtasks.',
-    '6. Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    '7. For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
-    '8. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
+    '1. Use the Write tool to rewrite the implementation plan files.',
+    '2. Use phases[].subtasks[] with concise pending subtasks for small plans.',
+    '3. For large plans, write implementation_plan.phase-1.json, implementation_plan.phase-2.json, etc. first.',
+    '4. Then write a compact implementation_plan.json index with split_plan, plan_files, and phases that reference subtasks_file.',
+    '5. Keep each Write payload small enough that the tool-call JSON closes correctly.',
+    '6. Do not paste the full plan into the final response.',
+    '7. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   );
 
   if (phase === 'quick_spec') {
-    lines.push('9. If spec.md is missing, use Write only for spec.md before returning the final plan JSON.');
+    lines.push('8. If spec.md is missing, use Write to recreate a compact spec.md as well.');
   }
 
   return lines.join('\n');
@@ -773,15 +775,12 @@ export class SpecOrchestrator extends EventEmitter {
       // Clear single-use retry context
       toolUseRetryContext = undefined;
 
-      // For planning and quick_spec phases, pass the output schema so providers
-      // with native structured output (OpenAI, Anthropic) use constrained decoding
-      // to guarantee the implementation plan matches the schema. The structured
-      // output is generated as a final step after all tool calls complete.
+      // Discovery/context-style JSON files are compact enough for structured
+      // output. Implementation plans can be very large, so planner phases write
+      // plan files directly with the Write tool and validate them from disk.
       const isPlanningPhase = phase === 'planning' || phase === 'quick_spec';
       const structuredJsonFile = STRUCTURED_JSON_PHASE_OUTPUTS[phase];
-      const outputSchema = isPlanningPhase
-        ? ImplementationPlanOutputSchema
-        : getStructuredJsonOutputSchema(phase);
+      const outputSchema = getStructuredJsonOutputSchema(phase);
 
       const result = await this.config.runSession({
         agentType,
@@ -806,20 +805,7 @@ export class SpecOrchestrator extends EventEmitter {
       }
 
       if (result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window') {
-        // If the provider returned structured output (via constrained decoding),
-        // write it to implementation_plan.json — this is guaranteed to match the
-        // schema, overriding whatever the agent wrote via the Write tool.
-        if (isPlanningPhase && result.structuredOutput) {
-          try {
-            const writeResult = await writeImplementationPlanFiles(this.config.specDir, result.structuredOutput);
-            const splitNote = writeResult?.split
-              ? ` split into ${writeResult.filesWritten.length - 1} phase files`
-              : '';
-            this.emitTyped('log', `Wrote compact implementation plan from structured output${splitNote}`);
-          } catch (writeErr) {
-            this.emitTyped('log', `Failed to write structured output plan: ${writeErr}`);
-          }
-        }
+        // Compact structured JSON phases are persisted here; plan files are written by the planner.
         if (structuredJsonFile && result.structuredOutput) {
           try {
             await writeStructuredJsonOutput(this.config.specDir, structuredJsonFile, result.structuredOutput);

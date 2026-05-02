@@ -21,20 +21,21 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
   it('builds compact retry guidance with normalized paths', () => {
     const prompt = buildWriteToolJsonRetryPrompt('quick_spec', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('CRITICAL - RETRY WITH SPLIT OUTPUTS');
+    expect(prompt).toContain('CRITICAL - RETRY QUICK SPEC FILE WRITES');
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/spec.md');
-    expect(prompt).toContain('Do NOT call Write for implementation_plan.json');
-    expect(prompt).toContain('final response JSON object');
+    expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/implementation_plan.json');
+    expect(prompt).toContain('Use the Write tool to create');
     expect(prompt).toContain('20-60 line');
     expect(prompt).not.toContain('\\');
   });
 
-  it('tells planner retries to return final JSON instead of using Write', () => {
+  it('tells planner retries to use split Write files', () => {
     const prompt = buildWriteToolJsonRetryPrompt('planning', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('DO NOT USE WRITE FOR implementation_plan.json');
-    expect(prompt).toContain('final response JSON object');
-    expect(prompt).not.toContain('Required Write tool input shape');
+    expect(prompt).toContain('RETRY IMPLEMENTATION PLAN WITH WRITE TOOL');
+    expect(prompt).toContain('implementation_plan.phase-1.json');
+    expect(prompt).toContain('subtasks_file');
+    expect(prompt).toContain('Required Write tool input shape');
   });
 
   it('tells context retries to return final JSON instead of using Write', () => {

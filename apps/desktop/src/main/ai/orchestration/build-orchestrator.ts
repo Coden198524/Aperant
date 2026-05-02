@@ -72,38 +72,40 @@ function isWriteToolPlanOutputFailure(message: string): boolean {
 
 function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string {
   return [
-    'CRITICAL - DO NOT USE WRITE FOR implementation_plan.json',
+    'CRITICAL - RETRY IMPLEMENTATION PLAN WITH WRITE TOOL',
     '',
-    `Previous planning attempt failed because the model tried to call Write incorrectly: ${errorMessage}`,
+    `Previous planning attempt failed because a Write tool call was malformed or too large: ${errorMessage}`,
     '',
-    'Retry by returning the implementation plan as the final response JSON object.',
-    'Do NOT call the Write tool for implementation_plan.json.',
-    'Do NOT wrap the JSON in a markdown fence.',
-    'Do NOT add prose before or after the JSON.',
-    'Keep descriptions concise so the final JSON is valid and schema-compatible.',
+    'Retry by writing smaller implementation plan files with the Write tool.',
+    'Do not return one giant plan JSON as final text.',
+    'Use forward slashes in file_path, including Windows paths.',
+    'Each Write input must be one object with file_path and content.',
+    'If the plan is large, write implementation_plan.phase-1.json, implementation_plan.phase-2.json, etc. first.',
+    'Then write a compact implementation_plan.json index with split_plan, plan_files, and phases that reference subtasks_file.',
+    'Keep descriptions concise so each file is valid and schema-compatible.',
     'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    'For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
+    'For genuinely complex tasks, preserve necessary subtasks by splitting files instead of dropping work.',
     'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
 
 function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): string {
   return [
-    'CRITICAL - RETURN CORRECTED PLAN AS FINAL JSON',
+    'CRITICAL - REWRITE IMPLEMENTATION PLAN FILES',
     '',
-    'The previous implementation plan JSON was missing or invalid.',
+    'The previous implementation plan file was missing or invalid.',
     '',
     'Errors:',
     ...errors.map((error) => `- ${error}`),
     '',
     IMPLEMENTATION_PLAN_SCHEMA_HINT,
     '',
-    'Retry by returning the corrected implementation plan as the final response JSON object.',
-    'Do NOT call the Write tool for implementation_plan.json.',
-    'Do NOT wrap the JSON in a markdown fence.',
-    'Do NOT add prose before or after the JSON.',
+    'Retry by using the Write tool to rewrite the implementation plan files.',
+    'Do not paste the full plan into the final response.',
+    'Use forward slashes in file_path, including Windows paths.',
+    'For large plans, write phase files first, then write a compact implementation_plan.json index with subtasks_file references.',
     'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    'For genuinely complex tasks, do not omit necessary subtasks; preserve the work and shorten descriptions instead.',
+    'For genuinely complex tasks, preserve necessary subtasks by splitting files instead of dropping work.',
     'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
@@ -431,7 +433,6 @@ export class BuildOrchestrator extends EventEmitter {
         abortSignal: this.config.abortSignal,
         cliModel: this.config.cliModel,
         cliThinking: this.config.cliThinking,
-        outputSchema: ImplementationPlanOutputSchema,
       });
 
       this.emitTyped('session-complete', result, 'planning');
@@ -448,7 +449,7 @@ export class BuildOrchestrator extends EventEmitter {
         const errorMessage = result.error?.message ?? 'Planning session failed';
         if (attempt < maxPlanningRetries && isWriteToolPlanOutputFailure(errorMessage)) {
           planningRetryContext = buildPlanningStructuredOutputRetryPrompt(errorMessage);
-          this.emitTyped('log', 'Planning attempted malformed Write for implementation_plan.json; retrying with structured-output-only guidance...');
+          this.emitTyped('log', 'Planning attempted malformed Write for implementation_plan.json; retrying with split Write guidance...');
           continue;
         }
         return { success: false, error: errorMessage };
@@ -496,12 +497,13 @@ export class BuildOrchestrator extends EventEmitter {
         return { success: true };
       }
 
-      // Plan is invalid — try lightweight LLM repair first (single generateText call,
-      // no tools, no codebase re-exploration). This is ~100x cheaper than a full re-plan.
+      // Plan is invalid. Default to a full planner retry so complex plans can
+      // be rewritten with smaller phase files instead of another large schema output.
       validationFailures++;
-      this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Attempting lightweight repair...`);
+      this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Retrying with split Write guidance...`);
 
-      if (this.config.getModel) {
+      const allowStructuredPlanRepair = process.env.AUTOCODE_ENABLE_PLAN_STRUCTURED_REPAIR === '1';
+      if (allowStructuredPlanRepair && this.config.getModel) {
         const model = await this.config.getModel('planner');
         if (model) {
           const repairResult = await repairJsonWithLLM(

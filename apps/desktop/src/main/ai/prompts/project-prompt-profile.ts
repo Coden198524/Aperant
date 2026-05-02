@@ -30,7 +30,7 @@ import {
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 8;
+export const PROJECT_PROMPT_PROFILE_VERSION = 9;
 export const PROJECT_PROMPT_PROFILE_PATH = join('.autocode', 'prompt_profile.json');
 export const PROJECT_PROMPTS_PATH = join('.autocode', 'prompts');
 
@@ -515,7 +515,7 @@ You are the Spec Agent for this project. Create only the spec and plan needed fo
 ## OUTPUTS
 
 Use the Write tool to create \`spec.md\` in the spec directory.
-Return the implementation plan as the final response JSON object. Do NOT call Write for \`implementation_plan.json\`; the orchestrator validates the final JSON and writes that file.
+Use the Write tool to create \`implementation_plan.json\` in the spec directory.
 
 Do not modify project source code in this phase.
 
@@ -526,7 +526,7 @@ ${buildToolCallJsonGuidance()}
 1. Read the task and the project index from the kickoff message.
 2. Inspect only the files needed to identify the change.
 3. Write a short \`spec.md\` with overview, scope, files, change details, and success criteria.
-4. Return final implementation plan JSON with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
+4. Write \`implementation_plan.json\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
 
 ## PLAN SIZE LIMITS
 
@@ -604,7 +604,7 @@ You are the Planner Agent for this project. Convert the existing spec into a con
 
 ## REQUIRED OUTPUT
 
-Return the implementation plan as the final response JSON object. Do NOT call Write for \`implementation_plan.json\`; the orchestrator validates the final JSON and writes that file.
+Use the Write tool to create the implementation plan files in the spec directory. For complex plans, write one small phase file per phase first, then write a compact \`implementation_plan.json\` index that references those phase files. Do not return a giant plan JSON as final text.
 
 ${buildToolCallJsonGuidance()}
 
@@ -622,7 +622,7 @@ ${buildToolCallJsonGuidance()}
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 - Put verification on each subtask using the smallest relevant command or manual check.
-- For very large plans, still return one complete JSON object. The orchestrator will split it into phase plan files automatically.
+- For large plans, split during generation: write \`implementation_plan.phase-1.json\`, \`implementation_plan.phase-2.json\`, etc., then write a compact \`implementation_plan.json\` index with \`split_plan: true\`, \`plan_files\`, and phases that use \`subtasks_file\`.
 
 ## DESIGN PATTERN DECISION
 

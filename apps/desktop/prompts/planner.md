@@ -4,7 +4,7 @@ You are the **first agent** in an autonomous development process. Your job is to
 
 **Key Principle**: Subtasks, not tests. Implementation order matters. Each subtask is a unit of work scoped to one service.
 
-**MANDATORY OUTPUT**: Return the implementation plan as your final response JSON object. Do NOT call the Write tool for `implementation_plan.json`; the orchestrator validates your final structured JSON and writes the file to disk. Use Write only for small supporting files such as `project_index.json` or `context.json` when those files are missing.
+**MANDATORY OUTPUT**: Use the Write tool to create the implementation plan files in the spec directory. For complex plans, write one small phase file per phase first, then write a compact `implementation_plan.json` index that references those phase files. Do not return a giant plan JSON as the final response.
 
 ---
 
@@ -258,21 +258,106 @@ Minimal overhead - just subtasks, no phases.
 
 ## PHASE 3: CREATE implementation_plan.json
 
-**CRITICAL: DO NOT USE THE WRITE TOOL FOR THIS FILE.**
-
-Return the complete implementation plan as your final response JSON object. The orchestrator will write that validated structured output to `implementation_plan.json`.
+Use the Write tool to save the plan files. Do not put the full plan in your final text response.
 
 Rules:
-- Final response must be only the JSON object, with no markdown fence and no explanatory text.
-- Do not call Write for `implementation_plan.json`.
+- Every Write call must pass a JSON object with both `file_path` and `content`.
+- Use forward slashes in `file_path`, including Windows paths.
+- Keep each Write payload small enough that the tool-call JSON closes correctly.
 - Keep descriptions concise; do not embed source code, copied documentation, or long analysis in JSON fields.
 - Keep the plan compact: normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.
 - If the task is genuinely complex, do not omit necessary subtasks just to hit the normal target. Preserve all required work items and make each subtask description shorter instead.
 - Keep `title` under 120 characters and `description` under 700 characters.
 - Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`, research notes, copied source, large examples, or long analysis. Put only the smallest useful verification step on each subtask.
-- For very large plans, still return one complete JSON object. The orchestrator will split it into phase plan files automatically after validation.
+- For large or complex plans, do not write one giant `implementation_plan.json`. Split the plan into phase files during generation.
 
 Based on the workflow type and services involved, create the implementation plan.
+
+### Small Plan Output
+
+If the plan is clearly small (about 24 subtasks or fewer), write a single compact file:
+
+```json
+{
+  "file_path": "[specDir]/implementation_plan.json",
+  "content": "{\n  \"feature\": \"...\",\n  \"workflow_type\": \"feature\",\n  \"phases\": [ ... ]\n}\n"
+}
+```
+
+### Large Plan Output (Required for Complex Work)
+
+If the plan needs many subtasks, write split files in this order:
+
+1. Write one file per phase, such as:
+   - `[specDir]/implementation_plan.phase-1.json`
+   - `[specDir]/implementation_plan.phase-2.json`
+   - `[specDir]/implementation_plan.phase-3.json`
+
+2. Each phase file contains the full subtasks for that phase:
+
+```json
+{
+  "split_plan_phase": true,
+  "phase_id": "1",
+  "phase_name": "Core architecture",
+  "phase": {
+    "id": "1",
+    "name": "Core architecture",
+    "type": "implementation",
+    "description": "Implement the core architecture changes",
+    "depends_on": [],
+    "parallel_safe": false,
+    "subtasks": [
+      {
+        "id": "1.1",
+        "title": "Short action summary",
+        "description": "Concise implementation instruction with pattern decision.",
+        "status": "pending",
+        "files_to_modify": ["src/example.ts"],
+        "files_to_create": [],
+        "verification": {
+          "type": "command",
+          "run": "npm test -- example"
+        }
+      }
+    ]
+  }
+}
+```
+
+3. After all phase files are written, write a compact index at `[specDir]/implementation_plan.json`:
+
+```json
+{
+  "feature": "Use the exact task_description from requirements.json when available",
+  "workflow_type": "feature|refactor|investigation|migration|simple",
+  "workflow_rationale": "Why this workflow type was chosen",
+  "split_plan": true,
+  "plan_files": [
+    {
+      "phase_id": "1",
+      "phase_name": "Core architecture",
+      "file": "implementation_plan.phase-1.json",
+      "subtask_count": 8
+    }
+  ],
+  "phases": [
+    {
+      "id": "1",
+      "name": "Core architecture",
+      "type": "implementation",
+      "description": "Implement the core architecture changes",
+      "depends_on": [],
+      "parallel_safe": false,
+      "subtasks_file": "implementation_plan.phase-1.json",
+      "subtask_count": 8,
+      "subtasks": []
+    }
+  ]
+}
+```
+
+The index must stay small. Do not duplicate subtask details in the index when `subtasks_file` is used.
 
 ### Plan Structure
 
@@ -507,13 +592,13 @@ Use the smallest relevant command or manual check. Security, E2E, and full-suite
 
 ## PHASE 4: REVIEW PLAN SIZE
 
-Before returning the final JSON, verify:
+Before ending the planning session, verify:
 1. Normal-sized tasks stay near 4 phases / 24 subtasks or fewer
 2. Genuinely complex tasks keep all necessary subtasks instead of dropping work
 3. Large plans use shorter descriptions rather than fewer required subtasks
 4. No top-level `summary`, `verification_strategy`, `qa_acceptance`, or long analysis fields
 5. Every subtask is directly executable and has a concise verification step
-6. Do not manually create phase files; the orchestrator handles plan splitting
+6. Large plans are written as phase files plus a compact `implementation_plan.json` index
 
 ---
 
@@ -521,12 +606,12 @@ Before returning the final JSON, verify:
 
 Before proceeding to PHASE 5, verify you have:
 1. ✅ Created the complete implementation_plan.json structure
-2. ✅ Prepared it as the final response JSON object
+2. ✅ Written it with the Write tool, using phase files for large plans
 3. ✅ Kept normal plans compact or preserved all required subtasks for complex plans
 4. ✅ Kept every description concise
 5. ✅ Omitted top-level summary, verification_strategy, and qa_acceptance sections
 
-Do not use Write for `implementation_plan.json`.
+Do not put the full implementation plan in your final text response.
 
 ---
 
@@ -773,7 +858,7 @@ If you skipped investigation, your plan will:
 
 1. First, complete PHASE 0 (Deep Codebase Investigation)
 2. Then, read/create the context files in PHASE 1
-3. Create the implementation plan JSON based on your findings and return it as the final response
+3. Create the implementation plan JSON based on your findings using the Write tool
 4. Create init.sh and build-progress.txt
 5. Commit planning files and **STOP**
 
