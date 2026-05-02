@@ -39,7 +39,8 @@ import {
 import type { SessionResult } from '../session/types';
 import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
-import type { BatchExecutorConfig } from './batch-executor';
+import { executeBatches, type BatchExecutorConfig } from './batch-executor';
+import { generateBatchPrompt } from './batch-prompt-generator';
 import { translateLogMessage, translatePhaseMessage } from './log-messages';
 import type { WorkflowConfig } from './workflow-config';
 import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
@@ -611,8 +612,6 @@ export class BuildOrchestrator extends EventEmitter {
     // If batch execution is enabled, use batch executor for parallel-safe subtasks
     if (this.config.enableBatchExecution) {
       this.emitTyped('log', translateLogMessage('Batch execution enabled - analyzing parallel opportunities', this.config.language));
-      const { executeBatches } = await import('./batch-executor');
-      const { generateBatchPrompt } = await import('./batch-prompt-generator');
 
       // Batch session handler: processes multiple subtasks in a single AI session
       const runBatchSession = async (batch: SubtaskInfo[], attempt: number): Promise<SessionResult> => {

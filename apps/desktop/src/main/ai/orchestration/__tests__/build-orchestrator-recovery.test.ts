@@ -6,6 +6,15 @@ const mockUnlink = vi.fn();
 const mockValidateAndNormalizeJsonFile = vi.fn();
 const mockIterateSubtasks = vi.fn();
 
+async function readMockPlan(specDir: string): Promise<Record<string, unknown> | null> {
+  try {
+    const raw = await mockReadFile(`${specDir}/implementation_plan.json`);
+    return JSON.parse(String(raw)) as Record<string, unknown>;
+  } catch {
+    return null;
+  }
+}
+
 vi.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: (...args: unknown[]) => mockWriteFile(...args),
@@ -26,9 +35,19 @@ vi.mock('../../schema', () => ({
   ImplementationPlanSchema: {},
   ImplementationPlanOutputSchema: {},
   validateAndNormalizeJsonFile: (...args: unknown[]) => mockValidateAndNormalizeJsonFile(...args),
+  validateImplementationPlanLanguage: vi.fn(() => []),
   repairJsonWithLLM: vi.fn(),
   buildValidationRetryPrompt: vi.fn(() => ''),
   IMPLEMENTATION_PLAN_SCHEMA_HINT: 'schema hint',
+  writeImplementationPlanFiles: vi.fn(async (specDir: string, plan: unknown) => {
+    await mockWriteFile(`${specDir}/implementation_plan.json`, JSON.stringify(plan));
+    return { plan, split: false, totalSubtasks: 1, filesWritten: [`${specDir}/implementation_plan.json`] };
+  }),
+  rewriteImplementationPlanFiles: vi.fn(async () => null),
+  loadImplementationPlanFromFiles: (specDir: string) => readMockPlan(specDir),
+  saveImplementationPlanToFiles: vi.fn(async (specDir: string, plan: unknown) => {
+    await mockWriteFile(`${specDir}/implementation_plan.json`, JSON.stringify(plan));
+  }),
 }));
 
 vi.mock('../subtask-iterator', () => ({
