@@ -86,6 +86,11 @@ vi.mock('../../../utils/atomic-file', () => ({
   writeFileAtomicSync: vi.fn(),
 }));
 
+vi.mock('../../../ai/schema/plan-shards', () => ({
+  loadImplementationPlanFromFilesSync: vi.fn(),
+  saveImplementationPlanToFilesSync: vi.fn(),
+}));
+
 vi.mock('../../../worktree-paths', () => ({
   findTaskWorktree: vi.fn(() => null),
 }));
@@ -137,6 +142,21 @@ describe('registerTaskExecutionHandlers', () => {
       mockAgentManager as never,
       () => mockMainWindow as BrowserWindow,
     );
+
+    const planShards = await import('../../../ai/schema/plan-shards');
+    const fs = await import('fs');
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockImplementation((planPath: string) => {
+      try {
+        const content = (fs.readFileSync as Mock)(planPath);
+        return content ? JSON.parse(content as string) : null;
+      } catch {
+        return null;
+      }
+    });
+    const atomicFile = await import('../../../utils/atomic-file');
+    (planShards.saveImplementationPlanToFilesSync as Mock).mockImplementation((planPath: string, plan: unknown) => {
+      (atomicFile.writeFileAtomicSync as Mock)(planPath, JSON.stringify(plan, null, 2));
+    });
   });
 
   it('scopes TASK_START lookups and task errors by requested projectId', async () => {
@@ -716,6 +736,85 @@ describe('registerTaskExecutionHandlers', () => {
     expect(writeFileAtomicSync).toHaveBeenCalledWith(
       expect.stringContaining('implementation_plan.json'),
       expect.stringContaining('"id": "1.3"')
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
+  it('saves follow-up subtasks through split-plan helpers on Request Changes', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const planShards = await import('../../../ai/schema/plan-shards');
+
+    const splitPlan = {
+      split_plan: true,
+      plan_files: [
+        {
+          phase_id: '1',
+          phase_name: 'Implementation',
+          file: 'implementation_plan.phase-1.json',
+          subtask_count: 1,
+        },
+      ],
+      phases: [
+        {
+          id: '1',
+          phase: 1,
+          name: 'Implementation',
+          type: 'implementation',
+          subtasks_file: 'implementation_plan.phase-1.json',
+          subtasks: [
+            { id: '1.1', title: 'Done work', description: 'done', status: 'completed', files: [] },
+          ],
+        },
+      ],
+    };
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-split-followup',
+        specId: '001-split-followup',
+        projectId: 'project-fast',
+        title: 'Split follow-up task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'completed',
+        subtasks: [{ id: '1.1', title: 'Done work', description: 'done', status: 'completed', files: [] }],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockReturnValue(splitPlan);
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-split-followup', false, '继续优化 UI 细节');
+
+    expect(result).toEqual({ success: true });
+    expect(planShards.saveImplementationPlanToFilesSync).toHaveBeenCalledWith(
+      expect.stringContaining('implementation_plan.json'),
+      expect.objectContaining({
+        split_plan: true,
+        phases: [
+          expect.objectContaining({
+            subtasks_file: 'implementation_plan.phase-1.json',
+            subtasks: [
+              expect.objectContaining({ id: '1.1' }),
+              expect.objectContaining({
+                id: '1.2',
+                status: 'pending',
+                description: expect.stringContaining('继续优化 UI 细节'),
+              }),
+            ],
+          }),
+        ],
+      }),
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();

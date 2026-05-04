@@ -36,6 +36,7 @@ describe('task-store-persistence', () => {
   let loadTasks: typeof import('../task-store').loadTasks;
   let createTask: typeof import('../task-store').createTask;
   let deleteTask: typeof import('../task-store').deleteTask;
+  let submitReview: typeof import('../task-store').submitReview;
 
 
   beforeEach(async () => {
@@ -48,10 +49,53 @@ describe('task-store-persistence', () => {
     loadTasks = storeModule.loadTasks;
     createTask = storeModule.createTask;
     deleteTask = storeModule.deleteTask;
+    submitReview = storeModule.submitReview;
   });
 
   afterEach(() => {
     vi.restoreAllMocks();
+  });
+
+  it('force refreshes tasks after Request Changes succeeds', async () => {
+    const originalTask: Task = {
+      id: 'task-review',
+      specId: '001-review',
+      projectId: 'test-project',
+      title: 'Review task',
+      description: 'Review task',
+      status: 'human_review' as TaskStatus,
+      reviewReason: 'completed',
+      subtasks: [
+        { id: '1.1', title: 'Original', description: 'Original', status: 'completed', files: [] },
+      ],
+      logs: [],
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    };
+    const refreshedTask: Task = {
+      ...originalTask,
+      subtasks: [
+        ...originalTask.subtasks,
+        { id: '1.2', title: 'Follow-up', description: 'Follow-up', status: 'pending', files: [] },
+      ],
+    };
+
+    useTaskStore.getState().setTasks([originalTask]);
+    (window.electronAPI.submitReview as ReturnType<typeof vi.fn>).mockResolvedValue({ success: true });
+    mockGetTasks.mockResolvedValue({ success: true, data: [refreshedTask] });
+
+    const result = await submitReview('task-review', false, '继续优化 UI 细节');
+
+    expect(result).toBe(true);
+    expect(window.electronAPI.submitReview).toHaveBeenCalledWith(
+      'task-review',
+      false,
+      '继续优化 UI 细节',
+      undefined,
+      'test-project',
+    );
+    expect(mockGetTasks).toHaveBeenCalledWith('test-project', { forceRefresh: true });
+    expect(useTaskStore.getState().tasks[0].subtasks).toHaveLength(2);
   });
 
   describe('Log Persistence', () => {

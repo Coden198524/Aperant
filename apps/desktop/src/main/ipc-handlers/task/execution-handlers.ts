@@ -5,6 +5,11 @@ import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Pr
 import path from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { spawnSync, execFileSync } from 'child_process';
+import {
+  loadImplementationPlanFromFilesSync,
+  saveImplementationPlanToFilesSync,
+  type ShardableImplementationPlan,
+} from '../../ai/schema/plan-shards';
 import { getToolPath } from '../../cli-tool-manager';
 import { AgentManager } from '../../agent';
 import { fileWatcher } from '../../file-watcher';
@@ -195,21 +200,12 @@ function buildFollowupSummary(feedback: string): string {
 }
 
 function reopenCompletedPlanForFollowupFix(planPath: string, feedback: string): boolean {
-  const planContent = safeReadFileSync(planPath);
-  if (!planContent) {
-    return false;
-  }
-
   try {
-    const plan = JSON.parse(planContent) as {
-      phases?: Array<{
-        phase?: number;
-        name?: string;
-        type?: string;
-        subtasks?: Array<Record<string, unknown>>;
-      }>;
-      updated_at?: string;
-    };
+    const plan = loadImplementationPlanFromFilesSync(planPath) as ShardableImplementationPlan | null;
+
+    if (!plan) {
+      return false;
+    }
 
     if (!Array.isArray(plan.phases)) {
       plan.phases = [];
@@ -251,7 +247,7 @@ function reopenCompletedPlanForFollowupFix(planPath: string, feedback: string): 
     });
 
     plan.updated_at = new Date().toISOString();
-    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(planPath, plan);
     return true;
   } catch (error) {
     console.error('[reopenCompletedPlanForFollowupFix] Failed to update plan:', error);

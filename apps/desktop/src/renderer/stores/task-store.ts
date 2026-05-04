@@ -942,6 +942,9 @@ export async function submitReview(
     const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
     const result = await window.electronAPI.submitReview(taskId, approved, feedback, images, task?.projectId);
     if (result.success) {
+      if (task?.projectId) {
+        await loadTasks(task.projectId, { forceRefresh: true });
+      }
       return true;
     }
     return false;
