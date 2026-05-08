@@ -30,6 +30,124 @@ If a relevant dimension cannot be verified, document the gap clearly instead of 
 
 ---
 
+## 3D NETWORK GAME DEVELOPMENT QA PRIORITIES
+
+**CRITICAL:** This project is for 3D network game development. Apply these additional QA checks.
+
+### Performance Validation (MANDATORY for game code)
+
+**Frame Time:**
+- [ ] Frame time consistently <16.6ms (60 FPS) under normal load
+- [ ] No frame spikes >33ms (causes visible stuttering)
+- [ ] Profile with 100+ entities spawned (stress test)
+
+**Memory:**
+- [ ] No allocations in Update/FixedUpdate loops (use profiler)
+- [ ] Memory growth <10MB over 10-minute session
+- [ ] No memory leaks after scene transitions
+- [ ] GC collections <1 per second
+
+**Network:**
+- [ ] Bandwidth per player <10KB/s upstream
+- [ ] State sync works with 200ms latency + 5% packet loss
+- [ ] Server validates all gameplay actions (no client authority)
+- [ ] Client prediction reconciles correctly with server state
+
+**Rendering:**
+- [ ] Draw calls within budget (<500 mobile, <2000 desktop)
+- [ ] No missing materials or pink textures
+- [ ] LOD system working correctly
+- [ ] Occlusion culling enabled where applicable
+
+### Game-Specific Validation
+
+**Object Pooling:**
+- [ ] Frequently spawned objects use pooling (projectiles, effects, etc.)
+- [ ] Pool returns objects correctly (no leaks)
+- [ ] Pool pre-warms on scene load
+
+**Component Caching:**
+- [ ] No GetComponent calls in Update/FixedUpdate
+- [ ] References cached in Start/Awake
+- [ ] Null checks on cached components
+
+**Physics:**
+- [ ] Physics updates in FixedUpdate (50Hz)
+- [ ] Raycasts limited (<10 per frame)
+- [ ] Collision layers configured correctly
+- [ ] No physics calculations in Update loop
+
+**Network Security:**
+- [ ] Server validates input ranges (position, rotation, speed)
+- [ ] Rate limiting on client messages (prevent flooding)
+- [ ] Critical game state (health, inventory) server-authoritative
+- [ ] No sensitive data in client-visible packets
+
+**Anti-Patterns Check:**
+- [ ] No FindObjectsOfType in Update
+- [ ] No string concatenation in loops
+- [ ] No synchronous asset loading in game thread
+- [ ] No missing null checks on networked objects
+- [ ] No direct client state modification (must go through server)
+
+### Performance Testing Commands
+
+```bash
+# 1. Frame time profiling (Unity Profiler or similar)
+# Check: CPU time, GPU time, memory allocations
+
+# 2. Spawn stress test
+# Spawn 100+ entities, verify frame time stays <16.6ms
+
+# 3. Network stress test
+# Simulate 32 concurrent players
+# Measure: bandwidth, latency handling, server load
+
+# 4. Memory leak test
+# Run for 10 minutes with normal gameplay
+# Check: memory growth, GC frequency
+
+# 5. Latency simulation
+# Add 200ms latency + 5% packet loss
+# Verify: gameplay remains responsive, prediction works
+```
+
+### Game QA Report Template
+
+Add this section to your QA report if game code was modified:
+
+```markdown
+## Game Performance Validation
+
+**Frame Time:**
+- Average: [X]ms
+- 99th percentile: [X]ms
+- Spikes: [count] frames >33ms
+- Status: PASS/FAIL
+
+**Memory:**
+- Allocations per frame: [X]KB
+- Total growth (10 min): [X]MB
+- GC collections: [X] per second
+- Status: PASS/FAIL
+
+**Network:**
+- Bandwidth per player: [X]KB/s
+- Latency handling: PASS/FAIL (tested at 200ms)
+- Server validation: PASS/FAIL (all actions validated)
+- Client prediction: PASS/FAIL (reconciliation working)
+
+**Anti-Patterns Found:**
+- [List any violations of game development best practices]
+- [Or "None"]
+
+**Performance Bottlenecks:**
+- [List any identified bottlenecks]
+- [Or "None detected"]
+```
+
+---
+
 ## WHY QA VALIDATION MATTERS
 
 The Coder Agent may have:

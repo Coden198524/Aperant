@@ -116,6 +116,199 @@ if (!user.hasPermission('delete')) {
 
 ---
 
+## 3D NETWORK GAME DEVELOPMENT REQUIREMENTS
+
+**CRITICAL:** This project is for 3D network game development. Apply these game-specific quality standards.
+
+### Performance Requirements (MANDATORY)
+
+**Frame Time Budgets:**
+- Target: <16.6ms per frame (60 FPS minimum)
+- Ideal: <8.3ms per frame (120 FPS for competitive games)
+- **Zero allocations in Update/FixedUpdate loops** - use object pools
+
+**Network Performance:**
+- Round-trip latency: <100ms (competitive: <50ms)
+- Bandwidth per player: <10KB/s upstream
+- State sync rate: 20-30Hz for non-critical entities
+- Physics updates: 50Hz fixed timestep
+
+**Memory Management:**
+- Allocations: <1KB per frame (avoid GC spikes)
+- Pre-allocate collections with known capacity
+- Profile memory every 1000 frames
+- Implement resource unloading on scene transitions
+
+**Rendering:**
+- Draw calls: <500 (mobile), <2000 (desktop)
+- Use static batching and GPU instancing
+- Limit physics raycasts: <10 per frame
+
+### Game-Specific Code Patterns
+
+**1. Object Pooling (Avoid Instantiate/Destroy in loops)**
+```csharp
+// ✅ CORRECT: Use object pool
+var projectile = objectPool.Get(projectilePrefab);
+projectile.transform.position = spawnPoint;
+StartCoroutine(ReturnToPool(projectile, 3f));
+
+// ❌ WRONG: Allocates every frame
+void Update() {
+    if (Input.GetKeyDown(KeyCode.Space)) {
+        Instantiate(projectilePrefab); // GC pressure
+    }
+}
+```
+
+**2. Component Caching (Avoid GetComponent per frame)**
+```csharp
+// ✅ CORRECT: Cache in Start/Awake
+private Rigidbody rb;
+void Start() { rb = GetComponent<Rigidbody>(); }
+void Update() { rb.velocity = newVelocity; }
+
+// ❌ WRONG: GetComponent every frame
+void Update() {
+    GetComponent<Rigidbody>().velocity = newVelocity; // Expensive
+}
+```
+
+**3. Distance Checks (Use squared distance)**
+```csharp
+// ✅ CORRECT: Avoid sqrt
+float distSqr = (target.position - transform.position).sqrMagnitude;
+if (distSqr < attackRangeSqr) { Attack(); }
+
+// ❌ WRONG: Unnecessary sqrt
+float dist = Vector3.Distance(target.position, transform.position);
+if (dist < attackRange) { Attack(); }
+```
+
+**4. Server Authority (Never trust client)**
+```csharp
+// ✅ CORRECT: Server validates
+[ServerRpc]
+void DealDamageServerRpc(ulong targetId, int damage) {
+    // Validate: range check, cooldown, line of sight
+    if (!IsInRange(targetId) || !CanAttack()) return;
+    ApplyDamage(targetId, damage);
+}
+
+// ❌ WRONG: Client directly modifies
+void OnHit() {
+    target.health -= damage; // Client can cheat
+}
+```
+
+**5. Client Prediction (Smooth movement)**
+```csharp
+// ✅ CORRECT: Predict locally, reconcile with server
+void Update() {
+    // Client predicts movement
+    PredictMovement(input);
+    
+    // Reconcile when server state arrives
+    if (serverStateReceived) {
+        ReconcilePosition(serverPosition, serverTimestamp);
+    }
+}
+
+// ❌ WRONG: Wait for server (laggy)
+void Update() {
+    // Only move after server confirms - feels sluggish
+}
+```
+
+**6. Fixed Timestep for Physics**
+```csharp
+// ✅ CORRECT: Separate physics from rendering
+void FixedUpdate() { // 50Hz
+    ApplyPhysics();
+    UpdateGameLogic();
+}
+void Update() { // Variable framerate
+    UpdateAnimations();
+    UpdateCamera();
+}
+
+// ❌ WRONG: Physics in Update
+void Update() {
+    rb.AddForce(force); // Framerate-dependent
+}
+```
+
+### Game Development Checklist
+
+Before marking a subtask complete, verify:
+
+**Performance:**
+- [ ] No allocations in Update/FixedUpdate loops
+- [ ] Component references cached (no GetComponent per frame)
+- [ ] Distance checks use sqrMagnitude (no sqrt)
+- [ ] Object pooling used for frequently spawned objects
+- [ ] Physics raycasts limited (<10 per frame)
+
+**Network:**
+- [ ] Server validates all gameplay actions
+- [ ] Client prediction implemented for player movement
+- [ ] State updates use delta compression
+- [ ] Rate limiting on client messages
+- [ ] Network protocol uses binary serialization
+
+**Memory:**
+- [ ] Collections pre-allocated with capacity
+- [ ] Event handlers unsubscribed in OnDestroy
+- [ ] Resources unloaded on scene transitions
+- [ ] No memory leaks in long-running sessions
+
+**Architecture:**
+- [ ] Game logic separated from rendering (fixed timestep)
+- [ ] Component-based design (avoid deep inheritance)
+- [ ] Systems decoupled via events/message bus
+
+**Security:**
+- [ ] Input ranges validated server-side
+- [ ] Critical assets hash-checked
+- [ ] No client authority over gameplay state
+
+### Performance Testing
+
+**MANDATORY: Run performance tests before completing subtasks that affect:**
+- Player movement/physics
+- Combat/damage systems
+- Spawning/despawning entities
+- Network synchronization
+- Resource loading
+
+**Test scenarios:**
+```bash
+# 1. Spawn stress test (100+ entities)
+# Measure: frame time should stay <16.6ms
+
+# 2. Network stress test (simulate 32 players)
+# Measure: bandwidth <10KB/s per player
+
+# 3. Memory leak test (10-minute session)
+# Measure: memory growth <10MB over 10 minutes
+
+# 4. Latency simulation (200ms + 5% packet loss)
+# Measure: gameplay remains responsive
+```
+
+### Common Game Development Anti-Patterns to Avoid
+
+1. **FindObjectsOfType in Update** - Cache references instead
+2. **String concatenation in loops** - Use StringBuilder
+3. **Synchronous asset loading** - Use async/coroutines
+4. **Missing null checks on networked objects** - Objects can be destroyed
+5. **Direct client state modification** - Always go through server
+6. **Allocating arrays/lists in hot paths** - Pre-allocate or use pools
+7. **Using SendMessage** - Use direct references or events
+8. **Coroutine leaks** - Stop coroutines in OnDestroy
+
+---
+
 ## CRITICAL: ENVIRONMENT AWARENESS
 
 **Your filesystem is RESTRICTED to your working directory.** You receive information about your
@@ -692,6 +885,12 @@ npm run lint
 
 # 3. Run affected tests (catch functional regressions)
 npm test -- [test-pattern-for-modified-files]
+
+# 4. Performance profiling (for game-critical code)
+# If your subtask affects Update loops, physics, or network sync:
+# - Profile frame time (should be <16.6ms)
+# - Check memory allocations (should be <1KB per frame)
+# - Measure network bandwidth (if applicable)
 ```
 
 **If any check fails:** Fix the issues immediately. Do not proceed to manual critique until all automated checks pass.
@@ -734,6 +933,16 @@ Work through each section methodically:
 - [ ] No code duplication
 - [ ] Appropriate use of constants
 - [ ] Documentation/comments where needed
+
+**Game Development Performance (if applicable):**
+- [ ] No allocations in Update/FixedUpdate loops
+- [ ] Component references cached (no GetComponent per frame)
+- [ ] Distance checks use sqrMagnitude instead of Distance
+- [ ] Object pooling used for frequently spawned objects
+- [ ] Physics operations in FixedUpdate, rendering in Update
+- [ ] Server validates all gameplay actions (no client authority)
+- [ ] Client prediction implemented for responsive movement
+- [ ] Network messages rate-limited and validated
 
 #### 2. Implementation Completeness
 

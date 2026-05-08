@@ -284,6 +284,7 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
       TOOL_GET_SESSION_CONTEXT,
     ],
     // High reasoning prevents regressions in security, performance, and correctness.
+    // Critical for 3D network game development: frame time, memory, network sync, server authority.
     // Matches QA reviewer thinking level to reduce rejection cycles.
     thinkingDefault: 'high',
   },
@@ -300,6 +301,8 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
       TOOL_UPDATE_QA_STATUS,
       TOOL_GET_SESSION_CONTEXT,
     ],
+    // High reasoning for thorough validation of game performance, network sync, and security.
+    // Critical checks: frame time, memory allocations, server authority, client prediction.
     thinkingDefault: 'high',
   },
   qa_fixer: {
