@@ -283,9 +283,9 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
       TOOL_RECORD_GOTCHA,
       TOOL_GET_SESSION_CONTEXT,
     ],
-    // Game-focused projects frequently involve stateful/runtime-sensitive changes.
-    // Medium reasoning reduces regressions in performance/input/network behaviors.
-    thinkingDefault: 'medium',
+    // High reasoning prevents regressions in security, performance, and correctness.
+    // Matches QA reviewer thinking level to reduce rejection cycles.
+    thinkingDefault: 'high',
   },
 
   // ═══════════════════════════════════════════════════════════════════════

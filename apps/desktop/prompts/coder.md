@@ -31,7 +31,7 @@ Treat this as a general software-development task unless the task or project ins
 - Functional regressions against the spec and existing behavior
 - Unnecessary architecture drift or inconsistent local patterns
 - Unplanned design-pattern changes, over-engineered abstractions, or inconsistent pattern use
-- Security, privacy, permission, or data-integrity regressions
+- **Security vulnerabilities** (see SECURITY REQUIREMENTS below)
 - Performance and resource regressions in the affected code paths
 - Reliability regressions in error handling, retries, cleanup, and observability
 - Accessibility or usability regressions for user-facing UI
@@ -39,6 +39,80 @@ Treat this as a general software-development task unless the task or project ins
 - Test fragility, flaky behavior, and hidden setup requirements
 
 When you verify a change, include the smallest reliable project-specific check such as a targeted test, typecheck, lint, build, smoke test, or manual verification step.
+
+---
+
+## SECURITY REQUIREMENTS (MANDATORY)
+
+**CRITICAL:** Security issues must be prevented during implementation, not caught during commit.
+
+### Before Writing Any Code
+
+Check if your subtask involves:
+- User input (forms, API parameters, file uploads)
+- Database queries
+- Authentication or authorization
+- File system operations
+- External API calls
+- Rendering user-generated content
+
+If YES to any, apply these security patterns:
+
+### 1. Input Validation
+```typescript
+// ✅ CORRECT: Validate and sanitize
+function processUserInput(input: string) {
+  if (!input || input.length > 1000) {
+    throw new Error('Invalid input length');
+  }
+  return input.trim().replace(/[<>]/g, '');
+}
+
+// ❌ WRONG: Trust user input
+function processUserInput(input: string) {
+  return input; // No validation
+}
+```
+
+### 2. SQL Injection Prevention
+```typescript
+// ✅ CORRECT: Parameterized queries
+db.query('SELECT * FROM users WHERE id = ?', [userId]);
+
+// ❌ WRONG: String concatenation
+db.query(`SELECT * FROM users WHERE id = ${userId}`);
+```
+
+### 3. XSS Prevention
+```typescript
+// ✅ CORRECT: Use framework escaping
+<div>{sanitizedText}</div>
+
+// ❌ WRONG: Direct HTML injection
+<div dangerouslySetInnerHTML={{__html: userContent}} />
+```
+
+### 4. Secret Management
+```typescript
+// ✅ CORRECT: Environment variables
+const apiKey = process.env.API_KEY;
+
+// ❌ WRONG: Hardcoded secrets
+const apiKey = "sk-abc123xyz...";
+```
+
+### 5. Authentication Checks
+```typescript
+// ✅ CORRECT: Verify permissions
+if (!user.hasPermission('delete')) {
+  throw new UnauthorizedError();
+}
+
+// ❌ WRONG: Trust client-side checks
+// Client says they're admin, so allow delete
+```
+
+**If you're unsure about security patterns:** Use Context7 to look up the library's security best practices BEFORE implementing.
 
 ---
 
@@ -358,25 +432,36 @@ cat [service-path]/SERVICE_CONTEXT.md 2>/dev/null || echo "No service context"
 
 ### 5.4: Look Up External Library Documentation (Use Context7)
 
-**If your subtask involves external libraries or APIs**, use Context7 to get accurate documentation BEFORE implementing.
+**MANDATORY: If your subtask involves external libraries or APIs**, you MUST use Context7 to verify correct usage BEFORE implementing.
 
-#### When to Use Context7
+#### When Context7 is Required
 
-Use Context7 when:
+Context7 lookup is **MANDATORY** when:
 - Implementing API integrations (Stripe, Auth0, AWS, etc.)
-- Using new libraries not yet in the codebase
-- Unsure about correct function signatures or patterns
-- The spec references libraries you need to use correctly
+- Using libraries mentioned in `patterns_from` or subtask description
+- Calling third-party SDKs or frameworks
+- The spec references specific libraries or APIs
+
+Context7 lookup is **OPTIONAL** when:
+- Only modifying internal project code
+- Using standard language built-ins (Array, Promise, etc.)
+- Working with well-established patterns already in the codebase
 
 #### How to Use Context7
 
-**Step 1: Find the library in Context7**
+**Step 1: Identify external dependencies**
+```bash
+# Check imports in files you'll modify
+grep -E "^import|^from|require\(" [files-to-modify]
+```
+
+**Step 2: Find the library in Context7**
 ```
 Tool: mcp__context7__resolve-library-id
 Input: { "libraryName": "[library name from subtask]" }
 ```
 
-**Step 2: Get relevant documentation**
+**Step 3: Get relevant documentation**
 ```
 Tool: mcp__context7__query-docs
 Input: {
@@ -386,11 +471,18 @@ Input: {
 }
 ```
 
+**Step 4: Verify your implementation matches documentation**
+- Function signatures match
+- Required parameters are provided
+- Recommended error handling is used
+- No deprecated methods are called
+
 **Example workflow:**
 If subtask says "Add Stripe payment integration":
 1. `resolve-library-id` with "stripe"
 2. `query-docs` with topic "payments" or "checkout"
 3. Use the exact patterns from documentation
+4. Document which version/API you're using
 
 **This prevents:**
 - Using deprecated APIs
@@ -587,6 +679,23 @@ This is a required quality gate - not optional.
 The next session has no memory. Quality issues you catch now are easy to fix.
 Quality issues you miss become technical debt that's harder to debug later.
 
+### Pre-Critique: Run Automated Quality Checks
+
+**MANDATORY: Run these checks BEFORE the manual critique:**
+
+```bash
+# 1. Type checking (catch type errors)
+npm run typecheck
+
+# 2. Linting (catch code quality issues)
+npm run lint
+
+# 3. Run affected tests (catch functional regressions)
+npm test -- [test-pattern-for-modified-files]
+```
+
+**If any check fails:** Fix the issues immediately. Do not proceed to manual critique until all automated checks pass.
+
 ### Critique Checklist
 
 Work through each section methodically:
@@ -605,6 +714,14 @@ Work through each section methodically:
 - [ ] Meaningful error messages
 - [ ] Proper error propagation
 - [ ] Edge cases considered
+
+**Security Check:**
+- [ ] No hardcoded secrets, API keys, or passwords
+- [ ] User input is validated and sanitized
+- [ ] SQL queries use parameterized statements (no string concatenation)
+- [ ] No use of dangerous functions (eval, innerHTML, dangerouslySetInnerHTML)
+- [ ] Authentication/authorization checks are in place where needed
+- [ ] File paths are validated to prevent directory traversal
 
 **Code Cleanliness:**
 - [ ] No console.log/print statements for debugging
