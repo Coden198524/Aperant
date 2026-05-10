@@ -272,7 +272,7 @@ export function MultiProviderModelSelect({ value, onChange, className, filterPro
 
       {/* Dropdown panel */}
       {open && (
-        <div className="absolute z-50 min-w-full w-max max-w-[400px] mt-1 bg-popover border border-border rounded-md shadow-lg flex flex-col max-h-80">
+        <div className="absolute z-50 min-w-full w-max max-w-[400px] mt-1 bg-popover border border-border rounded-md shadow-lg flex flex-col max-h-[600px]">
           {/* Search */}
           <div className="p-2 border-b border-border">
             <div className="relative">

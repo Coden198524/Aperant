@@ -21,7 +21,7 @@ interface ThinkingLevelSelectProps {
   value: string;
   onChange: (value: string) => void;
   modelValue: string;
-  provider: BuiltinProvider;
+  provider?: BuiltinProvider;
   disabled?: boolean;
 }
 
@@ -31,6 +31,8 @@ interface ThinkingLevelSelectProps {
  *   - 'none': disabled select showing "(No thinking)"
  *   - 'thinking_toggle': On/Off toggle appearance via Select (low = Off, high = On)
  *   - all others: standard Low / Medium / High dropdown
+ *
+ * If provider is not specified, it will be auto-detected from the model ID.
  */
 export function ThinkingLevelSelect({
   value,

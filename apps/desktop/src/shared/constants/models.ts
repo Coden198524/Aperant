@@ -11,6 +11,7 @@ import type { BuiltinProvider } from '../types/provider-account';
 // ============================================
 
 export const AVAILABLE_MODELS = [
+  { value: 'opus-4.7', label: 'Claude Opus 4.7' },
   { value: 'opus', label: 'Claude Opus 4.6' },
   { value: 'opus-1m', label: 'Claude Opus 4.6 (1M)' },
   { value: 'opus-4.5', label: 'Claude Opus 4.5' },
@@ -38,6 +39,7 @@ export interface ModelOption {
 
 export const ALL_AVAILABLE_MODELS: ModelOption[] = [
   // Anthropic
+  { value: 'opus-4.7', label: 'Claude Opus 4.7', provider: 'anthropic', description: 'Latest & most capable', capabilities: { thinking: true, tools: true, vision: true, contextWindow: 1000000 } },
   { value: 'opus', label: 'Claude Opus 4.6', provider: 'anthropic', description: 'Most capable', capabilities: { thinking: true, tools: true, vision: true, contextWindow: 200000 } },
   { value: 'opus-1m', label: 'Claude Opus 4.6 (1M)', provider: 'anthropic', description: '1M context', capabilities: { thinking: true, tools: true, vision: true, contextWindow: 1000000 } },
   { value: 'sonnet', label: 'Claude Sonnet 4.6', provider: 'anthropic', description: 'Balanced', capabilities: { thinking: true, tools: true, vision: true, contextWindow: 200000 } },
@@ -78,6 +80,7 @@ export const ALL_AVAILABLE_MODELS: ModelOption[] = [
 // Maps model shorthand to actual Claude model IDs
 // Values must match apps/desktop/src/main/ai/config/types.ts MODEL_ID_MAP
 export const MODEL_ID_MAP: Record<string, string> = {
+  'opus-4.7': 'claude-opus-4-7',
   opus: 'claude-opus-4-6',
   'opus-1m': 'claude-opus-4-6',
   'opus-4.5': 'claude-opus-4-5-20251101',
@@ -429,7 +432,7 @@ export function getProviderDefaultFeatureThinking(provider?: BuiltinProvider): F
 export const FAST_MODE_MODELS: readonly string[] = ['opus', 'opus-1m'] as const;
 
 // Models that use adaptive thinking (Opus dynamically decides how much to think within the budget cap)
-export const ADAPTIVE_THINKING_MODELS: readonly string[] = ['opus', 'opus-1m'] as const;
+export const ADAPTIVE_THINKING_MODELS: readonly string[] = ['opus-4.7', 'opus', 'opus-1m'] as const;
 
 // Valid thinking levels for validation
 export const VALID_THINKING_LEVELS = ['low', 'medium', 'high', 'xhigh'] as const;
@@ -607,37 +610,48 @@ export const REASONING_TYPE_BADGES: Record<ReasoningType, { i18nKey: string } | 
 };
 
 /**
+ * Detect the provider for a model ID by looking it up in ALL_AVAILABLE_MODELS.
+ * Returns the provider if found, otherwise 'anthropic' as fallback.
+ */
+export function detectProviderFromModelId(modelValue: string): BuiltinProvider {
+  const modelEntry = ALL_AVAILABLE_MODELS.find(m => m.value === modelValue);
+  return modelEntry?.provider ?? 'anthropic';
+}
+
+/**
  * Get the ReasoningConfig for a model+provider pair.
  * Looks up from DEFAULT_MODEL_EQUIVALENCES, falling back to ALL_AVAILABLE_MODELS.
+ * If provider is not specified, it will be auto-detected from the model ID.
  */
 export function getReasoningConfigForModel(
   modelValue: string,
-  provider: BuiltinProvider,
+  provider?: BuiltinProvider,
 ): ReasoningConfig {
+  const resolvedProvider = provider ?? detectProviderFromModelId(modelValue);
   // First try the equivalence table
-  const equiv = DEFAULT_MODEL_EQUIVALENCES[modelValue]?.[provider];
+  const equiv = DEFAULT_MODEL_EQUIVALENCES[modelValue]?.[resolvedProvider];
   if (equiv) return equiv.reasoning;
 
   // Check if model is in ALL_AVAILABLE_MODELS with matching provider
-  const modelEntry = ALL_AVAILABLE_MODELS.find(m => m.value === modelValue && m.provider === provider);
+  const modelEntry = ALL_AVAILABLE_MODELS.find(m => m.value === modelValue && m.provider === resolvedProvider);
   if (modelEntry) {
     if (!modelEntry.capabilities?.thinking) {
       return { type: 'none' };
     }
     // If it has thinking but we don't have a specific reasoning config,
     // try to infer from the provider
-    if (provider === 'anthropic') {
+    if (resolvedProvider === 'anthropic') {
       return ADAPTIVE_THINKING_MODELS.includes(modelValue)
         ? { type: 'adaptive_effort', level: 'high' }
         : { type: 'thinking_tokens', level: 'medium' };
     }
-    if (provider === 'openai') {
+    if (resolvedProvider === 'openai') {
       return { type: 'reasoning_effort', level: 'medium' };
     }
-    if (provider === 'openai-compatible') {
+    if (resolvedProvider === 'openai-compatible') {
       return { type: 'reasoning_effort', level: 'medium' };
     }
-    if (provider === 'google') {
+    if (resolvedProvider === 'google') {
       return { type: 'thinking_toggle', level: 'medium' };
     }
   }

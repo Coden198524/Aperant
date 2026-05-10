@@ -299,7 +299,6 @@ export function AgentProfileSelector({
                       <MultiProviderModelSelect
                         value={currentPhaseModels[phase]}
                         onChange={(value) => handlePhaseModelChange(phase, value as ModelType)}
-                        filterProvider={activeProvider ?? undefined}
                         className={disabled ? 'pointer-events-none opacity-50' : undefined}
                       />
                     </div>
@@ -307,7 +306,6 @@ export function AgentProfileSelector({
                       value={currentPhaseThinking[phase]}
                       onChange={(value) => handlePhaseThinkingChange(phase, value as ThinkingLevel)}
                       modelValue={currentPhaseModels[phase]}
-                      provider={activeProvider ?? 'anthropic'}
                       disabled={disabled}
                     />
                   </div>
@@ -328,7 +326,6 @@ export function AgentProfileSelector({
               <MultiProviderModelSelect
                 value={model}
                 onChange={(value) => onModelChange(value as ModelType)}
-                filterProvider={activeProvider ?? undefined}
                 className={disabled ? 'pointer-events-none opacity-50' : undefined}
               />
             </div>
@@ -338,7 +335,6 @@ export function AgentProfileSelector({
             value={thinkingLevel || 'low'}
             onChange={(value) => onThinkingLevelChange(value as ThinkingLevel)}
             modelValue={model || 'sonnet'}
-            provider={activeProvider ?? 'anthropic'}
             disabled={disabled}
           />
         </div>
