@@ -172,7 +172,10 @@
     "errorLoadingContent": "Failed to load file content",
     "retry": "Retry",
     "selectFile": "Select a file to view its contents",
-    "openInIDE": "Open in IDE"
+    "openInIDE": "Open in IDE",
+    "readerView": "Reader",
+    "sourceView": "Source",
+    "invalidJson": "This JSON file could not be parsed, so the source is shown instead."
   },
   "gitChanges": {
     "tab": "Git Changes",
@@ -240,8 +243,12 @@
     "creating": "Creating...",
     "createTask": "Create Task",
     "worktreeNotice": {
-      "title": "Isolated Workspace",
-      "description": "This task runs in an isolated git worktree. Your main branch stays safe until you choose to merge."
+      "title": "Current Workspace",
+      "description": "By default, this task edits the currently checked out git workspace. Enable an isolated workspace in Git Options only when you want a separate worktree branch."
+    },
+    "batchExecution": {
+      "label": "Enable batch execution",
+      "description": "Runs compatible subtasks in a shared batch session. Leave off for per-subtask execution."
     },
     "gitOptions": {
       "title": "Git Options (optional)",
@@ -250,11 +257,11 @@
       "useProjectDefaultWithBranch": "Use project default ({{branch}})",
       "searchBranches": "Search branches...",
       "noBranchesFound": "No branches found",
-      "helpText": "Override the branch this task's worktree will be created from. Leave empty to use the project's configured default branch.",
+      "helpText": "Used only when isolated workspace is enabled. Override the branch this task's worktree will be created from.",
       "pushNewBranchesLabel": "Automatically push new branch",
       "pushNewBranchesDescription": "Publish this task branch to GitHub and set upstream tracking automatically. Disable to keep it local-only.",
-      "useWorktreeLabel": "Use isolated workspace (recommended)",
-      "useWorktreeDescription": "Creates changes in a separate git worktree for safe review before merging. Disable to build directly in your project (faster but riskier)."
+      "useWorktreeLabel": "Use isolated workspace",
+      "useWorktreeDescription": "Creates changes in a separate git worktree and branch for review before merging. Leave off to build directly in the current project workspace."
     },
     "errors": {
       "createFailed": "Failed to create task. Please try again.",
@@ -369,7 +376,30 @@
     "deleteDisabledRunning": "Stop the task before deleting subtasks",
     "deleteConfirm": "Delete subtask \"{{title}}\"? This removes it from the implementation plan.",
     "deleteAriaLabel": "Delete subtask {{title}}",
-    "deleteFailed": "Failed to delete subtask"
+    "deleteFailed": "Failed to delete subtask",
+    "completionSummary": "Completion summary",
+    "summaryChanged": "What changed",
+    "summaryVerified": "Verification",
+    "summaryReviewNotes": "Review notes",
+    "summaryOther": "Other"
+  },
+  "logs": {
+    "runtimeLabel": "Runtime",
+    "runtimeTab": "Runtime",
+    "runtimeEmpty": "No runtime logs yet",
+    "runtimeEmptyDescription": "Runtime output will appear here when the task runs",
+    "modelOutputLabel": "Model output",
+    "modelOutputTab": "Model output",
+    "modelOutputEmpty": "No model output yet",
+    "modelOutputEmptyDescription": "Model text output will appear here while the task runs",
+    "entriesCount": "({{count}} entries)",
+    "modelOutputLive": "Live",
+    "modelThinking": "Thinking...",
+    "modelThinkingDescription": "The model is preparing its next response.",
+    "modelWorking": "Working...",
+    "modelWorkingDescription": "The model is active. Output will appear here when it starts responding.",
+    "jumpToLatest": "Latest",
+    "streamChunkCount": "{{count}} chunks"
   },
   "bulkPR": {
     "selectAllInColumn": "Select all tasks in column",

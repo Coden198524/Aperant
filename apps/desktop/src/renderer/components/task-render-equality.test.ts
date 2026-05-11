@@ -61,4 +61,31 @@ describe('task-render-equality', () => {
     expect(isTaskRenderEquivalent(prevTask, nextTask)).toBe(true);
     expect(areTaskListsRenderEquivalent([prevTask], [nextTask])).toBe(true);
   });
+
+  it('treats subtask completion summary updates as render-affecting changes', () => {
+    const prevTask = {
+      ...createTask(),
+      subtasks: [
+        {
+          id: 'subtask-1',
+          title: 'Review summary',
+          description: 'Display completed work',
+          status: 'completed' as const,
+          files: [],
+        },
+      ],
+    };
+    const nextTask: Task = {
+      ...prevTask,
+      subtasks: [
+        {
+          ...prevTask.subtasks[0],
+          completionSummary: 'Added the summary panel for human review.',
+        },
+      ],
+    };
+
+    expect(isTaskRenderEquivalent(prevTask, nextTask)).toBe(false);
+    expect(areTaskListsRenderEquivalent([prevTask], [nextTask])).toBe(false);
+  });
 });

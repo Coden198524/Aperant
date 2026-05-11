@@ -16,6 +16,7 @@ import { Loader2, ChevronDown, ChevronUp, RotateCcw, FolderTree, GitBranch, Info
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Combobox } from './ui/combobox';
+import { Switch } from './ui/switch';
 import { TaskModalLayout } from './task-form/TaskModalLayout';
 import { TaskFormFields } from './task-form/TaskFormFields';
 import { type FileReferenceData } from './task-form/useImageUpload';
@@ -31,7 +32,7 @@ import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
-  getProviderPreset
+  getProviderPreset,
 } from '../../shared/constants';
 import { loadSettings, useSettingsStore } from '../stores/settings-store';
 import { useActiveProvider } from '../hooks/useActiveProvider';
@@ -88,8 +89,8 @@ export function TaskCreationWizard({
   const [isLoadingBranches, setIsLoadingBranches] = useState(false);
   const [baseBranch, setBaseBranch] = useState<string>(PROJECT_DEFAULT_BRANCH);
   const [projectDefaultBranch, setProjectDefaultBranch] = useState<string>('');
-  // Worktree isolation - default to true for safety
-  const [useWorktree, setUseWorktree] = useState(true);
+  // Workspace mode - default to direct development in the current git workspace.
+  const [useWorktree, setUseWorktree] = useState(false);
   const [pushNewBranches, setPushNewBranches] = useState(true);
 
   // Get project path from project store
@@ -144,6 +145,7 @@ export function TaskCreationWizard({
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('balanced');
+  const [enableBatchExecution, setEnableBatchExecution] = useState(false);
 
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -209,6 +211,8 @@ export function TaskCreationWizard({
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
         setWorkflowMode(draft.workflowMode ?? 'balanced');
+        setEnableBatchExecution(draft.enableBatchExecution ?? false);
+        setUseWorktree(draft.useWorktree ?? false);
         setPushNewBranches(draft.pushNewBranches ?? projectPushNewBranches);
         setIsDraftRestored(true);
 
@@ -233,8 +237,9 @@ export function TaskCreationWizard({
         setReferencedFiles([]);
         setRequireReviewBeforeCoding(false);
         setWorkflowMode('balanced');
+        setEnableBatchExecution(false);
         setBaseBranch(PROJECT_DEFAULT_BRANCH);
-        setUseWorktree(true);
+        setUseWorktree(false);
         setPushNewBranches(projectPushNewBranches);
         setIsDraftRestored(false);
         setShowClassification(false);
@@ -311,9 +316,11 @@ export function TaskCreationWizard({
     referencedFiles,
     requireReviewBeforeCoding,
     workflowMode,
+    enableBatchExecution,
+    useWorktree,
     pushNewBranches,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, workflowMode, pushNewBranches]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, workflowMode, enableBatchExecution, useWorktree, pushNewBranches]);
 
   /**
    * Detect @ mention being typed and show autocomplete
@@ -474,7 +481,6 @@ export function TaskCreationWizard({
       if (impact) metadata.impact = impact;
       if (model) metadata.model = model;
       if (thinkingLevel) metadata.thinkingLevel = thinkingLevel;
-      if (activeProvider) metadata.provider = activeProvider;
       if (phaseModels && phaseThinking) {
         metadata.isAutoProfile = true;
         metadata.phaseModels = phaseModels;
@@ -510,20 +516,20 @@ export function TaskCreationWizard({
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
       metadata.workflowMode = workflowMode;
-      // Always include baseBranch - resolve PROJECT_DEFAULT_BRANCH to actual branch name
-      // This ensures the backend always knows which branch to use for worktree creation
-      if (baseBranch === PROJECT_DEFAULT_BRANCH) {
-        // Use the resolved project default branch
-        if (projectDefaultBranch) metadata.baseBranch = projectDefaultBranch;
-      } else if (baseBranch) {
-        metadata.baseBranch = baseBranch;
+      if (enableBatchExecution) metadata.enableBatchExecution = true;
+      metadata.useWorktree = useWorktree;
+      if (useWorktree) {
+        // Resolve PROJECT_DEFAULT_BRANCH to the actual branch name for worktree creation.
+        if (baseBranch === PROJECT_DEFAULT_BRANCH) {
+          if (projectDefaultBranch) metadata.baseBranch = projectDefaultBranch;
+        } else if (baseBranch) {
+          metadata.baseBranch = baseBranch;
+        }
+        // Set useLocalBranch when user explicitly selects a local branch.
+        // This preserves gitignored files (.env, configs) by not switching to origin.
+        if (isSelectedBranchLocal) metadata.useLocalBranch = true;
+        if (!pushNewBranches) metadata.pushNewBranches = false;
       }
-      // Pass worktree preference - false means use --direct mode
-      if (!useWorktree) metadata.useWorktree = false;
-      // Set useLocalBranch when user explicitly selects a local branch
-      // This preserves gitignored files (.env, configs) by not switching to origin
-      if (isSelectedBranchLocal) metadata.useLocalBranch = true;
-      if (!pushNewBranches) metadata.pushNewBranches = false;
 
       const task = await createTask(projectId, title.trim(), description.trim(), metadata);
       if (task) {
@@ -556,8 +562,9 @@ export function TaskCreationWizard({
     setReferencedFiles([]);
     setRequireReviewBeforeCoding(false);
     setWorkflowMode('balanced');
+    setEnableBatchExecution(false);
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
-    setUseWorktree(true);
+    setUseWorktree(false);
     setPushNewBranches(projectPushNewBranches);
     setError(null);
     setShowClassification(false);
@@ -689,7 +696,7 @@ export function TaskCreationWizard({
       }
     >
       <div className="space-y-6">
-        {/* Worktree isolation info banner */}
+        {/* Workspace mode info banner */}
         <div className="flex items-start gap-3 p-4 bg-info/10 border border-info/30 rounded-lg">
           <Info className="h-5 w-5 text-info flex-shrink-0 mt-0.5" />
           <div className="flex-1 min-w-0">
@@ -759,6 +766,28 @@ export function TaskCreationWizard({
           )}
         </TaskFormFields>
 
+        {/* Batch Execution Toggle - unique to creation */}
+        <div className="flex items-center justify-between gap-4 p-4 rounded-lg border border-border bg-muted/30">
+          <div className="space-y-1">
+            <Label
+              htmlFor="batch-execution"
+              className="text-sm font-medium text-foreground cursor-pointer"
+            >
+              {t('tasks:wizard.batchExecution.label')}
+            </Label>
+            <p className="text-xs text-muted-foreground">
+              {t('tasks:wizard.batchExecution.description')}
+            </p>
+          </div>
+          <Switch
+            id="batch-execution"
+            checked={enableBatchExecution}
+            onCheckedChange={(checked) => setEnableBatchExecution(checked === true)}
+            disabled={isCreating || isSyncingSettings}
+            aria-label={t('tasks:wizard.batchExecution.label')}
+          />
+        </div>
+
         {/* Git Options Toggle - unique to creation */}
         <button
           type="button"
@@ -805,7 +834,7 @@ export function TaskCreationWizard({
                 }
                 searchPlaceholder={t('tasks:wizard.gitOptions.searchBranches')}
                 emptyMessage={t('tasks:wizard.gitOptions.noBranchesFound')}
-                disabled={isCreating || isSyncingSettings || isLoadingBranches}
+                disabled={isCreating || isSyncingSettings || isLoadingBranches || !useWorktree}
                 className="h-9"
               />
               <p className="text-xs text-muted-foreground">
@@ -831,7 +860,7 @@ export function TaskCreationWizard({
                   pushNewBranches ? 'border-primary/40 text-primary' : 'border-border text-muted-foreground'
                 )}
                 onClick={() => setPushNewBranches((current) => !current)}
-                disabled={isCreating || isSyncingSettings}
+                disabled={isCreating || isSyncingSettings || !useWorktree}
               >
                 {pushNewBranches ? 'On' : 'Off'}
               </Button>

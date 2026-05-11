@@ -81,7 +81,7 @@ function createPhaseLogs(): TaskLogsData {
 }
 
 describe('TaskLogs', () => {
-  it('shows runtime logs even when phase logs are available', () => {
+  it('does not show runtime logs in the logs tab', () => {
     render(
       <TaskLogs
         task={createTask()}
@@ -96,8 +96,8 @@ describe('TaskLogs', () => {
       />,
     );
 
-    expect(screen.getByText('Runtime')).toBeInTheDocument();
-    expect(screen.getByText('Starting QA validation loop')).toBeInTheDocument();
-    expect(screen.getByText('Running qa_reviewer session (session=1)')).toBeInTheDocument();
+    expect(screen.queryByText('Runtime')).not.toBeInTheDocument();
+    expect(screen.queryByText('Starting QA validation loop')).not.toBeInTheDocument();
+    expect(screen.queryByText('Running qa_reviewer session (session=1)')).not.toBeInTheDocument();
   });
 });

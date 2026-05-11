@@ -92,6 +92,84 @@ describe('iterateSubtasks completion gating', () => {
     expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
   });
 
+  it('adds a completion summary from the final assistant message when auto-completing', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => ({
+        ...makeResult('completed'),
+        messages: [
+          { role: 'assistant', content: 'Implemented the detail view summary and verified with targeted tests.' },
+        ],
+      }),
+    });
+
+    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+      phases: Array<{ subtasks: Array<{ completion_summary?: string; notes?: string }> }>;
+    };
+
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toBe(
+      'Implemented the detail view summary and verified with targeted tests.'
+    );
+    expect(updatedPlan.phases[0].subtasks[0].notes).toBe(
+      'Implemented the detail view summary and verified with targeted tests.'
+    );
+  });
+
+  it('preserves long fallback completion summaries for human review', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    const longSummary = [
+      'Implemented the complete task detail summary surface.',
+      'Added structured rows for changed files, verification, and reviewer notes.',
+      'Preserved enough detail for manual audit without forcing reviewers to inspect raw logs.',
+    ].join(' ').repeat(8);
+
+    await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => ({
+        ...makeResult('completed'),
+        messages: [
+          { role: 'assistant', content: longSummary },
+        ],
+      }),
+    });
+
+    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+      phases: Array<{ subtasks: Array<{ completion_summary?: string }> }>;
+    };
+
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary?.length).toBeGreaterThan(500);
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('manual audit');
+  });
+
   it('marks subtask in_progress and restamps executionPhase before coder session starts', async () => {
     const plan = {
       executionPhase: 'planning',

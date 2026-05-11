@@ -150,11 +150,11 @@ export class TaskLogWriter {
       case 'tool-call':
         // Flush pending text before the tool call entry
         this.flushPendingText();
-        this.writeToolStart(logPhase, event.toolName, this.extractToolInput(event.toolName, event.args));
+        this.writeToolStart(logPhase, event.toolName, this.extractToolInput(event.toolName, event.args), event.toolCallId);
         break;
 
       case 'tool-result':
-        this.writeToolEnd(logPhase, event.toolName, event.isError, event.result);
+        this.writeToolEnd(logPhase, event.toolName, event.isError, event.result, event.toolCallId);
         break;
 
       case 'step-finish':
@@ -238,11 +238,12 @@ export class TaskLogWriter {
     this.data.phases[phase].entries.push(entry);
   }
 
-  private writeToolStart(phase: TaskLogPhase, toolName: string, toolInput?: string): void {
+  private writeToolStart(phase: TaskLogPhase, toolName: string, toolInput?: string, toolCallId?: string): void {
     const content = `[${toolName}] ${toolInput || ''}`.trim();
     this.addEntry(phase, 'tool_start', content, {
       tool_name: toolName,
       tool_input: toolInput,
+      tool_call_id: toolCallId,
     });
     this.save();
   }
@@ -251,7 +252,8 @@ export class TaskLogWriter {
     phase: TaskLogPhase,
     toolName: string,
     isError: boolean,
-    result: unknown
+    result: unknown,
+    toolCallId?: string
   ): void {
     const status = isError ? 'Error' : 'Done';
     const content = `[${toolName}] ${status}`;
@@ -266,6 +268,7 @@ export class TaskLogWriter {
 
     this.addEntry(phase, 'tool_end', content, {
       tool_name: toolName,
+      tool_call_id: toolCallId,
       ...(detail ? { detail, collapsed: true } : {}),
     });
     this.save();

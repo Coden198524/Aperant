@@ -123,7 +123,12 @@ function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProp
     prevTask.tokenUsage?.promptTokens === nextTask.tokenUsage?.promptTokens &&
     prevTask.tokenUsage?.completionTokens === nextTask.tokenUsage?.completionTokens &&
     prevTask.tokenUsage?.totalTokens === nextTask.tokenUsage?.totalTokens &&
-    prevTask.subtasks.every((s, i) => s.status === nextTask.subtasks[i]?.status)
+    prevTask.subtasks.every((s, i) =>
+      s.status === nextTask.subtasks[i]?.status &&
+      s.title === nextTask.subtasks[i]?.title &&
+      s.description === nextTask.subtasks[i]?.description &&
+      s.completionSummary === nextTask.subtasks[i]?.completionSummary
+    )
   );
 
   // Only log when actually re-rendering (reduces noise significantly)

@@ -502,13 +502,15 @@ export class TaskLogService extends EventEmitter {
           this.emit('stream-chunk', specId, {
             type: 'phase_start',
             phase,
-            timestamp: currPhase.started_at || new Date().toISOString()
+            timestamp: currPhase.started_at || new Date().toISOString(),
+            source: 'task_logs'
           } as TaskLogStreamChunk);
         } else if (currPhase.status === 'completed' || currPhase.status === 'failed') {
           this.emit('stream-chunk', specId, {
             type: 'phase_end',
             phase,
-            timestamp: currPhase.completed_at || new Date().toISOString()
+            timestamp: currPhase.completed_at || new Date().toISOString(),
+            source: 'task_logs'
           } as TaskLogStreamChunk);
         }
       }
@@ -527,7 +529,10 @@ export class TaskLogService extends EventEmitter {
             content: entry.content,
             phase: entry.phase,
             timestamp: entry.timestamp,
-            subtask_id: entry.subtask_id
+            tool_call_id: entry.tool_call_id,
+            subtask_id: entry.subtask_id,
+            session: entry.session,
+            source: 'task_logs'
           };
 
           if (entry.tool_name) {

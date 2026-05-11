@@ -149,6 +149,7 @@ function isWriteToolInputErrorMessage(message: string): boolean {
 
 interface WriteToolInputFailure {
   message: string;
+  toolCallId?: string;
   filePath?: string;
 }
 
@@ -165,9 +166,13 @@ function getWriteToolInputFailure(part: FullStreamPart): WriteToolInputFailure |
 
   if (part.type === 'tool-call' && toolName === 'Write') {
     const input = (part as { input?: unknown }).input;
+    const toolCallId = typeof (part as { toolCallId?: unknown }).toolCallId === 'string'
+      ? (part as { toolCallId: string }).toolCallId
+      : undefined;
     if (typeof input !== 'object' || input === null || Array.isArray(input)) {
       return {
         message: `received invalid input type ${typeof input}; expected object with file_path and content`,
+        toolCallId,
         filePath: extractMalformedWritePath(input),
       };
     }
@@ -176,6 +181,7 @@ function getWriteToolInputFailure(part: FullStreamPart): WriteToolInputFailure |
     if (typeof params.file_path !== 'string' || typeof params.content !== 'string') {
       return {
         message: 'expected object with string file_path and string content',
+        toolCallId,
         filePath: typeof params.file_path === 'string' ? params.file_path.replace(/\\/g, '/') : undefined,
       };
     }
@@ -192,6 +198,9 @@ function getWriteToolInputFailure(part: FullStreamPart): WriteToolInputFailure |
 
   return {
     message,
+    toolCallId: typeof (part as { toolCallId?: unknown }).toolCallId === 'string'
+      ? (part as { toolCallId: string }).toolCallId
+      : undefined,
     filePath: extractMalformedWritePath((part as { input?: unknown }).input),
   };
 }
@@ -534,6 +543,7 @@ async function executeStream(
   const stepMemoryState = memoryContext ? new StepMemoryState() : null;
   let lastMemoryInjectionStep = 0;
   let writeToolInputFailureCount = 0;
+  const writeToolInputFailureCallIds = new Set<string>();
   let writeToolInputCorrectionPrompt: string | undefined;
 
   // Convergence nudge: track whether we've already nudged the agent to wrap up
@@ -778,7 +788,15 @@ async function executeStream(
 
       const writeToolInputFailure = getWriteToolInputFailure(part as FullStreamPart);
       if (writeToolInputFailure) {
-        writeToolInputFailureCount += 1;
+        const alreadyCounted = writeToolInputFailure.toolCallId
+          ? writeToolInputFailureCallIds.has(writeToolInputFailure.toolCallId)
+          : false;
+        if (!alreadyCounted) {
+          writeToolInputFailureCount += 1;
+          if (writeToolInputFailure.toolCallId) {
+            writeToolInputFailureCallIds.add(writeToolInputFailure.toolCallId);
+          }
+        }
         if (writeToolInputFailureCount >= MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION) {
           throw new Error(`Tool 'Write' input JSON failed after ${writeToolInputFailureCount} attempts: ${writeToolInputFailure.message}`);
         }
@@ -789,6 +807,7 @@ async function executeStream(
         (part as { toolName: string }).toolName === 'Write'
       ) {
         writeToolInputFailureCount = 0;
+        writeToolInputFailureCallIds.clear();
         writeToolInputCorrectionPrompt = undefined;
       }
 

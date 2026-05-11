@@ -212,7 +212,10 @@
     "errorLoadingContent": "加载文件内容失败",
     "retry": "重试",
     "selectFile": "选择文件以查看其内容",
-    "openInIDE": "在 IDE 中打开"
+    "openInIDE": "在 IDE 中打开",
+    "readerView": "阅读",
+    "sourceView": "源码",
+    "invalidJson": "此 JSON 文件无法解析，已改为显示源码。"
   },
   "metadata": {
     "baseBranch": "基础分支",
@@ -280,8 +283,12 @@
     "createTask": "创建任务",
     "creatingTask": "正在创建任务...",
     "worktreeNotice": {
-      "title": "隔离工作区",
-      "description": "此任务会在隔离的 Git 工作树中运行。在你选择合并前，主分支始终保持安全。"
+      "title": "当前工作区",
+      "description": "默认直接在当前检出的 Git 工作区中开发。只有需要单独的 worktree 分支时，才在 Git 选项中开启隔离工作区。"
+    },
+    "batchExecution": {
+      "label": "启用批次执行",
+      "description": "将兼容的子任务放在共享批次会话中执行。关闭时按单个子任务执行。"
     },
     "gitOptions": {
       "title": "Git 选项（可选）",
@@ -290,11 +297,11 @@
       "useProjectDefaultWithBranch": "使用项目默认值（{{branch}}）",
       "searchBranches": "搜索分支...",
       "noBranchesFound": "未找到分支",
-      "helpText": "可覆盖此任务工作树创建所基于的分支。留空则使用项目配置的默认分支。",
+      "helpText": "仅在开启隔离工作区时生效。可覆盖此任务工作树创建所基于的分支。",
       "pushNewBranchesLabel": "自动推送新分支",
       "pushNewBranchesDescription": "自动将此任务分支发布到 GitHub 并设置上游跟踪。关闭后仅保留在本地。",
-      "useWorktreeLabel": "使用隔离工作区（推荐）",
-      "useWorktreeDescription": "在单独的 Git 工作树中创建更改，便于合并前安全审查。关闭后会直接在项目中构建（更快但风险更高）。"
+      "useWorktreeLabel": "使用隔离工作区",
+      "useWorktreeDescription": "在单独的 Git 工作树和分支中创建更改，便于合并前审查。关闭时直接在当前项目工作区中构建。"
     },
     "failedToCreate": "创建任务失败",
     "noContextFound": "未找到相关代码上下文",
@@ -415,7 +422,12 @@
     "deleteDisabledRunning": "停止任务后才能删除子任务",
     "deleteConfirm": "确定删除子任务“{{title}}”吗？这会从实现计划中移除它。",
     "deleteAriaLabel": "删除子任务 {{title}}",
-    "deleteFailed": "删除子任务失败"
+    "deleteFailed": "删除子任务失败",
+    "completionSummary": "完成总结",
+    "summaryChanged": "完成内容",
+    "summaryVerified": "验证结果",
+    "summaryReviewNotes": "审核要点",
+    "summaryOther": "其它说明"
   },
   "bulkPR": {
     "selectAllInColumn": "选择当前列中的所有任务",
@@ -448,6 +460,22 @@
     "subtasks": "{{completed}} / {{total}} 个子任务"
   },
   "logs": {
+    "runtimeLabel": "Runtime",
+    "runtimeTab": "Runtime",
+    "runtimeEmpty": "暂无 Runtime 日志",
+    "runtimeEmptyDescription": "任务运行时的输出会显示在这里",
+    "modelOutputLabel": "大模型输出",
+    "modelOutputTab": "大模型输出",
+    "modelOutputEmpty": "暂无大模型输出",
+    "modelOutputEmptyDescription": "任务运行时的大模型文本输出会显示在这里",
+    "entriesCount": "（{{count}} 条记录）",
+    "modelOutputLive": "实时",
+    "modelThinking": "思考中...",
+    "modelThinkingDescription": "大模型正在准备下一段回复。",
+    "modelWorking": "工作中...",
+    "modelWorkingDescription": "大模型正在工作，开始回复后会在这里显示输出。",
+    "jumpToLatest": "最新",
+    "streamChunkCount": "{{count}} 个片段",
     "phaseLabels": {
       "planning": "生成计划",
       "coding": "编写代码",

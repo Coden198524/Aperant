@@ -60,7 +60,7 @@ import {
 import { createMcpClientsForAgent, mergeMcpTools, closeAllMcpClients } from '../mcp/client';
 import type { McpClientResult } from '../mcp/types';
 import { runProjectIndexer } from '../project/project-indexer';
-import type { TaskWorkflowMode } from '../../../shared/types';
+import type { TaskLogPhase, TaskWorkflowMode } from '../../../shared/types';
 import { FileContentCache } from '../tools/cache/file-cache';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 import { specPhaseToPromptName } from './spec-phase-prompts';
@@ -173,6 +173,19 @@ function postTaskEvent(eventType: string, extra?: Record<string, unknown>): void
       ...extra,
     },
   } satisfies WorkerTaskEventMessage);
+}
+
+function toTaskLogPhase(phase: Phase | undefined): TaskLogPhase {
+  switch (phase) {
+    case 'spec':
+    case 'planning':
+      return 'planning';
+    case 'qa':
+      return 'validation';
+    case 'coding':
+    default:
+      return 'coding';
+  }
 }
 
 // =============================================================================
@@ -645,6 +658,11 @@ async function runSingleSession(
         taskId: config.taskId,
         data: event,
         projectId: config.projectId,
+        phase: toTaskLogPhase(phase),
+        subtaskId,
+        sessionNumber,
+        provider: baseSession.provider,
+        modelId: phaseModelId,
       });
     },
     onAuthRefresh: baseSession.configDir
@@ -830,6 +848,11 @@ async function runDefaultSession(
           taskId: config.taskId,
           data: event,
           projectId: config.projectId,
+          phase: toTaskLogPhase(defaultPhase),
+          subtaskId: session.subtaskId,
+          sessionNumber: session.sessionNumber,
+          provider: session.provider,
+          modelId: session.modelId,
         });
       },
       onAuthRefresh: session.configDir
@@ -896,8 +919,8 @@ async function runBuildOrchestrator(
     language: session.language,
     abortSignal: abortController.signal,
 
-    // Enable subtask batch execution to process multiple subtasks in a single AI session
-    enableBatchExecution: true,
+    // Per-task toggle: default off unless task metadata explicitly enables it.
+    enableBatchExecution: session.enableBatchExecution ?? false,
     batchSize: 'auto', // Auto-detect based on subtask dependencies
     maxBatchRetries: 2,
     maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,
@@ -1472,6 +1495,11 @@ async function runAgenticSpecOrchestrator(
           taskId: config.taskId,
           data: event,
           projectId: config.projectId,
+          phase: toTaskLogPhase('spec'),
+          subtaskId: session.subtaskId,
+          sessionNumber: session.sessionNumber,
+          provider: session.provider,
+          modelId: session.modelId,
         });
       },
       onAuthRefresh: session.configDir

@@ -133,6 +133,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
             profilesLoading: false
           }));
         }
+        await refreshSettingsAndProviderAccounts();
         return true;
       }
       set({
@@ -161,6 +162,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           ),
           profilesLoading: false
         }));
+        await refreshSettingsAndProviderAccounts();
         return true;
       }
       set({
@@ -187,6 +189,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
           activeProfileId: state.activeProfileId === profileId ? null : state.activeProfileId,
           profilesLoading: false
         }));
+        await refreshSettingsAndProviderAccounts();
         return true;
       }
       set({
@@ -209,6 +212,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
       const result = await window.electronAPI.setActiveAPIProfile(profileId);
       if (result.success) {
         set({ activeProfileId: profileId, profilesLoading: false });
+        await refreshSettingsAndProviderAccounts();
         return true;
       }
       set({
@@ -548,10 +552,36 @@ export async function loadProfiles(): Promise<void> {
     const result = await window.electronAPI.getAPIProfiles();
     if (result.success && result.data) {
       store.setProfiles(result.data.profiles, result.data.activeProfileId);
+      await refreshSettingsAndProviderAccounts();
     }
   } catch (error) {
     store.setProfilesError(error instanceof Error ? error.message : 'Failed to load profiles');
   } finally {
     store.setProfilesLoading(false);
+  }
+}
+
+async function refreshSettingsAndProviderAccounts(): Promise<void> {
+  try {
+    const [settingsResult, accountsResult] = await Promise.all([
+      window.electronAPI.getSettings(),
+      window.electronAPI.getProviderAccounts(),
+    ]);
+
+    useSettingsStore.setState((state) => ({
+      settings: settingsResult.success && settingsResult.data
+        ? {
+          ...state.settings,
+          providerAccounts: settingsResult.data.providerAccounts,
+          globalPriorityOrder: settingsResult.data.globalPriorityOrder,
+          crossProviderPriorityOrder: settingsResult.data.crossProviderPriorityOrder,
+        }
+        : state.settings,
+      providerAccounts: accountsResult.success && accountsResult.data
+        ? accountsResult.data.accounts
+        : state.providerAccounts,
+    }));
+  } catch (error) {
+    console.warn('[settings-store] Failed to refresh provider account state:', error);
   }
 }

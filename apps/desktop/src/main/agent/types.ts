@@ -1,7 +1,7 @@
 import { ChildProcess } from 'child_process';
 import type { Worker } from 'worker_threads';
 import type { CompletablePhase, ExecutionPhase } from '../../shared/constants/phase-protocol';
-import type { TaskWorkflowMode, TokenUsage } from '../../shared/types';
+import type { TaskLogStreamChunk, TaskWorkflowMode, TokenUsage } from '../../shared/types';
 import type { TaskEventPayload } from './task-event-schema';
 
 /**
@@ -41,6 +41,7 @@ export interface AgentManagerEvents {
   'execution-progress': (taskId: string, progress: ExecutionProgressData, projectId?: string) => void;
   'task-token-usage': (taskId: string, usage: TokenUsage, projectId?: string) => void;
   'task-event': (taskId: string, event: TaskEventPayload, projectId?: string) => void;
+  'task-log-stream': (taskId: string, chunk: TaskLogStreamChunk, projectId?: string) => void;
 }
 
 // IdeationConfig now imported from shared types to maintain consistency
@@ -55,7 +56,7 @@ export interface TaskExecutionOptions {
   parallel?: boolean;
   workers?: number;
   baseBranch?: string;
-  useWorktree?: boolean; // If false, use --direct mode (no worktree isolation)
+  useWorktree?: boolean; // If true, use worktree isolation; omitted defaults to direct mode
   useLocalBranch?: boolean; // If true, use local branch directly instead of preferring origin/branch
   pushNewBranches?: boolean; // If false, keep task worktree branches local-only
 }
@@ -85,7 +86,7 @@ export interface SpecCreationMetadata {
   thinkingLevel?: string;
   workflowMode?: TaskWorkflowMode;
   // Workspace mode - whether to use worktree isolation
-  useWorktree?: boolean; // If false, use --direct mode (no worktree isolation)
+  useWorktree?: boolean; // If true, use worktree isolation; omitted defaults to direct mode
   useLocalBranch?: boolean; // If true, use local branch directly instead of preferring origin/branch
 }
 

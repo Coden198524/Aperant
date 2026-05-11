@@ -40,6 +40,7 @@ export interface Subtask {
   id: string;
   title: string;
   description: string;
+  completionSummary?: string;
   status: SubtaskStatus;
   files: string[];
   verification?: {
@@ -84,8 +85,13 @@ export interface TaskLogEntry {
   type: TaskLogEntryType;
   content: string;
   phase: TaskLogPhase;
+  model?: {
+    provider?: string;
+    modelId?: string;
+  };
   tool_name?: string;
   tool_input?: string;
+  tool_call_id?: string;
   subtask_id?: string;
   session?: number;
   // Fields for expandable detail view
@@ -119,12 +125,19 @@ export interface TaskLogStreamChunk {
   content?: string;
   phase?: TaskLogPhase;
   timestamp?: string;
+  model?: {
+    provider?: string;
+    modelId?: string;
+  };
   tool?: {
     name: string;
     input?: string;
     success?: boolean;
   };
+  tool_call_id?: string;
   subtask_id?: string;
+  session?: number;
+  source?: 'sdk' | 'task_logs';
 }
 
 // Image attachment types for task creation
@@ -166,6 +179,8 @@ export interface TaskDraft {
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
   workflowMode?: TaskWorkflowMode;
+  enableBatchExecution?: boolean;
+  useWorktree?: boolean;
   pushNewBranches?: boolean;
   savedAt: Date;
 }
@@ -248,19 +263,20 @@ export interface TaskMetadata {
   // Agent configuration (from agent profile or manual selection)
   model?: ModelType;  // Claude model to use (haiku, sonnet, opus) - used when not auto profile
   thinkingLevel?: ThinkingLevel;  // Thinking budget level (low, medium, high)
-  provider?: string;  // Active provider when task was created (anthropic, openai, google, etc.)
+  provider?: string;  // Legacy UI snapshot only; execution uses the current provider queue unless phaseProviders is set
   // Auto profile - per-phase model configuration
   isAutoProfile?: boolean;  // True when using Auto (Optimized) profile
   phaseModels?: PhaseModelConfig;  // Per-phase model configuration
   phaseThinking?: PhaseThinkingConfig;  // Per-phase thinking configuration
   phaseProviders?: Record<string, string>;  // Per-phase provider preference (cross-provider mode)
   workflowMode?: TaskWorkflowMode;  // Workflow optimization level
+  enableBatchExecution?: boolean;  // If true, compatible subtasks run in batch sessions
 
   // Git/Worktree configuration
   baseBranch?: string;  // Override base branch for this task's worktree
   prUrl?: string;  // GitHub PR URL if task has been submitted as a PR
   gitblitTicketId?: number;  // GitBlit ticket id for patchset updates
-  useWorktree?: boolean;  // If false, use direct mode (no worktree isolation) - default is true for safety
+  useWorktree?: boolean;  // If true, use an isolated git worktree. Default is direct mode in the current workspace.
   useLocalBranch?: boolean;  // If true, use the local branch directly instead of preferring origin/branch (preserves gitignored files)
   pushNewBranches?: boolean;  // If false, keep the task branch local-only instead of auto-pushing to origin
 
@@ -343,6 +359,8 @@ export interface PlanSubtask {
   title: string;
   /** Detailed implementation notes for the coder agent */
   description: string;
+  completion_summary?: string;
+  notes?: string;
   status: SubtaskStatus;
   files_to_create?: string[];
   files_to_modify?: string[];

@@ -235,7 +235,7 @@ export function AgentProfileSelector({
       </div>
 
       {!isCustom && (
-        <div className="rounded-lg border border-border bg-muted/30 overflow-hidden">
+        <div className="rounded-lg border border-border bg-muted/30 overflow-visible">
           <button
             type="button"
             onClick={() => setShowPhaseDetails(!showPhaseDetails)}

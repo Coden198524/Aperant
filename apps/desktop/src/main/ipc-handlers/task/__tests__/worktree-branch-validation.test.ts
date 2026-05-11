@@ -9,7 +9,7 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { GIT_BRANCH_REGEX, validateWorktreeBranch } from '../worktree-handlers';
+import { createAddedFilePatchFromContent, GIT_BRANCH_REGEX, validateWorktreeBranch } from '../worktree-handlers';
 
 describe('GIT_BRANCH_REGEX', () => {
   it('should accept valid autocode branch names', () => {
@@ -157,5 +157,27 @@ describe('validateWorktreeBranch', () => {
       expect(result.usedFallback).toBe(true);
       expect(result.reason).toBe('invalid_pattern');
     });
+  });
+});
+
+describe('createAddedFilePatchFromContent', () => {
+  it('creates a unified diff preview for an untracked text file', () => {
+    const result = createAddedFilePatchFromContent('src/new-file.ts', 'export const value = 1;\n');
+
+    expect(result.additions).toBe(1);
+    expect(result.deletions).toBe(0);
+    expect(result.patch).toContain('diff --git a/src/new-file.ts b/src/new-file.ts');
+    expect(result.patch).toContain('--- /dev/null');
+    expect(result.patch).toContain('+++ b/src/new-file.ts');
+    expect(result.patch).toContain('@@ -0,0 +1,1 @@');
+    expect(result.patch).toContain('+export const value = 1;');
+  });
+
+  it('preserves no-newline-at-end marker for untracked files', () => {
+    const result = createAddedFilePatchFromContent('src/no-newline.ts', 'const value = 1;');
+
+    expect(result.additions).toBe(1);
+    expect(result.patch).toContain('+const value = 1;');
+    expect(result.patch).toContain('\\ No newline at end of file');
   });
 });

@@ -25,6 +25,12 @@ import {
   testConnection,
   discoverModels
 } from '../services/profile';
+import {
+  deactivateAPIProfileProviderAccounts,
+  hasAPIProfileProviderAccount,
+  removeAPIProfileProviderAccount,
+  syncAPIProfileToProviderAccount,
+} from '../services/profile/provider-account-sync';
 
 // Track active test connection requests for cancellation
 const activeTestConnections = new Map<number, AbortController>();
@@ -44,6 +50,12 @@ export function registerProfileHandlers(): void {
     async (): Promise<IPCResult<ProfilesFile>> => {
       try {
         const profiles = await loadProfilesFile();
+        const activeProfile = profiles.activeProfileId
+          ? profiles.profiles.find(profile => profile.id === profiles.activeProfileId)
+          : undefined;
+        if (activeProfile && !hasAPIProfileProviderAccount(activeProfile.id)) {
+          syncAPIProfileToProviderAccount(activeProfile, { activate: true });
+        }
         return { success: true, data: profiles };
       } catch (error) {
         return {
@@ -66,6 +78,10 @@ export function registerProfileHandlers(): void {
       try {
         // Use createProfile from service layer (handles validation)
         const newProfile = await createProfile(profileData);
+        const profiles = await loadProfilesFile();
+        syncAPIProfileToProviderAccount(newProfile, {
+          activate: profiles.activeProfileId === newProfile.id,
+        });
 
         // Set file permissions to user-readable only
         await validateFilePermissions(getProfilesFilePath()).catch((err) => {
@@ -97,6 +113,10 @@ export function registerProfileHandlers(): void {
           apiKey: profileData.apiKey,
           models: profileData.models
         });
+        const profiles = await loadProfilesFile();
+        syncAPIProfileToProviderAccount(updatedProfile, {
+          activate: profiles.activeProfileId === updatedProfile.id,
+        });
 
         // Set file permissions to user-readable only
         await validateFilePermissions(getProfilesFilePath()).catch((err) => {
@@ -122,6 +142,7 @@ export function registerProfileHandlers(): void {
       try {
         // Use deleteProfile from service layer (handles validation)
         await deleteProfile(profileId);
+        removeAPIProfileProviderAccount(profileId);
 
         return { success: true };
       } catch (error) {
@@ -143,7 +164,7 @@ export function registerProfileHandlers(): void {
     IPC_CHANNELS.PROFILES_SET_ACTIVE,
     async (_, profileId: string | null): Promise<IPCResult> => {
       try {
-        await atomicModifyProfiles((file) => {
+        const profiles = await atomicModifyProfiles((file) => {
           // If switching to OAuth (null), clear active profile
           if (profileId === null) {
             file.activeProfileId = null;
@@ -160,6 +181,15 @@ export function registerProfileHandlers(): void {
           file.activeProfileId = profileId;
           return file;
         });
+
+        if (profileId === null) {
+          deactivateAPIProfileProviderAccounts();
+        } else {
+          const activeProfile = profiles.profiles.find(profile => profile.id === profileId);
+          if (activeProfile) {
+            syncAPIProfileToProviderAccount(activeProfile, { activate: true });
+          }
+        }
 
         return { success: true };
       } catch (error) {

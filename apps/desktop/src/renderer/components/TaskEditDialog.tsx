@@ -42,7 +42,7 @@ import {
   DEFAULT_PHASE_THINKING,
   FAST_MODE_MODELS,
   PHASE_KEYS,
-  getProviderPreset
+  getProviderPreset,
 } from '../../shared/constants';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
 import { useSettingsStore } from '../stores/settings-store';
@@ -241,7 +241,6 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     if (impact) metadataUpdates.impact = impact;
     if (model) metadataUpdates.model = model as ModelType;
     if (thinkingLevel) metadataUpdates.thinkingLevel = thinkingLevel as ThinkingLevel;
-    if (activeProvider) metadataUpdates.provider = activeProvider;
     if (phaseModels && phaseThinking) {
       metadataUpdates.isAutoProfile = profileId === 'auto';
       metadataUpdates.phaseModels = phaseModels;

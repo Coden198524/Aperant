@@ -65,10 +65,23 @@ function isWriteToolPlanOutputFailure(message: string): boolean {
   const lower = message.toLowerCase();
   return lower.includes("tool 'write'") &&
     (lower.includes('implementation_plan.json') ||
+      lower.includes('implementation_plan.phase-') ||
       lower.includes('input json failed') ||
       lower.includes('json parsing failed') ||
       lower.includes('invalid input') ||
       lower.includes('received invalid input type'));
+}
+
+function isImplementationPlanFileFailure(message: string): boolean {
+  const lower = message.toLowerCase();
+  return lower.includes('implementation_plan.json') ||
+    lower.includes('implementation_plan.phase-') ||
+    lower.includes('subtasks_file') ||
+    lower.includes('plan_files');
+}
+
+function hasExecutableSubtasks(plan: ImplementationPlan | null): boolean {
+  return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
 }
 
 function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string {
@@ -448,9 +461,9 @@ export class BuildOrchestrator extends EventEmitter {
 
       if (result.outcome === 'error') {
         const errorMessage = result.error?.message ?? 'Planning session failed';
-        if (attempt < maxPlanningRetries && isWriteToolPlanOutputFailure(errorMessage)) {
+        if (attempt < maxPlanningRetries && (isWriteToolPlanOutputFailure(errorMessage) || isImplementationPlanFileFailure(errorMessage))) {
           planningRetryContext = buildPlanningStructuredOutputRetryPrompt(errorMessage);
-          this.emitTyped('log', 'Planning attempted malformed Write for implementation_plan.json; retrying with split Write guidance...');
+          this.emitTyped('log', 'Planning failed while writing implementation plan files; retrying with split Write guidance...');
           continue;
         }
         return { success: false, error: errorMessage };
@@ -474,10 +487,18 @@ export class BuildOrchestrator extends EventEmitter {
       // Zod coercion handles LLM field name variations (title→description,
       // subtask_id→id, status normalization, etc.) and writes back canonical data.
       const planPath = join(this.config.specDir, 'implementation_plan.json');
-      const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
-      if (rewrite?.split) {
-        this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
+      const validationErrorsFromRewrite: string[] = [];
+      try {
+        const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
+        if (rewrite?.split) {
+          this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
+        }
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        validationErrorsFromRewrite.push(`Failed to write split implementation plan files: ${message}`);
+        this.emitTyped('log', `Planning file rewrite failed: ${message}. Checking whether the main implementation_plan.json can still be used...`);
       }
+
       const validation = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
       const hydratedPlan = validation.valid
         ? await loadImplementationPlanFromFiles(this.config.specDir)
@@ -485,11 +506,21 @@ export class BuildOrchestrator extends EventEmitter {
       const languageErrors = validation.valid && hydratedPlan
         ? validateImplementationPlanLanguage(hydratedPlan as never, this.config.language)
         : [];
+      const executionErrors = validation.valid && !hasExecutableSubtasks(hydratedPlan as ImplementationPlan | null)
+        ? ['Implementation plan has no executable subtasks. If using split plan files, ensure every subtasks_file exists and contains subtasks.']
+        : [];
       const validationErrors = validation.valid
-        ? languageErrors
-        : [...validation.errors, ...languageErrors];
+        ? [
+            ...(executionErrors.length > 0 ? validationErrorsFromRewrite : []),
+            ...executionErrors,
+            ...languageErrors,
+          ]
+        : [...validationErrorsFromRewrite, ...validation.errors, ...languageErrors];
 
       if (validation.valid && validationErrors.length === 0) {
+        if (validationErrorsFromRewrite.length > 0) {
+          this.emitTyped('log', 'Split plan file rewrite failed, but the main implementation_plan.json is executable. Continuing without stopping the task.');
+        }
         // Sync to source if in worktree mode
         if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
           await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);

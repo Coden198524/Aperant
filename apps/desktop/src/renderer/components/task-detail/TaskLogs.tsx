@@ -28,7 +28,7 @@ import type { Task, TaskLogs, TaskLogPhase, TaskPhaseLog, TaskMetadata } from '.
 import type { PhaseModelConfig, ThinkingLevel } from '../../../shared/types/settings';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
 import { getProviderModelLabel } from '@shared/utils/model-display';
-import { buildDisplayLogEntries, buildDisplayRuntimeLogs, type DisplayTaskLogEntry } from './task-log-display';
+import { buildDisplayLogEntries, type DisplayTaskLogEntry } from './task-log-display';
 
 interface TaskLogsProps {
   task: Task;
@@ -97,8 +97,7 @@ function getPhaseConfig(
   if (metadata.isAutoProfile && metadata.phaseModels && metadata.phaseThinking) {
     const model = metadata.phaseModels[configPhase];
     const thinking = metadata.phaseThinking[configPhase];
-    // Use per-phase provider if available (cross-provider mode), otherwise task-level provider
-    const provider = metadata.phaseProviders?.[configPhase] ?? metadata.provider;
+    const provider = metadata.phaseProviders?.[configPhase];
     return {
       model: resolveModelLabel(model, provider),
       thinking: getThinkingShortLabel(thinking, t)
@@ -108,7 +107,7 @@ function getPhaseConfig(
   // Non-auto profile with single model/thinking
   if (metadata.model && metadata.thinkingLevel) {
     return {
-      model: resolveModelLabel(metadata.model, metadata.provider),
+      model: resolveModelLabel(metadata.model),
       thinking: getThinkingShortLabel(metadata.thinkingLevel, t)
     };
   }
@@ -128,13 +127,6 @@ export function TaskLogs({
   onTogglePhase
 }: TaskLogsProps) {
   const { t } = useTranslation(['tasks', 'common']);
-  const logOrder = useSettingsStore(s => s.settings.logOrder);
-  const [isRuntimeExpanded, setIsRuntimeExpanded] = useState(false);
-  const runtimeLogs = useMemo(() => {
-    const logs = buildDisplayRuntimeLogs(task.logs || []);
-    return logOrder === 'reverse-chronological' ? [...logs].reverse() : logs;
-  }, [task.logs, logOrder]);
-  const shouldShowRuntimeLogs = runtimeLogs.length > 0;
 
   return (
     <div
@@ -162,51 +154,8 @@ export function TaskLogs({
                 phaseConfig={getPhaseConfig(task.metadata, phase, t)}
               />
             ))}
-            {shouldShowRuntimeLogs && (
-              <Collapsible open={isRuntimeExpanded} onOpenChange={setIsRuntimeExpanded}>
-                <CollapsibleTrigger asChild>
-                  <button className="w-full flex items-center justify-between p-3 rounded-lg border border-border bg-secondary/20 hover:bg-secondary/50 transition-colors">
-                    <div className="flex items-center gap-2">
-                      {isRuntimeExpanded ? (
-                        <ChevronDown className="h-4 w-4 text-muted-foreground" />
-                      ) : (
-                        <ChevronRight className="h-4 w-4 text-muted-foreground" />
-                      )}
-                      <Terminal className="h-4 w-4 text-muted-foreground" />
-                      <span className="text-sm font-medium">
-                        {t('tasks:logs.runtimeLabel', { defaultValue: 'Runtime' })}
-                      </span>
-                      <span className="text-xs text-muted-foreground">
-                        {t('tasks:logs.entriesCount', {
-                          count: runtimeLogs.length,
-                          defaultValue: '({{count}} entries)'
-                        })}
-                      </span>
-                    </div>
-                  </button>
-                </CollapsibleTrigger>
-                <CollapsibleContent>
-                  <div className="mt-1 ml-6 border-l-2 border-border pl-4 py-2 space-y-1">
-                    {runtimeLogs.map((log, index) => (
-                      <div
-                        key={`${index}-${log.content.slice(0, 80)}`}
-                        className="font-mono text-[11px] text-muted-foreground whitespace-pre-wrap break-words"
-                      >
-                        {log.content}
-                      </div>
-                    ))}
-                  </div>
-                </CollapsibleContent>
-              </Collapsible>
-            )}
             <div ref={logsEndRef} />
           </>
-        ) : task.logs && task.logs.length > 0 ? (
-          // Fallback to legacy raw logs if no phase logs exist
-          <pre className="text-xs font-mono text-muted-foreground whitespace-pre-wrap break-all">
-            {task.logs.join('\n')}
-            <div ref={logsEndRef} />
-          </pre>
         ) : (
           <div className="text-center text-sm text-muted-foreground py-8">
             <Terminal className="mx-auto mb-2 h-8 w-8 opacity-50" />

@@ -144,12 +144,12 @@ async function migrateToProviderAccounts(settings: AppSettings): Promise<{ chang
     const profilesFile = await loadProfilesFile();
     for (const apiProfile of profilesFile.profiles as APIProfile[]) {
       // Skip if already migrated (match by baseUrl + name to avoid duplicates)
-      if (accounts.some(a => a.provider === 'openai-compatible' && a.baseUrl === apiProfile.baseUrl && a.name === apiProfile.name)) {
+      if (accounts.some(a => a.provider === 'anthropic' && a.baseUrl === apiProfile.baseUrl && a.name === apiProfile.name)) {
         continue;
       }
       accounts.push({
-        id: genId(),
-        provider: 'openai-compatible',
+        id: `api-profile:${apiProfile.id}`,
+        provider: 'anthropic',
         name: apiProfile.name,
         authType: 'api-key',
         apiKey: apiProfile.apiKey,
@@ -158,6 +158,14 @@ async function migrateToProviderAccounts(settings: AppSettings): Promise<{ chang
         createdAt: apiProfile.createdAt ?? now,
         updatedAt: apiProfile.updatedAt ?? now,
       });
+    }
+    if (profilesFile.activeProfileId) {
+      const activeAccountId = `api-profile:${profilesFile.activeProfileId}`;
+      const activeIndex = accounts.findIndex(account => account.id === activeAccountId);
+      if (activeIndex > 0) {
+        const [activeAccount] = accounts.splice(activeIndex, 1);
+        accounts.unshift(activeAccount);
+      }
     }
   } catch {
     // profiles.json may not exist for new users — skip silently

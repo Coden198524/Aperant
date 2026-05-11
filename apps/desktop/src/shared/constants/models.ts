@@ -610,12 +610,46 @@ export const REASONING_TYPE_BADGES: Record<ReasoningType, { i18nKey: string } | 
 };
 
 /**
- * Detect the provider for a model ID by looking it up in ALL_AVAILABLE_MODELS.
+ * Detect the provider for a configured model value. Handles catalog model
+ * values, known concrete model IDs, and common provider-specific prefixes.
+ */
+export function inferProviderFromModelValue(modelValue: string): BuiltinProvider | undefined {
+  const modelEntry = ALL_AVAILABLE_MODELS.find(m => m.value === modelValue);
+  if (modelEntry) {
+    return modelEntry.provider;
+  }
+
+  if (modelValue.startsWith('claude-')) {
+    return 'anthropic';
+  }
+  if (modelValue.startsWith('gpt-') || modelValue === 'o3' || modelValue.startsWith('o3-') || modelValue === 'o4-mini' || modelValue.startsWith('o4-') || modelValue.includes('codex')) {
+    return 'openai';
+  }
+  if (modelValue.startsWith('gemini-')) {
+    return 'google';
+  }
+  if (modelValue.startsWith('mistral-') || modelValue.startsWith('codestral-')) {
+    return 'mistral';
+  }
+  if (modelValue.startsWith('grok-')) {
+    return 'xai';
+  }
+  if (modelValue.startsWith('glm-')) {
+    return 'zai';
+  }
+  if (modelValue.startsWith('llama-') || modelValue.startsWith('meta-llama/')) {
+    return 'groq';
+  }
+
+  return undefined;
+}
+
+/**
+ * Detect the provider for a model ID by looking it up in known model metadata.
  * Returns the provider if found, otherwise 'anthropic' as fallback.
  */
 export function detectProviderFromModelId(modelValue: string): BuiltinProvider {
-  const modelEntry = ALL_AVAILABLE_MODELS.find(m => m.value === modelValue);
-  return modelEntry?.provider ?? 'anthropic';
+  return inferProviderFromModelValue(modelValue) ?? 'anthropic';
 }
 
 /**

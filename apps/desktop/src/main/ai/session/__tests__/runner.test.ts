@@ -259,6 +259,49 @@ describe('runAgentSession', () => {
     expect(injectedSystem).toContain('e:/work/project/.autocode/specs/001/spec.md');
   });
 
+  it('should count matching malformed Write tool-call and tool-error as one failure', async () => {
+    let injectedSystem = '';
+    const malformedInput = '{"file_path": "e:/work/test/aitest/.autocode/worktrees/tasks/004-web/tank-battle.js".';
+
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        yield {
+          type: 'tool-call',
+          toolName: 'Write',
+          toolCallId: 'tooluse_y7NkGn3FNrOFfzuIqHaAZ3',
+          input: malformedInput,
+          invalid: true,
+        };
+        yield {
+          type: 'tool-error',
+          toolName: 'Write',
+          toolCallId: 'tooluse_y7NkGn3FNrOFfzuIqHaAZ3',
+          input: malformedInput,
+          error: 'invalid input for tool write: json parsing failed',
+        };
+
+        const retryPrompt = await args.prepareStep({ stepNumber: 2 });
+        injectedSystem = retryPrompt.system ?? '';
+
+        yield { type: 'text-delta', id: 'text-1', text: 'retrying with a compact Write call' };
+        yield {
+          type: 'finish-step',
+          usage: { inputTokens: 20, outputTokens: 10 },
+        };
+      })(),
+      text: Promise.resolve('retrying with a compact Write call'),
+      totalUsage: Promise.resolve({ inputTokens: 20, outputTokens: 10 }),
+    }));
+
+    const result = await runAgentSession(createMockConfig());
+
+    expect(result.outcome).toBe('completed');
+    expect(injectedSystem).toContain('CRITICAL TOOL CALL CORRECTION');
+    expect(injectedSystem).toContain('e:/work/test/aitest/.autocode/worktrees/tasks/004-web/tank-battle.js');
+  });
+
   // ===========================================================================
   // Auth retry
   // ===========================================================================

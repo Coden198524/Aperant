@@ -10,9 +10,20 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { APIProfile, ProfilesFile } from '@shared/types/profile';
 
 // Hoist mocked functions to avoid circular dependency in atomicModifyProfiles
-const { mockedLoadProfilesFile, mockedSaveProfilesFile } = vi.hoisted(() => ({
+const {
+  mockedLoadProfilesFile,
+  mockedSaveProfilesFile,
+  mockedHasAPIProfileProviderAccount,
+  mockedSyncAPIProfileToProviderAccount,
+  mockedRemoveAPIProfileProviderAccount,
+  mockedDeactivateAPIProfileProviderAccounts
+} = vi.hoisted(() => ({
   mockedLoadProfilesFile: vi.fn(),
-  mockedSaveProfilesFile: vi.fn()
+  mockedSaveProfilesFile: vi.fn(),
+  mockedHasAPIProfileProviderAccount: vi.fn(),
+  mockedSyncAPIProfileToProviderAccount: vi.fn(),
+  mockedRemoveAPIProfileProviderAccount: vi.fn(),
+  mockedDeactivateAPIProfileProviderAccounts: vi.fn()
 }));
 
 // Mock electron before importing
@@ -42,6 +53,13 @@ vi.mock('../services/profile', () => ({
   })
 }));
 
+vi.mock('../services/profile/provider-account-sync', () => ({
+  hasAPIProfileProviderAccount: mockedHasAPIProfileProviderAccount,
+  syncAPIProfileToProviderAccount: mockedSyncAPIProfileToProviderAccount,
+  removeAPIProfileProviderAccount: mockedRemoveAPIProfileProviderAccount,
+  deactivateAPIProfileProviderAccounts: mockedDeactivateAPIProfileProviderAccounts
+}));
+
 import { registerProfileHandlers } from './profile-handlers';
 import { ipcMain } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants';
@@ -62,6 +80,22 @@ function getSetActiveHandler() {
   return setActiveCall?.[1];
 }
 
+function getProfilesHandler() {
+  const calls = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls;
+  const profilesCall = calls.find(
+    (call) => call[0] === IPC_CHANNELS.PROFILES_GET
+  );
+  return profilesCall?.[1];
+}
+
+function getDeleteHandler() {
+  const calls = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls;
+  const deleteCall = calls.find(
+    (call) => call[0] === IPC_CHANNELS.PROFILES_DELETE
+  );
+  return deleteCall?.[1];
+}
+
 // Get the testConnection handler function for testing
 function getTestConnectionHandler() {
   const calls = (ipcMain.handle as unknown as ReturnType<typeof vi.fn>).mock.calls;
@@ -74,6 +108,7 @@ function getTestConnectionHandler() {
 describe('profile-handlers - setActiveProfile', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedHasAPIProfileProviderAccount.mockReturnValue(false);
     registerProfileHandlers();
   });
   const mockProfiles: APIProfile[] = [
@@ -115,6 +150,10 @@ describe('profile-handlers - setActiveProfile', () => {
         expect.objectContaining({
           activeProfileId: 'profile-1'
         })
+      );
+      expect(mockedSyncAPIProfileToProviderAccount).toHaveBeenCalledWith(
+        mockProfiles[0],
+        { activate: true }
       );
     });
 
@@ -159,6 +198,7 @@ describe('profile-handlers - setActiveProfile', () => {
           activeProfileId: null
         })
       );
+      expect(mockedDeactivateAPIProfileProviderAccounts).toHaveBeenCalled();
     });
 
     it('should handle null when no profile was active', async () => {
@@ -219,9 +259,70 @@ describe('profile-handlers - setActiveProfile', () => {
   });
 });
 
+describe('profile-handlers - provider account sync', () => {
+  beforeEach(() => {
+    vi.clearAllMocks();
+    mockedHasAPIProfileProviderAccount.mockReturnValue(false);
+    registerProfileHandlers();
+  });
+
+  const mockProfile: APIProfile = {
+    id: 'profile-1',
+    name: 'Test Profile',
+    baseUrl: 'https://api.example.com',
+    apiKey: 'sk-test-key-123456',
+    createdAt: Date.now(),
+    updatedAt: Date.now()
+  };
+
+  it('should sync active API profile when profiles are loaded', async () => {
+    vi.mocked(loadProfilesFile).mockResolvedValue({
+      profiles: [mockProfile],
+      activeProfileId: mockProfile.id,
+      version: 1
+    });
+
+    const handler = getProfilesHandler();
+    const result = await handler({});
+
+    expect(result.success).toBe(true);
+    expect(mockedSyncAPIProfileToProviderAccount).toHaveBeenCalledWith(
+      mockProfile,
+      { activate: true }
+    );
+  });
+
+  it('should not reorder the queue when the active API profile is already mirrored', async () => {
+    mockedHasAPIProfileProviderAccount.mockReturnValue(true);
+    vi.mocked(loadProfilesFile).mockResolvedValue({
+      profiles: [mockProfile],
+      activeProfileId: mockProfile.id,
+      version: 1
+    });
+
+    const handler = getProfilesHandler();
+    const result = await handler({});
+
+    expect(result.success).toBe(true);
+    expect(mockedSyncAPIProfileToProviderAccount).not.toHaveBeenCalled();
+  });
+
+  it('should remove mirrored provider account after deleting a profile', async () => {
+    const { deleteProfile } = await import('../services/profile');
+    vi.mocked(deleteProfile).mockResolvedValue(undefined);
+
+    const handler = getDeleteHandler();
+    const result = await handler({}, mockProfile.id);
+
+    expect(result).toEqual({ success: true });
+    expect(mockedRemoveAPIProfileProviderAccount).toHaveBeenCalledWith(mockProfile.id);
+  });
+});
+
 describe('profile-handlers - testConnection', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    mockedHasAPIProfileProviderAccount.mockReturnValue(false);
     registerProfileHandlers();
   });
 

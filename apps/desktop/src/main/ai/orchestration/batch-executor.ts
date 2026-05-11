@@ -107,6 +107,8 @@ interface PlanSubtask {
   title: string;
   description: string;
   status: string;
+  notes?: string;
+  completion_summary?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
   pattern_files?: string[];
@@ -608,7 +610,7 @@ async function executeBatchAttempt(
 
   const completedByOutcome = executionResults
     .filter(({ sessionResult }) => sessionResult.outcome === 'completed')
-    .map(({ subtask }) => subtask.id);
+    .map(({ subtask, sessionResult }) => ({ id: subtask.id, summary: summarizeSessionResult(sessionResult) }));
 
   if (completedByOutcome.length > 0) {
     await updateSubtaskStatuses(config.specDir, completedByOutcome, 'completed');
@@ -665,15 +667,20 @@ async function runParallelSubtasks<T>(
 
 async function updateSubtaskStatuses(
   specDir: string,
-  subtaskIds: string[],
+  subtaskUpdates: Array<string | { id: string; summary?: string }>,
   status: 'in_progress' | 'completed',
 ): Promise<void> {
-  if (subtaskIds.length === 0) {
+  if (subtaskUpdates.length === 0) {
     return;
   }
 
   try {
-    const targetIds = new Set(subtaskIds);
+    const targetIds = new Set(subtaskUpdates.map((update) => typeof update === 'string' ? update : update.id));
+    const summaries = new Map(
+      subtaskUpdates
+        .filter((update): update is { id: string; summary?: string } => typeof update !== 'string')
+        .map((update) => [update.id, update.summary])
+    );
     const plan = await loadImplementationPlan(specDir);
     if (!plan) return;
 
@@ -685,12 +692,44 @@ async function updateSubtaskStatuses(
         if (subtask.status !== status) {
           subtask.status = status;
         }
+        const summary = summaries.get(subtask.id);
+        if (summary && !subtask.completion_summary) {
+          subtask.completion_summary = summary;
+          if (!subtask.notes) {
+            subtask.notes = summary;
+          }
+        }
       }
     }
     await saveImplementationPlanToFiles(specDir, plan as never);
   } catch {
     // Non-fatal: the orchestrator will retry or reconcile on the next round.
   }
+}
+
+function summarizeSessionResult(result: SessionResult): string | undefined {
+  const content = [...result.messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.content.trim())?.content;
+  if (!content) {
+    return undefined;
+  }
+
+  const normalized = content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[#*_>\-[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  const maxLength = 3000;
+  return normalized.length <= maxLength
+    ? normalized
+    : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 /**

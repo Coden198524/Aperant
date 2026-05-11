@@ -902,6 +902,10 @@ export class AgentProcessManager {
       this.emitter.emit('task-event', tId, event, pId);
     });
 
+    bridge.on('task-log-stream', (tId, chunk, pId?: string) => {
+      this.emitter.emit('task-log-stream', tId, chunk, pId);
+    });
+
     bridge.on('exit', (tId: string, code: number | null, pType: ProcessType, pId?: string) => {
       this.state.deleteProcess(tId);
 

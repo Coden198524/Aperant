@@ -17,17 +17,22 @@ import { Button } from '../ui/button';
 import { Badge } from '../ui/badge';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../hooks/use-toast';
-import type { Task } from '../../../shared/types';
+import type { Task, WorktreeDiffFile } from '../../../shared/types';
 
 interface TaskGitChangesProps {
   task: Task;
 }
 
+type GitFileStatus = 'M' | 'A' | 'D' | 'R';
+type ChangeSetMode = 'workspace' | 'commit';
+
 interface GitFile {
   path: string;
-  status: 'M' | 'A' | 'D';
+  status: GitFileStatus;
   additions: number;
   deletions: number;
+  previousPath?: string;
+  patch?: string;
 }
 
 interface GitCommit {
@@ -244,25 +249,74 @@ function getFileStatusIcon(status: string) {
       return <FilePlus className="h-4 w-4 text-green-500" />;
     case 'D':
       return <FileX className="h-4 w-4 text-red-500" />;
+    case 'R':
+      return <FileDiff className="h-4 w-4 text-blue-500" />;
     default:
       return <FileDiff className="h-4 w-4 text-amber-500" />;
   }
 }
 
-function getFileStatusLabel(status: string, t: (key: string) => string) {
+function getFileStatusLabel(status: string, t: (key: string, options?: Record<string, unknown>) => string) {
   switch (status) {
     case 'A':
       return t('tasks:gitChanges.added');
     case 'D':
       return t('tasks:gitChanges.deleted');
+    case 'R':
+      return t('tasks:gitChanges.renamed', { defaultValue: 'Renamed' });
     default:
       return t('tasks:gitChanges.modified');
   }
 }
 
+function getBadgeVariant(status: GitFileStatus): 'default' | 'destructive' | 'secondary' | 'outline' {
+  switch (status) {
+    case 'A':
+      return 'default';
+    case 'D':
+      return 'destructive';
+    case 'R':
+      return 'outline';
+    default:
+      return 'secondary';
+  }
+}
+
+function mapWorktreeStatus(status: WorktreeDiffFile['status']): GitFileStatus {
+  switch (status) {
+    case 'added':
+      return 'A';
+    case 'deleted':
+      return 'D';
+    case 'renamed':
+      return 'R';
+    default:
+      return 'M';
+  }
+}
+
+function mapWorktreeFile(file: WorktreeDiffFile): GitFile {
+  return {
+    path: file.path,
+    previousPath: file.previousPath,
+    status: mapWorktreeStatus(file.status),
+    additions: file.additions,
+    deletions: file.deletions,
+    patch: file.patch,
+  };
+}
+
 export function TaskGitChanges({ task }: TaskGitChangesProps) {
   const { t } = useTranslation(['tasks']);
   const { toast } = useToast();
+
+  // State for current worktree changes
+  const [workspaceFiles, setWorkspaceFiles] = useState<GitFile[]>([]);
+  const [workspaceSummary, setWorkspaceSummary] = useState<string>('');
+  const [isLoadingWorkspace, setIsLoadingWorkspace] = useState(false);
+  const [workspaceError, setWorkspaceError] = useState<string | null>(null);
+  const [hasLoadedWorkspace, setHasLoadedWorkspace] = useState(false);
+  const [activeChangeSet, setActiveChangeSet] = useState<ChangeSetMode>('workspace');
 
   // State for commits
   const [commits, setCommits] = useState<GitCommit[]>([]);
@@ -284,6 +338,31 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
 
   const commitGraphRows = useMemo(() => buildCommitGraphRows(commits), [commits]);
 
+  // Load current worktree changes. This captures committed and uncommitted file
+  // changes so the tab remains useful before the task branch has commits.
+  const loadWorkspaceDiff = useCallback(async () => {
+    setIsLoadingWorkspace(true);
+    setWorkspaceError(null);
+    setHasLoadedWorkspace(false);
+
+    try {
+      const result = await window.electronAPI.getWorktreeDiff(task.id, task.projectId);
+      if (!result.success || !result.data) {
+        throw new Error(result.error || 'Failed to load workspace changes');
+      }
+
+      setWorkspaceFiles(result.data.files.map(mapWorktreeFile));
+      setWorkspaceSummary(result.data.summary);
+    } catch (err) {
+      setWorkspaceFiles([]);
+      setWorkspaceSummary('');
+      setWorkspaceError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setIsLoadingWorkspace(false);
+      setHasLoadedWorkspace(true);
+    }
+  }, [task.id, task.projectId]);
+
   // Load commit history
   const loadCommits = useCallback(async () => {
     setIsLoadingCommits(true);
@@ -295,17 +374,12 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
         throw new Error(result.error || 'Failed to load commits');
       }
       setCommits(result.data);
-
-      // Auto-select first commit if available
-      if (result.data.length > 0 && !selectedCommit) {
-        setSelectedCommit(result.data[0].hash);
-      }
     } catch (err) {
       setCommitsError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoadingCommits(false);
     }
-  }, [task.id, task.projectId, selectedCommit]);
+  }, [task.id, task.projectId]);
 
   // Load files for selected commit
   const loadCommitFiles = useCallback(async (commitHash: string) => {
@@ -362,24 +436,74 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     }
   }, [task.id, task.projectId]);
 
-  // Load commits on mount
+  // Reset derived state when switching tasks
+  useEffect(() => {
+    setWorkspaceFiles([]);
+    setWorkspaceSummary('');
+    setWorkspaceError(null);
+    setHasLoadedWorkspace(false);
+    setCommits([]);
+    setCommitsError(null);
+    setSelectedCommit(null);
+    setCommitFiles([]);
+    setCommitFilesError(null);
+    setCommitFileStats(new Map());
+    setSelectedFile(null);
+    setDiff(null);
+    setDiffError(null);
+    setActiveChangeSet('workspace');
+  }, [task.id, task.projectId]);
+
+  // Load current worktree changes and commit history on mount/task change
+  useEffect(() => {
+    loadWorkspaceDiff();
+  }, [loadWorkspaceDiff]);
+
   useEffect(() => {
     loadCommits();
   }, [loadCommits]);
 
+  // Prefer current worktree changes. If there are no file changes, fall back to
+  // commit history so completed task branches still show reviewable content.
+  useEffect(() => {
+    if (!hasLoadedWorkspace || activeChangeSet !== 'workspace') {
+      return;
+    }
+
+    if (workspaceFiles.length > 0) {
+      const nextFile = workspaceFiles.find((file) => file.path === selectedFile) ?? workspaceFiles[0];
+      if (selectedFile !== nextFile.path) {
+        setSelectedFile(nextFile.path);
+      }
+      setDiff(nextFile.patch ?? '');
+      setDiffError(null);
+      return;
+    }
+
+    if (commits.length > 0 && !selectedCommit) {
+      setActiveChangeSet('commit');
+      setSelectedCommit(commits[0].hash);
+      return;
+    }
+
+    setSelectedFile(null);
+    setDiff(null);
+    setDiffError(null);
+  }, [activeChangeSet, commits, hasLoadedWorkspace, selectedCommit, selectedFile, workspaceFiles]);
+
   // Load files when commit is selected
   useEffect(() => {
-    if (selectedCommit) {
+    if (activeChangeSet === 'commit' && selectedCommit) {
       loadCommitFiles(selectedCommit);
     }
-  }, [selectedCommit, loadCommitFiles]);
+  }, [activeChangeSet, selectedCommit, loadCommitFiles]);
 
   // Load diff when file is selected
   useEffect(() => {
-    if (selectedCommit && selectedFile) {
+    if (activeChangeSet === 'commit' && selectedCommit && selectedFile) {
       loadDiff(selectedCommit, selectedFile);
     }
-  }, [selectedCommit, selectedFile, loadDiff]);
+  }, [activeChangeSet, selectedCommit, selectedFile, loadDiff]);
 
   // Copy commit hash to clipboard
   const copyCommitHash = useCallback(async (hash: string, e: React.MouseEvent) => {
@@ -395,8 +519,60 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     }
   }, [toast, t]);
 
+  const displayedFiles = activeChangeSet === 'workspace' ? workspaceFiles : commitFiles;
+  const isLoadingFiles = activeChangeSet === 'workspace' ? isLoadingWorkspace : isLoadingCommitFiles;
+  const filesError = activeChangeSet === 'workspace' ? workspaceError : commitFilesError;
+  const workspaceStats = useMemo(
+    () => ({
+      filesChanged: workspaceFiles.length,
+      additions: workspaceFiles.reduce((sum, file) => sum + file.additions, 0),
+      deletions: workspaceFiles.reduce((sum, file) => sum + file.deletions, 0),
+    }),
+    [workspaceFiles]
+  );
+  const selectedFileData = useMemo(
+    () => displayedFiles.find((file) => file.path === selectedFile),
+    [displayedFiles, selectedFile]
+  );
+
+  const selectWorkspaceChanges = useCallback(() => {
+    setActiveChangeSet('workspace');
+    setDiffError(null);
+
+    if (workspaceFiles.length === 0) {
+      setSelectedFile(null);
+      setDiff(null);
+      return;
+    }
+
+    const nextFile = workspaceFiles.find((file) => file.path === selectedFile) ?? workspaceFiles[0];
+    setSelectedFile(nextFile.path);
+    setDiff(nextFile.patch ?? '');
+  }, [selectedFile, workspaceFiles]);
+
+  const selectFile = useCallback((file: GitFile) => {
+    setSelectedFile(file.path);
+    if (activeChangeSet === 'workspace') {
+      setDiffError(null);
+      setDiff(file.patch ?? '');
+    }
+  }, [activeChangeSet]);
+
+  const refreshGitChanges = useCallback(() => {
+    void loadWorkspaceDiff();
+    void loadCommits();
+  }, [loadCommits, loadWorkspaceDiff]);
+
   // Render diff content
   const renderDiff = () => {
+    if (activeChangeSet === 'workspace' && isLoadingWorkspace) {
+      return (
+        <div className="h-full flex items-center justify-center">
+          <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />
+        </div>
+      );
+    }
+
     if (!selectedFile) {
       return (
         <div className="h-full flex items-center justify-center text-muted-foreground">
@@ -425,7 +601,13 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
             <Button
               variant="outline"
               size="sm"
-              onClick={() => selectedCommit && selectedFile && loadDiff(selectedCommit, selectedFile)}
+              onClick={() => {
+                if (activeChangeSet === 'workspace') {
+                  void loadWorkspaceDiff();
+                } else if (selectedCommit && selectedFile) {
+                  void loadDiff(selectedCommit, selectedFile);
+                }
+              }}
             >
               <RefreshCw className="h-3 w-3 mr-1" />
               {t('tasks:files.retry')}
@@ -510,24 +692,19 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     );
   };
 
-  const selectedFileData = useMemo(
-    () => commitFiles.find((file) => file.path === selectedFile),
-    [commitFiles, selectedFile]
-  );
-
   return (
     <div className="h-full flex">
-      {/* Left column - Commits list with graph */}
+      {/* Left column - Change sets and commit history */}
       <div className="w-[320px] border-r border-border flex flex-col shrink-0">
         <div className="px-3 py-2 border-b border-border flex items-center justify-between bg-muted/30">
           <div className="flex items-center gap-2">
             <GitBranch className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              {t('tasks:gitChanges.commits')}
+              {t('tasks:gitChanges.title')}
             </span>
-            {commits.length > 0 && (
+            {(workspaceFiles.length + commits.length) > 0 && (
               <Badge variant="secondary" className="text-xs">
-                {commits.length}
+                {workspaceFiles.length + commits.length}
               </Badge>
             )}
           </div>
@@ -535,14 +712,70 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
             variant="ghost"
             size="icon"
             className="h-6 w-6"
-            onClick={loadCommits}
-            disabled={isLoadingCommits}
+            onClick={refreshGitChanges}
+            disabled={isLoadingWorkspace || isLoadingCommits}
           >
-            <RefreshCw className={cn("h-3 w-3", isLoadingCommits && "animate-spin")} />
+            <RefreshCw className={cn("h-3 w-3", (isLoadingWorkspace || isLoadingCommits) && "animate-spin")} />
           </Button>
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-2">
+            <button
+              type="button"
+              onClick={selectWorkspaceChanges}
+              className={cn(
+                'relative w-full px-3 py-2 rounded-md border text-left transition-colors',
+                'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
+                activeChangeSet === 'workspace'
+                  ? 'bg-secondary border-primary'
+                  : 'bg-card border-border hover:bg-secondary/50'
+              )}
+            >
+              <div className="flex items-start gap-2">
+                <FileDiff className="mt-0.5 h-4 w-4 shrink-0 text-amber-500" />
+                <div className="min-w-0 flex-1">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-medium text-foreground">
+                      {t('tasks:gitChanges.files')}
+                    </span>
+                    {workspaceFiles.length > 0 && (
+                      <Badge variant="secondary" className="h-4 px-1 text-[10px]">
+                        {workspaceFiles.length}
+                      </Badge>
+                    )}
+                    {isLoadingWorkspace && (
+                      <Loader2 className="h-3 w-3 animate-spin text-muted-foreground" />
+                    )}
+                  </div>
+                  <div className="mt-1 text-[10px] text-muted-foreground line-clamp-2">
+                    {workspaceError ? (
+                      <span className="text-destructive">{workspaceError}</span>
+                    ) : workspaceSummary ? (
+                      workspaceSummary
+                    ) : (
+                      t('tasks:gitChanges.noChanges')
+                    )}
+                  </div>
+                  {workspaceFiles.length > 0 && (
+                    <div className="flex items-center gap-2 text-[10px] mt-1 pt-1 border-t border-border/50">
+                      <span className="text-muted-foreground">
+                        {t('tasks:gitChanges.filesChanged', { count: workspaceStats.filesChanged })}
+                      </span>
+                      <span className="text-green-600 dark:text-green-400">
+                        +{workspaceStats.additions}
+                      </span>
+                      <span className="text-red-600 dark:text-red-400">
+                        -{workspaceStats.deletions}
+                      </span>
+                    </div>
+                  )}
+                </div>
+              </div>
+            </button>
+
+            <div className="px-1 pt-2 text-[10px] font-medium uppercase tracking-wide text-muted-foreground">
+              {t('tasks:gitChanges.commits')}
+            </div>
             {isLoadingCommits ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
@@ -564,17 +797,20 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                   <button
                     key={commit.hash}
                     type="button"
-                    onClick={() => setSelectedCommit(commit.hash)}
+                    onClick={() => {
+                      setActiveChangeSet('commit');
+                      setSelectedCommit(commit.hash);
+                    }}
                     className={cn(
                       'relative w-full px-3 py-2 rounded-md border text-left transition-colors',
                       'focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
-                      selectedCommit === commit.hash
+                      activeChangeSet === 'commit' && selectedCommit === commit.hash
                         ? 'bg-secondary border-primary'
                         : 'bg-card border-border hover:bg-secondary/50'
                     )}
                   >
                     <div className="flex items-start gap-2">
-                      <CommitGraph row={commitGraphRows[idx]} selected={selectedCommit === commit.hash} />
+                      <CommitGraph row={commitGraphRows[idx]} selected={activeChangeSet === 'commit' && selectedCommit === commit.hash} />
                       <div className="flex-1 min-w-0">
                         <div className="flex items-start gap-2 mb-1">
                           <div className="text-xs font-medium text-foreground line-clamp-2 flex-1 min-w-0">
@@ -640,42 +876,44 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
           <div className="flex items-center gap-2">
             <FileText className="h-4 w-4 text-muted-foreground" />
             <span className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
-              {t('tasks:gitChanges.commitFiles')}
+              {activeChangeSet === 'workspace'
+                ? t('tasks:gitChanges.files')
+                : t('tasks:gitChanges.commitFiles')}
             </span>
-            {commitFiles.length > 0 && (
+            {displayedFiles.length > 0 && (
               <Badge variant="secondary" className="text-xs">
-                {commitFiles.length}
+                {displayedFiles.length}
               </Badge>
             )}
           </div>
         </div>
         <ScrollArea className="flex-1">
           <div className="p-2 space-y-1">
-            {!selectedCommit ? (
+            {activeChangeSet === 'commit' && !selectedCommit ? (
               <div className="text-center py-8">
                 <GitCommitIcon className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
                 <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.selectCommit')}</p>
               </div>
-            ) : isLoadingCommitFiles ? (
+            ) : isLoadingFiles ? (
               <div className="flex items-center justify-center py-8">
                 <Loader2 className="h-5 w-5 animate-spin text-muted-foreground" />
               </div>
-            ) : commitFilesError ? (
+            ) : filesError ? (
               <div className="text-center py-4 px-2">
                 <AlertCircle className="h-5 w-5 mx-auto mb-2 text-destructive" />
-                <p className="text-xs text-destructive break-words">{commitFilesError}</p>
+                <p className="text-xs text-destructive break-words">{filesError}</p>
               </div>
-            ) : commitFiles.length === 0 ? (
+            ) : displayedFiles.length === 0 ? (
               <div className="text-center py-8">
                 <FileText className="h-8 w-8 mx-auto mb-2 text-muted-foreground/30" />
                 <p className="text-xs text-muted-foreground">{t('tasks:gitChanges.noChanges')}</p>
               </div>
             ) : (
-              commitFiles.map((file) => (
+              displayedFiles.map((file) => (
                 <button
-                  key={file.path}
+                  key={`${file.status}-${file.previousPath ?? ''}-${file.path}`}
                   type="button"
-                  onClick={() => setSelectedFile(file.path)}
+                  onClick={() => selectFile(file)}
                   className={cn(
                     'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors',
                     'hover:bg-secondary/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
@@ -684,7 +922,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                 >
                   {getFileStatusIcon(file.status)}
                   <Badge
-                    variant={file.status === 'A' ? 'default' : file.status === 'D' ? 'destructive' : 'secondary'}
+                    variant={getBadgeVariant(file.status)}
                     className="text-[10px] px-1 py-0 h-4 min-w-[16px] justify-center"
                     title={getFileStatusLabel(file.status, t)}
                   >
@@ -697,6 +935,11 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
                     <div className="text-[10px] text-muted-foreground truncate">
                       {file.path}
                     </div>
+                    {file.previousPath && (
+                      <div className="text-[10px] text-muted-foreground/70 truncate">
+                        {file.previousPath}
+                      </div>
+                    )}
                   </div>
                   <div className="flex items-center gap-1 text-[10px] shrink-0">
                     <span className="text-green-600 dark:text-green-400">+{file.additions}</span>

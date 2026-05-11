@@ -29,6 +29,7 @@ export const PLAN_COMPACTION_LIMITS: PlanCompactionLimits = {
   maxPhaseNameChars: 120,
   maxSubtaskTitleChars: 120,
   maxSubtaskDescriptionChars: 700,
+  maxSubtaskCompletionSummaryChars: 3000,
   maxFileRefsPerList: 12,
   maxFilePathChars: 240,
   maxVerificationRunChars: 300,
@@ -43,6 +44,7 @@ export interface PlanCompactionOptions {
   maxPhaseNameChars?: number;
   maxSubtaskTitleChars?: number;
   maxSubtaskDescriptionChars?: number;
+  maxSubtaskCompletionSummaryChars?: number;
   maxFileRefsPerList?: number;
   maxFilePathChars?: number;
   maxVerificationRunChars?: number;
@@ -83,6 +85,22 @@ function mergeLimits(options?: PlanCompactionOptions): PlanCompactionLimits {
 function compactText(value: unknown, maxChars: number, fallback = ''): string {
   const text = typeof value === 'string' ? value : fallback;
   const normalized = text.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  if (maxChars <= 3) {
+    return normalized.slice(0, maxChars);
+  }
+  return `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function compactMultilineText(value: unknown, maxChars: number, fallback = ''): string {
+  const text = typeof value === 'string' ? value : fallback;
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
   if (normalized.length <= maxChars) {
     return normalized;
   }
@@ -217,11 +235,24 @@ function compactSubtask(
     limits.maxFilePathChars,
   );
   const verification = compactVerification(subtask.verification ?? rawSubtask.verification, limits);
+  const completionSummary = subtask.status === 'completed'
+    ? compactMultilineText(
+        rawSubtask.completion_summary
+          ?? rawSubtask.completionSummary
+          ?? rawSubtask.completed_summary
+          ?? rawSubtask.notes
+          ?? rawSubtask.actual_output,
+        limits.maxSubtaskCompletionSummaryChars,
+      )
+    : '';
+  const notes = compactText(rawSubtask.notes, limits.maxSubtaskDescriptionChars);
 
   return {
     id: compactText(subtask.id, 80, `${phaseIndex + 1}-${subtaskIndex + 1}`),
     title,
     description,
+    ...(completionSummary ? { completion_summary: completionSummary } : {}),
+    ...(notes && notes !== completionSummary ? { notes } : {}),
     status: subtask.status,
     files_to_create: toStringArray(subtask.files_to_create, limits.maxFileRefsPerList, limits.maxFilePathChars),
     files_to_modify: toStringArray(subtask.files_to_modify, limits.maxFileRefsPerList, limits.maxFilePathChars),

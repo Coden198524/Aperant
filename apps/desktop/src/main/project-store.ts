@@ -72,6 +72,20 @@ function getSubtaskProgressScore(subtasks: Task['subtasks']): number {
   }, 0);
 }
 
+function getPlanSubtaskCompletionSummary(subtask: PlanSubtask): string | undefined {
+  if (subtask.status !== 'completed') {
+    return undefined;
+  }
+
+  const raw = subtask as PlanSubtask & {
+    completionSummary?: unknown;
+    completed_summary?: unknown;
+    actual_output?: unknown;
+  };
+  const value = raw.completion_summary ?? raw.completionSummary ?? raw.completed_summary ?? raw.notes ?? raw.actual_output;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 function shouldRestoreSubtasks(preferred: Task, fallback: Task): boolean {
   if (fallback.subtasks.length === 0) {
     return false;
@@ -637,6 +651,7 @@ export class ProjectStore {
               id: subtask.id || `subtask-${phaseIndex + 1}-${subtaskIndex + 1}`,
               title,
               description,
+              completionSummary: getPlanSubtaskCompletionSummary(subtask),
               status: subtask.status || 'pending',
               files: []
             };

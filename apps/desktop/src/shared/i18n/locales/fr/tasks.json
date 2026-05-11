@@ -172,7 +172,10 @@
     "errorLoadingContent": "Échec du chargement du contenu du fichier",
     "retry": "Réessayer",
     "selectFile": "Sélectionnez un fichier pour voir son contenu",
-    "openInIDE": "Ouvrir dans l'IDE"
+    "openInIDE": "Ouvrir dans l'IDE",
+    "readerView": "Lecture",
+    "sourceView": "Source",
+    "invalidJson": "Ce fichier JSON n'a pas pu être analysé, la source est donc affichée."
   },
   "gitChanges": {
     "tab": "Changements Git",
@@ -235,8 +238,12 @@
     "creating": "Création...",
     "createTask": "Créer la tâche",
     "worktreeNotice": {
-      "title": "Espace de travail isolé",
-      "description": "Cette tâche s'exécute dans un worktree git isolé. Votre branche principale reste protégée jusqu'à ce que vous choisissiez de fusionner."
+      "title": "Espace de travail actuel",
+      "description": "Par défaut, cette tâche modifie l'espace Git actuellement extrait. Activez un espace isolé dans les options Git uniquement si vous voulez une branche worktree séparée."
+    },
+    "batchExecution": {
+      "label": "Activer l'exécution par lots",
+      "description": "Exécute les sous-tâches compatibles dans une session partagée. Laissez désactivé pour une exécution par sous-tâche."
     },
     "gitOptions": {
       "title": "Options Git (optionnel)",
@@ -245,11 +252,11 @@
       "useProjectDefaultWithBranch": "Utiliser la branche par défaut du projet ({{branch}})",
       "searchBranches": "Rechercher des branches...",
       "noBranchesFound": "Aucune branche trouvée",
-      "helpText": "Remplacez la branche à partir de laquelle le worktree de cette tâche sera créé. Laissez vide pour utiliser la branche par défaut configurée du projet.",
+      "helpText": "Utilisé uniquement lorsque l'espace de travail isolé est activé. Remplacez la branche à partir de laquelle le worktree de cette tâche sera créé.",
       "pushNewBranchesLabel": "Pousser automatiquement la nouvelle branche",
       "pushNewBranchesDescription": "Publier automatiquement cette branche de tâche sur GitHub et configurer le suivi. Désactivez pour la garder locale uniquement.",
-      "useWorktreeLabel": "Utiliser un espace de travail isolé (recommandé)",
-      "useWorktreeDescription": "Crée les changements dans un worktree git séparé pour une révision sécurisée avant la fusion. Désactivez pour travailler directement dans votre projet (plus rapide mais risqué)."
+      "useWorktreeLabel": "Utiliser un espace de travail isolé",
+      "useWorktreeDescription": "Crée les changements dans un worktree git et une branche séparés pour révision avant fusion. Laissez désactivé pour travailler directement dans l'espace projet actuel."
     },
     "errors": {
       "createFailed": "Échec de la création de la tâche. Veuillez réessayer.",
@@ -360,7 +367,22 @@
     "deleteDisabledRunning": "Arrêtez la tâche avant de supprimer des sous-tâches",
     "deleteConfirm": "Supprimer la sous-tâche \"{{title}}\" ? Elle sera retirée du plan d'implémentation.",
     "deleteAriaLabel": "Supprimer la sous-tâche {{title}}",
-    "deleteFailed": "Échec de la suppression de la sous-tâche"
+    "deleteFailed": "Échec de la suppression de la sous-tâche",
+    "completionSummary": "Résumé de fin"
+  },
+  "logs": {
+    "runtimeLabel": "Runtime",
+    "runtimeTab": "Runtime",
+    "runtimeEmpty": "Aucun journal d'exécution pour le moment",
+    "runtimeEmptyDescription": "La sortie d'exécution apparaîtra ici lorsque la tâche sera lancée",
+    "modelOutputLabel": "Sortie du modèle",
+    "modelOutputTab": "Sortie du modèle",
+    "modelOutputEmpty": "Aucune sortie du modèle pour le moment",
+    "modelOutputEmptyDescription": "La sortie texte du modèle apparaîtra ici pendant l'exécution de la tâche",
+    "entriesCount": "({{count}} entrées)",
+    "modelOutputLive": "Direct",
+    "jumpToLatest": "Dernier",
+    "streamChunkCount": "{{count}} fragments"
   },
   "bulkPR": {
     "selectAllInColumn": "Sélectionner toutes les tâches de la colonne",

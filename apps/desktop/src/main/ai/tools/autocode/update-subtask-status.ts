@@ -29,6 +29,10 @@ const inputSchema = z.object({
     .enum(['pending', 'in_progress', 'completed', 'failed'])
     .describe('New status for the subtask'),
   notes: z.string().optional().describe('Optional notes about the completion or failure'),
+  completion_summary: z
+    .string()
+    .optional()
+    .describe('Human-reviewable structured completion summary. Prefer Markdown table rows for What changed, Verification, and Review notes.'),
 });
 
 // ---------------------------------------------------------------------------
@@ -40,6 +44,7 @@ interface PlanSubtask {
   subtask_id?: string;
   status?: string;
   notes?: string;
+  completion_summary?: string;
   updated_at?: string;
 }
 
@@ -58,13 +63,23 @@ function updateSubtaskInPlan(
   subtaskId: string,
   status: string,
   notes: string | undefined,
+  completionSummary: string | undefined,
 ): boolean {
   for (const phase of plan.phases ?? []) {
     for (const subtask of phase.subtasks ?? []) {
       const id = subtask.id ?? subtask.subtask_id;
       if (id === subtaskId) {
         subtask.status = status;
-        if (notes) subtask.notes = notes;
+        if (notes) {
+          subtask.notes = notes;
+        }
+        if (status === 'completed') {
+          const summary = completionSummary || notes;
+          if (summary) {
+            subtask.completion_summary = summary;
+            subtask.notes = summary;
+          }
+        }
         subtask.updated_at = new Date().toISOString();
         plan.last_updated = new Date().toISOString();
         return true;
@@ -88,7 +103,7 @@ export const updateSubtaskStatusTool = Tool.define({
   },
   inputSchema,
   execute: async (input, context) => {
-    const { subtask_id, status, notes } = input;
+    const { subtask_id, status, notes, completion_summary } = input;
     const planFile = path.join(context.specDir, 'implementation_plan.json');
 
     if (!fs.existsSync(planFile)) {
@@ -100,7 +115,7 @@ export const updateSubtaskStatusTool = Tool.define({
       return 'Error: implementation_plan.json contains unrepairable JSON';
     }
 
-    const found = updateSubtaskInPlan(plan, subtask_id, status, notes);
+    const found = updateSubtaskInPlan(plan, subtask_id, status, notes, completion_summary);
     if (!found) {
       return `Error: Subtask '${subtask_id}' not found in implementation plan`;
     }

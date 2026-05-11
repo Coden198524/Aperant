@@ -10,7 +10,7 @@
 import type { ExecutionProgressData, ProcessType } from '../../../main/agent/types';
 import type { SessionConfig, SessionResult, StreamEvent } from '../session/types';
 import type { RunnerOptions } from '../session/runner';
-import type { CustomMcpServer, TaskWorkflowMode, TokenUsage } from '../../../shared/types';
+import type { CustomMcpServer, TaskLogPhase, TaskWorkflowMode, TokenUsage } from '../../../shared/types';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 
 // =============================================================================
@@ -92,6 +92,8 @@ export interface SerializableSessionConfig {
   useAgenticOrchestration?: boolean;
   /** Workflow execution mode controlling orchestration tradeoffs */
   workflowMode?: TaskWorkflowMode;
+  /** Whether coding should process compatible subtasks in batch sessions */
+  enableBatchExecution?: boolean;
   /** Preferred UI language from app settings */
   language?: SupportedLanguage;
   /** Whether to automatically push commits to remote Git repository */
@@ -149,6 +151,11 @@ export interface WorkerStreamEventMessage {
   taskId: string;
   data: StreamEvent;
   projectId?: string;
+  phase?: TaskLogPhase;
+  subtaskId?: string;
+  sessionNumber?: number;
+  provider?: string;
+  modelId?: string;
 }
 
 export interface WorkerTokenUsageMessage {

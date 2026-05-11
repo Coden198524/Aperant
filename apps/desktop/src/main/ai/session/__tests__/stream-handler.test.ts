@@ -81,6 +81,35 @@ describe('createStreamHandler', () => {
 
       expect(handler.getSummary().toolCallCount).toBe(3);
     });
+
+    it('should not synthesize duplicate errors for AI SDK invalid tool calls', () => {
+      const handler = createStreamHandler(onEvent);
+
+      handler.processPart({
+        type: 'tool-call',
+        toolName: 'Write',
+        toolCallId: 'c1',
+        input: '{"file_path": "e:/work/test/tank-battle.js".',
+        invalid: true,
+      });
+      handler.processPart({
+        type: 'tool-error',
+        toolName: 'Write',
+        toolCallId: 'c1',
+        input: '{"file_path": "e:/work/test/tank-battle.js".',
+        error: 'invalid input for tool write: json parsing failed',
+      });
+
+      expect(events).toHaveLength(3);
+      expect(events[0]).toEqual({
+        type: 'tool-call',
+        toolName: 'Write',
+        toolCallId: 'c1',
+        args: { file_path: 'e:/work/test/tank-battle.js' },
+      });
+      expect(events[1]).toMatchObject({ type: 'tool-result', isError: true });
+      expect(events[2]).toMatchObject({ type: 'error' });
+    });
   });
 
   // ===========================================================================

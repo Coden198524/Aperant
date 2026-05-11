@@ -431,10 +431,10 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           {/* Full-height centered modal content */}
           <DialogPrimitive.Content
             className={cn(
-              'fixed left-[50%] top-4 z-50',
+              'fixed inset-y-0 left-[50%] z-50',
               'translate-x-[-50%]',
-              'w-[95vw] max-w-5xl h-[calc(100vh-32px)]',
-              'bg-card border border-border rounded-xl',
+              'w-[92vw] max-w-7xl h-screen',
+              'bg-card border-x border-border rounded-none',
               'shadow-2xl overflow-hidden flex flex-col',
               'data-[state=open]:animate-in data-[state=closed]:animate-out',
               'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',

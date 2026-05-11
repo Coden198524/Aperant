@@ -58,8 +58,8 @@ export function isPathWithinBase(resolvedPath: string, basePath: string): boolea
 }
 
 /**
- * Find a task worktree path, checking new location first then legacy
- * Returns the path if found, null otherwise
+ * Find a task worktree path, checking new location first then legacy.
+ * Returns the dedicated worktree path if found, null otherwise.
  * Includes path traversal protection to ensure paths stay within project
  */
 export function findTaskWorktree(projectPath: string, specId: string): string | null {
@@ -116,10 +116,8 @@ export function findTaskWorktree(projectPath: string, specId: string): string | 
     return resolvedLegacyPath;
   }
 
-  // If not in .autocode or legacy paths, assume development is happening
-  // directly on a git branch in the project root
-  console.log('[worktree-paths] No dedicated worktree found, using project root:', normalizedProject);
-  return normalizedProject;
+  console.log('[worktree-paths] No dedicated worktree found for task:', specId);
+  return null;
 }
 
 /**

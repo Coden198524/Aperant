@@ -26,7 +26,12 @@ export function isTaskRenderEquivalent(prevTask: Task, nextTask: Task): boolean 
     prevTask.tokenUsage?.promptTokens === nextTask.tokenUsage?.promptTokens &&
     prevTask.tokenUsage?.completionTokens === nextTask.tokenUsage?.completionTokens &&
     prevTask.tokenUsage?.totalTokens === nextTask.tokenUsage?.totalTokens &&
-    prevTask.subtasks.every((subtask, index) => subtask.status === nextTask.subtasks[index]?.status)
+    prevTask.subtasks.every((subtask, index) =>
+      subtask.status === nextTask.subtasks[index]?.status &&
+      subtask.title === nextTask.subtasks[index]?.title &&
+      subtask.description === nextTask.subtasks[index]?.description &&
+      subtask.completionSummary === nextTask.subtasks[index]?.completionSummary
+    )
   );
 }
 

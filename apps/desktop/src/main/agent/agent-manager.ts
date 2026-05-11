@@ -1,7 +1,7 @@
 import { EventEmitter } from 'events';
 import path from 'path';
 import { existsSync, readdirSync, readFileSync } from 'fs';
-import { execSync } from 'child_process';
+import { execFileSync, execSync } from 'child_process';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
@@ -21,7 +21,7 @@ import { projectStore } from '../project-store';
 import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';
 import { resolveModelId } from '../ai/config/phase-config';
 import { detectProviderFromModel } from '../ai/providers/factory';
-import { resolveModelEquivalent } from '../../shared/constants/models';
+import { inferProviderFromModelValue, resolveModelEquivalent } from '../../shared/constants/models';
 import type { BuiltinProvider } from '../../shared/types/provider-account';
 import type { AgentExecutorConfig, SerializableSessionConfig, SerializedSecurityProfile } from '../ai/agent/types';
 import { getSecurityProfile } from '../ai/security/security-profile';
@@ -39,6 +39,22 @@ const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
   coding: 140,
   qa: 50,
 } as const;
+
+const CROSS_PROVIDER_MODEL_SHORTHANDS = new Set(['haiku', 'sonnet', 'opus', 'opus-1m']);
+const PROJECT_DEFAULT_BRANCH_MARKER = '__project_default__';
+const COMMON_BASE_BRANCHES = ['main', 'master', 'develop', 'dev', 'trunk'];
+
+export function inferPinnedProviderFromModel(model: string | undefined): BuiltinProvider | null {
+  if (!model || CROSS_PROVIDER_MODEL_SHORTHANDS.has(model)) {
+    return null;
+  }
+  return inferProviderFromModelValue(model) ?? null;
+}
+
+export const __agentManagerTestUtils = {
+  normalizeBaseBranch,
+  resolveTaskBaseBranch,
+};
 const AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS = {
   spec: 50,
   planning: 55,
@@ -64,6 +80,85 @@ function isMainBranch(projectPath: string): boolean {
     // Default to safe behavior (no push) if detection fails
     return true;
   }
+}
+
+function normalizeBaseBranch(branch: string | null | undefined): string | null {
+  const trimmed = branch?.trim();
+  if (!trimmed || trimmed === PROJECT_DEFAULT_BRANCH_MARKER) {
+    return null;
+  }
+  return trimmed.replace(/^origin\//, '');
+}
+
+function gitRefExists(projectPath: string, ref: string): boolean {
+  try {
+    execFileSync('git', ['rev-parse', '--verify', ref], {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    });
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function getCurrentGitBranch(projectPath: string): string | null {
+  try {
+    const branch = execFileSync('git', ['branch', '--show-current'], {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return branch || null;
+  } catch {
+    return null;
+  }
+}
+
+function detectRepositoryBaseBranch(projectPath: string): string | null {
+  try {
+    const ref = execFileSync('git', ['symbolic-ref', 'refs/remotes/origin/HEAD'], {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    const match = ref.match(/refs\/remotes\/origin\/(.+)$/);
+    if (match?.[1]) {
+      return match[1];
+    }
+  } catch {
+    // origin/HEAD is optional for local-only repositories.
+  }
+
+  for (const branch of COMMON_BASE_BRANCHES) {
+    if (gitRefExists(projectPath, branch) || gitRefExists(projectPath, `origin/${branch}`)) {
+      return branch;
+    }
+  }
+
+  return getCurrentGitBranch(projectPath);
+}
+
+function resolveTaskBaseBranch(
+  projectPath: string,
+  requestedBaseBranch?: string,
+  projectMainBranch?: string,
+): string {
+  for (const candidate of [requestedBaseBranch, projectMainBranch]) {
+    const normalized = normalizeBaseBranch(candidate);
+    if (!normalized) {
+      continue;
+    }
+
+    if (gitRefExists(projectPath, normalized) || gitRefExists(projectPath, `origin/${normalized}`)) {
+      return normalized;
+    }
+
+    console.warn(`[AgentManager] Configured base branch "${normalized}" was not found in ${projectPath}; trying repository detection.`);
+  }
+
+  return detectRepositoryBaseBranch(projectPath) ?? 'main';
 }
 
 /**
@@ -243,19 +338,21 @@ export class AgentManager extends EventEmitter {
         }
       }
 
-      // Last-resort queue retry with provider-agnostic shorthand. This avoids
-      // hard fallback to Anthropic when imported tasks carry legacy/full model IDs.
-      const genericFallbackResolved = await resolveAuthFromQueue('sonnet', orderedQueue, {
-        executionMode: 'agentic',
-      });
-      if (genericFallbackResolved) {
-        console.warn(`[AgentManager] Resolved auth from provider queue (generic retry): account=${genericFallbackResolved.accountId} provider=${genericFallbackResolved.resolvedProvider} model=${genericFallbackResolved.resolvedModelId}`);
-        return {
-          auth: genericFallbackResolved,
-          provider: genericFallbackResolved.resolvedProvider,
-          modelId: genericFallbackResolved.resolvedModelId,
-          configDir: undefined,
-        };
+      if (!preferredProvider) {
+        // Last-resort queue retry with provider-agnostic shorthand. This avoids
+        // hard fallback to Anthropic when imported tasks carry legacy/full model IDs.
+        const genericFallbackResolved = await resolveAuthFromQueue('sonnet', orderedQueue, {
+          executionMode: 'agentic',
+        });
+        if (genericFallbackResolved) {
+          console.warn(`[AgentManager] Resolved auth from provider queue (generic retry): account=${genericFallbackResolved.accountId} provider=${genericFallbackResolved.resolvedProvider} model=${genericFallbackResolved.resolvedModelId}`);
+          return {
+            auth: genericFallbackResolved,
+            provider: genericFallbackResolved.resolvedProvider,
+            modelId: genericFallbackResolved.resolvedModelId,
+            configDir: undefined,
+          };
+        }
       }
 
       const requestedProvider = preferredProvider ?? detectProviderFromModel(requestedModel);
@@ -441,7 +538,7 @@ export class AgentManager extends EventEmitter {
     // Determine the preferred provider (from metadata or task_metadata.json)
     const preferredProvider = (
       specDir ? this.resolveTaskPhaseProvider(specDir, 'spec') : null
-    ) ?? (metadata?.provider as string | undefined) ?? null;
+    ) ?? metadata?.phaseProviders?.spec ?? inferPinnedProviderFromModel(specModelShorthand) ?? (metadata?.provider as string | undefined) ?? null;
 
     // Resolve the model requested by queue. Keep shorthand when no preferred provider
     // so the queue can map across providers (e.g. sonnet -> gpt-5.x).
@@ -564,6 +661,7 @@ export class AgentManager extends EventEmitter {
     const modelId = await this.resolveTaskModelId(specDir, 'planning');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'planning');
     const workflowMode = this.resolveTaskWorkflowMode(specDir);
+    const enableBatchExecution = this.resolveTaskEnableBatchExecution(specDir);
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'build_orchestrator');
 
     // Load system prompt (planner prompt for build orchestrator entry point)
@@ -583,20 +681,21 @@ export class AgentManager extends EventEmitter {
       return;
     }
 
-    // Create or get existing git worktree for task isolation
-    // This matches the Python backend's WorktreeManager.create_worktree() behavior
+    // Create or get a git worktree only when explicitly requested. Existing task
+    // worktrees are still honored for backwards-compatible resume/retry behavior.
     let worktreePath: string | null = null;
     let worktreeSpecDir = specDir;
-    const useWorktree = workflowMode !== 'aggressive' && options.useWorktree !== false; // Aggressive workflow runs directly for lower startup latency
+    const existingWorktreePath = options.useWorktree === false ? null : findTaskWorktree(projectPath, specId);
+    const useWorktree = options.useWorktree === true || existingWorktreePath !== null;
     if (useWorktree) {
       try {
-        const baseBranch = options.baseBranch ?? project?.settings?.mainBranch ?? 'main';
+        const baseBranch = resolveTaskBaseBranch(projectPath, options.baseBranch, project?.settings?.mainBranch);
         const result = await createOrGetWorktree(
           projectPath,
           specId,
           baseBranch,
           options.useLocalBranch ?? false,
-          project?.settings?.pushNewBranches !== false,
+          options.pushNewBranches ?? project?.settings?.pushNewBranches !== false,
           project?.autoBuildPath,
         );
         worktreePath = result.worktreePath;
@@ -604,9 +703,27 @@ export class AgentManager extends EventEmitter {
         worktreeSpecDir = path.join(worktreePath, specsBaseDir, specId);
         console.warn(`[AgentManager] Task ${taskId} will run in worktree: ${worktreePath}`);
       } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
         console.error(`[AgentManager] Failed to create worktree for ${taskId}:`, err);
-        // Fall back to running in project root (non-fatal)
-        console.warn(`[AgentManager] Falling back to project root for ${taskId}`);
+        this.emit(
+          'error',
+          taskId,
+          `Failed to create isolated worktree for this task. Execution was stopped to avoid writing changes to the main project branch. ${message}`,
+          projectId,
+        );
+        this.emit('task-event', taskId, {
+          type: 'CODING_FAILED',
+          taskId,
+          specId,
+          projectId: projectId ?? '',
+          timestamp: new Date().toISOString(),
+          eventId: `${taskId}-worktree-setup-failed-${Date.now()}`,
+          sequence: Date.now(),
+          subtaskId: 'worktree-setup',
+          error: message,
+          attemptCount: 0,
+        }, projectId);
+        return;
       }
     }
 
@@ -637,6 +754,7 @@ export class AgentManager extends EventEmitter {
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
+      enableBatchExecution,
       language: this.resolveAppLanguage(),
       autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
@@ -1082,19 +1200,20 @@ export class AgentManager extends EventEmitter {
           isAutoProfile?: boolean;
           phaseModels?: Record<string, string>;
           phaseProviders?: Record<string, string>;
-          provider?: string;
           model?: string;
         };
 
-        // Determine the target provider for this phase
-        const targetProvider = (metadata.phaseProviders?.[phase] ?? metadata.provider ?? null) as BuiltinProvider | null;
-
+        // Only explicit cross-provider phase config should pin a provider.
+        // Task-level metadata.provider is a legacy UI snapshot and must not
+        // override the current account queue.
         let shorthand: string | undefined;
         if (metadata.phaseModels?.[phase]) {
           shorthand = metadata.phaseModels[phase];
         } else if (metadata.model) {
           shorthand = metadata.model;
         }
+
+        const targetProvider = (metadata.phaseProviders?.[phase] ?? inferPinnedProviderFromModel(shorthand) ?? null) as BuiltinProvider | null;
 
         // If shorthand is empty (e.g., Ollama presets use '' because models are dynamic),
         // try reading the user's per-provider phase config from settings
@@ -1126,6 +1245,9 @@ export class AgentManager extends EventEmitter {
 
           // No target provider override: keep shorthand so queue can map across providers.
           // Legacy Anthropic fallback later normalizes this via resolveModelId().
+          if (targetProvider === 'anthropic') {
+            return baseModelId;
+          }
           return shorthand;
         }
 
@@ -1154,11 +1276,16 @@ export class AgentManager extends EventEmitter {
         const raw = readFileSync(metadataPath, 'utf-8');
         const metadata = JSON.parse(raw) as {
           phaseProviders?: Record<string, string>;
-          provider?: string;
+          phaseModels?: Record<string, string>;
+          model?: string;
         };
-        // Per-phase provider (cross-provider mode) takes precedence,
-        // then fall back to the single task-level provider (e.g. 'ollama')
-        return metadata.phaseProviders?.[phase] ?? metadata.provider ?? null;
+        const explicitProvider = metadata.phaseProviders?.[phase];
+        if (explicitProvider) {
+          return explicitProvider;
+        }
+
+        const model = metadata.phaseModels?.[phase] ?? metadata.model;
+        return inferPinnedProviderFromModel(model);
       }
     } catch {
       // Fall through
@@ -1178,6 +1305,20 @@ export class AgentManager extends EventEmitter {
       // Fall through
     }
     return 'conservative';
+  }
+
+  private resolveTaskEnableBatchExecution(specDir: string): boolean {
+    try {
+      const metadataPath = path.join(specDir, 'task_metadata.json');
+      if (existsSync(metadataPath)) {
+        const raw = readFileSync(metadataPath, 'utf-8');
+        const metadata = JSON.parse(raw) as { enableBatchExecution?: boolean };
+        return metadata.enableBatchExecution === true;
+      }
+    } catch {
+      // Fall through
+    }
+    return false;
   }
 
   private resolveAppLanguage(): SerializableSessionConfig['language'] {

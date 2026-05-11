@@ -8,6 +8,7 @@ import type {
   SDKRateLimitInfo,
   AuthFailureInfo,
   ImplementationPlan,
+  TaskLogStreamChunk,
   TokenUsage,
 } from "../../shared/types";
 import { XSTATE_SETTLED_STATES, XSTATE_ACTIVE_STATES, XSTATE_TO_PHASE, mapStateToLegacy } from "../../shared/state-machines";
@@ -65,6 +66,18 @@ export function registerAgenteventsHandlers(
       projectId = project?.id;
     }
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_ERROR, taskId, error, projectId);
+  });
+
+  agentManager.on("task-log-stream", (taskId: string, chunk: TaskLogStreamChunk, projectId?: string) => {
+    const { task } = findTaskAndProject(taskId, projectId);
+    const specId = task?.specId || taskId;
+
+    safeSendToRenderer(
+      getMainWindow,
+      IPC_CHANNELS.TASK_LOGS_STREAM,
+      specId,
+      chunk
+    );
   });
 
   // Handle SDK rate limit events from agent manager
@@ -293,6 +306,7 @@ export function registerAgenteventsHandlers(
                 baseBranch,
                 useWorktree: specTask.metadata?.useWorktree,
                 useLocalBranch: specTask.metadata?.useLocalBranch,
+                pushNewBranches: specTask.metadata?.pushNewBranches,
               },
               specProject.id
             );

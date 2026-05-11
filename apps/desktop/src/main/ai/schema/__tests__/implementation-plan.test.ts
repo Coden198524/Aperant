@@ -238,6 +238,53 @@ describe('compactImplementationPlan', () => {
     expect(compacted.phases[0].subtasks[0].verification?.run?.length).toBeLessThanOrEqual(300);
     expect(ImplementationPlanSchema.safeParse(result.plan).success).toBe(true);
   });
+
+  it('preserves multiline completion summaries longer than subtask descriptions', () => {
+    const completionSummary = [
+      '| Item | Detail |',
+      '| --- | --- |',
+      `| What changed | ${'Implemented detailed review notes. '.repeat(35)} |`,
+      `| Verification | ${'Ran targeted checks and inspected output. '.repeat(25)} |`,
+      `| Review notes | ${'Manual reviewer should see the complete context. '.repeat(25)} |`,
+      '',
+      'Additional context after the table should remain visible.',
+    ].join('\n');
+
+    const rawPlan = {
+      feature: 'Completion summary compaction',
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Phase 1',
+          subtasks: [
+            {
+              id: 's1',
+              title: 'Render completion summary',
+              description: 'Short description.',
+              status: 'completed',
+              completion_summary: completionSummary,
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = compactImplementationPlan(rawPlan);
+
+    expect(result).not.toBeNull();
+    if (!result) {
+      throw new Error('Expected plan compaction to succeed');
+    }
+
+    const compacted = result.plan as {
+      phases: Array<{ subtasks: Array<{ completion_summary?: string }> }>;
+    };
+    const summary = compacted.phases[0].subtasks[0].completion_summary ?? '';
+    expect(summary.length).toBeGreaterThan(700);
+    expect(summary.length).toBeLessThanOrEqual(3000);
+    expect(summary).toContain('| What changed |');
+    expect(summary).toContain('\n| Verification |');
+  });
 });
 
 describe('PlanPhaseSchema', () => {

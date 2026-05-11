@@ -1,5 +1,7 @@
-import { useState, useEffect, useCallback, useRef } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import ReactMarkdown, { type Components } from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import {
   FileText,
   FileJson,
@@ -8,7 +10,9 @@ import {
   FolderOpen,
   RefreshCw,
   ChevronRight,
-  ExternalLink
+  ExternalLink,
+  BookOpen,
+  Code2
 } from 'lucide-react';
 import { ScrollArea } from '../ui/scroll-area';
 import { Button } from '../ui/button';
@@ -25,12 +29,133 @@ interface TaskFilesProps {
 // File extensions to display
 const ALLOWED_EXTENSIONS = ['.md', '.json'];
 
+type FileViewMode = 'reader' | 'source';
+type FileKind = 'markdown' | 'json' | 'text';
+type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
+type ParsedJson = { value: JsonValue; error?: never } | { value?: never; error: string };
+
 // Get icon for file type
 function getFileIcon(filename: string) {
   if (filename.endsWith('.json')) {
     return <FileJson className="h-4 w-4 text-amber-500" />;
   }
   return <FileText className="h-4 w-4 text-blue-500" />;
+}
+
+function getFileKind(filename: string | null): FileKind {
+  if (!filename) return 'text';
+  if (filename.endsWith('.json')) return 'json';
+  if (filename.endsWith('.md')) return 'markdown';
+  return 'text';
+}
+
+function getJsonSummary(value: JsonValue): string {
+  if (Array.isArray(value)) return `[${value.length}]`;
+  if (value && typeof value === 'object') return `{${Object.keys(value).length}}`;
+  return '';
+}
+
+function JsonPrimitive({ value }: { value: JsonValue }) {
+  if (value === null) {
+    return <span className="font-mono text-xs italic text-muted-foreground">null</span>;
+  }
+
+  if (typeof value === 'string') {
+    return (
+      <span className="font-mono text-xs text-emerald-600 dark:text-emerald-400 whitespace-pre-wrap break-words">
+        &quot;{value}&quot;
+      </span>
+    );
+  }
+
+  if (typeof value === 'number') {
+    return <span className="font-mono text-xs text-blue-600 dark:text-blue-400">{value}</span>;
+  }
+
+  if (typeof value === 'boolean') {
+    return (
+      <span className="font-mono text-xs text-purple-600 dark:text-purple-400">
+        {String(value)}
+      </span>
+    );
+  }
+
+  return null;
+}
+
+function JsonNode({ name, value, depth = 0 }: { name?: string; value: JsonValue; depth?: number }) {
+  const isObjectLike = value !== null && typeof value === 'object';
+
+  if (!isObjectLike) {
+    return (
+      <div className="flex items-start gap-2 py-1">
+        {name !== undefined && (
+          <>
+            <span className="shrink-0 font-mono text-xs text-muted-foreground">{name}</span>
+            <span className="shrink-0 text-xs text-muted-foreground">:</span>
+          </>
+        )}
+        <JsonPrimitive value={value} />
+      </div>
+    );
+  }
+
+  const entries: Array<[string, JsonValue]> = Array.isArray(value)
+    ? value.map((item, index) => [String(index), item])
+    : Object.entries(value);
+  const summary = getJsonSummary(value);
+  const typeLabel = Array.isArray(value) ? 'array' : 'object';
+
+  if (name === undefined) {
+    return (
+      <div className="space-y-1">
+        <div className="flex items-center gap-2 pb-2 text-xs text-muted-foreground">
+          <span className="font-mono">{typeLabel}</span>
+          <span className="font-mono">{summary}</span>
+        </div>
+        {entries.length === 0 ? (
+          <div className="rounded-md border border-dashed border-border px-3 py-2 text-xs text-muted-foreground">
+            {Array.isArray(value) ? '[]' : '{}'}
+          </div>
+        ) : (
+          entries.map(([key, item]) => (
+            <JsonNode key={key} name={key} value={item} depth={depth + 1} />
+          ))
+        )}
+      </div>
+    );
+  }
+
+  return (
+    <details open={depth < 2} className="group py-1">
+      <summary className="flex cursor-pointer list-none items-center gap-2 rounded-md px-1 py-1 hover:bg-muted/60 [&::-webkit-details-marker]:hidden">
+        <ChevronRight className="h-3 w-3 shrink-0 text-muted-foreground transition-transform group-open:rotate-90" />
+        <span className="font-mono text-xs text-muted-foreground">{name}</span>
+        <span className="text-xs text-muted-foreground">:</span>
+        <span className="font-mono text-xs text-foreground">{typeLabel}</span>
+        <span className="font-mono text-xs text-muted-foreground">{summary}</span>
+      </summary>
+      <div className="ml-3 border-l border-border/70 pl-3">
+        {entries.length === 0 ? (
+          <div className="py-1 font-mono text-xs text-muted-foreground">
+            {Array.isArray(value) ? '[]' : '{}'}
+          </div>
+        ) : (
+          entries.map(([key, item]) => (
+            <JsonNode key={key} name={key} value={item} depth={depth + 1} />
+          ))
+        )}
+      </div>
+    </details>
+  );
+}
+
+function SourceContent({ content }: { content: string }) {
+  return (
+    <pre className="min-h-full p-4 text-xs font-mono leading-relaxed text-foreground whitespace-pre-wrap break-words">
+      {content}
+    </pre>
+  );
 }
 
 export function TaskFiles({ task }: TaskFilesProps) {
@@ -47,6 +172,7 @@ export function TaskFiles({ task }: TaskFilesProps) {
   const [fileContent, setFileContent] = useState<string | null>(null);
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
+  const [viewMode, setViewMode] = useState<FileViewMode>('reader');
 
   // Ref for keyboard navigation
   const fileListRef = useRef<HTMLDivElement>(null);
@@ -172,6 +298,45 @@ export function TaskFiles({ task }: TaskFilesProps) {
     }
   }, [files, selectedFile, loadFileContent]);
 
+  // Get selected filename (cross-platform: handles both / and \ separators)
+  const selectedFileName = selectedFile ? (selectedFile.split(/[/\\]/).pop() ?? null) : null;
+  const selectedFileKind = getFileKind(selectedFileName);
+
+  const parsedJson = useMemo<ParsedJson | null>(() => {
+    if (selectedFileKind !== 'json' || fileContent === null) return null;
+
+    try {
+      return { value: JSON.parse(fileContent) as JsonValue };
+    } catch (err) {
+      return { error: err instanceof Error ? err.message : 'Invalid JSON' };
+    }
+  }, [fileContent, selectedFileKind]);
+
+  const markdownComponents = useMemo<Components>(() => ({
+    a: ({ href, children }) => (
+      <a href={href} target="_blank" rel="noreferrer">
+        {children}
+      </a>
+    ),
+    table: ({ children }) => (
+      <div className="my-4 overflow-x-auto">
+        <table className="w-full border-collapse text-sm">
+          {children}
+        </table>
+      </div>
+    ),
+    th: ({ children }) => (
+      <th className="border border-border bg-muted/60 px-2 py-1 text-left font-medium">
+        {children}
+      </th>
+    ),
+    td: ({ children }) => (
+      <td className="border border-border px-2 py-1 align-top">
+        {children}
+      </td>
+    )
+  }), []);
+
   // Handle no specsPath
   if (!task.specsPath) {
     return (
@@ -228,37 +393,48 @@ export function TaskFiles({ task }: TaskFilesProps) {
 
     if (fileContent === null) return null;
 
-    // Render JSON with formatting
-    if (selectedFile.endsWith('.json')) {
-      try {
-        const formatted = JSON.stringify(JSON.parse(fileContent), null, 2);
+    if (viewMode === 'source') {
+      return <SourceContent content={fileContent} />;
+    }
+
+    // Render JSON with a structured reader, falling back to source for invalid JSON.
+    if (selectedFileKind === 'json') {
+      if (parsedJson && 'error' in parsedJson) {
         return (
-          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words p-4">
-            {formatted}
-          </pre>
+          <div className="space-y-3 p-4">
+            <div className="flex items-center gap-2 rounded-md border border-warning/40 bg-warning/10 px-3 py-2 text-xs text-warning">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{t('tasks:files.invalidJson')}</span>
+            </div>
+            <SourceContent content={fileContent} />
+          </div>
         );
-      } catch {
-        // If JSON parsing fails, show raw content
+      }
+
+      if (parsedJson && 'value' in parsedJson) {
         return (
-          <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words p-4">
-            {fileContent}
-          </pre>
+          <div className="p-4">
+            <JsonNode value={parsedJson.value} />
+          </div>
         );
       }
     }
 
-    // Render markdown/text files
+    // Render markdown files in reading mode.
+    if (selectedFileKind === 'markdown') {
+      return (
+        <div className="prose prose-sm dark:prose-invert max-w-none p-4 prose-p:text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground/90 prose-pre:overflow-x-auto prose-a:break-all">
+          <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
+            {fileContent}
+          </ReactMarkdown>
+        </div>
+      );
+    }
+
     return (
-      <div className="prose prose-sm dark:prose-invert max-w-none p-4">
-        <pre className="text-xs font-mono text-foreground whitespace-pre-wrap break-words bg-transparent border-0 p-0">
-          {fileContent}
-        </pre>
-      </div>
+      <SourceContent content={fileContent} />
     );
   };
-
-  // Get selected filename (cross-platform: handles both / and \ separators)
-  const selectedFileName = selectedFile ? selectedFile.split(/[/\\]/).pop() : null;
 
   return (
     <div className="h-full flex">
@@ -345,7 +521,29 @@ export function TaskFiles({ task }: TaskFilesProps) {
         {selectedFileName && (
           <div className="px-4 py-2 border-b border-border flex items-center gap-2 shrink-0 bg-muted/30">
             {getFileIcon(selectedFileName)}
-            <span className="text-sm font-medium flex-1">{selectedFileName}</span>
+            <span className="text-sm font-medium flex-1 min-w-0 truncate">{selectedFileName}</span>
+            <div className="flex items-center gap-1 rounded-md border border-border bg-background p-0.5">
+              <Button
+                variant={viewMode === 'reader' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 gap-1 px-2"
+                onClick={() => setViewMode('reader')}
+                aria-pressed={viewMode === 'reader'}
+              >
+                <BookOpen className="h-3.5 w-3.5" />
+                {t('tasks:files.readerView')}
+              </Button>
+              <Button
+                variant={viewMode === 'source' ? 'secondary' : 'ghost'}
+                size="sm"
+                className="h-6 gap-1 px-2"
+                onClick={() => setViewMode('source')}
+                aria-pressed={viewMode === 'source'}
+              >
+                <Code2 className="h-3.5 w-3.5" />
+                {t('tasks:files.sourceView')}
+              </Button>
+            </div>
             {settings.preferredIDE && (
               <Tooltip>
                 <TooltipTrigger asChild>

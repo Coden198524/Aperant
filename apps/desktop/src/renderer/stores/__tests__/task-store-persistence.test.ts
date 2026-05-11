@@ -8,7 +8,7 @@
  * Related to Issue #1657: Bug - Logs disappear after restart in dev mode
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import type { Task, TaskStatus } from '../../../shared/types';
+import type { Task, TaskDraft, TaskStatus } from '../../../shared/types';
 
 // Mock the electronAPI for IPC communication
 const mockGetTasks = vi.fn();
@@ -37,6 +37,10 @@ describe('task-store-persistence', () => {
   let createTask: typeof import('../task-store').createTask;
   let deleteTask: typeof import('../task-store').deleteTask;
   let submitReview: typeof import('../task-store').submitReview;
+  let saveDraft: typeof import('../task-store').saveDraft;
+  let loadDraft: typeof import('../task-store').loadDraft;
+  let clearDraft: typeof import('../task-store').clearDraft;
+  let isDraftEmpty: typeof import('../task-store').isDraftEmpty;
 
 
   beforeEach(async () => {
@@ -50,6 +54,11 @@ describe('task-store-persistence', () => {
     createTask = storeModule.createTask;
     deleteTask = storeModule.deleteTask;
     submitReview = storeModule.submitReview;
+    saveDraft = storeModule.saveDraft;
+    loadDraft = storeModule.loadDraft;
+    clearDraft = storeModule.clearDraft;
+    isDraftEmpty = storeModule.isDraftEmpty;
+    localStorage.clear();
   });
 
   afterEach(() => {
@@ -697,6 +706,37 @@ describe('task-store-persistence', () => {
       expect(result).toBeNull();
       const state = useTaskStore.getState();
       expect(state.error).toBe('Creation failed');
+    });
+  });
+
+  describe('Task Creation Drafts', () => {
+    it('should persist the batch execution preference', () => {
+      const draft: TaskDraft = {
+        projectId: 'test-project',
+        title: '',
+        description: '',
+        category: '',
+        priority: '',
+        complexity: '',
+        impact: '',
+        model: '',
+        thinkingLevel: '',
+        images: [],
+        referencedFiles: [],
+        workflowMode: 'balanced',
+        enableBatchExecution: true,
+        savedAt: new Date()
+      };
+
+      expect(isDraftEmpty(draft)).toBe(false);
+
+      saveDraft(draft);
+
+      const loaded = loadDraft('test-project');
+      expect(loaded?.enableBatchExecution).toBe(true);
+
+      clearDraft('test-project');
+      expect(loadDraft('test-project')).toBeNull();
     });
   });
 

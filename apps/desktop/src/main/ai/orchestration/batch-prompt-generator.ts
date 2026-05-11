@@ -156,7 +156,7 @@ function generateBatchInstructions(count: number, attempt: number): string {
 
 ### 2. 进度跟踪
 完成每个子任务后，你必须：
-1. 更新 implementation_plan.json，将该子任务的 status 设为 "completed"
+1. 更新 implementation_plan.json，将该子任务的 status 设为 "completed"，并添加 completion_summary 说明完成内容、验证结果和审核要点
 2. 在输出中添加进度标记：\`[SUBTASK_COMPLETED: {id}]\`
 3. 提交代码（每 2-3 个子任务提交一次）
 

@@ -19,7 +19,7 @@ const { app } = electron;
 
 import type { AgentManagerEvents, ExecutionProgressData, ProcessType } from '../../agent/types';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
-import type { TokenUsage } from '../../../shared/types';
+import type { TaskLogPhase, TaskLogStreamChunk, TokenUsage } from '../../../shared/types';
 import type {
   WorkerConfig,
   WorkerMessage,
@@ -213,8 +213,12 @@ export class WorkerBridge extends EventEmitter {
 
       case 'stream-event':
         if (message.data.type === 'text-delta') {
+          this.emitTaskLogStreamTextDelta(message);
           this.bufferTextDeltaLog(message.taskId, message.data.text, message.projectId);
           break;
+        }
+        if (message.data.type === 'tool-call' || message.data.type === 'tool-result' || message.data.type === 'error') {
+          this.emitTaskLogStreamEvent(message);
         }
 
         this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
@@ -290,6 +294,117 @@ export class WorkerBridge extends EventEmitter {
 
     this.emitTyped('log', taskId, this.bufferedTextDeltaLog, projectId);
     this.bufferedTextDeltaLog = '';
+  }
+
+  private emitTaskLogStreamTextDelta(message: WorkerMessage & { type: 'stream-event' }): void {
+    if (message.data.type !== 'text-delta' || !message.data.text) return;
+
+    const model = this.resolveStreamModel(message);
+    const chunk: TaskLogStreamChunk = {
+      type: 'text',
+      content: message.data.text,
+      phase: message.phase ?? this.resolveCurrentLogPhase(),
+      timestamp: new Date().toISOString(),
+      ...(model ? { model } : {}),
+      ...(message.subtaskId ? { subtask_id: message.subtaskId } : {}),
+      ...(message.sessionNumber ? { session: message.sessionNumber } : {}),
+      source: 'sdk',
+    };
+
+    this.emitTyped('task-log-stream', message.taskId, chunk, message.projectId);
+  }
+
+  private emitTaskLogStreamEvent(message: WorkerMessage & { type: 'stream-event' }): void {
+    const phase = message.phase ?? this.resolveCurrentLogPhase();
+    const timestamp = new Date().toISOString();
+    const model = this.resolveStreamModel(message);
+
+    if (message.data.type === 'tool-call') {
+      const toolInput = this.extractToolInput(message.data.args);
+      const chunk: TaskLogStreamChunk = {
+        type: 'tool_start',
+        content: `[${message.data.toolName}] ${toolInput ?? ''}`.trim(),
+        phase,
+        timestamp,
+        ...(model ? { model } : {}),
+        tool: {
+          name: message.data.toolName,
+          input: toolInput,
+        },
+        tool_call_id: message.data.toolCallId,
+        ...(message.subtaskId ? { subtask_id: message.subtaskId } : {}),
+        ...(message.sessionNumber ? { session: message.sessionNumber } : {}),
+        source: 'sdk',
+      };
+      this.emitTyped('task-log-stream', message.taskId, chunk, message.projectId);
+      return;
+    }
+
+    if (message.data.type === 'tool-result') {
+      const chunk: TaskLogStreamChunk = {
+        type: 'tool_end',
+        content: `[${message.data.toolName}] ${message.data.isError ? 'Error' : 'Done'}`,
+        phase,
+        timestamp,
+        ...(model ? { model } : {}),
+        tool: {
+          name: message.data.toolName,
+          success: !message.data.isError,
+        },
+        tool_call_id: message.data.toolCallId,
+        ...(message.subtaskId ? { subtask_id: message.subtaskId } : {}),
+        ...(message.sessionNumber ? { session: message.sessionNumber } : {}),
+        source: 'sdk',
+      };
+      this.emitTyped('task-log-stream', message.taskId, chunk, message.projectId);
+      return;
+    }
+
+    if (message.data.type === 'error') {
+      const chunk: TaskLogStreamChunk = {
+        type: 'error',
+        content: message.data.error.message,
+        phase,
+        timestamp,
+        ...(model ? { model } : {}),
+        ...(message.subtaskId ? { subtask_id: message.subtaskId } : {}),
+        ...(message.sessionNumber ? { session: message.sessionNumber } : {}),
+        source: 'sdk',
+      };
+      this.emitTyped('task-log-stream', message.taskId, chunk, message.projectId);
+    }
+  }
+
+  private resolveStreamModel(message: WorkerMessage & { type: 'stream-event' }): NonNullable<TaskLogStreamChunk['model']> | undefined {
+    if (!message.provider && !message.modelId) {
+      return undefined;
+    }
+
+    return {
+      ...(message.provider ? { provider: message.provider } : {}),
+      ...(message.modelId ? { modelId: message.modelId } : {}),
+    };
+  }
+
+  private extractToolInput(args: Record<string, unknown>): string | undefined {
+    const value = args.file_path ?? args.path ?? args.command ?? args.query ?? args.pattern;
+    if (typeof value !== 'string') return undefined;
+    return value.length > 180 ? `${value.slice(0, 177)}...` : value;
+  }
+
+  private resolveCurrentLogPhase(): TaskLogPhase {
+    const phase = this.progressTracker.state.currentPhase;
+    switch (phase) {
+      case 'planning':
+        return 'planning';
+      case 'qa_review':
+      case 'qa_fixing':
+      case 'complete':
+      case 'failed':
+        return 'validation';
+      default:
+        return 'coding';
+    }
   }
 
   /**

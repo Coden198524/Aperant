@@ -257,6 +257,16 @@ interface ComplexityAssessment {
   needs_self_critique?: boolean;
 }
 
+interface MinimalImplementationPlan {
+  phases?: Array<{
+    subtasks?: unknown[];
+  }>;
+}
+
+function hasExecutableSubtasks(plan: MinimalImplementationPlan | null): boolean {
+  return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
+}
+
 export function isWriteToolJsonFailure(message: string): boolean {
   const lower = message.toLowerCase();
   const mentionsWriteTool = lower.includes("tool 'write'") ||
@@ -1093,11 +1103,28 @@ export class SpecOrchestrator extends EventEmitter {
   ): Promise<{ valid: boolean; errors: string[] } | null> {
     if (phase === 'planning' || phase === 'quick_spec') {
       const planPath = join(this.config.specDir, 'implementation_plan.json');
+      const rewriteErrors: string[] = [];
       try {
-        const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
-        if (rewrite?.split) {
-          this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
+        try {
+          const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
+          if (rewrite?.split) {
+            this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
+          }
+        } catch (error) {
+          const message = error instanceof Error ? error.message : String(error);
+          if (
+            message.includes('implementation_plan.json') ||
+            message.includes('implementation_plan.phase-') ||
+            message.includes('subtasks_file') ||
+            message.includes('plan_files')
+          ) {
+            rewriteErrors.push(`Failed to write implementation plan files: ${message}`);
+            this.emitTyped('log', `Planning file rewrite failed: ${message}. Checking whether the main implementation_plan.json can still be used...`);
+          } else {
+            throw error;
+          }
         }
+
         const result = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
         const hydratedPlan = result.valid
           ? await loadImplementationPlanFromFiles(this.config.specDir)
@@ -1105,11 +1132,37 @@ export class SpecOrchestrator extends EventEmitter {
         const languageErrors = result.valid && hydratedPlan
           ? validateImplementationPlanLanguage(hydratedPlan as never, this.config.language)
           : [];
+        const executionErrors = result.valid && !hasExecutableSubtasks(hydratedPlan)
+          ? ['Implementation plan has no executable subtasks. If using split plan files, ensure every subtasks_file exists and contains subtasks.']
+          : [];
+
+        if (result.valid && rewriteErrors.length > 0 && executionErrors.length === 0 && languageErrors.length === 0) {
+          this.emitTyped('log', 'Split plan file rewrite failed, but the main implementation_plan.json is executable. Continuing without stopping the task.');
+        }
+
         return {
-          valid: result.valid && languageErrors.length === 0,
-          errors: [...result.errors, ...languageErrors],
+          valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0,
+          errors: result.valid
+            ? [
+                ...(executionErrors.length > 0 ? rewriteErrors : []),
+                ...executionErrors,
+                ...languageErrors,
+              ]
+            : [...rewriteErrors, ...result.errors, ...languageErrors],
         };
-      } catch {
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        if (
+          message.includes('implementation_plan.json') ||
+          message.includes('implementation_plan.phase-') ||
+          message.includes('subtasks_file') ||
+          message.includes('plan_files')
+        ) {
+          return {
+            valid: false,
+            errors: [`Failed to write implementation plan files: ${message}`],
+          };
+        }
         return null; // File doesn't exist yet — handled by validatePhaseOutputs
       }
     }

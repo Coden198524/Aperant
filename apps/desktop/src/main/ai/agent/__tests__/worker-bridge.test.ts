@@ -252,6 +252,69 @@ describe('WorkerBridge', () => {
       expect(handler).toHaveBeenCalledWith('task-123', 'some output', undefined);
     });
 
+    it('emits task-log-stream immediately for text-delta events', () => {
+      const handler = vi.fn();
+      bridge.on('task-log-stream', handler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        projectId: 'proj-456',
+        phase: 'coding',
+        subtaskId: 'subtask-1',
+        sessionNumber: 2,
+        data: { type: 'text-delta', text: 'token' } as never,
+      } satisfies WorkerMessage);
+
+      expect(handler).toHaveBeenCalledWith(
+        'task-123',
+        expect.objectContaining({
+          type: 'text',
+          content: 'token',
+          phase: 'coding',
+          subtask_id: 'subtask-1',
+          session: 2,
+          source: 'sdk',
+        }),
+        'proj-456'
+      );
+    });
+
+    it('emits task-log-stream for tool-call events', () => {
+      const handler = vi.fn();
+      bridge.on('task-log-stream', handler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        projectId: 'proj-456',
+        phase: 'coding',
+        data: {
+          type: 'tool-call',
+          toolName: 'Bash',
+          toolCallId: 'call-1',
+          args: { command: 'npm test' },
+        } as never,
+      } satisfies WorkerMessage);
+
+      expect(handler).toHaveBeenCalledWith(
+        'task-123',
+        expect.objectContaining({
+          type: 'tool_start',
+          content: '[Bash] npm test',
+          phase: 'coding',
+          tool: {
+            name: 'Bash',
+            input: 'npm test',
+          },
+          source: 'sdk',
+        }),
+        'proj-456'
+      );
+    });
+
     it('emits task-token-usage for usage-update stream events', () => {
       const handler = vi.fn();
       bridge.on('task-token-usage', handler);

@@ -103,6 +103,7 @@ export class AgentExecutor extends EventEmitter {
       'exit',
       'execution-progress',
       'task-event',
+      'task-log-stream',
     ];
 
     for (const event of events) {

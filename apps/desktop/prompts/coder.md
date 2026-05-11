@@ -1101,10 +1101,13 @@ The next session has no memory. You are the only one who can fix it efficiently.
 After successful verification, update the subtask:
 
 ```json
-"status": "completed"
+"status": "completed",
+"completion_summary": "[What changed, what was verified, and any reviewer notes]"
 ```
 
-**ONLY change the status field. Never modify:**
+Keep the completion summary concise and specific enough for human review.
+
+**Only change the status and completion_summary fields. Never modify:**
 - Subtask descriptions
 - File lists
 - Verification criteria

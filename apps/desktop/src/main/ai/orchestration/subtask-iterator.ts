@@ -105,6 +105,8 @@ interface PlanSubtask {
   title: string;
   description: string;
   status: string;
+  notes?: string;
+  completion_summary?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
   pattern_files?: string[];
@@ -316,7 +318,7 @@ export async function iterateSubtasks(
     // completed. `max_steps`/`context_window` can indicate partial progress.
     // Auto-completing in those cases can prematurely advance to QA.
     if (result.outcome === 'completed') {
-      await ensureSubtaskMarkedCompleted(config.specDir, subtask.id);
+      await ensureSubtaskMarkedCompleted(config.specDir, subtask.id, result);
 
       // Re-stamp executionPhase on the worktree plan after the coder session.
       // The coder model's Edit/Write calls can overwrite executionPhase with a
@@ -387,11 +389,13 @@ export async function iterateSubtasks(
 async function ensureSubtaskMarkedCompleted(
   specDir: string,
   subtaskId: string,
+  result?: SessionResult,
 ): Promise<void> {
   try {
     const plan = await loadImplementationPlan(specDir);
     if (!plan) return; // JSON corrupt beyond repair
     let updated = false;
+    const completionSummary = result ? summarizeSessionResult(result) : undefined;
 
     for (const phase of plan.phases) {
       for (const subtask of phase.subtasks) {
@@ -409,6 +413,14 @@ async function ensureSubtaskMarkedCompleted(
             new Date().toISOString();
           updated = true;
         }
+
+        if (subtask.id === subtaskId && completionSummary && !subtask.completion_summary) {
+          subtask.completion_summary = completionSummary;
+          if (!subtask.notes) {
+            subtask.notes = completionSummary;
+          }
+          updated = true;
+        }
       }
     }
 
@@ -418,6 +430,31 @@ async function ensureSubtaskMarkedCompleted(
   } catch {
     // Non-fatal: if we can't update the plan the loop will retry or mark stuck
   }
+}
+
+function summarizeSessionResult(result: SessionResult): string | undefined {
+  const content = [...result.messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.content.trim())?.content;
+  if (!content) {
+    return undefined;
+  }
+
+  const normalized = content
+    .replace(/```[\s\S]*?```/g, ' ')
+    .replace(/`([^`]+)`/g, '$1')
+    .replace(/[#*_>\-[\]]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+
+  if (!normalized) {
+    return undefined;
+  }
+
+  const maxLength = 3000;
+  return normalized.length <= maxLength
+    ? normalized
+    : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 async function markSubtaskInProgress(

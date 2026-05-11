@@ -193,6 +193,20 @@ function validatePlanData(plan: ImplementationPlan): boolean {
   return true;
 }
 
+function getPlanSubtaskCompletionSummary(subtask: ImplementationPlan['phases'][number]['subtasks'][number]): string | undefined {
+  if (subtask.status !== 'completed') {
+    return undefined;
+  }
+
+  const raw = subtask as typeof subtask & {
+    completionSummary?: unknown;
+    completed_summary?: unknown;
+    actual_output?: unknown;
+  };
+  const value = raw.completion_summary ?? raw.completionSummary ?? raw.completed_summary ?? raw.notes ?? raw.actual_output;
+  return typeof value === 'string' && value.trim() ? value.trim() : undefined;
+}
+
 function hasCodingActivityInSubtasks(subtasks: Subtask[]): boolean {
   return subtasks.some((subtask) => subtask.status !== 'pending');
 }
@@ -486,6 +500,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                 id,
                 title,
                 description,
+                completionSummary: getPlanSubtaskCompletionSummary(subtask),
                 status,
                 files: [],
                 verification: subtask.verification as Subtask['verification']
@@ -1388,7 +1403,8 @@ export function isDraftEmpty(draft: TaskDraft | null): boolean {
     !draft.category &&
     !draft.priority &&
     !draft.complexity &&
-    !draft.impact
+    !draft.impact &&
+    draft.enableBatchExecution !== true
   );
 }
 

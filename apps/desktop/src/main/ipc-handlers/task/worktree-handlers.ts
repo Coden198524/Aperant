@@ -97,6 +97,187 @@ const PRINTABLE_CHARS_REGEX = /^[\x20-\x7E\u00A0-\uFFFF]*$/;
 // Timeout for PR creation operations (2 minutes for network operations)
 const PR_CREATION_TIMEOUT_MS = 120000;
 const WORKTREE_GIT_TIMEOUT_MS = 10000;
+const MAX_UNTRACKED_PATCH_BYTES = 512 * 1024;
+
+type WorktreeDiffFileBase = Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'>;
+
+function normalizeGitPath(filePath: string): string {
+  return filePath.replace(/\\/g, '/');
+}
+
+function parseWorktreeNameStatus(nameStatus: string): WorktreeDiffFileBase[] {
+  return nameStatus
+    .split('\n')
+    .filter(Boolean)
+    .map((line: string): WorktreeDiffFileBase | null => {
+      const [status, ...pathParts] = line.split('\t');
+      const statusCode = status?.[0];
+
+      if (!statusCode) {
+        return null;
+      }
+
+      switch (statusCode) {
+        case 'A':
+          return { path: normalizeGitPath(pathParts.join('\t')), status: 'added' };
+        case 'M':
+          return { path: normalizeGitPath(pathParts.join('\t')), status: 'modified' };
+        case 'D':
+          return { path: normalizeGitPath(pathParts.join('\t')), status: 'deleted' };
+        case 'R':
+          return {
+            path: normalizeGitPath(pathParts[1] || pathParts[0] || ''),
+            ...(pathParts[0] ? { previousPath: normalizeGitPath(pathParts[0]) } : {}),
+            status: 'renamed',
+          };
+        default:
+          return { path: normalizeGitPath(pathParts.join('\t')), status: 'modified' };
+      }
+    })
+    .filter((file): file is WorktreeDiffFileBase => !!file && !!file.path);
+}
+
+function splitPatchLines(content: string): { lines: string[]; hasNoNewlineAtEnd: boolean } {
+  if (content.length === 0) {
+    return { lines: [], hasNoNewlineAtEnd: false };
+  }
+
+  const normalizedContent = content.replace(/\r\n/g, '\n').replace(/\r/g, '\n');
+  const hasNoNewlineAtEnd = !normalizedContent.endsWith('\n');
+  const contentWithoutFinalNewline = hasNoNewlineAtEnd
+    ? normalizedContent
+    : normalizedContent.slice(0, -1);
+
+  return {
+    lines: contentWithoutFinalNewline.length > 0 ? contentWithoutFinalNewline.split('\n') : [],
+    hasNoNewlineAtEnd,
+  };
+}
+
+export function createAddedFilePatchFromContent(filePath: string, content: string): { patch: string; additions: number; deletions: number } {
+  const normalizedPath = normalizeGitPath(filePath);
+  const { lines, hasNoNewlineAtEnd } = splitPatchLines(content);
+  const header = [
+    `diff --git a/${normalizedPath} b/${normalizedPath}`,
+    'new file mode 100644',
+    'index 0000000..0000000',
+    '--- /dev/null',
+    `+++ b/${normalizedPath}`,
+  ];
+
+  if (lines.length === 0) {
+    return {
+      patch: header.join('\n'),
+      additions: 0,
+      deletions: 0,
+    };
+  }
+
+  const hunk = [
+    `@@ -0,0 +1,${lines.length} @@`,
+    ...lines.map((line) => `+${line}`),
+  ];
+
+  if (hasNoNewlineAtEnd) {
+    hunk.push('\\ No newline at end of file');
+  }
+
+  return {
+    patch: [...header, ...hunk].join('\n'),
+    additions: lines.length,
+    deletions: 0,
+  };
+}
+
+function createUntrackedWorktreeDiffFile(worktreePath: string, filePath: string): WorktreeDiffFile | null {
+  const normalizedPath = normalizeGitPath(filePath);
+  const worktreeRoot = path.resolve(worktreePath);
+  const absolutePath = path.resolve(worktreePath, filePath);
+
+  if (absolutePath !== worktreeRoot && !absolutePath.startsWith(worktreeRoot + path.sep)) {
+    return null;
+  }
+
+  try {
+    const stats = statSync(absolutePath);
+    if (!stats.isFile()) {
+      return null;
+    }
+
+    if (stats.size > MAX_UNTRACKED_PATCH_BYTES) {
+      return {
+        path: normalizedPath,
+        status: 'added',
+        additions: 0,
+        deletions: 0,
+        patch: [
+          `diff --git a/${normalizedPath} b/${normalizedPath}`,
+          'new file mode 100644',
+          'index 0000000..0000000',
+          '--- /dev/null',
+          `+++ b/${normalizedPath}`,
+          `@@ -0,0 +1,1 @@`,
+          `+[New file is too large to preview: ${stats.size} bytes]`,
+        ].join('\n'),
+      };
+    }
+
+    const buffer = readFileSync(absolutePath);
+    if (buffer.includes(0)) {
+      return {
+        path: normalizedPath,
+        status: 'added',
+        additions: 0,
+        deletions: 0,
+        patch: [
+          `diff --git a/${normalizedPath} b/${normalizedPath}`,
+          'new file mode 100644',
+          'index 0000000..0000000',
+          `Binary files /dev/null and b/${normalizedPath} differ`,
+        ].join('\n'),
+      };
+    }
+
+    const { patch, additions, deletions } = createAddedFilePatchFromContent(normalizedPath, buffer.toString('utf-8'));
+    return {
+      path: normalizedPath,
+      status: 'added',
+      additions,
+      deletions,
+      patch,
+    };
+  } catch (error) {
+    console.warn(`[TASK_WORKTREE_DIFF] Failed to read untracked file ${normalizedPath}:`, error);
+    return {
+      path: normalizedPath,
+      status: 'added',
+      additions: 0,
+      deletions: 0,
+      patch: [
+        `diff --git a/${normalizedPath} b/${normalizedPath}`,
+        'new file mode 100644',
+        `--- /dev/null`,
+        `+++ b/${normalizedPath}`,
+        '@@ -0,0 +1,1 @@',
+        '+[New file preview unavailable]',
+      ].join('\n'),
+    };
+  }
+}
+
+async function getUntrackedFilePaths(worktreePath: string): Promise<string[]> {
+  const result = await execFileAsync(getToolPath('git'), ['ls-files', '--others', '--exclude-standard', '-z'], {
+    cwd: worktreePath,
+    encoding: 'utf-8',
+    env: getIsolatedGitEnv(),
+    timeout: WORKTREE_GIT_TIMEOUT_MS,
+  });
+
+  return ((result.stdout as string) || '')
+    .split('\0')
+    .map((filePath) => normalizeGitPath(filePath))
+    .filter(Boolean);
+}
 
 function parsePatchStats(patch: string): { additions: number; deletions: number } {
   let additions = 0;
@@ -1912,6 +2093,20 @@ export function registerWorktreeHandlers(
             // Ignore diff errors
           }
 
+          try {
+            const untrackedFiles = (await getUntrackedFilePaths(worktreePath))
+              .map((filePath) => createUntrackedWorktreeDiffFile(worktreePath, filePath))
+              .filter((file): file is WorktreeDiffFile => !!file);
+
+            if (untrackedFiles.length > 0) {
+              filesChanged += untrackedFiles.length;
+              additions += untrackedFiles.reduce((sum, file) => sum + file.additions, 0);
+              deletions += untrackedFiles.reduce((sum, file) => sum + file.deletions, 0);
+            }
+          } catch (untrackedError) {
+            console.warn('[TASK_WORKTREE_STATUS] Failed to inspect untracked files:', untrackedError);
+          }
+
           return {
             success: true,
             data: {
@@ -1983,37 +2178,9 @@ export function registerWorktreeHandlers(
           });
           nameStatus = (nameStatusResult.stdout as string).trim();
 
-          const fileEntries = nameStatus
-            .split('\n')
-            .filter(Boolean)
-            .map((line: string): Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'> | null => {
-              const [status, ...pathParts] = line.split('\t');
-              const statusCode = status?.[0];
+          const fileEntries = parseWorktreeNameStatus(nameStatus);
 
-              if (!statusCode) {
-                return null;
-              }
-
-              switch (statusCode) {
-                case 'A':
-                  return { path: pathParts.join('\t'), status: 'added' };
-                case 'M':
-                  return { path: pathParts.join('\t'), status: 'modified' };
-                case 'D':
-                  return { path: pathParts.join('\t'), status: 'deleted' };
-                case 'R':
-                  return {
-                    path: pathParts[1] || pathParts[0] || '',
-                    previousPath: pathParts[0],
-                    status: 'renamed',
-                  };
-                default:
-                  return { path: pathParts.join('\t'), status: 'modified' };
-              }
-            })
-            .filter((file): file is Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'> => !!file && !!file.path);
-
-          files = await Promise.all(
+          const trackedFiles = await Promise.all(
             fileEntries.map(async (file) => {
               let patch = '';
 
@@ -2046,6 +2213,19 @@ export function registerWorktreeHandlers(
               };
             })
           );
+
+          let untrackedFiles: WorktreeDiffFile[] = [];
+          try {
+            const trackedPaths = new Set(fileEntries.map((file) => file.path));
+            untrackedFiles = (await getUntrackedFilePaths(worktreePath))
+              .filter((filePath) => !trackedPaths.has(filePath))
+              .map((filePath) => createUntrackedWorktreeDiffFile(worktreePath, filePath))
+              .filter((file): file is WorktreeDiffFile => !!file);
+          } catch (untrackedError) {
+            console.warn('[TASK_WORKTREE_DIFF] Failed to inspect untracked files:', untrackedError);
+          }
+
+          files = [...trackedFiles, ...untrackedFiles].sort((a, b) => a.path.localeCompare(b.path));
         } catch (diffError) {
           console.error('Error getting diff:', diffError);
         }

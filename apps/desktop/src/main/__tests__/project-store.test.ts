@@ -384,6 +384,98 @@ describe('ProjectStore', () => {
       expect(tasks[0].subtasks[1].title).toBe('Subtask subtask-2');
     });
 
+    it('should expose subtask completion summaries from plan notes for review', async () => {
+      const specsDir = path.join(TEST_PROJECT_PATH, '.autocode', 'specs', '001-subtask-summary');
+      mkdirSync(specsDir, { recursive: true });
+
+      const plan = {
+        feature: 'Summary Feature',
+        workflow_type: 'feature',
+        services_involved: [],
+        status: 'human_review',
+        phases: [
+          {
+            phase: 1,
+            name: 'Phase 1',
+            type: 'implementation',
+            subtasks: [
+              {
+                id: 'subtask-1',
+                title: 'Render completion summary',
+                description: 'Show subtask completion notes',
+                status: 'completed',
+                notes: 'Rendered completion notes for human review.'
+              }
+            ]
+          }
+        ],
+        final_acceptance: [],
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-02T00:00:00Z',
+        spec_file: 'spec.md'
+      };
+
+      writeFileSync(
+        path.join(specsDir, 'implementation_plan.json'),
+        JSON.stringify(plan)
+      );
+
+      const { ProjectStore } = await import('../project-store');
+      const store = new ProjectStore();
+
+      const project = store.addProject(TEST_PROJECT_PATH);
+      const tasks = store.getTasks(project.id);
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].subtasks[0].completionSummary).toBe('Rendered completion notes for human review.');
+    });
+
+    it('should not treat notes on pending subtasks as completion summaries', async () => {
+      const specsDir = path.join(TEST_PROJECT_PATH, '.autocode', 'specs', '001-pending-subtask-notes');
+      mkdirSync(specsDir, { recursive: true });
+
+      const plan = {
+        feature: 'Pending Notes Feature',
+        workflow_type: 'feature',
+        services_involved: [],
+        status: 'in_progress',
+        phases: [
+          {
+            phase: 1,
+            name: 'Phase 1',
+            type: 'implementation',
+            subtasks: [
+              {
+                id: 'subtask-1',
+                title: 'Resume work',
+                description: 'Continue work',
+                status: 'pending',
+                notes: 'Resumed from checkpoint'
+              }
+            ]
+          }
+        ],
+        final_acceptance: [],
+        created_at: '2024-01-01T00:00:00Z',
+        updated_at: '2024-01-02T00:00:00Z',
+        spec_file: 'spec.md'
+      };
+
+      writeFileSync(
+        path.join(specsDir, 'implementation_plan.json'),
+        JSON.stringify(plan)
+      );
+
+      const { ProjectStore } = await import('../project-store');
+      const store = new ProjectStore();
+
+      const project = store.addProject(TEST_PROJECT_PATH);
+      const tasks = store.getTasks(project.id);
+
+      expect(tasks).toHaveLength(1);
+      expect(tasks[0].subtasks[0].completionSummary).toBeUndefined();
+    });
+
     it('should determine status as backlog when no subtasks completed', async () => {
       const specsDir = path.join(TEST_PROJECT_PATH, '.autocode', 'specs', '002-pending');
       mkdirSync(specsDir, { recursive: true });

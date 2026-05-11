@@ -54,6 +54,9 @@ export interface ToolCallPart {
   toolCallId: string;
   toolName: string;
   input: unknown;
+  invalid?: boolean;
+  dynamic?: boolean;
+  error?: unknown;
 }
 
 export interface ToolResultPart {
@@ -216,6 +219,27 @@ function validateToolCallParams(toolName: string, input: unknown): string | null
   return null; // Validation passed
 }
 
+function extractMalformedWritePath(input: unknown): string | undefined {
+  if (typeof input !== 'string') return undefined;
+  const match = input.match(/"file_path"\s*:\s*"([^"]+)"/);
+  return match?.[1]?.replace(/\\/g, '/');
+}
+
+function normalizeToolCallArgs(toolName: string, input: unknown): Record<string, unknown> {
+  if (typeof input === 'object' && input !== null && !Array.isArray(input)) {
+    return input as Record<string, unknown>;
+  }
+
+  if (toolName === 'Write') {
+    const filePath = extractMalformedWritePath(input);
+    if (filePath) {
+      return { file_path: filePath };
+    }
+  }
+
+  return {};
+}
+
 // =============================================================================
 // Stream Handler
 // =============================================================================
@@ -304,6 +328,20 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
     state.toolCallTimestamps.set(part.toolCallId, Date.now());
     // Store the tool name so we can include it in tool-result/tool-error events
     state.toolCallNames.set(part.toolCallId, part.toolName);
+    const args = normalizeToolCallArgs(part.toolName, part.input);
+
+    // AI SDK emits invalid tool calls as a tool-call followed by a tool-error.
+    // Do not synthesize another validation error here; the following tool-error
+    // is the single source of truth for the failed call status.
+    if (part.invalid === true) {
+      emit({
+        type: 'tool-call',
+        toolName: part.toolName,
+        toolCallId: part.toolCallId,
+        args,
+      });
+      return;
+    }
 
     // Pre-validate tool call parameters to catch issues before execution
     const validationError = validateToolCallParams(part.toolName, part.input);
@@ -346,7 +384,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
       type: 'tool-call',
       toolName: part.toolName,
       toolCallId: part.toolCallId,
-      args: (part.input as Record<string, unknown>) ?? {},
+      args,
     });
   }
 

@@ -4,6 +4,7 @@ const mockReadFile = vi.fn();
 const mockWriteFile = vi.fn();
 const mockUnlink = vi.fn();
 const mockValidateAndNormalizeJsonFile = vi.fn();
+const mockRewriteImplementationPlanFiles = vi.fn();
 const mockIterateSubtasks = vi.fn();
 
 async function readMockPlan(specDir: string): Promise<Record<string, unknown> | null> {
@@ -43,7 +44,7 @@ vi.mock('../../schema', () => ({
     await mockWriteFile(`${specDir}/implementation_plan.json`, JSON.stringify(plan));
     return { plan, split: false, totalSubtasks: 1, filesWritten: [`${specDir}/implementation_plan.json`] };
   }),
-  rewriteImplementationPlanFiles: vi.fn(async () => null),
+  rewriteImplementationPlanFiles: (...args: unknown[]) => mockRewriteImplementationPlanFiles(...args),
   loadImplementationPlanFromFiles: (specDir: string) => readMockPlan(specDir),
   saveImplementationPlanToFiles: vi.fn(async (specDir: string, plan: unknown) => {
     await mockWriteFile(`${specDir}/implementation_plan.json`, JSON.stringify(plan));
@@ -102,6 +103,7 @@ describe('BuildOrchestrator QA recovery', () => {
       valid: true,
       errors: [],
     });
+    mockRewriteImplementationPlanFiles.mockReset().mockResolvedValue(null);
     mockIterateSubtasks.mockReset();
   });
 
@@ -251,5 +253,104 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(phases[0]).toBe('planning');
     expect(phases).toContain('coding');
     expect(phases).toContain('qa_review');
+  });
+
+  it('continues planning when split rewrite fails but the main implementation plan is executable', async () => {
+    let plannerRuns = 0;
+    let codingRuns = 0;
+
+    mockRewriteImplementationPlanFiles
+      .mockRejectedValueOnce(new Error('EACCES: failed to write implementation_plan.phase-1.json'));
+
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.json')) {
+        if (plannerRuns === 0) {
+          return Promise.resolve(JSON.stringify({ phases: [] }));
+        }
+        return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve('Status: PASSED');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = makeOrchestrator(runSession);
+    const logs: string[] = [];
+    orchestrator.on('log', (message) => logs.push(message));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(1);
+    expect(mockRewriteImplementationPlanFiles).toHaveBeenCalledTimes(1);
+    expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
+    expect(logs.some(log => log.includes('Planning file rewrite failed'))).toBe(true);
+    expect(logs.some(log => log.includes('main implementation_plan.json is executable'))).toBe(true);
+  });
+
+  it('retries planning when split rewrite fails and no executable subtasks are available', async () => {
+    let plannerRuns = 0;
+    let codingRuns = 0;
+
+    mockRewriteImplementationPlanFiles
+      .mockRejectedValueOnce(new Error('EACCES: failed to write implementation_plan.phase-1.json'))
+      .mockResolvedValue(null);
+
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.json')) {
+        if (plannerRuns <= 1) {
+          return Promise.resolve(JSON.stringify({ phases: [] }));
+        }
+        return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve('Status: PASSED');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = makeOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(2);
+    expect(mockRewriteImplementationPlanFiles).toHaveBeenCalledTimes(2);
+    expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
   });
 });
