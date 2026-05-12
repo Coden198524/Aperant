@@ -333,7 +333,9 @@ export async function generateSubtaskPrompt(config: SubtaskPromptConfig): Promis
     `   git add .\n` +
     `   git commit -m "autocode: ${subtask.id} - ${subtask.description.slice(0, 50)}"\n` +
     `   \`\`\`\n` +
-    `6. **Update the plan** - set this subtask's status to "completed" in implementation_plan.json and add a structured completion_summary for human review. Use a compact Markdown table with rows: What changed, Verification, Review notes. Keep each row concise but complete.\n\n` +
+    `6. **Update the plan** - set this subtask's status to "completed" in implementation_plan.json and add a structured completion_summary for human review. Use this compact Markdown review matrix exactly:\n` +
+    `   \`| Item | Details |\n| --- | --- |\n| What changed | ... |\n| Verification | ... |\n| Review notes | ... |\`\n` +
+    `   Keep each cell concise, concrete, and suitable for quick manual audit.\n\n` +
     `## Quality Checklist\n\n` +
     `Before marking complete, verify:\n` +
     `- [ ] Follows patterns from reference files\n` +

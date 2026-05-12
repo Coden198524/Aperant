@@ -22,6 +22,8 @@ import { ToolPermission } from '../types';
 const DEFAULT_TIMEOUT_MS = 120_000;
 const MAX_TIMEOUT_MS = 600_000;
 const MAX_OUTPUT_LENGTH = 30_000;
+const AGGRESSIVE_MAX_OUTPUT_LENGTH = 8_000;
+const AGGRESSIVE_MAX_STDERR_LENGTH = 6_000;
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -52,6 +54,42 @@ function truncateOutput(output: string): string {
     return output;
   }
   return `${output.slice(0, MAX_OUTPUT_LENGTH)}\n\n[Output truncated — ${output.length} characters total]`;
+}
+
+function truncateOutputTo(output: string, maxLength: number): string {
+  if (output.length <= maxLength) {
+    return output;
+  }
+  return `${output.slice(0, maxLength)}\n\n[Output truncated - ${output.length} characters total]`;
+}
+
+function truncateCompilerError(output: string, maxLength: number): string {
+  if (output.length <= maxLength) {
+    return output;
+  }
+
+  const lines = output.split(/\r?\n/);
+  const diagnosticLines = lines.filter((line) => {
+    const lower = line.toLowerCase();
+    return (
+      lower.includes('error:') ||
+      lower.includes('fatal error:') ||
+      lower.includes('warning:') ||
+      lower.includes('undefined reference') ||
+      lower.includes('cannot find') ||
+      lower.includes('not recognized') ||
+      lower.includes('is not recognized')
+    );
+  });
+  const compact = diagnosticLines.length > 0
+    ? diagnosticLines.slice(0, 20).join('\n')
+    : lines.slice(0, 80).join('\n');
+
+  return `${compact.slice(0, maxLength)}\n\n[Compiler output truncated - ${output.length} characters total. Re-run with a narrower command if more detail is needed.]`;
+}
+
+function isCompilerCommand(command: string): boolean {
+  return /(^|[^\w.-])(g\+\+|gcc|clang\+\+|clang|cl)(\.exe)?([^\w.-]|$)/i.test(command);
 }
 
 function resolveShell(): string {
@@ -156,13 +194,22 @@ export const bashTool = Tool.define({
     );
 
     const parts: string[] = [];
+    const aggressiveMode = context.workflowMode === 'aggressive';
+    const compilerCommand = isCompilerCommand(command);
+    const maxOutputLength = aggressiveMode ? AGGRESSIVE_MAX_OUTPUT_LENGTH : MAX_OUTPUT_LENGTH;
+    const maxStderrLength = aggressiveMode ? AGGRESSIVE_MAX_STDERR_LENGTH : MAX_OUTPUT_LENGTH;
 
     if (stdout) {
-      parts.push(truncateOutput(stdout));
+      parts.push(aggressiveMode ? truncateOutputTo(stdout, maxOutputLength) : truncateOutput(stdout));
     }
 
     if (stderr) {
-      parts.push(`STDERR:\n${truncateOutput(stderr)}`);
+      const stderrOutput = aggressiveMode && compilerCommand
+        ? truncateCompilerError(stderr, maxStderrLength)
+        : aggressiveMode
+          ? truncateOutputTo(stderr, maxStderrLength)
+          : truncateOutput(stderr);
+      parts.push(`STDERR:\n${stderrOutput}`);
     }
 
     if (exitCode !== 0) {

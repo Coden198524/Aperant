@@ -4,6 +4,8 @@ const createOrGetWorktreeMock = vi.fn();
 const spawnWorkerProcessMock = vi.fn();
 const emitSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
 
+const writeFileSyncMock = vi.fn();
+
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
   return {
@@ -11,6 +13,7 @@ vi.mock('fs', async (importOriginal) => {
     existsSync: vi.fn(() => false),
     readdirSync: vi.fn(() => []),
     readFileSync: vi.fn(() => ''),
+    writeFileSync: (...args: unknown[]) => writeFileSyncMock(...args),
   };
 });
 
@@ -29,6 +32,9 @@ vi.mock('child_process', () => ({
     }
     if (joined === 'branch --show-current') {
       return 'master\n';
+    }
+    if (joined === 'rev-parse HEAD') {
+      return 'baseline1234567890abcdef\n';
     }
     return '';
   }),
@@ -118,6 +124,7 @@ vi.mock('./agent-queue', () => ({
 describe('AgentManager worktree execution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
+    writeFileSyncMock.mockReset();
     createOrGetWorktreeMock.mockResolvedValue({
       worktreePath: 'E:/repo/.autocode/worktrees/tasks/001-task',
       branch: 'autocode/001-task',
@@ -137,6 +144,23 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.toolContext.cwd).toBe('E:/repo');
   });
 
+  it('captures the baseline commit when running in the current project workspace', async () => {
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(createOrGetWorktreeMock).not.toHaveBeenCalled();
+    expect(writeFileSyncMock).toHaveBeenCalledWith(
+      expect.stringContaining('task_metadata.json'),
+      expect.stringContaining('directWorkspaceBaselineCommit'),
+      'utf-8',
+    );
+    const writtenMetadata = JSON.parse(writeFileSyncMock.mock.calls[0][1] as string);
+    expect(writtenMetadata.directWorkspaceBaselineCommit).toBe('baseline1234567890abcdef');
+    expect(writtenMetadata.directWorkspaceBaselineBranch).toBe('master');
+  });
+
   it('auto-detects master as the worktree base branch when worktree isolation is explicitly enabled', async () => {
     const { AgentManager } = await import('./agent-manager');
     const manager = new AgentManager();
@@ -148,7 +172,7 @@ describe('AgentManager worktree execution', () => {
       '001-task',
       'master',
       false,
-      true,
+      false,
       '.autocode',
     );
     expect(spawnWorkerProcessMock).toHaveBeenCalled();
@@ -196,6 +220,37 @@ describe('AgentManager worktree execution', () => {
     const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
     expect(executorConfig.session.projectDir).toBe('E:/repo');
     expect(executorConfig.session.toolContext.cwd).toBe('E:/repo');
+  });
+
+  it('routes workflow off tasks to a direct single-session agent', async () => {
+    const fs = await import('fs');
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
+      JSON.stringify({ workflowMode: 'off', model: 'sonnet' })
+    );
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', {}, 'project-1');
+
+    expect(createOrGetWorktreeMock).not.toHaveBeenCalled();
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.agentType).toBe('direct_task');
+    expect(executorConfig.session.workflowMode).toBe('off');
+    expect(executorConfig.session.phase).toBe('coding');
+    expect(executorConfig.session.maxSteps).toBe(16);
+    expect(executorConfig.session.thinkingLevel).toBe('xhigh');
+    expect(executorConfig.session.responsePersistence).toBe(false);
+    expect(executorConfig.session.mcpOptions).toMatchObject({
+      context7Enabled: false,
+      memoryEnabled: false,
+      linearEnabled: false,
+      yunxiaoEnabled: false,
+    });
+    expect(executorConfig.session.projectDir).toBe('E:/repo');
   });
 });
 

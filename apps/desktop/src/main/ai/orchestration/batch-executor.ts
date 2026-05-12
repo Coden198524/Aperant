@@ -727,9 +727,34 @@ function summarizeSessionResult(result: SessionResult): string | undefined {
   }
 
   const maxLength = 3000;
-  return normalized.length <= maxLength
+  const compacted = normalized.length <= maxLength
     ? normalized
     : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+
+  return formatCompletionSummaryTable(compacted, result);
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value
+    .replace(/\r?\n/g, '<br>')
+    .replace(/\|/g, '\\|')
+    .trim();
+}
+
+function formatCompletionSummaryTable(summary: string, result: SessionResult): string {
+  const verification = [
+    `Session outcome: ${result.outcome}`,
+    `Steps: ${result.stepsExecuted ?? 0}`,
+    `Tools: ${result.toolCallCount ?? 0}`,
+  ].join('. ');
+
+  return [
+    '| Item | Details |',
+    '| --- | --- |',
+    `| What changed | ${escapeMarkdownTableCell(summary)} |`,
+    `| Verification | ${escapeMarkdownTableCell(verification)} |`,
+    '| Review notes | Review changed files, runtime output, and git diff before approval. |',
+  ].join('\n');
 }
 
 /**

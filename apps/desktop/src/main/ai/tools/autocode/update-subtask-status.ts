@@ -32,7 +32,7 @@ const inputSchema = z.object({
   completion_summary: z
     .string()
     .optional()
-    .describe('Human-reviewable structured completion summary. Prefer Markdown table rows for What changed, Verification, and Review notes.'),
+    .describe('Human-reviewable structured completion summary. Use a Markdown review matrix with rows: What changed, Verification, Review notes.'),
 });
 
 // ---------------------------------------------------------------------------

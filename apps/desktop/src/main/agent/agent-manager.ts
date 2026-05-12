@@ -1,6 +1,6 @@
 import { EventEmitter } from 'events';
 import path from 'path';
-import { existsSync, readdirSync, readFileSync } from 'fs';
+import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync, execSync } from 'child_process';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
@@ -61,6 +61,17 @@ const AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS = {
   coding: 80,
   qa: 30,
 } as const;
+
+const DIRECT_WORKFLOW_PHASE_STEP_BUDGETS = {
+  spec: 0,
+  planning: 0,
+  coding: 16,
+  qa: 0,
+} as const;
+
+const DIRECT_TASK_TEXT_LIMIT = 6000;
+const DIRECT_TASK_REFERENCE_LIMIT = 25;
+const DIRECT_TASK_ATTACHMENT_LIMIT = 10;
 
 /**
  * Check if the current Git branch is a main/trunk branch.
@@ -161,6 +172,54 @@ function resolveTaskBaseBranch(
   return detectRepositoryBaseBranch(projectPath) ?? 'main';
 }
 
+function getGitHeadCommit(projectPath: string): string | null {
+  try {
+    const commit = execFileSync('git', ['rev-parse', 'HEAD'], {
+      cwd: projectPath,
+      encoding: 'utf-8',
+      stdio: ['pipe', 'pipe', 'pipe'],
+    }).trim();
+    return commit || null;
+  } catch {
+    return null;
+  }
+}
+
+function captureDirectWorkspaceBaseline(projectPath: string, specDir: string): void {
+  try {
+    const metadataPath = path.join(specDir, 'task_metadata.json');
+    let metadata: Record<string, unknown> = {};
+
+    if (existsSync(metadataPath)) {
+      try {
+        metadata = JSON.parse(readFileSync(metadataPath, 'utf-8')) as Record<string, unknown>;
+      } catch {
+        metadata = {};
+      }
+    }
+
+    if (typeof metadata.directWorkspaceBaselineCommit === 'string' && metadata.directWorkspaceBaselineCommit.trim()) {
+      return;
+    }
+
+    const commit = getGitHeadCommit(projectPath);
+    if (!commit) {
+      return;
+    }
+
+    const branch = getCurrentGitBranch(projectPath);
+    metadata.directWorkspaceBaselineCommit = commit;
+    metadata.directWorkspaceBaselineCapturedAt = new Date().toISOString();
+    if (branch) {
+      metadata.directWorkspaceBaselineBranch = branch;
+    }
+
+    writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+  } catch (error) {
+    console.warn('[AgentManager] Failed to capture direct workspace baseline:', error);
+  }
+}
+
 /**
  * Main AgentManager - orchestrates agent process lifecycle
  * This is a slim facade that delegates to focused modules
@@ -179,6 +238,7 @@ export class AgentManager extends EventEmitter {
     specDir?: string;
     metadata?: SpecCreationMetadata;
     baseBranch?: string;
+    isDirectExecution?: boolean;
     swapCount: number;
     projectId?: string;
     /** Generation counter to prevent stale cleanup after restart */
@@ -656,11 +716,15 @@ export class AgentManager extends EventEmitter {
     const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
     const specsBaseDir = getSpecsDir(project?.autoBuildPath);
     const specDir = path.join(projectPath, specsBaseDir, specId);
+    const workflowMode = this.resolveTaskWorkflowMode(specDir);
+    if (workflowMode === 'off') {
+      await this.startDirectTaskExecution(taskId, projectPath, specId, options, projectId);
+      return;
+    }
 
     // Load model configuration from task_metadata.json if available
     const modelId = await this.resolveTaskModelId(specDir, 'planning');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'planning');
-    const workflowMode = this.resolveTaskWorkflowMode(specDir);
     const enableBatchExecution = this.resolveTaskEnableBatchExecution(specDir);
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'build_orchestrator');
 
@@ -695,7 +759,7 @@ export class AgentManager extends EventEmitter {
           specId,
           baseBranch,
           options.useLocalBranch ?? false,
-          options.pushNewBranches ?? project?.settings?.pushNewBranches !== false,
+          options.pushNewBranches ?? project?.settings?.pushNewBranches === true,
           project?.autoBuildPath,
         );
         worktreePath = result.worktreePath;
@@ -725,6 +789,8 @@ export class AgentManager extends EventEmitter {
         }, projectId);
         return;
       }
+    } else {
+      captureDirectWorkspaceBaseline(projectPath, specDir);
     }
 
     const effectiveCwd = worktreePath ?? projectPath;
@@ -784,6 +850,145 @@ export class AgentManager extends EventEmitter {
     // const combinedEnv = this.processManager.getCombinedEnv(projectPath);
     // const args = [runPath, '--spec', specId, '--project-dir', projectPath, '--auto-continue', '--force'];
     // await this.processManager.spawnProcess(taskId, projectPath, args, combinedEnv, 'task-execution', projectId);
+  }
+
+  /**
+   * Start direct task execution: one model session, no spec/planning/QA orchestration.
+   */
+  async startDirectTaskExecution(
+    taskId: string,
+    projectPath: string,
+    specId: string,
+    options: TaskExecutionOptions = {},
+    projectId?: string
+  ): Promise<void> {
+    let profileManager: ClaudeProfileManager;
+    try {
+      profileManager = await initializeClaudeProfileManager();
+    } catch (error) {
+      console.error('[AgentManager] Failed to initialize profile manager:', error);
+      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.');
+      return;
+    }
+    if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
+      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.');
+      return;
+    }
+
+    const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
+    const specsBaseDir = getSpecsDir(project?.autoBuildPath);
+    const specDir = path.join(projectPath, specsBaseDir, specId);
+    const workflowMode = this.resolveTaskWorkflowMode(specDir);
+
+    const modelId = await this.resolveTaskModelId(specDir, 'coding');
+    const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'coding');
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'direct_task');
+    const systemPrompt = this.loadPrompt('direct_task') ?? this.buildDefaultDirectTaskPrompt(specId, projectPath);
+
+    let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
+    try {
+      resolved = await this.resolveAuthFromProviderQueue(modelId, preferredProvider);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
+      this.emit('error', taskId, message, projectId);
+      return;
+    }
+    if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
+      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
+      return;
+    }
+
+    let worktreePath: string | null = null;
+    let worktreeSpecDir = specDir;
+    const existingWorktreePath = options.useWorktree === false ? null : findTaskWorktree(projectPath, specId);
+    const useWorktree = options.useWorktree === true || existingWorktreePath !== null;
+    if (useWorktree) {
+      try {
+        const baseBranch = resolveTaskBaseBranch(projectPath, options.baseBranch, project?.settings?.mainBranch);
+        const result = await createOrGetWorktree(
+          projectPath,
+          specId,
+          baseBranch,
+          options.useLocalBranch ?? false,
+          options.pushNewBranches ?? project?.settings?.pushNewBranches === true,
+          project?.autoBuildPath,
+        );
+        worktreePath = result.worktreePath;
+        worktreeSpecDir = path.join(worktreePath, specsBaseDir, specId);
+        console.warn(`[AgentManager] Direct task ${taskId} will run in worktree: ${worktreePath}`);
+      } catch (err) {
+        const message = err instanceof Error ? err.message : String(err);
+        console.error(`[AgentManager] Failed to create worktree for direct task ${taskId}:`, err);
+        this.emit(
+          'error',
+          taskId,
+          `Failed to create isolated worktree for this direct task. Execution was stopped to avoid writing changes to the main project branch. ${message}`,
+          projectId,
+        );
+        this.emit('task-event', taskId, {
+          type: 'CODING_FAILED',
+          taskId,
+          specId,
+          projectId: projectId ?? '',
+          timestamp: new Date().toISOString(),
+          eventId: `${taskId}-direct-worktree-setup-failed-${Date.now()}`,
+          sequence: Date.now(),
+          subtaskId: 'direct-implementation',
+          error: message,
+          attemptCount: 0,
+        }, projectId);
+        return;
+      }
+    } else {
+      captureDirectWorkspaceBaseline(projectPath, specDir);
+    }
+
+    const effectiveCwd = worktreePath ?? projectPath;
+    const effectiveProjectDir = worktreePath ?? projectPath;
+    const initialMessages = this.buildDirectTaskExecutionMessages(worktreeSpecDir, specId, effectiveProjectDir);
+
+    const sessionConfig: SerializableSessionConfig = {
+      agentType: 'direct_task',
+      systemPrompt,
+      initialMessages,
+      maxSteps: sessionRuntime.maxSteps,
+      phaseStepBudgets: sessionRuntime.phaseStepBudgets,
+      specDir: worktreeSpecDir,
+      projectDir: effectiveProjectDir,
+      sourceProjectDir: worktreePath ? projectPath : undefined,
+      sourceSpecDir: worktreePath ? specDir : undefined,
+      phase: 'coding',
+      provider: resolved.provider,
+      modelId: resolved.modelId,
+      thinkingLevel: 'xhigh',
+      apiKey: resolved.auth?.apiKey,
+      baseURL: resolved.auth?.baseURL,
+      configDir: resolved.configDir,
+      oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
+      responsePersistence: false,
+      mcpOptions: sessionRuntime.mcpOptions,
+      workflowMode: 'off',
+      language: this.resolveAppLanguage(),
+      autoPushToRemote: !isMainBranch(projectPath),
+      toolContext: {
+        cwd: effectiveCwd,
+        projectDir: effectiveProjectDir,
+        specDir: worktreeSpecDir,
+        securityProfile: this.serializeSecurityProfile(effectiveProjectDir),
+      },
+    };
+
+    const executorConfig: AgentExecutorConfig = {
+      taskId,
+      projectId,
+      processType: 'task-execution',
+      session: sessionConfig,
+    };
+
+    this.storeTaskContext(taskId, projectPath, specId, options, false, undefined, undefined, undefined, undefined, projectId, true);
+    this.registerTaskWithOperationRegistry(taskId, 'task-execution', { projectPath, specId, options, direct: true });
+
+    await this.processManager.spawnWorkerProcess(taskId, executorConfig, {}, 'task-execution', projectId);
   }
 
   /**
@@ -997,7 +1202,8 @@ export class AgentManager extends EventEmitter {
     specDir?: string,
     metadata?: SpecCreationMetadata,
     baseBranch?: string,
-    projectId?: string
+    projectId?: string,
+    isDirectExecution?: boolean
   ): void {
     // Preserve swapCount if context already exists (for restarts)
     const existingContext = this.taskExecutionContext.get(taskId);
@@ -1014,6 +1220,7 @@ export class AgentManager extends EventEmitter {
       specDir,
       metadata,
       baseBranch,
+      isDirectExecution,
       swapCount, // Preserve existing count instead of resetting
       projectId,
       generation, // Incremented to prevent stale exit cleanup
@@ -1104,13 +1311,23 @@ export class AgentManager extends EventEmitter {
         );
       } else {
         console.log('[AgentManager] Restarting as task execution');
-        this.startTaskExecution(
-          taskId,
-          context.projectPath,
-          context.specId,
-          context.options,
-          context.projectId
-        );
+        if (context.isDirectExecution) {
+          this.startDirectTaskExecution(
+            taskId,
+            context.projectPath,
+            context.specId,
+            context.options,
+            context.projectId
+          );
+        } else {
+          this.startTaskExecution(
+            taskId,
+            context.projectPath,
+            context.specId,
+            context.options,
+            context.projectId
+          );
+        }
       }
     }, 500);
 
@@ -1448,6 +1665,23 @@ export class AgentManager extends EventEmitter {
       };
     }
 
+    if (workflowMode === 'off') {
+      return {
+        maxSteps: DIRECT_WORKFLOW_PHASE_STEP_BUDGETS.coding,
+        phaseStepBudgets: DIRECT_WORKFLOW_PHASE_STEP_BUDGETS,
+        mcpOptions: {
+          context7Enabled: false,
+          memoryEnabled: false,
+          linearEnabled: false,
+          yunxiaoEnabled: false,
+          electronMcpEnabled: false,
+          puppeteerMcpEnabled: false,
+          customMcpServers: [],
+          mcpEnv: combinedEnv,
+        },
+      };
+    }
+
     return {
       maxSteps: DEFAULT_SESSION_MAX_STEPS,
       phaseStepBudgets: DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS,
@@ -1498,6 +1732,128 @@ export class AgentManager extends EventEmitter {
    */
   private buildDefaultQAPrompt(specId: string, projectPath: string): string {
     return `You are a QA reviewer agent. Your job is to review the implementation of spec ${specId} in project ${projectPath}. Check that all requirements in spec.md are implemented correctly and write a qa_report.md with Status: PASSED or Status: FAILED.`;
+  }
+
+  /**
+   * Build a minimal direct task prompt when the prompt file is not found.
+   */
+  private buildDefaultDirectTaskPrompt(specId: string, projectPath: string): string {
+    return [
+      `Complete task ${specId} in ${projectPath}.`,
+      'Use one concise coding session. Do not create spec, planning, QA, or subagents.',
+      'If the task is pure question-answer, explanation, translation, summarization, or does not require changing files, do not call tools. Answer directly in the final markdown table.',
+      'Use the first user message as the task source. Do not read task metadata, requirements, implementation plans, previous specs, or broad directory listings unless the request is ambiguous.',
+      'For simple documentation or question-answer tasks, do not probe candidate files like README*, package.json, *.html, or *.md. If creating an obvious file such as README.md, write it directly.',
+      'Inspect only necessary files, edit directly, run one focused validation for simple tasks, and end with a short markdown table: What changed, Verification, Review notes.',
+    ].join('\n');
+  }
+
+  /**
+   * Build initial messages for direct task execution.
+   */
+  private buildDirectTaskExecutionMessages(
+    specDir: string,
+    specId: string,
+    projectPath: string,
+  ): Array<{ role: 'user' | 'assistant'; content: string }> {
+    const parts: string[] = [];
+    const planPath = path.join(specDir, 'implementation_plan.json');
+    const requirementsPath = path.join(specDir, 'requirements.json');
+    const metadataPath = path.join(specDir, 'task_metadata.json');
+    let planDescription = '';
+    let requestDescriptionFound = false;
+    const appendLimited = (heading: string, value: string): void => {
+      const trimmed = value.trim();
+      if (!trimmed) return;
+      const limited = trimmed.length > DIRECT_TASK_TEXT_LIMIT
+        ? `${trimmed.slice(0, DIRECT_TASK_TEXT_LIMIT)}\n...[truncated]`
+        : trimmed;
+      parts.push(`## ${heading}\n${limited}`);
+      parts.push('');
+    };
+
+    parts.push(`Implement task ${specId} directly in project: ${projectPath}`);
+    parts.push(`Task data: ${specDir}`);
+    parts.push('Workflow off: one coding session only. No staged spec, plan, QA, or subagents.');
+    parts.push('If this is pure question-answer, explanation, translation, summarization, or does not require changing files, do not call tools; answer directly in the final markdown table.');
+    parts.push('Do not read task metadata, requirements, implementation plans, previous specs, or broad directory listings unless this request is missing or ambiguous.');
+    parts.push('For simple documentation or question-answer tasks, do not probe candidate files like README*, package.json, *.html, or *.md; write the obvious target file directly.');
+    parts.push('For simple single-file/documentation tasks, edit first and use at most one verification command or read-back.');
+    parts.push('');
+
+    try {
+      if (existsSync(planPath)) {
+        const plan = JSON.parse(readFileSync(planPath, 'utf-8')) as {
+          feature?: string;
+          title?: string;
+          description?: string;
+        };
+        if (plan.feature || plan.title) {
+          appendLimited('Title', plan.feature ?? plan.title ?? '');
+        }
+        if (plan.description) {
+          planDescription = plan.description;
+        }
+      }
+    } catch {
+      // The agent can still inspect files directly if the plan is missing or malformed.
+    }
+
+    try {
+      if (existsSync(requirementsPath)) {
+        const requirements = JSON.parse(readFileSync(requirementsPath, 'utf-8')) as {
+          task_description?: string;
+          attached_images?: Array<{ filename?: string; path?: string }>;
+        };
+        if (requirements.task_description) {
+          requestDescriptionFound = true;
+          appendLimited('Request', requirements.task_description);
+        }
+        if (Array.isArray(requirements.attached_images) && requirements.attached_images.length > 0) {
+          parts.push('## Attached Reference Images');
+          for (const image of requirements.attached_images.slice(0, DIRECT_TASK_ATTACHMENT_LIMIT)) {
+            parts.push(`- ${image.filename ?? 'image'}${image.path ? `: ${path.join(specDir, image.path)}` : ''}`);
+          }
+          if (requirements.attached_images.length > DIRECT_TASK_ATTACHMENT_LIMIT) {
+            parts.push(`- ...${requirements.attached_images.length - DIRECT_TASK_ATTACHMENT_LIMIT} more omitted`);
+          }
+          parts.push('');
+        }
+      }
+    } catch {
+      // Non-fatal.
+    }
+
+    if (!requestDescriptionFound && planDescription) {
+      appendLimited('Request', planDescription);
+    }
+
+    try {
+      if (existsSync(metadataPath)) {
+        const metadata = JSON.parse(readFileSync(metadataPath, 'utf-8')) as {
+          referencedFiles?: Array<{ path?: string; isDirectory?: boolean }>;
+        };
+        if (Array.isArray(metadata.referencedFiles) && metadata.referencedFiles.length > 0) {
+          parts.push('## User-Referenced Files');
+          for (const file of metadata.referencedFiles.slice(0, DIRECT_TASK_REFERENCE_LIMIT)) {
+            if (file.path) {
+              parts.push(`- ${file.isDirectory ? 'Directory' : 'File'}: ${file.path}`);
+            }
+          }
+          if (metadata.referencedFiles.length > DIRECT_TASK_REFERENCE_LIMIT) {
+            parts.push(`- ...${metadata.referencedFiles.length - DIRECT_TASK_REFERENCE_LIMIT} more omitted`);
+          }
+          parts.push('');
+        }
+      }
+    } catch {
+      // Non-fatal.
+    }
+
+    parts.push('## Completion Summary Requirement');
+    parts.push('Final answer must be a concise markdown table with rows: What changed, Verification, Review notes.');
+
+    return [{ role: 'user', content: parts.join('\n') }];
   }
 
   /**

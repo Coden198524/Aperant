@@ -106,6 +106,7 @@ describe('registerTaskExecutionHandlers', () => {
   let mockAgentManager: {
     startSpecCreation: ReturnType<typeof vi.fn>;
     startTaskExecution: ReturnType<typeof vi.fn>;
+    startDirectTaskExecution: ReturnType<typeof vi.fn>;
     startQAProcess: ReturnType<typeof vi.fn>;
     killTask: ReturnType<typeof vi.fn>;
     isRunning: ReturnType<typeof vi.fn>;
@@ -132,6 +133,7 @@ describe('registerTaskExecutionHandlers', () => {
     mockAgentManager = {
       startSpecCreation: vi.fn(),
       startTaskExecution: vi.fn(),
+      startDirectTaskExecution: vi.fn(),
       startQAProcess: vi.fn(),
       killTask: vi.fn(),
       isRunning: vi.fn(() => false),
@@ -452,6 +454,61 @@ describe('registerTaskExecutionHandlers', () => {
       expect.any(Object),
       expect.any(Object)
     );
+  });
+
+  it('starts direct execution for workflow off tasks without spec creation', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const fs = await import('fs');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-direct',
+        specId: '001-direct',
+        projectId: 'project-fast',
+        title: 'Direct task',
+        description: 'do it directly',
+        status: 'backlog',
+        subtasks: [],
+        logs: [],
+        metadata: { workflowMode: 'off' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue(null);
+    (fs.existsSync as Mock).mockReturnValue(false);
+    (fs.readFileSync as Mock).mockReturnValue('');
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, '001-direct', { projectId: 'project-fast' });
+
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-direct',
+      {
+        type: 'CODING_STARTED',
+        subtaskId: 'direct-implementation',
+        subtaskDescription: 'Direct model execution',
+      },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startDirectTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+    expect(mockAgentManager.startTaskExecution).not.toHaveBeenCalled();
   });
 
   it('restarts coding for qa_rejected human review Request Changes', async () => {

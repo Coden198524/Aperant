@@ -939,6 +939,7 @@ export interface ElectronAPI {
   // File explorer operations
   listDirectory: (dirPath: string) => Promise<IPCResult<FileNode[]>>;
   readFile: (filePath: string) => Promise<IPCResult<string>>;
+  showItemInFolder: (filePath: string) => Promise<IPCResult<void>>;
 
   // Git operations
   /** @deprecated Will return GitBranchDetail[] in future - see getGitBranchesWithInfo */

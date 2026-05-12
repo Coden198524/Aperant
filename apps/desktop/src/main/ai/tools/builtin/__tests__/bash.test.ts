@@ -132,6 +132,29 @@ describe('Bash Tool', () => {
     expect(result.length).toBeLessThan(longOutput.length);
   });
 
+  it('should compact compiler stderr in aggressive mode', async () => {
+    const hugeCompilerError = [
+      'In file included from tetris.cpp:1:',
+      ...Array.from({ length: 400 }, (_, i) => `C:/VS/include/header${i}.hpp:${i}:10: note: template instantiation context`),
+      'C:/VS/include/type_traits:2461:22: error: deduced return types are a C++14 extension',
+      'C:/VS/include/xutility:314:1: error: statement not allowed in constexpr function',
+      'fatal error: too many errors emitted, stopping now [-ferror-limit=]',
+    ].join('\n');
+    setupExecFile('', hugeCompilerError, 1);
+
+    const result = await bashTool.config.execute(
+      { command: 'clang++ -o tetris.exe tetris.cpp -std=c++11' },
+      {
+        ...baseContext,
+        workflowMode: 'aggressive',
+      },
+    );
+
+    expect(result).toContain('deduced return types are a C++14 extension');
+    expect(result).toContain('[Compiler output truncated');
+    expect(result.length).toBeLessThan(7_000);
+  });
+
   it('should return error message when security hook rejects command', async () => {
     mockBashSecurityHook.mockReturnValue({
       hookSpecificOutput: {

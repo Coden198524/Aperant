@@ -35,6 +35,8 @@ const ALL_BUILTIN_TOOLS = [...BASE_READ_TOOLS, ...BASE_WRITE_TOOLS, ...WEB_TOOLS
 /** Spec pipeline tools — read codebase + write to spec dir + web research. No Edit, no Bash. */
 const SPEC_TOOLS = [...BASE_READ_TOOLS, 'Write', ...WEB_TOOLS] as const;
 
+const DIRECT_TASK_TOOLS = [...BASE_READ_TOOLS, ...BASE_WRITE_TOOLS] as const;
+
 // =============================================================================
 // Autocode MCP Tools (Custom build management)
 // =============================================================================
@@ -130,6 +132,7 @@ export type AgentType =
   | 'build_orchestrator'
   | 'planner'
   | 'coder'
+  | 'direct_task'
   | 'qa_reviewer'
   | 'qa_fixer'
   | 'insights'
@@ -287,6 +290,13 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
     // Critical for 3D network game development: frame time, memory, network sync, server authority.
     // Matches QA reviewer thinking level to reduce rejection cycles.
     thinkingDefault: 'high',
+  },
+  direct_task: {
+    tools: [...DIRECT_TASK_TOOLS],
+    mcpServers: [],
+    mcpServersOptional: [],
+    autoClaudeTools: [],
+    thinkingDefault: 'xhigh',
   },
 
   // ═══════════════════════════════════════════════════════════════════════

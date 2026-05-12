@@ -32,6 +32,7 @@ import {
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
   rewriteImplementationPlanFiles,
   loadImplementationPlanFromFiles,
+  saveImplementationPlanToFiles,
   SpecContextOutputSchema,
   RequirementsOutputSchema,
   type RequirementsOutput,
@@ -111,6 +112,8 @@ const COMPLEXITY_PHASES: Record<ComplexityTier, SpecPhase[]> = {
     'validation',
   ],
 } as const;
+
+const AGGRESSIVE_SIMPLE_PHASES: SpecPhase[] = ['quick_spec'];
 
 /** Maps each phase to the output files it typically produces */
 const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
@@ -263,8 +266,43 @@ interface MinimalImplementationPlan {
   }>;
 }
 
+interface MinimalPlanSubtask {
+  id?: string;
+  title?: string;
+  description?: string;
+  status?: string;
+  files_to_create?: string[];
+  files_to_modify?: string[];
+  verification?: {
+    type?: string;
+    run?: string;
+    scenario?: string;
+  };
+  [key: string]: unknown;
+}
+
+interface MinimalPlanPhase {
+  id?: string | number;
+  phase?: number;
+  name?: string;
+  subtasks?: MinimalPlanSubtask[];
+  [key: string]: unknown;
+}
+
+interface MutableImplementationPlan extends Record<string, unknown> {
+  phases?: MinimalPlanPhase[];
+  split_plan?: boolean;
+  plan_files?: unknown;
+}
+
 function hasExecutableSubtasks(plan: MinimalImplementationPlan | null): boolean {
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
+}
+
+function uniqueStrings(values: Array<string | undefined>): string[] {
+  return Array.from(new Set(values
+    .map((value) => value?.trim())
+    .filter((value): value is string => Boolean(value))));
 }
 
 export function isWriteToolJsonFailure(message: string): boolean {
@@ -692,7 +730,9 @@ export class SpecOrchestrator extends EventEmitter {
       // ===================================================================
       // Step 2: Determine and run phases based on assessed complexity
       // ===================================================================
-      const phasesToRun = [...COMPLEXITY_PHASES[complexity]];
+      const phasesToRun = this.config.workflowConfig?.optimizationLevel === 'aggressive' && complexity === 'simple'
+        ? [...AGGRESSIVE_SIMPLE_PHASES]
+        : [...COMPLEXITY_PHASES[complexity]];
 
       // Inject research/self-critique if flagged but not already in the tier
       if (this.assessment?.needs_research && !phasesToRun.includes('research')) {
@@ -1135,20 +1175,24 @@ export class SpecOrchestrator extends EventEmitter {
         const executionErrors = result.valid && !hasExecutableSubtasks(hydratedPlan)
           ? ['Implementation plan has no executable subtasks. If using split plan files, ensure every subtasks_file exists and contains subtasks.']
           : [];
+        const compactErrors = result.valid && executionErrors.length === 0 && languageErrors.length === 0
+          ? await this.compactAggressiveSimplePlan()
+          : [];
 
-        if (result.valid && rewriteErrors.length > 0 && executionErrors.length === 0 && languageErrors.length === 0) {
+        if (result.valid && rewriteErrors.length > 0 && executionErrors.length === 0 && languageErrors.length === 0 && compactErrors.length === 0) {
           this.emitTyped('log', 'Split plan file rewrite failed, but the main implementation_plan.json is executable. Continuing without stopping the task.');
         }
 
         return {
-          valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0,
+          valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0 && compactErrors.length === 0,
           errors: result.valid
             ? [
                 ...(executionErrors.length > 0 ? rewriteErrors : []),
                 ...executionErrors,
                 ...languageErrors,
+                ...compactErrors,
               ]
-            : [...rewriteErrors, ...result.errors, ...languageErrors],
+            : [...rewriteErrors, ...result.errors, ...languageErrors, ...compactErrors],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
@@ -1167,6 +1211,72 @@ export class SpecOrchestrator extends EventEmitter {
       }
     }
     return null; // No schema for this phase
+  }
+
+  private async compactAggressiveSimplePlan(): Promise<string[]> {
+    if (this.config.workflowConfig?.optimizationLevel !== 'aggressive') {
+      return [];
+    }
+
+    const complexity = this.assessment?.complexity ?? this.config.complexityOverride;
+    if (complexity !== 'simple') {
+      return [];
+    }
+
+    try {
+      const plan = await loadImplementationPlanFromFiles(this.config.specDir) as MutableImplementationPlan | null;
+      const subtasks = (plan?.phases ?? [])
+        .flatMap((phase) => Array.isArray(phase.subtasks) ? phase.subtasks : []);
+
+      if (!plan || subtasks.length <= 1) {
+        return [];
+      }
+
+      const firstPhase = plan.phases?.[0];
+      const filesToCreate = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_create ?? []));
+      const filesToModify = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_modify ?? []));
+      const verification = [...subtasks].reverse().find((subtask) => subtask.verification)?.verification
+        ?? { type: 'manual', scenario: 'Review the completed change and run the project checks that apply to this task.' };
+      const taskList = subtasks
+        .map((subtask) => {
+          const label = subtask.title?.trim() || subtask.description?.trim() || subtask.id || 'Implementation step';
+          return `- ${label}`;
+        })
+        .join('\n');
+
+      plan.split_plan = false;
+      plan.plan_files = undefined;
+      plan.phases = [
+        {
+          id: firstPhase?.id ?? firstPhase?.phase ?? '1',
+          phase: firstPhase?.phase ?? 1,
+          name: firstPhase?.name ?? 'Implementation',
+          subtasks: [
+            {
+              id: '1-1',
+              title: 'Implement complete task',
+              description: [
+                'Implement the complete requested change in one focused coding session.',
+                '',
+                'Scope:',
+                taskList,
+              ].join('\n'),
+              status: 'pending',
+              ...(filesToCreate.length > 0 ? { files_to_create: filesToCreate } : {}),
+              ...(filesToModify.length > 0 ? { files_to_modify: filesToModify } : {}),
+              verification,
+            },
+          ],
+        },
+      ];
+
+      await saveImplementationPlanToFiles(this.config.specDir, plan as never);
+      this.emitTyped('log', `Aggressive workflow compacted implementation plan from ${subtasks.length} subtasks to 1 coder session`);
+      return [];
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return [`Failed to compact aggressive implementation plan: ${message}`];
+    }
   }
 
   private async capturePhaseOutput(phase: SpecPhase): Promise<void> {

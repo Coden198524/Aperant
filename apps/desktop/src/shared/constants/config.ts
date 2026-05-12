@@ -88,7 +88,9 @@ export const DEFAULT_PROJECT_SETTINGS = {
     sound: false
   },
   // Include CLAUDE.md instructions in agent context (enabled by default)
-  useClaudeMd: true
+  useClaudeMd: true,
+  // Keep newly created task/worktree branches local unless explicitly enabled.
+  pushNewBranches: false
 };
 
 // ============================================

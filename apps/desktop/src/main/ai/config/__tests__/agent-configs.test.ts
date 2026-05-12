@@ -29,6 +29,7 @@ const ALL_AGENT_TYPES: AgentType[] = [
   'spec_compaction',
   'planner',
   'coder',
+  'direct_task',
   'qa_reviewer',
   'qa_fixer',
   'insights',
@@ -60,7 +61,7 @@ describe('AGENT_CONFIGS', () => {
   });
 
   it('should have valid thinking defaults for all agents', () => {
-    const validLevels = new Set(['low', 'medium', 'high']);
+    const validLevels = new Set(['low', 'medium', 'high', 'xhigh']);
     for (const [type, config] of Object.entries(AGENT_CONFIGS)) {
       expect(validLevels.has(config.thinkingDefault)).toBe(true);
     }
@@ -84,7 +85,22 @@ describe('AGENT_CONFIGS', () => {
     expect(config.tools).toContain('WebFetch');
     expect(config.tools).toContain('Glob');
     expect(config.tools).toContain('Grep');
-    expect(config.thinkingDefault).toBe('low');
+    expect(config.thinkingDefault).toBe('high');
+  });
+
+  it('should configure direct_task as a lightweight direct execution agent', () => {
+    const config = AGENT_CONFIGS.direct_task;
+    expect(config.tools).toContain('Read');
+    expect(config.tools).toContain('Write');
+    expect(config.tools).toContain('Edit');
+    expect(config.tools).toContain('Bash');
+    expect(config.tools).not.toContain('WebFetch');
+    expect(config.tools).not.toContain('WebSearch');
+    expect(config.tools).not.toContain('SpawnSubagent');
+    expect(config.mcpServers).toHaveLength(0);
+    expect(config.mcpServersOptional).toHaveLength(0);
+    expect(config.autoClaudeTools).toHaveLength(0);
+    expect(config.thinkingDefault).toBe('xhigh');
   });
 
   it('should configure planner with memory and autocode MCP', () => {
@@ -177,10 +193,11 @@ describe('getAgentConfig', () => {
 
 describe('getDefaultThinkingLevel', () => {
   it.each([
-    ['coder', 'low'],
+    ['coder', 'high'],
     ['planner', 'high'],
     ['qa_reviewer', 'high'],
-    ['qa_fixer', 'medium'],
+    ['qa_fixer', 'high'],
+    ['direct_task', 'xhigh'],
     ['spec_gatherer', 'medium'],
     ['ideation', 'high'],
     ['insights', 'low'],

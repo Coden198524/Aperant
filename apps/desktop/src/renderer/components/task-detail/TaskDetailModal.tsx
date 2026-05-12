@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useToast } from '../../hooks/use-toast';
@@ -79,12 +79,47 @@ const isFilesTabEnabled = () => {
   return flag === null || flag === 'true'; // Enabled by default
 };
 
+const MODAL_WIDTH_STORAGE_KEY = 'task_detail_modal_width';
+const DEFAULT_MODAL_WIDTH_RATIO = 0.92;
+const MIN_MODAL_WIDTH = 760;
+const MODAL_SIDE_MARGIN = 48;
+
+function getMaxModalWidth(): number {
+  if (typeof window === 'undefined') {
+    return 1280;
+  }
+  return Math.max(MIN_MODAL_WIDTH, window.innerWidth - MODAL_SIDE_MARGIN * 2);
+}
+
+function clampModalWidth(width: number): number {
+  return Math.max(MIN_MODAL_WIDTH, Math.min(width, getMaxModalWidth()));
+}
+
+function getInitialModalWidth(): number {
+  if (typeof window === 'undefined') {
+    return 1280;
+  }
+
+  const saved = Number(localStorage.getItem(MODAL_WIDTH_STORAGE_KEY));
+  if (Number.isFinite(saved) && saved > 0) {
+    return clampModalWidth(saved);
+  }
+
+  return clampModalWidth(Math.min(1280, window.innerWidth * DEFAULT_MODAL_WIDTH_RATIO));
+}
+
 // Separate component to use hooks only when task exists
 function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals, onOpenInbuiltTerminal }: { open: boolean; task: Task; onOpenChange: (open: boolean) => void; onSwitchToTerminals?: () => void; onOpenInbuiltTerminal?: (id: string, cwd: string) => void }) {
   const { t } = useTranslation(['tasks', 'common']);
   const { toast } = useToast();
   const state = useTaskDetail({ task });
   const [isClearingLogs, setIsClearingLogs] = useState(false);
+  const [modalWidth, setModalWidth] = useState(getInitialModalWidth);
+  const resizeStateRef = useRef<{
+    side: 'left' | 'right';
+    startX: number;
+    startWidth: number;
+  } | null>(null);
   const activeProject = useProjectStore(s => s.getActiveProject());
   const showFilesTab = isFilesTabEnabled();
   const progressPercent = calculateProgress(task.subtasks);
@@ -279,6 +314,68 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
     onOpenChange(false);
   };
 
+  useEffect(() => {
+    if (!open) return;
+
+    const handleWindowResize = () => {
+      setModalWidth(width => {
+        const next = clampModalWidth(width);
+        localStorage.setItem(MODAL_WIDTH_STORAGE_KEY, String(Math.round(next)));
+        return next;
+      });
+    };
+
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, [open]);
+
+  useEffect(() => {
+    return () => {
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
+
+  const handleResizeStart = (side: 'left' | 'right', event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+    resizeStateRef.current = {
+      side,
+      startX: event.clientX,
+      startWidth: modalWidth,
+    };
+
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState) return;
+
+      const delta = moveEvent.clientX - resizeState.startX;
+      const direction = resizeState.side === 'right' ? 1 : -1;
+      setModalWidth(clampModalWidth(resizeState.startWidth + delta * direction * 2));
+    };
+
+    const handlePointerUp = () => {
+      resizeStateRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setModalWidth(width => {
+        const next = clampModalWidth(width);
+        localStorage.setItem(MODAL_WIDTH_STORAGE_KEY, String(Math.round(next)));
+        return next;
+      });
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+  };
+
   // Helper function to get status badge variant
   const getStatusBadgeVariant = (status: string, isStuck: boolean) => {
     if (isStuck) return 'warning';
@@ -433,7 +530,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
             className={cn(
               'fixed inset-y-0 left-[50%] z-50',
               'translate-x-[-50%]',
-              'w-[92vw] max-w-7xl h-screen',
+              'h-screen',
               'bg-card border-x border-border rounded-none',
               'shadow-2xl overflow-hidden flex flex-col',
               'data-[state=open]:animate-in data-[state=closed]:animate-out',
@@ -441,7 +538,22 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
               'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
               'duration-200'
             )}
+            style={{ width: `${modalWidth}px`, maxWidth: `calc(100vw - ${MODAL_SIDE_MARGIN * 2}px)` }}
           >
+            <div
+              className="absolute inset-y-0 left-0 z-20 w-2 cursor-ew-resize touch-none hover:bg-primary/20"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('tasks:detail.resizeWidth', { defaultValue: 'Resize task detail width' })}
+              onPointerDown={(event) => handleResizeStart('left', event)}
+            />
+            <div
+              className="absolute inset-y-0 right-0 z-20 w-2 cursor-ew-resize touch-none hover:bg-primary/20"
+              role="separator"
+              aria-orientation="vertical"
+              aria-label={t('tasks:detail.resizeWidth', { defaultValue: 'Resize task detail width' })}
+              onPointerDown={(event) => handleResizeStart('right', event)}
+            />
             {/* Header */}
             <div className="p-5 pb-4 border-b border-border shrink-0">
               <div className="flex items-start justify-between gap-4">

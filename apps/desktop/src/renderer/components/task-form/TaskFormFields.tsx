@@ -549,6 +549,25 @@ export function TaskFormFields({
               {t('tasks:form.workflowOptimization.description')}
             </p>
             <div className="grid grid-cols-1 gap-2 mt-3">
+              {/* Off / Direct */}
+              <button
+                type="button"
+                onClick={() => onWorkflowModeChange('off')}
+                disabled={disabled}
+                className={cn(
+                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
+                  workflowMode === 'off'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                )}
+              >
+                <div className="flex-1">
+                  <div className="font-medium text-sm">{t('tasks:form.workflowOptimization.off.title')}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.off.description')}</div>
+                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.off.performance')}</div>
+                </div>
+              </button>
+
               {/* Conservative */}
               <button
                 type="button"

@@ -110,6 +110,10 @@ export const projectMock = {
     data: ''
   }),
 
+  showItemInFolder: async () => ({
+    success: true
+  }),
+
   // Git operations
   getGitBranches: async () => ({
     success: true,

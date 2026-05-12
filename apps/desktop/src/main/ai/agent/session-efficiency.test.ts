@@ -69,6 +69,8 @@ describe('session-efficiency', () => {
     expect(message).toContain('src/renderer/TaskBoard.tsx');
     expect(message).toContain('src/renderer/PlanProgress.tsx');
     expect(message).toContain('npm run typecheck');
+    expect(message).toContain('Do not read spec.md or implementation_plan.json before implementation');
+    expect(message).toContain('clang++ -std=c++17');
     expect(message).toContain('Do not re-plan completed work');
     expect(message).toContain('update only this subtask status to "completed"');
   });

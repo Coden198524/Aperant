@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react';
-import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2, ClipboardCheck } from 'lucide-react';
+import type { ReactNode } from 'react';
+import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2, ClipboardCheck, TerminalSquare, Hash } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
@@ -16,6 +17,14 @@ interface TaskSubtasksProps {
 interface CompletionSummaryRow {
   label: string;
   content: string;
+}
+
+interface SummaryVisualData {
+  points: string[];
+  files: string[];
+  commands: string[];
+  metrics: Array<{ label: string; value: string }>;
+  status: 'passed' | 'failed' | 'warning' | 'neutral';
 }
 
 type TranslationFn = ReturnType<typeof useTranslation>['t'];
@@ -209,27 +218,211 @@ function buildCompletionSummaryRows(summary: string, t: TranslationFn): Completi
   }));
 }
 
+function getSummaryRowStyle(label: string, t: TranslationFn): {
+  icon: typeof ClipboardCheck;
+  label: string;
+  marker: string;
+} {
+  const changedLabel = getSummaryLabel('changed', t);
+  const verifiedLabel = getSummaryLabel('verified', t);
+  const reviewLabel = getSummaryLabel('reviewNotes', t);
+
+  if (label === changedLabel) {
+    return {
+      icon: CheckCircle2,
+      label: 'text-emerald-700 dark:text-emerald-300',
+      marker: 'bg-emerald-500/80',
+    };
+  }
+
+  if (label === verifiedLabel) {
+    return {
+      icon: ClipboardCheck,
+      label: 'text-sky-700 dark:text-sky-300',
+      marker: 'bg-sky-500/80',
+    };
+  }
+
+  if (label === reviewLabel) {
+    return {
+      icon: AlertCircle,
+      label: 'text-amber-700 dark:text-amber-300',
+      marker: 'bg-amber-500/80',
+    };
+  }
+
+  return {
+    icon: ListChecks,
+    label: 'text-muted-foreground',
+    marker: 'bg-muted-foreground/70',
+  };
+}
+
+function splitSummaryPoints(content: string): string[] {
+  const lines = content
+    .replace(/<br\s*\/?>/gi, '\n')
+    .split(/\r?\n/)
+    .map(stripSummaryMarkup)
+    .filter(Boolean);
+
+  if (lines.length > 1) {
+    return lines;
+  }
+
+  return content
+    .split(/(?<=[。！？.!?])\s+/)
+    .map(stripSummaryMarkup)
+    .filter(Boolean);
+}
+
+function uniqueValues(values: string[]): string[] {
+  return Array.from(new Set(values.map(value => value.trim()).filter(Boolean)));
+}
+
+function extractSummaryCommands(content: string): string[] {
+  const commands = [
+    ...content.matchAll(/`([^`]+)`/g),
+    ...content.matchAll(/\b((?:npm|pnpm|yarn|bun|pytest|vitest|cargo|go|python|tsc|eslint|biome|make|cmake)\s+[^.;\n，。]*)/gi),
+  ].map(match => match[1]);
+
+  return uniqueValues(commands)
+    .filter(command => !/[\\/][\w.-]+/.test(command) || /^(npm|pnpm|yarn|bun|pytest|vitest|cargo|go|python|tsc|eslint|biome|make|cmake)\b/i.test(command))
+    .slice(0, 4);
+}
+
+function extractSummaryFiles(content: string): string[] {
+  return uniqueValues([
+    ...content.matchAll(/`([^`]+\.[A-Za-z0-9]{1,8})`/g),
+    ...content.matchAll(/\b([\w@./-]+\.(?:ts|tsx|js|jsx|json|md|css|scss|html|py|go|rs|java|kt|cpp|c|h|yml|yaml))\b/g),
+  ].map(match => match[1]))
+    .filter(file => /[./\\]/.test(file) || file.includes('.'))
+    .slice(0, 5);
+}
+
+function extractSummaryMetrics(content: string): Array<{ label: string; value: string }> {
+  const metrics: Array<{ label: string; value: string }> = [];
+  const lowered = content.toLowerCase();
+  const pairs: Array<[RegExp, string]> = [
+    [/\b(\d+)\s+files?\b/i, 'files'],
+    [/\b(\d+)\s+tests?\b/i, 'tests'],
+    [/\b(\d+)\s+checks?\b/i, 'checks'],
+    [/\b(\d+)\s+steps?\b/i, 'steps'],
+    [/\b(\d+)\s+tools?\b/i, 'tools'],
+  ];
+
+  for (const [pattern, label] of pairs) {
+    const match = content.match(pattern);
+    if (match) {
+      metrics.push({ label, value: match[1] });
+    }
+  }
+
+  if (/\b(pass(?:ed|es)?|success|ok|green|通过|成功)\b/i.test(lowered)) {
+    metrics.push({ label: 'status', value: 'passed' });
+  } else if (/\b(fail(?:ed|s)?|error|失败|错误)\b/i.test(lowered)) {
+    metrics.push({ label: 'status', value: 'failed' });
+  } else if (/\b(manual|review|audit|人工|审核)\b/i.test(lowered)) {
+    metrics.push({ label: 'status', value: 'review' });
+  }
+
+  return metrics.slice(0, 4);
+}
+
+function inferSummaryStatus(content: string): SummaryVisualData['status'] {
+  if (/\b(fail(?:ed|s)?|error|blocked|risk|失败|错误|阻塞|风险)\b/i.test(content)) {
+    return 'failed';
+  }
+  if (/\b(manual|review|audit|caveat|follow-up|人工|审核|注意)\b/i.test(content)) {
+    return 'warning';
+  }
+  if (/\b(pass(?:ed|es)?|verified|success|ok|完成|通过|成功)\b/i.test(content)) {
+    return 'passed';
+  }
+  return 'neutral';
+}
+
+function buildSummaryVisualData(content: string): SummaryVisualData {
+  const files = extractSummaryFiles(content);
+  const commands = extractSummaryCommands(content);
+  const points = splitSummaryPoints(content)
+    .filter(point => point.length > 3)
+    .slice(0, 4);
+
+  return {
+    points,
+    files,
+    commands,
+    metrics: extractSummaryMetrics(content),
+    status: inferSummaryStatus(content),
+  };
+}
+
+function SummaryChip({
+  children,
+  title,
+  tone = 'neutral',
+}: {
+  children: ReactNode;
+  title?: string;
+  tone?: 'neutral' | 'success' | 'info' | 'warning' | 'danger';
+}) {
+  const toneClass = {
+    neutral: 'border-border bg-background/70 text-foreground/80',
+    success: 'border-emerald-500/25 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300',
+    info: 'border-sky-500/25 bg-sky-500/10 text-sky-700 dark:text-sky-300',
+    warning: 'border-amber-500/25 bg-amber-500/10 text-amber-700 dark:text-amber-300',
+    danger: 'border-rose-500/25 bg-rose-500/10 text-rose-700 dark:text-rose-300',
+  }[tone];
+
+  return (
+    <span
+      className={cn('inline-flex max-w-full items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] leading-4', toneClass)}
+      title={title}
+    >
+      {children}
+    </span>
+  );
+}
+
 function CompletionSummaryTable({ summary, t }: { summary: string; t: TranslationFn }) {
   const rows = buildCompletionSummaryRows(summary, t);
 
   return (
-    <div className="overflow-hidden rounded-md border border-success/20 bg-background/60">
-      <table className="w-full border-collapse text-xs">
-        <tbody>
-          {rows.map((row, index) => (
-            <tr key={`${row.label}-${index}`} className="border-b border-success/10 last:border-b-0">
-              <th className="w-28 bg-success/10 px-2.5 py-2 text-left align-top font-medium text-success">
+    <div className="overflow-hidden rounded-md border border-border/60 bg-background/60">
+      {rows.map((row, index) => {
+        const style = getSummaryRowStyle(row.label, t);
+        const Icon = style.icon;
+        const visual = buildSummaryVisualData(row.content);
+        const points = visual.points.length > 0 ? visual.points : splitSummaryPoints(row.content);
+
+        return (
+          <div
+            key={`${row.label}-${index}`}
+            className="grid min-w-0 border-b border-border/50 last:border-b-0 md:grid-cols-[112px_minmax(0,1fr)]"
+          >
+            <div className="flex items-center gap-1.5 border-b border-border/40 bg-muted/30 px-2 py-1.5 md:border-b-0 md:border-r">
+              <Icon className={cn('h-3.5 w-3.5 shrink-0', style.label)} />
+              <span className={cn('truncate text-xs font-semibold', style.label)}>
                 {row.label}
-              </th>
-              <td className="px-2.5 py-2 align-top text-foreground/85">
-                <div className="whitespace-pre-wrap break-words leading-relaxed">
-                  {row.content}
-                </div>
-              </td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+              </span>
+            </div>
+            <div className="min-w-0 px-2.5 py-1.5">
+              {points.length > 1 ? (
+                <ul className="space-y-1 text-xs leading-5 text-foreground/85">
+                  {points.map((point, pointIndex) => (
+                    <li key={`${point}-${pointIndex}`} className="flex min-w-0 gap-1.5">
+                      <span className={cn('mt-2 h-1.5 w-1.5 shrink-0 rounded-full', style.marker)} />
+                      <span className="min-w-0 break-words">{point}</span>
+                    </li>
+                  ))}
+                </ul>
+              ) : (
+                <p className="break-words text-xs leading-5 text-foreground/85">{points[0] ?? row.content}</p>
+              )}
+            </div>
+          </div>
+        );
+      })}
     </div>
   );
 }
@@ -314,7 +507,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
 
   return (
     <div className="flex h-full min-h-0 w-full overflow-hidden">
-      <div className="min-w-0 flex-1 overflow-y-auto overflow-x-hidden p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+      <div className="w-[46%] min-w-[560px] shrink-0 overflow-y-auto overflow-x-hidden p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
         <div className="space-y-3">
           {task.subtasks.length === 0 ? (
             <div className="text-center py-12">
@@ -491,7 +684,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
           )}
         </div>
       </div>
-      <TaskRuntimeLogs task={task} className="w-[64%] min-w-[520px] max-w-[900px] shrink-0" />
+      <TaskRuntimeLogs task={task} className="min-w-[460px] flex-1" />
     </div>
   );
 }

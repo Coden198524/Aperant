@@ -477,6 +477,7 @@ const AGENT_MAX_OUTPUT_TOKENS: Partial<Record<string, number>> = {
   planner: 16_000,
   build_orchestrator: 16_000,
   coder: 12_000,
+  direct_task: 6_000,
   qa_reviewer: 8_000,
   qa_fixer: 8_000,
   commit_message: 2_000,
@@ -631,6 +632,7 @@ async function executeStream(
   const hasTools = tools != null && Object.keys(tools).length > 0;
   const useOutputSchema = config.outputSchema != null && !hasTools;
   const maxOutputTokens = resolveMaxOutputTokens(config);
+  const responsePersistence = config.responsePersistence !== false;
 
   const result = streamText({
     model: config.model,
@@ -648,7 +650,7 @@ async function executeStream(
           openai: {
             ...(thinkingOptions?.openai ?? {}),
             ...(isCodex && config.systemPrompt ? { instructions: config.systemPrompt } : {}),
-            store: true,
+            ...(responsePersistence ? { store: true } : {}),
           },
         } : {}),
         ...(useOutputSchema && isAnthropicModel ? {

@@ -224,7 +224,7 @@ export function GitHubIntegration({
 
   // Selected branch for Combobox value
   const selectedBranch = settings?.mainBranch || envConfig?.defaultBranch || '';
-  const pushNewBranches = settings?.pushNewBranches !== false;
+  const pushNewBranches = settings?.pushNewBranches === true;
   const localizedBranchesError = localizeGitHubErrorMessage(t, branchesError) ?? branchesError;
   const localizedReposError = !reposError
     ? null

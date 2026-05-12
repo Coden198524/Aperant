@@ -391,6 +391,21 @@ export class BuildOrchestrator extends EventEmitter {
           continue;
         }
 
+        if (this.config.workflowConfig?.skipAIQAReview) {
+          const qualityGate = await this.runPreQAQualityGate();
+          if (qualityGate.resumeCoding) {
+            continue;
+          }
+          if (!qualityGate.success) {
+            return this.buildOutcome(false, Date.now() - startTime, qualityGate.error);
+          }
+
+          this.markPhaseCompleted('qa_review');
+          this.transitionPhase('complete', 'Build complete - AI QA skipped by aggressive workflow');
+          this.emitTyped('log', 'Aggressive workflow: skipped AI QA review after successful coding and local quality gates');
+          return this.buildOutcome(true, Date.now() - startTime);
+        }
+
         // QA review phase
         const qaResult = await this.runQAPhase();
         if (qaResult.resumeCoding) {
@@ -795,36 +810,9 @@ export class BuildOrchestrator extends EventEmitter {
    * Run QA review and optional QA fixing loop.
    */
   private async runQAPhase(): Promise<{ success: boolean; error?: string; resumeCoding?: boolean }> {
-    if (!(await this.isBuildComplete())) {
-      return this.resumeCodingFromQA('Detected incomplete subtasks before QA review - returning to coding');
-    }
-
-    // Run pre-QA quality checks (integrated)
-    this.emitTyped('log', translateLogMessage('Running pre-QA quality checks...', this.config.language));
-    const { runPreQAQualityChecks } = await import('./quality-integration');
-
-    const preQAResult = await runPreQAQualityChecks(
-      this.config.qualityConfig || {},
-      this.config.projectDir,
-      this.config.specDir,
-    );
-
-    // If critical issues found, return to coding (with limit to prevent infinite loops)
-    if (!preQAResult.shouldProceedToQA) {
-      if (this.qaReturnToCodingCount >= this.MAX_QA_RETURNS) {
-        this.emitTyped('log', `Pre-QA checks failed ${this.MAX_QA_RETURNS} times. Proceeding to QA anyway to get detailed feedback.`);
-        // Reset counter and proceed to QA
-        this.qaReturnToCodingCount = 0;
-      } else {
-        this.qaReturnToCodingCount++;
-        const issuesSummary = preQAResult.issues.join('; ');
-        return this.resumeCodingFromQA(
-          `Pre-QA quality checks failed (attempt ${this.qaReturnToCodingCount}/${this.MAX_QA_RETURNS}) - ${issuesSummary}. Fix these issues before QA review.`
-        );
-      }
-    } else {
-      // Reset counter on success
-      this.qaReturnToCodingCount = 0;
+    const qualityGate = await this.runPreQAQualityGate();
+    if (!qualityGate.success || qualityGate.resumeCoding) {
+      return qualityGate;
     }
 
     // QA review
@@ -936,6 +924,42 @@ export class BuildOrchestrator extends EventEmitter {
 
     this.emitTyped('log', 'QA loop exhausted all cycles without resolution');
     return { success: false, error: 'QA exhausted all cycles' };
+  }
+
+  private async runPreQAQualityGate(): Promise<{ success: boolean; error?: string; resumeCoding?: boolean }> {
+    if (!(await this.isBuildComplete())) {
+      return this.resumeCodingFromQA('Detected incomplete subtasks before QA review - returning to coding');
+    }
+
+    // Run pre-QA quality checks (integrated)
+    this.emitTyped('log', translateLogMessage('Running pre-QA quality checks...', this.config.language));
+    const { runPreQAQualityChecks } = await import('./quality-integration');
+
+    const preQAResult = await runPreQAQualityChecks(
+      this.config.qualityConfig || {},
+      this.config.projectDir,
+      this.config.specDir,
+    );
+
+    // If critical issues found, return to coding (with limit to prevent infinite loops)
+    if (!preQAResult.shouldProceedToQA) {
+      if (this.qaReturnToCodingCount >= this.MAX_QA_RETURNS) {
+        this.emitTyped('log', `Pre-QA checks failed ${this.MAX_QA_RETURNS} times. Proceeding to QA anyway to get detailed feedback.`);
+        // Reset counter and proceed to QA
+        this.qaReturnToCodingCount = 0;
+      } else {
+        this.qaReturnToCodingCount++;
+        const issuesSummary = preQAResult.issues.join('; ');
+        return this.resumeCodingFromQA(
+          `Pre-QA quality checks failed (attempt ${this.qaReturnToCodingCount}/${this.MAX_QA_RETURNS}) - ${issuesSummary}. Fix these issues before QA review.`
+        );
+      }
+    } else {
+      // Reset counter on success
+      this.qaReturnToCodingCount = 0;
+    }
+
+    return { success: true };
   }
 
   // ===========================================================================

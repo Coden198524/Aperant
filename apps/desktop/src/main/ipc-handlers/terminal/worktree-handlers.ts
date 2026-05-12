@@ -242,7 +242,7 @@ function getDefaultBranch(projectPath: string): string {
 
 function shouldPushNewBranches(projectPath: string): boolean {
   const project = projectStore.getProjects().find(p => p.path === projectPath);
-  return project?.settings?.pushNewBranches !== false;
+  return project?.settings?.pushNewBranches === true;
 }
 
 /**

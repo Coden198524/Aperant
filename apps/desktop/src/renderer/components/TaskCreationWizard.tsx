@@ -91,7 +91,7 @@ export function TaskCreationWizard({
   const [projectDefaultBranch, setProjectDefaultBranch] = useState<string>('');
   // Workspace mode - default to direct development in the current git workspace.
   const [useWorktree, setUseWorktree] = useState(false);
-  const [pushNewBranches, setPushNewBranches] = useState(true);
+  const [pushNewBranches, setPushNewBranches] = useState(false);
 
   // Get project path from project store
   const projects = useProjectStore((state) => state.projects);
@@ -101,7 +101,7 @@ export function TaskCreationWizard({
   }, [projects, projectId]);
   const projectPushNewBranches = useMemo(() => {
     const project = projects.find((p) => p.id === projectId);
-    return project?.settings?.pushNewBranches !== false;
+    return project?.settings?.pushNewBranches === true;
   }, [projects, projectId]);
 
   // Build branch options using shared utility - groups by local/remote with type indicators
@@ -528,7 +528,7 @@ export function TaskCreationWizard({
         // Set useLocalBranch when user explicitly selects a local branch.
         // This preserves gitignored files (.env, configs) by not switching to origin.
         if (isSelectedBranchLocal) metadata.useLocalBranch = true;
-        if (!pushNewBranches) metadata.pushNewBranches = false;
+        metadata.pushNewBranches = pushNewBranches;
       }
 
       const task = await createTask(projectId, title.trim(), description.trim(), metadata);

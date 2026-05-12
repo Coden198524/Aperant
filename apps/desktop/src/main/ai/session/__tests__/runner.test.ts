@@ -461,6 +461,17 @@ describe('runAgentSession', () => {
     expect(callArgs.maxOutputTokens).toBe(8000);
   });
 
+  it('should cap direct_task output tokens for compact one-shot sessions', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({ agentType: 'direct_task', phase: 'coding' }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.maxOutputTokens).toBe(6000);
+  });
+
   it('should keep system prompt for openai-compatible chat models even when model id is codex', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
@@ -539,5 +550,26 @@ describe('runAgentSession', () => {
     expect(callArgs.providerOptions?.openai).toMatchObject({
       store: true,
     });
+  });
+
+  it('should allow disabling responses persistence for one-shot sessions', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
+    );
+
+    await runAgentSession(createMockConfig({
+      systemPrompt: 'Spec prompt',
+      responsePersistence: false,
+      model: {
+        modelId: 'gpt-5.3-codex',
+        provider: 'openai.responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.providerOptions?.openai).toMatchObject({
+      instructions: 'Spec prompt',
+    });
+    expect(callArgs.providerOptions?.openai?.store).toBeUndefined();
   });
 });

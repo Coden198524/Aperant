@@ -196,9 +196,10 @@ describe('getAgentConfig (registry)', () => {
 
 describe('getDefaultThinkingLevel (registry)', () => {
   it('should return correct defaults', () => {
-    expect(getDefaultThinkingLevel('coder')).toBe('low');
+    expect(getDefaultThinkingLevel('coder')).toBe('high');
     expect(getDefaultThinkingLevel('planner')).toBe('high');
-    expect(getDefaultThinkingLevel('qa_fixer')).toBe('medium');
+    expect(getDefaultThinkingLevel('qa_fixer')).toBe('high');
+    expect(getDefaultThinkingLevel('direct_task')).toBe('xhigh');
   });
 });
 

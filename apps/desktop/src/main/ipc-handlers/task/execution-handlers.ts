@@ -136,6 +136,28 @@ function hasPlanSubtasks(planFilePath: string): boolean {
   }
 }
 
+function isDirectWorkflowTask(task: Task): boolean {
+  return task.metadata?.workflowMode === 'off';
+}
+
+function hasDirectReviewArtifact(specDir: string): boolean {
+  if (existsSync(path.join(specDir, 'direct_summary.md'))) {
+    return true;
+  }
+
+  const planContent = safeReadFileSync(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+  if (!planContent) {
+    return false;
+  }
+
+  try {
+    const plan = JSON.parse(planContent) as Record<string, unknown>;
+    return Boolean(plan.direct_execution);
+  } catch {
+    return false;
+  }
+}
+
 const IMPLEMENTATION_FAILURE_FEEDBACK_PATTERNS: RegExp[] = [
   /\bcompile (?:failed|failure|error|errors)\b/i,
   /\bcompilation (?:failed|failure|error|errors)\b/i,
@@ -282,12 +304,31 @@ export function registerTaskExecutionHandlers(
       console.error(`${logPrefix} Failed to watch spec dir for ${taskId}:`, err);
     });
 
+    const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
+    if (isDirectWorkflowTask(task)) {
+      console.warn(`${logPrefix} Starting direct task execution for:`, task.specId);
+      agentManager.startDirectTaskExecution(
+        taskId,
+        project.path,
+        task.specId,
+        {
+          parallel: false,
+          workers: 1,
+          baseBranch,
+          useWorktree: task.metadata?.useWorktree,
+          useLocalBranch: task.metadata?.useLocalBranch,
+          pushNewBranches: task.metadata?.pushNewBranches
+        },
+        project.id
+      );
+      return;
+    }
+
     const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
     const hasSpec = existsSync(specFilePath);
     const planHasSubtasks = hasPlanSubtasks(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
     const needsSpecCreation = !hasSpec;
     const needsImplementation = hasSpec && !planHasSubtasks;
-    const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
 
     console.warn(
       `${logPrefix} hasSpec:`,
@@ -446,6 +487,55 @@ export function registerTaskExecutionHandlers(
       // - backlog/other: Fresh start, send PLANNING_STARTED
       const currentXState = taskStateManager.getCurrentState(taskId);
       console.warn('[TASK_START] Current XState:', currentXState, '| Task status:', task.status, task.reviewReason);
+
+      if (isDirectWorkflowTask(task)) {
+        const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
+        const isResume = currentXState === 'human_review'
+          || currentXState === 'error'
+          || task.status === 'human_review'
+          || task.status === 'error';
+
+        taskStateManager.handleUiEvent(
+          taskId,
+          isResume
+            ? { type: 'USER_RESUMED' }
+            : {
+                type: 'CODING_STARTED',
+                subtaskId: 'direct-implementation',
+                subtaskDescription: 'Direct model execution'
+              },
+          task,
+          project
+        );
+
+        const planPath = getPlanPath(project, task);
+        const resetResult = await resetStuckSubtasks(planPath, project.id);
+        if (resetResult.success && resetResult.resetCount > 0) {
+          console.warn(`[TASK_START] Reset ${resetResult.resetCount} stuck subtask(s) before direct execution`);
+        }
+
+        const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
+        fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
+          console.error(`[TASK_START] Failed to watch spec dir for direct task ${taskId}:`, err);
+        });
+
+        console.warn('[TASK_START] Starting direct task execution for:', task.specId);
+        agentManager.startDirectTaskExecution(
+          taskId,
+          project.path,
+          task.specId,
+          {
+            parallel: false,
+            workers: 1,
+            baseBranch,
+            useWorktree: task.metadata?.useWorktree,
+            useLocalBranch: task.metadata?.useLocalBranch,
+            pushNewBranches: task.metadata?.pushNewBranches
+          },
+          project.id
+        );
+        return;
+      }
 
       if (currentXState === 'plan_review') {
         // XState says plan_review - send PLAN_APPROVED
@@ -1130,11 +1220,15 @@ export function registerTaskExecutionHandlers(
           // Ignore read errors - treat as empty spec
         }
 
-        if (!specContent || specContent.length < MIN_SPEC_CONTENT_LENGTH) {
+        const hasReviewArtifact = isDirectWorkflowTask(task)
+          ? hasDirectReviewArtifact(specDirForValidation)
+          : Boolean(specContent && specContent.length >= MIN_SPEC_CONTENT_LENGTH);
+
+        if (!hasReviewArtifact) {
           console.warn(`[TASK_UPDATE_STATUS] Blocked attempt to set status 'human_review' for task ${taskId}. No spec has been created yet.`);
           return {
             success: false,
-            error: "Cannot move to human review - no spec has been created yet. The task must complete processing before review."
+            error: "Cannot move to human review - no review artifact has been created yet. The task must complete processing before review."
           };
         }
       }
@@ -1257,7 +1351,23 @@ export function registerTaskExecutionHandlers(
           // Get base branch: task-level override takes precedence over project settings
           const baseBranchForUpdate = task.metadata?.baseBranch || project.settings?.mainBranch;
 
-          if (needsSpecCreation) {
+          if (isDirectWorkflowTask(task)) {
+            console.warn('[TASK_UPDATE_STATUS] Starting direct task execution for:', task.specId);
+            agentManager.startDirectTaskExecution(
+              taskId,
+              project.path,
+              task.specId,
+              {
+                parallel: false,
+                workers: 1,
+                baseBranch: baseBranchForUpdate,
+                useWorktree: task.metadata?.useWorktree,
+                useLocalBranch: task.metadata?.useLocalBranch,
+                pushNewBranches: task.metadata?.pushNewBranches
+              },
+              project.id
+            );
+          } else if (needsSpecCreation) {
             // No spec file - need to run spec_runner.py to create the spec
             const taskDescription = task.description || task.title;
             console.warn('[TASK_UPDATE_STATUS] Starting spec creation for:', task.specId);
@@ -1768,7 +1878,23 @@ export function registerTaskExecutionHandlers(
             // Get base branch: task-level override takes precedence over project settings
             const baseBranchForRecovery = task.metadata?.baseBranch || project.settings?.mainBranch;
 
-            if (needsSpecCreation) {
+            if (isDirectWorkflowTask(task)) {
+              console.warn(`[Recovery] Starting direct task execution for: ${task.specId}`);
+              agentManager.startDirectTaskExecution(
+                taskId,
+                project.path,
+                task.specId,
+                {
+                  parallel: false,
+                  workers: 1,
+                  baseBranch: baseBranchForRecovery,
+                  useWorktree: task.metadata?.useWorktree,
+                  useLocalBranch: task.metadata?.useLocalBranch,
+                  pushNewBranches: task.metadata?.pushNewBranches
+                },
+                project.id
+              );
+            } else if (needsSpecCreation) {
               // No spec file - need to run spec_runner.py to create the spec
               const taskDescription = task.description || task.title;
               console.warn(`[Recovery] Starting spec creation for: ${task.specId}`);

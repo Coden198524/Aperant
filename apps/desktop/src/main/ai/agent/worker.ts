@@ -12,7 +12,7 @@
  */
 
 import { parentPort, workerData } from 'worker_threads';
-import { readFileSync, existsSync } from 'node:fs';
+import { readFileSync, existsSync, writeFileSync } from 'node:fs';
 import { join, basename } from 'node:path';
 
 import { runAgentSession } from '../session/runner';
@@ -65,6 +65,12 @@ import { FileContentCache } from '../tools/cache/file-cache';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 import { specPhaseToPromptName } from './spec-phase-prompts';
 import { OPTIMIZATION_PRESETS, type WorkflowConfig } from '../orchestration/workflow-config';
+import {
+  loadImplementationPlanFromFilesSync,
+  saveImplementationPlanToFilesSync,
+  type ShardableImplementationPlan,
+} from '../schema/plan-shards';
+import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 
 // =============================================================================
 // Validation
@@ -111,7 +117,27 @@ function formatPathForPrompt(filePath: string): string {
  */
 function getWorkflowConfigFromMode(mode?: TaskWorkflowMode): WorkflowConfig | undefined {
   if (!mode) return undefined;
-  return OPTIMIZATION_PRESETS[mode as 'conservative' | 'balanced' | 'aggressive'];
+  if (mode === 'off') return undefined;
+  return OPTIMIZATION_PRESETS[mode];
+}
+
+function getQualityConfigFromWorkflowConfig(workflowConfig?: WorkflowConfig): import('../orchestration/quality-integration').QualityConfig | undefined {
+  if (!workflowConfig) {
+    return undefined;
+  }
+
+  const qualityChecks = workflowConfig.qualityChecks ?? {};
+
+  return {
+    enablePreQASmokeTests: qualityChecks.enableSmokeTests ?? false,
+    enableIncrementalValidation: true,
+    enablePatternInjection: qualityChecks.enablePatternInjection ?? false,
+    enablePreImplementationChecklist: qualityChecks.enablePreImplementationChecklist ?? false,
+    enableSelfCritique: qualityChecks.enableSelfCritique ?? false,
+    enableContextAwareRecovery: true,
+    enableActiveMemoryLearning: false,
+    enableTieredQualityStandards: qualityChecks.enableTieredQualityStandards ?? false,
+  };
 }
 
 // =============================================================================
@@ -246,6 +272,7 @@ function buildToolContext(session: SerializableSessionConfig, securityProfile: S
     securityProfile,
     abortSignal: abortController.signal,
     fileCache,
+    workflowMode: session.workflowMode,
   };
 }
 
@@ -478,6 +505,10 @@ function getPromptProfileProjectDir(session: SerializableSessionConfig): string 
   return session.sourceProjectDir ?? session.projectDir;
 }
 
+function shouldUseProjectPromptProfile(session: SerializableSessionConfig, promptName: string): boolean {
+  return !isDirectTaskSession(session) && promptName !== 'direct_task';
+}
+
 function getProjectPromptProfile(session: SerializableSessionConfig): ProjectPromptProfile | null {
   const profileProjectDir = getPromptProfileProjectDir(session);
   if (
@@ -514,15 +545,22 @@ async function assemblePrompt(
   promptName: string,
   session: SerializableSessionConfig,
 ): Promise<string> {
+  const useCompactAggressiveCoderPrompt = promptName === 'coder' && isFastWorkflow(session);
   const profileProjectDir = getPromptProfileProjectDir(session);
-  const projectPromptProfile = getProjectPromptProfile(session);
-  const projectOverride = loadProjectPromptOverride(profileProjectDir, promptName);
+  const projectPromptProfile = !useCompactAggressiveCoderPrompt && shouldUseProjectPromptProfile(session, promptName)
+    ? getProjectPromptProfile(session)
+    : null;
+  const projectOverride = useCompactAggressiveCoderPrompt
+    ? null
+    : loadProjectPromptOverride(profileProjectDir, promptName);
   if (projectOverride && !loggedProjectPromptOverrides.has(projectOverride.path)) {
     loggedProjectPromptOverrides.add(projectOverride.path);
     postLog(`Using project-specific prompt override: ${projectOverride.path}`);
   }
 
-  const basePrompt = projectOverride?.content
+  const basePrompt = useCompactAggressiveCoderPrompt
+    ? buildAggressiveCoderPrompt()
+    : projectOverride?.content
     ?? loadPrompt(promptName)
     ?? buildFallbackPrompt(promptName as AgentType, session.specDir, session.projectDir);
 
@@ -550,13 +588,15 @@ async function assemblePrompt(
     }
   }
 
-  let promptWithContext = injectContext(basePrompt, {
-    specDir: session.specDir,
-    projectDir: session.projectDir,
-    projectInstructions: cachedProjectInstructions,
-    humanInput,
-    autoPushToRemote: session.autoPushToRemote,
-  });
+  let promptWithContext = useCompactAggressiveCoderPrompt
+    ? basePrompt
+    : injectContext(basePrompt, {
+      specDir: session.specDir,
+      projectDir: session.projectDir,
+      projectInstructions: cachedProjectInstructions,
+      humanInput,
+      autoPushToRemote: session.autoPushToRemote,
+    });
 
   if (projectPromptProfile && !projectOverride) {
     promptWithContext += `\n\n${buildProjectPromptProfileSection(projectPromptProfile)}`;
@@ -568,6 +608,29 @@ async function assemblePrompt(
     if (planRequirement) {
       promptWithLanguage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planRequirement}`;
     }
+  }
+  if (promptName === 'spec_quick' && isFastWorkflow(session)) {
+    promptWithLanguage += [
+      '',
+      '## AGGRESSIVE WORKFLOW PLAN LIMIT',
+      'This task is running in aggressive mode. Keep the plan optimized for a single coder session.',
+      '- Write exactly 1 implementation phase.',
+      '- Write exactly 1 pending subtask unless the user explicitly requested independent staged delivery.',
+      '- Put the full implementation scope, files, and verification in that one subtask.',
+      '- Do not split by component, file, UI, tests, or cleanup for simple apps or games.',
+    ].join('\n');
+  }
+  if (promptName === 'coder' && isFastWorkflow(session)) {
+    promptWithLanguage += [
+      '',
+      '## AGGRESSIVE WORKFLOW CODING LIMITS',
+      'This task is running in aggressive mode. Keep coding to one compact implementation session.',
+      '- Use the kickoff subtask details as primary context; do not start by reading spec.md or implementation_plan.json when Current Subtask is present.',
+      '- Avoid broad repository discovery. Read only files required for the implementation.',
+      '- Prefer one target write/edit pass, one targeted verification, then completion.',
+      '- For C/C++ verification on Windows, use clang++ -std=c++17 or newer when clang++ is available; do not try C++11 first with modern MSVC headers.',
+      '- Limit compiler error output where supported, for example -ferror-limit=3 for clang++ or -fmax-errors=3 for g++.',
+    ].join('\n');
   }
 
   return promptWithLanguage;
@@ -792,6 +855,142 @@ async function run(): Promise<void> {
   }
 }
 
+function isDirectTaskSession(session: SerializableSessionConfig): boolean {
+  return session.agentType === 'direct_task' || session.workflowMode === 'off';
+}
+
+function isSuccessfulDirectOutcome(result: SessionResult | undefined): boolean {
+  return result?.outcome === 'completed'
+    || result?.outcome === 'max_steps'
+    || result?.outcome === 'context_window';
+}
+
+function getFinalAssistantText(result: SessionResult | undefined, streamedText: string): string {
+  const finalAssistant = result?.messages
+    ?.slice()
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.content.trim());
+  return (finalAssistant?.content ?? streamedText).trim();
+}
+
+function escapeTableCell(value: string): string {
+  return value
+    .trim()
+    .replace(/\|/g, '\\|')
+    .replace(/\r?\n/g, '<br>');
+}
+
+function buildDirectCompletionSummary(
+  session: SerializableSessionConfig,
+  result: SessionResult | undefined,
+  streamedText: string,
+): string {
+  const finalText = getFinalAssistantText(result, streamedText);
+  if (finalText) {
+    return finalText;
+  }
+
+  const outcome = result?.outcome ?? 'unknown';
+  const error = result?.error?.message;
+  const reviewNote = isSuccessfulDirectOutcome(result)
+    ? 'Direct mode skipped staged spec, implementation planning, and QA. Review the git changes manually before approval.'
+    : `Direct mode ended with outcome "${outcome}".${error ? ` Error: ${error}` : ''}`;
+
+  return [
+    '| Item | Details |',
+    '| --- | --- |',
+    `| What changed | ${escapeTableCell(`Direct model session finished for ${basename(session.specDir)}.`)} |`,
+    `| Verification | ${escapeTableCell(`Session outcome: ${outcome}. Steps: ${result?.stepsExecuted ?? 0}. Tools: ${result?.toolCallCount ?? 0}.`)} |`,
+    `| Review notes | ${escapeTableCell(reviewNote)} |`,
+  ].join('\n');
+}
+
+function extractDirectTaskDescription(session: SerializableSessionConfig): string {
+  const initialMessage = session.initialMessages?.[0]?.content?.trim();
+  if (initialMessage) {
+    return initialMessage.length > 2000 ? `${initialMessage.slice(0, 2000)}...` : initialMessage;
+  }
+  return `Direct model execution for ${basename(session.specDir)}`;
+}
+
+function persistDirectTaskCompletion(
+  session: SerializableSessionConfig,
+  result: SessionResult | undefined,
+  streamedText: string,
+): void {
+  const success = isSuccessfulDirectOutcome(result);
+  const summary = buildDirectCompletionSummary(session, result, streamedText);
+  const now = new Date().toISOString();
+  const specDirs = Array.from(new Set([
+    session.specDir,
+    session.sourceSpecDir,
+  ].filter((value): value is string => Boolean(value))));
+
+  for (const specDir of specDirs) {
+    try {
+      const existingPlan = loadImplementationPlanFromFilesSync(specDir);
+      const plan: ShardableImplementationPlan = existingPlan ?? {
+        feature: basename(specDir),
+        workflow_type: 'direct',
+        phases: [],
+        created_at: now,
+        updated_at: now,
+      };
+
+      plan.feature = typeof plan.feature === 'string' && plan.feature.trim()
+        ? plan.feature
+        : basename(specDir);
+      plan.workflow_type = 'direct';
+      plan.split_plan = false;
+      plan.plan_files = undefined;
+      plan.status = success ? 'human_review' : 'error';
+      plan.planStatus = success ? 'review' : 'pending';
+      plan.reviewReason = success ? 'completed' : 'errors';
+      plan.xstateState = success ? 'human_review' : 'error';
+      plan.executionPhase = success ? 'complete' : 'failed';
+      plan.direct_execution = {
+        enabled: true,
+        outcome: result?.outcome ?? 'unknown',
+        completed_at: now,
+        summary_file: 'direct_summary.md',
+      };
+      plan.updated_at = now;
+      if (!plan.created_at) {
+        plan.created_at = now;
+      }
+      plan.phases = [
+        {
+          phase: 1,
+          name: 'Direct execution',
+          type: 'direct',
+          subtasks: [
+            {
+              id: 'direct-implementation',
+              title: 'Direct model execution',
+              description: extractDirectTaskDescription(session),
+              status: success ? 'completed' : 'failed',
+              completion_summary: summary,
+              notes: summary,
+              verification: {
+                type: 'manual',
+                scenario: 'Review the completion summary, runtime log, and git changes.',
+              },
+            },
+          ],
+        },
+      ];
+      plan.final_acceptance = Array.isArray(plan.final_acceptance) && plan.final_acceptance.length > 0
+        ? plan.final_acceptance
+        : ['Manual reviewer approves the direct execution summary and git changes.'];
+
+      writeFileSync(join(specDir, 'direct_summary.md'), summary, 'utf-8');
+      saveImplementationPlanToFilesSync(specDir, plan);
+    } catch (error) {
+      postLog(`Direct completion summary persistence failed for ${specDir}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 /**
  * Run a single agent session (default path for spec_orchestrator, etc.)
  */
@@ -826,6 +1025,7 @@ async function runDefaultSession(
     sessionNumber: session.sessionNumber,
     subtaskId: session.subtaskId,
     contextWindowLimit,
+    responsePersistence: session.responsePersistence,
   };
 
   // Start phase logging for default session
@@ -835,10 +1035,14 @@ async function runDefaultSession(
   }
 
   let result: SessionResult | undefined;
+  let streamedText = '';
   try {
-    result = await runContinuableSessionWithGatewayFallback(sessionConfig, {
+    const runnerOptions = {
       tools,
       onEvent: (event: StreamEvent) => {
+        if (isDirectTaskSession(session) && event.type === 'text-delta') {
+          streamedText += event.text;
+        }
         // Write stream events to task_logs.json for UI log display
         if (logWriter) {
           logWriter.processEvent(event, defaultPhase);
@@ -868,16 +1072,60 @@ async function runDefaultSession(
             modelId: session.modelId,
           })
         : undefined,
-    }, {
+    };
+    const continuationOptions = {
       contextWindowLimit,
       apiKey: session.apiKey,
       baseURL: session.baseURL,
       oauthTokenFilePath: session.oauthTokenFilePath,
-    }, session, session.modelId);
+      maxContinuations: isDirectTaskSession(session) ? 0 : undefined,
+    };
+
+    result = isDirectTaskSession(session)
+      ? await runAgentSession(sessionConfig, runnerOptions)
+      : await runContinuableSessionWithGatewayFallback(
+          sessionConfig,
+          runnerOptions,
+          continuationOptions,
+          session,
+          session.modelId,
+        );
+  } catch (error) {
+    if (!isDirectTaskSession(session)) {
+      throw error;
+    }
+    const message = error instanceof Error ? error.message : String(error);
+    result = {
+      outcome: 'error',
+      stepsExecuted: 0,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      messages: [],
+      toolCallCount: 0,
+      durationMs: 0,
+      error: {
+        code: 'direct_session_error',
+        message,
+        retryable: false,
+      },
+    };
+    postError(`Direct task session failed: ${message}`);
   } finally {
     if (logWriter) {
       const success = result?.outcome === 'completed' || result?.outcome === 'max_steps' || result?.outcome === 'context_window';
       logWriter.endPhase(defaultPhase, success ?? false);
+    }
+  }
+
+  if (isDirectTaskSession(session)) {
+    persistDirectTaskCompletion(session, result, streamedText);
+    if (isSuccessfulDirectOutcome(result)) {
+      postTaskEvent('QA_PASSED', { iteration: 0, testsRun: { workflowMode: 'off' } });
+    } else {
+      postTaskEvent('CODING_FAILED', {
+        subtaskId: 'direct-implementation',
+        error: result?.error?.message ?? `Direct task ended with outcome ${result?.outcome ?? 'unknown'}`,
+        attemptCount: 1,
+      });
     }
   }
 
@@ -911,6 +1159,8 @@ async function runBuildOrchestrator(
 ): Promise<void> {
   postLog('Starting BuildOrchestrator pipeline (planning → coding → QA)');
 
+  const workflowConfig = getWorkflowConfigFromMode(session.workflowMode);
+
   const orchestrator = new BuildOrchestrator({
     specDir: session.specDir,
     projectDir: session.projectDir,
@@ -926,7 +1176,8 @@ async function runBuildOrchestrator(
     maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,
 
     // Apply workflow optimization config based on task's workflowMode
-    workflowConfig: getWorkflowConfigFromMode(session.workflowMode),
+    workflowConfig,
+    qualityConfig: getQualityConfigFromWorkflowConfig(workflowConfig),
 
     generatePrompt: async (agentType, _phase, context) => {
       const promptName = agentType === 'coder' ? 'coder' : agentType;
@@ -1254,6 +1505,7 @@ async function runSpecOrchestrator(
     taskDescription,
     complexityOverride: isFastWorkflow(session) ? 'simple' : undefined,
     useAiAssessment: !isFastWorkflow(session),
+    workflowConfig: getWorkflowConfigFromMode(session.workflowMode),
     projectIndex: projectIndexContent,
     language: session.language,
     abortSignal: abortController.signal,
@@ -1645,6 +1897,9 @@ function buildKickoffMessage(
         baseMessage = `Read ${promptSpecDir}/implementation_plan.json and implement the next pending subtask. Project root: ${promptProjectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
       }
       break;
+    case 'direct_task':
+      baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. End with a short markdown review table.`;
+      break;
     case 'qa_reviewer':
       baseMessage = `Review the implementation in ${promptProjectDir} against the specification in ${promptSpecDir}/spec.md. Write your findings to ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
       break;
@@ -1678,6 +1933,8 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
       return `You are a planning agent. Read spec.md in ${promptSpecDir} and create implementation_plan.json with phases and subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending". If the system prompt specifies an app language, localize all user-facing planning fields such as feature, phase names, subtask titles, and subtask descriptions to that language.`;
     case 'coder':
       return `You are a coding agent. Implement the current pending subtask from implementation_plan.json in ${promptSpecDir}. Project root: ${promptProjectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+    case 'direct_task':
+      return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. End with a markdown table: What changed, Verification, Review notes.`;
     case 'qa_reviewer':
       return `You are a QA reviewer. Review the implementation in ${promptProjectDir} against the spec in ${promptSpecDir}/spec.md. Write your findings to ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
     case 'qa_fixer':

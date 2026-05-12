@@ -189,8 +189,9 @@ export function buildFocusedCoderKickoffMessageFromContext(
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
   const lines: string[] = [
-    `Implement ONLY subtask "${subtaskId}" from ${promptSpecDir}/implementation_plan.json.`,
+    `Implement ONLY subtask "${subtaskId}".`,
     `Project root: ${promptProjectDir}.`,
+    `Plan file for final status update: ${promptSpecDir}/implementation_plan.json.`,
   ];
 
   if (context) {
@@ -239,10 +240,15 @@ export function buildFocusedCoderKickoffMessageFromContext(
 
   lines.push('');
   lines.push('## Execution Rules');
+  if (context) {
+    lines.push('- The Current Subtask section above is already loaded from the plan. Do not read spec.md or implementation_plan.json before implementation.');
+  }
   lines.push('- Focus on this one subtask until it is done.');
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');
   lines.push('- Prefer the smallest code change that satisfies the subtask.');
   lines.push('- Run the listed verification before finishing.');
+  lines.push('- For C/C++ verification on Windows, prefer clang++ -std=c++17 or newer when clang++ is available; do not try C++11 first with modern MSVC headers.');
+  lines.push('- Limit compiler error output where supported, for example -ferror-limit=3 for clang++ or -fmax-errors=3 for g++.');
   lines.push('- After verification passes, update only this subtask status to "completed" in implementation_plan.json immediately.');
 
   return lines.join('\n');

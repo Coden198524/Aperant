@@ -11,7 +11,12 @@ import { useTaskStore } from '../../stores/task-store';
 import type { Task, TaskLogEntry, TaskLogPhase, TaskLogStreamChunk, TaskLogs as TaskLogsData } from '../../../shared/types';
 import type { PhaseModelConfig } from '../../../shared/types/settings';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
-import { buildDisplayLogEntries, buildDisplayRuntimeLogs, type DisplayTaskLogEntry } from './task-log-display';
+import {
+  buildDisplayLogEntries,
+  buildDisplayRuntimeLogs,
+  type DisplayRuntimeLog,
+  type DisplayTaskLogEntry,
+} from './task-log-display';
 import { Button } from '../ui/button';
 
 interface TaskRuntimeLogsProps {
@@ -159,7 +164,7 @@ const runtimeMarkdownComponents: Components = {
     </th>
   ),
   td: ({ children }) => (
-    <td className="border-b border-r border-slate-800 px-2 py-1 align-top last:border-r-0">
+    <td className="border-b border-r border-slate-800 px-2 py-1 align-top leading-relaxed break-words last:border-r-0">
       {children}
     </td>
   ),
@@ -519,6 +524,81 @@ function formatEntryTime(timestamp: string): string {
   });
 }
 
+function parseRuntimeKeyValueList(value: string): Record<string, string> {
+  const fields: Record<string, string> = {};
+
+  for (const part of value.split(',')) {
+    const [rawKey, ...rawValue] = part.trim().split('=');
+    const key = rawKey?.trim();
+    const fieldValue = rawValue.join('=').trim();
+
+    if (key && fieldValue) {
+      fields[key] = fieldValue;
+    }
+  }
+
+  return fields;
+}
+
+function formatRuntimeDuration(value?: string): string | undefined {
+  if (!value) return undefined;
+
+  const match = value.match(/^(\d+)ms$/i);
+  if (!match) return value;
+
+  const milliseconds = Number(match[1]);
+  if (!Number.isFinite(milliseconds)) return value;
+
+  if (milliseconds < 1000) {
+    return `${milliseconds}ms`;
+  }
+
+  return `${(milliseconds / 1000).toFixed(1)}s`;
+}
+
+function getRuntimeStatus(content: string): {
+  kind: 'worker' | 'start' | 'complete';
+  label: string;
+  fields: Array<{ label: string; value: string }>;
+} | null {
+  const trimmed = content.trim();
+  const workerMatch = trimmed.match(/^Worker thread online:\s*(.+)$/i);
+  if (workerMatch) {
+    return {
+      kind: 'worker',
+      label: 'Worker online',
+      fields: [{ label: 'file', value: workerMatch[1].trim() }],
+    };
+  }
+
+  const startMatch = trimmed.match(/^Starting agent session:\s*(.+)$/i);
+  if (startMatch) {
+    const fields = parseRuntimeKeyValueList(startMatch[1]);
+    return {
+      kind: 'start',
+      label: 'Agent session started',
+      fields: Object.entries(fields).map(([label, value]) => ({ label, value })),
+    };
+  }
+
+  const completeMatch = trimmed.match(/^Session complete:\s*(.+)$/i);
+  if (completeMatch) {
+    const fields = parseRuntimeKeyValueList(completeMatch[1]);
+    return {
+      kind: 'complete',
+      label: 'Session complete',
+      fields: [
+        ...(fields.outcome ? [{ label: 'outcome', value: fields.outcome }] : []),
+        ...(fields.steps ? [{ label: 'steps', value: fields.steps }] : []),
+        ...(fields.tools ? [{ label: 'tools', value: fields.tools }] : []),
+        ...(fields.duration ? [{ label: 'duration', value: formatRuntimeDuration(fields.duration) ?? fields.duration }] : []),
+      ],
+    };
+  }
+
+  return null;
+}
+
 function getToolDisplay(entry: DisplayTaskLogEntry): { name: string; input: string; status: 'running' | 'done' | 'error' } {
   const name = entry.tool_name || entry.content.match(/^\[([^\]]+)\]/)?.[1] || 'Tool';
   const input = entry.tool_input || entry.content.replace(/^\[[^\]]+\]\s*/, '').replace(/^(Done|Error)$/i, '').trim();
@@ -828,16 +908,7 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
         <div className="min-h-0 flex-1 overflow-y-auto bg-[#0B1020] p-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
           <div className="space-y-2">
             {runtimeLogs.map((log, index) => (
-              <div
-                key={`${index}-${log.content.slice(0, 80)}`}
-                className="rounded-md border border-slate-700/70 bg-slate-950/70 px-3 py-2 font-mono text-[11px] leading-relaxed shadow-sm"
-              >
-                <div className="max-w-none break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
-                  <ReactMarkdown remarkPlugins={[remarkGfm]} components={runtimeMarkdownComponents}>
-                    {log.content}
-                  </ReactMarkdown>
-                </div>
-              </div>
+              <RuntimeLogEntry key={`${index}-${log.content.slice(0, 80)}`} log={log} />
             ))}
           </div>
         </div>
@@ -917,6 +988,62 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
         </div>
       )}
     </section>
+  );
+}
+
+function RuntimeLogEntry({ log }: { log: DisplayRuntimeLog }) {
+  const status = getRuntimeStatus(log.content);
+
+  if (status) {
+    const statusStyles = {
+      worker: {
+        container: 'border-sky-500/30 bg-sky-500/10',
+        dot: 'bg-sky-300',
+        label: 'text-sky-200',
+      },
+      start: {
+        container: 'border-amber-500/30 bg-amber-500/10',
+        dot: 'bg-amber-300',
+        label: 'text-amber-200',
+      },
+      complete: {
+        container: 'border-emerald-500/30 bg-emerald-500/10',
+        dot: 'bg-emerald-300',
+        label: 'text-emerald-200',
+      },
+    }[status.kind];
+
+    return (
+      <div className={cn('rounded-md border px-3 py-2 font-mono text-[11px] shadow-sm', statusStyles.container)}>
+        <div className="flex min-w-0 flex-wrap items-center gap-2">
+          <span className={cn('h-2 w-2 shrink-0 rounded-full', statusStyles.dot)} />
+          <span className={cn('shrink-0 font-medium', statusStyles.label)}>
+            {status.label}
+          </span>
+          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
+            {status.fields.map(field => (
+              <span
+                key={`${field.label}-${field.value}`}
+                className="inline-flex max-w-full items-center gap-1 rounded border border-slate-700/70 bg-slate-950/50 px-1.5 py-0.5 text-[10px] leading-none"
+              >
+                <span className="shrink-0 text-slate-500">{field.label}</span>
+                <span className="min-w-0 truncate text-slate-200">{field.value}</span>
+              </span>
+            ))}
+          </div>
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div className="rounded-md border border-slate-700/70 bg-slate-950/70 px-3 py-2 font-mono text-[11px] leading-relaxed shadow-sm">
+      <div className="max-w-none break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
+        <ReactMarkdown remarkPlugins={[remarkGfm]} components={runtimeMarkdownComponents}>
+          {log.content}
+        </ReactMarkdown>
+      </div>
+    </div>
   );
 }
 

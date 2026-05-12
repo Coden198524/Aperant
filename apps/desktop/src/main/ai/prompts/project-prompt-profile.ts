@@ -663,7 +663,7 @@ ${buildToolCallJsonGuidance()}
 2. Read the files listed on the subtask first. Search only when those files are insufficient.
 3. Implement the subtask using existing project conventions.
 4. Run the smallest relevant verification command that is available.
-5. Update the subtask status in \`implementation_plan.json\` to \`completed\` and add a structured \`completion_summary\` for human review. Use a compact Markdown table with rows: What changed, Verification, Review notes. Use \`blocked\` or \`failed\` only when you cannot proceed.
+5. Update the subtask status in \`implementation_plan.json\` to \`completed\` and add a structured \`completion_summary\` for human review. Use this compact Markdown review matrix exactly: \`| Item | Details |\`, \`| --- | --- |\`, \`| What changed | ... |\`, \`| Verification | ... |\`, \`| Review notes | ... |\`. Keep each cell concise and concrete. Use \`blocked\` or \`failed\` only when you cannot proceed.
 
 ## PROJECT COMMANDS
 

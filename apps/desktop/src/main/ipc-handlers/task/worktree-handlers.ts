@@ -1672,6 +1672,62 @@ function getTaskBaseBranch(specDir: string): string | undefined {
   return undefined;
 }
 
+function getTaskDirectWorkspaceBaselineCommit(specDir: string): string | undefined {
+  if (!specDir || typeof specDir !== 'string') {
+    return undefined;
+  }
+
+  try {
+    const metadataPath = path.join(specDir, 'task_metadata.json');
+    if (!existsSync(metadataPath)) {
+      return undefined;
+    }
+
+    const metadata = JSON.parse(readFileSync(metadataPath, 'utf-8')) as Record<string, unknown>;
+    const commit = typeof metadata.directWorkspaceBaselineCommit === 'string'
+      ? metadata.directWorkspaceBaselineCommit.trim()
+      : '';
+
+    return /^[a-f0-9]{7,40}$/i.test(commit) ? commit : undefined;
+  } catch (error) {
+    console.warn('[getTaskDirectWorkspaceBaselineCommit] Failed to read task metadata:', error);
+    return undefined;
+  }
+}
+
+function getTaskSpecDir(projectPath: string, specId: string, autoBuildPath?: string): string {
+  return path.join(projectPath, getSpecsDir(autoBuildPath), specId);
+}
+
+function getTaskDiffWorkspace(projectPath: string, specId: string, autoBuildPath?: string): {
+  path: string;
+  isWorktree: boolean;
+  specDir: string;
+} {
+  const worktreePath = findTaskWorktree(projectPath, specId);
+  const specDir = getTaskSpecDir(projectPath, specId, autoBuildPath);
+
+  return {
+    path: worktreePath ?? projectPath,
+    isWorktree: Boolean(worktreePath),
+    specDir,
+  };
+}
+
+function resolveTaskDiffBaseRef(
+  projectPath: string,
+  specId: string,
+  workspace: { isWorktree: boolean; specDir: string },
+  projectMainBranch?: string,
+): string {
+  if (!workspace.isWorktree) {
+    return getTaskDirectWorkspaceBaselineCommit(workspace.specDir)
+      ?? getEffectiveBaseBranch(projectPath, specId, projectMainBranch);
+  }
+
+  return getEffectiveBaseBranch(projectPath, specId, projectMainBranch);
+}
+
 /**
  * Get the effective base branch for a task with proper fallback chain.
  * Priority:
@@ -2151,17 +2207,13 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Task not found' };
         }
 
-        // Find worktree at .autocode/worktrees/tasks/{spec-name}/
-        const worktreePath = findTaskWorktree(project.path, task.specId);
-
-        if (!worktreePath) {
-          return { success: false, error: 'No worktree found for this task' };
-        }
+        const workspace = getTaskDiffWorkspace(project.path, task.specId, project.autoBuildPath);
+        const workspacePath = workspace.path;
 
         // Get base branch using proper fallback chain:
         // 1. Task metadata baseBranch, 2. Project settings mainBranch, 3. main/master detection
         // Note: We do NOT use current HEAD as that may be a feature branch
-        const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
+        const baseRef = resolveTaskDiffBaseRef(project.path, task.specId, workspace, project.settings?.mainBranch);
 
         // Get the diff with per-file patches
         let files: WorktreeDiffFile[] = [];
@@ -2170,8 +2222,8 @@ export function registerWorktreeHandlers(
           // Use working-tree diff against baseBranch to capture ALL changes
           // (both committed and uncommitted). This ensures the diff view shows
           // file changes even when the agent hasn't committed its work yet.
-          const nameStatusResult = await execFileAsync(getToolPath('git'), ['diff', '--find-renames', '--name-status', baseBranch], {
-            cwd: worktreePath,
+          const nameStatusResult = await execFileAsync(getToolPath('git'), ['diff', '--find-renames', '--name-status', baseRef], {
+            cwd: workspacePath,
             encoding: 'utf-8',
             env: getIsolatedGitEnv(),
             timeout: WORKTREE_GIT_TIMEOUT_MS,
@@ -2185,7 +2237,7 @@ export function registerWorktreeHandlers(
               let patch = '';
 
               try {
-                const diffArgs = ['diff', '--no-color', '--find-renames', '--unified=3', baseBranch, '--'];
+                const diffArgs = ['diff', '--no-color', '--find-renames', '--unified=3', baseRef, '--'];
                 if (file.previousPath && file.previousPath !== file.path) {
                   diffArgs.push(file.previousPath, file.path);
                 } else {
@@ -2193,7 +2245,7 @@ export function registerWorktreeHandlers(
                 }
 
                 const patchResult = await execFileAsync(getToolPath('git'), diffArgs, {
-                  cwd: worktreePath,
+                  cwd: workspacePath,
                   encoding: 'utf-8',
                   env: getIsolatedGitEnv(),
                   timeout: WORKTREE_GIT_TIMEOUT_MS,
@@ -2217,9 +2269,9 @@ export function registerWorktreeHandlers(
           let untrackedFiles: WorktreeDiffFile[] = [];
           try {
             const trackedPaths = new Set(fileEntries.map((file) => file.path));
-            untrackedFiles = (await getUntrackedFilePaths(worktreePath))
+            untrackedFiles = (await getUntrackedFilePaths(workspacePath))
               .filter((filePath) => !trackedPaths.has(filePath))
-              .map((filePath) => createUntrackedWorktreeDiffFile(worktreePath, filePath))
+              .map((filePath) => createUntrackedWorktreeDiffFile(workspacePath, filePath))
               .filter((file): file is WorktreeDiffFile => !!file);
           } catch (untrackedError) {
             console.warn('[TASK_WORKTREE_DIFF] Failed to inspect untracked files:', untrackedError);
@@ -3385,14 +3437,12 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Task not found' };
         }
 
-        const worktreePath = findTaskWorktree(project.path, task.specId);
-        if (!worktreePath) {
-          return { success: false, error: `Worktree not found for task ${task.specId}. The task may not have an active worktree.` };
-        }
+        const workspace = getTaskDiffWorkspace(project.path, task.specId, project.autoBuildPath);
+        const workspacePath = workspace.path;
 
         // Get current branch
         const currentBranchResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', 'HEAD'], {
-          cwd: worktreePath,
+          cwd: workspacePath,
           encoding: 'utf-8',
           env: getIsolatedGitEnv(),
           timeout: WORKTREE_GIT_TIMEOUT_MS,
@@ -3403,16 +3453,14 @@ export function registerWorktreeHandlers(
         let compareTarget = '';
         try {
           const upstreamResult = await execFileAsync(getToolPath('git'), ['rev-parse', '--abbrev-ref', '@{upstream}'], {
-            cwd: worktreePath,
+            cwd: workspacePath,
             encoding: 'utf-8',
             env: getIsolatedGitEnv(),
             timeout: WORKTREE_GIT_TIMEOUT_MS,
           });
           compareTarget = (upstreamResult.stdout as string).trim();
         } catch {
-          // No upstream, use main branch
-          const baseBranch = getEffectiveBaseBranch(project.path, task.specId, project.settings?.mainBranch);
-          compareTarget = `origin/${baseBranch}`;
+          compareTarget = resolveTaskDiffBaseRef(project.path, task.specId, workspace, project.settings?.mainBranch);
         }
 
         // Get commit log
@@ -3420,7 +3468,7 @@ export function registerWorktreeHandlers(
           getToolPath('git'),
           ['log', `${compareTarget}..HEAD`, '--topo-order', '--pretty=format:%H%x00%h%x00%s%x00%an%x00%ar%x00%at%x00%P%x00%D'],
           {
-            cwd: worktreePath,
+            cwd: workspacePath,
             encoding: 'utf-8',
             env: getIsolatedGitEnv(),
             timeout: WORKTREE_GIT_TIMEOUT_MS,

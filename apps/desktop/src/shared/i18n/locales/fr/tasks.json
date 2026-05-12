@@ -294,8 +294,13 @@
     "requireReviewDescription": "Lorsque activé, vous serez invité à réviser la spécification et le plan d'implémentation avant le début de la phase de codage. Cela vous permet d'approuver, de demander des modifications ou de fournir des commentaires.",
     "workflowOptimization": {
       "label": "Optimisation du flux de travail",
-      "description": "Choisissez le niveau d'optimisation pour cette tâche. Une optimisation plus élevée signifie une exécution plus rapide mais moins de contrôles de qualité.",
+      "description": "Choisissez comment cette tâche doit être exécutée. Le mode direct ignore la planification par étapes et la QA; les autres modes utilisent le flux normal avec différents contrôles qualité.",
       "recommended": "Recommandé",
+      "off": {
+        "title": "Mode désactivé",
+        "description": "Envoie la tâche directement au modèle dans une seule session de codage, sans spécification, planification ni QA.",
+        "performance": "Chemin le plus rapide; enregistre un résumé final pour la revue humaine."
+      },
       "conservative": {
         "title": "Conservateur",
         "description": "Assurance qualité maximale avec des contrôles complets. Idéal pour les versions de production et les fonctionnalités critiques.",

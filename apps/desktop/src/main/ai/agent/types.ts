@@ -66,6 +66,8 @@ export interface SerializableSessionConfig {
   configDir?: string;
   /** Pre-resolved path to OAuth token file for file-based OAuth providers (e.g., Codex). Worker-safe. */
   oauthTokenFilePath?: string;
+  /** Persist OpenAI Responses API state across tool-call steps. Disable for one-shot sessions. */
+  responsePersistence?: boolean;
   /** MCP options resolved from project settings (serialized for worker) */
   mcpOptions?: {
     context7Enabled?: boolean;

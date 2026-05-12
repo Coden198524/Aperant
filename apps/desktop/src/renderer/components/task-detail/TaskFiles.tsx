@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
+import { useState, useEffect, useCallback, useRef, useMemo, type MouseEvent } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
@@ -31,6 +31,11 @@ const ALLOWED_EXTENSIONS = ['.md', '.json'];
 
 type FileViewMode = 'reader' | 'source';
 type FileKind = 'markdown' | 'json' | 'text';
+type FileContextMenuState = {
+  x: number;
+  y: number;
+  file: FileNode;
+};
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ParsedJson = { value: JsonValue; error?: never } | { value?: never; error: string };
 
@@ -173,8 +178,10 @@ export function TaskFiles({ task }: TaskFilesProps) {
   const [isLoadingContent, setIsLoadingContent] = useState(false);
   const [contentError, setContentError] = useState<string | null>(null);
   const [viewMode, setViewMode] = useState<FileViewMode>('reader');
+  const [contextMenu, setContextMenu] = useState<FileContextMenuState | null>(null);
 
   // Ref for keyboard navigation
+  const rootRef = useRef<HTMLDivElement>(null);
   const fileListRef = useRef<HTMLDivElement>(null);
 
   // Load files from spec directory
@@ -265,6 +272,64 @@ export function TaskFiles({ task }: TaskFilesProps) {
       console.error('Failed to open in IDE:', err);
     }
   }, [settings.preferredIDE, settings.customIDEPath, task.specsPath]);
+
+  const handleFileContextMenu = useCallback((event: MouseEvent, file: FileNode) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    const containerRect = rootRef.current?.getBoundingClientRect();
+    const menuWidth = 220;
+    const menuHeight = 44;
+    const rawX = containerRect ? event.clientX - containerRect.left : event.clientX;
+    const rawY = containerRect ? event.clientY - containerRect.top : event.clientY;
+    const maxX = (containerRect?.width ?? window.innerWidth) - menuWidth - 8;
+    const maxY = (containerRect?.height ?? window.innerHeight) - menuHeight - 8;
+
+    setContextMenu({
+      x: Math.max(8, Math.min(rawX, maxX)),
+      y: Math.max(8, Math.min(rawY, maxY)),
+      file
+    });
+  }, []);
+
+  const handleShowItemInFolder = useCallback(async () => {
+    if (!contextMenu) return;
+
+    const filePath = contextMenu.file.path;
+    setContextMenu(null);
+
+    try {
+      const result = await window.electronAPI.showItemInFolder(filePath);
+      if (!result.success) {
+        throw new Error(result.error || 'Failed to show item in folder');
+      }
+    } catch (err) {
+      console.error('Failed to show item in folder:', err);
+    }
+  }, [contextMenu]);
+
+  useEffect(() => {
+    if (!contextMenu) return;
+
+    const closeContextMenu = () => setContextMenu(null);
+    const handleEscape = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') {
+        closeContextMenu();
+      }
+    };
+
+    window.addEventListener('click', closeContextMenu);
+    window.addEventListener('resize', closeContextMenu);
+    window.addEventListener('scroll', closeContextMenu, true);
+    window.addEventListener('keydown', handleEscape);
+
+    return () => {
+      window.removeEventListener('click', closeContextMenu);
+      window.removeEventListener('resize', closeContextMenu);
+      window.removeEventListener('scroll', closeContextMenu, true);
+      window.removeEventListener('keydown', handleEscape);
+    };
+  }, [contextMenu]);
 
   // Keyboard navigation for file list
   const handleKeyDown = useCallback((e: React.KeyboardEvent) => {
@@ -437,7 +502,7 @@ export function TaskFiles({ task }: TaskFilesProps) {
   };
 
   return (
-    <div className="h-full flex">
+    <div ref={rootRef} className="relative h-full flex">
       {/* File list sidebar */}
       <div className="w-52 border-r border-border flex flex-col">
         {/* Sidebar header */}
@@ -495,6 +560,7 @@ export function TaskFiles({ task }: TaskFilesProps) {
                   role="option"
                   aria-selected={selectedFile === file.path}
                   onClick={() => loadFileContent(file.path)}
+                  onContextMenu={(event) => handleFileContextMenu(event, file)}
                   className={cn(
                     'w-full flex items-center gap-2 px-2 py-1.5 rounded-md text-left transition-colors',
                     'hover:bg-secondary/50 focus:outline-none focus:ring-2 focus:ring-ring focus:ring-offset-1',
@@ -567,6 +633,23 @@ export function TaskFiles({ task }: TaskFilesProps) {
           {renderContent()}
         </ScrollArea>
       </div>
+      {contextMenu && (
+        <div
+          className="absolute z-[1000] min-w-52 overflow-hidden rounded-md border border-border bg-popover py-1 text-popover-foreground shadow-lg"
+          style={{ left: contextMenu.x, top: contextMenu.y }}
+          onClick={(event) => event.stopPropagation()}
+          onContextMenu={(event) => event.preventDefault()}
+        >
+          <button
+            type="button"
+            className="flex w-full items-center gap-2 px-3 py-2 text-left text-xs transition-colors hover:bg-accent hover:text-accent-foreground focus:bg-accent focus:text-accent-foreground focus:outline-none"
+            onClick={handleShowItemInFolder}
+          >
+            <FolderOpen className="h-3.5 w-3.5" />
+            {t('tasks:files.showItemInFolder', { defaultValue: '打开所在目录并选中文件' })}
+          </button>
+        </div>
+      )}
     </div>
   );
 }

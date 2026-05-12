@@ -554,6 +554,7 @@ export const IPC_CHANNELS = {
   // File explorer operations
   FILE_EXPLORER_LIST: 'fileExplorer:list',
   FILE_EXPLORER_READ: 'fileExplorer:read',
+  FILE_EXPLORER_SHOW_ITEM_IN_FOLDER: 'fileExplorer:showItemInFolder',
 
   // Git operations
   GIT_GET_BRANCHES: 'git:getBranches',

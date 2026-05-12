@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -103,6 +103,94 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(requirements).not.toHaveProperty('generated_by_fallback');
       expect(runSession).toHaveBeenCalledTimes(3);
       expect(runSession.mock.calls[0][0].outputSchema).toBeDefined();
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('compacts aggressive simple quick specs into one coder subtask', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn(async () => {
+      await writeFile(join(specDir, 'spec.md'), '# Quick Spec: Tetris\n', 'utf-8');
+      await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+        feature: 'Tetris',
+        workflow_type: 'simple',
+        phases: [
+          {
+            id: '1',
+            phase: 1,
+            name: 'Implementation',
+            subtasks: [
+              {
+                id: '1-1',
+                title: 'Add tetromino logic',
+                description: 'Create tetromino shapes and rotation rules.',
+                status: 'pending',
+                files_to_create: ['src/game.ts'],
+              },
+              {
+                id: '1-2',
+                title: 'Add board state',
+                description: 'Create board state and line clearing.',
+                status: 'pending',
+                files_to_create: ['src/game.ts'],
+              },
+              {
+                id: '1-3',
+                title: 'Add controls',
+                description: 'Handle keyboard input.',
+                status: 'pending',
+                files_to_modify: ['src/game.ts'],
+              },
+            ],
+          },
+        ],
+      }, null, 2), 'utf-8');
+
+      return {
+        outcome: 'completed' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 2,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Create a small Tetris game',
+        complexityOverride: 'simple',
+        workflowConfig: { optimizationLevel: 'aggressive' },
+        generatePrompt: vi.fn(async () => 'Create quick spec and plan.'),
+        runSession,
+      });
+
+      const runPhase = (orchestrator as unknown as {
+        runPhase: (phase: SpecPhase, phaseNumber: number, totalPhases: number) => Promise<SpecPhaseResult>;
+      }).runPhase.bind(orchestrator);
+
+      const result = await runPhase('quick_spec', 1, 1);
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        phases: Array<{ subtasks: Array<{
+          title: string;
+          description: string;
+          files_to_create?: string[];
+          files_to_modify?: string[];
+        }> }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(plan.phases).toHaveLength(1);
+      expect(plan.phases[0].subtasks).toHaveLength(1);
+      expect(plan.phases[0].subtasks[0].title).toBe('Implement complete task');
+      expect(plan.phases[0].subtasks[0].description).toContain('Add tetromino logic');
+      expect(plan.phases[0].subtasks[0].description).toContain('Add board state');
+      expect(plan.phases[0].subtasks[0].description).toContain('Add controls');
+      expect(plan.phases[0].subtasks[0].files_to_create).toEqual(['src/game.ts']);
+      expect(plan.phases[0].subtasks[0].files_to_modify).toEqual(['src/game.ts']);
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }

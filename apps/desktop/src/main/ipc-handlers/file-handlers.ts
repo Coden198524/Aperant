@@ -1,6 +1,6 @@
-import { ipcMain } from 'electron';
+import { ipcMain, shell } from 'electron';
 import { readdirSync } from 'fs';
-import { readFile } from 'fs/promises';
+import { readFile, stat } from 'fs/promises';
 import path from 'path';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { IPCResult, FileNode } from '../../shared/types';
@@ -129,6 +129,32 @@ export function registerFileHandlers(): void {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to read file'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_EXPLORER_SHOW_ITEM_IN_FOLDER,
+    async (_, filePath: string): Promise<IPCResult<void>> => {
+      try {
+        const validation = validatePath(filePath);
+        if (!validation.valid) {
+          return { success: false, error: validation.error };
+        }
+
+        const safePath = validation.path;
+        const fileStat = await stat(safePath);
+        if (fileStat.isDirectory()) {
+          return { success: false, error: 'Path must be a file' };
+        }
+
+        shell.showItemInFolder(safePath);
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to show item in folder'
         };
       }
     }

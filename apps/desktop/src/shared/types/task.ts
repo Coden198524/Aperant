@@ -189,7 +189,7 @@ export interface TaskDraft {
 export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex';
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
-export type TaskWorkflowMode = 'conservative' | 'balanced' | 'aggressive';
+export type TaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
 // Re-export ThinkingLevel (defined in settings.ts) for convenience
 export type { ThinkingLevel };
 /** Model identifier — Claude shorthands or concrete model IDs from any provider */

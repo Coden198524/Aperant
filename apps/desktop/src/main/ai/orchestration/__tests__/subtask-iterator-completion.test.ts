@@ -122,11 +122,14 @@ describe('iterateSubtasks completion gating', () => {
       phases: Array<{ subtasks: Array<{ completion_summary?: string; notes?: string }> }>;
     };
 
-    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toBe(
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('| What changed |');
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain(
       'Implemented the detail view summary and verified with targeted tests.'
     );
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('| Verification |');
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('| Review notes |');
     expect(updatedPlan.phases[0].subtasks[0].notes).toBe(
-      'Implemented the detail view summary and verified with targeted tests.'
+      updatedPlan.phases[0].subtasks[0].completion_summary
     );
   });
 

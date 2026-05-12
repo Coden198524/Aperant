@@ -77,7 +77,7 @@ export interface WorktreeResult {
  * @param useLocalBranch If true, always use the local base branch instead of
  *                       the remote ref (preserves gitignored files)
  * @param pushNewBranches If true, push the branch to origin and set upstream
- *                        tracking after worktree creation. Defaults to true.
+ *                        tracking after worktree creation. Defaults to false.
  * @param autoBuildPath  Optional custom data directory (e.g. ".autocode").
  *                       Passed to getSpecsDir() for spec-copy logic.
  */
@@ -86,7 +86,7 @@ export async function createOrGetWorktree(
   specId: string,
   baseBranch = 'main',
   useLocalBranch = false,
-  pushNewBranches = true,
+  pushNewBranches = false,
   autoBuildPath?: string,
 ): Promise<WorktreeResult> {
   const worktreePath = join(projectPath, '.autocode/worktrees/tasks', specId);

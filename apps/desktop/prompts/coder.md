@@ -1102,10 +1102,10 @@ After successful verification, update the subtask:
 
 ```json
 "status": "completed",
-"completion_summary": "[What changed, what was verified, and any reviewer notes]"
+"completion_summary": "| Item | Details |\n| --- | --- |\n| What changed | [specific changes] |\n| Verification | [checks run and result] |\n| Review notes | [risks, caveats, or manual review focus] |"
 ```
 
-Keep the completion summary concise and specific enough for human review.
+Keep the completion summary concise, structured, and specific enough for human review.
 
 **Only change the status and completion_summary fields. Never modify:**
 - Subtask descriptions

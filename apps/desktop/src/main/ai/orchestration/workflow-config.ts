@@ -53,6 +53,13 @@ export interface WorkflowConfig {
 
   /** Maximum spec phase retries */
   maxSpecPhaseRetries?: number;
+
+  /**
+   * Skip the AI QA reviewer when coding and local quality gates have completed.
+   * Intended for aggressive/simple workflows where a full reviewer pass costs
+   * more than it adds.
+   */
+  skipAIQAReview?: boolean;
 }
 
 // =============================================================================
@@ -69,6 +76,7 @@ const CONSERVATIVE_PRESET: Required<WorkflowConfig> = {
   maxSubtaskRetries: 3,
   maxQACycles: 3,
   maxSpecPhaseRetries: 2,
+  skipAIQAReview: false,
   qualityChecks: {
     enableSmokeTests: true,
     enablePatternInjection: true,
@@ -94,6 +102,7 @@ const BALANCED_PRESET: Required<WorkflowConfig> = {
   maxSubtaskRetries: 2,
   maxQACycles: 2,
   maxSpecPhaseRetries: 2,
+  skipAIQAReview: false,
   qualityChecks: {
     enableSmokeTests: false,
     enablePatternInjection: false,
@@ -119,6 +128,7 @@ const AGGRESSIVE_PRESET: Required<WorkflowConfig> = {
   maxSubtaskRetries: 2,
   maxQACycles: 1,
   maxSpecPhaseRetries: 1,
+  skipAIQAReview: true,
   qualityChecks: {
     enableSmokeTests: false,
     enablePatternInjection: false,

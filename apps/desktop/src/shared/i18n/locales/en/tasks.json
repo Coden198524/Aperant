@@ -303,8 +303,13 @@
     "requireReviewDescription": "When enabled, you'll be prompted to review the spec and implementation plan before the coding phase begins. This allows you to approve, request changes, or provide feedback.",
     "workflowOptimization": {
       "label": "Workflow Optimization",
-      "description": "Choose the optimization level for this task. Higher optimization means faster execution but fewer quality checks.",
+      "description": "Choose how this task should be executed. Direct mode skips staged planning and QA; other modes run the normal workflow with different quality checks.",
       "recommended": "Recommended",
+      "off": {
+        "title": "Off Mode",
+        "description": "Send the task directly to the model in one coding session without spec, planning, or QA phases.",
+        "performance": "Fastest path; records a final summary for manual review."
+      },
       "conservative": {
         "title": "Conservative",
         "description": "Maximum quality assurance with comprehensive checks. Best for production releases and critical features.",

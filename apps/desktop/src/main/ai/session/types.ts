@@ -62,6 +62,8 @@ export interface SessionConfig {
   provider?: import('../providers/types').SupportedProvider;
   /** Context window limit in tokens for reactive compaction guard */
   contextWindowLimit?: number;
+  /** Persist OpenAI Responses API state across tool-call steps. Disable for one-shot sessions. */
+  responsePersistence?: boolean;
   /**
    * Optional Zod schema for structured output.
    *

@@ -10,6 +10,7 @@ import type { z } from 'zod/v3';
 
 import type { SecurityProfile } from '../security/bash-validator';
 import type { FileContentCache } from './cache/file-cache';
+import type { TaskWorkflowMode } from '../../../shared/types';
 
 // ---------------------------------------------------------------------------
 // Tool Context
@@ -36,6 +37,8 @@ export interface ToolContext {
   allowedWritePaths?: string[];
   /** Optional file content cache for session-scoped caching */
   fileCache?: FileContentCache;
+  /** Current task workflow mode, used for mode-specific tool behavior */
+  workflowMode?: TaskWorkflowMode;
 }
 
 // ---------------------------------------------------------------------------
