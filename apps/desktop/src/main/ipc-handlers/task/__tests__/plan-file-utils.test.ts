@@ -9,7 +9,7 @@ vi.mock('../../../project-store', () => ({
   },
 }));
 
-import { persistPlanTokenUsageSync } from '../plan-file-utils';
+import { persistPlanTokenUsageSync, syncPlanPhasesToMainSync } from '../plan-file-utils';
 import { projectStore } from '../../../project-store';
 
 describe('plan-file-utils token usage persistence', () => {
@@ -61,5 +61,30 @@ describe('plan-file-utils token usage persistence', () => {
       sessionId: 'new-session',
     });
     expect(projectStore.invalidateTasksCache).toHaveBeenCalledWith('project-1');
+  });
+
+  it('does not overwrite an executable plan with stale empty watcher phases', () => {
+    writeFileSync(
+      planPath,
+      JSON.stringify({
+        phases: [
+          {
+            phase: 1,
+            name: 'Implementation',
+            subtasks: [
+              { id: '1.1', title: 'Implement', description: 'Do work', status: 'pending' },
+            ],
+          },
+        ],
+      }),
+      'utf-8'
+    );
+
+    const success = syncPlanPhasesToMainSync(planPath, [], 'project-1');
+    const plan = JSON.parse(readFileSync(planPath, 'utf-8'));
+
+    expect(success).toBe(false);
+    expect(plan.phases[0].subtasks).toHaveLength(1);
+    expect(projectStore.invalidateTasksCache).not.toHaveBeenCalled();
   });
 });

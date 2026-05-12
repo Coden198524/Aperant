@@ -49,6 +49,33 @@ function normalizeStatus(value: unknown): string {
   return statusMap[lower] ?? (SUBTASK_STATUS_VALUES.includes(lower as typeof SUBTASK_STATUS_VALUES[number]) ? lower : 'pending');
 }
 
+function coerceVerification(value: unknown): unknown {
+  if (typeof value === 'string') {
+    const run = value.trim();
+    return run ? { type: 'manual', run } : undefined;
+  }
+
+  if (Array.isArray(value)) {
+    const run = value
+      .filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+      .map((item) => item.trim())
+      .join('; ');
+    return run ? { type: 'manual', run } : undefined;
+  }
+
+  if (value && typeof value === 'object') {
+    const raw = value as Record<string, unknown>;
+    return {
+      ...raw,
+      type: raw.type ?? raw.method ?? 'manual',
+      run: raw.run ?? raw.command ?? raw.instructions ?? undefined,
+      scenario: raw.scenario ?? raw.description ?? undefined,
+    };
+  }
+
+  return value;
+}
+
 // =============================================================================
 // Subtask Schema (with coercion)
 // =============================================================================
@@ -82,21 +109,7 @@ function coerceSubtask(input: unknown): unknown {
     // Coerce verification object: accept method as alias for type.
     // Non-object verification values (strings, etc.) are NOT coerced — let Zod
     // reject them so the validation retry loop can tell the LLM what's wrong.
-    verification: raw.verification && typeof raw.verification === 'object'
-      ? {
-          ...(raw.verification as Record<string, unknown>),
-          type: (raw.verification as Record<string, unknown>).type
-            ?? (raw.verification as Record<string, unknown>).method
-            ?? undefined,
-          run: (raw.verification as Record<string, unknown>).run
-            ?? (raw.verification as Record<string, unknown>).command
-            ?? (raw.verification as Record<string, unknown>).instructions
-            ?? undefined,
-          scenario: (raw.verification as Record<string, unknown>).scenario
-            ?? (raw.verification as Record<string, unknown>).description
-            ?? undefined,
-        }
-      : raw.verification,
+    verification: coerceVerification(raw.verification),
   };
 }
 

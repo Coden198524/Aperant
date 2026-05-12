@@ -71,6 +71,7 @@ export interface TokenUsage {
   thinkingTokens?: number;
   cacheReadTokens?: number;
   cacheCreationTokens?: number;
+  estimated?: boolean;  // True when provider did not return usage and the value is locally estimated
   stepsExecuted?: number;  // Number of AI model requests (steps)
   sessionId?: string;  // Unique ID for each AI session to track cross-session accumulation
 }

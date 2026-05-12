@@ -147,6 +147,8 @@ export interface TokenUsage {
   cacheReadTokens?: number;
   /** Cache creation tokens (Anthropic prompt caching) */
   cacheCreationTokens?: number;
+  /** True when provider did not return usage and the value is locally estimated */
+  estimated?: boolean;
   /** Unique ID for each AI session to track cross-session accumulation */
   sessionId?: string;
 }

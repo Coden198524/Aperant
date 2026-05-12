@@ -85,19 +85,42 @@ function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage)
     result: Math.max(prevSteps, incomingSteps),
   });
 
+  const preferIncomingTokens = !incoming.estimated || previous.estimated === true;
+
   // WorkerBridge emits task-level cumulative usage, including any historical
   // baseline loaded when a task is resumed. Persisting must be idempotent:
   // adding again on sessionId changes double-counts requests after pause/resume.
   return {
-    promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
-    completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
-    totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
+    promptTokens: preferIncomingTokens
+      ? Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0)
+      : previous.promptTokens,
+    completionTokens: preferIncomingTokens
+      ? Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0)
+      : previous.completionTokens,
+    totalTokens: preferIncomingTokens
+      ? Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0)
+      : previous.totalTokens,
     thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
     cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
     cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
     stepsExecuted: Math.max(prevSteps, incomingSteps) || undefined,
+    estimated: previous.estimated === true && incoming.estimated === true ? true : undefined,
     sessionId: incoming.sessionId, // Always use the latest sessionId
   };
+}
+
+function countSubtasksInPhases(phases: unknown): number {
+  if (!Array.isArray(phases)) {
+    return 0;
+  }
+
+  return phases.reduce((total, phase) => {
+    if (!phase || typeof phase !== 'object') {
+      return total;
+    }
+    const subtasks = (phase as { subtasks?: unknown }).subtasks;
+    return total + (Array.isArray(subtasks) ? subtasks.length : 0);
+  }, 0);
 }
 
 /**
@@ -681,6 +704,15 @@ export function syncPlanPhasesToMainSync(
     const plan = loadImplementationPlanFromFilesSync(mainPlanPath);
     if (!plan) {
       console.warn(`[plan-file-utils] Unrepairable JSON in ${mainPlanPath} - phase sync skipped`);
+      return false;
+    }
+
+    const existingSubtaskCount = countSubtasksInPhases(plan.phases);
+    const incomingSubtaskCount = countSubtasksInPhases(phases);
+    if (existingSubtaskCount > 0 && incomingSubtaskCount === 0) {
+      console.warn(
+        `[plan-file-utils] Skipping empty phase sync to ${mainPlanPath}: existing plan has ${existingSubtaskCount} subtask(s)`
+      );
       return false;
     }
 

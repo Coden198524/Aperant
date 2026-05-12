@@ -141,15 +141,36 @@ describe('PlanSubtaskSchema', () => {
     expect(result.success).toBe(false);
   });
 
-  it('rejects string verification (must be an object for retry feedback)', () => {
+  it('coerces string verification to a manual verification object', () => {
     const result = PlanSubtaskSchema.safeParse({
       id: '1.1',
       title: 'Add HiDPI support',
       status: 'pending',
       verification: 'Open in Chrome, canvas should render sharp on DPR=2',
     });
-    // String verification should fail so the retry loop can tell the LLM what's wrong
-    expect(result.success).toBe(false);
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.verification).toEqual({
+        type: 'manual',
+        run: 'Open in Chrome, canvas should render sharp on DPR=2',
+      });
+    }
+  });
+
+  it('coerces verification lists to manual verification instructions', () => {
+    const result = PlanSubtaskSchema.safeParse({
+      id: '1.1',
+      title: 'Verify task',
+      status: 'pending',
+      verification: ['Run tests', 'Open the app'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.verification).toEqual({
+        type: 'manual',
+        run: 'Run tests; Open the app',
+      });
+    }
   });
 
   it('coerces "files_modified" to "files_to_modify"', () => {

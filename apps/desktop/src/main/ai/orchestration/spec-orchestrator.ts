@@ -405,6 +405,60 @@ function extensionOf(fileName: string): string {
   return dot >= 0 ? fileName.slice(dot).toLowerCase() : '';
 }
 
+const EXPLICIT_FILE_PATTERN = /(?:^|[\s`"'([{,:;])([A-Za-z0-9_@./-]+\.[A-Za-z0-9]{1,12})(?=$|[\s`"'\])},:;.!?])/g;
+
+const CREATE_TARGET_RULES: Array<{
+  pattern: RegExp;
+  files: string[];
+}> = [
+  { pattern: /(readme|docs?|documentation|\u6587\u6863|\u8bf4\u660e)/i, files: ['README.md'] },
+  { pattern: /(html|web|\u7f51\u9875|\u9875\u9762|\u6d4f\u89c8\u5668)/i, files: ['index.html'] },
+  { pattern: /(react|vite)/i, files: ['package.json', 'src/App.tsx'] },
+  { pattern: /(node|express|javascript|js\b)/i, files: ['package.json', 'src/index.js'] },
+  { pattern: /(typescript|ts\b)/i, files: ['package.json', 'src/index.ts'] },
+  { pattern: /(python|py\b)/i, files: ['main.py'] },
+  { pattern: /(go\b|golang)/i, files: ['go.mod', 'main.go'] },
+  { pattern: /(rust|cargo)/i, files: ['Cargo.toml', 'src/main.rs'] },
+  { pattern: /(java\b|maven|gradle)/i, files: ['src/main/java/Main.java'] },
+  { pattern: /(c#|csharp|\.net)/i, files: ['Program.cs'] },
+  { pattern: /(c\+\+|cpp|cxx|\u63a7\u5236\u53f0|console)/i, files: ['CMakeLists.txt', 'src/main.cpp'] },
+  { pattern: /(\bc\b|clang|gcc)/i, files: ['CMakeLists.txt', 'src/main.c'] },
+  { pattern: /(shell|bash|sh\b)/i, files: ['script.sh'] },
+  { pattern: /(powershell|pwsh|ps1)/i, files: ['script.ps1'] },
+];
+
+function extractExplicitTaskFiles(taskDescription: string): string[] {
+  const files: string[] = [];
+  const normalized = taskDescription.replace(/\\/g, '/');
+  for (const match of normalized.matchAll(EXPLICIT_FILE_PATTERN)) {
+    const file = match[1]?.replace(/^\.?\//, '').trim();
+    if (!file || file.startsWith('.autocode/')) {
+      continue;
+    }
+    const lower = file.toLowerCase();
+    if (COMMON_LOW_VALUE_ROOT_FILES.has(lower)) {
+      continue;
+    }
+    files.push(file);
+  }
+  return uniqueStrings(files);
+}
+
+function inferAggressiveCreateFiles(taskDescription: string, patternFiles: string[]): string[] {
+  if (patternFiles.length > 0) {
+    return [];
+  }
+
+  const task = normalizeTaskDescription(taskDescription);
+  const explicitFiles = extractExplicitTaskFiles(task);
+  if (explicitFiles.length > 0) {
+    return explicitFiles.slice(0, 4);
+  }
+
+  const matched = CREATE_TARGET_RULES.find((rule) => rule.pattern.test(task));
+  return matched ? matched.files : [];
+}
+
 function _scoreAggressiveRootCandidate(fileName: string, task: string): number {
   const lower = fileName.toLowerCase();
   const ext = extensionOf(lower);
@@ -573,6 +627,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
   patternFiles: string[] = [],
 ): QuickSpecPlan {
   const task = normalizeTaskDescription(taskDescription);
+  const filesToCreate = inferAggressiveCreateFiles(task, patternFiles);
   const feature = oneLine(task, 120);
   const isChinese = language === 'zh-CN';
   const title = isChinese ? '\u5b9e\u73b0\u5b8c\u6574\u4efb\u52a1' : 'Implement complete task';
@@ -646,7 +701,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
               title,
               description: [task, '', implementationInstruction].join('\n'),
               status: 'pending',
-              files_to_create: [],
+              files_to_create: filesToCreate,
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
               verification: {

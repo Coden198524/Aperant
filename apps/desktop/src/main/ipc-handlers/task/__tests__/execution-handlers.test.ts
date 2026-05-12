@@ -20,7 +20,7 @@ vi.mock('fs', () => ({
 }));
 
 vi.mock('child_process', () => ({
-  spawnSync: vi.fn(),
+  spawnSync: vi.fn(() => ({ status: 0, stdout: '', stderr: '' })),
   execFileSync: vi.fn(),
 }));
 
@@ -456,6 +456,77 @@ describe('registerTaskExecutionHandlers', () => {
     );
   });
 
+  it('uses worktree plan subtasks on TASK_START when the main plan is still empty', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { initializeClaudeProfileManager } = await import('../../../claude-profile-manager');
+    const { checkGitStatus } = await import('../../../project-initializer');
+    const { findTaskWorktree } = await import('../../../worktree-paths');
+    const fs = await import('fs');
+
+    (initializeClaudeProfileManager as Mock).mockResolvedValue({
+      hasValidAuth: () => true,
+    });
+    (checkGitStatus as Mock).mockReturnValue({
+      isGitRepo: true,
+      hasCommits: true,
+    });
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-worktree-plan',
+        specId: '001-worktree-plan',
+        projectId: 'project-fast',
+        title: 'Worktree plan task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'stopped',
+        subtasks: [],
+        logs: [],
+        metadata: {},
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (findTaskWorktree as Mock).mockReturnValue('E:/Work/FastProject/.autocode/worktrees/tasks/001-worktree-plan');
+    (fs.existsSync as Mock).mockImplementation((filePath: string) =>
+      filePath.includes('spec.md') || filePath.includes('implementation_plan.json')
+    );
+    (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
+      const normalizedPath = filePath.replace(/\\/g, '/');
+      if (normalizedPath.includes('.autocode/worktrees/tasks/001-worktree-plan')) {
+        return JSON.stringify({
+          phases: [
+            {
+              phase: 1,
+              subtasks: [{ id: '1.1', status: 'pending' }],
+            },
+          ],
+        });
+      }
+      if (filePath.includes('implementation_plan.json')) {
+        return JSON.stringify({ phases: [] });
+      }
+      return '';
+    });
+
+    const startHandler = onHandlers[IPC_CHANNELS.TASK_START];
+    await startHandler({}, '001-worktree-plan', { projectId: 'project-fast' });
+
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-worktree-plan',
+      { type: 'USER_RESUMED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+  });
+
   it('starts direct execution for workflow off tasks without spec creation', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
@@ -861,14 +932,14 @@ describe('registerTaskExecutionHandlers', () => {
         phases: [
           expect.objectContaining({
             subtasks_file: 'implementation_plan.phase-1.json',
-            subtasks: [
+            subtasks: expect.arrayContaining([
               expect.objectContaining({ id: '1.1' }),
               expect.objectContaining({
                 id: '1.2',
                 status: 'pending',
                 description: expect.stringContaining('继续优化 UI 细节'),
               }),
-            ],
+            ]),
           }),
         ],
       }),

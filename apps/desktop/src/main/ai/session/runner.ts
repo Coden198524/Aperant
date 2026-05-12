@@ -90,6 +90,8 @@ const WRITE_TOOL_INPUT_ERROR_PATTERNS = [
 
 const MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION = 2;
 
+const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
+
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
   return (
@@ -517,6 +519,8 @@ async function executeStream(
   const maxSteps = baseMaxSteps; // Keep for outcome detection
   const progressTracker = new ProgressTracker();
   const messages: SessionMessage[] = [...config.initialMessages];
+  let streamedCompletionChars = 0;
+  let streamedContextChars = 0;
 
   // Context window guard: track prompt tokens per step
   const contextWindowLimit = config.contextWindowLimit ?? 0;
@@ -787,6 +791,12 @@ async function executeStream(
     for await (const part of result.fullStream) {
       resetStreamInactivityTimer(); // Reset on each part
       streamHandler.processPart(part as FullStreamPart);
+      const estimatedPartSize = estimateStreamPartSize(part as FullStreamPart);
+      if (isCompletionStreamPart(part as FullStreamPart)) {
+        streamedCompletionChars += estimatedPartSize;
+      } else {
+        streamedContextChars += estimatedPartSize;
+      }
 
       const writeToolInputFailure = getWriteToolInputFailure(part as FullStreamPart);
       if (writeToolInputFailure) {
@@ -942,9 +952,9 @@ async function executeStream(
     messages.push({ role: 'assistant', content: responseText });
   }
 
-  // Get total usage from AI SDK result
-  // AI SDK v6 uses inputTokens/outputTokens naming
-  let totalUsage: { inputTokens?: number; outputTokens?: number } | undefined;
+  // Get total usage from AI SDK result. Providers differ in field naming, so
+  // normalize below instead of assuming only inputTokens/outputTokens.
+  let totalUsage: unknown;
 
   try {
     totalUsage = await withTimeout(result.totalUsage, POST_STREAM_TIMEOUT_MS, 'result.totalUsage');
@@ -952,18 +962,35 @@ async function executeStream(
     // Fall through - use summary usage collected during stream iteration.
   }
 
-  // For models that don't return usage in finish-step (e.g., OpenAI Responses API),
-  // totalUsage will have the data while summary.usage will be all zeros.
-  // Prefer totalUsage when available.
+  const normalizedTotalUsage = normalizeTokenUsage(totalUsage);
+  const estimatedUsage = estimateTokenUsageFromSession({
+    systemPrompt: config.systemPrompt,
+    messages,
+    streamedCompletionChars,
+    streamedContextChars,
+  });
+
+  // For models that don't return usage in finish-step, totalUsage may have the
+  // data while summary.usage is all zeros. Prefer normalized totalUsage when it
+  // contains any token information.
   const usage: TokenUsage = {
-    promptTokens: totalUsage?.inputTokens ?? summary.usage.promptTokens,
-    completionTokens: totalUsage?.outputTokens ?? summary.usage.completionTokens,
+    promptTokens: normalizedTotalUsage
+      ? normalizedTotalUsage.promptTokens
+      : summary.usage.totalTokens > 0
+        ? summary.usage.promptTokens
+        : estimatedUsage.promptTokens,
+    completionTokens: normalizedTotalUsage
+      ? normalizedTotalUsage.completionTokens
+      : summary.usage.totalTokens > 0
+        ? summary.usage.completionTokens
+        : estimatedUsage.completionTokens,
     totalTokens:
-      // FIX: Only fallback to summary when totalUsage is undefined, not when it's 0
-      // The previous logic `0 || X` incorrectly treated valid 0 values as falsy
-      totalUsage !== undefined
-        ? (totalUsage.inputTokens ?? 0) + (totalUsage.outputTokens ?? 0)
-        : summary.usage.totalTokens,
+      normalizedTotalUsage
+        ? normalizedTotalUsage.totalTokens
+        : summary.usage.totalTokens > 0
+          ? summary.usage.totalTokens
+          : estimatedUsage.totalTokens,
+    ...(normalizedTotalUsage || summary.usage.totalTokens > 0 ? {} : { estimated: true }),
     sessionId,
   };
 
@@ -1004,6 +1031,117 @@ async function executeStream(
 // =============================================================================
 // Helpers
 // =============================================================================
+
+function readNumberField(source: Record<string, unknown>, names: string[]): number | undefined {
+  for (const name of names) {
+    const value = source[name];
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function normalizeTokenUsage(value: unknown): TokenUsage | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+
+  const record = value as Record<string, unknown>;
+  const promptTokens = readNumberField(record, [
+    'inputTokens',
+    'promptTokens',
+    'prompt_tokens',
+    'input_tokens',
+  ]) ?? 0;
+  const completionTokens = readNumberField(record, [
+    'outputTokens',
+    'completionTokens',
+    'completion_tokens',
+    'output_tokens',
+  ]) ?? 0;
+  const explicitTotal = readNumberField(record, [
+    'totalTokens',
+    'total_tokens',
+  ]);
+  const totalTokens = explicitTotal ?? promptTokens + completionTokens;
+
+  if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
+    return null;
+  }
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens,
+  };
+}
+
+function estimateTokensFromChars(chars: number): number {
+  return Math.max(1, Math.ceil(chars / TOKEN_ESTIMATE_CHARS_PER_TOKEN));
+}
+
+function safeJsonLength(value: unknown): number {
+  try {
+    return JSON.stringify(value)?.length ?? 0;
+  } catch {
+    return String(value ?? '').length;
+  }
+}
+
+function estimateStreamPartSize(part: FullStreamPart): number {
+  const record = part as Record<string, unknown>;
+  const type = typeof record.type === 'string' ? record.type : '';
+
+  if (type === 'text-delta') {
+    return typeof record.delta === 'string'
+      ? record.delta.length
+      : typeof record.text === 'string'
+        ? record.text.length
+        : 0;
+  }
+  if (type === 'reasoning-delta' || type === 'reasoning') {
+    return typeof record.delta === 'string'
+      ? record.delta.length
+      : typeof record.text === 'string'
+        ? record.text.length
+        : 0;
+  }
+  if (type === 'tool-call') {
+    return safeJsonLength(record.input ?? record.args ?? record);
+  }
+  if (type === 'tool-result') {
+    return safeJsonLength(record.output ?? record.result ?? record);
+  }
+
+  return 0;
+}
+
+function isCompletionStreamPart(part: FullStreamPart): boolean {
+  const type = (part as { type?: unknown }).type;
+  return type === 'text-delta' || type === 'reasoning-delta' || type === 'reasoning';
+}
+
+function estimateTokenUsageFromSession(input: {
+  systemPrompt: string;
+  messages: SessionMessage[];
+  streamedCompletionChars: number;
+  streamedContextChars: number;
+}): TokenUsage {
+  const promptChars = input.systemPrompt.length
+    + input.messages.reduce((total, message) => total + message.content.length, 0)
+    + input.streamedContextChars;
+  const completionChars = input.streamedCompletionChars;
+  const promptTokens = estimateTokensFromChars(promptChars);
+  const completionTokens = estimateTokensFromChars(completionChars);
+
+  return {
+    promptTokens,
+    completionTokens,
+    totalTokens: promptTokens + completionTokens,
+    estimated: true,
+  };
+}
 
 /**
  * Build an error SessionResult.

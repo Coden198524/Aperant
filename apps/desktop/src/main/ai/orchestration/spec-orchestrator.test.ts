@@ -246,5 +246,65 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       await rm(specDir, { recursive: true, force: true });
     }
   });
+
+  it('adds generic create-file hints for aggressive quick specs in empty projects', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Task: 用 C++ 实现一个控制台贪吃蛇游戏',
+        complexityOverride: 'simple',
+        workflowConfig: { optimizationLevel: 'aggressive' },
+        generatePrompt: vi.fn(async () => 'should not be used'),
+        runSession,
+        language: 'zh-CN',
+      });
+
+      const result = await orchestrator.run();
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        phases: Array<{ subtasks: Array<{
+          files_to_create?: string[];
+          pattern_files?: string[];
+        }> }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(runSession).not.toHaveBeenCalled();
+      expect(plan.phases[0].subtasks[0].files_to_create).toEqual(['CMakeLists.txt', 'src/main.cpp']);
+      expect(plan.phases[0].subtasks[0].pattern_files).toBeUndefined();
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('prefers explicit filenames over inferred aggressive create-file hints', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Task: Create a Python tool in tools/report.py',
+        complexityOverride: 'simple',
+        workflowConfig: { optimizationLevel: 'aggressive' },
+        generatePrompt: vi.fn(async () => 'should not be used'),
+        runSession,
+      });
+
+      const result = await orchestrator.run();
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        phases: Array<{ subtasks: Array<{ files_to_create?: string[] }> }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(plan.phases[0].subtasks[0].files_to_create).toEqual(['tools/report.py']);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
 });
 

@@ -142,14 +142,23 @@ function mergeTokenUsageForTask(
     return incoming;
   }
 
+  const preferIncomingTokens = !incoming.estimated || previous.estimated === true;
+
   return {
-    promptTokens: Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0),
-    completionTokens: Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0),
-    totalTokens: Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0),
+    promptTokens: preferIncomingTokens
+      ? Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0)
+      : previous.promptTokens,
+    completionTokens: preferIncomingTokens
+      ? Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0)
+      : previous.completionTokens,
+    totalTokens: preferIncomingTokens
+      ? Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0)
+      : previous.totalTokens,
     thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
     cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
     cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
     stepsExecuted: Math.max(previous.stepsExecuted ?? 0, incoming.stepsExecuted ?? 0) || undefined,
+    estimated: previous.estimated === true && incoming.estimated === true ? true : undefined,
   };
 }
 

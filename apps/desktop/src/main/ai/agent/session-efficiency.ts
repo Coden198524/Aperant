@@ -193,6 +193,9 @@ export function buildFocusedCoderKickoffMessageFromContext(
     `Project root: ${promptProjectDir}.`,
     `Plan file for final status update: ${promptSpecDir}/implementation_plan.json.`,
   ];
+  if (/^[A-Za-z]:\//.test(promptProjectDir)) {
+    lines.push(`Windows command path: use \`cd /d ${promptProjectDir.replace(/\//g, '\\')}\` for Bash commands; do not convert it to Unix-style paths such as \`/e/...\`.`);
+  }
 
   if (context) {
     lines.push('');
@@ -221,13 +224,17 @@ export function buildFocusedCoderKickoffMessageFromContext(
   if (readFirst.length > 0) {
     lines.push('Read only these files first:');
     lines.push(formatBulletList(readFirst));
+  } else if (context?.filesToCreate.length) {
+    lines.push('No existing file read is required. Create or overwrite/update the listed output files directly unless the task is ambiguous.');
+  } else if (context) {
+    lines.push('No file focus was provided by the plan. If the request clearly creates new output, choose conventional target files directly. If it modifies existing code, do at most one narrow root-file check before editing. Do not run repeated globs or broad scans.');
   } else {
     lines.push('No file list is provided. Do one minimal target discovery only: check obvious root files by name or a narrow glob, then edit the best match. Avoid broad repo scans.');
   }
 
   if (context?.filesToCreate.length) {
     lines.push('');
-    lines.push('Create or update these outputs if needed:');
+    lines.push('Create or overwrite/update these outputs if needed:');
     lines.push(formatBulletList(context.filesToCreate));
   }
 
@@ -247,8 +254,8 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');
   lines.push('- Prefer the smallest code change that satisfies the subtask.');
   lines.push('- Run the listed verification before finishing.');
-  lines.push('- For C/C++ verification on Windows, prefer clang++ -std=c++17 or newer when clang++ is available; do not try g++ first unless it is known present, and do not try C++11 with modern MSVC headers.');
-  lines.push('- Limit compiler error output where supported, for example -ferror-limit=3 for clang++ or -fmax-errors=3 for g++.');
+  lines.push('- If the listed verification tool is unavailable, discover one compatible alternative at most, then run the best available targeted check.');
+  lines.push('- Keep failed verification output compact; include only the first 3-5 relevant error lines needed to fix the issue.');
   lines.push('- When verification passes, immediately call update_subtask_status for this subtask before writing any final summary.');
   lines.push('- Do not write a long final response before the status update. After the update succeeds, provide only a compact review matrix.');
 

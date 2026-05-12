@@ -440,6 +440,11 @@ function summarizeSessionResult(result: SessionResult): string | undefined {
     return undefined;
   }
 
+  const tableSummary = extractCompletionSummaryTable(content);
+  if (tableSummary) {
+    return tableSummary;
+  }
+
   const normalized = content
     .replace(/```[\s\S]*?```/g, ' ')
     .replace(/`([^`]+)`/g, '$1')
@@ -457,6 +462,27 @@ function summarizeSessionResult(result: SessionResult): string | undefined {
     : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
 
   return formatCompletionSummaryTable(compacted, result);
+}
+
+function extractCompletionSummaryTable(content: string): string | undefined {
+  const lines = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const start = lines.findIndex((line, index) => {
+    const next = lines[index + 1] ?? '';
+    return /^\|\s*(Item|项目)\s*\|\s*(Details|详情)\s*\|$/i.test(line) &&
+      /^\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|$/.test(next);
+  });
+
+  if (start < 0) {
+    return undefined;
+  }
+
+  const tableLines = lines
+    .slice(start)
+    .filter((line) => line.startsWith('|') && line.endsWith('|'));
+  return tableLines.length >= 3 ? tableLines.join('\n') : undefined;
 }
 
 function escapeMarkdownTableCell(value: string): string {

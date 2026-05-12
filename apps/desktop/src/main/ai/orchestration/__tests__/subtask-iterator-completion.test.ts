@@ -133,6 +133,49 @@ describe('iterateSubtasks completion gating', () => {
     );
   });
 
+  it('preserves assistant completion tables without wrapping them again', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    const table = [
+      '| Item | Details |',
+      '|---|---|',
+      '| What changed | Added match-3 gameplay loop. |',
+      '| Verification | Build passed. |',
+      '| Review notes | Ready for manual review. |',
+    ].join('\n');
+
+    await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => ({
+        ...makeResult('completed'),
+        messages: [
+          { role: 'assistant', content: table },
+        ],
+      }),
+    });
+
+    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+      phases: Array<{ subtasks: Array<{ completion_summary?: string }> }>;
+    };
+
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toBe(table);
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).not.toContain('Session outcome');
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).not.toContain('\\| Item \\| Details \\|');
+  });
+
   it('preserves long fallback completion summaries for human review', async () => {
     const plan = {
       phases: [

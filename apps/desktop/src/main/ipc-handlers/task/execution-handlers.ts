@@ -136,6 +136,23 @@ function hasPlanSubtasks(planFilePath: string): boolean {
   }
 }
 
+function hasPlanSubtasksInAnyPath(planFilePaths: string[]): boolean {
+  return Array.from(new Set(planFilePaths)).some((planFilePath) => hasPlanSubtasks(planFilePath));
+}
+
+function getPlanFilePathsForTask(project: Project, task: Task, specsBaseDir: string): string[] {
+  const paths = [
+    path.join(project.path, specsBaseDir, task.specId, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+  ];
+
+  const worktreePath = findTaskWorktree(project.path, task.specId);
+  if (worktreePath) {
+    paths.push(path.join(worktreePath, specsBaseDir, task.specId, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+  }
+
+  return paths;
+}
+
 function isDirectWorkflowTask(task: Task): boolean {
   return task.metadata?.workflowMode === 'off';
 }
@@ -326,7 +343,7 @@ export function registerTaskExecutionHandlers(
 
     const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
     const hasSpec = existsSync(specFilePath);
-    const planHasSubtasks = hasPlanSubtasks(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+    const planHasSubtasks = hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
     const needsSpecCreation = !hasSpec;
     const needsImplementation = hasSpec && !planHasSubtasks;
 
@@ -468,17 +485,7 @@ export function registerTaskExecutionHandlers(
         specsBaseDir,
         task.specId
       );
-      const planFilePath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
-      let planHasSubtasks = false;
-      const planContent = safeReadFileSync(planFilePath);
-      if (planContent) {
-        try {
-          const plan = JSON.parse(planContent);
-          planHasSubtasks = checkSubtasksCompletion(plan).totalCount > 0;
-        } catch {
-          // Invalid/corrupt plan file - treat as no subtasks
-        }
-      }
+      const planHasSubtasks = hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
 
       // Immediately mark as started so the UI moves the card to In Progress.
       // Use XState actor state as source of truth (if actor exists), with task data as fallback.

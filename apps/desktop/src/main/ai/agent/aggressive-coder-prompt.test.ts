@@ -11,4 +11,12 @@ describe('buildAggressiveCoderPrompt', () => {
     expect(prompt).toContain('Do not write a long final summary before update_subtask_status');
     expect(prompt).toContain('After the status update succeeds');
   });
+
+  it('keeps aggressive verification failures compact', () => {
+    const prompt = buildAggressiveCoderPrompt();
+
+    expect(prompt).toContain('first 3-5 relevant error lines');
+    expect(prompt).toContain('filter noisy output');
+    expect(prompt).toContain('create or overwrite/update the listed target files directly');
+  });
 });

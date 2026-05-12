@@ -94,6 +94,31 @@ function makeOrchestrator(runSession = vi.fn().mockResolvedValue(makeSessionResu
   });
 }
 
+function makeAggressiveOrchestrator(runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'))): BuildOrchestrator {
+  return new BuildOrchestrator({
+    specDir: '/spec',
+    projectDir: '/project',
+    generatePrompt: vi.fn().mockResolvedValue('prompt'),
+    runSession,
+    workflowConfig: {
+      optimizationLevel: 'aggressive',
+      skipAIQAReview: true,
+      maxPlanningRetries: 1,
+      maxSubtaskRetries: 2,
+      maxQACycles: 1,
+      maxSpecPhaseRetries: 1,
+      qualityChecks: {
+        enableSmokeTests: false,
+        enablePatternInjection: false,
+        enableSelfCritique: false,
+        enablePreImplementationChecklist: false,
+        enableTieredQualityStandards: false,
+      },
+      specCreationMode: 'unified',
+    },
+  });
+}
+
 describe('BuildOrchestrator QA recovery', () => {
   beforeEach(() => {
     mockReadFile.mockReset();
@@ -253,6 +278,37 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(phases[0]).toBe('planning');
     expect(phases).toContain('coding');
     expect(phases).toContain('qa_review');
+  });
+
+  it('skips planner in aggressive mode when quick plan already has executable subtasks', async () => {
+    let codingRuns = 0;
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.json')) {
+        return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+      totalSubtasks: 1,
+      completedSubtasks: 1,
+      stuckSubtasks: [],
+      cancelled: false,
+      };
+    });
+
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeAggressiveOrchestrator(runSession);
+    const logs: string[] = [];
+    orchestrator.on('log', (message) => logs.push(message));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(runSession.mock.calls.some(([config]) => config.agentType === 'planner')).toBe(false);
+    expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
+    expect(logs.some(log => log.includes('skipping planner session'))).toBe(true);
   });
 
   it('continues planning when split rewrite fails but the main implementation plan is executable', async () => {

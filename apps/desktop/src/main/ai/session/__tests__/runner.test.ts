@@ -40,7 +40,7 @@ function createMockConfig(overrides: Partial<SessionConfig> = {}): SessionConfig
  */
 function createMockStreamResult(
   parts: Array<Record<string, unknown>>,
-  options?: { text?: string; totalUsage?: { inputTokens: number; outputTokens: number } },
+  options?: { text?: string; totalUsage?: Record<string, number> | null },
 ) {
   return {
     fullStream: (async function* () {
@@ -50,7 +50,9 @@ function createMockStreamResult(
     })(),
     text: Promise.resolve(options?.text ?? ''),
     totalUsage: Promise.resolve(
-      options?.totalUsage ?? { inputTokens: 100, outputTokens: 50 },
+      options?.totalUsage === null
+        ? undefined
+        : options?.totalUsage ?? { inputTokens: 100, outputTokens: 50 },
     ),
   };
 }
@@ -201,6 +203,46 @@ describe('runAgentSession', () => {
 
     expect(result.outcome).toBe('error');
     expect(result.error!.code).toBe('generic_error');
+  });
+
+  it('normalizes snake_case total usage from compatible providers', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [
+          { type: 'text-delta', id: 'text-1', delta: 'Done' },
+          { type: 'finish-step', usage: { promptTokens: 0, completionTokens: 0 } },
+        ],
+        { text: 'Done', totalUsage: { prompt_tokens: 120, completion_tokens: 30, total_tokens: 150 } },
+      ),
+    );
+
+    const result = await runAgentSession(createMockConfig());
+
+    expect(result.usage.promptTokens).toBe(120);
+    expect(result.usage.completionTokens).toBe(30);
+    expect(result.usage.totalTokens).toBe(150);
+  });
+
+  it('estimates token usage when the provider returns no usage', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [
+          { type: 'text-delta', id: 'text-1', delta: 'Generated source code content.' },
+          { type: 'tool-call', toolName: 'Write', toolCallId: 'c1', input: { file_path: 'src/main.ts', content: 'x'.repeat(200) } },
+          { type: 'tool-result', toolName: 'Write', toolCallId: 'c1', output: 'Successfully wrote file' },
+          { type: 'finish-step', usage: { promptTokens: 0, completionTokens: 0 } },
+        ],
+        { text: 'Generated source code content.', totalUsage: null },
+      ),
+    );
+
+    const result = await runAgentSession(createMockConfig({
+      systemPrompt: 'System prompt text.',
+      initialMessages: [{ role: 'user', content: 'Create a file.' }],
+    }));
+
+    expect(result.usage.totalTokens).toBeGreaterThan(0);
+    expect(result.usage.estimated).toBe(true);
   });
 
   it('should treat stream error parts as fatal session errors', async () => {

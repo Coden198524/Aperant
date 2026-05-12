@@ -1055,6 +1055,18 @@ export class BuildOrchestrator extends EventEmitter {
    */
   private async shouldRunPlanningPhase(): Promise<boolean> {
     try {
+      if (this.config.workflowConfig?.optimizationLevel === 'aggressive') {
+        const planPath = join(this.config.specDir, 'implementation_plan.json');
+        const validation = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
+        if (validation.valid) {
+          const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
+          if (hasExecutableSubtasks(plan)) {
+            this.emitTyped('log', 'Aggressive workflow: using existing quick implementation plan and skipping planner session');
+            return false;
+          }
+        }
+      }
+
       const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
       if (!plan || !Array.isArray(plan.phases) || plan.phases.length === 0) {
         return true;

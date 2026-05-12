@@ -627,9 +627,10 @@ async function assemblePrompt(
       'This task is running in aggressive mode. Keep coding to one compact implementation session.',
       '- Use the kickoff subtask details as primary context; do not start by reading spec.md or implementation_plan.json when Current Subtask is present.',
       '- Avoid broad repository discovery. Read only files required for the implementation.',
+      '- On Windows project roots such as E:\\path, use that path directly in commands; do not rewrite it as /e/path.',
       '- Prefer one target write/edit pass, one targeted verification, then completion.',
-      '- For C/C++ verification on Windows, use clang++ -std=c++17 or newer when clang++ is available; do not try C++11 first with modern MSVC headers.',
-      '- Limit compiler error output where supported, for example -ferror-limit=3 for clang++ or -fmax-errors=3 for g++.',
+      '- If verification needs an unavailable tool, discover one compatible alternative at most.',
+      '- Keep failed verification output compact; include only the first relevant errors needed to fix the issue.',
     ].join('\n');
   }
 
