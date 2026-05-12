@@ -115,6 +115,20 @@ describe('Read Tool', () => {
     expect(result).not.toContain('line4');
   });
 
+  it('should cap default reads in aggressive mode', async () => {
+    const content = Array.from({ length: 150 }, (_, i) => `line${i + 1}`).join('\n');
+    setupTextFile(content);
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/project/file.ts' },
+      { ...baseContext, workflowMode: 'aggressive' },
+    ) as string;
+
+    expect(result).toContain('line120');
+    expect(result).not.toContain('line121');
+    expect(result).toContain('Showing lines 1-120 of 150 total lines');
+  });
+
   it('should show truncation notice when there are more lines beyond limit', async () => {
     const lines = Array.from({ length: 10 }, (_, i) => `line${i + 1}`);
     setupTextFile(lines.join('\n'));

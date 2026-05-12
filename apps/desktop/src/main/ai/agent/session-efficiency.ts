@@ -222,7 +222,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
     lines.push('Read only these files first:');
     lines.push(formatBulletList(readFirst));
   } else {
-    lines.push('Start from the files most directly tied to this subtask. Avoid broad repo scans.');
+    lines.push('No file list is provided. Do one minimal target discovery only: check obvious root files by name or a narrow glob, then edit the best match. Avoid broad repo scans.');
   }
 
   if (context?.filesToCreate.length) {
@@ -247,7 +247,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');
   lines.push('- Prefer the smallest code change that satisfies the subtask.');
   lines.push('- Run the listed verification before finishing.');
-  lines.push('- For C/C++ verification on Windows, prefer clang++ -std=c++17 or newer when clang++ is available; do not try C++11 first with modern MSVC headers.');
+  lines.push('- For C/C++ verification on Windows, prefer clang++ -std=c++17 or newer when clang++ is available; do not try g++ first unless it is known present, and do not try C++11 with modern MSVC headers.');
   lines.push('- Limit compiler error output where supported, for example -ferror-limit=3 for clang++ or -fmax-errors=3 for g++.');
   lines.push('- After verification passes, update only this subtask status to "completed" in implementation_plan.json immediately.');
 

@@ -195,4 +195,49 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       await rm(specDir, { recursive: true, force: true });
     }
   });
+
+  it('generates aggressive simple quick specs without an AI planning session', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: '用 C++ 实现一个控制台俄罗斯方块游戏',
+        complexityOverride: 'simple',
+        workflowConfig: { optimizationLevel: 'aggressive' },
+        generatePrompt: vi.fn(async () => 'should not be used'),
+        runSession,
+        language: 'zh-CN',
+      });
+      const events: string[] = [];
+      orchestrator.on('phase-start', (phase) => events.push(`start:${phase}`));
+      orchestrator.on('phase-complete', (phase) => events.push(`complete:${phase}`));
+
+      await writeFile(join(specDir, 'main.cpp'), 'int main() { return 0; }\n', 'utf-8');
+      await writeFile(join(specDir, 'README.md'), '# Test\n', 'utf-8');
+
+      const result = await orchestrator.run();
+      const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        workflow_type: string;
+        phases: Array<{ subtasks: Array<{ title: string; status: string; pattern_files?: string[] }> }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(runSession).not.toHaveBeenCalled();
+      expect(spec).toContain('用 C++ 实现一个控制台俄罗斯方块游戏');
+      expect(plan.workflow_type).toBe('simple');
+      expect(plan.phases[0].subtasks).toHaveLength(1);
+      expect(plan.phases[0].subtasks[0]).toMatchObject({
+        title: '实现完整任务',
+        status: 'pending',
+      });
+      expect(plan.phases[0].subtasks[0].pattern_files).toContain('main.cpp');
+      expect(events).toEqual(['start:quick_spec', 'complete:quick_spec']);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
 });

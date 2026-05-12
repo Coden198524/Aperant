@@ -26,6 +26,7 @@ import type { FileContentCache } from '../cache/file-cache';
 // ---------------------------------------------------------------------------
 
 const DEFAULT_LINE_LIMIT = 2000;
+const AGGRESSIVE_DEFAULT_LINE_LIMIT = 120;
 const MAX_LINE_LENGTH = 2000;
 
 const IMAGE_EXTENSIONS = new Set([
@@ -182,7 +183,11 @@ export const readTool = Tool.define({
 
       const lines = content.split(/\r?\n/);
       const startLine = offset ?? 0;
-      const lineLimit = limit ?? DEFAULT_LINE_LIMIT;
+      const lineLimit = limit ?? (
+        context.workflowMode === 'aggressive'
+          ? AGGRESSIVE_DEFAULT_LINE_LIMIT
+          : DEFAULT_LINE_LIMIT
+      );
 
       const sliced = lines.slice(startLine, startLine + lineLimit);
       const result = formatWithLineNumbers(sliced.join('\n'), startLine);

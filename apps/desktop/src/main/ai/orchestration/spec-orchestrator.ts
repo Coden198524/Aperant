@@ -14,7 +14,7 @@
  * into the next phase's kickoff message, eliminating redundant file re-reads.
  */
 
-import { readFile, writeFile, access } from 'node:fs/promises';
+import { readFile, writeFile, access, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { EventEmitter } from 'events';
 
@@ -175,6 +175,35 @@ export interface SpecOrchestratorConfig {
   runSession: (config: SpecSessionRunConfig) => Promise<SessionResult>;
 }
 
+interface QuickSpecPlan {
+  specMarkdown: string;
+  implementationPlan: {
+    feature: string;
+    workflow_type: string;
+    phases: Array<{
+      id: string;
+      phase: number;
+      name: string;
+      depends_on: string[];
+      subtasks: Array<{
+        id: string;
+        title: string;
+        description: string;
+        status: 'pending';
+        files_to_create?: string[];
+        files_to_modify?: string[];
+        pattern_files?: string[];
+        verification: {
+          type: string;
+          run: string;
+          scenario?: string;
+        };
+      }>;
+    }>;
+    split_plan: false;
+  };
+}
+
 /** Context passed to prompt generation */
 export interface SpecPromptContext {
   /** Current phase number (1-indexed) */
@@ -303,6 +332,189 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values
     .map((value) => value?.trim())
     .filter((value): value is string => Boolean(value))));
+}
+
+function normalizeTaskDescription(taskDescription: string | undefined): string {
+  const trimmed = taskDescription?.trim();
+  if (!trimmed) {
+    return 'Complete the requested task';
+  }
+  return trimmed.length > 1200 ? `${trimmed.slice(0, 1200)}...` : trimmed;
+}
+
+function oneLine(value: string, maxLength: number): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length > maxLength ? `${compact.slice(0, maxLength - 3)}...` : compact;
+}
+
+function escapeMarkdownTableCell(value: string): string {
+  return value.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
+const COMMON_LOW_VALUE_ROOT_FILES = new Set([
+  'task_logs.json',
+  'task_metadata.json',
+  'requirements.json',
+  'implementation_plan.json',
+  'spec.md',
+]);
+
+const SOURCE_FILE_EXTENSIONS = new Set([
+  '.ts',
+  '.tsx',
+  '.js',
+  '.jsx',
+  '.mjs',
+  '.cjs',
+  '.cpp',
+  '.cc',
+  '.cxx',
+  '.c',
+  '.h',
+  '.hpp',
+  '.html',
+  '.css',
+  '.scss',
+  '.py',
+  '.java',
+  '.cs',
+  '.go',
+  '.rs',
+  '.php',
+  '.rb',
+  '.swift',
+  '.kt',
+]);
+
+function extensionOf(fileName: string): string {
+  const dot = fileName.lastIndexOf('.');
+  return dot >= 0 ? fileName.slice(dot).toLowerCase() : '';
+}
+
+function scoreAggressiveRootCandidate(fileName: string, task: string): number {
+  const lower = fileName.toLowerCase();
+  const ext = extensionOf(lower);
+  let score = 0;
+
+  if (COMMON_LOW_VALUE_ROOT_FILES.has(lower)) {
+    score -= 10;
+  }
+  if (SOURCE_FILE_EXTENSIONS.has(ext)) {
+    score += 8;
+  }
+  if (lower === 'package.json') {
+    score += 6;
+  }
+  if (lower === 'index.html' || lower.startsWith('main.') || lower.startsWith('app.')) {
+    score += 5;
+  }
+  if (lower.startsWith('readme.')) {
+    score += 1;
+  }
+
+  if (/\b(c\+\+|cpp|cxx|控制台|console)\b/i.test(task)) {
+    if (['.cpp', '.cc', '.cxx', '.h', '.hpp', '.c'].includes(ext)) score += 12;
+    if (lower.startsWith('main.')) score += 4;
+  }
+  if (/\b(html|web|网页|页面|浏览器)\b/i.test(task)) {
+    if (['.html', '.css', '.js', '.ts'].includes(ext)) score += 10;
+    if (lower === 'index.html') score += 5;
+  }
+  if (/\b(readme|文档|说明)\b/i.test(task) && lower.startsWith('readme.')) {
+    score += 12;
+  }
+
+  return score;
+}
+
+async function inferAggressivePatternFiles(projectDir: string, taskDescription: string): Promise<string[]> {
+  try {
+    const entries = await readdir(projectDir, { withFileTypes: true });
+    return entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => ({
+        name: entry.name,
+        score: scoreAggressiveRootCandidate(entry.name, taskDescription),
+      }))
+      .filter((entry) => entry.score > 0)
+      .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
+      .slice(0, 4)
+      .map((entry) => entry.name);
+  } catch {
+    return [];
+  }
+}
+
+function buildAggressiveQuickSpecPlan(
+  taskDescription: string | undefined,
+  language?: SupportedLanguage,
+  patternFiles: string[] = [],
+): QuickSpecPlan {
+  const task = normalizeTaskDescription(taskDescription);
+  const feature = oneLine(task, 120);
+  const title = language === 'zh-CN' ? '实现完整任务' : 'Implement complete task';
+  const phaseName = language === 'zh-CN' ? '实现' : 'Implementation';
+  const verificationRun = language === 'zh-CN'
+    ? '根据项目类型运行最小可用验证；若没有自动化验证，说明已完成的人工检查。'
+    : 'Run the smallest available project-specific verification; if none exists, describe the manual check completed.';
+  const specMarkdown = [
+    `# Quick Spec: ${feature}`,
+    '',
+    '## Overview',
+    task,
+    '',
+    '## Workflow Type',
+    '**Type**: simple',
+    '',
+    '## Scope',
+    `- ${escapeMarkdownTableCell(task)}`,
+    '',
+    '## Implementation Notes',
+    '- Aggressive mode uses one focused coder session.',
+    '- The coder should inspect only files directly needed for the task.',
+    '- No new design pattern is required unless the existing code clearly demands it.',
+    '',
+    '## Success Criteria',
+    '- Requested behavior is implemented.',
+    '- A targeted verification or clear manual check is recorded.',
+    '',
+  ].join('\n');
+
+  return {
+    specMarkdown,
+    implementationPlan: {
+      feature,
+      workflow_type: 'simple',
+      phases: [
+        {
+          id: '1',
+          phase: 1,
+          name: phaseName,
+          depends_on: [],
+          subtasks: [
+            {
+              id: '1-1',
+              title,
+              description: [
+                task,
+                '',
+                'Implement the complete requested change in one focused coding session. Read only directly relevant files before editing.',
+              ].join('\n'),
+              status: 'pending',
+              files_to_create: [],
+              files_to_modify: [],
+              ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              verification: {
+                type: 'manual',
+                run: verificationRun,
+              },
+            },
+          ],
+        },
+      ],
+      split_plan: false,
+    },
+  };
 }
 
 export function isWriteToolJsonFailure(message: string): boolean {
@@ -755,6 +967,24 @@ export class SpecOrchestrator extends EventEmitter {
       this.emitTyped('log', `Running ${complexity} workflow: ${phasesToRun.join(' → ')}`);
 
       for (const phase of phasesToRun) {
+        if (
+          phase === 'quick_spec' &&
+          this.config.workflowConfig?.optimizationLevel === 'aggressive' &&
+          complexity === 'simple'
+        ) {
+          const phaseNumber = phasesExecuted.length + 1;
+          const totalPhases = phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0);
+          const result = await this.writeAggressiveQuickSpec(phaseNumber, totalPhases);
+          phasesExecuted.push(phase);
+          this.completedPhases.push(phase);
+          await this.capturePhaseOutput(phase);
+          await this.saveState();
+          if (!result.success) {
+            return this.outcome(false, phasesExecuted, Date.now() - startTime, result.errors.join('; '));
+          }
+          continue;
+        }
+
         // Skip phases that were already completed
         if (this.completedPhases.includes(phase)) {
           this.emitTyped('log', `Skipping ${phase} (already completed)`);
@@ -1211,6 +1441,44 @@ export class SpecOrchestrator extends EventEmitter {
       }
     }
     return null; // No schema for this phase
+  }
+
+  private async writeAggressiveQuickSpec(
+    phaseNumber: number,
+    totalPhases: number,
+  ): Promise<SpecPhaseResult> {
+    const phase: SpecPhase = 'quick_spec';
+    this.emitTyped('phase-start', phase, phaseNumber, totalPhases);
+
+    const plan = buildAggressiveQuickSpecPlan(
+      this.config.taskDescription ?? 'Complete the requested task',
+      this.config.language,
+      await inferAggressivePatternFiles(
+        this.config.projectDir,
+        this.config.taskDescription ?? '',
+      ),
+    );
+
+    try {
+      await writeFile(join(this.config.specDir, 'spec.md'), plan.specMarkdown, 'utf-8');
+      await writeFile(
+        join(this.config.specDir, 'implementation_plan.json'),
+        JSON.stringify(plan.implementationPlan, null, 2),
+        'utf-8',
+      );
+
+      const result: SpecPhaseResult = { phase, success: true, errors: [], retries: 0 };
+      const patternFiles = plan.implementationPlan.phases[0]?.subtasks[0]?.pattern_files ?? [];
+      const fileHint = patternFiles.length > 0 ? `; file hints: ${patternFiles.join(', ')}` : '';
+      this.emitTyped('log', `Aggressive workflow generated quick spec and one-subtask plan without an AI planning session${fileHint}`);
+      this.emitTyped('phase-complete', phase, result);
+      return result;
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const result: SpecPhaseResult = { phase, success: false, errors: [message], retries: 0 };
+      this.emitTyped('phase-complete', phase, result);
+      return result;
+    }
   }
 
   private async compactAggressiveSimplePlan(): Promise<string[]> {
