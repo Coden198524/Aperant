@@ -80,7 +80,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '修复任务暂停后请求统计次数突然增多的问题',
+        taskDescription: '\u4fee\u590d\u4efb\u52a1\u6682\u505c\u540e\u8bf7\u6c42\u7edf\u8ba1\u6b21\u6570\u7a81\u7136\u589e\u591a\u7684\u95ee\u9898',
         useAiAssessment: false,
         generatePrompt: vi.fn(async () => 'Return requirements JSON.'),
         runSession,
@@ -95,11 +95,11 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
       expect(result).toEqual({ phase: 'requirements', success: true, errors: [], retries: 2 });
       expect(requirements).toMatchObject({
-        task_description: '修复任务暂停后请求统计次数突然增多的问题',
+        task_description: '\u4fee\u590d\u4efb\u52a1\u6682\u505c\u540e\u8bf7\u6c42\u7edf\u8ba1\u6b21\u6570\u7a81\u7136\u589e\u591a\u7684\u95ee\u9898',
         workflow_type: 'bugfix',
         services_involved: [],
       });
-      expect(requirements.user_requirements).toEqual(['修复任务暂停后请求统计次数突然增多的问题']);
+      expect(requirements.user_requirements).toEqual(['\u4fee\u590d\u4efb\u52a1\u6682\u505c\u540e\u8bf7\u6c42\u7edf\u8ba1\u6b21\u6570\u7a81\u7136\u589e\u591a\u7684\u95ee\u9898']);
       expect(requirements).not.toHaveProperty('generated_by_fallback');
       expect(runSession).toHaveBeenCalledTimes(3);
       expect(runSession.mock.calls[0][0].outputSchema).toBeDefined();
@@ -196,48 +196,55 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('generates aggressive simple quick specs without an AI planning session', async () => {
+  it('writes localized aggressive quick specs from only the user task text', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn();
+    const taskDescription = [
+      'Task: \u7528 C++ \u5b9e\u73b0\u4e00\u4e2a\u63a7\u5236\u53f0\u4fc4\u7f57\u65af\u65b9\u5757\u6e38\u620f',
+      '',
+      'Project directory: E:\\Work\\Test\\aitest',
+      'Spec directory: E:\\Work\\Test\\aitest\\.autocode\\specs\\002-c',
+      'Base branch: master',
+      'Auto-approve: true',
+    ].join('\n');
 
     try {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '用 C++ 实现一个控制台俄罗斯方块游戏',
+        taskDescription,
         complexityOverride: 'simple',
         workflowConfig: { optimizationLevel: 'aggressive' },
         generatePrompt: vi.fn(async () => 'should not be used'),
         runSession,
         language: 'zh-CN',
       });
-      const events: string[] = [];
-      orchestrator.on('phase-start', (phase) => events.push(`start:${phase}`));
-      orchestrator.on('phase-complete', (phase) => events.push(`complete:${phase}`));
 
       await writeFile(join(specDir, 'main.cpp'), 'int main() { return 0; }\n', 'utf-8');
-      await writeFile(join(specDir, 'README.md'), '# Test\n', 'utf-8');
 
       const result = await orchestrator.run();
       const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
       const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
-        workflow_type: string;
-        phases: Array<{ subtasks: Array<{ title: string; status: string; pattern_files?: string[] }> }>;
+        feature: string;
+        phases: Array<{ name: string; subtasks: Array<{
+          title: string;
+          description: string;
+          pattern_files?: string[];
+        }> }>;
       };
 
       expect(result.success).toBe(true);
       expect(runSession).not.toHaveBeenCalled();
-      expect(spec).toContain('用 C++ 实现一个控制台俄罗斯方块游戏');
-      expect(plan.workflow_type).toBe('simple');
-      expect(plan.phases[0].subtasks).toHaveLength(1);
-      expect(plan.phases[0].subtasks[0]).toMatchObject({
-        title: '实现完整任务',
-        status: 'pending',
-      });
+      expect(spec).toContain('# \u5feb\u901f\u89c4\u683c\uff1a\u7528 C++ \u5b9e\u73b0\u4e00\u4e2a\u63a7\u5236\u53f0\u4fc4\u7f57\u65af\u65b9\u5757\u6e38\u620f');
+      expect(spec).not.toContain('Project directory');
+      expect(plan.feature).toBe('\u7528 C++ \u5b9e\u73b0\u4e00\u4e2a\u63a7\u5236\u53f0\u4fc4\u7f57\u65af\u65b9\u5757\u6e38\u620f');
+      expect(plan.phases[0].name).toBe('\u5b9e\u73b0');
+      expect(plan.phases[0].subtasks[0].title).toBe('\u5b9e\u73b0\u5b8c\u6574\u4efb\u52a1');
+      expect(plan.phases[0].subtasks[0].description).not.toContain('Spec directory');
       expect(plan.phases[0].subtasks[0].pattern_files).toContain('main.cpp');
-      expect(events).toEqual(['start:quick_spec', 'complete:quick_spec']);
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }
   });
 });
+

@@ -335,11 +335,25 @@ function uniqueStrings(values: Array<string | undefined>): string[] {
 }
 
 function normalizeTaskDescription(taskDescription: string | undefined): string {
-  const trimmed = taskDescription?.trim();
+  const trimmed = taskDescription?.trim().replace(/\r\n/g, '\n');
   if (!trimmed) {
     return 'Complete the requested task';
   }
-  return trimmed.length > 1200 ? `${trimmed.slice(0, 1200)}...` : trimmed;
+
+  const lines = trimmed
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean);
+  const taskLine = lines.find((line) => /^Task\s*:/i.test(line));
+  const taskOnly = taskLine
+    ? taskLine.replace(/^Task\s*:\s*/i, '').trim()
+    : lines
+      .filter((line) => !/^(Project directory|Spec directory|Base branch|Auto-approve)\s*:/i.test(line))
+      .join(' ')
+      .trim();
+  const normalized = taskOnly || trimmed;
+
+  return normalized.length > 1200 ? `${normalized.slice(0, 1200)}...` : normalized;
 }
 
 function oneLine(value: string, maxLength: number): string {
@@ -391,7 +405,7 @@ function extensionOf(fileName: string): string {
   return dot >= 0 ? fileName.slice(dot).toLowerCase() : '';
 }
 
-function scoreAggressiveRootCandidate(fileName: string, task: string): number {
+function _scoreAggressiveRootCandidate(fileName: string, task: string): number {
   const lower = fileName.toLowerCase();
   const ext = extensionOf(lower);
   let score = 0;
@@ -427,6 +441,42 @@ function scoreAggressiveRootCandidate(fileName: string, task: string): number {
   return score;
 }
 
+function scoreLocalizedAggressiveRootCandidate(fileName: string, task: string): number {
+  const lower = fileName.toLowerCase();
+  const ext = extensionOf(lower);
+  let score = 0;
+
+  if (COMMON_LOW_VALUE_ROOT_FILES.has(lower)) {
+    score -= 10;
+  }
+  if (SOURCE_FILE_EXTENSIONS.has(ext)) {
+    score += 8;
+  }
+  if (lower === 'package.json') {
+    score += 6;
+  }
+  if (lower === 'index.html' || lower.startsWith('main.') || lower.startsWith('app.')) {
+    score += 5;
+  }
+  if (lower.startsWith('readme.')) {
+    score += 1;
+  }
+
+  if (/(c\+\+|cpp|cxx|console|\u63a7\u5236\u53f0)/i.test(task)) {
+    if (['.cpp', '.cc', '.cxx', '.h', '.hpp', '.c'].includes(ext)) score += 12;
+    if (lower.startsWith('main.')) score += 4;
+  }
+  if (/(html|web|\u7f51\u9875|\u9875\u9762|\u6d4f\u89c8\u5668)/i.test(task)) {
+    if (['.html', '.css', '.js', '.ts'].includes(ext)) score += 10;
+    if (lower === 'index.html') score += 5;
+  }
+  if (/(readme|\u6587\u6863|\u8bf4\u660e)/i.test(task) && lower.startsWith('readme.')) {
+    score += 12;
+  }
+
+  return score;
+}
+
 async function inferAggressivePatternFiles(projectDir: string, taskDescription: string): Promise<string[]> {
   try {
     const entries = await readdir(projectDir, { withFileTypes: true });
@@ -434,7 +484,7 @@ async function inferAggressivePatternFiles(projectDir: string, taskDescription: 
       .filter((entry) => entry.isFile())
       .map((entry) => ({
         name: entry.name,
-        score: scoreAggressiveRootCandidate(entry.name, taskDescription),
+        score: scoreLocalizedAggressiveRootCandidate(entry.name, normalizeTaskDescription(taskDescription)),
       }))
       .filter((entry) => entry.score > 0)
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
@@ -445,7 +495,7 @@ async function inferAggressivePatternFiles(projectDir: string, taskDescription: 
   }
 }
 
-function buildAggressiveQuickSpecPlan(
+function _buildAggressiveQuickSpecPlan(
   taskDescription: string | undefined,
   language?: SupportedLanguage,
   patternFiles: string[] = [],
@@ -500,6 +550,101 @@ function buildAggressiveQuickSpecPlan(
                 '',
                 'Implement the complete requested change in one focused coding session. Read only directly relevant files before editing.',
               ].join('\n'),
+              status: 'pending',
+              files_to_create: [],
+              files_to_modify: [],
+              ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              verification: {
+                type: 'manual',
+                run: verificationRun,
+              },
+            },
+          ],
+        },
+      ],
+      split_plan: false,
+    },
+  };
+}
+
+function buildLocalizedAggressiveQuickSpecPlan(
+  taskDescription: string | undefined,
+  language?: SupportedLanguage,
+  patternFiles: string[] = [],
+): QuickSpecPlan {
+  const task = normalizeTaskDescription(taskDescription);
+  const feature = oneLine(task, 120);
+  const isChinese = language === 'zh-CN';
+  const title = isChinese ? '\u5b9e\u73b0\u5b8c\u6574\u4efb\u52a1' : 'Implement complete task';
+  const phaseName = isChinese ? '\u5b9e\u73b0' : 'Implementation';
+  const verificationRun = isChinese
+    ? '\u6839\u636e\u9879\u76ee\u7c7b\u578b\u8fd0\u884c\u6700\u5c0f\u53ef\u7528\u9a8c\u8bc1\uff1b\u82e5\u6ca1\u6709\u81ea\u52a8\u5316\u9a8c\u8bc1\uff0c\u8bf4\u660e\u5df2\u5b8c\u6210\u7684\u4eba\u5de5\u68c0\u67e5\u3002'
+    : 'Run the smallest available project-specific verification; if none exists, describe the manual check completed.';
+  const implementationInstruction = isChinese
+    ? '\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u5b8c\u6210\u6574\u4e2a\u8bf7\u6c42\u3002\u7f16\u8f91\u524d\u53ea\u9605\u8bfb\u4e0e\u4efb\u52a1\u76f4\u63a5\u76f8\u5173\u7684\u6587\u4ef6\u3002'
+    : 'Implement the complete requested change in one focused coding session. Read only directly relevant files before editing.';
+  const specMarkdown = isChinese
+    ? [
+        `# \u5feb\u901f\u89c4\u683c\uff1a${feature}`,
+        '',
+        '## \u6982\u8ff0',
+        task,
+        '',
+        '## \u5de5\u4f5c\u6d41\u7c7b\u578b',
+        '**\u7c7b\u578b**\uff1a\u7b80\u5355',
+        '',
+        '## \u8303\u56f4',
+        `- ${escapeMarkdownTableCell(task)}`,
+        '',
+        '## \u5b9e\u73b0\u8981\u70b9',
+        '- \u6fc0\u8fdb\u6a21\u5f0f\u4f7f\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u3002',
+        '- \u7f16\u7801\u667a\u80fd\u4f53\u53ea\u5e94\u68c0\u67e5\u4e0e\u4efb\u52a1\u76f4\u63a5\u76f8\u5173\u7684\u6587\u4ef6\u3002',
+        '- \u9664\u975e\u73b0\u6709\u4ee3\u7801\u660e\u786e\u9700\u8981\uff0c\u5426\u5219\u4e0d\u5f15\u5165\u65b0\u8bbe\u8ba1\u6a21\u5f0f\u3002',
+        '',
+        '## \u6210\u529f\u6807\u51c6',
+        '- \u5df2\u5b9e\u73b0\u7528\u6237\u8bf7\u6c42\u7684\u884c\u4e3a\u3002',
+        '- \u5df2\u8bb0\u5f55\u6709\u9488\u5bf9\u6027\u7684\u9a8c\u8bc1\u6216\u4eba\u5de5\u68c0\u67e5\u7ed3\u679c\u3002',
+        '',
+      ].join('\n')
+    : [
+        `# Quick Spec: ${feature}`,
+        '',
+        '## Overview',
+        task,
+        '',
+        '## Workflow Type',
+        '**Type**: simple',
+        '',
+        '## Scope',
+        `- ${escapeMarkdownTableCell(task)}`,
+        '',
+        '## Implementation Notes',
+        '- Aggressive mode uses one focused coder session.',
+        '- The coder should inspect only files directly needed for the task.',
+        '- No new design pattern is required unless the existing code clearly demands it.',
+        '',
+        '## Success Criteria',
+        '- Requested behavior is implemented.',
+        '- A targeted verification or clear manual check is recorded.',
+        '',
+      ].join('\n');
+
+  return {
+    specMarkdown,
+    implementationPlan: {
+      feature,
+      workflow_type: 'simple',
+      phases: [
+        {
+          id: '1',
+          phase: 1,
+          name: phaseName,
+          depends_on: [],
+          subtasks: [
+            {
+              id: '1-1',
+              title,
+              description: [task, '', implementationInstruction].join('\n'),
               status: 'pending',
               files_to_create: [],
               files_to_modify: [],
@@ -1450,7 +1595,7 @@ export class SpecOrchestrator extends EventEmitter {
     const phase: SpecPhase = 'quick_spec';
     this.emitTyped('phase-start', phase, phaseNumber, totalPhases);
 
-    const plan = buildAggressiveQuickSpecPlan(
+    const plan = buildLocalizedAggressiveQuickSpecPlan(
       this.config.taskDescription ?? 'Complete the requested task',
       this.config.language,
       await inferAggressivePatternFiles(
