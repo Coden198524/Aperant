@@ -72,7 +72,9 @@ describe('session-efficiency', () => {
     expect(message).toContain('Do not read spec.md or implementation_plan.json before implementation');
     expect(message).toContain('clang++ -std=c++17');
     expect(message).toContain('Do not re-plan completed work');
-    expect(message).toContain('update only this subtask status to "completed"');
+    expect(message).toContain('immediately call update_subtask_status');
+    expect(message).toContain('before writing any final summary');
+    expect(message).toContain('provide only a compact review matrix');
   });
 
   it('keeps normal workflow budgets lower than the legacy unlimited fallback', () => {

@@ -46,9 +46,10 @@ export function buildAggressiveCoderPrompt(): string {
     '',
     '## COMPLETION',
     '',
-    '- After verification, mark only this subtask completed.',
-    '- Prefer the update_subtask_status tool if available; otherwise edit only this subtask status and completion_summary in implementation_plan.json.',
-    '- Use a compact completion_summary review matrix: | Item | Details | with What changed, Verification, and Review notes.',
+    '- As soon as targeted verification passes, immediately call update_subtask_status for this subtask before any final narrative.',
+    '- Do not write a long final summary before update_subtask_status; that can trigger a redundant retry.',
+    '- Prefer the update_subtask_status tool if available; otherwise edit only this subtask status and completion_summary in implementation_plan.json immediately.',
+    '- After the status update succeeds, output only a compact completion_summary review matrix: | Item | Details | with What changed, Verification, and Review notes.',
     '- Do not commit or push unless the user or task explicitly requires it.',
   ].join('\n');
 }

@@ -249,7 +249,8 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('- Run the listed verification before finishing.');
   lines.push('- For C/C++ verification on Windows, prefer clang++ -std=c++17 or newer when clang++ is available; do not try g++ first unless it is known present, and do not try C++11 with modern MSVC headers.');
   lines.push('- Limit compiler error output where supported, for example -ferror-limit=3 for clang++ or -fmax-errors=3 for g++.');
-  lines.push('- After verification passes, update only this subtask status to "completed" in implementation_plan.json immediately.');
+  lines.push('- When verification passes, immediately call update_subtask_status for this subtask before writing any final summary.');
+  lines.push('- Do not write a long final response before the status update. After the update succeeds, provide only a compact review matrix.');
 
   return lines.join('\n');
 }
