@@ -127,6 +127,8 @@ export interface SessionResult {
   durationMs: number;
   /** Tool calls made during the session */
   toolCallCount: number;
+  /** Subtask IDs that were explicitly marked completed by update_subtask_status. */
+  completedSubtaskIds?: string[];
   /**
    * Validated structured output when outputSchema was provided in config.
    * Null if no schema was provided or if structured output extraction failed.

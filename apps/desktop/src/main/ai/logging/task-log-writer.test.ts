@@ -151,6 +151,36 @@ describe('TaskLogWriter', () => {
     ]);
   });
 
+  it('always writes parseable JSON for multiline localized text and tool details', () => {
+    const { specDir, writer } = createWriterFixture();
+    const content = '阶段开始："编码"\n包含中文、引号、反斜杠 \\\\ 和控制字符 \u0000\u0007';
+
+    writer.startPhase('coding', content);
+    writer.processEvent(
+      { type: 'text-delta', text: '| 项目 | 详情 |\n|---|---|\n| 内容 | 中文 "quoted" |' },
+      'coding',
+    );
+    writer.processEvent(
+      {
+        type: 'tool-result',
+        toolCallId: 'tool-1',
+        toolName: 'Bash',
+        result: '输出第一行\n输出第二行 "quoted"',
+        isError: false,
+        durationMs: 1,
+      },
+      'coding',
+    );
+    writer.endPhase('coding', true, '完成："编码"');
+
+    const raw = readFileSync(join(specDir, 'task_logs.json'), 'utf-8');
+    const logs = JSON.parse(raw) as TaskLogs;
+
+    expect(logs.phases.coding.entries.length).toBeGreaterThan(0);
+    expect(raw).toContain('阶段开始');
+    expect(raw).not.toContain('\u0000');
+  });
+
   it('flushes pending text for the active subtask when a phase ends', () => {
     const writer = createWriter();
     writer.startPhase('coding', 'Starting implementation');

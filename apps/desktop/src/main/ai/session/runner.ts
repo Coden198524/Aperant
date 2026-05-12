@@ -255,6 +255,29 @@ function repairWriteToolInput(rawInput: string): string | null {
   });
 }
 
+function extractCompletedSubtaskIdFromToolResult(part: FullStreamPart): string | null {
+  if (
+    part.type !== 'tool-result' ||
+    typeof (part as { toolName?: unknown }).toolName !== 'string' ||
+    !(part as { toolName: string }).toolName.endsWith('update_subtask_status')
+  ) {
+    return null;
+  }
+
+  const output = (part as { output?: unknown }).output;
+  const text = typeof output === 'string'
+    ? output
+    : output === undefined || output === null
+      ? ''
+      : JSON.stringify(output);
+
+  if (!text.includes("to status 'completed'")) {
+    return null;
+  }
+
+  return text.match(/subtask '([^']+)'/)?.[1] ?? null;
+}
+
 async function repairMalformedToolCall(options: {
   toolCall: LanguageModelV3ToolCall;
 }): Promise<LanguageModelV3ToolCall | null> {
@@ -550,6 +573,7 @@ async function executeStream(
   let writeToolInputFailureCount = 0;
   const writeToolInputFailureCallIds = new Set<string>();
   let writeToolInputCorrectionPrompt: string | undefined;
+  const completedSubtaskIds = new Set<string>();
 
   // Convergence nudge: track whether we've already nudged the agent to wrap up
   let convergenceNudgeInjected = false;
@@ -799,6 +823,11 @@ async function executeStream(
       }
 
       const writeToolInputFailure = getWriteToolInputFailure(part as FullStreamPart);
+      const completedSubtaskId = extractCompletedSubtaskIdFromToolResult(part as FullStreamPart);
+      if (completedSubtaskId) {
+        completedSubtaskIds.add(completedSubtaskId);
+      }
+
       if (writeToolInputFailure) {
         const alreadyCounted = writeToolInputFailure.toolCallId
           ? writeToolInputFailureCallIds.has(writeToolInputFailure.toolCallId)
@@ -851,6 +880,7 @@ async function executeStream(
         },
         messages,
         toolCallCount: summary.toolCallCount,
+        ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
       };
     }
 
@@ -865,6 +895,7 @@ async function executeStream(
         usage: summary.usage,
         messages,
         toolCallCount: summary.toolCallCount,
+        ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
       };
     }
 
@@ -881,6 +912,7 @@ async function executeStream(
         },
         messages,
         toolCallCount: summary.toolCallCount,
+        ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
       };
     }
     // Re-throw for classification in the outer try/catch
@@ -1024,6 +1056,7 @@ async function executeStream(
     usage,
     messages,
     toolCallCount: summary.toolCallCount,
+    ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
     ...(structuredOutput ? { structuredOutput } : {}),
   };
 }

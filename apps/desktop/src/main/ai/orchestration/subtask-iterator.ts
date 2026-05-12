@@ -319,7 +319,15 @@ export async function iterateSubtasks(
     // Auto-completing in those cases can prematurely advance to QA.
     if (result.outcome === 'completed') {
       await ensureSubtaskMarkedCompleted(config.specDir, subtask.id, result);
+    }
 
+    const subtaskCompletedByTool = result.completedSubtaskIds?.includes(subtask.id) === true;
+    if (subtaskCompletedByTool && result.outcome !== 'completed') {
+      await ensureSubtaskMarkedCompleted(config.specDir, subtask.id, result);
+    }
+
+    const subtaskCompletedInPlan = await isSubtaskCompleted(config.specDir, subtask.id);
+    if (result.outcome === 'completed' || subtaskCompletedInPlan || subtaskCompletedByTool) {
       // Re-stamp executionPhase on the worktree plan after the coder session.
       // The coder model's Edit/Write calls can overwrite executionPhase with a
       // stale value (read before persistPlanPhaseSync ran). Since the model is
@@ -330,6 +338,10 @@ export async function iterateSubtasks(
       // This keeps the main plan current during execution, not just on exit.
       if (config.sourceSpecDir) {
         await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+      }
+
+      if ((subtaskCompletedInPlan || subtaskCompletedByTool) && result.outcome !== 'completed') {
+        attemptCounts.delete(subtask.id);
       }
 
       // Extract insights from the session (opt-in, never blocks the build)
@@ -430,6 +442,31 @@ async function ensureSubtaskMarkedCompleted(
   } catch {
     // Non-fatal: if we can't update the plan the loop will retry or mark stuck
   }
+}
+
+async function isSubtaskCompleted(
+  specDir: string,
+  subtaskId: string,
+): Promise<boolean> {
+  try {
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) {
+      return false;
+    }
+
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
+        const id = subtask.id ?? withLegacyId.subtask_id;
+        if (id === subtaskId) {
+          return subtask.status === 'completed';
+        }
+      }
+    }
+  } catch {
+    // Non-fatal: fall back to normal retry handling.
+  }
+  return false;
 }
 
 function summarizeSessionResult(result: SessionResult): string | undefined {

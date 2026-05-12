@@ -226,6 +226,10 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
       const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
         feature: string;
+        source_task?: {
+          original_request?: string;
+          constraint_terms?: string[];
+        };
         phases: Array<{ name: string; subtasks: Array<{
           title: string;
           description: string;
@@ -238,8 +242,10 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(spec).toContain('# \u5feb\u901f\u89c4\u683c\uff1a\u7528 C++ \u5b9e\u73b0\u4e00\u4e2a\u63a7\u5236\u53f0\u4fc4\u7f57\u65af\u65b9\u5757\u6e38\u620f');
       expect(spec).not.toContain('Project directory');
       expect(plan.feature).toBe('\u7528 C++ \u5b9e\u73b0\u4e00\u4e2a\u63a7\u5236\u53f0\u4fc4\u7f57\u65af\u65b9\u5757\u6e38\u620f');
+      expect(plan.source_task?.constraint_terms).toEqual(expect.arrayContaining(['C++', 'Console']));
       expect(plan.phases[0].name).toBe('\u5b9e\u73b0');
       expect(plan.phases[0].subtasks[0].title).toBe('\u5b9e\u73b0\u5b8c\u6574\u4efb\u52a1');
+      expect(plan.phases[0].subtasks[0].description).toContain('C++');
       expect(plan.phases[0].subtasks[0].description).not.toContain('Spec directory');
       expect(plan.phases[0].subtasks[0].pattern_files).toContain('main.cpp');
     } finally {

@@ -15,7 +15,7 @@
  *   qa       → validation
  */
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync } from 'node:fs';
+import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { TaskLogs, TaskLogPhase, TaskLogPhaseStatus, TaskLogEntry, TaskLogEntryType } from '../../../shared/types';
 import type { StreamEvent } from '../session/types';
@@ -23,6 +23,8 @@ import type { Phase } from '../config/types';
 
 const DEFAULT_LIVE_TEXT_FLUSH_MS = 1000;
 const DEFAULT_LIVE_TEXT_MAX_CHARS = 1200;
+const TEXT_ENTRY_MAX_CHARS = 4000;
+const FIELD_MAX_CHARS = 2000;
 
 interface TaskLogWriterOptions {
   liveTextFlushMs?: number;
@@ -46,6 +48,67 @@ function toLogPhase(phase: Phase | undefined): TaskLogPhase {
     default:
       return 'coding'; // Fallback for unknown phases
   }
+}
+
+function sanitizeLogText(value: unknown, maxLength = FIELD_MAX_CHARS): string {
+  const text = typeof value === 'string'
+    ? value
+    : value === undefined || value === null
+      ? ''
+      : String(value);
+
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+
+  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+}
+
+function sanitizeEntry(entry: Partial<TaskLogEntry>, fallbackPhase: TaskLogPhase): TaskLogEntry {
+  const phase = entry.phase ?? fallbackPhase;
+  return {
+    timestamp: typeof entry.timestamp === 'string' ? entry.timestamp : new Date().toISOString(),
+    type: entry.type ?? 'info',
+    content: sanitizeLogText(entry.content),
+    phase,
+    ...(entry.subtask_id ? { subtask_id: sanitizeLogText(entry.subtask_id, 200) } : {}),
+    ...(entry.tool_name ? { tool_name: sanitizeLogText(entry.tool_name, 200) } : {}),
+    ...(entry.tool_input ? { tool_input: sanitizeLogText(entry.tool_input) } : {}),
+    ...(entry.tool_call_id ? { tool_call_id: sanitizeLogText(entry.tool_call_id, 200) } : {}),
+    ...(entry.detail ? { detail: sanitizeLogText(entry.detail, 10240) } : {}),
+    ...(entry.collapsed !== undefined ? { collapsed: Boolean(entry.collapsed) } : {}),
+  };
+}
+
+function sanitizeLogs(logs: TaskLogs): TaskLogs {
+  const phases: TaskLogs['phases'] = {
+    planning: { phase: 'planning', status: 'pending', started_at: null, completed_at: null, entries: [] },
+    coding: { phase: 'coding', status: 'pending', started_at: null, completed_at: null, entries: [] },
+    validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] },
+  };
+
+  for (const phase of Object.keys(phases) as TaskLogPhase[]) {
+    const source = logs.phases?.[phase];
+    if (!source) {
+      continue;
+    }
+    phases[phase] = {
+      phase,
+      status: source.status ?? 'pending',
+      started_at: source.started_at ?? null,
+      completed_at: source.completed_at ?? null,
+      entries: Array.isArray(source.entries)
+        ? source.entries.map((entry) => sanitizeEntry(entry, phase))
+        : [],
+    };
+  }
+
+  return {
+    spec_id: sanitizeLogText(logs.spec_id, 200),
+    created_at: typeof logs.created_at === 'string' ? logs.created_at : new Date().toISOString(),
+    updated_at: typeof logs.updated_at === 'string' ? logs.updated_at : new Date().toISOString(),
+    phases,
+  };
 }
 
 // =============================================================================
@@ -218,7 +281,7 @@ export class TaskLogWriter {
     const entry: TaskLogEntry = {
       timestamp: this.timestamp(),
       type,
-      content: content.slice(0, 2000), // Reasonable cap to prevent huge entries
+      content: sanitizeLogText(content), // Reasonable cap to prevent huge entries
       phase,
       ...(subtaskId ? { subtask_id: subtaskId } : {}),
       ...extra,
@@ -235,7 +298,7 @@ export class TaskLogWriter {
       };
     }
 
-    this.data.phases[phase].entries.push(entry);
+    this.data.phases[phase].entries.push(sanitizeEntry(entry, phase));
   }
 
   private writeToolStart(phase: TaskLogPhase, toolName: string, toolInput?: string, toolCallId?: string): void {
@@ -317,7 +380,7 @@ export class TaskLogWriter {
     const subtaskId = this.pendingTextSubtask;
 
     // Write as a text entry
-    this.addEntry(phase, 'text', content.slice(0, 4000), undefined, subtaskId);
+    this.addEntry(phase, 'text', sanitizeLogText(content, TEXT_ENTRY_MAX_CHARS), undefined, subtaskId);
     this.save();
 
     this.pendingText = '';
@@ -392,7 +455,7 @@ export class TaskLogWriter {
     if (existsSync(this.logFile)) {
       try {
         const content = readFileSync(this.logFile, 'utf-8');
-        return JSON.parse(content) as TaskLogs;
+        return sanitizeLogs(JSON.parse(content) as TaskLogs);
       } catch {
         // Corrupted file — start fresh
       }
@@ -422,10 +485,19 @@ export class TaskLogWriter {
 
       // Atomic-like write: write to temp file then rename
       const tmpFile = `${this.logFile}.tmp`;
-      writeFileSync(tmpFile, JSON.stringify(this.data, null, 2), 'utf-8');
+      this.data = sanitizeLogs(this.data);
+      const serialized = JSON.stringify(this.data, null, 2);
+      JSON.parse(serialized);
+      writeFileSync(tmpFile, serialized, 'utf-8');
+      JSON.parse(readFileSync(tmpFile, 'utf-8'));
       // renameSync is atomic on same filesystem (POSIX)
       renameSync(tmpFile, this.logFile);
     } catch {
+      try {
+        unlinkSync(`${this.logFile}.tmp`);
+      } catch {
+        // Ignore cleanup failures.
+      }
       // Non-fatal: log write failures don't break execution
       // (The UI will just show an empty log section)
     }

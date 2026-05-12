@@ -201,6 +201,10 @@ interface QuickSpecPlan {
       }>;
     }>;
     split_plan: false;
+    source_task: {
+      original_request: string;
+      constraint_terms: string[];
+    };
   };
 }
 
@@ -363,6 +367,41 @@ function oneLine(value: string, maxLength: number): string {
 
 function escapeMarkdownTableCell(value: string): string {
   return value.replace(/\|/g, '\\|').replace(/\r?\n/g, '<br>');
+}
+
+const CONSTRAINT_TERM_PATTERNS: Array<{ label: string; pattern: RegExp }> = [
+  { label: 'C++', pattern: /c\+\+|cpp|cxx/i },
+  { label: 'C', pattern: /(?:^|[^\w+#])c(?:$|[^\w+#])|clang|gcc/i },
+  { label: 'Python', pattern: /python|py\b/i },
+  { label: 'JavaScript', pattern: /javascript|js\b/i },
+  { label: 'TypeScript', pattern: /typescript|ts\b/i },
+  { label: 'Java', pattern: /java\b/i },
+  { label: 'Go', pattern: /go\b|golang/i },
+  { label: 'Rust', pattern: /rust|cargo/i },
+  { label: 'C#', pattern: /c#|csharp|\.net/i },
+  { label: 'Web', pattern: /html|web|\u7f51\u9875|\u9875\u9762|\u6d4f\u89c8\u5668/i },
+  { label: 'Console', pattern: /console|\u63a7\u5236\u53f0/i },
+  { label: 'Desktop', pattern: /desktop|electron|\u684c\u9762/i },
+  { label: 'Mobile', pattern: /mobile|android|ios|\u79fb\u52a8/i },
+  { label: 'CLI', pattern: /\bcli\b|command line|\u547d\u4ee4\u884c/i },
+];
+
+function extractConstraintTerms(taskDescription: string): string[] {
+  return CONSTRAINT_TERM_PATTERNS
+    .filter((item) => item.pattern.test(taskDescription))
+    .map((item) => item.label);
+}
+
+function buildConstraintReminder(task: string, language?: SupportedLanguage): string {
+  const terms = extractConstraintTerms(task);
+  if (terms.length === 0) {
+    return '';
+  }
+
+  const termList = terms.join(', ');
+  return language === 'zh-CN'
+    ? `必须保持原始请求中的技术/平台约束：${termList}。不要改成其他语言、运行环境或交付形态，除非用户明确要求。`
+    : `Preserve the original technical/platform constraints: ${termList}. Do not switch language, runtime, or delivery format unless the user explicitly asked for it.`;
 }
 
 const COMMON_LOW_VALUE_ROOT_FILES = new Set([
@@ -617,6 +656,10 @@ function _buildAggressiveQuickSpecPlan(
         },
       ],
       split_plan: false,
+      source_task: {
+        original_request: task,
+        constraint_terms: extractConstraintTerms(task),
+      },
     },
   };
 }
@@ -638,6 +681,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
   const implementationInstruction = isChinese
     ? '\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u5b8c\u6210\u6574\u4e2a\u8bf7\u6c42\u3002\u7f16\u8f91\u524d\u53ea\u9605\u8bfb\u4e0e\u4efb\u52a1\u76f4\u63a5\u76f8\u5173\u7684\u6587\u4ef6\u3002'
     : 'Implement the complete requested change in one focused coding session. Read only directly relevant files before editing.';
+  const constraintReminder = buildConstraintReminder(task, language);
   const specMarkdown = isChinese
     ? [
         `# \u5feb\u901f\u89c4\u683c\uff1a${feature}`,
@@ -654,6 +698,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
         '## \u5b9e\u73b0\u8981\u70b9',
         '- \u6fc0\u8fdb\u6a21\u5f0f\u4f7f\u7528\u4e00\u6b21\u805a\u7126\u7684\u7f16\u7801\u4f1a\u8bdd\u3002',
         '- \u7f16\u7801\u667a\u80fd\u4f53\u53ea\u5e94\u68c0\u67e5\u4e0e\u4efb\u52a1\u76f4\u63a5\u76f8\u5173\u7684\u6587\u4ef6\u3002',
+        ...(constraintReminder ? [`- ${constraintReminder}`] : []),
         '- \u9664\u975e\u73b0\u6709\u4ee3\u7801\u660e\u786e\u9700\u8981\uff0c\u5426\u5219\u4e0d\u5f15\u5165\u65b0\u8bbe\u8ba1\u6a21\u5f0f\u3002',
         '',
         '## \u6210\u529f\u6807\u51c6',
@@ -676,6 +721,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
         '## Implementation Notes',
         '- Aggressive mode uses one focused coder session.',
         '- The coder should inspect only files directly needed for the task.',
+        ...(constraintReminder ? [`- ${constraintReminder}`] : []),
         '- No new design pattern is required unless the existing code clearly demands it.',
         '',
         '## Success Criteria',
@@ -699,7 +745,12 @@ function buildLocalizedAggressiveQuickSpecPlan(
             {
               id: '1-1',
               title,
-              description: [task, '', implementationInstruction].join('\n'),
+              description: [
+                task,
+                '',
+                implementationInstruction,
+                ...(constraintReminder ? ['', constraintReminder] : []),
+              ].join('\n'),
               status: 'pending',
               files_to_create: filesToCreate,
               files_to_modify: [],
@@ -713,6 +764,10 @@ function buildLocalizedAggressiveQuickSpecPlan(
         },
       ],
       split_plan: false,
+      source_task: {
+        original_request: task,
+        constraint_terms: extractConstraintTerms(task),
+      },
     },
   };
 }

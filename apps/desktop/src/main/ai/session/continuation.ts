@@ -104,6 +104,7 @@ export async function runContinuableSession(
   let totalStepsExecuted = 0;
   let totalToolCallCount = 0;
   let totalDurationMs = 0;
+  const completedSubtaskIds = new Set<string>();
   const cumulativeUsage: TokenUsage = {
     promptTokens: 0,
     completionTokens: 0,
@@ -119,6 +120,9 @@ export async function runContinuableSession(
     totalToolCallCount += result.toolCallCount;
     totalDurationMs += result.durationMs;
     addUsage(cumulativeUsage, result.usage);
+    for (const subtaskId of result.completedSubtaskIds ?? []) {
+      completedSubtaskIds.add(subtaskId);
+    }
 
     // If not a context window outcome, we're done
     if (result.outcome !== 'context_window') {
@@ -128,6 +132,7 @@ export async function runContinuableSession(
         toolCallCount: totalToolCallCount,
         durationMs: totalDurationMs,
         usage: cumulativeUsage,
+        ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
         continuationCount,
         cumulativeUsage,
       };
@@ -142,6 +147,7 @@ export async function runContinuableSession(
         toolCallCount: totalToolCallCount,
         durationMs: totalDurationMs,
         usage: cumulativeUsage,
+        ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
         continuationCount,
         cumulativeUsage,
       };
@@ -156,6 +162,7 @@ export async function runContinuableSession(
         toolCallCount: totalToolCallCount,
         durationMs: totalDurationMs,
         usage: cumulativeUsage,
+        ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
         continuationCount,
         cumulativeUsage,
       };
@@ -190,6 +197,7 @@ export async function runContinuableSession(
     usage: cumulativeUsage,
     messages: [],
     error: undefined,
+    ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
     continuationCount,
     cumulativeUsage,
   };

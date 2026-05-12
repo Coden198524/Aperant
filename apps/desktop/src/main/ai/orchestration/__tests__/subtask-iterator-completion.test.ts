@@ -92,6 +92,94 @@ describe('iterateSubtasks completion gating', () => {
     expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
   });
 
+  it('accepts a model-updated completed status even when the session outcome is error', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    let runs = 0;
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 2,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => {
+        runs++;
+        const currentPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+          phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
+        };
+        currentPlan.phases[0].subtasks[0].status = 'completed';
+        await writeFile(planPath, JSON.stringify(currentPlan, null, 2), 'utf-8');
+        return makeResult('error');
+      },
+    });
+
+    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+      phases: Array<{ subtasks: Array<{ status: string }> }>;
+    };
+
+    expect(runs).toBe(1);
+    expect(result.totalSubtasks).toBe(1);
+    expect(result.completedSubtasks).toBe(1);
+    expect(result.stuckSubtasks).toEqual([]);
+    expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+  });
+
+  it('trusts update_subtask_status completion evidence even if the plan was overwritten stale', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    let runs = 0;
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 2,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => {
+        runs++;
+        const stalePlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+          phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
+        };
+        stalePlan.phases[0].subtasks[0].status = 'in_progress';
+        await writeFile(planPath, JSON.stringify(stalePlan, null, 2), 'utf-8');
+        return {
+          ...makeResult('error'),
+          completedSubtaskIds: ['s1'],
+          messages: [
+            { role: 'assistant', content: '| Item | Details |\n|---|---|\n| What changed | Done. |\n| Verification | Checked. |\n| Review notes | Ready. |' },
+          ],
+        };
+      },
+    });
+
+    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+      phases: Array<{ subtasks: Array<{ status: string; completion_summary?: string }> }>;
+    };
+
+    expect(runs).toBe(1);
+    expect(result.completedSubtasks).toBe(1);
+    expect(result.stuckSubtasks).toEqual([]);
+    expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('What changed');
+  });
+
   it('adds a completion summary from the final assistant message when auto-completing', async () => {
     const plan = {
       phases: [
