@@ -29,6 +29,29 @@ interface SummaryVisualData {
 
 type TranslationFn = ReturnType<typeof useTranslation>['t'];
 
+function getChineseSummaryLabelKey(label: string): CompletionSummaryRowKey | null {
+  switch (label) {
+    case '\u5b8c\u6210\u5185\u5bb9':
+    case '\u53d8\u66f4\u5185\u5bb9':
+    case '\u5b9e\u73b0\u5185\u5bb9':
+      return 'changed';
+    case '\u9a8c\u8bc1\u7ed3\u679c':
+    case '\u6d4b\u8bd5\u7ed3\u679c':
+      return 'verified';
+    case '\u5ba1\u6838\u8981\u70b9':
+    case '\u5ba1\u6838\u8bf4\u660e':
+    case '\u98ce\u9669':
+    case '\u6ce8\u610f\u4e8b\u9879':
+      return 'reviewNotes';
+    case '\u5176\u5b83':
+    case '\u5176\u4ed6':
+    case '\u8bf4\u660e':
+      return 'other';
+    default:
+      return null;
+  }
+}
+
 const SUMMARY_LABEL_PATTERNS: Array<{
   pattern: RegExp;
   key: 'changed' | 'verified' | 'reviewNotes' | 'other';
@@ -40,13 +63,33 @@ const SUMMARY_LABEL_PATTERNS: Array<{
 ];
 
 function splitMarkdownTableRow(line: string): string[] {
-  return line
+  const normalizedLine = normalizeMarkdownTableLine(line);
+  return normalizedLine
     .trim()
     .replace(/^\|/, '')
     .replace(/\|$/, '')
     .split('|')
     .map(cell => cell.trim())
     .filter(Boolean);
+}
+
+function normalizeMarkdownTableLine(line: string): string {
+  return line.trim().replace(/\\\|/g, '|');
+}
+
+function isMarkdownTableLine(line: string): boolean {
+  const normalizedLine = normalizeMarkdownTableLine(line);
+  return normalizedLine.startsWith('|') && normalizedLine.endsWith('|') && splitMarkdownTableRow(normalizedLine).length >= 2;
+}
+
+function isSummaryTableHeader(cells: string[]): boolean {
+  if (cells.length < 2) return false;
+
+  const label = stripSummaryMarkup(cells[0]).toLowerCase();
+  const content = stripSummaryMarkup(cells[1]).toLowerCase();
+
+  return /^(item|\u9879\u76ee|\u9805\u76ee)$/.test(label) &&
+    /^(details?|content|\u5185\u5bb9|\u5167\u5bb9)$/.test(content);
 }
 
 function isMarkdownTableSeparator(line: string): boolean {
@@ -77,23 +120,33 @@ type CompletionSummaryRowKey = 'changed' | 'verified' | 'reviewNotes' | 'other';
 
 function normalizeSummaryLabel(label: string, t: TranslationFn): string {
   const normalized = stripSummaryMarkup(label).replace(/[:：]$/, '').trim();
+  const chineseKey = getChineseSummaryLabelKey(normalized);
+  if (chineseKey) {
+    return getSummaryLabel(chineseKey, t);
+  }
+
   const match = SUMMARY_LABEL_PATTERNS.find(item => item.pattern.test(normalized));
   return match ? getSummaryLabel(match.key, t) : normalized;
 }
 
 function parseMarkdownSummaryTable(summary: string, t: TranslationFn): CompletionSummaryRow[] {
-  const lines = summary.split(/\r?\n/).map(line => line.trim());
+  const lines = summary.split(/\r?\n/).map(normalizeMarkdownTableLine);
   const separatorIndex = lines.findIndex(isMarkdownTableSeparator);
-  if (separatorIndex <= 0) {
+  const headerIndex = separatorIndex > 0
+    ? separatorIndex - 1
+    : lines.findIndex(line => isMarkdownTableLine(line) && isSummaryTableHeader(splitMarkdownTableRow(line)));
+
+  if (headerIndex < 0) {
     return [];
   }
 
+  const bodyStartIndex = separatorIndex > headerIndex ? separatorIndex + 1 : headerIndex + 1;
   const tableEndIndex = lines.findIndex((line, index) =>
-    index > separatorIndex && line && !line.trim().startsWith('|')
+    index >= bodyStartIndex && line && !isMarkdownTableLine(line)
   );
   const effectiveTableEnd = tableEndIndex === -1 ? lines.length : tableEndIndex;
   const beforeTable = lines
-    .slice(0, Math.max(0, separatorIndex - 1))
+    .slice(0, Math.max(0, headerIndex))
     .map(stripSummaryMarkup)
     .filter(Boolean);
   const afterTable = lines
@@ -102,7 +155,8 @@ function parseMarkdownSummaryTable(summary: string, t: TranslationFn): Completio
     .filter(Boolean);
 
   const rows = lines
-    .slice(separatorIndex + 1, effectiveTableEnd)
+    .slice(bodyStartIndex, effectiveTableEnd)
+    .filter(line => isMarkdownTableLine(line) && !isMarkdownTableSeparator(line))
     .map(splitMarkdownTableRow)
     .filter(cells => cells.length >= 2)
     .map(cells => ({

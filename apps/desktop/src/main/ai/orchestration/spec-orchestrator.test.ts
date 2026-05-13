@@ -486,6 +486,72 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
+  it('splits complex conservative implementation plans into phase files', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
+      if (config.specPhase === 'planning') {
+        await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+          feature: 'Refactor platform workflow',
+          workflow_type: 'refactor',
+          phases: Array.from({ length: 8 }, (_, phaseIndex) => ({
+            id: String(phaseIndex + 1),
+            name: `Phase ${phaseIndex + 1}`,
+            subtasks: [
+              {
+                id: `${phaseIndex + 1}-1`,
+                title: `Task ${phaseIndex + 1}`,
+                description: `Implement phase ${phaseIndex + 1}.`,
+                status: 'pending',
+                verification: { type: 'manual', scenario: 'Run applicable checks.' },
+              },
+            ],
+          })),
+        }, null, 2), 'utf-8');
+      }
+
+      return {
+        outcome: 'completed' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 1,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Refactor platform workflow',
+        complexityOverride: 'complex',
+        workflowConfig: { optimizationLevel: 'conservative', specCreationMode: 'phased' },
+        generatePrompt: vi.fn(async () => 'Run phase.'),
+        runSession,
+      });
+
+      const runPhase = (orchestrator as unknown as {
+        runPhase: (phase: SpecPhase, phaseNumber: number, totalPhases: number) => Promise<SpecPhaseResult>;
+      }).runPhase.bind(orchestrator);
+
+      const result = await runPhase('planning', 1, 1);
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        split_plan?: boolean;
+        plan_files?: string[];
+        phases: Array<{ subtasks_file?: string; subtasks?: unknown[] }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(plan.split_plan).toBe(true);
+      expect(plan.plan_files).toHaveLength(8);
+      expect(plan.phases[0].subtasks ?? []).toHaveLength(0);
+      expect(plan.phases[0].subtasks_file).toBe('implementation_plan.phase-1.json');
+      await expect(readFile(join(specDir, 'implementation_plan.phase-1.json'), 'utf-8')).resolves.toContain('"subtasks"');
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not mark failed non-fallback phases as completed in saved state', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => ({
@@ -850,6 +916,186 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(phases[0]).toBe('complexity_assessment');
       expect(phases).toContain('discovery');
       expect(phases).not.toContain('quick_spec');
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('falls back to complex routing for broad migrations when AI assessment fails', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const phases: SpecPhase[] = [];
+    const projectIndex = JSON.stringify({
+      project_type: 'monorepo',
+      services: {
+        app: { language: 'TypeScript' },
+        api: { language: 'Go' },
+        worker: { language: 'Python' },
+      },
+      infrastructure: {
+        ci: 'GitHub Actions',
+        ci_workflows: ['build.yml', 'release.yml'],
+      },
+      source_summary: {
+        source_file_count: 1200,
+        total_file_count: 3200,
+        languages: ['TypeScript', 'Go', 'Python'],
+        build_files: ['Makefile'],
+        project_files: ['app.workspace'],
+      },
+    });
+    const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
+      phases.push(config.specPhase);
+      if (config.specPhase === 'complexity_assessment') {
+        return {
+          outcome: 'error' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 0, totalTokens: 1 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+          error: { code: 'network_error', message: 'network error', retryable: true },
+        };
+      }
+
+      return {
+        outcome: 'cancelled' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 0,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Migrate and remove the old runtime, replace editor UI, build tooling, CI release pipeline, asset templates, plugin API compatibility, rollback, and platform packaging paths.',
+        workflowConfig: { optimizationLevel: 'conservative', specCreationMode: 'phased', qualityChecks: { enableSelfCritique: true } },
+        projectIndex,
+        generatePrompt: vi.fn(async () => 'Run phase.'),
+        runSession,
+      });
+
+      const result = await orchestrator.run();
+      const state = JSON.parse(await readFile(join(specDir, 'spec_state.json'), 'utf-8')) as { complexity?: string };
+      const assessment = JSON.parse(await readFile(join(specDir, 'complexity_assessment.json'), 'utf-8')) as { complexity?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.complexity).toBe('complex');
+      expect(state.complexity).toBe('complex');
+      expect(assessment.complexity).toBe('complex');
+      expect(phases).toEqual(['complexity_assessment', 'discovery']);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('recovers complexity assessment from final JSON text without a file write', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const phases: SpecPhase[] = [];
+    const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
+      phases.push(config.specPhase);
+      if (config.specPhase === 'complexity_assessment') {
+        return {
+          outcome: 'completed' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          messages: [{
+            role: 'assistant' as const,
+            content: JSON.stringify({
+              tier: 'high',
+              confidence: 80,
+              explanation: 'Large multi-area platform change.',
+              needs_self_critique: true,
+            }),
+          }],
+          toolCallCount: 0,
+          durationMs: 1,
+        };
+      }
+
+      return {
+        outcome: 'cancelled' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 0,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Refactor the platform workflow.',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        projectIndex: '{}',
+        generatePrompt: vi.fn(async () => 'Run phase.'),
+        runSession,
+      });
+
+      const result = await orchestrator.run();
+      const assessment = JSON.parse(await readFile(join(specDir, 'complexity_assessment.json'), 'utf-8')) as {
+        complexity?: string;
+        confidence?: number;
+      };
+
+      expect(result.success).toBe(false);
+      expect(result.complexity).toBe('complex');
+      expect(assessment.complexity).toBe('complex');
+      expect(assessment.confidence).toBe(0.8);
+      expect(phases).toEqual(['complexity_assessment', 'discovery']);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('restores complexity from complexity_assessment.json when old state omitted it', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const phases: SpecPhase[] = [];
+    const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
+      phases.push(config.specPhase);
+      return {
+        outcome: 'cancelled' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 0,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      await writeFile(join(specDir, 'spec_state.json'), JSON.stringify({
+        completedPhases: ['complexity_assessment'],
+        lastUpdated: '2026-05-13T00:00:00.000Z',
+      }), 'utf-8');
+      await writeFile(join(specDir, 'complexity_assessment.json'), JSON.stringify({
+        complexity: 'complex',
+        confidence: 0.8,
+        reasoning: 'Previously assessed as complex.',
+        needs_self_critique: true,
+      }), 'utf-8');
+
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Continue the migration plan.',
+        workflowConfig: { optimizationLevel: 'conservative' },
+        projectIndex: '{}',
+        generatePrompt: vi.fn(async () => 'Run phase.'),
+        runSession,
+      });
+
+      const result = await orchestrator.run();
+
+      expect(result.success).toBe(false);
+      expect(result.complexity).toBe('complex');
+      expect(phases).toEqual(['discovery']);
+      expect(phases).not.toContain('complexity_assessment');
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }

@@ -143,6 +143,7 @@ const SPEC_STATE_FILE = 'spec_state.json';
 /** Spec creation state for resume support */
 interface SpecState {
   complexity?: ComplexityTier;
+  complexityReasoning?: string;
   completedPhases: SpecPhase[];
   lastUpdated: string;
 }
@@ -299,6 +300,14 @@ interface MinimalImplementationPlan {
   phases?: Array<{
     subtasks?: unknown[];
   }>;
+}
+
+interface FallbackComplexityAssessment {
+  complexity: ComplexityTier;
+  confidence: number;
+  reasoning: string;
+  needs_research?: boolean;
+  needs_self_critique?: boolean;
 }
 
 interface MinimalPlanSubtask {
@@ -980,6 +989,11 @@ function parseJsonFromFinalText(text: string): { ok: true; value: unknown } | { 
   return { ok: false, error: 'no valid JSON object found in final assistant message' };
 }
 
+function normalizeComplexityAssessmentOutput(value: unknown): ComplexityAssessment | null {
+  const validation = ComplexityAssessmentSchema.safeParse(value);
+  return validation.success ? validation.data as ComplexityAssessment : null;
+}
+
 function buildJsonTextCandidates(text: string): string[] {
   const trimmed = text.trim();
   const candidates = new Set<string>();
@@ -1378,6 +1392,149 @@ function hasProjectExternalResearchSignal(text: string): boolean {
   return /(\boauth\b|\bsso\b|\bwebhook\b|\bpayment\b|\bstripe\b|\baws\b|\bazure\b|\bgcp\b|\bfirebase\b|\bsupabase\b|\bpostgres\b|\bmysql\b|\bmongodb\b|\bredis\b|\bgraphql\b|\bgrpc\b|\bkafka\b|\brabbitmq\b|\bthird[-\s]?party\b|\bexternal api\b|\bapi client\b|第三方|外部接口|认证|授权|支付|云服务|数据库|消息队列)/i.test(text);
 }
 
+function inferComplexityFallback(
+  taskDescription: string,
+  projectIndex: string | undefined,
+  workflowConfig: WorkflowConfig,
+): FallbackComplexityAssessment {
+  const taskText = normalizeTaskDescription(taskDescription).toLowerCase();
+  const projectText = (projectIndex ?? '').toLowerCase();
+  const parsedIndex = parseProjectIndexSummary(projectIndex);
+  const signals: string[] = [];
+
+  const hasBroadChangeIntent = /(\bmigrate|\bmigration|\bport\b|\bremove\b|\bdelete\b|\breplace\b|\brewrite\b|\brefactor\b|\brework\b|\bredesign\b|\brestructure\b|\bswitch\b|\bconvert\b|\bdeprecate\b|\bdrop\b|\bphase[-\s]?out\b|迁移|移植|移除|删除|替换|重写|重构|改造|重新设计|切换|转换|废弃|下线)/i.test(taskText);
+  if (hasBroadChangeIntent) {
+    signals.push('broad change intent');
+  }
+
+  const affectedAreas = [
+    /\bruntime\b|运行时/,
+    /\beditor\b|\badmin\b|\bdashboard\b|\bui\b|\binterface\b|编辑器|后台|界面/,
+    /\bbuild\b|\bcompile\b|\bpackag(e|ing)\b|\bbundle\b|\btoolchain\b|\bgenerator\b|\bmakefile\b|\bcmake\b|\bgradle\b|\bmaven\b|构建|编译|打包|工具链|项目生成/,
+    /\bci\b|\bworkflow\b|\bpipeline\b|\bdeploy\b|\brelease\b|\bpublish\b|流水线|发布|部署/,
+    /\basset\b|\bresource\b|\btemplate\b|\bexample\b|\bdocumentation\b|\bdocs\b|资产|资源|模板|示例|文档/,
+    /\bapi\b|\bsdk\b|\bplugin\b|\bextension\b|\bmodule\b|\babi\b|接口|插件|扩展|模块/,
+    /\bseriali[sz]ation\b|\bschema\b|\bmetadata\b|\breflection\b|\bcompatib/i,
+    /序列化|元数据|反射|兼容|回滚|迁移工具/,
+    /\bplatform\b|\bwindows\b|\blinux\b|\bmacos\b|\bandroid\b|\bios\b|\bcross[-\s]?platform\b|平台|跨平台/,
+    /\bsecurity\b|\bauth\b|\bpermission\b|\brole\b|安全|认证|权限|角色/,
+  ];
+  const affectedAreaCount = affectedAreas.reduce((count, pattern) => {
+    return count + (pattern.test(taskText) || pattern.test(projectText) ? 1 : 0);
+  }, 0);
+  if (affectedAreaCount >= 3) {
+    signals.push(`${affectedAreaCount} affected areas`);
+  }
+
+  if (parsedIndex.serviceCount >= 3) {
+    signals.push(`${parsedIndex.serviceCount} services`);
+  }
+  if (parsedIndex.languageCount >= 3) {
+    signals.push(`${parsedIndex.languageCount} languages`);
+  }
+  if (parsedIndex.infrastructureCount >= 2) {
+    signals.push(`${parsedIndex.infrastructureCount} infrastructure signals`);
+  }
+  if (parsedIndex.hasLargeProjectSignal) {
+    signals.push('large project profile');
+  }
+
+  const isConservative = workflowConfig.optimizationLevel === 'conservative' ||
+    workflowConfig.specCreationMode === 'phased' ||
+    workflowConfig.qualityChecks?.enableSelfCritique === true;
+  const hasLargeProjectContext = parsedIndex.hasLargeProjectSignal ||
+    parsedIndex.serviceCount >= 3 ||
+    parsedIndex.languageCount >= 3 ||
+    parsedIndex.infrastructureCount >= 2 ||
+    /\bmonorepo\b|大型|多模块|多服务|多平台/.test(projectText);
+  const hasComplexTaskShape = hasBroadChangeIntent && affectedAreaCount >= 3;
+
+  if ((hasComplexTaskShape && hasLargeProjectContext) || (isConservative && hasComplexTaskShape && affectedAreaCount >= 4)) {
+    return {
+      complexity: 'complex',
+      confidence: 0.75,
+      reasoning: `local fallback detected ${signals.join(', ')}`,
+      needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
+      needs_self_critique: true,
+    };
+  }
+
+  if (hasComplexTaskShape || (hasBroadChangeIntent && hasLargeProjectContext)) {
+    return {
+      complexity: 'standard',
+      confidence: 0.65,
+      reasoning: `local fallback detected ${signals.join(', ') || 'moderate scope'}`,
+      needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
+      needs_self_critique: isConservative,
+    };
+  }
+
+  return {
+    complexity: 'standard',
+    confidence: 0.5,
+    reasoning: signals.length > 0
+      ? `local fallback detected ${signals.join(', ')}`
+      : 'local fallback did not find enough signal for complex routing',
+    needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
+    needs_self_critique: false,
+  };
+}
+
+function parseProjectIndexSummary(projectIndex: string | undefined): {
+  serviceCount: number;
+  languageCount: number;
+  infrastructureCount: number;
+  hasLargeProjectSignal: boolean;
+} {
+  const summary = {
+    serviceCount: 0,
+    languageCount: 0,
+    infrastructureCount: 0,
+    hasLargeProjectSignal: false,
+  };
+
+  if (!projectIndex?.trim()) {
+    return summary;
+  }
+
+  try {
+    const parsed = JSON.parse(projectIndex) as Record<string, unknown>;
+    const services = isRecord(parsed.services) ? parsed.services : {};
+    summary.serviceCount = Object.keys(services).length;
+
+    const languages = new Set<string>();
+    for (const service of Object.values(services)) {
+      if (isRecord(service)) {
+        stringArrayFrom(service.languages, service.language).forEach((language) => languages.add(language.toLowerCase()));
+        stringArrayFrom(service.frameworks, service.framework).forEach((framework) => languages.add(framework.toLowerCase()));
+      }
+    }
+
+    const project = isRecord(parsed.project) ? parsed.project : {};
+    const sourceSummary = isRecord(parsed.source_summary) ? parsed.source_summary : {};
+    stringArrayFrom(project.languages).forEach((language) => languages.add(language.toLowerCase()));
+    stringArrayFrom(sourceSummary.languages).forEach((language) => languages.add(language.toLowerCase()));
+    summary.languageCount = languages.size;
+
+    const infrastructure = isRecord(parsed.infrastructure) ? parsed.infrastructure : {};
+    summary.infrastructureCount = Object.values(infrastructure)
+      .filter((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))
+      .length;
+    summary.infrastructureCount += stringArrayFrom(sourceSummary.build_files).length > 0 ? 1 : 0;
+    summary.infrastructureCount += stringArrayFrom(sourceSummary.project_files).length > 0 ? 1 : 0;
+
+    const sourceCount = Number(project.sourceFileCount ?? project.source_file_count ?? sourceSummary.source_file_count ?? parsed.sourceFileCount ?? parsed.source_file_count ?? 0);
+    const totalCount = Number(project.totalFileCount ?? project.total_file_count ?? sourceSummary.total_file_count ?? parsed.totalFileCount ?? parsed.total_file_count ?? 0);
+    summary.hasLargeProjectSignal = project.size === 'large' || sourceCount >= 250 || totalCount >= 1500;
+  } catch {
+    const text = projectIndex.toLowerCase();
+    summary.hasLargeProjectSignal = /"size"\s*:\s*"large"|sourcefilecount"\s*:\s*[3-9]\d\d|source_file_count"\s*:\s*[3-9]\d\d|totalfilecount"\s*:\s*[2-9]\d{3,}|total_file_count"\s*:\s*[2-9]\d{3,}/.test(text);
+    summary.infrastructureCount = (text.match(/ci_workflows|docker|workflow|pipeline|deployment/g) ?? []).length;
+  }
+
+  return summary;
+}
+
 function selectSpecPhases(
   complexity: ComplexityTier,
   assessment: ComplexityAssessment | null,
@@ -1410,6 +1567,17 @@ function selectSpecPhases(
   }
 
   return phases;
+}
+
+function shouldForceSplitImplementationPlan(
+  complexity: ComplexityTier | undefined,
+  workflowConfig: WorkflowConfig | undefined,
+): boolean {
+  if (complexity !== 'complex') {
+    return false;
+  }
+  return workflowConfig?.optimizationLevel === 'conservative' ||
+    workflowConfig?.specCreationMode === 'phased';
 }
 
 function buildPlanStructuredOutputValidationRetryPrompt(
@@ -1489,6 +1657,7 @@ export class SpecOrchestrator extends EventEmitter {
     try {
       const state: SpecState = {
         complexity: this.assessment?.complexity,
+        complexityReasoning: this.assessment?.reasoning,
         completedPhases: this.completedPhases,
         lastUpdated: new Date().toISOString(),
       };
@@ -1556,7 +1725,11 @@ export class SpecOrchestrator extends EventEmitter {
 
       // Skip complexity assessment if already completed
       if (this.completedPhases.includes('complexity_assessment')) {
-        complexity = this.assessment?.complexity ?? 'standard';
+        if (!this.assessment) {
+          this.assessment = await this.restoreComplexityAssessmentFromFile() ??
+            this.buildFallbackComplexityAssessment('Resume state omitted complexity');
+        }
+        complexity = this.assessment.complexity;
         this.emitTyped('log', `Skipping complexity assessment (already completed): ${complexity}`);
       } else {
         // Fast-path heuristic: catch obviously simple tasks before expensive AI assessment
@@ -1614,28 +1787,27 @@ export class SpecOrchestrator extends EventEmitter {
             await this.saveState();
 
             if (!assessResult.success) {
-              // Fall back to standard on assessment failure
-              this.assessment = {
-                complexity: 'standard',
-                confidence: 0.5,
-                reasoning: 'Fallback: AI assessment failed',
-              };
+              this.assessment = this.buildFallbackComplexityAssessment('AI assessment failed');
+              this.emitTyped('log', `Complexity fallback: ${this.assessment.complexity} (${this.assessment.reasoning})`);
+              await this.persistComplexityAssessment();
+              await this.capturePhaseOutput('complexity_assessment');
             }
 
             complexity = this.assessment?.complexity ?? 'standard';
+            await this.saveState();
           }
         } else {
           // Heuristic fallback
-          complexity = 'standard';
-          this.assessment = {
-            complexity: 'standard',
-            confidence: 0.5,
-            reasoning: 'Heuristic assessment (AI disabled)',
-          };
+          this.assessment = this.buildFallbackComplexityAssessment('AI assessment disabled');
+          complexity = this.assessment.complexity;
           phasesExecuted.push('complexity_assessment');
           this.completedPhases.push('complexity_assessment');
           await this.saveState();
         }
+      }
+
+      if (!this.config.complexityOverride) {
+        complexity = await this.escalateComplexityIfNeeded(complexity);
       }
 
       // ===================================================================
@@ -1692,6 +1864,9 @@ export class SpecOrchestrator extends EventEmitter {
         this.completedPhases.push(phase);
 
         // Capture phase outputs for injection into subsequent phases
+        if (phase === 'validation') {
+          await this.writeSpecValidationReport();
+        }
         await this.capturePhaseOutput(phase);
 
         // Save state after each successful phase
@@ -1754,6 +1929,79 @@ export class SpecOrchestrator extends EventEmitter {
 
     // Long descriptions or complex signal words → let AI decide
     return null;
+  }
+
+  private buildFallbackComplexityAssessment(reason: string): ComplexityAssessment {
+    const fallbackComplexity = inferComplexityFallback(
+      this.config.taskDescription ?? '',
+      this.config.projectIndex,
+      this.config.workflowConfig!,
+    );
+
+    return {
+      complexity: fallbackComplexity.complexity,
+      confidence: fallbackComplexity.confidence,
+      reasoning: `${reason}; ${fallbackComplexity.reasoning}`,
+      needs_research: fallbackComplexity.needs_research,
+      needs_self_critique: fallbackComplexity.needs_self_critique,
+    };
+  }
+
+  private async persistComplexityAssessment(): Promise<void> {
+    if (!this.assessment) {
+      return;
+    }
+
+    try {
+      await writeStructuredJsonOutput(this.config.specDir, 'complexity_assessment.json', this.assessment);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emitTyped('log', `Failed to persist complexity assessment: ${message}`);
+    }
+  }
+
+  private async restoreComplexityAssessmentFromFile(): Promise<ComplexityAssessment | null> {
+    try {
+      const assessmentPath = join(this.config.specDir, 'complexity_assessment.json');
+      await access(assessmentPath);
+      const result = await validateJsonFile(assessmentPath, ComplexityAssessmentSchema);
+      return result.valid && result.data ? result.data as ComplexityAssessment : null;
+    } catch {
+      return null;
+    }
+  }
+
+  private async escalateComplexityIfNeeded(current: ComplexityTier): Promise<ComplexityTier> {
+    if (current === 'complex') {
+      return current;
+    }
+
+    const fallback = inferComplexityFallback(
+      this.config.taskDescription ?? '',
+      this.config.projectIndex,
+      this.config.workflowConfig!,
+    );
+
+    if (fallback.complexity !== 'complex') {
+      return current;
+    }
+
+    this.assessment = {
+      complexity: 'complex',
+      confidence: Math.max(this.assessment?.confidence ?? 0, fallback.confidence),
+      reasoning: [
+        this.assessment?.reasoning,
+        `Escalated by local complexity guard: ${fallback.reasoning}`,
+      ].filter(Boolean).join('; '),
+      needs_research: this.assessment?.needs_research ?? fallback.needs_research,
+      needs_self_critique: true,
+    };
+    this.emitTyped('log', `Complexity escalated to complex by local guard (${fallback.reasoning})`);
+    await this.persistComplexityAssessment();
+    await this.capturePhaseOutput('complexity_assessment');
+    await this.saveState();
+
+    return 'complex';
   }
 
   // ===========================================================================
@@ -2048,9 +2296,13 @@ export class SpecOrchestrator extends EventEmitter {
     }
 
     // Prefer structured output from constrained decoding (no file I/O needed)
-    if (sessionResult.structuredOutput) {
-      this.assessment = sessionResult.structuredOutput as unknown as ComplexityAssessment;
+    const structuredAssessment = sessionResult.structuredOutput
+      ? normalizeComplexityAssessmentOutput(sessionResult.structuredOutput)
+      : null;
+    if (structuredAssessment) {
+      this.assessment = structuredAssessment;
       this.emitTyped('log', `Complexity assessed (structured output): ${this.assessment.complexity} (confidence: ${(this.assessment.confidence * 100).toFixed(0)}%)`);
+      await this.persistComplexityAssessment();
       return { phase: 'complexity_assessment', success: true, errors: [], retries: 0 };
     }
 
@@ -2066,6 +2318,20 @@ export class SpecOrchestrator extends EventEmitter {
       }
     } catch {
       // Assessment file not found or invalid — fall through
+    }
+
+    const finalText = getLastAssistantText(sessionResult);
+    if (finalText) {
+      const parsed = parseJsonFromFinalText(finalText);
+      if (parsed.ok) {
+        const finalAssessment = normalizeComplexityAssessmentOutput(parsed.value);
+        if (finalAssessment) {
+          this.assessment = finalAssessment;
+          this.emitTyped('log', `Complexity assessed (final JSON): ${this.assessment.complexity} (confidence: ${(this.assessment.confidence * 100).toFixed(0)}%)`);
+          await this.persistComplexityAssessment();
+          return { phase: 'complexity_assessment', success: true, errors: [], retries: 0 };
+        }
+      }
     }
 
     // If assessment file wasn't written, treat as failure (caller will fallback)
@@ -2147,7 +2413,13 @@ export class SpecOrchestrator extends EventEmitter {
       const rewriteErrors: string[] = [];
       try {
         try {
-          const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
+          const rewrite = await rewriteImplementationPlanFiles(this.config.specDir, {
+            forceSplit: shouldForceSplitImplementationPlan(
+              this.assessment?.complexity ?? this.config.complexityOverride,
+              this.config.workflowConfig,
+            ),
+            threshold: 16,
+          });
           if (rewrite?.split) {
             this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
           }
@@ -2315,6 +2587,67 @@ export class SpecOrchestrator extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return [`Failed to compact aggressive implementation plan: ${message}`];
+    }
+  }
+
+  private async writeSpecValidationReport(): Promise<void> {
+    const rows: Array<[string, string]> = [];
+    const addRow = (item: string, status: string): void => {
+      rows.push([item, status]);
+    };
+
+    let implementationPlanValid = false;
+    let executablePlan = false;
+    let splitPlan = false;
+    let planFileCount = 0;
+
+    try {
+      await access(join(this.config.specDir, 'spec.md'));
+      addRow('spec.md', 'present');
+    } catch {
+      addRow('spec.md', 'missing');
+    }
+
+    try {
+      const result = await validateAndNormalizeJsonFile(
+        join(this.config.specDir, 'implementation_plan.json'),
+        ImplementationPlanSchema,
+      );
+      implementationPlanValid = result.valid;
+      addRow('implementation_plan.json', result.valid ? 'valid' : `invalid: ${result.errors.join('; ')}`);
+
+      const plan = result.valid ? await loadImplementationPlanFromFiles(this.config.specDir) : null;
+      executablePlan = hasExecutableSubtasks(plan);
+      splitPlan = Boolean((plan as { split_plan?: boolean } | null)?.split_plan);
+      planFileCount = Array.isArray((plan as { plan_files?: unknown[] } | null)?.plan_files)
+        ? ((plan as { plan_files?: unknown[] }).plan_files?.length ?? 0)
+        : 0;
+      addRow('executable subtasks', executablePlan ? 'present' : 'missing');
+      addRow('split plan', splitPlan ? `yes (${planFileCount} files)` : 'no');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      addRow('implementation_plan.json', `unreadable: ${message}`);
+    }
+
+    const passed = rows.every(([, status]) => !status.startsWith('missing') && !status.startsWith('invalid') && !status.startsWith('unreadable')) &&
+      implementationPlanValid &&
+      executablePlan;
+    const report = [
+      '# Spec Validation Report',
+      '',
+      `Status: ${passed ? 'PASSED' : 'FAILED'}`,
+      '',
+      '| Check | Result |',
+      '| --- | --- |',
+      ...rows.map(([item, status]) => `| ${item} | ${status.replace(/\|/g, '\\|')} |`),
+      '',
+    ].join('\n');
+
+    try {
+      await writeFile(join(this.config.specDir, 'spec_validation_report.md'), report, 'utf-8');
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      this.emitTyped('log', `Failed to write validation report: ${message}`);
     }
   }
 

@@ -16,6 +16,7 @@ import type {
   ConventionsInfo,
   InfrastructureInfo,
   ProjectIndex,
+  ProjectSourceSummary,
   ServiceInfo,
 } from '../../../shared/types';
 
@@ -59,6 +60,86 @@ const MONOREPO_INDICATORS = [
   'turbo.json',
   'rush.json',
 ];
+
+const SOURCE_EXTENSION_LANGUAGES: Record<string, string> = {
+  '.c': 'C',
+  '.cc': 'C++',
+  '.cpp': 'C++',
+  '.cs': 'C#',
+  '.css': 'CSS',
+  '.dart': 'Dart',
+  '.go': 'Go',
+  '.h': 'C/C++',
+  '.hpp': 'C++',
+  '.html': 'HTML',
+  '.java': 'Java',
+  '.js': 'JavaScript',
+  '.jsx': 'JavaScript',
+  '.kt': 'Kotlin',
+  '.php': 'PHP',
+  '.py': 'Python',
+  '.rb': 'Ruby',
+  '.rs': 'Rust',
+  '.scss': 'SCSS',
+  '.swift': 'Swift',
+  '.ts': 'TypeScript',
+  '.tsx': 'TypeScript',
+  '.vue': 'Vue',
+  '.svelte': 'Svelte',
+};
+
+const GENERIC_BUILD_FILES = new Set([
+  'CMakeLists.txt',
+  'Makefile',
+  'configure',
+  'meson.build',
+  'BUILD',
+  'BUILD.bazel',
+  'WORKSPACE',
+  'WORKSPACE.bazel',
+  'build.gradle',
+  'build.gradle.kts',
+  'pom.xml',
+  'Cargo.toml',
+  'go.mod',
+  'Package.swift',
+  'pubspec.yaml',
+  'mix.exs',
+  'package.json',
+  'pyproject.toml',
+  'requirements.txt',
+]);
+
+const GENERIC_CONFIG_FILES = new Set([
+  '.editorconfig',
+  '.clang-format',
+  '.clang-tidy',
+  '.eslintrc',
+  'eslint.config.js',
+  'biome.json',
+  'tsconfig.json',
+  'pytest.ini',
+  'ruff.toml',
+]);
+
+const GENERIC_PROJECT_EXTENSIONS = new Set([
+  '.sln',
+  '.csproj',
+  '.vcxproj',
+  '.xcodeproj',
+  '.xcworkspace',
+]);
+
+const SUMMARY_SKIP_DIRS = new Set([
+  ...SKIP_DIRS,
+  '.vs',
+  '.idea',
+  '.vscode',
+  'Cache',
+  'Binaries',
+  'Intermediate',
+  'Saved',
+]);
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -107,6 +188,7 @@ function listDirectory(dirPath: string): fs.Dirent[] {
 
 interface DetectedService {
   language: string | null;
+  languages?: string[];
   framework: string | null;
   type: ServiceInfo['type'];
   package_manager: string | null;
@@ -350,6 +432,66 @@ function detectLanguageAndFramework(serviceDir: string): DetectedService {
   return result;
 }
 
+function detectGenericService(serviceDir: string, summary?: ProjectSourceSummary): DetectedService {
+  const detected = detectLanguageAndFramework(serviceDir);
+  if (detected.language) {
+    return detected;
+  }
+
+  const languages = summary?.languages ?? [];
+  if (languages.length === 0) {
+    return detected;
+  }
+
+  return {
+    language: languages.slice(0, 4).join(', '),
+    languages: languages.slice(0, 4),
+    framework: null,
+    type: 'unknown',
+    package_manager: null,
+  };
+}
+
+function shouldPreferSourceSummaryLanguages(
+  detected: DetectedService,
+  summary?: ProjectSourceSummary,
+): boolean {
+  const summaryLanguages = summary?.languages ?? [];
+  const sourceFileCount = summary?.source_file_count ?? 0;
+  const detectedLanguage = detected.language?.trim().toLowerCase() ?? '';
+
+  if (summaryLanguages.length < 2 || sourceFileCount < 250) {
+    return false;
+  }
+
+  if (!detectedLanguage) {
+    return true;
+  }
+
+  const normalizedSummary = summaryLanguages.map((language) => language.toLowerCase());
+  if (normalizedSummary.includes(detectedLanguage)) {
+    return false;
+  }
+
+  return detectedLanguage === 'javascript' || detectedLanguage === 'typescript';
+}
+
+function mergeSourceSummaryIntoDetectedService(
+  detected: DetectedService,
+  summary?: ProjectSourceSummary,
+): DetectedService {
+  if (!shouldPreferSourceSummaryLanguages(detected, summary)) {
+    return detected;
+  }
+
+  const languages = (summary?.languages ?? []).slice(0, 4);
+  return {
+    ...detected,
+    language: languages.join(', '),
+    languages,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Service type inference from name
 // ---------------------------------------------------------------------------
@@ -559,6 +701,7 @@ function analyzeService(serviceDir: string, serviceName: string): ServiceInfo | 
     name: serviceName,
     path: serviceDir,
     language: detected.language ?? undefined,
+    ...(detected.languages?.length ? { languages: detected.languages } : {}),
     framework: detected.framework ?? undefined,
     type: serviceType,
     package_manager: detected.package_manager ?? undefined,
@@ -573,6 +716,63 @@ function analyzeService(serviceDir: string, serviceName: string): ServiceInfo | 
   };
 
   return service;
+}
+
+function analyzeGenericRootService(
+  serviceDir: string,
+  serviceName: string,
+  summary: ProjectSourceSummary,
+): ServiceInfo | null {
+  const detected = mergeSourceSummaryIntoDetectedService(detectGenericService(serviceDir, summary), summary);
+
+  if (!detected.language) return null;
+
+  const serviceType = inferTypeFromName(serviceName, detected.type);
+  const entryPoint = detectEntryPoint(serviceDir);
+  const keyDirectories = detectKeyDirectories(serviceDir);
+  const dockerfile = detectDockerfile(serviceDir, serviceName);
+
+  const service: ServiceInfo = {
+    name: serviceName,
+    path: serviceDir,
+    language: detected.language ?? undefined,
+    ...(detected.languages?.length ? { languages: detected.languages } : {}),
+    framework: detected.framework ?? undefined,
+    type: serviceType,
+    package_manager: detected.package_manager ?? undefined,
+    ...(entryPoint ? { entry_point: entryPoint } : {}),
+    ...(keyDirectories ? { key_directories: keyDirectories } : {}),
+    ...(summary.project_files?.length ? { dependencies: summary.project_files.slice(0, 20) } : {}),
+    ...(detected.testing ? { testing: detected.testing } : {}),
+    ...(detected.e2e_testing ? { e2e_testing: detected.e2e_testing } : {}),
+    ...(dockerfile ? { dockerfile } : {}),
+  };
+
+  return service;
+}
+
+function mergeSourceSummaryIntoService(
+  service: ServiceInfo | null,
+  summary: ProjectSourceSummary,
+): ServiceInfo | null {
+  if (!service) return null;
+
+  const detected: DetectedService = {
+    language: service.language ?? null,
+    framework: service.framework ?? null,
+    type: service.type ?? 'unknown',
+    package_manager: service.package_manager ?? null,
+  };
+  const merged = mergeSourceSummaryIntoDetectedService(detected, summary);
+  if (merged === detected) {
+    return service;
+  }
+
+  return {
+    ...service,
+    language: merged.language ?? service.language,
+    ...(merged.languages?.length ? { languages: merged.languages } : {}),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -784,6 +984,7 @@ function detectProjectType(projectDir: string): 'single' | 'monorepo' {
 function findAndAnalyzeServices(
   projectDir: string,
   projectType: 'single' | 'monorepo',
+  sourceSummary: ProjectSourceSummary,
 ): Record<string, ServiceInfo> {
   const services: Record<string, ServiceInfo> = {};
 
@@ -815,7 +1016,16 @@ function findAndAnalyzeServices(
     }
   } else {
     // Single project - analyze root as "main"
-    const serviceInfo = analyzeService(projectDir, 'main');
+    const serviceInfo =
+      mergeSourceSummaryIntoService(analyzeService(projectDir, 'main'), sourceSummary) ??
+      analyzeGenericRootService(projectDir, 'main', sourceSummary);
+    if (serviceInfo) {
+      services['main'] = serviceInfo;
+    }
+  }
+
+  if (Object.keys(services).length === 0) {
+    const serviceInfo = analyzeGenericRootService(projectDir, 'main', sourceSummary);
     if (serviceInfo) {
       services['main'] = serviceInfo;
     }
@@ -860,6 +1070,85 @@ function mapDependencies(services: Record<string, ServiceInfo>): void {
   }
 }
 
+function buildSourceSummary(projectDir: string): ProjectSourceSummary {
+  const languages = new Set<string>();
+  const buildFiles = new Set<string>();
+  const projectFiles = new Set<string>();
+  const configFiles = new Set<string>();
+  const rootDirectories = listDirectory(projectDir)
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !SUMMARY_SKIP_DIRS.has(entry.name))
+    .map((entry) => entry.name)
+    .slice(0, 20);
+
+  let totalFileCount = 0;
+  let sourceFileCount = 0;
+  const maxDepth = 6;
+  const maxFiles = 5000;
+
+  function rememberRelative(set: Set<string>, filePath: string): void {
+    if (set.size >= 40) {
+      return;
+    }
+    set.add(path.relative(projectDir, filePath).split(path.sep).join('/'));
+  }
+
+  function visit(dir: string, depth: number): void {
+    if (depth > maxDepth || totalFileCount >= maxFiles) {
+      return;
+    }
+
+    for (const entry of listDirectory(dir)) {
+      if (totalFileCount >= maxFiles) {
+        return;
+      }
+      if (entry.isSymbolicLink()) {
+        continue;
+      }
+
+      const entryPath = path.join(dir, entry.name);
+      if (entry.isDirectory()) {
+        if (entry.name.startsWith('.') || SUMMARY_SKIP_DIRS.has(entry.name)) {
+          continue;
+        }
+        visit(entryPath, depth + 1);
+        continue;
+      }
+      if (!entry.isFile()) {
+        continue;
+      }
+
+      totalFileCount += 1;
+      const extension = path.extname(entry.name).toLowerCase();
+      const language = SOURCE_EXTENSION_LANGUAGES[extension];
+      if (language) {
+        sourceFileCount += 1;
+        languages.add(language);
+      }
+      if (GENERIC_BUILD_FILES.has(entry.name)) {
+        rememberRelative(buildFiles, entryPath);
+      }
+      if (GENERIC_CONFIG_FILES.has(entry.name)) {
+        rememberRelative(configFiles, entryPath);
+      }
+      if (GENERIC_PROJECT_EXTENSIONS.has(extension) || entry.name.endsWith('.xcodeproj') || entry.name.endsWith('.xcworkspace')) {
+        rememberRelative(projectFiles, entryPath);
+      }
+    }
+  }
+
+  visit(projectDir, 0);
+
+  return {
+    source_file_count: sourceFileCount,
+    total_file_count: totalFileCount,
+    languages: [...languages].sort((a, b) => a.localeCompare(b)),
+    build_files: [...buildFiles].sort((a, b) => a.localeCompare(b)),
+    project_files: [...projectFiles].sort((a, b) => a.localeCompare(b)),
+    config_files: [...configFiles].sort((a, b) => a.localeCompare(b)),
+    root_directories: rootDirectories,
+  };
+}
+
 // ---------------------------------------------------------------------------
 // Public API
 // ---------------------------------------------------------------------------
@@ -875,7 +1164,8 @@ export function buildProjectIndex(projectDir: string): ProjectIndex {
   const resolvedDir = path.resolve(projectDir);
 
   const projectType = detectProjectType(resolvedDir);
-  const services = findAndAnalyzeServices(resolvedDir, projectType);
+  const sourceSummary = buildSourceSummary(resolvedDir);
+  const services = findAndAnalyzeServices(resolvedDir, projectType, sourceSummary);
   mapDependencies(services);
 
   const infrastructure = analyzeInfrastructure(resolvedDir);
@@ -887,6 +1177,7 @@ export function buildProjectIndex(projectDir: string): ProjectIndex {
     services,
     infrastructure,
     conventions,
+    source_summary: sourceSummary,
   };
 }
 

@@ -45,12 +45,24 @@ export interface ProjectIndex {
   services: Record<string, ServiceInfo>;
   infrastructure: InfrastructureInfo;
   conventions: ConventionsInfo;
+  source_summary?: ProjectSourceSummary;
+}
+
+export interface ProjectSourceSummary {
+  source_file_count?: number;
+  total_file_count?: number;
+  languages?: string[];
+  build_files?: string[];
+  project_files?: string[];
+  config_files?: string[];
+  root_directories?: string[];
 }
 
 export interface ServiceInfo {
   name: string;
   path: string;
   language?: string;
+  languages?: string[];
   framework?: string;
   type?: 'backend' | 'frontend' | 'worker' | 'scraper' | 'library' | 'proxy' | 'mobile' | 'desktop' | 'unknown';
   package_manager?: string;

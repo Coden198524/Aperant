@@ -50,6 +50,7 @@ export interface ServiceInfo {
   type?: string;
   path?: string;
   language?: string;
+  languages?: string[];
   framework?: string;
   entry_point?: string;
   key_directories?: Record<string, string>;

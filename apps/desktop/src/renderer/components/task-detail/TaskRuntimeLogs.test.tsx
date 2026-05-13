@@ -8,6 +8,7 @@ import { TaskRuntimeLogs } from './TaskRuntimeLogs';
 
 let storeTasks: Task[] = [];
 const unsubscribeTaskLogsChanged = vi.fn();
+let taskLogsChangedCallback: ((specId: string, logs: TaskLogs) => void) | null = null;
 let taskLogsStreamCallback: ((specId: string, chunk: TaskLogStreamChunk) => void) | null = null;
 
 function createTaskLogs(): TaskLogs {
@@ -146,6 +147,7 @@ function createTask(overrides: Partial<Task> = {}): Task {
 describe('TaskRuntimeLogs', () => {
   beforeEach(() => {
     storeTasks = [];
+    taskLogsChangedCallback = null;
     taskLogsStreamCallback = null;
     unsubscribeTaskLogsChanged.mockClear();
     window.electronAPI = {
@@ -153,7 +155,10 @@ describe('TaskRuntimeLogs', () => {
       getTaskLogs: vi.fn(async () => ({ success: true, data: createTaskLogs() })),
       watchTaskLogs: vi.fn(async () => ({ success: true })),
       unwatchTaskLogs: vi.fn(async () => ({ success: true })),
-      onTaskLogsChanged: vi.fn(() => unsubscribeTaskLogsChanged),
+      onTaskLogsChanged: vi.fn((callback) => {
+        taskLogsChangedCallback = callback;
+        return unsubscribeTaskLogsChanged;
+      }),
       onTaskLogsStream: vi.fn((callback) => {
         taskLogsStreamCallback = callback;
         return vi.fn();
@@ -306,6 +311,43 @@ describe('TaskRuntimeLogs', () => {
     expect(screen.getByText('Live')).toBeInTheDocument();
   });
 
+  it('keeps historical full logs when a shorter live stream is already visible', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
+
+    render(<TaskRuntimeLogs task={createTask()} />);
+    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
+
+    taskLogsStreamCallback?.('spec-1', {
+      type: 'text',
+      phase: 'coding',
+      timestamp: '2026-01-01T00:00:05.000Z',
+      content: 'Live tail that is not flushed yet.',
+      source: 'sdk',
+      session: 1,
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('Live tail that is not flushed yet.')).toBeInTheDocument();
+    });
+
+    const historicalLogs = createTaskLogs();
+    historicalLogs.updated_at = '2026-01-01T00:00:01.000Z';
+    historicalLogs.phases.planning.entries = [
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'text',
+        phase: 'planning',
+        content: 'Historical planning output.',
+      },
+    ];
+    taskLogsChangedCallback?.('spec-1', historicalLogs);
+
+    await waitFor(() => {
+      expect(screen.getByText('Historical planning output.')).toBeInTheDocument();
+    });
+    expect(screen.getByText('Live tail that is not flushed yet.')).toBeInTheDocument();
+  });
+
   it('shows the current streamed provider and model in the model output title', async () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 
@@ -383,6 +425,46 @@ describe('TaskRuntimeLogs', () => {
     await waitFor(() => {
       expect(screen.getByText('done')).toBeInTheDocument();
     });
+    expect(screen.getAllByText('Bash')).toHaveLength(1);
+    expect(screen.getAllByText('tool')).toHaveLength(1);
+  });
+
+  it('keeps streamed failed tool calls in one row with an error status', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
+
+    render(<TaskRuntimeLogs task={createTask()} />);
+    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
+
+    taskLogsStreamCallback?.('spec-1', {
+      type: 'tool_start',
+      phase: 'coding',
+      timestamp: '2026-01-01T00:00:03.000Z',
+      content: '[Bash] npm test',
+      tool_call_id: 'call-1',
+      tool: {
+        name: 'Bash',
+        input: 'npm test',
+      },
+    });
+
+    expect(await screen.findByText('running')).toBeInTheDocument();
+
+    taskLogsStreamCallback?.('spec-1', {
+      type: 'tool_end',
+      phase: 'coding',
+      timestamp: '2026-01-01T00:00:04.000Z',
+      content: '[Bash] Failed',
+      tool_call_id: 'call-1',
+      tool: {
+        name: 'Bash',
+        success: false,
+      },
+    });
+
+    await waitFor(() => {
+      expect(screen.getByText('error')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('done')).not.toBeInTheDocument();
     expect(screen.getAllByText('Bash')).toHaveLength(1);
     expect(screen.getAllByText('tool')).toHaveLength(1);
   });

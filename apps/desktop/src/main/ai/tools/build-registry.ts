@@ -6,6 +6,8 @@
  * Used by worker threads, runners (insights, roadmap, ideation), and the client factory.
  */
 
+import { isCommandAvailable } from '../../env-utils';
+
 import { ToolRegistry } from './registry';
 import type { DefinedTool } from './define';
 
@@ -18,6 +20,7 @@ import { grepTool } from './builtin/grep';
 import { webFetchTool } from './builtin/web-fetch';
 import { webSearchTool } from './builtin/web-search';
 import { spawnSubagentTool } from './builtin/spawn-subagent';
+import { isSearchProviderConfigured } from './providers';
 import {
   updateSubtaskStatusTool,
   getBuildProgressTool,
@@ -40,9 +43,13 @@ export function buildToolRegistry(): ToolRegistry {
   registry.registerTool('Edit', asDefined(editTool));
   registry.registerTool('Bash', asDefined(bashTool));
   registry.registerTool('Glob', asDefined(globTool));
-  registry.registerTool('Grep', asDefined(grepTool));
+  if (isCommandAvailable('rg')) {
+    registry.registerTool('Grep', asDefined(grepTool));
+  }
   registry.registerTool('WebFetch', asDefined(webFetchTool));
-  registry.registerTool('WebSearch', asDefined(webSearchTool));
+  if (isSearchProviderConfigured()) {
+    registry.registerTool('WebSearch', asDefined(webSearchTool));
+  }
   registry.registerTool('SpawnSubagent', asDefined(spawnSubagentTool));
   registry.registerTool('mcp__autocode__update_subtask_status', asDefined(updateSubtaskStatusTool));
   registry.registerTool('mcp__autocode__get_build_progress', asDefined(getBuildProgressTool));

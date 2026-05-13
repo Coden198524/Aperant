@@ -355,6 +355,7 @@ function mergeModelTextChunk(
     ...(chunk.model ? { model: chunk.model } : {}),
     ...(toolName ? { tool_name: toolName } : {}),
     ...(toolInput ? { tool_input: toolInput } : {}),
+    ...(chunk.tool?.success !== undefined ? { tool_success: chunk.tool.success } : {}),
     ...(chunk.tool_call_id ? { tool_call_id: chunk.tool_call_id } : {}),
     ...(chunk.subtask_id ? { subtask_id: chunk.subtask_id } : {}),
     ...(chunk.session ? { session: chunk.session } : {}),
@@ -364,14 +365,130 @@ function mergeModelTextChunk(
   return nextLogs;
 }
 
-function getModelTextLength(logs: TaskLogsData | null): number {
-  if (!logs) return 0;
+function getLogTimestamp(value: string | null | undefined): number {
+  if (!value) return 0;
+  const timestamp = Date.parse(value);
+  return Number.isNaN(timestamp) ? 0 : timestamp;
+}
 
-  return (
-    logs.phases.planning.entries.reduce((sum, entry) => sum + (entry.type === 'text' ? entry.content.length : 0), 0) +
-    logs.phases.coding.entries.reduce((sum, entry) => sum + (entry.type === 'text' ? entry.content.length : 0), 0) +
-    logs.phases.validation.entries.reduce((sum, entry) => sum + (entry.type === 'text' ? entry.content.length : 0), 0)
+function getLatestLogTimestamp(...timestamps: Array<string | null | undefined>): string {
+  let latest = timestamps.find((timestamp): timestamp is string => Boolean(timestamp)) ?? new Date().toISOString();
+
+  for (const timestamp of timestamps) {
+    if (timestamp && getLogTimestamp(timestamp) > getLogTimestamp(latest)) {
+      latest = timestamp;
+    }
+  }
+
+  return latest;
+}
+
+function getPhaseStatusRank(status: TaskLogsData['phases'][TaskLogPhase]['status']): number {
+  switch (status) {
+    case 'failed':
+      return 3;
+    case 'completed':
+      return 2;
+    case 'active':
+      return 1;
+    default:
+      return 0;
+  }
+}
+
+function pickMergedPhaseStatus(
+  currentStatus: TaskLogsData['phases'][TaskLogPhase]['status'],
+  nextStatus: TaskLogsData['phases'][TaskLogPhase]['status'],
+): TaskLogsData['phases'][TaskLogPhase]['status'] {
+  return getPhaseStatusRank(currentStatus) > getPhaseStatusRank(nextStatus)
+    ? currentStatus
+    : nextStatus;
+}
+
+function getEntryExactKey(entry: TaskLogEntry): string {
+  return [
+    entry.phase,
+    entry.type,
+    entry.timestamp,
+    entry.content,
+    entry.tool_call_id ?? '',
+    entry.tool_name ?? '',
+    entry.subtask_id ?? '',
+    entry.session ?? '',
+  ].join('\u0001');
+}
+
+function getToolLifecycleKey(entry: TaskLogEntry): string | null {
+  if ((entry.type !== 'tool_start' && entry.type !== 'tool_end') || !entry.tool_call_id) {
+    return null;
+  }
+
+  return [entry.phase, entry.type, entry.tool_call_id].join('\u0001');
+}
+
+function hasEquivalentNonTextEntry(entries: TaskLogEntry[], entry: TaskLogEntry): boolean {
+  const exactKey = getEntryExactKey(entry);
+  const toolKey = getToolLifecycleKey(entry);
+
+  return entries.some(existing =>
+    getEntryExactKey(existing) === exactKey ||
+    (toolKey !== null && getToolLifecycleKey(existing) === toolKey)
   );
+}
+
+function isSameTextScope(left: TaskLogEntry, right: TaskLogEntry): boolean {
+  return (
+    left.type === 'text' &&
+    right.type === 'text' &&
+    left.phase === right.phase &&
+    left.subtask_id === right.subtask_id &&
+    left.session === right.session
+  );
+}
+
+function mergeLiveTextEntry(entries: TaskLogEntry[], entry: TaskLogEntry): void {
+  const sameScopeEntries = entries
+    .map((existing, index) => ({ existing, index }))
+    .filter(({ existing }) => isSameTextScope(existing, entry));
+
+  if (sameScopeEntries.some(({ existing }) => existing.content === entry.content || existing.content.includes(entry.content))) {
+    return;
+  }
+
+  const combinedScopeContent = sameScopeEntries.map(({ existing }) => existing.content).join('');
+  if (combinedScopeContent.includes(entry.content)) {
+    return;
+  }
+
+  const prefixMatch = sameScopeEntries
+    .filter(({ existing }) => entry.content.startsWith(existing.content))
+    .sort((left, right) => right.existing.content.length - left.existing.content.length)[0];
+
+  if (prefixMatch) {
+    if (entry.content.length > prefixMatch.existing.content.length) {
+      entries[prefixMatch.index] = { ...prefixMatch.existing, ...entry };
+    }
+    return;
+  }
+
+  entries.push({ ...entry });
+}
+
+function mergeTaskLogEntries(fullEntries: TaskLogEntry[], currentEntries: TaskLogEntry[]): TaskLogEntry[] {
+  const merged = fullEntries.map(entry => ({ ...entry }));
+
+  for (const entry of currentEntries) {
+    if (entry.type === 'text') {
+      mergeLiveTextEntry(merged, entry);
+      continue;
+    }
+
+    if (!hasEquivalentNonTextEntry(merged, entry)) {
+      merged.push({ ...entry });
+    }
+  }
+
+  return merged.sort((left, right) => getLogTimestamp(left.timestamp) - getLogTimestamp(right.timestamp));
 }
 
 function mergeFullLogsWithoutRegressingStream(
@@ -381,9 +498,24 @@ function mergeFullLogsWithoutRegressingStream(
   if (!nextLogs) return currentLogs ?? null;
   if (!currentLogs) return nextLogs;
 
-  return getModelTextLength(nextLogs) >= getModelTextLength(currentLogs)
-    ? nextLogs
-    : currentLogs;
+  const mergedLogs = structuredClone(nextLogs);
+  const phases: TaskLogPhase[] = ['planning', 'coding', 'validation'];
+
+  for (const phase of phases) {
+    const currentPhase = currentLogs.phases[phase];
+    const nextPhase = nextLogs.phases[phase];
+
+    mergedLogs.phases[phase] = {
+      ...nextPhase,
+      status: pickMergedPhaseStatus(currentPhase.status, nextPhase.status),
+      started_at: nextPhase.started_at ?? currentPhase.started_at,
+      completed_at: nextPhase.completed_at ?? currentPhase.completed_at,
+      entries: mergeTaskLogEntries(nextPhase.entries, currentPhase.entries),
+    };
+  }
+
+  mergedLogs.updated_at = getLatestLogTimestamp(currentLogs.updated_at, nextLogs.updated_at);
+  return mergedLogs;
 }
 
 function getPhaseLabel(phase: TaskLogPhase, t: ReturnType<typeof useTranslation>['t']): string {
@@ -605,7 +737,7 @@ function getToolDisplay(entry: DisplayTaskLogEntry): { name: string; input: stri
   const input = entry.tool_input || entry.content.replace(/^\[[^\]]+\]\s*/, '').replace(/^(Done|Error)$/i, '').trim();
   const status = entry.type === 'tool_start'
     ? 'running'
-    : /\berror\b/i.test(entry.content)
+    : entry.tool_success === false || /\b(error|fail|failed)\b/i.test(entry.content)
       ? 'error'
       : 'done';
 
@@ -668,6 +800,7 @@ function mergeToolLifecycleEntries(entries: DisplayTaskLogEntry[]): DisplayTaskL
     matchingStart.content = entry.content;
     matchingStart.tool_name = matchingStart.tool_name ?? entry.tool_name;
     matchingStart.tool_input = matchingStart.tool_input ?? entry.tool_input;
+    matchingStart.tool_success = entry.tool_success ?? matchingStart.tool_success;
     matchingStart.tool_call_id = matchingStart.tool_call_id ?? entry.tool_call_id;
     matchingStart.detail = entry.detail ?? matchingStart.detail;
     matchingStart.collapsed = entry.collapsed ?? matchingStart.collapsed;

@@ -92,6 +92,7 @@ export interface TaskLogEntry {
   };
   tool_name?: string;
   tool_input?: string;
+  tool_success?: boolean;
   tool_call_id?: string;
   subtask_id?: string;
   session?: number;

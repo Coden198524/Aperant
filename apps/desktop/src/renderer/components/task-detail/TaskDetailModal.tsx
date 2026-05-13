@@ -532,7 +532,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
               'translate-x-[-50%]',
               'h-screen',
               'bg-card border-x border-border rounded-none',
-              'shadow-2xl overflow-hidden flex flex-col',
+              'shadow-2xl overflow-visible flex flex-col',
               'data-[state=open]:animate-in data-[state=closed]:animate-out',
               'data-[state=closed]:fade-out-0 data-[state=open]:fade-in-0',
               'data-[state=closed]:zoom-out-95 data-[state=open]:zoom-in-95',
@@ -541,14 +541,14 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
             style={{ width: `${modalWidth}px`, maxWidth: `calc(100vw - ${MODAL_SIDE_MARGIN * 2}px)` }}
           >
             <div
-              className="absolute inset-y-0 left-0 z-20 w-2 cursor-ew-resize touch-none hover:bg-primary/20"
+              className="absolute inset-y-0 -left-2.5 z-20 w-2.5 cursor-ew-resize touch-none hover:bg-primary/20"
               role="separator"
               aria-orientation="vertical"
               aria-label={t('tasks:detail.resizeWidth', { defaultValue: 'Resize task detail width' })}
               onPointerDown={(event) => handleResizeStart('left', event)}
             />
             <div
-              className="absolute inset-y-0 right-0 z-20 w-2 cursor-ew-resize touch-none hover:bg-primary/20"
+              className="absolute inset-y-0 -right-2.5 z-20 w-2.5 cursor-ew-resize touch-none hover:bg-primary/20"
               role="separator"
               aria-orientation="vertical"
               aria-label={t('tasks:detail.resizeWidth', { defaultValue: 'Resize task detail width' })}

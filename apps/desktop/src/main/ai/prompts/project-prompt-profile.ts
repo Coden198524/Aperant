@@ -456,6 +456,18 @@ function getSpecLengthGuidance(profile: ProjectPromptProfile): string {
   }
 }
 
+function getComplexPlanningGuidance(profile: ProjectPromptProfile): string {
+  if (profile.workflow.specStyle !== 'full' && profile.workflow.promptIntensity !== 'thorough') {
+    return '- For genuinely complex tasks, preserve necessary work items and use split plan files instead of merging unrelated areas.';
+  }
+
+  return [
+    '- For genuinely complex tasks, especially migrations, removals, replacements, refactors, or cross-system changes, do not compress the plan into the normal phase/subtask target.',
+    '- Split complex plans by dependency boundary such as runtime behavior, UI/editor surfaces, build/tooling, CI/release, data/assets, compatibility, migration tooling, and validation/rollback when those areas are relevant.',
+    '- Use `split_plan: true` with phase files when preserving the necessary work would make one `implementation_plan.json` dense or hard to review.',
+  ].join('\n');
+}
+
 function buildGeneratedHeader(profile: ProjectPromptProfile, promptName: string): string {
   const domainGuidance = profile.project.domain === 'general'
     ? 'Use general software-development quality checks.'
@@ -620,6 +632,8 @@ ${buildToolCallJsonGuidance()}
 
 - Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.
 - If the task is genuinely complex, do not omit necessary subtasks just to hit the normal target. Preserve all required work items and make each subtask description shorter instead.
+- The 1-${profile.workflow.maxRecommendedSubtasks} subtask guidance applies to small changes only, not complex migrations or broad rewrites.
+${getComplexPlanningGuidance(profile)}
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 - Put verification on each subtask using the smallest relevant command or manual check.

@@ -103,6 +103,30 @@ describe('TaskSubtasks', () => {
     expect(screen.getByText(/Context after table should also remain visible/)).toBeInTheDocument();
   });
 
+  it('renders escaped Chinese markdown summary tables instead of raw source', () => {
+    const task = createTask();
+    task.subtasks[0].completionSummary = [
+      '\\|项目\\|内容\\|',
+      '\\|完成内容\\|添加了子任务总结表格渲染。\\|',
+      '\\|验证结果\\|运行 TaskSubtasks.test.tsx。\\|',
+      '\\|审核要点\\|确认表格不再显示源码。\\|',
+    ].join('\n');
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={task} />
+      </TooltipProvider>
+    );
+
+    fireEvent.click(screen.getByText('Render summary'));
+
+    expect(screen.getByText('What changed')).toBeInTheDocument();
+    expect(screen.getByText('Verification')).toBeInTheDocument();
+    expect(screen.getByText('Review notes')).toBeInTheDocument();
+    expect(screen.getByText('添加了子任务总结表格渲染。')).toBeInTheDocument();
+    expect(screen.queryByText(/\\\|项目\\\|内容\\\|/)).not.toBeInTheDocument();
+  });
+
   it('shows runtime logs next to the subtask list', () => {
     render(
       <TooltipProvider>

@@ -18,12 +18,22 @@ import type { BrowseProvider } from './types';
 import { SerperSearchProvider } from './serper-search';
 import { JinaBrowseProvider } from './jina-browse';
 
+declare const __SERPER_API_KEY__: string;
+
 /**
  * Create the default search provider.
  * Uses Serper.dev with an embedded API key — search works out of the box.
  */
 export function createSearchProvider(): SearchProvider {
   return new SerperSearchProvider();
+}
+
+export function isSearchProviderConfigured(): boolean {
+  if (typeof __SERPER_API_KEY__ !== 'undefined' && __SERPER_API_KEY__) {
+    return true;
+  }
+
+  return Boolean(process.env.SERPER_API_KEY);
 }
 
 /**
