@@ -127,14 +127,15 @@ function getQualityConfigFromWorkflowConfig(workflowConfig?: WorkflowConfig): im
   }
 
   const qualityChecks = workflowConfig.qualityChecks ?? {};
+  const conservativeMode = workflowConfig.optimizationLevel === 'conservative';
 
   return {
     enablePreQASmokeTests: qualityChecks.enableSmokeTests ?? false,
-    enableIncrementalValidation: true,
+    enableIncrementalValidation: conservativeMode,
     enablePatternInjection: qualityChecks.enablePatternInjection ?? false,
     enablePreImplementationChecklist: qualityChecks.enablePreImplementationChecklist ?? false,
     enableSelfCritique: qualityChecks.enableSelfCritique ?? false,
-    enableContextAwareRecovery: true,
+    enableContextAwareRecovery: conservativeMode,
     enableActiveMemoryLearning: false,
     enableTieredQualityStandards: qualityChecks.enableTieredQualityStandards ?? false,
   };
@@ -617,7 +618,7 @@ async function assemblePrompt(
       '- Write exactly 1 implementation phase.',
       '- Write exactly 1 pending subtask unless the user explicitly requested independent staged delivery.',
       '- Put the full implementation scope, files, and verification in that one subtask.',
-      '- Do not split by component, file, UI, tests, or cleanup for simple apps or games.',
+      '- Do not split by component, file, test, cleanup, or other internal implementation area for a single-deliverable task.',
     ].join('\n');
   }
   if (promptName === 'coder' && isFastWorkflow(session)) {
@@ -1816,28 +1817,28 @@ function buildSpecKickoffMessage(
     baseMessage = `Assess the complexity of the following task and write your assessment to ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Determine if this is a SIMPLE, STANDARD, or COMPLEX task based on the scope of changes required.\n\nIMPORTANT: This is the FIRST phase of the spec pipeline. No spec.md or other spec files exist yet — do NOT attempt to read them. Assess complexity based on the task description and the project structure at ${promptProjectDir} only.`;
   } else switch (agentType) {
     case 'spec_discovery':
-      baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Return the complete context.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
+      baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Return ONLY the compact context.json object; the orchestrator will write ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Use the pre-generated project index first. Run at most two narrow discovery tools, and for empty projects do not run recursive globs. Keep arrays concise and do not include read-operation transcripts, copied source, long analysis, or optional large sections.`;
       break;
     case 'spec_gatherer':
-      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return the complete requirements.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Derive requirements from the task description and the project source code at ${promptProjectDir}.`;
+      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return ONLY the compact requirements.json object; the orchestrator will write ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Prefer the task description and provided context. Keep user_requirements, acceptance_criteria, and constraints short; do not include analysis, source excerpts, or discovery transcripts.`;
       break;
     case 'spec_researcher':
-      baseMessage = `Research implementation approaches for: ${taskDescription}. Review relevant code in ${promptProjectDir} and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.`;
+      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. This phase may run before spec.md exists, so do not read spec.md unless it is explicitly provided or confirmed to exist. Use the task, prior context.json/requirements.json summaries, and project index first. If no external research is needed, return a compact research.json object with integrations_researched: [], unverified_claims: [], and concise recommendations explaining that existing project patterns are sufficient. Review relevant code in ${promptProjectDir} only when needed and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.`;
       break;
     case 'spec_writer':
-      baseMessage = `Write the specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}.`;
+      baseMessage = `Write a compact implementation specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}. Use prior phase context as the source of truth; do not re-read context.json or requirements.json unless missing. Keep spec.md focused, normally 40-80 lines for balanced workflow, with overview, files, core behavior, and acceptance checks only.`;
       break;
     case 'planner':
-      baseMessage = `Create a detailed implementation plan for: ${taskDescription}. Read the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.json with concrete coding subtasks. Project root: ${promptProjectDir}.`;
+      baseMessage = `Create a concise implementation plan for: ${taskDescription}. Use the prior phase context already provided in this kickoff before reading files. If you need spec.md, read only the relevant section with a line limit. Create ${promptSpecDir}/implementation_plan.json with concrete coding subtasks. Project root: ${promptProjectDir}.`;
       break;
     case 'spec_critic':
       baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
       break;
     case 'spec_context':
-      baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and return the complete context.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Analyze the project source code at ${promptProjectDir} directly.`;
+      baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and return ONLY the compact context.json object; the orchestrator will write ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Use narrow reads only, and do not include transcripts, copied source, or long analysis.`;
       break;
     case 'spec_validation':
-      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.json are complete, consistent, and ready for implementation. Fix any issues found. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
+      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.json are complete, consistent, and ready for implementation. Use targeted reads with limits; do not read entire large files unless required. Fix only blocking issues. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
       break;
     default:
       baseMessage = `Complete the spec creation task described in your system prompt. Task: ${taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
@@ -1902,7 +1903,7 @@ function buildKickoffMessage(
       baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. End with a short markdown review table.`;
       break;
     case 'qa_reviewer':
-      baseMessage = `Review the implementation in ${promptProjectDir} against the specification in ${promptSpecDir}/spec.md. Write your findings to ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+      baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.json statuses, completion summaries, and file hints. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Read source only when the check fails or the plan lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read spec.md, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
       break;
     case 'qa_fixer':
       baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/qa_report.md to indicate fixes have been applied.`;
@@ -1937,7 +1938,7 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
     case 'direct_task':
       return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. End with a markdown table: What changed, Verification, Review notes.`;
     case 'qa_reviewer':
-      return `You are a QA reviewer. Review the implementation in ${promptProjectDir} against the spec in ${promptSpecDir}/spec.md. Write your findings to ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
+      return `You are a QA reviewer. Use minimal verification: inspect ${promptSpecDir}/implementation_plan.json, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Avoid broad searches and repeated full-file reads. Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
     case 'qa_fixer':
       return `You are a QA fixer. Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix the issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/implementation_plan.json qa_signoff status to "fixes_applied".`;
     default:

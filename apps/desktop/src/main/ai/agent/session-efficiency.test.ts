@@ -71,7 +71,17 @@ describe('session-efficiency', () => {
     expect(message).toContain('npm run typecheck');
     expect(message).toContain('Do not read spec.md or implementation_plan.json before implementation');
     expect(message).toContain('one compatible alternative at most');
+    expect(message).toContain('Run at most one listed verification');
+    expect(message).toContain('Do not try multiple equivalent checks');
+    expect(message).toContain('single existence/key-content check is enough');
+    expect(message).toContain('avoid nested cmd/powershell quoting');
+    expect(message).toContain('Never use Bash here-documents');
+    expect(message).toContain('do not keep rewriting commands');
     expect(message).toContain('Do not re-plan completed work');
+    expect(message).toContain('few grouped Edits');
+    expect(message).toContain('do not reread the whole file');
+    expect(message).toContain('do not read it back unless verification fails');
+    expect(message).toContain('avoid python/node one-liners with non-ASCII quoting');
     expect(message).toContain('immediately call update_subtask_status');
     expect(message).toContain('before writing any final summary');
     expect(message).toContain('provide only a compact review matrix');

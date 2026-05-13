@@ -450,9 +450,9 @@ function getSpecLengthGuidance(profile: ProjectPromptProfile): string {
     case 'quick':
       return 'Keep `spec.md` concise: normally 20-60 lines.';
     case 'standard':
-      return 'Keep `spec.md` focused but complete: normally 40-100 lines.';
+      return 'Keep `spec.md` focused but complete: normally 40-80 lines.';
     default:
-      return 'Write enough `spec.md` detail to cover cross-module behavior, dependencies, validation, and risk.';
+      return 'Write enough `spec.md` detail to cover cross-module behavior, dependencies, validation, and risk, but avoid copied context or exhaustive checklists.';
   }
 }
 
@@ -611,8 +611,8 @@ ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
-1. Read \`spec.md\`.
-2. Read \`requirements.json\` and \`context.json\` if present.
+1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.json\`, and \`context.json\` summaries.
+2. Read \`spec.md\`, \`requirements.json\`, or \`context.json\` only if the kickoff context is missing the detail needed for the plan; use Read \`limit\` for large files.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
 4. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
 
@@ -707,9 +707,9 @@ ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
-1. Read \`spec.md\` and \`implementation_plan.json\`.
-2. Check that all subtasks are completed.
-3. Inspect the changed files and verify the requested behavior.
+1. Read \`implementation_plan.json\` first and check that all subtasks are completed.
+2. Read only the relevant parts of \`spec.md\` if the plan does not already contain enough acceptance detail.
+3. Inspect changed files once; use line limits or targeted searches for large files.
 4. Run the smallest relevant verification command available.
 5. Report only actionable failures that block the requested task.
 

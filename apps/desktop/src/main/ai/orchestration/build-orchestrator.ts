@@ -84,6 +84,19 @@ function hasExecutableSubtasks(plan: ImplementationPlan | null): boolean {
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
 }
 
+function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
+  if (subtask.status === 'completed') {
+    return true;
+  }
+
+  if (typeof subtask.completed_at === 'string' && subtask.completed_at.trim().length > 0) {
+    return true;
+  }
+
+  return typeof subtask.completion_summary === 'string' &&
+    subtask.completion_summary.trim().length > 0;
+}
+
 function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string {
   return [
     'CRITICAL - RETRY IMPLEMENTATION PLAN WITH WRITE TOOL',
@@ -285,6 +298,8 @@ interface PlanSubtask {
   id: string;
   description: string;
   status: string;
+  completion_summary?: string;
+  completed_at?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
 }
@@ -1025,6 +1040,14 @@ export class BuildOrchestrator extends EventEmitter {
             subtask.status = 'pending';
             updated = true;
           }
+          if (subtask.completion_summary !== undefined) {
+            delete subtask.completion_summary;
+            updated = true;
+          }
+          if (subtask.completed_at !== undefined) {
+            delete subtask.completed_at;
+            updated = true;
+          }
         }
       }
 
@@ -1088,7 +1111,7 @@ export class BuildOrchestrator extends EventEmitter {
 
       for (const phase of plan.phases) {
         for (const subtask of phase.subtasks) {
-          if (subtask.status !== 'completed') {
+          if (!hasSubtaskCompletionEvidence(subtask)) {
             return false;
           }
         }

@@ -13,7 +13,7 @@ vi.mock('node:child_process', () => ({
 }));
 
 const mockIsWindows = vi.fn(() => false);
-const mockFindExecutable = vi.fn(() => null);
+const mockFindExecutable = vi.fn<() => string | null>(() => null);
 const mockKillProcessGracefully = vi.fn();
 
 vi.mock('../../../../platform/index', () => ({
@@ -153,6 +153,32 @@ describe('Bash Tool', () => {
     expect(result).toContain('deduced return types are a C++14 extension');
     expect(result).toContain('[Compiler output truncated');
     expect(result.length).toBeLessThan(7_000);
+  });
+
+  it('should reject Windows Python here-doc verification before execution', async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockFindExecutable.mockReturnValue('C:\\Program Files\\Git\\bin\\bash.exe');
+
+    const result = await bashTool.config.execute(
+      { command: "cd /d E:\\Work\\Test && python - <<'PY'\nprint('ok')\nPY" },
+      baseContext,
+    );
+
+    expect(result).toContain('Unsupported Windows shell syntax');
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('should reject risky Windows non-ASCII Python one-liners before execution', async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockFindExecutable.mockReturnValue('C:\\Program Files\\Git\\bin\\bash.exe');
+
+    const result = await bashTool.config.execute(
+      { command: 'cd /d E:\\Work\\Test && python -c "assert \'中文\' in open(\'README.md\', encoding=\'utf-8\').read()"' },
+      baseContext,
+    );
+
+    expect(result).toContain('Risky Windows verification command');
+    expect(mockExecFile).not.toHaveBeenCalled();
   });
 
   it('should return error message when security hook rejects command', async () => {

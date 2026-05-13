@@ -1,9 +1,83 @@
 import path from 'path';
 import { existsSync, readFileSync, } from 'fs';
 import { EventEmitter } from 'events';
-import type { TaskLogs, TaskLogPhase, TaskLogStreamChunk, TaskPhaseLog } from '../shared/types';
+import type { TaskLogs, TaskLogEntryType, TaskLogPhase, TaskLogStreamChunk, TaskPhaseLog } from '../shared/types';
 import { findTaskWorktree } from './worktree-paths';
 import { debugLog, debugWarn, debugError } from '../shared/utils/debug-logger';
+
+function emptyPhaseLog(phase: TaskLogPhase): TaskPhaseLog {
+  return {
+    phase,
+    status: 'pending',
+    started_at: null,
+    completed_at: null,
+    entries: [],
+  };
+}
+
+function extractJsonStringField(content: string, field: string): string | null {
+  const match = content.match(new RegExp(`"${field}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`));
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return match[1];
+  }
+}
+
+function salvageTaskLogs(content: string, specDir: string, error: unknown): TaskLogs {
+  const now = new Date().toISOString();
+  const specId = extractJsonStringField(content, 'spec_id') ?? path.basename(specDir);
+  const createdAt = extractJsonStringField(content, 'created_at') ?? now;
+  const updatedAt = extractJsonStringField(content, 'updated_at') ?? now;
+  const phases: TaskLogs['phases'] = {
+    planning: emptyPhaseLog('planning'),
+    coding: emptyPhaseLog('coding'),
+    validation: emptyPhaseLog('validation'),
+  };
+
+  const entryPattern = /"timestamp"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"type"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"content"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[\s\S]{0,1200}?"phase"\s*:\s*"(planning|coding|validation)"/g;
+  for (const match of content.matchAll(entryPattern)) {
+    const phase = match[4] as TaskLogPhase;
+    let entryContent = match[3] ?? '';
+    try {
+      entryContent = JSON.parse(`"${entryContent}"`) as string;
+    } catch {
+      // Keep the raw escaped fragment if the individual entry is also damaged.
+    }
+
+    phases[phase].entries.push({
+      timestamp: match[1] ?? now,
+      type: match[2] as TaskLogEntryType,
+      content: entryContent,
+      phase,
+    });
+  }
+
+  for (const phase of Object.keys(phases) as TaskLogPhase[]) {
+    const startedAt = content.match(new RegExp(`"${phase}"\\s*:\\s*\\{[\\s\\S]*?"started_at"\\s*:\\s*("[^"]+"|null)`))?.[1];
+    const completedAt = content.match(new RegExp(`"${phase}"\\s*:\\s*\\{[\\s\\S]*?"completed_at"\\s*:\\s*("[^"]+"|null)`))?.[1];
+    if (startedAt && startedAt !== 'null') phases[phase].started_at = startedAt.slice(1, -1);
+    if (completedAt && completedAt !== 'null') phases[phase].completed_at = completedAt.slice(1, -1);
+    if (phases[phase].completed_at) {
+      phases[phase].status = 'completed';
+    } else if (phases[phase].started_at || phases[phase].entries.length > 0) {
+      phases[phase].status = 'active';
+    }
+  }
+
+  phases.planning.entries.unshift({
+    timestamp: now,
+    type: 'error',
+    content: `task_logs.json could not be parsed; showing recovered log entries only. ${error instanceof Error ? error.message : String(error)}`,
+    phase: 'planning',
+  });
+
+  return { spec_id: specId, created_at: createdAt, updated_at: updatedAt, phases };
+}
 
 function findWorktreeSpecDir(projectPath: string, specId: string, specsRelPath: string): string | null {
   const worktreePath = findTaskWorktree(projectPath, specId);
@@ -85,7 +159,10 @@ export class TaskLogService extends EventEmitter {
         logFile,
         error: error instanceof Error ? error.message : String(error)
       });
-      return null;
+      const content = readFileSync(logFile, 'utf-8');
+      const salvaged = salvageTaskLogs(content, specDir, error);
+      this.logCache.set(specDir, salvaged);
+      return salvaged;
     }
   }
 

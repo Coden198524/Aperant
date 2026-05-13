@@ -92,6 +92,28 @@ function isCompilerCommand(command: string): boolean {
   return /(^|[^\w.-])(g\+\+|gcc|clang\+\+|clang|cl)(\.exe)?([^\w.-]|$)/i.test(command);
 }
 
+function hasNonAscii(text: string): boolean {
+  return /[^\u0000-\u007F]/.test(text);
+}
+
+function detectFastCommandFailure(command: string): string | null {
+  if (!isWindows()) {
+    return null;
+  }
+
+  const hasPythonHereDoc = /\bpython(?:\d+(?:\.\d+)?)?\b[^\n\r]*(?:<<\s*['"]?\w+['"]?)/i.test(command);
+  if (hasPythonHereDoc) {
+    return 'Error: Unsupported Windows shell syntax. Bash here-documents such as `python - <<EOF` are not portable here. Use a simple file read or one short command instead of retrying with equivalent shell quoting.';
+  }
+
+  const hasComplexPythonOneLiner = /\bpython(?:\d+(?:\.\d+)?)?\b[^\n\r]*\s-c\s*["'][\s\S]*["']/i.test(command);
+  if (hasComplexPythonOneLiner && hasNonAscii(command)) {
+    return 'Error: Risky Windows verification command. Python -c with nested quotes and non-ASCII text often fails because of shell encoding/quoting. Use Read, Test-Path, Get-Content -Raw, or record the manual check instead of retrying equivalent commands.';
+  }
+
+  return null;
+}
+
 function resolveShell(): string {
   if (isWindows()) {
     // Prefer Git Bash on Windows; fall back to cmd.exe
@@ -176,6 +198,11 @@ export const bashTool = Tool.define({
     if ('hookSpecificOutput' in hookResult) {
       const reason = hookResult.hookSpecificOutput.permissionDecisionReason;
       return `Error: Command not allowed — ${reason}`;
+    }
+
+    const fastFailure = detectFastCommandFailure(command);
+    if (fastFailure) {
+      return fastFailure;
     }
 
     const timeoutMs = Math.min(timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);

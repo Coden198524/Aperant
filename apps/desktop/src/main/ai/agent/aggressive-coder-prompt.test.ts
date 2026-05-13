@@ -19,4 +19,16 @@ describe('buildAggressiveCoderPrompt', () => {
     expect(prompt).toContain('filter noisy output');
     expect(prompt).toContain('create or overwrite/update the listed target files directly');
   });
+
+  it('discourages repeated shell verification retries', () => {
+    const prompt = buildAggressiveCoderPrompt();
+
+    expect(prompt).toContain('Run at most one targeted verification');
+    expect(prompt).toContain('do not try multiple equivalent checks');
+    expect(prompt).toContain('single existence/key-content check is enough');
+    expect(prompt).toContain('avoid nested cmd/powershell quoting');
+    expect(prompt).toContain('Never use Bash here-documents');
+    expect(prompt).toContain('Avoid Python -c or Node -e checks containing non-ASCII text');
+    expect(prompt).toContain('do not keep rewriting commands');
+  });
 });

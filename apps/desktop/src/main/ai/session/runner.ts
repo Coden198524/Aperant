@@ -35,6 +35,7 @@ import type {
   SessionOutcome,
   SessionError,
   SessionEventCallback,
+  StreamEvent,
   TokenUsage,
   SessionMessage,
 } from './types';
@@ -255,27 +256,129 @@ function repairWriteToolInput(rawInput: string): string | null {
   });
 }
 
-function extractCompletedSubtaskIdFromToolResult(part: FullStreamPart): string | null {
+function stringifyToolValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (value === undefined || value === null) {
+    return '';
+  }
+  try {
+    return JSON.stringify(value);
+  } catch {
+    return String(value);
+  }
+}
+
+function getToolName(value: unknown): string | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const record = value as Record<string, unknown>;
+  return typeof record.toolName === 'string'
+    ? record.toolName
+    : typeof record.tool_name === 'string'
+      ? record.tool_name
+      : null;
+}
+
+function isUpdateSubtaskStatusTool(toolName: string | null): boolean {
+  return toolName?.endsWith('update_subtask_status') === true;
+}
+
+function getToolCallId(value: unknown): string | undefined {
+  if (!value || typeof value !== 'object') {
+    return undefined;
+  }
+  const record = value as Record<string, unknown>;
+  return typeof record.toolCallId === 'string'
+    ? record.toolCallId
+    : typeof record.id === 'string'
+      ? record.id
+      : undefined;
+}
+
+function getRecordValue(record: Record<string, unknown>, names: string[]): unknown {
+  for (const name of names) {
+    if (name in record) {
+      return record[name];
+    }
+  }
+  return undefined;
+}
+
+function extractCompletedStatusText(text: string): string | null {
+  const lower = text.toLowerCase();
   if (
-    part.type !== 'tool-result' ||
-    typeof (part as { toolName?: unknown }).toolName !== 'string' ||
-    !(part as { toolName: string }).toolName.endsWith('update_subtask_status')
+    !lower.includes('completed') &&
+    !text.includes("to status 'completed'") &&
+    !text.includes('"status":"completed"') &&
+    !text.includes('"status": "completed"')
   ) {
     return null;
   }
+  return text.match(/subtask ['"]([^'"]+)['"]/i)?.[1] ??
+    text.match(/subtask_id["']?\s*[:=]\s*["']([^"']+)["']/i)?.[1] ??
+    text.match(/"subtask_id"\s*:\s*"([^"]+)"/i)?.[1] ??
+    null;
+}
 
-  const output = (part as { output?: unknown }).output;
-  const text = typeof output === 'string'
-    ? output
-    : output === undefined || output === null
-      ? ''
-      : JSON.stringify(output);
+function extractCompletedStatusInput(input: unknown): { subtaskId?: string; completed: boolean } {
+  if (!input || typeof input !== 'object' || Array.isArray(input)) {
+    return { completed: false };
+  }
+  const record = input as Record<string, unknown>;
+  const status = getRecordValue(record, ['status']);
+  const subtaskId = getRecordValue(record, ['subtask_id', 'subtaskId', 'id']);
+  return {
+    completed: status === 'completed',
+    subtaskId: typeof subtaskId === 'string' ? subtaskId : undefined,
+  };
+}
 
-  if (!text.includes("to status 'completed'")) {
+function extractCompletedSubtaskIdFromToolResult(part: FullStreamPart): string | null {
+  if (part.type !== 'tool-result' || !isUpdateSubtaskStatusTool(getToolName(part))) {
     return null;
   }
 
-  return text.match(/subtask '([^']+)'/)?.[1] ?? null;
+  const record = part as Record<string, unknown>;
+  const output = getRecordValue(record, ['output', 'result', 'content', 'text']);
+  const text = stringifyToolValue(output);
+  const idFromOutput = extractCompletedStatusText(text);
+  if (idFromOutput) {
+    return idFromOutput;
+  }
+
+  const inputCompletion = extractCompletedStatusInput(record.input);
+  return inputCompletion.completed ? inputCompletion.subtaskId ?? null : null;
+}
+
+function extractCompletedSubtaskIdFromEvent(
+  event: StreamEvent,
+  pendingCompletions: Map<string, string>,
+): string | null {
+  if (event.type === 'tool-call' && isUpdateSubtaskStatusTool(event.toolName)) {
+    const completion = extractCompletedStatusInput(event.args);
+    if (completion.completed && completion.subtaskId) {
+      pendingCompletions.set(event.toolCallId, completion.subtaskId);
+    }
+    return null;
+  }
+
+  if (event.type !== 'tool-result' || !isUpdateSubtaskStatusTool(event.toolName)) {
+    return null;
+  }
+
+  if (event.isError) {
+    pendingCompletions.delete(event.toolCallId);
+    return null;
+  }
+
+  const text = stringifyToolValue(event.result);
+  const idFromOutput = extractCompletedStatusText(text);
+  const idFromInput = pendingCompletions.get(event.toolCallId);
+  pendingCompletions.delete(event.toolCallId);
+  return idFromOutput ?? idFromInput ?? null;
 }
 
 async function repairMalformedToolCall(options: {
@@ -574,6 +677,7 @@ async function executeStream(
   const writeToolInputFailureCallIds = new Set<string>();
   let writeToolInputCorrectionPrompt: string | undefined;
   const completedSubtaskIds = new Set<string>();
+  const pendingCompletedSubtaskToolCalls = new Map<string, string>();
 
   // Convergence nudge: track whether we've already nudged the agent to wrap up
   let convergenceNudgeInjected = false;
@@ -582,6 +686,10 @@ async function executeStream(
   const emitEvent: SessionEventCallback = (event) => {
     // Feed progress tracker
     progressTracker.processEvent(event);
+    const completedSubtaskId = extractCompletedSubtaskIdFromEvent(event, pendingCompletedSubtaskToolCalls);
+    if (completedSubtaskId) {
+      completedSubtaskIds.add(completedSubtaskId);
+    }
     // Track tool calls in memory state for injection decisions
     if (stepMemoryState && event.type === 'tool-call') {
       stepMemoryState.recordToolCall(event.toolName, event.args);

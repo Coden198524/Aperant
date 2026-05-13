@@ -158,6 +158,38 @@ describe('createStreamHandler', () => {
 
       expect(events[0]).toMatchObject({ type: 'tool-result', durationMs: 0 });
     });
+
+    it('should convert tool-output-available to a tool-result event', () => {
+      const handler = createStreamHandler(onEvent);
+      const now = Date.now();
+      vi.spyOn(Date, 'now').mockReturnValueOnce(now).mockReturnValueOnce(now + 75);
+
+      handler.processPart({
+        type: 'tool-input-available',
+        toolCallId: 'c1',
+        toolName: 'mcp__autocode__update_subtask_status',
+        input: { subtask_id: '2.2', status: 'completed' },
+      });
+      events.length = 0;
+
+      handler.processPart({
+        type: 'tool-output-available',
+        toolCallId: 'c1',
+        output: "Successfully updated subtask '2.2' to status 'completed'",
+      });
+
+      expect(events).toHaveLength(1);
+      expect(events[0]).toMatchObject({
+        type: 'tool-result',
+        toolName: 'mcp__autocode__update_subtask_status',
+        toolCallId: 'c1',
+        result: "Successfully updated subtask '2.2' to status 'completed'",
+        durationMs: 75,
+        isError: false,
+      });
+
+      vi.restoreAllMocks();
+    });
   });
 
   // ===========================================================================

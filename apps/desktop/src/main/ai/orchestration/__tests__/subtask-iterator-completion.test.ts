@@ -180,6 +180,95 @@ describe('iterateSubtasks completion gating', () => {
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('What changed');
   });
 
+  it('does not retry a tool-completed subtask when the session hits max_steps', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    let runs = 0;
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 2,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => {
+        runs++;
+        const stalePlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+          phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
+        };
+        stalePlan.phases[0].subtasks[0].status = 'in_progress';
+        await writeFile(planPath, JSON.stringify(stalePlan, null, 2), 'utf-8');
+        return {
+          ...makeResult('max_steps'),
+          completedSubtaskIds: ['s1'],
+          messages: [
+            { role: 'assistant', content: 'Done and checked.' },
+          ],
+        };
+      },
+    });
+
+    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+      phases: Array<{ subtasks: Array<{ status: string; completion_summary?: string }> }>;
+    };
+
+    expect(runs).toBe(1);
+    expect(result.completedSubtasks).toBe(1);
+    expect(result.stuckSubtasks).toEqual([]);
+    expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('Done and checked');
+  });
+
+  it('skips subtasks that have completion evidence even if status regressed', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            {
+              id: 's1',
+              title: 'done',
+              description: 'already done',
+              status: 'in_progress',
+              completion_summary: '| Item | Details |\n| --- | --- |\n| What changed | Done. |',
+            },
+            { id: 's2', title: 'next', description: 'next work', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+
+    const started: string[] = [];
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      onSubtaskStart: (subtask) => started.push(subtask.id),
+      runSubtaskSession: async () => makeResult('completed'),
+    });
+
+    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+      phases: Array<{ subtasks: Array<{ id: string; status: string; completed_at?: string }> }>;
+    };
+
+    expect(started).toEqual(['s2']);
+    expect(result.totalSubtasks).toBe(2);
+    expect(result.completedSubtasks).toBe(2);
+    expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+    expect(updatedPlan.phases[0].subtasks[0].completed_at).toEqual(expect.any(String));
+    expect(updatedPlan.phases[0].subtasks[1].status).toBe('completed');
+  });
+
   it('adds a completion summary from the final assistant message when auto-completing', async () => {
     const plan = {
       phases: [

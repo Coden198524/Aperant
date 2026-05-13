@@ -37,6 +37,8 @@ import {
   RequirementsOutputSchema,
   type RequirementsOutput,
   ResearchOutputSchema,
+  type SpecContextOutput,
+  type ResearchOutput,
 } from '../schema';
 import type { ZodSchema } from 'zod';
 import type { SessionResult } from '../session/types';
@@ -330,6 +332,30 @@ interface MutableImplementationPlan extends Record<string, unknown> {
 
 function hasExecutableSubtasks(plan: MinimalImplementationPlan | null): boolean {
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
+}
+
+function isEmptyOrUnstructuredProjectIndex(projectIndex: string | undefined): boolean {
+  if (!projectIndex) {
+    return false;
+  }
+
+  try {
+    const parsed = JSON.parse(projectIndex) as {
+      services?: Record<string, unknown>;
+      infrastructure?: Record<string, unknown>;
+    };
+    const services = parsed.services && typeof parsed.services === 'object'
+      ? Object.keys(parsed.services).length
+      : 0;
+    const infrastructure = parsed.infrastructure && typeof parsed.infrastructure === 'object'
+      ? Object.keys(parsed.infrastructure).length
+      : 0;
+    return services === 0 && infrastructure === 0;
+  } catch {
+    return projectIndex.trim().length > 0 &&
+      projectIndex.length < 512 &&
+      !/(package\.json|requirements\.txt|cargo\.toml|go\.mod|pom\.xml|build\.gradle)/i.test(projectIndex);
+  }
 }
 
 function uniqueStrings(values: Array<string | undefined>): string[] {
@@ -931,6 +957,336 @@ async function writeStructuredJsonOutput(
   await writeFile(join(specDir, fileName), `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
 }
 
+function getLastAssistantText(result: SessionResult): string | null {
+  for (let index = result.messages.length - 1; index >= 0; index--) {
+    const message = result.messages[index];
+    if (message.role === 'assistant' && message.content.trim()) {
+      return message.content.trim();
+    }
+  }
+  return null;
+}
+
+function parseJsonFromFinalText(text: string): { ok: true; value: unknown } | { ok: false; error: string } {
+  const candidates = buildJsonTextCandidates(text);
+  for (const candidate of candidates) {
+    try {
+      return { ok: true, value: JSON.parse(candidate) };
+    } catch {
+      // Try the next candidate.
+    }
+  }
+
+  return { ok: false, error: 'no valid JSON object found in final assistant message' };
+}
+
+function buildJsonTextCandidates(text: string): string[] {
+  const trimmed = text.trim();
+  const candidates = new Set<string>();
+  candidates.add(trimmed);
+
+  const fenceMatches = trimmed.matchAll(/```(?:json)?\s*([\s\S]*?)```/gi);
+  for (const match of fenceMatches) {
+    if (match[1]?.trim()) {
+      candidates.add(match[1].trim());
+    }
+  }
+
+  const firstBrace = trimmed.indexOf('{');
+  const lastBrace = trimmed.lastIndexOf('}');
+  if (firstBrace >= 0 && lastBrace > firstBrace) {
+    candidates.add(trimmed.slice(firstBrace, lastBrace + 1).trim());
+  }
+
+  return [...candidates].filter(Boolean);
+}
+
+function normalizeStructuredJsonOutput(phase: SpecPhase, value: unknown): unknown {
+  switch (phase) {
+    case 'discovery':
+    case 'context':
+      return normalizeSpecContextOutput(value);
+    case 'requirements':
+      return normalizeRequirementsOutput(value);
+    case 'research':
+      return normalizeResearchOutput(value);
+    default:
+      return value;
+  }
+}
+
+function normalizeSpecContextOutput(value: unknown): SpecContextOutput | unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  return {
+    task_description: stringFrom(record.task_description, record.task, record.taskDescription, record.summary),
+    scoped_services: stringArrayFrom(record.scoped_services, record.services_involved, record.services),
+    architecture_summary: stringFrom(record.architecture_summary, record.architecture, record.current_state, record.summary, record.tech_stack),
+    files_to_modify: normalizeFileModifications(record.files_to_modify, record.filesToModify, record.likely_files_to_create),
+    files_to_reference: normalizeFileReferences(record.files_to_reference, record.filesToReference, record.pattern_files),
+    design_patterns: normalizeDesignPatterns(record.design_patterns, record.patterns),
+    implementation_notes: stringArrayFrom(record.implementation_notes, record.notes, record.notes_for_next_phase),
+    risks: stringArrayFrom(record.risks, record.risk_notes),
+    verification_suggestions: stringArrayFrom(record.verification_suggestions, record.validation_strategy, record.recommended_checks),
+    created_at: stringFrom(record.created_at, record.createdAt) || new Date().toISOString(),
+  };
+}
+
+function stringFrom(...values: unknown[]): string {
+  for (const value of values) {
+    const text = stringifyCompact(value);
+    if (text) {
+      return text;
+    }
+  }
+  return '';
+}
+
+function stringifyCompact(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.trim();
+  }
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(stringifyCompact).filter(Boolean).join('; ');
+  }
+  if (typeof value === 'object') {
+    try {
+      return JSON.stringify(value);
+    } catch {
+      return '';
+    }
+  }
+  return '';
+}
+
+function stringArrayFrom(...values: unknown[]): string[] {
+  for (const value of values) {
+    const items = toStringArray(value);
+    if (items.length > 0) {
+      return items;
+    }
+  }
+  return [];
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    const text = stringifyCompact(value);
+    return text ? [text] : [];
+  }
+  return value.map(stringifyCompact).filter(Boolean);
+}
+
+function normalizeFileModifications(...values: unknown[]): SpecContextOutput['files_to_modify'] {
+  const items = firstArray(values);
+  return items.map((item) => {
+    if (typeof item === 'string') {
+      return {
+        path: item,
+        reason: 'Relevant file for the requested change',
+        change_needed: 'Create or update this file to implement the task',
+      };
+    }
+    const record = isRecord(item) ? item : {};
+    const pathValue = stringFrom(record.path, record.file, record.file_path, record.name);
+    return {
+      path: pathValue,
+      reason: stringFrom(record.reason, record.purpose, record.description) || 'Relevant file for the requested change',
+      change_needed: stringFrom(record.change_needed, record.changeNeeded, record.action, record.status) || 'Create or update this file to implement the task',
+    };
+  }).filter((item) => item.path);
+}
+
+function normalizeFileReferences(...values: unknown[]): SpecContextOutput['files_to_reference'] {
+  const items = firstArray(values);
+  return items.map((item) => {
+    if (typeof item === 'string') {
+      return {
+        path: item,
+        reason: 'Reference file for existing patterns',
+        pattern: 'Review relevant implementation patterns',
+      };
+    }
+    const record = isRecord(item) ? item : {};
+    const pathValue = stringFrom(record.path, record.file, record.file_path, record.name);
+    return {
+      path: pathValue,
+      reason: stringFrom(record.reason, record.purpose, record.description) || 'Reference file for existing patterns',
+      pattern: stringFrom(record.pattern, record.guidance, record.existing_usage) || 'Review relevant implementation patterns',
+    };
+  }).filter((item) => item.path);
+}
+
+function normalizeDesignPatterns(...values: unknown[]): SpecContextOutput['design_patterns'] {
+  const items = firstArray(values);
+  return items.map((item) => {
+    if (typeof item === 'string') {
+      return {
+        name: item,
+        existing_usage: 'Not detected',
+        files: [],
+        guidance: item,
+      };
+    }
+    const record = isRecord(item) ? item : {};
+    const name = stringFrom(record.name, record.pattern, record.title, record.guidance);
+    return {
+      name,
+      existing_usage: stringFrom(record.existing_usage, record.existingUsage, record.usage) || 'Not detected',
+      files: stringArrayFrom(record.files, record.paths),
+      guidance: stringFrom(record.guidance, record.description, record.reason) || name,
+    };
+  }).filter((item) => item.name);
+}
+
+function firstArray(values: unknown[]): unknown[] {
+  for (const value of values) {
+    if (Array.isArray(value)) {
+      return value;
+    }
+  }
+  return [];
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
+
+function normalizeRequirementsOutput(value: unknown): RequirementsOutput | unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const taskDescription = stringFrom(record.task_description, record.task, record.taskDescription, record.summary);
+  return {
+    task_description: taskDescription,
+    workflow_type: normalizeWorkflowType(record.workflow_type, record.workflowType, record.type),
+    services_involved: stringArrayFrom(record.services_involved, record.scoped_services, record.services),
+    user_requirements: stringArrayFrom(record.user_requirements, record.requirements, record.functional_requirements, taskDescription),
+    acceptance_criteria: stringArrayFrom(record.acceptance_criteria, record.acceptanceCriteria, record.success_criteria, record.validation_scenarios),
+    constraints: stringArrayFrom(record.constraints, record.non_functional_requirements, record.risks),
+    created_at: stringFrom(record.created_at, record.createdAt) || new Date().toISOString(),
+  };
+}
+
+function normalizeWorkflowType(...values: unknown[]): RequirementsOutput['workflow_type'] {
+  const allowed: RequirementsOutput['workflow_type'][] = ['feature', 'refactor', 'investigation', 'migration', 'simple', 'bugfix'];
+  const text = stringFrom(...values).toLowerCase();
+  return allowed.find((item) => text.includes(item)) ?? 'feature';
+}
+
+function normalizeResearchOutput(value: unknown): ResearchOutput | unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const integrations = firstArray([
+    record.integrations_researched,
+    record.integrations,
+    record.external_dependencies,
+    record.packages,
+    record.libraries,
+  ]);
+
+  return {
+    integrations_researched: integrations.map(normalizeResearchIntegration).filter(Boolean),
+    unverified_claims: normalizeUnverifiedClaims(record.unverified_claims, record.unknowns, record.risks),
+    recommendations: uniqueStrings([
+      ...toStringArray(record.recommendations),
+      ...toStringArray(record.recommended_approach),
+      ...toStringArray(record.implementation_guidance),
+      ...toStringArray(record.validation_plan),
+      ...toStringArray(record.summary),
+      ...toStringArray(record.conclusion),
+    ]),
+    created_at: stringFrom(record.created_at, record.createdAt) || new Date().toISOString(),
+  };
+}
+
+function normalizeResearchIntegration(value: unknown): ResearchOutput['integrations_researched'][number] | null {
+  const record = isRecord(value) ? value : { name: stringifyCompact(value) };
+  const name = stringFrom(record.name, record.package, record.library, record.dependency, record.title);
+  if (!name) {
+    return null;
+  }
+
+  const verifiedPackage = isRecord(record.verified_package) ? record.verified_package : {};
+  const apiPatterns = isRecord(record.api_patterns) ? record.api_patterns : {};
+  const configuration = isRecord(record.configuration) ? record.configuration : {};
+  const verified = record.verified ?? verifiedPackage.verified;
+
+  return {
+    name,
+    type: stringFrom(record.type, record.category) || 'library',
+    verified_package: {
+      name: stringFrom(verifiedPackage.name, record.package, record.package_name, name),
+      install_command: stringFrom(verifiedPackage.install_command, record.install_command, record.install) || '',
+      version: stringFrom(verifiedPackage.version, record.version) || 'unspecified',
+      verified: typeof verified === 'boolean' ? verified : false,
+    },
+    api_patterns: {
+      imports: stringArrayFrom(apiPatterns.imports, record.imports),
+      initialization: stringFrom(apiPatterns.initialization, record.initialization, record.setup),
+      key_functions: stringArrayFrom(apiPatterns.key_functions, record.key_functions, record.apis, record.api),
+      verified_against: stringFrom(apiPatterns.verified_against, record.verified_against, record.source) || 'not verified',
+    },
+    configuration: {
+      env_vars: stringArrayFrom(configuration.env_vars, record.env_vars),
+      config_files: stringArrayFrom(configuration.config_files, record.config_files),
+      dependencies: stringArrayFrom(configuration.dependencies, record.dependencies),
+    },
+    gotchas: stringArrayFrom(record.gotchas, record.risks, record.notes),
+    research_sources: stringArrayFrom(record.research_sources, record.sources, record.documentation),
+  };
+}
+
+function normalizeUnverifiedClaims(...values: unknown[]): ResearchOutput['unverified_claims'] {
+  const items = firstArray(values);
+  return items.map((item) => {
+    if (typeof item === 'string') {
+      return {
+        claim: item,
+        reason: 'Not independently verified during this phase',
+        risk_level: 'low' as const,
+      };
+    }
+
+    const record = isRecord(item) ? item : {};
+    const claim = stringFrom(record.claim, record.description, record.risk, record.issue);
+    if (!claim) {
+      return null;
+    }
+
+    return {
+      claim,
+      reason: stringFrom(record.reason, record.status, record.mitigation) || 'Not independently verified during this phase',
+      risk_level: normalizeRiskLevel(record.risk_level, record.severity),
+    };
+  }).filter((item): item is ResearchOutput['unverified_claims'][number] => Boolean(item));
+}
+
+function normalizeRiskLevel(...values: unknown[]): ResearchOutput['unverified_claims'][number]['risk_level'] {
+  const text = stringFrom(...values).toLowerCase();
+  if (text.includes('high') || text.includes('critical') || text.includes('block')) {
+    return 'high';
+  }
+  if (text.includes('medium') || text.includes('moderate')) {
+    return 'medium';
+  }
+  return 'low';
+}
+
 type RequirementsWorkflowType = RequirementsOutput['workflow_type'];
 
 function inferRequirementsWorkflowType(
@@ -969,6 +1325,91 @@ function buildFallbackRequirementsOutput(
     ],
     created_at: new Date().toISOString(),
   };
+}
+
+function buildFallbackContextOutput(taskDescription?: string): SpecContextOutput {
+  const description = taskDescription?.trim() || 'Create the requested software change.';
+  return {
+    task_description: description,
+    scoped_services: [],
+    architecture_summary: 'Project structure is empty or insufficiently indexed; continue from the task description and existing project conventions.',
+    files_to_modify: [],
+    files_to_reference: [],
+    design_patterns: [],
+    implementation_notes: [
+      'Use the task description as the source of truth.',
+      'Inspect only files directly relevant to the implementation before editing.',
+    ],
+    risks: [
+      'Discovery fallback was used because the model did not produce context.json.',
+    ],
+    verification_suggestions: [
+      'Run the smallest available project-specific verification, or document a manual check if no automated check exists.',
+    ],
+    created_at: new Date().toISOString(),
+  };
+}
+
+function shouldRunResearchPhase(
+  assessment: ComplexityAssessment | null,
+  taskDescription?: string,
+  projectIndex?: string,
+): boolean {
+  if (assessment?.needs_research === true) {
+    return true;
+  }
+  if (assessment?.needs_research === false) {
+    return false;
+  }
+
+  const taskText = (taskDescription ?? '').toLowerCase();
+  if (hasTaskExternalResearchSignal(taskText)) {
+    return true;
+  }
+
+  return hasProjectExternalResearchSignal((projectIndex ?? '').toLowerCase());
+}
+
+function hasTaskExternalResearchSignal(text: string): boolean {
+  return /(\bapi\b|\bsdk\b|\boauth\b|\bsso\b|\bwebhook\b|\bpayment\b|\bstripe\b|\bcloud\b|\baws\b|\bazure\b|\bgcp\b|\bfirebase\b|\bsupabase\b|\bpostgres\b|\bmysql\b|\bmongodb\b|\bredis\b|\bgraphql\b|\bgrpc\b|\brest\b|\bplugin\b|\bextension\b|\bpackage\b|\blibrary\b|\bdependency\b|\bintegration\b|\bthird[-\s]?party\b|\bexternal\b|\bauth\b|\bdatabase\b|\bqueue\b|\bmessage broker\b|\bkafka\b|\brabbitmq\b|接口|集成|第三方|外部|依赖|包|库|插件|认证|授权|支付|云服务|数据库|消息队列)/i.test(text);
+}
+
+function hasProjectExternalResearchSignal(text: string): boolean {
+  return /(\boauth\b|\bsso\b|\bwebhook\b|\bpayment\b|\bstripe\b|\baws\b|\bazure\b|\bgcp\b|\bfirebase\b|\bsupabase\b|\bpostgres\b|\bmysql\b|\bmongodb\b|\bredis\b|\bgraphql\b|\bgrpc\b|\bkafka\b|\brabbitmq\b|\bthird[-\s]?party\b|\bexternal api\b|\bapi client\b|第三方|外部接口|认证|授权|支付|云服务|数据库|消息队列)/i.test(text);
+}
+
+function selectSpecPhases(
+  complexity: ComplexityTier,
+  assessment: ComplexityAssessment | null,
+  taskDescription: string | undefined,
+  projectIndex: string | undefined,
+  workflowConfig: WorkflowConfig,
+): SpecPhase[] {
+  const phases = workflowConfig.optimizationLevel === 'aggressive' && complexity === 'simple'
+    ? [...AGGRESSIVE_SIMPLE_PHASES]
+    : [...COMPLEXITY_PHASES[complexity]];
+  const needsResearch = shouldRunResearchPhase(assessment, taskDescription, projectIndex);
+  const researchIndex = phases.indexOf('research');
+
+  if (needsResearch && researchIndex === -1) {
+    const insertBefore = phases.indexOf('context') !== -1
+      ? phases.indexOf('context')
+      : phases.indexOf('spec_writing');
+    if (insertBefore !== -1) {
+      phases.splice(insertBefore, 0, 'research');
+    }
+  } else if (!needsResearch && researchIndex !== -1) {
+    phases.splice(researchIndex, 1);
+  }
+
+  if (assessment?.needs_self_critique && !phases.includes('self_critique')) {
+    const planningIdx = phases.indexOf('planning');
+    if (planningIdx !== -1) {
+      phases.splice(planningIdx, 0, 'self_critique');
+    }
+  }
+
+  return phases;
 }
 
 function buildPlanStructuredOutputValidationRetryPrompt(
@@ -1119,7 +1560,10 @@ export class SpecOrchestrator extends EventEmitter {
         this.emitTyped('log', `Skipping complexity assessment (already completed): ${complexity}`);
       } else {
         // Fast-path heuristic: catch obviously simple tasks before expensive AI assessment
-        const heuristicResult = this.assessComplexityHeuristic(this.config.taskDescription ?? '');
+        const heuristicResult = this.assessComplexityHeuristic(
+          this.config.taskDescription ?? '',
+          this.config.projectIndex,
+        );
         if (heuristicResult) {
           complexity = heuristicResult;
           this.assessment = {
@@ -1197,27 +1641,13 @@ export class SpecOrchestrator extends EventEmitter {
       // ===================================================================
       // Step 2: Determine and run phases based on assessed complexity
       // ===================================================================
-      const phasesToRun = this.config.workflowConfig?.optimizationLevel === 'aggressive' && complexity === 'simple'
-        ? [...AGGRESSIVE_SIMPLE_PHASES]
-        : [...COMPLEXITY_PHASES[complexity]];
-
-      // Inject research/self-critique if flagged but not already in the tier
-      if (this.assessment?.needs_research && !phasesToRun.includes('research')) {
-        // Insert research before context (or before spec_writing if no context phase)
-        const insertBefore = phasesToRun.indexOf('context') !== -1
-          ? phasesToRun.indexOf('context')
-          : phasesToRun.indexOf('spec_writing');
-        if (insertBefore !== -1) {
-          phasesToRun.splice(insertBefore, 0, 'research');
-        }
-      }
-
-      if (this.assessment?.needs_self_critique && !phasesToRun.includes('self_critique')) {
-        const planningIdx = phasesToRun.indexOf('planning');
-        if (planningIdx !== -1) {
-          phasesToRun.splice(planningIdx, 0, 'self_critique');
-        }
-      }
+      const phasesToRun = selectSpecPhases(
+        complexity,
+        this.assessment,
+        this.config.taskDescription,
+        this.config.projectIndex,
+        this.config.workflowConfig!,
+      );
 
       this.emitTyped('log', `Running ${complexity} workflow: ${phasesToRun.join(' → ')}`);
 
@@ -1231,12 +1661,13 @@ export class SpecOrchestrator extends EventEmitter {
           const totalPhases = phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0);
           const result = await this.writeAggressiveQuickSpec(phaseNumber, totalPhases);
           phasesExecuted.push(phase);
+          if (!result.success) {
+            await this.saveState();
+            return this.outcome(false, phasesExecuted, Date.now() - startTime, result.errors.join('; '));
+          }
           this.completedPhases.push(phase);
           await this.capturePhaseOutput(phase);
           await this.saveState();
-          if (!result.success) {
-            return this.outcome(false, phasesExecuted, Date.now() - startTime, result.errors.join('; '));
-          }
           continue;
         }
 
@@ -1252,12 +1683,13 @@ export class SpecOrchestrator extends EventEmitter {
 
         const result = await this.runPhase(phase, phasesExecuted.length + 1, phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0));
         phasesExecuted.push(phase);
-        this.completedPhases.push(phase);
 
         if (!result.success) {
           await this.saveState(); // Save state even on failure for resume
           return this.outcome(false, phasesExecuted, Date.now() - startTime, result.errors.join('; '));
         }
+
+        this.completedPhases.push(phase);
 
         // Capture phase outputs for injection into subsequent phases
         await this.capturePhaseOutput(phase);
@@ -1282,9 +1714,14 @@ export class SpecOrchestrator extends EventEmitter {
    * Returns 'simple' if the description matches simple patterns, null otherwise.
    * This avoids an expensive AI assessment call for trivial tasks.
    */
-  private assessComplexityHeuristic(taskDescription: string): ComplexityTier | null {
-    const desc = taskDescription.toLowerCase().trim();
-    const wordCount = desc.split(/\s+/).length;
+  private assessComplexityHeuristic(
+    taskDescription: string,
+    projectIndex?: string,
+  ): ComplexityTier | null {
+    const task = normalizeTaskDescription(taskDescription);
+    const desc = task.toLowerCase().trim();
+    const wordCount = desc.split(/\s+/).filter(Boolean).length;
+    const compactLength = desc.replace(/\s+/g, '').length;
 
     // Very short descriptions (under 30 words) with simple signal words → SIMPLE
     if (wordCount <= 30) {
@@ -1297,6 +1734,22 @@ export class SpecOrchestrator extends EventEmitter {
       if (simplePatterns.some(p => p.test(desc))) {
         return 'simple';
       }
+    }
+
+    const hasSimpleProject = isEmptyOrUnstructuredProjectIndex(projectIndex);
+    const hasCreateIntent = /\b(create|build|implement|add|make|develop|generate|write)\b|创建|新建|实现|开发|编写|生成|制作/.test(desc);
+    const hasSingleDeliverableSignal = /\b(local|standalone|single|small|simple|static|demo|prototype|app|application|tool|utility|page|site|script|program|game)\b|本地|单个|简单|小型|静态|演示|应用|工具|页面|脚本|程序|游戏/.test(desc);
+    const hasComplexSignal = hasTaskExternalResearchSignal(desc) ||
+      /\b(migrate|migration|refactor|architecture|distributed|microservice|multi[-\s]?service|production|security|permission|role|workflow|pipeline|concurrent|scalable|enterprise)\b|迁移|重构|架构|分布式|微服务|多服务|生产|安全|权限|角色|流程|管线|并发|可扩展|企业/.test(desc);
+
+    if (
+      hasSimpleProject &&
+      hasCreateIntent &&
+      hasSingleDeliverableSignal &&
+      !hasComplexSignal &&
+      (wordCount <= 80 || compactLength <= 180)
+    ) {
+      return 'simple';
     }
 
     // Long descriptions or complex signal words → let AI decide
@@ -1390,6 +1843,17 @@ export class SpecOrchestrator extends EventEmitter {
             this.emitTyped('log', `Failed to write structured ${structuredJsonFile}: ${writeErr}`);
           }
         }
+        if (structuredJsonFile && outputSchema && !result.structuredOutput) {
+          const recovered = await this.writeStructuredOutputFromFinalText(
+            phase,
+            structuredJsonFile,
+            outputSchema,
+            result,
+          );
+          if (recovered) {
+            this.emitTyped('log', `Wrote ${structuredJsonFile} from final response JSON`);
+          }
+        }
         // Validate that expected output files were actually created.
         // Some models (e.g., GLM-5, Codex) may complete a session without calling
         // any tools, producing no output files despite a successful stream.
@@ -1419,6 +1883,30 @@ export class SpecOrchestrator extends EventEmitter {
               }
             } catch (fallbackErr) {
               this.emitTyped('log', `Failed to write fallback requirements.json: ${fallbackErr}`);
+            }
+          }
+
+          if (
+            (phase === 'discovery' || phase === 'context') &&
+            missingFiles.includes('context.json') &&
+            attempt >= maxPhaseRetries
+          ) {
+            try {
+              await writeStructuredJsonOutput(
+                this.config.specDir,
+                'context.json',
+                buildFallbackContextOutput(this.config.taskDescription),
+              );
+              const remainingMissing = await this.validatePhaseOutputs(phase);
+              if (remainingMissing.length === 0) {
+                this.emitTyped('log', 'Wrote fallback context.json from task description');
+                errors.pop();
+                const phaseResult: SpecPhaseResult = { phase, success: true, errors: [], retries: attempt };
+                this.emitTyped('phase-complete', phase, phaseResult);
+                return phaseResult;
+              }
+            } catch (fallbackErr) {
+              this.emitTyped('log', `Failed to write fallback context.json: ${fallbackErr}`);
             }
           }
 
@@ -1615,6 +2103,34 @@ export class SpecOrchestrator extends EventEmitter {
       }
     }
     return missing;
+  }
+
+  private async writeStructuredOutputFromFinalText(
+    phase: SpecPhase,
+    fileName: string,
+    schema: ZodSchema,
+    result: SessionResult,
+  ): Promise<boolean> {
+    const finalText = getLastAssistantText(result);
+    if (!finalText) {
+      return false;
+    }
+
+    const parsed = parseJsonFromFinalText(finalText);
+    if (!parsed.ok) {
+      this.emitTyped('log', `Could not parse final JSON for ${phase}: ${parsed.error}`);
+      return false;
+    }
+
+    const normalized = normalizeStructuredJsonOutput(phase, parsed.value);
+    const validation = schema.safeParse(normalized);
+    if (!validation.success) {
+      this.emitTyped('log', `Final JSON for ${phase} did not match schema: ${validation.error.issues.map((issue) => issue.message).join(', ')}`);
+      return false;
+    }
+
+    await writeStructuredJsonOutput(this.config.specDir, fileName, validation.data);
+    return true;
   }
 
   /**

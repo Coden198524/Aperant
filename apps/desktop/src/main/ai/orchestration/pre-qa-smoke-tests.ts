@@ -13,8 +13,9 @@
 
 import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import { scanFiles } from '../security/secret-scanner';
 
 const execAsync = promisify(exec);
 
@@ -67,13 +68,31 @@ interface SmokeCheck {
   name: string;
   type: SmokeTestIssue['type'];
   severity: SmokeTestIssue['severity'];
-  command: string;
+  command?: string;
   timeout: number;
   /** Whether this check is required (critical failures block QA) */
   required: boolean;
   /** Function to detect if this check is applicable */
   isApplicable?: (projectDir: string) => Promise<boolean>;
+  /** Optional in-process check for cross-platform validation */
+  run?: (projectDir: string) => Promise<CheckResult>;
 }
+
+const MAX_SECRET_SCAN_FILES = 1000;
+const SECRET_SCAN_SKIP_DIRS = new Set([
+  '.autocode',
+  '.git',
+  '.hg',
+  '.svn',
+  '.venv',
+  'build',
+  'coverage',
+  'dist',
+  'node_modules',
+  'out',
+  'venv',
+  '__pycache__',
+]);
 
 // =============================================================================
 // Smoke Test Configuration
@@ -116,9 +135,9 @@ const SMOKE_CHECKS: SmokeCheck[] = [
     name: 'secrets',
     type: 'security',
     severity: 'critical',
-    command: 'git diff --cached | grep -iE "(api[_-]?key|secret|password|token)\\s*=\\s*[\'\\"][^\'\\"]{8,}" || exit 0',
     timeout: 5000,
     required: true,
+    run: runSecretScanCheck,
     isApplicable: async () => true, // Always run
   },
 
@@ -280,6 +299,20 @@ async function runCheck(check: SmokeCheck, projectDir: string): Promise<CheckRes
   const startTime = Date.now();
 
   try {
+    if (check.run) {
+      return await check.run(projectDir);
+    }
+
+    if (!check.command) {
+      return {
+        name: check.name,
+        passed: false,
+        durationMs: Date.now() - startTime,
+        stderr: 'No command configured for smoke check',
+        exitCode: 1,
+      };
+    }
+
     const { stdout, stderr } = await execAsync(check.command, {
       cwd: projectDir,
       timeout: check.timeout,
@@ -304,6 +337,158 @@ async function runCheck(check: SmokeCheck, projectDir: string): Promise<CheckRes
       exitCode: error.code || 1,
     };
   }
+}
+
+/**
+ * Scan changed project files for secrets without relying on shell tools such as grep.
+ */
+async function runSecretScanCheck(projectDir: string): Promise<CheckResult> {
+  const startTime = Date.now();
+  const files = await collectSecretScanFiles(projectDir);
+
+  if (files.length === 0) {
+    return {
+      name: 'secrets',
+      passed: true,
+      durationMs: Date.now() - startTime,
+      stdout: 'No changed files to scan for secrets.',
+      exitCode: 0,
+    };
+  }
+
+  const matches = scanFiles(files, projectDir);
+  if (matches.length > 0) {
+    const preview = matches
+      .slice(0, 10)
+      .map((match) => `${match.filePath}:${match.lineNumber} ${match.patternName}`)
+      .join('\n');
+    const suffix = matches.length > 10 ? `\n...and ${matches.length - 10} more` : '';
+
+    return {
+      name: 'secrets',
+      passed: false,
+      durationMs: Date.now() - startTime,
+      stderr: `Potential secrets detected:\n${preview}${suffix}`,
+      exitCode: 1,
+    };
+  }
+
+  return {
+    name: 'secrets',
+    passed: true,
+    durationMs: Date.now() - startTime,
+    stdout: `Scanned ${files.length} changed file(s); no secrets found.`,
+    exitCode: 0,
+  };
+}
+
+async function collectSecretScanFiles(projectDir: string): Promise<string[]> {
+  const gitFiles = await collectGitChangedFiles(projectDir);
+  if (gitFiles) {
+    return uniqueNormalizedPaths(gitFiles);
+  }
+
+  return collectRecursiveSecretScanFiles(projectDir);
+}
+
+async function collectGitChangedFiles(projectDir: string): Promise<string[] | null> {
+  try {
+    await execAsync('git rev-parse --is-inside-work-tree', {
+      cwd: projectDir,
+      timeout: 3000,
+    });
+  } catch {
+    return null;
+  }
+
+  const outputs = await Promise.all([
+    runGitListCommand(projectDir, 'git diff --name-only --diff-filter=ACMRT --'),
+    runGitListCommand(projectDir, 'git diff --cached --name-only --diff-filter=ACMRT --'),
+    runGitListCommand(projectDir, 'git ls-files --others --exclude-standard'),
+  ]);
+
+  return outputs.flatMap((output) => output.split(/\r?\n/));
+}
+
+async function runGitListCommand(projectDir: string, command: string): Promise<string> {
+  try {
+    const { stdout } = await execAsync(command, {
+      cwd: projectDir,
+      timeout: 5000,
+      maxBuffer: 1024 * 1024,
+    });
+    return stdout;
+  } catch {
+    return '';
+  }
+}
+
+async function collectRecursiveSecretScanFiles(projectDir: string): Promise<string[]> {
+  const files: string[] = [];
+
+  async function walk(currentDir: string, relativeDir = ''): Promise<void> {
+    if (files.length >= MAX_SECRET_SCAN_FILES) return;
+
+    let entries;
+    try {
+      entries = await readdir(currentDir, { withFileTypes: true });
+    } catch {
+      return;
+    }
+
+    for (const entry of entries) {
+      if (files.length >= MAX_SECRET_SCAN_FILES) return;
+      const relativePath = relativeDir ? `${relativeDir}/${entry.name}` : entry.name;
+
+      if (entry.isDirectory()) {
+        if (shouldSkipSecretScanDir(entry.name, relativePath)) continue;
+        await walk(join(currentDir, entry.name), relativePath);
+        continue;
+      }
+
+      if (entry.isFile()) {
+        files.push(relativePath);
+      }
+    }
+  }
+
+  await walk(projectDir);
+  return uniqueNormalizedPaths(files);
+}
+
+function shouldSkipSecretScanDir(name: string, relativePath: string): boolean {
+  const normalizedName = name.toLowerCase();
+  const normalizedPath = normalizeRelativePath(relativePath);
+
+  return SECRET_SCAN_SKIP_DIRS.has(normalizedName) ||
+    normalizedPath === null ||
+    normalizedPath.startsWith('.autocode/');
+}
+
+function uniqueNormalizedPaths(paths: string[]): string[] {
+  const seen = new Set<string>();
+  const normalized: string[] = [];
+
+  for (const filePath of paths) {
+    const path = normalizeRelativePath(filePath);
+    if (!path || seen.has(path)) continue;
+    seen.add(path);
+    normalized.push(path);
+  }
+
+  return normalized;
+}
+
+function normalizeRelativePath(filePath: string): string | null {
+  const normalized = filePath.trim().replace(/\\/g, '/').replace(/^\.\//, '');
+  if (!normalized) return null;
+  if (normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
+    return null;
+  }
+  if (normalized === '.autocode' || normalized.startsWith('.autocode/')) {
+    return null;
+  }
+  return normalized;
 }
 
 /**

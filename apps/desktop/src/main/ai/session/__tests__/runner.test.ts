@@ -245,6 +245,60 @@ describe('runAgentSession', () => {
     expect(result.usage.estimated).toBe(true);
   });
 
+  it('tracks completed subtasks from update_subtask_status tool results', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [
+          {
+            type: 'tool-call',
+            toolName: 'mcp__autocode__update_subtask_status',
+            toolCallId: 'status-1',
+            input: { subtask_id: '2.2', status: 'completed' },
+          },
+          {
+            type: 'tool-result',
+            toolName: 'mcp__autocode__update_subtask_status',
+            toolCallId: 'status-1',
+            input: { subtask_id: '2.2', status: 'completed' },
+            output: "Successfully updated subtask '2.2' to status 'completed'",
+          },
+          { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        { text: 'Done', totalUsage: { inputTokens: 10, outputTokens: 5 } },
+      ),
+    );
+
+    const result = await runAgentSession(createMockConfig());
+
+    expect(result.completedSubtaskIds).toEqual(['2.2']);
+  });
+
+  it('tracks completed subtasks from output-only tool events', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [
+          {
+            type: 'tool-input-available',
+            toolName: 'mcp__autocode__update_subtask_status',
+            toolCallId: 'status-1',
+            input: { subtask_id: '3.3', status: 'completed' },
+          },
+          {
+            type: 'tool-output-available',
+            toolCallId: 'status-1',
+            output: "Successfully updated subtask '3.3' to status 'completed'",
+          },
+          { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } },
+        ],
+        { text: 'Done', totalUsage: { inputTokens: 10, outputTokens: 5 } },
+      ),
+    );
+
+    const result = await runAgentSession(createMockConfig());
+
+    expect(result.completedSubtaskIds).toEqual(['3.3']);
+  });
+
   it('should treat stream error parts as fatal session errors', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult(

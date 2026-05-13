@@ -26,6 +26,7 @@ import type { FileContentCache } from '../cache/file-cache';
 // ---------------------------------------------------------------------------
 
 const DEFAULT_LINE_LIMIT = 2000;
+const BALANCED_DEFAULT_LINE_LIMIT = 400;
 const AGGRESSIVE_DEFAULT_LINE_LIMIT = 120;
 const MAX_LINE_LENGTH = 2000;
 
@@ -94,6 +95,33 @@ function isPdfFile(filePath: string): boolean {
   return path.extname(filePath).toLowerCase() === PDF_EXTENSION;
 }
 
+function getDefaultLineLimit(workflowMode: string | undefined): number {
+  if (workflowMode === 'aggressive') {
+    return AGGRESSIVE_DEFAULT_LINE_LIMIT;
+  }
+  if (workflowMode === 'balanced') {
+    return BALANCED_DEFAULT_LINE_LIMIT;
+  }
+  return DEFAULT_LINE_LIMIT;
+}
+
+function formatReadContent(
+  content: string,
+  startLine: number,
+  lineLimit: number,
+): string {
+  const lines = content.split(/\r?\n/);
+  const sliced = lines.slice(startLine, startLine + lineLimit);
+  const result = formatWithLineNumbers(sliced.join('\n'), startLine);
+
+  const totalLines = lines.length;
+  if (startLine + lineLimit < totalLines) {
+    return `${result}\n\n[Showing lines ${startLine + 1}-${startLine + lineLimit} of ${totalLines} total lines]`;
+  }
+
+  return result;
+}
+
 // ---------------------------------------------------------------------------
 // Tool Definition
 // ---------------------------------------------------------------------------
@@ -121,12 +149,17 @@ export const readTool = Tool.define({
 
     // Try cache first (if available)
     const cache = context.fileCache as FileContentCache | undefined;
-    if (cache && !offset && !limit && !pages) {
+    if (cache && !pages) {
       const cached = cache.getSync(resolvedPath);
       if (cached) {
-        // Return cached content with line numbers
-        const lines = cached.split(/\r?\n/);
-        return formatWithLineNumbers(cached, 0);
+        if (cached.length === 0) {
+          return `[File exists but is empty: ${file_path}]`;
+        }
+        return formatReadContent(
+          cached,
+          offset ?? 0,
+          limit ?? getDefaultLineLimit(context.workflowMode),
+        );
       }
     }
 
@@ -181,23 +214,9 @@ export const readTool = Tool.define({
         return `[File exists but is empty: ${file_path}]`;
       }
 
-      const lines = content.split(/\r?\n/);
       const startLine = offset ?? 0;
-      const lineLimit = limit ?? (
-        context.workflowMode === 'aggressive'
-          ? AGGRESSIVE_DEFAULT_LINE_LIMIT
-          : DEFAULT_LINE_LIMIT
-      );
-
-      const sliced = lines.slice(startLine, startLine + lineLimit);
-      const result = formatWithLineNumbers(sliced.join('\n'), startLine);
-
-      const totalLines = lines.length;
-      if (startLine + lineLimit < totalLines) {
-        return `${result}\n\n[Showing lines ${startLine + 1}-${startLine + lineLimit} of ${totalLines} total lines]`;
-      }
-
-      return result;
+      const lineLimit = limit ?? getDefaultLineLimit(context.workflowMode);
+      return formatReadContent(content, startLine, lineLimit);
     } finally {
       fs.closeSync(fd);
     }

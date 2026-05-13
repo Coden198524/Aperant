@@ -107,6 +107,7 @@ interface PlanSubtask {
   status: string;
   notes?: string;
   completion_summary?: string;
+  completed_at?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
   pattern_files?: string[];
@@ -147,6 +148,11 @@ export async function iterateSubtasks(
       return { totalSubtasks: 0, completedSubtasks: 0, stuckSubtasks, cancelled: false };
     }
 
+    // Normalize stale status before choosing work. Some sessions successfully
+    // write a completion summary or timestamp, then a stale plan write restores
+    // status to pending/in_progress. Treat that persisted evidence as completed.
+    const normalizedPlan = await normalizeCompletedSubtasks(config, plan);
+
     // Count totals
     totalSubtasks = countTotalSubtasks(plan);
     completedSubtasks = countCompletedSubtasks(plan);
@@ -154,6 +160,9 @@ export async function iterateSubtasks(
     // Find next subtask
     const next = getNextPendingSubtask(plan, stuckSubtasks);
     if (!next) {
+      if (normalizedPlan && config.sourceSpecDir) {
+        await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+      }
       // All subtasks completed or stuck
       break;
     }
@@ -195,8 +204,8 @@ export async function iterateSubtasks(
     // Notify start
     config.onSubtaskStart?.(subtaskInfo, currentAttempt);
 
-    // Run pre-implementation checklist before starting the session
-    if (config.qualityConfig?.enablePreImplementationChecklist !== false) {
+    // Run optional pre-implementation checks only when the workflow explicitly enables them.
+    if (config.qualityConfig?.enablePreImplementationChecklist === true) {
       const { generatePreImplementationChecklist } = await import('./pre-implementation-checklist');
       const checklistResult = await generatePreImplementationChecklist({
         subtask: subtaskInfo,
@@ -212,8 +221,23 @@ export async function iterateSubtasks(
     // Run the session
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
 
+    const subtaskCompletedByTool = result.completedSubtaskIds?.includes(subtask.id) === true;
+    if (subtaskCompletedByTool) {
+      await finalizeAcceptedSubtask(config, subtask, result, attemptCounts);
+      config.onSubtaskComplete?.(subtaskInfo, result);
+
+      if (result.outcome === 'cancelled') {
+        return { totalSubtasks, completedSubtasks, stuckSubtasks, cancelled: true };
+      }
+
+      if (config.autoContinueDelayMs > 0) {
+        await delay(config.autoContinueDelayMs, config.abortSignal);
+      }
+      continue;
+    }
+
     // Run self-critique after session completes (before validation)
-    if (result.outcome === 'completed' && config.qualityConfig?.enableSelfCritique !== false) {
+    if (result.outcome === 'completed' && config.qualityConfig?.enableSelfCritique === true) {
       const { runSelfCritique } = await import('./self-critique');
       const critiqueResult = await runSelfCritique({
         generatedFiles: [], // TODO: extract from session result
@@ -235,7 +259,7 @@ export async function iterateSubtasks(
     }
 
     // Run quality validation and learning after session completes
-    if (result.outcome === 'completed') {
+    if (result.outcome === 'completed' && config.qualityConfig) {
       const { validateSubtaskQuality, learnFromSession } = await import('./quality-integration');
 
       // Validate subtask quality (includes incremental validation)
@@ -321,42 +345,16 @@ export async function iterateSubtasks(
       await ensureSubtaskMarkedCompleted(config.specDir, subtask.id, result);
     }
 
-    const subtaskCompletedByTool = result.completedSubtaskIds?.includes(subtask.id) === true;
-    if (subtaskCompletedByTool && result.outcome !== 'completed') {
-      await ensureSubtaskMarkedCompleted(config.specDir, subtask.id, result);
-    }
-
     const subtaskCompletedInPlan = await isSubtaskCompleted(config.specDir, subtask.id);
-    if (result.outcome === 'completed' || subtaskCompletedInPlan || subtaskCompletedByTool) {
-      // Re-stamp executionPhase on the worktree plan after the coder session.
-      // The coder model's Edit/Write calls can overwrite executionPhase with a
-      // stale value (read before persistPlanPhaseSync ran). Since the model is
-      // no longer writing, we can safely correct it here.
-      await restampExecutionPhase(config.specDir, 'coding');
-
-      // Sync updated phases to main project plan (worktree mode).
-      // This keeps the main plan current during execution, not just on exit.
-      if (config.sourceSpecDir) {
-        await syncPhasesToMain(config.specDir, config.sourceSpecDir);
-      }
-
-      if ((subtaskCompletedInPlan || subtaskCompletedByTool) && result.outcome !== 'completed') {
-        attemptCounts.delete(subtask.id);
-      }
-
-      // Extract insights from the session (opt-in, never blocks the build)
-      if (config.extractInsights) {
-        extractInsightsAfterSession(config, subtask, result).then((insights) => {
-          if (insights) config.onInsightsExtracted?.(subtask.id, insights);
-        }).catch(() => { /* insight extraction is non-blocking */ });
-      }
+    if (result.outcome === 'completed' || subtaskCompletedInPlan) {
+      await finalizeAcceptedSubtask(config, subtask, result, attemptCounts);
     }
 
     // For errors, the subtask will be retried on next loop iteration
     // (implementation_plan.json status remains in_progress or pending)
 
     // Analyze failure and suggest recovery strategy
-    if (result.outcome === 'error' && config.qualityConfig?.enableContextAwareRecovery !== false) {
+    if (result.outcome === 'error' && config.qualityConfig?.enableContextAwareRecovery === true) {
       const { analyzeFailureAndRecover } = await import('./context-aware-recovery');
       const failureRecord: import('./context-aware-recovery').FailureRecord = {
         attempt: currentAttempt,
@@ -387,6 +385,36 @@ export async function iterateSubtasks(
 // =============================================================================
 // Post-Session Processing
 // =============================================================================
+
+async function finalizeAcceptedSubtask(
+  config: SubtaskIteratorConfig,
+  subtask: PlanSubtask,
+  result: SessionResult,
+  attemptCounts: Map<string, number>,
+): Promise<void> {
+  await ensureSubtaskMarkedCompleted(config.specDir, subtask.id, result);
+
+  // Re-stamp executionPhase on the worktree plan after the coder session.
+  // The coder model's Edit/Write calls can overwrite executionPhase with a
+  // stale value (read before persistPlanPhaseSync ran). Since the model is
+  // no longer writing, we can safely correct it here.
+  await restampExecutionPhase(config.specDir, 'coding');
+
+  // Sync updated phases to main project plan (worktree mode).
+  // This keeps the main plan current during execution, not just on exit.
+  if (config.sourceSpecDir) {
+    await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+  }
+
+  attemptCounts.delete(subtask.id);
+
+  // Extract insights from the session (opt-in, never blocks the build)
+  if (config.extractInsights) {
+    extractInsightsAfterSession(config, subtask, result).then((insights) => {
+      if (insights) config.onInsightsExtracted?.(subtask.id, insights);
+    }).catch(() => { /* insight extraction is non-blocking */ });
+  }
+}
 
 /**
  * Ensure a subtask is marked as completed in implementation_plan.json.
@@ -459,7 +487,7 @@ async function isSubtaskCompleted(
         const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
         const id = subtask.id ?? withLegacyId.subtask_id;
         if (id === subtaskId) {
-          return subtask.status === 'completed';
+          return hasSubtaskCompletionEvidence(subtask);
         }
       }
     }
@@ -565,7 +593,11 @@ async function markSubtaskInProgress(
           updated = true;
         }
 
-        if (subtask.id === subtaskId && subtask.status === 'pending') {
+        if (
+          subtask.id === subtaskId &&
+          subtask.status === 'pending' &&
+          !hasSubtaskCompletionEvidence(subtask)
+        ) {
           subtask.status = 'in_progress';
           updated = true;
         }
@@ -694,6 +726,9 @@ function getNextPendingSubtask(
 ): { subtask: PlanSubtask; phaseName: string } | null {
   for (const phase of plan.phases) {
     for (const subtask of phase.subtasks) {
+      if (hasSubtaskCompletionEvidence(subtask)) {
+        continue;
+      }
       if (
         subtask.status === 'pending' &&
         !stuckSubtaskIds.includes(subtask.id)
@@ -730,12 +765,56 @@ function countCompletedSubtasks(plan: ImplementationPlan): number {
   let count = 0;
   for (const phase of plan.phases) {
     for (const subtask of phase.subtasks) {
-      if (subtask.status === 'completed') {
+      if (hasSubtaskCompletionEvidence(subtask)) {
         count++;
       }
     }
   }
   return count;
+}
+
+function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
+  if (subtask.status === 'completed') {
+    return true;
+  }
+
+  if (typeof subtask.completed_at === 'string' && subtask.completed_at.trim().length > 0) {
+    return true;
+  }
+
+  return typeof subtask.completion_summary === 'string' &&
+    subtask.completion_summary.trim().length > 0;
+}
+
+async function normalizeCompletedSubtasks(
+  config: SubtaskIteratorConfig,
+  plan: ImplementationPlan,
+): Promise<boolean> {
+  let updated = false;
+
+  for (const phase of plan.phases) {
+    for (const subtask of phase.subtasks) {
+      const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
+      if (withLegacyId.subtask_id && !subtask.id) {
+        subtask.id = withLegacyId.subtask_id;
+        updated = true;
+      }
+
+      if (hasSubtaskCompletionEvidence(subtask) && subtask.status !== 'completed') {
+        subtask.status = 'completed';
+        if (!subtask.completed_at) {
+          subtask.completed_at = new Date().toISOString();
+        }
+        updated = true;
+      }
+    }
+  }
+
+  if (updated) {
+    await saveImplementationPlanToFiles(config.specDir, plan as never);
+  }
+
+  return updated;
 }
 
 // =============================================================================

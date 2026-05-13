@@ -240,6 +240,15 @@ function normalizeToolCallArgs(toolName: string, input: unknown): Record<string,
   return {};
 }
 
+function getToolCallId(part: Record<string, unknown>): string | null {
+  const value = typeof part.toolCallId === 'string'
+    ? part.toolCallId
+    : typeof part.id === 'string'
+      ? part.id
+      : null;
+  return value;
+}
+
 // =============================================================================
 // Stream Handler
 // =============================================================================
@@ -280,8 +289,17 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
       case 'tool-call':
         handleToolCall(part as ToolCallPart);
         break;
+      case 'tool-input-available':
+        handleToolInputAvailable(part as { type: 'tool-input-available'; toolCallId: string; toolName: string; input: unknown });
+        break;
       case 'tool-result':
         handleToolResult(part as ToolResultPart);
+        break;
+      case 'tool-output-available':
+        handleToolOutputAvailable(part as { type: 'tool-output-available'; toolCallId: string; output: unknown });
+        break;
+      case 'tool-output-error':
+        handleToolOutputError(part as { type: 'tool-output-error'; toolCallId: string; errorText?: string });
         break;
       case 'tool-error':
         handleToolError(part as ToolErrorPart);
@@ -324,10 +342,11 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
   }
 
   function handleToolCall(part: ToolCallPart): void {
+    const toolCallId = getToolCallId(part as unknown as Record<string, unknown>) ?? part.toolCallId;
     state.toolCallCount++;
-    state.toolCallTimestamps.set(part.toolCallId, Date.now());
+    state.toolCallTimestamps.set(toolCallId, Date.now());
     // Store the tool name so we can include it in tool-result/tool-error events
-    state.toolCallNames.set(part.toolCallId, part.toolName);
+    state.toolCallNames.set(toolCallId, part.toolName);
     const args = normalizeToolCallArgs(part.toolName, part.input);
 
     // AI SDK emits invalid tool calls as a tool-call followed by a tool-error.
@@ -337,7 +356,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
       emit({
         type: 'tool-call',
         toolName: part.toolName,
-        toolCallId: part.toolCallId,
+        toolCallId,
         args,
       });
       return;
@@ -356,13 +375,13 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
       emit({
         type: 'tool-result',
         toolName: part.toolName,
-        toolCallId: part.toolCallId,
+        toolCallId,
         result: validationError,
         durationMs: 0,
         isError: true,
       });
 
-      const toolError = classifyToolError(part.toolName, part.toolCallId, validationError);
+      const toolError = classifyToolError(part.toolName, toolCallId, validationError);
       emit({ type: 'error', error: toolError });
       return;
     }
@@ -371,7 +390,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
     if (part.toolName === 'Write' && part.input) {
       const input = part.input;
       console.log('[StreamHandler] Write tool call:', {
-        toolCallId: part.toolCallId,
+        toolCallId,
         inputType: typeof input,
         isObject: typeof input === 'object' && input !== null,
         file_path: typeof input === 'object' && input !== null ? (input as Record<string, unknown>).file_path : undefined,
@@ -383,12 +402,39 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
     emit({
       type: 'tool-call',
       toolName: part.toolName,
-      toolCallId: part.toolCallId,
+      toolCallId,
       args,
     });
   }
 
+  function handleToolInputAvailable(part: { toolCallId: string; toolName: string; input: unknown }): void {
+    handleToolCall({
+      type: 'tool-call',
+      toolCallId: part.toolCallId,
+      toolName: part.toolName,
+      input: part.input,
+    });
+  }
+
   function handleToolResult(part: ToolResultPart): void {
+    const toolCallId = getToolCallId(part as unknown as Record<string, unknown>) ?? part.toolCallId;
+    const startTime = state.toolCallTimestamps.get(toolCallId);
+    const durationMs = startTime ? Date.now() - startTime : 0;
+    state.toolCallTimestamps.delete(toolCallId);
+    state.toolCallNames.delete(toolCallId);
+
+    emit({
+      type: 'tool-result',
+      toolName: part.toolName,
+      toolCallId,
+      result: part.output,
+      durationMs,
+      isError: false,
+    });
+  }
+
+  function handleToolOutputAvailable(part: { toolCallId: string; output: unknown }): void {
+    const toolName = state.toolCallNames.get(part.toolCallId) ?? 'Tool';
     const startTime = state.toolCallTimestamps.get(part.toolCallId);
     const durationMs = startTime ? Date.now() - startTime : 0;
     state.toolCallTimestamps.delete(part.toolCallId);
@@ -396,7 +442,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
 
     emit({
       type: 'tool-result',
-      toolName: part.toolName,
+      toolName,
       toolCallId: part.toolCallId,
       result: part.output,
       durationMs,
@@ -404,11 +450,33 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
     });
   }
 
-  function handleToolError(part: ToolErrorPart): void {
+  function handleToolOutputError(part: { toolCallId: string; errorText?: string }): void {
+    const toolName = state.toolCallNames.get(part.toolCallId) ?? 'Tool';
     const startTime = state.toolCallTimestamps.get(part.toolCallId);
     const durationMs = startTime ? Date.now() - startTime : 0;
     state.toolCallTimestamps.delete(part.toolCallId);
     state.toolCallNames.delete(part.toolCallId);
+    const errorMessage = part.errorText ?? 'Tool execution failed';
+
+    emit({
+      type: 'tool-result',
+      toolName,
+      toolCallId: part.toolCallId,
+      result: errorMessage,
+      durationMs,
+      isError: true,
+    });
+
+    const toolError = classifyToolError(toolName, part.toolCallId, errorMessage);
+    emit({ type: 'error', error: toolError });
+  }
+
+  function handleToolError(part: ToolErrorPart): void {
+    const toolCallId = getToolCallId(part as unknown as Record<string, unknown>) ?? part.toolCallId;
+    const startTime = state.toolCallTimestamps.get(toolCallId);
+    const durationMs = startTime ? Date.now() - startTime : 0;
+    state.toolCallTimestamps.delete(toolCallId);
+    state.toolCallNames.delete(toolCallId);
 
     const errorMessage = part.error instanceof Error ? part.error.message : String(part.error ?? 'Tool execution failed');
 
@@ -422,15 +490,15 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
     }
 
     emit({
-      type: 'tool-result',
-      toolName: part.toolName,
-      toolCallId: part.toolCallId,
-      result: errorMessage,
-      durationMs,
-      isError: true,
-    });
+        type: 'tool-result',
+        toolName: part.toolName,
+        toolCallId,
+        result: errorMessage,
+        durationMs,
+        isError: true,
+      });
 
-    const toolError = classifyToolError(part.toolName, part.toolCallId, errorMessage);
+    const toolError = classifyToolError(part.toolName, toolCallId, errorMessage);
     emit({ type: 'error', error: toolError });
   }
 

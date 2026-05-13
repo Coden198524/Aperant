@@ -253,8 +253,16 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('- Focus on this one subtask until it is done.');
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');
   lines.push('- Prefer the smallest code change that satisfies the subtask.');
-  lines.push('- Run the listed verification before finishing.');
-  lines.push('- If the listed verification tool is unavailable, discover one compatible alternative at most, then run the best available targeted check.');
+  lines.push('- Prefer one broad Write for new files or a few grouped Edits for existing files. Do not perform many tiny adjacent Edit calls when one replacement can cover the block.');
+  lines.push('- After reading a file once, do not reread the whole file. If an edit misses, read only the narrow surrounding lines needed to repair that edit.');
+  lines.push('- If a listed file was just written successfully, do not read it back unless verification fails or the next edit needs exact local context.');
+  lines.push('- Run at most one listed verification before finishing.');
+  lines.push('- If the listed verification tool is unavailable, discover one compatible alternative at most, then run the best available targeted check. Do not try multiple equivalent checks.');
+  lines.push('- For simple create-only file tasks, a single existence/key-content check is enough; do not add separate dir/type/findstr checks after a successful write.');
+  lines.push('- For pure documentation, answer, or manual-check tasks, Read or simple file existence is enough; avoid python/node one-liners with non-ASCII quoting.');
+  lines.push('- On Windows, avoid nested cmd/powershell quoting for smoke checks. Prefer one simple command such as Test-Path, Get-Content -Raw, or dir on the target path.');
+  lines.push('- Never use Bash here-documents such as `python - <<EOF` on Windows. Avoid Python -c or Node -e checks containing non-ASCII text.');
+  lines.push('- If verification fails because of shell quoting, encoding, or path syntax rather than product code, do not keep rewriting commands. Record the limitation and continue if the file/output exists.');
   lines.push('- Keep failed verification output compact; include only the first 3-5 relevant error lines needed to fix the issue.');
   lines.push('- When verification passes, immediately call update_subtask_status for this subtask before writing any final summary.');
   lines.push('- Do not write a long final response before the status update. After the update succeeds, provide only a compact review matrix.');
