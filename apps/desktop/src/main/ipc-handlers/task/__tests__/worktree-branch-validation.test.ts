@@ -9,7 +9,12 @@
  */
 
 import { describe, expect, it } from 'vitest';
-import { createAddedFilePatchFromContent, GIT_BRANCH_REGEX, validateWorktreeBranch } from '../worktree-handlers';
+import {
+  createAddedFilePatchFromContent,
+  GIT_BRANCH_REGEX,
+  shouldHideTaskGitChangePath,
+  validateWorktreeBranch,
+} from '../worktree-handlers';
 
 describe('GIT_BRANCH_REGEX', () => {
   it('should accept valid autocode branch names', () => {
@@ -179,5 +184,21 @@ describe('createAddedFilePatchFromContent', () => {
     expect(result.additions).toBe(1);
     expect(result.patch).toContain('+const value = 1;');
     expect(result.patch).toContain('\\ No newline at end of file');
+  });
+});
+
+describe('shouldHideTaskGitChangePath', () => {
+  it('hides internal task and agent metadata directories', () => {
+    expect(shouldHideTaskGitChangePath('.git/index')).toBe(true);
+    expect(shouldHideTaskGitChangePath('.claude/settings.json')).toBe(true);
+    expect(shouldHideTaskGitChangePath('.codex/config.toml')).toBe(true);
+    expect(shouldHideTaskGitChangePath('.autocode/specs/001-task/task_logs.json')).toBe(true);
+    expect(shouldHideTaskGitChangePath('.\\.autocode\\specs\\001-task\\task_logs.json')).toBe(true);
+  });
+
+  it('keeps normal project files and similarly named non-root directories visible', () => {
+    expect(shouldHideTaskGitChangePath('src/app.ts')).toBe(false);
+    expect(shouldHideTaskGitChangePath('docs/.autocode-notes.md')).toBe(false);
+    expect(shouldHideTaskGitChangePath('src/.codex/config.ts')).toBe(false);
   });
 });

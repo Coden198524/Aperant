@@ -77,6 +77,18 @@ const GRAPH_COLORS = [
   '#ec4899',
   '#84cc16'
 ];
+const HIDDEN_GIT_CHANGE_DIRS = new Set(['.git', '.claude', '.codex', '.autocode']);
+
+function shouldHideGitChangePath(filePath: string | undefined): boolean {
+  if (!filePath) return false;
+  const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  const [firstSegment] = normalized.split('/');
+  return HIDDEN_GIT_CHANGE_DIRS.has(firstSegment);
+}
+
+function isVisibleGitFile(file: Pick<GitFile, 'path' | 'previousPath'>): boolean {
+  return !shouldHideGitChangePath(file.path) && !shouldHideGitChangePath(file.previousPath);
+}
 
 function getGraphColor(hash: string | undefined, laneIndex: number): string {
   if (!hash) return GRAPH_COLORS[laneIndex % GRAPH_COLORS.length];
@@ -351,7 +363,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
         throw new Error(result.error || 'Failed to load workspace changes');
       }
 
-      setWorkspaceFiles(result.data.files.map(mapWorktreeFile));
+      setWorkspaceFiles(result.data.files.map(mapWorktreeFile).filter(isVisibleGitFile));
       setWorkspaceSummary(result.data.summary);
     } catch (err) {
       setWorkspaceFiles([]);
@@ -394,20 +406,21 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
         throw new Error(result.error || 'Failed to load commit files');
       }
 
-      setCommitFiles(result.data);
+      const visibleFiles = result.data.filter(isVisibleGitFile);
+      setCommitFiles(visibleFiles);
 
       // Calculate stats for this commit
       const stats: CommitFileStats = {
-        filesChanged: result.data.length,
-        additions: result.data.reduce((sum: number, file: GitFile) => sum + file.additions, 0),
-        deletions: result.data.reduce((sum: number, file: GitFile) => sum + file.deletions, 0)
+        filesChanged: visibleFiles.length,
+        additions: visibleFiles.reduce((sum: number, file: GitFile) => sum + file.additions, 0),
+        deletions: visibleFiles.reduce((sum: number, file: GitFile) => sum + file.deletions, 0)
       };
 
       setCommitFileStats(prev => new Map(prev).set(commitHash, stats));
 
       // Auto-select first file
-      if (result.data.length > 0) {
-        setSelectedFile(result.data[0].path);
+      if (visibleFiles.length > 0) {
+        setSelectedFile(visibleFiles[0].path);
       }
     } catch (err) {
       setCommitFilesError(err instanceof Error ? err.message : 'Unknown error');

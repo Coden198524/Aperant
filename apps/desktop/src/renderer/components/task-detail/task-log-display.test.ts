@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { TaskLogEntry } from '../../../shared/types';
-import { buildDisplayLogEntries, mergeStreamingTextContent } from './task-log-display';
+import { buildDisplayLogEntries, formatLogMarkdownForDisplay, mergeStreamingTextContent } from './task-log-display';
 
 function createTextEntry(timestamp: string, content: string): TaskLogEntry {
   return {
@@ -49,5 +49,50 @@ describe('task-log-display', () => {
     expect(
       mergeStreamingTextContent('结论摘要：', '- 这是一个自研 C++ 游戏引擎项目')
     ).toBe('结论摘要：\n- 这是一个自研 C++ 游戏引擎项目');
+  });
+});
+
+describe('formatLogMarkdownForDisplay', () => {
+  it('wraps raw code-like model output in markdown code fences', () => {
+    const formatted = formatLogMarkdownForDisplay([
+      'Updated src/app.ts:',
+      'import { createRoot } from "react-dom/client";',
+      'const enabled = true;',
+      'export function App() {',
+      '  return enabled;',
+      '}',
+    ].join('\n'));
+
+    expect(formatted).toContain('```ts\nimport { createRoot } from "react-dom/client";');
+    expect(formatted).toContain('export function App() {');
+    expect(formatted).toContain('\n```');
+  });
+
+  it('wraps raw unified diffs in markdown diff fences', () => {
+    const formatted = formatLogMarkdownForDisplay([
+      'Patch:',
+      'diff --git a/src/app.ts b/src/app.ts',
+      'index 1111111..2222222 100644',
+      '--- a/src/app.ts',
+      '+++ b/src/app.ts',
+      '@@ -1,1 +1,1 @@',
+      '-old',
+      '+new',
+    ].join('\n'));
+
+    expect(formatted).toContain('```diff\ndiff --git a/src/app.ts b/src/app.ts');
+    expect(formatted).toContain('-old');
+    expect(formatted).toContain('+new');
+  });
+
+  it('preserves authored markdown tables without wrapping them as code', () => {
+    const formatted = formatLogMarkdownForDisplay([
+      '| Item | Details |',
+      '| --- | --- |',
+      '| What changed | Added output rendering. |',
+    ].join('\n'));
+
+    expect(formatted).not.toContain('```');
+    expect(formatted).toContain('| Item | Details |');
   });
 });

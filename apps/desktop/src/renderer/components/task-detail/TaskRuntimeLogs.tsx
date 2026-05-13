@@ -14,6 +14,7 @@ import type { BuiltinProvider } from '../../../shared/types/provider-account';
 import {
   buildDisplayLogEntries,
   buildDisplayRuntimeLogs,
+  formatLogMarkdownForDisplay,
   type DisplayRuntimeLog,
   type DisplayTaskLogEntry,
 } from './task-log-display';
@@ -993,6 +994,7 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
 
 function RuntimeLogEntry({ log }: { log: DisplayRuntimeLog }) {
   const status = getRuntimeStatus(log.content);
+  const markdownContent = formatLogMarkdownForDisplay(log.content);
 
   if (status) {
     const statusStyles = {
@@ -1040,7 +1042,7 @@ function RuntimeLogEntry({ log }: { log: DisplayRuntimeLog }) {
     <div className="rounded-md border border-slate-700/70 bg-slate-950/70 px-3 py-2 font-mono text-[11px] leading-relaxed shadow-sm">
       <div className="max-w-none break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
         <ReactMarkdown remarkPlugins={[remarkGfm]} components={runtimeMarkdownComponents}>
-          {log.content}
+          {markdownContent}
         </ReactMarkdown>
       </div>
     </div>
@@ -1088,6 +1090,7 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
   const phaseLabel = getPhaseLabel(entry.phase, t);
   const timeLabel = formatEntryTime(entry.timestamp);
   const visibleContent = useTypewriterText(entry.content, isStreaming);
+  const markdownContent = formatLogMarkdownForDisplay(visibleContent);
   const isError = entry.type === 'error';
 
   if (entry.type === 'tool_start' || entry.type === 'tool_end') {
@@ -1169,7 +1172,7 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
             </p>
           ) : (
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={modelMarkdownComponents}>
-              {visibleContent}
+              {markdownContent}
             </ReactMarkdown>
           )}
         </div>

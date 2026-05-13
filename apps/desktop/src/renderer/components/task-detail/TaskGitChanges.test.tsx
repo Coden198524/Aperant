@@ -73,6 +73,36 @@ describe('TaskGitChanges', () => {
     expect(window.electronAPI.getWorktreeCommitFiles).not.toHaveBeenCalled();
   });
 
+  it('hides internal metadata directories from current worktree changes', async () => {
+    window.electronAPI.getWorktreeDiff = vi.fn(async () => ({
+      success: true,
+      data: {
+        summary: '5 files changed',
+        files: [
+          { path: '.git/index', status: 'modified', additions: 1, deletions: 0, patch: '+git' },
+          { path: '.claude/settings.json', status: 'modified', additions: 1, deletions: 0, patch: '+claude' },
+          { path: '.codex/config.toml', status: 'modified', additions: 1, deletions: 0, patch: '+codex' },
+          { path: '.autocode/specs/task.json', status: 'modified', additions: 1, deletions: 0, patch: '+autocode' },
+          {
+            path: 'src/app.ts',
+            status: 'modified',
+            additions: 1,
+            deletions: 0,
+            patch: 'diff --git a/src/app.ts b/src/app.ts\n@@ -0,0 +1,1 @@\n+app',
+          },
+        ],
+      },
+    })) as typeof window.electronAPI.getWorktreeDiff;
+
+    render(<TaskGitChanges task={createTask()} />);
+
+    expect((await screen.findAllByText('src/app.ts')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('.git/index')).not.toBeInTheDocument();
+    expect(screen.queryByText('.claude/settings.json')).not.toBeInTheDocument();
+    expect(screen.queryByText('.codex/config.toml')).not.toBeInTheDocument();
+    expect(screen.queryByText('.autocode/specs/task.json')).not.toBeInTheDocument();
+  });
+
   it('falls back to commit history when the worktree has no current changes', async () => {
     window.electronAPI.getWorktreeDiff = vi.fn(async () => ({
       success: true,
@@ -125,5 +155,50 @@ describe('TaskGitChanges', () => {
     });
     expect((await screen.findAllByText('src/feature.ts')).length).toBeGreaterThan(0);
     expect(await screen.findByText('+feature')).toBeInTheDocument();
+  });
+
+  it('hides internal metadata directories from commit files', async () => {
+    window.electronAPI.getWorktreeDiff = vi.fn(async () => ({
+      success: true,
+      data: {
+        summary: 'No changes found',
+        files: [],
+      },
+    })) as typeof window.electronAPI.getWorktreeDiff;
+    window.electronAPI.getWorktreeCommits = vi.fn(async () => ({
+      success: true,
+      data: [
+        {
+          hash: 'abcdef123456',
+          shortHash: 'abcdef1',
+          message: 'Implement feature',
+          author: 'Autocode',
+          date: '2 minutes ago',
+          timestamp: 1767225600,
+          parents: ['parent1'],
+          refs: [],
+          isMerge: false,
+        },
+      ],
+    })) as typeof window.electronAPI.getWorktreeCommits;
+    window.electronAPI.getWorktreeCommitFiles = vi.fn(async () => ({
+      success: true,
+      data: [
+        { path: '.autocode/specs/task.json', status: 'A', additions: 1, deletions: 0 },
+        { path: '.codex/config.toml', status: 'A', additions: 1, deletions: 0 },
+        { path: 'src/feature.ts', status: 'A', additions: 1, deletions: 0 },
+      ],
+    })) as typeof window.electronAPI.getWorktreeCommitFiles;
+    window.electronAPI.getWorktreeCommitFileDiff = vi.fn(async () => ({
+      success: true,
+      data: 'diff --git a/src/feature.ts b/src/feature.ts\n@@ -0,0 +1,1 @@\n+feature',
+    })) as typeof window.electronAPI.getWorktreeCommitFileDiff;
+
+    render(<TaskGitChanges task={createTask()} />);
+
+    expect(await screen.findByText('Implement feature')).toBeInTheDocument();
+    expect((await screen.findAllByText('src/feature.ts')).length).toBeGreaterThan(0);
+    expect(screen.queryByText('.autocode/specs/task.json')).not.toBeInTheDocument();
+    expect(screen.queryByText('.codex/config.toml')).not.toBeInTheDocument();
   });
 });

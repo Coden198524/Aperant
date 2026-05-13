@@ -12,6 +12,12 @@ export interface DisplayRuntimeLog {
   mergedEntryCount?: number;
 }
 
+interface CodeLineClassification {
+  isCode: boolean;
+  strongSignal: boolean;
+  startsPatch: boolean;
+}
+
 const RUNTIME_BOUNDARY_PATTERNS = [
   /Worker thread online:/g,
   /Starting agent session:/g,
@@ -22,6 +28,7 @@ const RUNTIME_BOUNDARY_PATTERNS = [
 const COMPACT_SUMMARY_ROW_PATTERN = /\|\s*(What changed|Verification|Review notes)\s*\|/gi;
 const COMPACT_SUMMARY_TABLE_PATTERN =
   /\|\s*Item\s*\|\s*Details\s*\|\s*\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|/i;
+const FENCED_CODE_BLOCK_PATTERN = /(^|\n)\s*(```|~~~)/;
 
 function parseTimestamp(value: string): number | null {
   const parsed = Date.parse(value);
@@ -56,6 +63,152 @@ export function mergeStreamingTextContent(previousContent: string, nextContent: 
   return shouldStartNewLine(previous, next)
     ? `${previous}\n${next}`
     : `${previous}${next}`;
+}
+
+function isLikelyJsonLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+
+  if ((trimmed.startsWith('{') && trimmed.endsWith('}')) || (trimmed.startsWith('[') && trimmed.endsWith(']'))) {
+    try {
+      JSON.parse(trimmed);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+
+  return /^["']?[\w.-]+["']?\s*:\s*.+,?$/.test(trimmed) && /["'{}[\],]/.test(trimmed);
+}
+
+function classifyMarkdownLogLine(line: string, insidePatch: boolean): CodeLineClassification {
+  const trimmed = line.trim();
+
+  if (!trimmed) {
+    return { isCode: false, strongSignal: false, startsPatch: false };
+  }
+
+  if (/^diff --git\b|^@@\s|^index\s+[0-9a-f]{5,}\b|^(---|\+\+\+)\s+[ab/]/.test(trimmed)) {
+    return { isCode: true, strongSignal: true, startsPatch: true };
+  }
+
+  if (insidePatch && (/^[ +-]/.test(line) || /^\\ No newline at end of file/.test(trimmed))) {
+    return { isCode: true, strongSignal: true, startsPatch: false };
+  }
+
+  if (/^\|.+\|$/.test(trimmed)) {
+    return { isCode: false, strongSignal: false, startsPatch: false };
+  }
+
+  if (/^(#{1,6}\s|[-*+]\s+\S|\d+\.\s+\S|>\s+\S)/.test(trimmed)) {
+    return { isCode: false, strongSignal: false, startsPatch: false };
+  }
+
+  if (/^<\/?[A-Za-z][^>]*>$/.test(trimmed) || /^<!doctype\s+html>/i.test(trimmed)) {
+    return { isCode: true, strongSignal: true, startsPatch: false };
+  }
+
+  if (isLikelyJsonLine(trimmed)) {
+    return { isCode: true, strongSignal: true, startsPatch: false };
+  }
+
+  if (
+    /^(import|export|const|let|var|function|class|interface|type|enum|return|if|else|for|while|switch|case|try|catch|async|await)\b/.test(trimmed) ||
+    /^(def|from|class|return|if|elif|else|for|while|try|except|with)\b/.test(trimmed) ||
+    /^[.#]?[\w-]+\s*\{/.test(trimmed) ||
+    /^[}\]);,]+$/.test(trimmed)
+  ) {
+    return { isCode: true, strongSignal: /[{}();=<>]/.test(trimmed), startsPatch: false };
+  }
+
+  if (/^\s{2,}\S/.test(line) && /[{}();=<>]/.test(trimmed)) {
+    return { isCode: true, strongSignal: false, startsPatch: false };
+  }
+
+  return { isCode: false, strongSignal: false, startsPatch: false };
+}
+
+function countNonBlankLines(lines: string[]): number {
+  return lines.filter(line => line.trim()).length;
+}
+
+function guessCodeFenceLanguage(lines: string[]): string {
+  const block = lines.join('\n');
+  const trimmed = block.trim();
+
+  if (/^diff --git\b|^@@\s/m.test(trimmed)) return 'diff';
+  if (/^<!doctype\s+html>|<\/?[A-Za-z][^>]*>/i.test(trimmed)) return 'html';
+  if (/^(import|export|const|let|function|class|interface|type|enum)\b/m.test(trimmed)) return 'ts';
+  if (/^([.#][\w-]+|[A-Za-z][\w-]*(?:\s+[.#]?[A-Za-z][\w-]*)?)\s*\{/m.test(trimmed)) return 'css';
+  if (/^(def|from|class|import)\b/m.test(trimmed)) return 'py';
+
+  try {
+    JSON.parse(trimmed);
+    return 'json';
+  } catch {
+    return '';
+  }
+}
+
+function shouldFenceCodeBlock(lines: string[], strongSignal: boolean): boolean {
+  const nonBlankLineCount = countNonBlankLines(lines);
+  if (nonBlankLineCount === 0) return false;
+  if (strongSignal) return true;
+  return nonBlankLineCount >= 2;
+}
+
+function fenceCodeBlock(lines: string[]): string[] {
+  const language = guessCodeFenceLanguage(lines);
+  return [`\`\`\`${language}`, ...lines, '```'];
+}
+
+/**
+ * The model often streams raw diffs or file contents without Markdown fences.
+ * Keep authored Markdown intact, but wrap bare code-like blocks so the runtime
+ * panel renders code/text changes as readable code blocks.
+ */
+export function formatLogMarkdownForDisplay(content: string): string {
+  const normalized = content.replace(/\r\n?/g, '\n').trim();
+  if (!normalized || FENCED_CODE_BLOCK_PATTERN.test(normalized)) {
+    return normalized;
+  }
+
+  const output: string[] = [];
+  let codeBlock: string[] = [];
+  let codeBlockHasStrongSignal = false;
+  let insidePatch = false;
+
+  const flushCodeBlock = () => {
+    if (codeBlock.length === 0) return;
+
+    if (shouldFenceCodeBlock(codeBlock, codeBlockHasStrongSignal)) {
+      output.push(...fenceCodeBlock(codeBlock));
+    } else {
+      output.push(...codeBlock);
+    }
+
+    codeBlock = [];
+    codeBlockHasStrongSignal = false;
+    insidePatch = false;
+  };
+
+  for (const line of normalized.split('\n')) {
+    const classification = classifyMarkdownLogLine(line, insidePatch);
+
+    if (classification.isCode || (insidePatch && line.trim() === '')) {
+      codeBlock.push(line);
+      codeBlockHasStrongSignal ||= classification.strongSignal;
+      insidePatch ||= classification.startsPatch;
+      continue;
+    }
+
+    flushCodeBlock();
+    output.push(line);
+  }
+
+  flushCodeBlock();
+
+  return output.join('\n').replace(/\n{4,}/g, '\n\n\n');
 }
 
 function looksStructuredRuntimeLog(content: string): boolean {

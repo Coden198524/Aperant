@@ -98,11 +98,23 @@ const PRINTABLE_CHARS_REGEX = /^[\x20-\x7E\u00A0-\uFFFF]*$/;
 const PR_CREATION_TIMEOUT_MS = 120000;
 const WORKTREE_GIT_TIMEOUT_MS = 10000;
 const MAX_UNTRACKED_PATCH_BYTES = 512 * 1024;
+const HIDDEN_GIT_CHANGE_DIRS = new Set(['.git', '.claude', '.codex', '.autocode']);
 
 type WorktreeDiffFileBase = Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'>;
 
 function normalizeGitPath(filePath: string): string {
   return filePath.replace(/\\/g, '/');
+}
+
+export function shouldHideTaskGitChangePath(filePath: string | undefined | null): boolean {
+  if (!filePath) return false;
+  const normalized = normalizeGitPath(filePath).replace(/^\.\//, '');
+  const [firstSegment] = normalized.split('/');
+  return HIDDEN_GIT_CHANGE_DIRS.has(firstSegment);
+}
+
+function isVisibleTaskGitChange(file: { path?: string; previousPath?: string }): boolean {
+  return !shouldHideTaskGitChangePath(file.path) && !shouldHideTaskGitChangePath(file.previousPath);
 }
 
 function parseWorktreeNameStatus(nameStatus: string): WorktreeDiffFileBase[] {
@@ -134,7 +146,7 @@ function parseWorktreeNameStatus(nameStatus: string): WorktreeDiffFileBase[] {
           return { path: normalizeGitPath(pathParts.join('\t')), status: 'modified' };
       }
     })
-    .filter((file): file is WorktreeDiffFileBase => !!file && !!file.path);
+    .filter((file): file is WorktreeDiffFileBase => !!file && !!file.path && isVisibleTaskGitChange(file));
 }
 
 function splitPatchLines(content: string): { lines: string[]; hasNoNewlineAtEnd: boolean } {
@@ -191,6 +203,10 @@ export function createAddedFilePatchFromContent(filePath: string, content: strin
 
 function createUntrackedWorktreeDiffFile(worktreePath: string, filePath: string): WorktreeDiffFile | null {
   const normalizedPath = normalizeGitPath(filePath);
+  if (shouldHideTaskGitChangePath(normalizedPath)) {
+    return null;
+  }
+
   const worktreeRoot = path.resolve(worktreePath);
   const absolutePath = path.resolve(worktreePath, filePath);
 
@@ -2151,6 +2167,7 @@ export function registerWorktreeHandlers(
 
           try {
             const untrackedFiles = (await getUntrackedFilePaths(worktreePath))
+              .filter((filePath) => !shouldHideTaskGitChangePath(filePath))
               .map((filePath) => createUntrackedWorktreeDiffFile(worktreePath, filePath))
               .filter((file): file is WorktreeDiffFile => !!file);
 
@@ -2271,6 +2288,7 @@ export function registerWorktreeHandlers(
             const trackedPaths = new Set(fileEntries.map((file) => file.path));
             untrackedFiles = (await getUntrackedFilePaths(workspacePath))
               .filter((filePath) => !trackedPaths.has(filePath))
+              .filter((filePath) => !shouldHideTaskGitChangePath(filePath))
               .map((filePath) => createUntrackedWorktreeDiffFile(workspacePath, filePath))
               .filter((file): file is WorktreeDiffFile => !!file);
           } catch (untrackedError) {
@@ -3382,10 +3400,11 @@ export function registerWorktreeHandlers(
           .filter(Boolean)
           .map((line: string) => {
             const [status, ...pathParts] = line.split('\t');
-            const path = pathParts.join('\t');
+            const path = normalizeGitPath(pathParts.join('\t'));
             const statusCode = status?.[0] as 'M' | 'A' | 'D';
             return { path, status: statusCode || 'M', additions: 0, deletions: 0 };
-          });
+          })
+          .filter((file) => isVisibleTaskGitChange(file));
 
         // Get stats for each file
         const filesWithStats = await Promise.all(
@@ -3552,6 +3571,10 @@ export function registerWorktreeHandlers(
         }
 
         // Get diff for the file
+        if (shouldHideTaskGitChangePath(filePath)) {
+          return { success: true, data: '' };
+        }
+
         const diffResult = await execFileAsync(
           getToolPath('git'),
           ['diff', '--no-color', '--unified=3', `${compareTarget}...HEAD`, '--', filePath],
@@ -3615,10 +3638,11 @@ export function registerWorktreeHandlers(
           .filter(Boolean)
           .map((line: string) => {
             const [status, ...pathParts] = line.split('\t');
-            const path = pathParts.join('\t');
+            const path = normalizeGitPath(pathParts.join('\t'));
             const statusCode = status?.[0] as 'M' | 'A' | 'D';
             return { path, status: statusCode || 'M', additions: 0, deletions: 0 };
-          });
+          })
+          .filter((file) => isVisibleTaskGitChange(file));
 
         // Get stats for each file
         const filesWithStats = await Promise.all(
@@ -3680,6 +3704,10 @@ export function registerWorktreeHandlers(
         }
 
         // Get diff for the file in the specific commit
+        if (shouldHideTaskGitChangePath(filePath)) {
+          return { success: true, data: '' };
+        }
+
         const diffResult = await execFileAsync(
           getToolPath('git'),
           ['diff', '--no-color', '--unified=3', `${commitHash}^`, commitHash, '--', filePath],
