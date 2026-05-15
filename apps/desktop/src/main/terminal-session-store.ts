@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, promises as fsPromises } from 'fs';
-import type { TerminalWorktreeConfig } from '../shared/types';
+import type { SupportedCLI, TerminalWorktreeConfig } from '../shared/types';
 import { debugLog } from '../shared/utils/debug-logger';
 
 /**
@@ -13,6 +13,7 @@ export interface TerminalSession {
   cwd: string;
   projectPath: string;  // Which project this terminal belongs to
   isCLIMode: boolean;
+  activeCLI?: SupportedCLI;
   claudeSessionId?: string;  // Claude session ID for resume functionality
   outputBuffer: string;  // Last 100KB of output for replay
   createdAt: string;  // ISO timestamp

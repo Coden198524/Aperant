@@ -398,25 +398,12 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
       setWorkspaceFiles(visibleFiles);
       setWorkspaceSummary(formatWorkspaceSummary(visibleFiles, t));
       if (visibleFiles.length > 0) {
-        const nextFile = visibleFiles[0];
-        requestedWorkspaceDiffRef.current = nextFile.path;
-        setSelectedFile(nextFile.path);
+        setSelectedFile(current => current && visibleFiles.some(file => file.path === current)
+          ? current
+          : visibleFiles[0].path);
         setDiffError(null);
-        setIsLoadingDiff(true);
-        window.electronAPI.getWorktreeFileDiff(task.id, nextFile.path, task.projectId)
-          .then((diffResult) => {
-            if (diffResult.success && diffResult.data !== undefined) {
-              setDiff(diffResult.data);
-            } else {
-              setDiffError(diffResult.error || 'Failed to load diff');
-            }
-          })
-          .catch((err) => {
-            setDiffError(err instanceof Error ? err.message : 'Unknown error');
-          })
-          .finally(() => {
-            setIsLoadingDiff(false);
-          });
+        setDiff(null);
+        requestedWorkspaceDiffRef.current = null;
       }
     } catch (err) {
       setWorkspaceFiles([]);
@@ -589,13 +576,19 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
       if (requestedWorkspaceDiffRef.current === selectedFile) {
         return;
       }
-      void loadWorkspaceFileDiff(selectedFile);
+      const timer = window.setTimeout(() => {
+        void loadWorkspaceFileDiff(selectedFile);
+      }, 80);
+      return () => window.clearTimeout(timer);
     }
   }, [activeChangeSet, selectedFile, loadWorkspaceFileDiff]);
 
   useEffect(() => {
     if (activeChangeSet === 'commit' && selectedCommit && selectedFile) {
-      loadDiff(selectedCommit, selectedFile);
+      const timer = window.setTimeout(() => {
+        loadDiff(selectedCommit, selectedFile);
+      }, 80);
+      return () => window.clearTimeout(timer);
     }
   }, [activeChangeSet, selectedCommit, selectedFile, loadDiff]);
 
@@ -641,8 +634,9 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     }
 
     const nextFile = workspaceFiles.find((file) => file.path === selectedFile) ?? workspaceFiles[0];
-    requestedWorkspaceDiffRef.current = null;
-    setSelectedFile(nextFile.path);
+      setSelectedFile(nextFile.path);
+      setDiff(null);
+      requestedWorkspaceDiffRef.current = null;
   }, [selectedFile, workspaceFiles]);
 
   const selectFile = useCallback((file: GitFile) => {

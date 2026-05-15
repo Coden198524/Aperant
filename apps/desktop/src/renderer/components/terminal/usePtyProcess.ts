@@ -180,6 +180,7 @@ export function usePtyProcess({
           cwd: terminalState.cwd,
           projectPath: projectPath || '',
           isCLIMode: terminalState.isCLIMode,
+          activeCLI: terminalState.activeCLI,
           claudeSessionId: terminalState.claudeSessionId,
           outputBuffer: '',
           createdAt: terminalState.createdAt.toISOString(),

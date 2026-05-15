@@ -1,4 +1,4 @@
-import { useState, useRef, useLayoutEffect, useId, useMemo, useEffect } from 'react';
+import { useCallback, useState, useRef, useId, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   Target,
@@ -186,7 +186,7 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
   })();
 
   // biome-ignore lint/correctness/useExhaustiveDependencies: content height depends on rendered description
-  useLayoutEffect(() => {
+  useEffect(() => {
     setIsExpanded(false);
     const element = contentRef.current;
     if (element) {
@@ -200,55 +200,58 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
     setIsEditingBaseBranch(false);
   }, [task.id, task.metadata?.baseBranch]);
 
-  useEffect(() => {
-    let cancelled = false;
+  const loadBranchData = useCallback(async () => {
+    if (!project?.path) return;
 
-    const loadBranchData = async () => {
-      if (!project?.path) return;
+    setIsLoadingBranches(true);
+    try {
+      const [branchesResult, envResult] = await Promise.all([
+        window.electronAPI.getGitBranchesWithInfo(project.path),
+        window.electronAPI.getProjectEnv(task.projectId),
+      ]);
 
-      setIsLoadingBranches(true);
-      try {
-        const [branchesResult, envResult] = await Promise.all([
-          window.electronAPI.getGitBranchesWithInfo(project.path),
-          window.electronAPI.getProjectEnv(task.projectId),
-        ]);
-
-        if (cancelled) return;
-
-        if (branchesResult.success && branchesResult.data) {
-          setBranches(branchesResult.data);
-        } else {
-          setBranches([]);
-        }
-
-        const envDefaultBranch = envResult.success ? envResult.data?.defaultBranch : undefined;
-        if (envDefaultBranch) {
-          setProjectDefaultBranch(envDefaultBranch);
-          return;
-        }
-
-        const detectedBranch = await window.electronAPI.detectMainBranch(project.path);
-        if (!cancelled && detectedBranch.success && detectedBranch.data) {
-          setProjectDefaultBranch(detectedBranch.data);
-        }
-      } catch (error) {
-        if (!cancelled) {
-          console.error('Failed to load task base branch options:', error);
-          setBranches([]);
-        }
-      } finally {
-        if (!cancelled) {
-          setIsLoadingBranches(false);
-        }
+      if (branchesResult.success && branchesResult.data) {
+        setBranches(branchesResult.data);
+      } else {
+        setBranches([]);
       }
-    };
 
-    void loadBranchData();
+      const envDefaultBranch = envResult.success ? envResult.data?.defaultBranch : undefined;
+      if (envDefaultBranch) {
+        setProjectDefaultBranch(envDefaultBranch);
+        return;
+      }
+
+      const detectedBranch = await window.electronAPI.detectMainBranch(project.path);
+      if (detectedBranch.success && detectedBranch.data) {
+        setProjectDefaultBranch(detectedBranch.data);
+      }
+    } catch (error) {
+      console.error('Failed to load task base branch options:', error);
+      setBranches([]);
+    } finally {
+      setIsLoadingBranches(false);
+    }
+  }, [project?.path, task.projectId]);
+
+  useEffect(() => {
+    if (!isEditingBaseBranch || branches.length > 0 || isLoadingBranches) {
+      return;
+    }
+
+    let cancelled = false;
+    setIsLoadingBranches(true);
+    loadBranchData().finally(() => {
+      if (cancelled) {
+        return;
+      }
+      setIsLoadingBranches(false);
+    });
 
     return () => {
       cancelled = true;
     };
-  }, [project?.path, task.projectId]);
+  }, [branches.length, isEditingBaseBranch, isLoadingBranches, loadBranchData]);
 
   const hasClassification = task.metadata && (
     task.metadata.category ||
@@ -335,16 +338,10 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
 
   const displayedBaseBranch = task.metadata?.baseBranch
     || projectDefaultBranch
-    || t('tasks:metadata.baseBranchUnknown', { defaultValue: 'Unknown' });
+    || t('tasks:metadata.baseBranchProjectDefault', { defaultValue: 'Use project default' });
 
   const handleSaveBaseBranch = async () => {
     const nextBaseBranch = baseBranchDraft === PROJECT_DEFAULT_BRANCH ? undefined : baseBranchDraft.trim();
-    if (!nextBaseBranch && !projectDefaultBranch) {
-      setBaseBranchError(t('tasks:metadata.baseBranchUpdateFailed', {
-        defaultValue: 'Unable to save the base branch right now.',
-      }));
-      return;
-    }
 
     setIsSavingBaseBranch(true);
     setBaseBranchError(null);

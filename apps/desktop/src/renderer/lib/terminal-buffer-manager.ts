@@ -66,6 +66,16 @@ class TerminalBufferManager {
   }
 
   /**
+   * Clear a terminal's buffer only if it has not changed since it was read.
+   * This prevents dropping output that arrives between a replay read and clear.
+   */
+  clearIfUnchanged(id: string, expectedBuffer: string): void {
+    if (this.buffers.get(id) === expectedBuffer) {
+      this.buffers.delete(id);
+    }
+  }
+
+  /**
    * Atomically get and clear a terminal's buffer
    * This prevents race conditions where data could be appended between get() and clear()
    */

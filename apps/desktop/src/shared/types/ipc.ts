@@ -4,7 +4,7 @@
 
 import type { IPCResult } from './common';
 import type { KanbanPreferences } from './kanban';
-import type { SupportedIDE, SupportedTerminal } from './settings';
+import type { SupportedCLI, SupportedIDE, SupportedTerminal } from './settings';
 import type {
   Project,
   ProjectSettings,
@@ -289,7 +289,7 @@ export interface ElectronAPI {
   destroyTerminal: (id: string) => Promise<IPCResult>;
   sendTerminalInput: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<IPCResult<{ success: boolean }>>;
-  invokeCLIInTerminal: (id: string, cwd?: string) => void;
+  invokeCLIInTerminal: (id: string, cwd?: string, cli?: SupportedCLI) => void;
   generateTerminalName: (command: string, cwd?: string) => Promise<IPCResult<string>>;
   setTerminalTitle: (id: string, title: string) => void;
   setTerminalWorktreeConfig: (id: string, config: TerminalWorktreeConfig | undefined) => void;

@@ -1,11 +1,18 @@
-import { X, Sparkles, TerminalSquare, FolderGit, ExternalLink, GripVertical, Maximize2, Minimize2, RotateCcw } from 'lucide-react';
+import { X, Sparkles, TerminalSquare, FolderGit, ExternalLink, GripVertical, Maximize2, Minimize2, RotateCcw, ChevronDown } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
-import type { Task, TerminalWorktreeConfig } from '../../../shared/types';
+import type { SupportedCLI, Task, TerminalWorktreeConfig } from '../../../shared/types';
 import type { TerminalStatus } from '../../stores/terminal-store';
 import { useTerminalStore } from '../../stores/terminal-store';
 import { Button } from '../ui/button';
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from '../ui/dropdown-menu';
 import { cn } from '../../lib/utils';
+import { getCliLabel, QUICK_CLI_OPTIONS } from '../../lib/cli-display';
 import { STATUS_COLORS } from './types';
 import { TerminalTitle } from './TerminalTitle';
 import { TaskSelector } from './TaskSelector';
@@ -19,7 +26,9 @@ interface TerminalHeaderProps {
   tasks: Task[];
   associatedTask?: Task;
   onClose: () => void;
-  onInvokeClaude: () => void;
+  activeCLI?: SupportedCLI;
+  defaultCLI: SupportedCLI;
+  onInvokeCLI: (cli?: SupportedCLI) => void;
   onTitleChange: (newTitle: string) => void;
   onTaskSelect: (taskId: string) => void;
   onClearTask: () => void;
@@ -53,7 +62,9 @@ export function TerminalHeader({
   tasks,
   associatedTask,
   onClose,
-  onInvokeClaude,
+  activeCLI,
+  defaultCLI,
+  onInvokeCLI,
   onTitleChange,
   onTaskSelect,
   onClearTask,
@@ -78,10 +89,11 @@ export function TerminalHeader({
     (state) => state.terminals.filter((t) => t.pendingCLIResume === true).length
   );
   const showResumeAllButton = pendingResumeCount >= 2;
+  const cliLabel = getCliLabel(activeCLI || defaultCLI);
 
   return (
-    <div className="electron-no-drag group/header flex h-9 items-center justify-between border-b border-border/50 bg-card/30 px-2">
-      <div className="flex items-center gap-2">
+    <div className="electron-no-drag group/header flex h-9 items-center justify-between gap-2 border-b border-border/50 bg-card/30 px-2">
+      <div className="flex min-w-0 flex-1 items-center gap-2">
         {/* Drag handle - visible on hover */}
         {dragHandleListeners && (
           <div
@@ -99,8 +111,8 @@ export function TerminalHeader({
           </div>
         )}
         <div className={cn('h-2 w-2 rounded-full', STATUS_COLORS[status])} />
-        <div className="flex items-center gap-1.5">
-          <TerminalSquare className="h-3.5 w-3.5 text-muted-foreground" />
+        <div className="flex min-w-0 items-center gap-1.5">
+          <TerminalSquare className="h-3.5 w-3.5 flex-shrink-0 text-muted-foreground" />
           <TerminalTitle
             title={title}
             associatedTask={associatedTask}
@@ -111,10 +123,10 @@ export function TerminalHeader({
         {isCLIMode && (
           <span
             className="flex items-center gap-1 text-[10px] font-medium text-primary bg-primary/10 px-1.5 py-0.5 rounded"
-            title="Claude"
+            title={cliLabel}
           >
             <Sparkles className="h-2.5 w-2.5" />
-            {terminalCount < 4 && <span>Claude</span>}
+            {terminalCount < 4 && <span>{cliLabel}</span>}
           </span>
         )}
         {pendingCLIResume && (
@@ -160,7 +172,7 @@ export function TerminalHeader({
           )
         )}
       </div>
-      <div className="flex items-center gap-1">
+      <div className="flex shrink-0 items-center gap-1">
         {/* Resume All button - shown when 2+ terminals have pending resume */}
         {showResumeAllButton && (
           <Button
@@ -201,22 +213,52 @@ export function TerminalHeader({
           </Button>
         )}
         {!isCLIMode && status !== 'exited' && (
-          <Button
-            variant="ghost"
-            size={terminalCount >= 4 ? 'icon' : 'sm'}
-            className={cn(
-              'h-6 hover:bg-primary/10 hover:text-primary',
-              terminalCount >= 4 ? 'w-6' : 'px-2 text-xs gap-1'
-            )}
-            onClick={(e) => {
-              e.stopPropagation();
-              onInvokeClaude();
-            }}
-            title="Claude"
-          >
-            <Sparkles className="h-3 w-3" />
-            {terminalCount < 4 && <span>Claude</span>}
-          </Button>
+          <DropdownMenu>
+            <div className="flex items-center">
+              <Button
+                variant="ghost"
+                size={terminalCount >= 4 ? 'icon' : 'sm'}
+                className={cn(
+                  'h-6 hover:bg-primary/10 hover:text-primary',
+                  terminalCount >= 4 ? 'w-6' : 'rounded-r-none px-2 text-xs gap-1'
+                )}
+                onClick={(e) => {
+                  e.stopPropagation();
+                  onInvokeCLI(defaultCLI);
+                }}
+                title={cliLabel}
+              >
+                <Sparkles className="h-3 w-3" />
+                {terminalCount < 4 && <span>{cliLabel}</span>}
+              </Button>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="ghost"
+                  size="icon"
+                  className="h-6 w-6 rounded-l-none border-l border-border/50 hover:bg-primary/10 hover:text-primary"
+                  onClick={(e) => e.stopPropagation()}
+                  title="Select CLI"
+                >
+                  <ChevronDown className="h-3 w-3 opacity-70" />
+                </Button>
+              </DropdownMenuTrigger>
+            </div>
+            <DropdownMenuContent align="end" className="w-36">
+              {QUICK_CLI_OPTIONS.map((cli) => (
+                <DropdownMenuItem
+                  key={cli}
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    onInvokeCLI(cli);
+                  }}
+                  className="text-xs"
+                >
+                  <Sparkles className="h-3 w-3 mr-2 text-muted-foreground" />
+                  {getCliLabel(cli)}
+                </DropdownMenuItem>
+              ))}
+            </DropdownMenuContent>
+          </DropdownMenu>
         )}
         {/* Expand/collapse button */}
         {onToggleExpand && (

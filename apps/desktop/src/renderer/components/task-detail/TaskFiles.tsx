@@ -246,13 +246,19 @@ export function TaskFiles({ task }: TaskFilesProps) {
 
   // Load files on mount and when specsPath changes
   useEffect(() => {
-    loadFiles();
+    const timer = window.setTimeout(() => {
+      void loadFiles();
+    }, 80);
+    return () => window.clearTimeout(timer);
   }, [loadFiles]);
 
   // Auto-select first file (spec.md) when files are loaded
   useEffect(() => {
     if (files.length > 0 && selectedFile === null) {
-      loadFileContent(files[0].path);
+      const timer = window.setTimeout(() => {
+        void loadFileContent(files[0].path);
+      }, 80);
+      return () => window.clearTimeout(timer);
     }
     // Only run when files change, not on selectedFile changes
     // eslint-disable-next-line react-hooks/exhaustive-deps

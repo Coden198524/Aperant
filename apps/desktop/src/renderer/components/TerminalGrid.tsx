@@ -32,7 +32,10 @@ import { cn } from '../lib/utils';
 import { useTerminalStore } from '../stores/terminal-store';
 import { useTaskStore } from '../stores/task-store';
 import { useFileExplorerStore } from '../stores/file-explorer-store';
+import { saveSettings, useSettingsStore } from '../stores/settings-store';
+import { getCliLabel, QUICK_CLI_OPTIONS } from '../lib/cli-display';
 import { TERMINAL_DOM_UPDATE_DELAY_MS, PANEL_CLEANUP_GRACE_PERIOD_MS } from '../../shared/constants';
+import type { SupportedCLI } from '../../shared/types/settings';
 import type { SessionDateInfo } from '../../shared/types';
 
 interface TerminalGridProps {
@@ -46,6 +49,8 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
   const modifierKey = navigator.platform.includes('Mac') ? '⌘' : 'Ctrl';
   const newTerminalShortcut = `${modifierKey}+T`;
   const allTerminals = useTerminalStore((state) => state.terminals);
+  const preferredCLI = useSettingsStore((state) => (state.settings.preferredCLI || 'claude-code') as SupportedCLI);
+  const preferredCLILabel = getCliLabel(preferredCLI);
 
   // Track terminals that are in the grace period before being filtered out
   // Map of terminal ID -> timestamp when it was marked for cleanup
@@ -150,6 +155,34 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
     setPendingCleanup(new Map());
     clearAllCleanupTimers();
   }, [projectPath, clearAllCleanupTimers]);
+
+  // TerminalGrid stays mounted while hidden so xterm state is preserved.
+  // When the view becomes visible again, force a refit because ResizeObserver
+  // can miss display:none -> visible transitions and xterm may keep stale cols.
+  useEffect(() => {
+    if (!isActive || terminals.length === 0) {
+      return;
+    }
+
+    const dispatchRefit = () => {
+      window.dispatchEvent(new CustomEvent('terminal-refit-all'));
+    };
+
+    const raf = typeof requestAnimationFrame !== 'undefined'
+      ? requestAnimationFrame
+      : (cb: FrameRequestCallback) => setTimeout(() => cb(Date.now()), 0) as unknown as number;
+    const cancelRaf = typeof cancelAnimationFrame !== 'undefined'
+      ? cancelAnimationFrame
+      : (id: number) => clearTimeout(id);
+
+    const rafId = raf(dispatchRefit);
+    const timeoutId = setTimeout(dispatchRefit, TERMINAL_DOM_UPDATE_DELAY_MS);
+
+    return () => {
+      cancelRaf(rafId);
+      clearTimeout(timeoutId);
+    };
+  }, [isActive, terminals.length]);
 
   // Fetch available session dates when project changes
   useEffect(() => {
@@ -324,14 +357,18 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
     setExpandedTerminalId(prev => prev === terminalId ? null : terminalId);
   }, []);
 
-  const handleInvokeClaudeAll = useCallback(() => {
+  const handleInvokeCLIAll = useCallback(() => {
     terminals.forEach((terminal) => {
       if (terminal.status === 'running' && !terminal.isCLIMode) {
-        setCLIMode(terminal.id, true);
-        window.electronAPI.invokeCLIInTerminal(terminal.id, terminal.cwd || projectPath);
+        setCLIMode(terminal.id, true, preferredCLI);
+        window.electronAPI.invokeCLIInTerminal(terminal.id, terminal.cwd || projectPath, preferredCLI);
       }
     });
-  }, [terminals, setCLIMode, projectPath]);
+  }, [terminals, setCLIMode, projectPath, preferredCLI]);
+
+  const handlePreferredCLIChange = useCallback((cli: SupportedCLI) => {
+    saveSettings({ preferredCLI: cli });
+  }, []);
 
   // Handle drag start - store dragged item data
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -453,7 +490,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
             </h2>
             <p className="mt-1 text-sm text-muted-foreground max-w-md">
               {t('terminalGrid.emptyDescriptionPrefix', {
-                defaultValue: 'Spawn multiple terminals to run Claude agents in parallel. Use '
+                defaultValue: 'Spawn multiple agent terminals in parallel. Use '
               })}
               <kbd className="px-1.5 py-0.5 text-xs bg-card border border-border rounded">{newTerminalShortcut}</kbd>
               {t('terminalGrid.emptyDescriptionSuffix', {
@@ -550,12 +587,42 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
                 variant="outline"
                 size="sm"
                 className="h-7 text-xs gap-1.5"
-                onClick={handleInvokeClaudeAll}
+                onClick={handleInvokeCLIAll}
               >
                 <Sparkles className="h-3 w-3" />
-                {t('terminalGrid.invokeAll', { defaultValue: 'Invoke Claude All' })}
+                {t('terminalGrid.invokeAll', { defaultValue: `Invoke ${preferredCLILabel} All` })}
               </Button>
             )}
+            <DropdownMenu>
+              <DropdownMenuTrigger asChild>
+                <Button
+                  variant="outline"
+                  size="sm"
+                  className="h-7 text-xs gap-1.5"
+                  title="Select default smart terminal CLI"
+                >
+                  <Sparkles className="h-3 w-3" />
+                  {preferredCLILabel}
+                  <ChevronDown className="h-3 w-3" />
+                </Button>
+              </DropdownMenuTrigger>
+              <DropdownMenuContent align="end" className="w-40">
+                <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
+                  Smart terminal CLI
+                </div>
+                <DropdownMenuSeparator />
+                {QUICK_CLI_OPTIONS.map((cli) => (
+                  <DropdownMenuItem
+                    key={cli}
+                    onClick={() => handlePreferredCLIChange(cli)}
+                    className="flex items-center justify-between text-xs"
+                  >
+                    <span>{getCliLabel(cli)}</span>
+                    {preferredCLI === cli && <span className="text-primary">Default</span>}
+                  </DropdownMenuItem>
+                ))}
+              </DropdownMenuContent>
+            </DropdownMenu>
             <Button
               variant="outline"
               size="sm"

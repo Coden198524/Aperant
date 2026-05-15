@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
 import * as DialogPrimitive from '@radix-ui/react-dialog';
 import { useToast } from '../../hooks/use-toast';
@@ -57,8 +57,10 @@ interface TaskDetailModalProps {
 }
 
 export function TaskDetailModal({ open, task, onOpenChange, onSwitchToTerminals, onOpenInbuiltTerminal }: TaskDetailModalProps) {
-  // Don't render anything if no task
-  if (!task) {
+  // Do not mount the detail tree while closed. Several detail tabs perform
+  // expensive markdown rendering or IPC loading, so keeping them unmounted
+  // prevents background work from blocking the next open.
+  if (!open || !task) {
     return null;
   }
 
@@ -83,6 +85,7 @@ const MODAL_WIDTH_STORAGE_KEY = 'task_detail_modal_width';
 const DEFAULT_MODAL_WIDTH_RATIO = 0.92;
 const MIN_MODAL_WIDTH = 760;
 const MODAL_SIDE_MARGIN = 48;
+const TAB_MOUNT_DELAY_MS = 80;
 
 function getMaxModalWidth(): number {
   if (typeof window === 'undefined') {
@@ -106,6 +109,49 @@ function getInitialModalWidth(): number {
   }
 
   return clampModalWidth(Math.min(1280, window.innerWidth * DEFAULT_MODAL_WIDTH_RATIO));
+}
+
+function DeferredTabMount({
+  active,
+  label,
+  children,
+}: {
+  active: boolean;
+  label: string;
+  children: ReactNode;
+}) {
+  const [ready, setReady] = useState(false);
+
+  useEffect(() => {
+    if (!active) {
+      setReady(false);
+      return;
+    }
+
+    const timer = window.setTimeout(() => {
+      const scheduleFrame = window.requestAnimationFrame ?? ((callback: FrameRequestCallback) => window.setTimeout(callback, 16));
+      scheduleFrame(() => setReady(true));
+    }, TAB_MOUNT_DELAY_MS);
+
+    return () => window.clearTimeout(timer);
+  }, [active]);
+
+  if (!active) {
+    return null;
+  }
+
+  if (!ready) {
+    return (
+      <div className="flex h-full items-center justify-center text-muted-foreground">
+        <div className="flex items-center gap-2 rounded-md border border-border bg-card px-3 py-2 text-sm shadow-sm">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          <span>{label}</span>
+        </div>
+      </div>
+    );
+  }
+
+  return <>{children}</>;
 }
 
 // Separate component to use hooks only when task exists
@@ -776,59 +822,81 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
                 {/* Subtasks Tab */}
                 <TabsContent value="subtasks" className="flex-1 min-h-0 overflow-hidden mt-0">
-                  <TaskSubtasks task={task} />
+                  <DeferredTabMount
+                    active={state.activeTab === 'subtasks'}
+                    label={t('tasks:detail.loadingTab', { defaultValue: 'Loading...' })}
+                  >
+                    <TaskSubtasks task={task} />
+                  </DeferredTabMount>
                 </TabsContent>
 
                 {/* Logs Tab */}
                 <TabsContent value="logs" className="flex flex-1 min-h-0 flex-col overflow-hidden mt-0" data-testid="task-logs-tab">
-                  <div
-                    className="shrink-0 px-5 pt-3 pb-2 border-b border-border flex items-center justify-end"
-                    data-testid="task-logs-actions"
+                  <DeferredTabMount
+                    active={state.activeTab === 'logs'}
+                    label={t('tasks:detail.loadingLogs', { defaultValue: 'Loading logs...' })}
                   >
-                    <Button
-                      variant="outline"
-                      size="sm"
-                      onClick={handleClearLogs}
-                      disabled={isClearingLogs}
-                    >
-                      {isClearingLogs ? (
-                        <>
-                          <Loader2 className="mr-2 h-4 w-4 animate-spin" />
-                          {t('tasks:logActions.clearing', { defaultValue: 'Clearing...' })}
-                        </>
-                      ) : (
-                        <>
-                          <Trash2 className="mr-2 h-4 w-4" />
-                          {t('tasks:logActions.clearAction', { defaultValue: 'Clear Logs' })}
-                        </>
-                      )}
-                    </Button>
-                  </div>
-                  <div className="flex-1 min-h-0">
-                    <TaskLogs
-                      task={task}
-                      phaseLogs={state.phaseLogs}
-                      isLoadingLogs={state.isLoadingLogs}
-                      expandedPhases={state.expandedPhases}
-                      isStuck={state.isStuck}
-                      logsEndRef={state.logsEndRef}
-                      logsContainerRef={state.logsContainerRef}
-                      onLogsScroll={state.handleLogsScroll}
-                      onTogglePhase={state.togglePhase}
-                    />
-                  </div>
+                    <>
+                      <div
+                        className="shrink-0 px-5 pt-3 pb-2 border-b border-border flex items-center justify-end"
+                        data-testid="task-logs-actions"
+                      >
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          onClick={handleClearLogs}
+                          disabled={isClearingLogs}
+                        >
+                          {isClearingLogs ? (
+                            <>
+                              <Loader2 className="mr-2 h-4 w-4 animate-spin" />
+                              {t('tasks:logActions.clearing', { defaultValue: 'Clearing...' })}
+                            </>
+                          ) : (
+                            <>
+                              <Trash2 className="mr-2 h-4 w-4" />
+                              {t('tasks:logActions.clearAction', { defaultValue: 'Clear Logs' })}
+                            </>
+                          )}
+                        </Button>
+                      </div>
+                      <div className="flex-1 min-h-0">
+                        <TaskLogs
+                          task={task}
+                          phaseLogs={state.phaseLogs}
+                          isLoadingLogs={state.isLoadingLogs}
+                          expandedPhases={state.expandedPhases}
+                          isStuck={state.isStuck}
+                          logsEndRef={state.logsEndRef}
+                          logsContainerRef={state.logsContainerRef}
+                          onLogsScroll={state.handleLogsScroll}
+                          onTogglePhase={state.togglePhase}
+                        />
+                      </div>
+                    </>
+                  </DeferredTabMount>
                 </TabsContent>
 
                 {/* Files Tab */}
                 {showFilesTab && (
                   <TabsContent value="files" className="flex-1 min-h-0 overflow-hidden mt-0">
-                    <TaskFiles task={task} />
+                    <DeferredTabMount
+                      active={state.activeTab === 'files'}
+                      label={t('tasks:detail.loadingFiles', { defaultValue: 'Loading files...' })}
+                    >
+                      <TaskFiles task={task} />
+                    </DeferredTabMount>
                   </TabsContent>
                 )}
 
                 {/* Git Changes Tab */}
                 <TabsContent value="git" className="flex-1 min-h-0 overflow-hidden mt-0">
-                  <TaskGitChanges task={task} />
+                  <DeferredTabMount
+                    active={state.activeTab === 'git'}
+                    label={t('tasks:detail.loadingGitChanges', { defaultValue: 'Loading git changes...' })}
+                  >
+                    <TaskGitChanges task={task} />
+                  </DeferredTabMount>
                 </TabsContent>
               </Tabs>
             </div>

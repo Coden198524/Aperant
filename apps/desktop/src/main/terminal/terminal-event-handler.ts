@@ -32,8 +32,10 @@ export function handleTerminalData(
   data: string,
   callbacks: EventHandlerCallbacks
 ): void {
+  const isClaudeCLI = terminal.isCLIMode && (terminal.activeCLI === undefined || terminal.activeCLI === 'claude-code');
+
   // Try to extract Claude session ID
-  if (terminal.isCLIMode && !terminal.claudeSessionId) {
+  if (isClaudeCLI && !terminal.claudeSessionId) {
     const sessionId = OutputParser.extractClaudeSessionId(data);
     if (sessionId) {
       callbacks.onClaudeSessionId(terminal, sessionId);
@@ -41,7 +43,7 @@ export function handleTerminalData(
   }
 
   // Check for rate limit messages
-  if (terminal.isCLIMode) {
+  if (isClaudeCLI) {
     callbacks.onRateLimit(terminal, data);
   }
 
@@ -52,7 +54,7 @@ export function handleTerminalData(
   callbacks.onOnboardingComplete(terminal, data);
 
   // Detect Claude busy state changes (only when in Claude mode)
-  if (terminal.isCLIMode) {
+  if (isClaudeCLI) {
     const busyState = OutputParser.detectClaudeBusyState(data);
     if (busyState !== null) {
       const isBusy = busyState === 'busy';

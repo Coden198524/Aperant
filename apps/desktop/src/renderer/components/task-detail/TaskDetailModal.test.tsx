@@ -3,7 +3,7 @@
  */
 import '@testing-library/jest-dom/vitest';
 import '../../../shared/i18n';
-import { render, screen } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../../shared/types';
 
@@ -187,9 +187,25 @@ describe('TaskDetailModal', () => {
 
     expect(screen.getByText('Generating implementation plan...')).toBeInTheDocument();
     expect(screen.getByText('42%')).toBeInTheDocument();
+    expect(screen.queryByTestId('task-subtasks')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('task-logs')).not.toBeInTheDocument();
+    expect(screen.queryByTestId('task-files')).not.toBeInTheDocument();
   });
 
-  it('keeps the clear logs action in a dedicated logs header', () => {
+  it('does not mount detail content while closed', () => {
+    render(
+      <TaskDetailModal
+        open={false}
+        task={createTask()}
+        onOpenChange={vi.fn()}
+      />
+    );
+
+    expect(screen.queryByTestId('task-metadata')).not.toBeInTheDocument();
+    expect(mockUseTaskDetail).not.toHaveBeenCalled();
+  });
+
+  it('keeps the clear logs action in a dedicated logs header', async () => {
     mockUseTaskDetail.mockReturnValue({
       ...createTaskDetailState(),
       activeTab: 'logs',
@@ -204,7 +220,8 @@ describe('TaskDetailModal', () => {
     );
 
     expect(screen.getByTestId('task-logs-tab')).toHaveClass('flex-col');
-    expect(screen.getByTestId('task-logs-actions')).toBeInTheDocument();
+    expect(screen.getByText(/loading logs/i)).toBeInTheDocument();
+    await waitFor(() => expect(screen.getByTestId('task-logs-actions')).toBeInTheDocument());
     expect(screen.getByRole('button', { name: /clear logs/i })).toBeInTheDocument();
   });
 });

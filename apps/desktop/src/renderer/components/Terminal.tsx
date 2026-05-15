@@ -7,6 +7,7 @@ import { useTerminalStore } from '../stores/terminal-store';
 import { useSettingsStore } from '../stores/settings-store';
 import { useToast } from '../hooks/use-toast';
 import type { TerminalProps } from './terminal/types';
+import type { SupportedCLI } from '../../shared/types/settings';
 import type { TerminalWorktreeConfig } from '../../shared/types';
 import { TerminalHeader } from './terminal/TerminalHeader';
 import { CreateWorktreeDialog } from './terminal/CreateWorktreeDialog';
@@ -17,6 +18,7 @@ import { useAutoNaming } from './terminal/useAutoNaming';
 import { useTerminalFileDrop } from './terminal/useTerminalFileDrop';
 import { debugLog } from '../../shared/utils/debug-logger';
 import { isWindows as checkIsWindows } from '../lib/os-detection';
+import { getCliLabel } from '../lib/cli-display';
 
 // Minimum dimensions to prevent PTY creation with invalid sizes
 const MIN_COLS = 10;
@@ -646,10 +648,13 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     };
   }, [id, dispose, cleanupAutoNaming]);
 
-  const handleInvokeClaude = useCallback(() => {
-    setCLIMode(id, true);
-    window.electronAPI.invokeCLIInTerminal(id, effectiveCwd);
-  }, [id, effectiveCwd, setCLIMode]);
+  const defaultCLI = (settings.preferredCLI || 'claude-code') as SupportedCLI;
+
+  const handleInvokeCLI = useCallback((cli?: SupportedCLI) => {
+    const selectedCLI = cli || defaultCLI;
+    setCLIMode(id, true, selectedCLI);
+    window.electronAPI.invokeCLIInTerminal(id, effectiveCwd, selectedCLI);
+  }, [id, effectiveCwd, setCLIMode, defaultCLI]);
 
   const handleClick = useCallback(() => {
     onActivate();
@@ -683,10 +688,11 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
 
   const handleClearTask = useCallback(() => {
     setAssociatedTask(id, undefined);
-    updateTerminal(id, { title: 'Claude' });
+    const cliTitle = getCliLabel(terminal?.activeCLI || defaultCLI);
+    updateTerminal(id, { title: cliTitle });
     // Sync to main process so title persists across hot reloads
-    window.electronAPI.setTerminalTitle(id, 'Claude');
-  }, [id, setAssociatedTask, updateTerminal]);
+    window.electronAPI.setTerminalTitle(id, cliTitle);
+  }, [id, setAssociatedTask, updateTerminal, terminal?.activeCLI, defaultCLI]);
 
   // Worktree handlers
   const handleCreateWorktree = useCallback(() => {
@@ -801,10 +807,12 @@ Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title
         title={terminal?.title || 'Terminal'}
         status={terminal?.status || 'idle'}
         isCLIMode={terminal?.isCLIMode || false}
+        activeCLI={terminal?.activeCLI}
+        defaultCLI={defaultCLI}
         tasks={tasks}
         associatedTask={associatedTask}
         onClose={onClose}
-        onInvokeClaude={handleInvokeClaude}
+        onInvokeCLI={handleInvokeCLI}
         onTitleChange={handleTitleChange}
         onTaskSelect={handleTaskSelect}
         onClearTask={handleClearTask}

@@ -60,20 +60,34 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
   const commandBufferRef = useRef<string>('');
   const isDisposedRef = useRef<boolean>(false);
   const dimensionsReadyCalledRef = useRef<boolean>(false);
+  const skippedReplayRef = useRef<boolean>(false);
   // Lazily-loaded WebGL context manager — only populated when gpuAcceleration !== 'off'
   const webglManagerRef = useRef<WebGLContextManagerType | null>(null);
   const onResizeRef = useRef(onResize);
+  const onDimensionsReadyRef = useRef(onDimensionsReady);
   const [dimensions, setDimensions] = useState<{ cols: number; rows: number }>({ cols: 80, rows: 24 });
 
   // Get font settings from store
   // Note: We subscribe to the entire store here for initial terminal creation.
   // The subscription effect below handles reactive updates for font changes.
   const fontSettings = useTerminalFontSettingsStore();
+  const fontFamily = fontSettings.fontFamily.join(', ');
 
   // Keep onResizeRef up-to-date to avoid stale closures in retry logic
   useEffect(() => {
     onResizeRef.current = onResize;
   }, [onResize]);
+
+  useEffect(() => {
+    onDimensionsReadyRef.current = onDimensionsReady;
+  }, [onDimensionsReady]);
+
+  const notifyDimensionsReady = useCallback((cols: number, rows: number) => {
+    if (!dimensionsReadyCalledRef.current && cols > 0 && rows > 0) {
+      dimensionsReadyCalledRef.current = true;
+      onDimensionsReadyRef.current?.(cols, rows);
+    }
+  }, []);
 
   // Initialize xterm.js UI
   useEffect(() => {
@@ -88,6 +102,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
     // Without this reset, the remounted component would still have isDisposed = true.
     isDisposedRef.current = false;
     dimensionsReadyCalledRef.current = false;
+    skippedReplayRef.current = false;
 
     debugLog(`[useXterm] Initializing xterm for terminal: ${terminalId}`);
 
@@ -96,7 +111,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
       cursorStyle: fontSettings.cursorStyle,
       fontSize: fontSettings.fontSize,
       fontWeight: fontSettings.fontWeight,
-      fontFamily: fontSettings.fontFamily.join(', '),
+      fontFamily,
       lineHeight: fontSettings.lineHeight,
       letterSpacing: fontSettings.letterSpacing,
       theme: {
@@ -288,9 +303,8 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
             setDimensions({ cols, rows });
             // Call onDimensionsReady once when we have valid dimensions
             if (!dimensionsReadyCalledRef.current && cols > 0 && rows > 0) {
-              dimensionsReadyCalledRef.current = true;
               debugLog(`[useXterm] Dimensions ready for terminal: ${terminalId}, cols: ${cols}, rows: ${rows}, containerWidth: ${rect.width}, containerHeight: ${rect.height}`);
-              onDimensionsReady?.(cols, rows);
+              notifyDimensionsReady(cols, rows);
             }
           } else {
             // Container not ready yet, retry after a short delay
@@ -301,10 +315,10 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
     };
     performInitialFit();
 
-    // Replay buffered output if this is a remount or restored session
-    // This now includes ANSI codes for proper formatting/colors/prompt
-    // Use atomic getAndClear to prevent race condition where new output could arrive between get() and clear()
-    const bufferedOutput = terminalBufferManager.getAndClear(terminalId);
+    // Replay buffered output if this is a remount or restored session.
+    // Only clear the buffer after a replay actually happens; Claude/TUI remounts
+    // intentionally skip replay, and clearing here would erase scrollback history.
+    const bufferedOutput = terminalBufferManager.get(terminalId);
     if (bufferedOutput && bufferedOutput.length > 0) {
       // For Claude-mode terminals that are NOT being restored for the first time
       // (i.e., project switch remount), skip buffer replay.
@@ -319,10 +333,12 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
       const isInitialRestore = terminal?.isRestored === true;
 
       if (isClaudeActive && !isInitialRestore) {
+        skippedReplayRef.current = true;
         debugLog(`[useXterm] Skipping buffer replay for Claude-mode terminal on project switch remount: ${terminalId}`);
       } else {
         debugLog(`[useXterm] Replaying buffered output for terminal: ${terminalId}, buffer size: ${bufferedOutput.length} chars`);
         xterm.write(bufferedOutput);
+        terminalBufferManager.clearIfUnchanged(terminalId, bufferedOutput);
         debugLog(`[useXterm] Buffer replay complete and cleared for terminal: ${terminalId}`);
       }
     } else {
@@ -359,7 +375,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
     return () => {
       // Cleanup handled by parent component
     };
-  }, [terminalId, onCommandEnter, onResize, onDimensionsReady, fontSettings.cursorAccentColor, fontSettings.cursorBlink, fontSettings.cursorStyle, fontSettings.fontFamily.join, fontSettings.fontSize, fontSettings.fontWeight, fontSettings.letterSpacing, fontSettings.lineHeight, fontSettings.scrollback]);
+  }, [terminalId, onCommandEnter, onResize, notifyDimensionsReady, fontSettings.cursorAccentColor, fontSettings.cursorBlink, fontSettings.cursorStyle, fontFamily, fontSettings.fontSize, fontSettings.fontWeight, fontSettings.letterSpacing, fontSettings.lineHeight, fontSettings.scrollback]);
 
   // Subscribe to font settings changes and update terminal reactively
   // This effect runs after xterm is created and re-runs when terminalId changes,
@@ -446,10 +462,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
           // fit() may detect no dimension change and skip the repaint.
           xtermRef.current.refresh(0, xtermRef.current.rows - 1);
           // Notify when dimensions become valid (for late PTY creation)
-          if (!dimensionsReadyCalledRef.current && cols > 0 && rows > 0) {
-            dimensionsReadyCalledRef.current = true;
-            onDimensionsReady?.(cols, rows);
-          }
+          notifyDimensionsReady(cols, rows);
         }
       }
     }, 200); // 200ms debounce for xterm.js resize stability (recommended minimum)
@@ -465,7 +478,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
         resizeObserver.disconnect();
       };
     }
-  }, [onDimensionsReady]);
+  }, [notifyDimensionsReady]);
 
   // Listen for terminal refit events (triggered after drag-drop reorder)
   useEffect(() => {
@@ -494,6 +507,9 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
           if (onResizeRef.current && cols > 0 && rows > 0) {
             onResizeRef.current(cols, rows);
           }
+          // If the terminal was first mounted while hidden, this refit event may
+          // be the first moment with real dimensions. Let PTY creation proceed.
+          notifyDimensionsReady(cols, rows);
         } else if (retryCount < MAX_RETRIES) {
           // Container not ready yet (still transitioning from drag-drop), retry
           const timeoutId = setTimeout(() => {
@@ -521,7 +537,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
       }
       activeTimeouts.clear();
     };
-  }, []);
+  }, [notifyDimensionsReady]);
 
   /**
    * Fit the terminal content to the container dimensions.
@@ -570,6 +586,11 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
         debugLog(`[useXterm] Serializing buffer for terminal: ${terminalId}`);
         const serialized = serializeAddonRef.current.serialize();
         if (serialized && serialized.length > 0) {
+          const existingBuffer = terminalBufferManager.get(terminalId);
+          if (skippedReplayRef.current && existingBuffer.length > serialized.length) {
+            debugLog(`[useXterm] Preserving existing buffer for terminal: ${terminalId}, existing size: ${existingBuffer.length}, serialized size: ${serialized.length}`);
+            return;
+          }
           terminalBufferManager.set(terminalId, serialized);
           debugLog(`[useXterm] Buffer serialized for terminal: ${terminalId}, size: ${serialized.length} chars`);
         } else {

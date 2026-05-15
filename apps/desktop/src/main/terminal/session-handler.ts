@@ -157,6 +157,7 @@ function createSessionObject(terminal: TerminalProcess): TerminalSession {
     cwd: terminal.cwd,
     projectPath: terminal.projectPath!,
     isCLIMode: terminal.isCLIMode,
+    activeCLI: terminal.activeCLI,
     claudeSessionId: terminal.claudeSessionId,
     outputBuffer: terminal.outputBuffer,
     createdAt: new Date().toISOString(),

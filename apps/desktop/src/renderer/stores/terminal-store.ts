@@ -4,6 +4,7 @@ import type { ActorRefFrom } from 'xstate';
 import { v4 as uuid } from 'uuid';
 import { arrayMove } from '@dnd-kit/sortable';
 import type { TerminalSession, TerminalWorktreeConfig } from '../../shared/types';
+import type { SupportedCLI } from '../../shared/types/settings';
 import { terminalMachine, type TerminalEvent } from '@shared/state-machines';
 import { terminalBufferManager } from '../lib/terminal-buffer-manager';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
@@ -132,6 +133,7 @@ export interface Terminal {
   projectPath?: string;  // Project this terminal belongs to (for multi-project support)
   worktreeConfig?: TerminalWorktreeConfig;  // Associated worktree for isolated development
   isClaudeBusy?: boolean;  // Whether Claude Code is actively processing (for visual indicator)
+  activeCLI?: SupportedCLI;  // CLI currently running in this terminal session
   pendingCLIResume?: boolean;  // Whether this terminal has a pending Claude resume (deferred until tab activated)
   displayOrder?: number;  // Display order for tab persistence (lower = further left)
   cliNamedOnce?: boolean;  // Whether this Claude terminal has been auto-named based on initial message (prevents repeated naming)
@@ -161,7 +163,7 @@ interface TerminalState {
   updateTerminal: (id: string, updates: Partial<Terminal>) => void;
   setActiveTerminal: (id: string | null) => void;
   setTerminalStatus: (id: string, status: TerminalStatus) => void;
-  setCLIMode: (id: string, isCLIMode: boolean) => void;
+  setCLIMode: (id: string, isCLIMode: boolean, activeCLI?: SupportedCLI) => void;
   setClaudeSessionId: (id: string, sessionId: string) => void;
   setAssociatedTask: (id: string, taskId: string | undefined) => void;
   setWorktreeConfig: (id: string, config: TerminalWorktreeConfig | undefined) => void;
@@ -254,7 +256,8 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       // If session was in Claude mode before shutdown, update pendingCLIResume for re-restore scenarios
       // (e.g., after project switch). This ensures the deferred resume logic can trigger even when
       // the terminal already exists in the store.
-      if (session.isCLIMode === true && !existingTerminal.pendingCLIResume) {
+      const isRestoredClaudeCLI = session.isCLIMode === true && (session.activeCLI === undefined || session.activeCLI === 'claude-code');
+      if (isRestoredClaudeCLI && !existingTerminal.pendingCLIResume) {
         debugLog(`[TerminalStore] Updating pendingCLIResume for existing terminal ${session.id}`);
         set((state) => ({
           terminals: state.terminals.map(t =>
@@ -280,6 +283,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       // Reset Claude mode to false - Claude Code is killed on app restart
       // Keep claudeSessionId so users can resume by clicking the invoke button
       isCLIMode: false,
+      activeCLI: session.activeCLI,
       claudeSessionId: session.claudeSessionId,
       // outputBuffer now stored in terminalBufferManager (done above before existence check)
       isRestored: true,
@@ -292,7 +296,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       // This ensures the renderer knows to trigger 'claude --continue' when the terminal
       // becomes active, without relying on the TERMINAL_PENDING_RESUME IPC event timing
       // (which may be sent before the Terminal component mounts its listener).
-      pendingCLIResume: session.isCLIMode === true,
+      pendingCLIResume: session.isCLIMode === true && (session.activeCLI === undefined || session.activeCLI === 'claude-code'),
     };
 
     set((state) => ({
@@ -391,7 +395,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     }));
   },
 
-  setCLIMode: (id: string, isCLIMode: boolean) => {
+  setCLIMode: (id: string, isCLIMode: boolean, activeCLI?: SupportedCLI) => {
     // Send corresponding event to XState machine
     if (isCLIMode) {
       // Ensure machine has transitioned past idle before sending CLAUDE_ACTIVE
@@ -418,6 +422,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
               ...t,
               isCLIMode,
               status: isCLIMode ? 'claude-active' : (t.status === 'exited' ? 'exited' : 'running'),
+              activeCLI: isCLIMode ? (activeCLI || t.activeCLI || 'claude-code') : undefined,
               // Reset busy state and naming flag when leaving Claude mode
               isClaudeBusy: isCLIMode ? t.isClaudeBusy : undefined,
               cliNamedOnce: isCLIMode ? t.cliNamedOnce : undefined

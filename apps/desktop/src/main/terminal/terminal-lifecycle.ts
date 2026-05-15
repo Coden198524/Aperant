@@ -183,6 +183,7 @@ export async function restoreTerminal(
   const storedSessions = SessionHandler.getSavedSessions(session.projectPath);
   const storedSession = storedSessions.find(s => s.id === session.id);
   const storedIsClaudeMode = storedSession?.isCLIMode ?? session.isCLIMode;
+  const storedActiveCLI = storedSession?.activeCLI ?? session.activeCLI ?? 'claude-code';
   const storedClaudeSessionId = storedSession?.claudeSessionId ?? session.claudeSessionId;
   // Get worktreeConfig from stored session (authoritative) since renderer-passed value may be stale
   const storedWorktreeConfig = storedSession?.worktreeConfig ?? session.worktreeConfig;
@@ -260,11 +261,12 @@ export async function restoreTerminal(
   //
   // Use storedIsClaudeMode which comes from the persisted store,
   // not the renderer-passed values (renderer always passes isCLIMode: false)
-  if (options.resumeClaudeSession && storedIsClaudeMode) {
+  if (options.resumeClaudeSession && storedIsClaudeMode && storedActiveCLI === 'claude-code') {
     // Set Claude mode so it persists correctly across app restarts
     // Without this, storedIsClaudeMode would be false on next restore
     terminal.claudeSessionId = storedClaudeSessionId;
     terminal.isCLIMode = true;
+    terminal.activeCLI = 'claude-code';
     // Mark terminal as having a pending Claude resume
     // The actual resume will be triggered when the terminal becomes active
     terminal.pendingCLIResume = true;

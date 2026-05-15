@@ -1,6 +1,6 @@
 import type * as pty from '@lydell/node-pty';
 import type { BrowserWindow } from 'electron';
-import type { TerminalWorktreeConfig, WindowsShellType } from '../../shared/types';
+import type { SupportedCLI, TerminalWorktreeConfig, WindowsShellType } from '../../shared/types';
 
 // Re-export WindowsShellType for backwards compatibility
 export type { WindowsShellType } from '../../shared/types';
@@ -12,6 +12,7 @@ export interface TerminalProcess {
   id: string;
   pty: pty.IPty;
   isCLIMode: boolean;
+  activeCLI?: SupportedCLI;
   projectPath?: string;
   cwd: string;
   claudeSessionId?: string;

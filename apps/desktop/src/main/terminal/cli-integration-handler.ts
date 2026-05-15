@@ -769,6 +769,7 @@ export function handleClaudeExit(
 
   // Reset Claude mode state
   terminal.isCLIMode = false;
+  terminal.activeCLI = undefined;
   terminal.claudeSessionId = undefined;
 
   // Persist the session state change
@@ -1029,9 +1030,11 @@ export function invokeClaude(
   // Track terminal state for cleanup on error
   const wasClaudeMode = terminal.isCLIMode;
   const previousProfileId = terminal.claudeProfileId;
+  const previousActiveCLI = terminal.activeCLI;
 
   try {
     terminal.isCLIMode = true;
+    terminal.activeCLI = 'claude-code';
     // Store YOLO mode setting so it persists across profile switches
     terminal.dangerouslySkipPermissions = dangerouslySkipPermissions;
     SessionHandler.releaseSessionId(terminal.id);
@@ -1108,6 +1111,7 @@ export function invokeClaude(
   } catch (error) {
     // Reset terminal state on error to prevent inconsistent state
     terminal.isCLIMode = wasClaudeMode;
+    terminal.activeCLI = previousActiveCLI;
     terminal.claudeSessionId = undefined;
     terminal.claudeProfileId = previousProfileId;
     debugError('[ClaudeIntegration:invokeClaude] Invocation failed:', error);
@@ -1209,16 +1213,18 @@ export async function invokeCLIAsync(
   profileId: string | undefined,
   getWindow: WindowGetter,
   onSessionCapture: (terminalId: string, projectPath: string, startTime: number) => void,
-  dangerouslySkipPermissions?: boolean
+  dangerouslySkipPermissions?: boolean,
+  cliOverride?: SupportedCLI
 ): Promise<void> {
   // Track terminal state for cleanup on error
   const wasClaudeMode = terminal.isCLIMode;
   const previousProfileId = terminal.claudeProfileId;
+  const previousActiveCLI = terminal.activeCLI;
 
   const startTime = Date.now();
 
   try {
-    debugLog('[ClaudeIntegration:invokeCLIAsync] ========== INVOKE CLAUDE START (async) ==========');
+    debugLog('[ClaudeIntegration:invokeCLIAsync] ========== INVOKE CLI START (async) ==========');
     debugLog('[ClaudeIntegration:invokeCLIAsync] Terminal ID:', terminal.id);
     debugLog('[ClaudeIntegration:invokeCLIAsync] Requested profile ID:', profileId);
     debugLog('[ClaudeIntegration:invokeCLIAsync] CWD:', cwd);
@@ -1237,7 +1243,8 @@ export async function invokeCLIAsync(
 
     // Dispatch to the appropriate CLI based on preferredCLI setting
     const settings = await readSettingsFileAsync();
-    const preferredCLI = (settings?.preferredCLI as SupportedCLI | undefined) || 'claude-code';
+    const preferredCLI = cliOverride || (settings?.preferredCLI as SupportedCLI | undefined) || 'claude-code';
+    terminal.activeCLI = preferredCLI;
 
     if (preferredCLI !== 'claude-code') {
       // Non-Claude CLI: change directory if needed, then run the CLI command directly
@@ -1245,7 +1252,7 @@ export async function invokeCLIAsync(
       const command = getCLICommand(preferredCLI, settings?.customCLIPath as string | undefined);
       debugLog('[ClaudeIntegration:invokeCLIAsync] Non-Claude CLI dispatch:', { preferredCLI, command });
       if (cwdCommand) {
-        PtyManager.writeToPty(terminal, `${cwdCommand} && ${command}\r`);
+        PtyManager.writeToPty(terminal, `${cwdCommand}${command}\r`);
       } else {
         PtyManager.writeToPty(terminal, `${command}\r`);
       }
@@ -1333,6 +1340,7 @@ export async function invokeCLIAsync(
   } catch (error) {
     // Reset terminal state on error to prevent inconsistent state
     terminal.isCLIMode = wasClaudeMode;
+    terminal.activeCLI = previousActiveCLI;
     terminal.claudeSessionId = undefined;
     terminal.claudeProfileId = previousProfileId;
     const elapsed = Date.now() - startTime;

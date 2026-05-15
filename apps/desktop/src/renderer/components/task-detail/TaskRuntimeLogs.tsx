@@ -68,6 +68,10 @@ const MODEL_PHASE_STYLES: Record<TaskLogPhase, {
 
 const TYPEWRITER_CHARS_PER_TICK = 12;
 const TYPEWRITER_TICK_MS = 18;
+const INITIAL_RENDERED_RUNTIME_ENTRIES = 250;
+const INITIAL_RENDERED_MODEL_ENTRIES = 250;
+const LOG_RENDER_BATCH_SIZE = 250;
+const LOAD_MORE_SCROLL_THRESHOLD = 96;
 
 const runtimeMarkdownComponents: Components = {
   p: ({ children }) => (
@@ -894,11 +898,11 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     state.tasks.find(item => item.id === task.id || item.specId === task.specId)
   );
   const runtimeSourceTask = liveTask ?? task;
-  const runtimeLogs = useMemo(() => {
+  const fullRuntimeLogs = useMemo(() => {
     const logs = buildDisplayRuntimeLogs(runtimeSourceTask.logs || []);
     return logOrder === 'reverse-chronological' ? [...logs].reverse() : logs;
   }, [runtimeSourceTask.logs, logOrder]);
-  const modelOutputEntries = useMemo(() => {
+  const fullModelOutputEntries = useMemo(() => {
     if (!modelLogs) return [];
 
     const entries = [
@@ -910,7 +914,20 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     return mergeToolLifecycleEntries(buildDisplayLogEntries(entries));
   }, [modelLogs]);
+  const [visibleRuntimeCount, setVisibleRuntimeCount] = useState(INITIAL_RENDERED_RUNTIME_ENTRIES);
+  const [visibleModelCount, setVisibleModelCount] = useState(INITIAL_RENDERED_MODEL_ENTRIES);
+  const runtimeLogs = useMemo(() => {
+    return logOrder === 'reverse-chronological'
+      ? fullRuntimeLogs.slice(0, visibleRuntimeCount)
+      : fullRuntimeLogs.slice(-visibleRuntimeCount);
+  }, [fullRuntimeLogs, logOrder, visibleRuntimeCount]);
+  const modelOutputEntries = useMemo(() => {
+    return fullModelOutputEntries.slice(-visibleModelCount);
+  }, [fullModelOutputEntries, visibleModelCount]);
   const visibleCount = mode === 'runtime' ? runtimeLogs.length : modelOutputEntries.length;
+  const totalCount = mode === 'runtime' ? fullRuntimeLogs.length : fullModelOutputEntries.length;
+  const hasMoreRuntimeLogs = visibleRuntimeCount < fullRuntimeLogs.length;
+  const hasMoreModelOutput = visibleModelCount < fullModelOutputEntries.length;
   const activeModelPhase = getActiveModelPhase(modelLogs, runtimeSourceTask);
   const runtimeModelInfo = getRuntimeModelInfo(modelOutputEntries, runtimeSourceTask, activeModelPhase);
   const runtimeModelLabel = formatModelInfo(runtimeModelInfo);
@@ -958,21 +975,43 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     const container = runtimeScrollRef.current;
     if (!container) return;
 
+    const isReverseOrder = logOrder === 'reverse-chronological';
+    const distanceFromTop = container.scrollTop;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isAtOlderHistoryEdge = isReverseOrder
+      ? distanceFromBottom < LOAD_MORE_SCROLL_THRESHOLD
+      : distanceFromTop < LOAD_MORE_SCROLL_THRESHOLD;
+    if (isAtOlderHistoryEdge) {
+      setVisibleRuntimeCount(count => Math.min(count + LOG_RENDER_BATCH_SIZE, fullRuntimeLogs.length));
+    }
+
     const isPinned = distanceFromBottom < 48;
     isRuntimePinnedToBottomRef.current = isPinned;
     setShowJumpToLatest(!isPinned);
-  }, []);
+  }, [fullRuntimeLogs.length, logOrder]);
 
   const handleModelScroll = useCallback(() => {
     const container = modelScrollRef.current;
     if (!container) return;
 
+    const distanceFromTop = container.scrollTop;
     const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    if (distanceFromTop < LOAD_MORE_SCROLL_THRESHOLD) {
+      setVisibleModelCount(count => Math.min(count + LOG_RENDER_BATCH_SIZE, fullModelOutputEntries.length));
+    }
+
     const isPinned = distanceFromBottom < 48;
     isModelPinnedToBottomRef.current = isPinned;
     setShowJumpToLatest(!isPinned);
-  }, []);
+  }, [fullModelOutputEntries.length]);
+
+  useEffect(() => {
+    setVisibleRuntimeCount(count => Math.max(count, INITIAL_RENDERED_RUNTIME_ENTRIES));
+  }, [task.id, task.specId]);
+
+  useEffect(() => {
+    setVisibleModelCount(count => Math.max(count, INITIAL_RENDERED_MODEL_ENTRIES));
+  }, [task.id, task.specId]);
 
   useEffect(() => {
     let cancelled = false;
@@ -1097,10 +1136,16 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
           </span>
         </div>
         <span className="shrink-0 text-xs text-muted-foreground">
-          {t('tasks:logs.entriesCount', {
-            count: visibleCount,
-            defaultValue: '({{count}} entries)'
-          })}
+          {totalCount > visibleCount
+            ? t('tasks:logs.visibleEntriesCount', {
+                visible: visibleCount,
+                total: totalCount,
+                defaultValue: '({{visible}}/{{total}} entries)'
+              })
+            : t('tasks:logs.entriesCount', {
+                count: visibleCount,
+                defaultValue: '({{count}} entries)'
+              })}
         </span>
       </div>
       <div className="flex shrink-0 items-center gap-1 border-b border-border/70 bg-background/40 px-4 py-2">
@@ -1135,9 +1180,15 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
             data-testid="runtime-output-scroll"
           >
             <div className="space-y-2">
+              {hasMoreRuntimeLogs && logOrder !== 'reverse-chronological' && (
+                <LogHistoryLoadingHint label={t('tasks:logs.scrollForOlder', { defaultValue: 'Scroll up to load older logs' })} />
+              )}
               {runtimeLogs.map((log, index) => (
                 <RuntimeLogEntry key={`${index}-${log.content.slice(0, 80)}`} log={log} />
               ))}
+              {hasMoreRuntimeLogs && logOrder === 'reverse-chronological' && (
+                <LogHistoryLoadingHint label={t('tasks:logs.scrollForOlder', { defaultValue: 'Scroll down to load older logs' })} />
+              )}
             </div>
           </div>
           {showJumpToLatest && (
@@ -1162,6 +1213,9 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
             data-testid="model-output-scroll"
           >
             <div className="space-y-3">
+              {hasMoreModelOutput && (
+                <LogHistoryLoadingHint label={t('tasks:logs.scrollForOlder', { defaultValue: 'Scroll up to load older output' })} />
+              )}
               {modelOutputEntries.map((entry, index) => (
                 <ModelOutputEntry
                   key={`${entry.timestamp}-${entry.phase}-${entry.type}-${entry.tool_name ?? ''}-${entry.subtask_id ?? ''}-${index}`}
@@ -1314,6 +1368,16 @@ function ModelActivityStatus({
           {description}
         </p>
       )}
+    </div>
+  );
+}
+
+function LogHistoryLoadingHint({ label }: { label: string }) {
+  return (
+    <div className="flex items-center justify-center py-2 text-[11px] text-slate-400">
+      <div className="rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1">
+        {label}
+      </div>
     </div>
   );
 }

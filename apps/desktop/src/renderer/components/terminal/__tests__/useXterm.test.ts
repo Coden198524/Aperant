@@ -12,6 +12,8 @@ import { act, render } from '@testing-library/react';
 import React from 'react';
 import { Terminal as XTerm } from '@xterm/xterm';
 import { useXterm } from '../useXterm';
+import { terminalBufferManager } from '../../../lib/terminal-buffer-manager';
+import { useTerminalStore } from '../../../stores/terminal-store';
 
 // Mock xterm.js
 vi.mock('@xterm/xterm', () => ({
@@ -68,7 +70,8 @@ vi.mock('../../../../lib/terminal-buffer-manager', () => ({
     get: vi.fn(() => ''),
     getAndClear: vi.fn(() => ''),
     set: vi.fn(),
-    clear: vi.fn()
+    clear: vi.fn(),
+    clearIfUnchanged: vi.fn()
   }
 }));
 
@@ -860,6 +863,145 @@ describe('useXterm keyboard handlers', () => {
       expect(mockClipboard.writeText).not.toHaveBeenCalled();
     });
   });
+});
+
+describe('useXterm buffer replay', () => {
+  const originalRequestAnimationFrame = global.requestAnimationFrame;
+  const originalCancelAnimationFrame = global.cancelAnimationFrame;
+
+  beforeAll(() => {
+    global.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => setTimeout(cb, 0) as unknown as number);
+    global.cancelAnimationFrame = vi.fn((id: number) => clearTimeout(id));
+  });
+
+  afterAll(() => {
+    global.requestAnimationFrame = originalRequestAnimationFrame;
+    global.cancelAnimationFrame = originalCancelAnimationFrame;
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    mockSettingsStoreState.settings.gpuAcceleration = 'off';
+    useTerminalStore.setState({ terminals: [], activeTerminalId: null });
+
+    global.ResizeObserver = vi.fn().mockImplementation(function() {
+      return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+    });
+
+    (window as unknown as { electronAPI: unknown }).electronAPI = {
+      sendTerminalInput: vi.fn(),
+      openExternal: vi.fn(),
+    };
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    useTerminalStore.setState({ terminals: [], activeTerminalId: null });
+    vi.restoreAllMocks();
+  });
+
+  async function renderBufferedTerminal(terminalId = 'buffer-terminal') {
+    const mockWrite = vi.fn();
+    const mockDispose = vi.fn();
+    const { FitAddon } = await import('@xterm/addon-fit');
+    vi.mocked(FitAddon).mockImplementation(function() {
+      return { fit: vi.fn(), dispose: vi.fn() };
+    } as never);
+
+    (XTerm as unknown as Mock).mockImplementation(function() {
+      return {
+        open: vi.fn(),
+        loadAddon: vi.fn(),
+        attachCustomKeyEventHandler: vi.fn(),
+        hasSelection: vi.fn(() => false),
+        getSelection: vi.fn(() => ''),
+        paste: vi.fn(),
+        input: vi.fn(),
+        onData: vi.fn(),
+        onResize: vi.fn(),
+        dispose: mockDispose,
+        write: mockWrite,
+        cols: 80,
+        rows: 24,
+        options: {
+          cursorBlink: true,
+          cursorStyle: 'block',
+          fontSize: 14,
+          fontFamily: 'monospace',
+          fontWeight: 'normal',
+          lineHeight: 1,
+          letterSpacing: 0,
+          theme: { cursorAccent: '#000000' },
+          scrollback: 1000
+        },
+        refresh: vi.fn()
+      };
+    });
+
+    let disposeHook: (() => void) | null = null;
+    const TestWrapper = () => {
+      const result = useXterm({ terminalId });
+      disposeHook = result.dispose;
+      return React.createElement('div', { ref: result.terminalRef });
+    };
+
+    await act(async () => {
+      render(React.createElement(TestWrapper));
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    return {
+      mockWrite,
+      mockDispose,
+      disposeHook: () => disposeHook?.(),
+    };
+  }
+
+  it('replays and clears buffered output for normal terminal remounts', async () => {
+    const getSpy = vi.spyOn(terminalBufferManager, 'get').mockReturnValue('old output\r\n');
+    const clearIfUnchangedSpy = vi.spyOn(terminalBufferManager, 'clearIfUnchanged').mockImplementation(() => {});
+
+    const { mockWrite } = await renderBufferedTerminal('normal-terminal');
+
+    expect(mockWrite).toHaveBeenCalledWith('old output\r\n');
+    expect(clearIfUnchangedSpy).toHaveBeenCalledWith('normal-terminal', 'old output\r\n');
+    expect(getSpy).toHaveBeenCalledWith('normal-terminal');
+  });
+
+  it('preserves buffered history when Claude remount skips replay', async () => {
+    useTerminalStore.setState({
+      terminals: [{
+        id: 'claude-terminal',
+        title: 'Claude',
+        status: 'claude-active',
+        cwd: 'E:/Work/Test',
+        createdAt: new Date(),
+        isCLIMode: true,
+      }],
+      activeTerminalId: 'claude-terminal',
+    });
+
+    vi.spyOn(terminalBufferManager, 'get').mockReturnValue('long preserved output history');
+    const clearIfUnchangedSpy = vi.spyOn(terminalBufferManager, 'clearIfUnchanged').mockImplementation(() => {});
+    const setSpy = vi.spyOn(terminalBufferManager, 'set').mockImplementation(() => {});
+    const { mockWrite, disposeHook } = await renderBufferedTerminal('claude-terminal');
+
+    expect(mockWrite).not.toHaveBeenCalledWith('long preserved output history');
+    expect(clearIfUnchangedSpy).not.toHaveBeenCalled();
+
+    const { SerializeAddon } = await import('@xterm/addon-serialize');
+    const serializeInstance = vi.mocked(SerializeAddon).mock.results[0]?.value as { serialize: Mock };
+    serializeInstance.serialize.mockReturnValue('short');
+
+    act(() => {
+      disposeHook();
+    });
+
+    expect(setSpy).not.toHaveBeenCalledWith('claude-terminal', 'short');
+  });
+
 });
 
 describe('useXterm WebGL context management', () => {

@@ -5,6 +5,7 @@ import { describe, expect, it, vi, beforeEach } from 'vitest';
 import type * as pty from '@lydell/node-pty';
 import type { TerminalProcess } from '../types';
 import { buildCdCommand, escapeShellArg } from '../../../shared/utils/shell-escape';
+import { readSettingsFileAsync } from '../../settings-utils';
 
 // Mock the platform module (main/platform/index.ts)
 vi.mock('../../platform', () => ({
@@ -242,6 +243,7 @@ describe('cli-integration-handler', () => {
     mockReleaseSessionId.mockClear();
     mockWriteToPty.mockClear();
     vi.mocked(writeFileSync).mockClear();
+    vi.mocked(readSettingsFileAsync).mockResolvedValue(undefined);
   });
 
   describe.each(['win32', 'darwin', 'linux'] as const)('on %s', (platform) => {
@@ -828,6 +830,21 @@ describe('invokeCLIAsync', () => {
 
       const capturedTime = mockOnSessionCapture.mock.calls[0][2];
       expect(capturedTime).toBeGreaterThanOrEqual(startTime);
+    });
+
+    it('should invoke Codex directly when CLI override is codex', async () => {
+      vi.mocked(readSettingsFileAsync).mockResolvedValue({ preferredCLI: 'claude-code' } as never);
+      const terminal = createMockTerminal();
+
+      const { invokeCLIAsync } = await import('../cli-integration-handler');
+      await invokeCLIAsync(terminal, '/tmp/project', undefined, () => null, vi.fn(), false, 'codex');
+
+      const written = mockWriteToPty.mock.calls[0][1] as string;
+      expect(written).toBe(`${buildCdCommand('/tmp/project')}codex\r`);
+      expect(mockInitializeClaudeProfileManager).not.toHaveBeenCalled();
+      expect(mockGetClaudeCliInvocationAsync).not.toHaveBeenCalled();
+      expect(terminal.isCLIMode).toBe(true);
+      expect(terminal.activeCLI).toBe('codex');
     });
   });
 });

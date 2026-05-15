@@ -153,7 +153,7 @@ export class TerminalManager {
   /**
    * Invoke Claude in a terminal with optional profile override (async - non-blocking)
    */
-  async invokeCLIAsync(id: string, cwd?: string, profileId?: string, dangerouslySkipPermissions?: boolean): Promise<void> {
+  async invokeCLIAsync(id: string, cwd?: string, profileId?: string, dangerouslySkipPermissions?: boolean, cliOverride?: import('../../shared/types/settings').SupportedCLI): Promise<void> {
     const terminal = this.terminals.get(id);
     if (!terminal) {
       return;
@@ -173,7 +173,8 @@ export class TerminalManager {
           this.getWindow
         );
       },
-      dangerouslySkipPermissions
+      dangerouslySkipPermissions,
+      cliOverride
     );
   }
 

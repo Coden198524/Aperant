@@ -18,6 +18,7 @@ import type {
   TerminalWorktreeResult,
   OtherWorktreeInfo,
   TerminalProfileChangedEvent,
+  SupportedCLI,
 } from '../../shared/types';
 
 /** Type for proactive swap notification events */
@@ -34,7 +35,7 @@ export interface TerminalAPI {
   destroyTerminal: (id: string) => Promise<IPCResult>;
   sendTerminalInput: (id: string, data: string) => void;
   resizeTerminal: (id: string, cols: number, rows: number) => Promise<IPCResult<{ success: boolean }>>;
-  invokeCLIInTerminal: (id: string, cwd?: string) => void;
+  invokeCLIInTerminal: (id: string, cwd?: string, cli?: SupportedCLI) => void;
   generateTerminalName: (command: string, cwd?: string) => Promise<IPCResult<string>>;
   setTerminalTitle: (id: string, title: string) => void;
   setTerminalWorktreeConfig: (id: string, config: TerminalWorktreeConfig | undefined) => void;
@@ -139,8 +140,8 @@ export const createTerminalAPI = (): TerminalAPI => ({
   resizeTerminal: (id: string, cols: number, rows: number): Promise<IPCResult<{ success: boolean }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_RESIZE, id, cols, rows),
 
-  invokeCLIInTerminal: (id: string, cwd?: string): void =>
-    ipcRenderer.send(IPC_CHANNELS.TERMINAL_INVOKE_CLI, id, cwd),
+  invokeCLIInTerminal: (id: string, cwd?: string, cli?: SupportedCLI): void =>
+    ipcRenderer.send(IPC_CHANNELS.TERMINAL_INVOKE_CLI, id, cwd, cli),
 
   generateTerminalName: (command: string, cwd?: string): Promise<IPCResult<string>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GENERATE_NAME, command, cwd),

@@ -1,7 +1,7 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow, IpcMainInvokeEvent } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants';
-import type { IPCResult, TerminalCreateOptions, ClaudeProfile, ClaudeProfileSettings, ClaudeUsageSnapshot, AllProfilesUsage } from '../../shared/types';
+import type { IPCResult, TerminalCreateOptions, ClaudeProfile, ClaudeProfileSettings, ClaudeUsageSnapshot, AllProfilesUsage, SupportedCLI } from '../../shared/types';
 import { getClaudeProfileManager } from '../claude-profile-manager';
 import { getUsageMonitor } from '../claude-profile/usage-monitor';
 import { TerminalManager } from '../terminal-manager';
@@ -65,7 +65,7 @@ export function registerTerminalHandlers(
 
   ipcMain.on(
     IPC_CHANNELS.TERMINAL_INVOKE_CLI,
-    (_, id: string, cwd?: string) => {
+    (_, id: string, cwd?: string, cli?: SupportedCLI) => {
       // Wrap in async IIFE to allow async settings read without blocking
       (async () => {
         // Read settings asynchronously to check for YOLO mode (dangerously skip permissions)
@@ -73,9 +73,9 @@ export function registerTerminalHandlers(
         const dangerouslySkipPermissions = settings?.dangerouslySkipPermissions === true;
 
         // Use async version to avoid blocking main process during CLI detection
-        await terminalManager.invokeCLIAsync(id, cwd, undefined, dangerouslySkipPermissions);
+        await terminalManager.invokeCLIAsync(id, cwd, undefined, dangerouslySkipPermissions, cli);
       })().catch((error) => {
-        console.warn('[terminal-handlers] Failed to invoke Claude:', error);
+        console.warn('[terminal-handlers] Failed to invoke CLI:', error);
       });
     }
   );
