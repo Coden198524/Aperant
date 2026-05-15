@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -836,6 +836,124 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
+  it('uses a local one-subtask plan for source analysis documentation tasks', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+
+    try {
+      await writeFile(join(specDir, 'engine.cpp'), 'void tick() {}\n', 'utf-8');
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: '分析源码架构并生成一份中文 Markdown 文档',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        generatePrompt: vi.fn(async () => 'should not be used'),
+        runSession,
+        language: 'zh-CN',
+      });
+
+      const result = await orchestrator.run();
+      const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        workflow_type: string;
+        phases: Array<{ name: string; subtasks: Array<{
+          title: string;
+          description: string;
+          verification?: { run?: string };
+          pattern_files?: string[];
+        }> }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(runSession).not.toHaveBeenCalled();
+      expect(result.complexity).toBe('simple');
+      expect(result.phasesExecuted).toEqual(['complexity_assessment', 'quick_spec']);
+      expect(spec).toContain('文档分析任务');
+      expect(plan.workflow_type).toBe('documentation');
+      expect(plan.phases).toHaveLength(1);
+      expect(plan.phases[0].name).toBe('文档分析');
+      expect(plan.phases[0].subtasks).toHaveLength(1);
+      expect(plan.phases[0].subtasks[0].title).toBe('分析源码并生成文档');
+      expect(plan.phases[0].subtasks[0].description).toContain('不修改产品代码');
+      expect(plan.phases[0].subtasks[0].verification?.run).toContain('不要为纯文档任务运行编译或 QA');
+      expect(plan.phases[0].subtasks[0].pattern_files).toContain('engine.cpp');
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('does not seed documentation plans with recursive source globs', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+
+    try {
+      await writeFile(join(specDir, 'CMakeLists.txt'), 'add_executable(app src/main.cpp src/Game.cpp)\n', 'utf-8');
+      await mkdir(join(specDir, 'src'), { recursive: true });
+      await writeFile(join(specDir, 'src', 'main.cpp'), 'int main() { return 0; }\n', 'utf-8');
+      await writeFile(join(specDir, 'src', 'Game.h'), 'class Game {};\n', 'utf-8');
+      await writeFile(join(specDir, 'src', 'Game.cpp'), '#include "Game.h"\n', 'utf-8');
+
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: '分析游戏源码，生成游戏实现方案的markdown文档。',
+        workflowConfig: { optimizationLevel: 'aggressive' },
+        generatePrompt: vi.fn(async () => 'should not be used'),
+        runSession,
+        language: 'zh-CN',
+      });
+
+      const result = await orchestrator.run();
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        workflow_type: string;
+        phases: Array<{ subtasks: Array<{ files_to_create?: string[]; pattern_files?: string[] }> }>;
+      };
+      const subtask = plan.phases[0].subtasks[0];
+
+      expect(result.success).toBe(true);
+      expect(runSession).not.toHaveBeenCalled();
+      expect(plan.workflow_type).toBe('documentation');
+      expect(subtask.files_to_create).toEqual(['docs/analysis.md']);
+      expect(subtask.pattern_files).toContain('CMakeLists.txt');
+      expect(subtask.pattern_files).toContain('src/main.cpp');
+      expect(subtask.pattern_files).toContain('src/Game.h');
+      expect(subtask.pattern_files?.some((file) => file.includes('**'))).toBe(false);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('treats implementation plan documentation wording as documentation-only', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: '分析游戏源码，生成游戏实现方案的markdown文档，不修改任何源码',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        generatePrompt: vi.fn(async () => 'should not be used'),
+        runSession,
+        language: 'zh-CN',
+      });
+
+      const result = await orchestrator.run();
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        workflow_type: string;
+        phases: Array<{ subtasks: unknown[] }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(runSession).not.toHaveBeenCalled();
+      expect(result.phasesExecuted).toEqual(['complexity_assessment', 'quick_spec']);
+      expect(plan.workflow_type).toBe('documentation');
+      expect(plan.phases[0].subtasks).toHaveLength(1);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
   it('does not use the empty-project simple fast path for integration-heavy tasks', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const phases: SpecPhase[] = [];
@@ -985,6 +1103,73 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(result.success).toBe(false);
       expect(result.complexity).toBe('complex');
       expect(state.complexity).toBe('complex');
+      expect(assessment.complexity).toBe('complex');
+      expect(phases).toEqual(['complexity_assessment', 'discovery']);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('escalates broad conservative platform changes in large multi-subsystem projects', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const phases: SpecPhase[] = [];
+    const projectIndex = JSON.stringify({
+      project: { size: 'large', sourceFileCount: 900 },
+      services: {
+        runtime: { languages: ['C++'] },
+        shaders: { languages: ['HLSL'] },
+        editor: { languages: ['C#'] },
+      },
+      source_summary: {
+        languages: ['C++', 'HLSL', 'C#'],
+        build_files: ['CMakeLists.txt'],
+        project_files: ['Engine.sln'],
+      },
+      infrastructure: {
+        ci_workflows: ['build'],
+        packaging: ['installer'],
+      },
+    });
+    const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
+      phases.push(config.specPhase);
+      if (config.specPhase === 'complexity_assessment') {
+        return {
+          outcome: 'error' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 0, totalTokens: 1 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+          error: { code: 'network_error', message: 'network error', retryable: true },
+        };
+      }
+
+      return {
+        outcome: 'cancelled' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 0,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Port the renderer global illumination system from the existing solution to a new runtime architecture with shader and platform integration.',
+        workflowConfig: { optimizationLevel: 'conservative', specCreationMode: 'phased', qualityChecks: { enableSelfCritique: true } },
+        projectIndex,
+        generatePrompt: vi.fn(async () => 'Run phase.'),
+        runSession,
+      });
+
+      const result = await orchestrator.run();
+      const assessment = JSON.parse(await readFile(join(specDir, 'complexity_assessment.json'), 'utf-8')) as { complexity?: string };
+
+      expect(result.success).toBe(false);
+      expect(result.complexity).toBe('complex');
       expect(assessment.complexity).toBe('complex');
       expect(phases).toEqual(['complexity_assessment', 'discovery']);
     } finally {

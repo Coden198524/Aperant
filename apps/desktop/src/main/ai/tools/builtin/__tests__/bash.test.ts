@@ -181,6 +181,20 @@ describe('Bash Tool', () => {
     expect(mockExecFile).not.toHaveBeenCalled();
   });
 
+  it('should reject inefficient Windows shell search commands before execution', async () => {
+    mockIsWindows.mockReturnValue(true);
+    mockFindExecutable.mockReturnValue('C:\\Program Files\\Git\\bin\\bash.exe');
+
+    const result = await bashTool.config.execute(
+      { command: 'cd /d E:\\Work\\Project && findstr /s /n "GPU_CB_STRUCT" Source\\*.h 2>nul | head -20' },
+      baseContext,
+    );
+
+    expect(result).toContain('Inefficient Windows search command');
+    expect(result).toContain('Use the Grep tool');
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
   it('should return error message when security hook rejects command', async () => {
     mockBashSecurityHook.mockReturnValue({
       hookSpecificOutput: {

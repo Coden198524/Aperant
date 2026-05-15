@@ -71,6 +71,8 @@ export interface BatchExecutorConfig {
 
   /** Callback: batch start */
   onBatchStart?: (batch: SubtaskInfo[], batchNum: number, totalBatches?: number) => void;
+  /** Callback: subtask start */
+  onSubtaskStart?: (subtask: SubtaskInfo, attempt: number) => void;
   /** Callback: run a single batch session */
   runBatchSession?: (batch: SubtaskInfo[], attempt: number) => Promise<SessionResult>;
   /** Callback: run a single subtask session */
@@ -187,9 +189,11 @@ export async function executeBatches(
     log(`[BatchExecutor] Batch size: ${batchSize}`);
 
     const independentBatches = independent.flatMap((group) => chunkSubtasks(group, batchSize));
-    const conflictingBatches = groupConflictingSubtasks(sequential).flatMap((group) =>
-      group.length > batchSize ? chunkSubtasks(group, batchSize) : [group],
-    );
+    const conflictingBatches = config.runBatchSession
+      ? groupConflictingSubtasks(sequential).flatMap((group) =>
+          group.length > batchSize ? chunkSubtasks(group, batchSize) : [group],
+        )
+      : sequential.map((subtask) => [subtask]);
     const allBatches = [...independentBatches, ...conflictingBatches];
 
     log(
@@ -602,6 +606,7 @@ async function executeBatchAttempt(
     batch,
     concurrency,
     async (subtask) => {
+      config.onSubtaskStart?.(subtask, attempt);
       const sessionResult = await executeSubtaskSession(subtask, config, attempt);
       config.onSubtaskSessionComplete?.(subtask, sessionResult);
       return { subtask, sessionResult };

@@ -40,7 +40,6 @@ import type { SessionResult } from '../session/types';
 import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
 import { executeBatches, type BatchExecutorConfig } from './batch-executor';
-import { generateBatchPrompt } from './batch-prompt-generator';
 import { translateLogMessage, translatePhaseMessage } from './log-messages';
 import type { WorkflowConfig } from './workflow-config';
 import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
@@ -287,6 +286,17 @@ interface ImplementationPlan {
   phases: PlanPhase[];
 }
 
+function isDocumentationWorkflow(plan: ImplementationPlan | null): boolean {
+  const workflowType = plan?.workflow_type?.toLowerCase().trim();
+  if (workflowType === 'documentation') {
+    return true;
+  }
+
+  const feature = plan?.feature?.toLowerCase() ?? '';
+  return /\b(documentation|document|docs|markdown|source analysis)\b/i.test(feature) ||
+    /(\u6587\u6863|\u6e90\u7801\u5206\u6790|\u4ee3\u7801\u5206\u6790)/.test(feature);
+}
+
 interface PlanPhase {
   id?: string;
   phase?: number;
@@ -406,7 +416,9 @@ export class BuildOrchestrator extends EventEmitter {
           continue;
         }
 
-        if (this.config.workflowConfig?.skipAIQAReview) {
+        const completedPlan = await this.loadPlan();
+        const skipAIQAReview = this.config.workflowConfig?.skipAIQAReview || isDocumentationWorkflow(completedPlan);
+        if (skipAIQAReview) {
           const qualityGate = await this.runPreQAQualityGate();
           if (qualityGate.resumeCoding) {
             continue;
@@ -416,8 +428,12 @@ export class BuildOrchestrator extends EventEmitter {
           }
 
           this.markPhaseCompleted('qa_review');
-          this.transitionPhase('complete', 'Build complete - AI QA skipped by aggressive workflow');
-          this.emitTyped('log', 'Aggressive workflow: skipped AI QA review after successful coding and local quality gates');
+          this.transitionPhase('complete', isDocumentationWorkflow(completedPlan)
+            ? 'Build complete - documentation QA skipped'
+            : 'Build complete - AI QA skipped by aggressive workflow');
+          this.emitTyped('log', isDocumentationWorkflow(completedPlan)
+            ? 'Documentation workflow: skipped AI QA review after successful document generation and local quality gates'
+            : 'Aggressive workflow: skipped AI QA review after successful coding and local quality gates');
           return this.buildOutcome(true, Date.now() - startTime);
         }
 
@@ -674,46 +690,6 @@ export class BuildOrchestrator extends EventEmitter {
     if (this.config.enableBatchExecution) {
       this.emitTyped('log', translateLogMessage('Batch execution enabled - analyzing parallel opportunities', this.config.language));
 
-      // Batch session handler: processes multiple subtasks in a single AI session
-      const runBatchSession = async (batch: SubtaskInfo[], attempt: number): Promise<SessionResult> => {
-        // Generate batch prompt
-        const batchPrompt = await generateBatchPrompt({
-          subtasks: batch,
-          specDir: this.config.specDir,
-          projectDir: this.config.projectDir,
-          attemptCount: attempt,
-          isContinuation: false,
-        });
-
-        // Inject memory context if available
-        const prompt = batchPrompt;
-        // TODO: Implement memory context injection when method is available
-        // if (this.config.memoryService) {
-        //   const injectionResult = await this.config.memoryService.injectMemoryContext(
-        //     batchPrompt,
-        //     this.config.projectDir,
-        //     'coding',
-        //   );
-        //   prompt = injectionResult.enhancedPrompt;
-        // }
-
-        const result = await this.config.runSession({
-          agentType: 'coder',
-          phase: 'coding',
-          systemPrompt: prompt,
-          specDir: this.config.specDir,
-          projectDir: this.config.projectDir,
-          subtaskId: batch.map(s => s.id).join(','), // Multiple subtask IDs
-          sessionNumber: this.iteration,
-          abortSignal: this.config.abortSignal,
-          cliModel: this.config.cliModel,
-          cliThinking: this.config.cliThinking,
-        });
-
-        console.log('[BuildOrchestrator] runBatchSession result.usage:', result.usage);
-        return result;
-      };
-
       const batchConfig: BatchExecutorConfig = {
         specDir: this.config.specDir,
         projectDir: this.config.projectDir,
@@ -723,14 +699,16 @@ export class BuildOrchestrator extends EventEmitter {
         executionMode: 'batch',
         maxConcurrentSubtasks: this.config.maxConcurrentSubtasks,
         abortSignal: this.config.abortSignal,
-        runBatchSession, // Use batch session instead of parallel subtask sessions
-        runSubtaskSession, // Fallback for serial execution
+        runSubtaskSession,
         onBatchStart: (batch, batchNum, totalBatches) => {
+          this.emitTyped('log', `Starting parallel batch ${batchNum}/${totalBatches}: ${batch.length} subtasks`);
+        },
+        onSubtaskStart: (subtask, attempt) => {
           this.iteration++;
           this.emitTyped('iteration-start', this.iteration, 'coding');
-          this.emitTyped('log', `Starting batch ${batchNum}/${totalBatches}: ${batch.length} subtasks`);
+          this.emitTyped('log', `Working on ${subtask.id}: ${subtask.description} (attempt ${attempt})`);
         },
-        onBatchSessionComplete: (batch, result) => {
+        onSubtaskSessionComplete: (_subtask, result) => {
           this.emitTyped('session-complete', result, 'coding');
         },
         onBatchComplete: (batch, result) => {
@@ -1076,6 +1054,10 @@ export class BuildOrchestrator extends EventEmitter {
    * Check whether the build must enter planning before coding can start.
    * Missing, malformed, or empty plans are treated as needing planning.
    */
+  private async loadPlan(): Promise<ImplementationPlan | null> {
+    return loadImplementationPlanFromFiles(this.config.specDir) as Promise<ImplementationPlan | null>;
+  }
+
   private async shouldRunPlanningPhase(): Promise<boolean> {
     try {
       if (this.config.workflowConfig?.optimizationLevel === 'aggressive') {

@@ -21,6 +21,7 @@ export const SupportedProvider = {
   XAI: 'xai',
   OpenRouter: 'openrouter',
   ZAI: 'zai',
+  DeepSeek: 'deepseek',
   Ollama: 'ollama',
 } as const;
 

@@ -15,7 +15,7 @@
  */
 
 import { readFile, writeFile, access, readdir } from 'node:fs/promises';
-import { join } from 'node:path';
+import { join, extname } from 'node:path';
 import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
@@ -367,6 +367,36 @@ function isEmptyOrUnstructuredProjectIndex(projectIndex: string | undefined): bo
   }
 }
 
+function isSourceDocumentationTask(taskDescription: string | undefined): boolean {
+  const task = normalizeTaskDescription(taskDescription).toLowerCase();
+  if (!task) {
+    return false;
+  }
+
+  const hasDocumentationOutput =
+    /\b(document|documentation|docs|readme|guide|manual|summary|report|markdown|write[-\s]?up|architecture overview|design note)\b/i.test(task) ||
+    /(\u6587\u6863|\u8bf4\u660e|\u603b\u7ed3|\u62a5\u544a|\u6307\u5357|\u624b\u518c|\u67b6\u6784\u6982\u8ff0|\u8bbe\u8ba1\u8bf4\u660e)/.test(task);
+  const hasSourceAnalysis =
+    /\b(analy[sz]e|inspect|review|understand|summari[sz]e|explain|map|overview)\b.*\b(source|code|codebase|project|module|class|api|architecture|flow|implementation)\b/i.test(task) ||
+    /\b(source|code|codebase|project|module|class|api|architecture|flow|implementation)\b.*\b(analy[sz]e|inspect|review|understand|summari[sz]e|explain|map|overview)\b/i.test(task) ||
+    /(\u5206\u6790|\u68b3\u7406|\u9605\u8bfb|\u7406\u89e3|\u89e3\u91ca|\u6982\u8ff0).*(\u6e90\u7801|\u4ee3\u7801|\u9879\u76ee|\u6a21\u5757|\u7c7b|\u63a5\u53e3|\u67b6\u6784|\u6d41\u7a0b|\u5b9e\u73b0)/.test(task) ||
+    /(\u6e90\u7801|\u4ee3\u7801|\u9879\u76ee|\u6a21\u5757|\u7c7b|\u63a5\u53e3|\u67b6\u6784|\u6d41\u7a0b|\u5b9e\u73b0).*(\u5206\u6790|\u68b3\u7406|\u9605\u8bfb|\u7406\u89e3|\u89e3\u91ca|\u6982\u8ff0)/.test(task);
+  const hasDocumentationOnlyConstraint =
+    /\b(do not|don't|without)\b.*\b(modify|change|edit)\b.*\b(source|code|product code)\b/i.test(task) ||
+    /\b(documentation|docs|markdown|document)\b.*\bonly\b/i.test(task) ||
+    /(\u4e0d\u4fee\u6539|\u7981\u6b62\u4fee\u6539|\u4ec5|\u53ea).*(\u6e90\u4ee3\u7801|\u6e90\u7801|\u4ee3\u7801|\u4ea7\u54c1\u4ee3\u7801|\u6587\u6863|\u5206\u6790\u6587\u6863)/.test(task);
+  const implementationAsDocumentNoun =
+    /\bimplementation\s+(plan|scheme|design|document|documentation|guide|markdown|analysis)\b/i.test(task) ||
+    /(\u5b9e\u73b0\u65b9\u6848|\u5b9e\u73b0\u8bf4\u660e|\u5b9e\u73b0\u6587\u6863|\u5b9e\u73b0\u5206\u6790)/.test(task);
+  const hasMutationIntent =
+    /\b(implement|add|fix|change|modify|refactor|rewrite|migrate|port|delete|remove|replace|build|create app|develop)\b/i.test(task) ||
+    /(\u5b9e\u73b0|\u4fee\u590d|\u4fee\u6539|\u6539\u9020|\u91cd\u6784|\u8fc1\u79fb|\u79fb\u690d|\u5220\u9664|\u66ff\u6362|\u5f00\u53d1|\u7f16\u5199\u7a0b\u5e8f)/.test(task);
+
+  return hasDocumentationOutput &&
+    hasSourceAnalysis &&
+    (!hasMutationIntent || hasDocumentationOnlyConstraint || implementationAsDocumentNoun);
+}
+
 function uniqueStrings(values: Array<string | undefined>): string[] {
   return Array.from(new Set(values
     .map((value) => value?.trim())
@@ -446,6 +476,17 @@ const COMMON_LOW_VALUE_ROOT_FILES = new Set([
   'implementation_plan.json',
   'spec.md',
 ]);
+
+const DOCUMENTATION_SOURCE_FILE_EXTENSIONS = new Set([
+  '.c', '.cc', '.cpp', '.cxx', '.h', '.hpp',
+  '.cs', '.java', '.kt', '.go', '.rs', '.py',
+  '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte',
+]);
+
+const DOCUMENTATION_ENTRY_FILE_NAMES = [
+  'main', 'index', 'app', 'application', 'program', 'server', 'client',
+  'game', 'engine', 'core',
+];
 
 const SOURCE_FILE_EXTENSIONS = new Set([
   '.ts',
@@ -607,20 +648,72 @@ function scoreLocalizedAggressiveRootCandidate(fileName: string, task: string): 
 
 async function inferAggressivePatternFiles(projectDir: string, taskDescription: string): Promise<string[]> {
   try {
+    const task = normalizeTaskDescription(taskDescription);
     const entries = await readdir(projectDir, { withFileTypes: true });
-    return entries
+    const rootFileHints = entries
       .filter((entry) => entry.isFile())
       .map((entry) => ({
         name: entry.name,
-        score: scoreLocalizedAggressiveRootCandidate(entry.name, normalizeTaskDescription(taskDescription)),
+        score: scoreLocalizedAggressiveRootCandidate(entry.name, task),
       }))
       .filter((entry) => entry.score > 0)
       .sort((a, b) => b.score - a.score || a.name.localeCompare(b.name))
       .slice(0, 4)
       .map((entry) => entry.name);
+
+    if (!isSourceDocumentationTask(taskDescription)) {
+      return rootFileHints;
+    }
+
+    const sourceDirs = entries
+      .filter((entry) => entry.isDirectory())
+      .map((entry) => entry.name)
+      .filter((name) => /^(src|source|sources|lib|include|app|apps|packages|core|engine)$/i.test(name))
+      .slice(0, 3);
+    const sourceFileHints = await inferDocumentationSourceFileHints(projectDir, sourceDirs);
+
+    const manifestHints = entries
+      .filter((entry) => entry.isFile())
+      .map((entry) => entry.name)
+      .filter((name) => /^(package\.json|tsconfig\.json|vite\.config\.[cm]?[jt]s|CMakeLists\.txt|Makefile|Cargo\.toml|go\.mod|pyproject\.toml|pom\.xml|build\.gradle|settings\.gradle)$/i.test(name))
+      .slice(0, 3);
+
+    return Array.from(new Set([...manifestHints, ...rootFileHints, ...sourceFileHints])).slice(0, 8);
   } catch {
     return [];
   }
+}
+
+async function inferDocumentationSourceFileHints(projectDir: string, sourceDirs: string[]): Promise<string[]> {
+  const hints: Array<{ path: string; score: number }> = [];
+  for (const dir of sourceDirs) {
+    try {
+      const entries = await readdir(join(projectDir, dir), { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile()) {
+          continue;
+        }
+        const ext = extname(entry.name).toLowerCase();
+        if (!DOCUMENTATION_SOURCE_FILE_EXTENSIONS.has(ext)) {
+          continue;
+        }
+        const base = entry.name.slice(0, entry.name.length - ext.length).toLowerCase();
+        const entryScore = DOCUMENTATION_ENTRY_FILE_NAMES.some((name) => base === name || base.includes(name)) ? 20 : 0;
+        const headerScore = ['.h', '.hpp'].includes(ext) ? 5 : 0;
+        hints.push({
+          path: `${dir}/${entry.name}`,
+          score: entryScore + headerScore,
+        });
+      }
+    } catch {
+    }
+  }
+
+  return hints
+    .filter((hint) => hint.score > 0)
+    .sort((a, b) => b.score - a.score || a.path.localeCompare(b.path))
+    .slice(0, 5)
+    .map((hint) => hint.path);
 }
 
 function _buildAggressiveQuickSpecPlan(
@@ -807,6 +900,116 @@ function buildLocalizedAggressiveQuickSpecPlan(
   };
 }
 
+function inferDocumentationOutputFile(task: string): string {
+  const markdownPath = task.match(/(?:^|[\s"'`(（])([A-Za-z0-9_./-]+\.md)(?=$|[\s"'`)），。；;])/i)?.[1];
+  if (markdownPath) {
+    return markdownPath.replace(/\\/g, '/');
+  }
+  if (/\breadme\b|README/i.test(task)) {
+    return 'README.md';
+  }
+  return 'docs/analysis.md';
+}
+
+function buildSourceDocumentationQuickSpecPlan(
+  taskDescription: string | undefined,
+  language?: SupportedLanguage,
+  patternFiles: string[] = [],
+): QuickSpecPlan {
+  const task = normalizeTaskDescription(taskDescription);
+  const feature = oneLine(task, 120);
+  const outputFile = inferDocumentationOutputFile(task);
+  const isChinese = language === 'zh-CN';
+  const phaseName = isChinese ? '\u6587\u6863\u5206\u6790' : 'Documentation analysis';
+  const title = isChinese ? '\u5206\u6790\u6e90\u7801\u5e76\u751f\u6210\u6587\u6863' : 'Analyze source and generate documentation';
+  const outputHint = isChinese
+    ? `\u751f\u6210\u6216\u66f4\u65b0\u7528\u6237\u8981\u6c42\u7684 Markdown \u6587\u6863\u3002\u672a\u6307\u5b9a\u8f93\u51fa\u6587\u4ef6\u65f6\u4f7f\u7528 ${outputFile}\u3002`
+    : `Create or update the requested Markdown document. When no output file is specified, use ${outputFile}.`;
+  const readRule = isChinese
+    ? '\u53ea\u505a\u6587\u6863\u5206\u6790\uff0c\u4e0d\u4fee\u6539\u4ea7\u54c1\u4ee3\u7801\u3002\u5148\u7528\u9879\u76ee\u7d22\u5f15\u548c\u7528\u6237\u6307\u5b9a\u6587\u4ef6\u5b9a\u4f4d\u8303\u56f4\uff0c\u518d\u7cbe\u8bfb\u5c11\u91cf\u5173\u952e\u6e90\u7801\u6587\u4ef6\u3002'
+    : 'This is documentation analysis only; do not modify product code. Use the project index and user-specified files to narrow scope, then read only a small set of key source files.';
+  const verificationRun = isChinese
+    ? '\u786e\u8ba4 Markdown \u6587\u6863\u5df2\u751f\u6210\uff0c\u4e14\u5305\u542b\u7ed3\u6784\u5316\u7684\u6e90\u7801\u5206\u6790\u7ed3\u679c\u3002\u4e0d\u8981\u4e3a\u7eaf\u6587\u6863\u4efb\u52a1\u8fd0\u884c\u7f16\u8bd1\u6216 QA\u3002'
+    : 'Confirm the Markdown document exists and contains structured source analysis. Do not run build or QA for documentation-only tasks.';
+  const specMarkdown = isChinese
+    ? [
+        `# \u6587\u6863\u5206\u6790\u4efb\u52a1\uff1a${feature}`,
+        '',
+        '## \u76ee\u6807',
+        task,
+        '',
+        '## \u8303\u56f4',
+        `- \u8f93\u51fa Markdown \u6587\u6863\uff1a\`${outputFile}\`\u3002`,
+        '- \u53ea\u9605\u8bfb\u4e0e\u95ee\u9898\u76f4\u63a5\u76f8\u5173\u7684\u6e90\u7801\u6587\u4ef6\u3002',
+        '- \u4e0d\u505a\u4ea7\u54c1\u4ee3\u7801\u6539\u52a8\u3002',
+        '',
+        '## \u9a8c\u6536',
+        '- \u6587\u6863\u5df2\u751f\u6210\u6216\u66f4\u65b0\u3002',
+        '- \u5185\u5bb9\u6709\u7ed3\u6784\uff0c\u80fd\u652f\u6301\u4eba\u5de5\u5ba1\u6838\u3002',
+        '',
+      ].join('\n')
+    : [
+        `# Documentation Analysis Task: ${feature}`,
+        '',
+        '## Goal',
+        task,
+        '',
+        '## Scope',
+        `- Output Markdown documentation: \`${outputFile}\`.`,
+        '- Read only source files directly relevant to the request.',
+        '- Do not change product code.',
+        '',
+        '## Acceptance',
+        '- Documentation is created or updated.',
+        '- The content is structured and reviewable.',
+        '',
+      ].join('\n');
+
+  return {
+    specMarkdown,
+    implementationPlan: {
+      feature,
+      workflow_type: 'documentation',
+      phases: [
+        {
+          id: '1',
+          phase: 1,
+          name: phaseName,
+          depends_on: [],
+          subtasks: [
+            {
+              id: '1-1',
+              title,
+              description: [
+                task,
+                '',
+                readRule,
+                outputHint,
+                isChinese
+                  ? '\u4f18\u5148\u7528\u8868\u683c\u3001\u5206\u5c42\u6807\u9898\u3001\u6d41\u7a0b\u5217\u8868\u5448\u73b0\uff0c\u907f\u514d\u5927\u6bb5\u5806\u53e0\u6587\u5b57\u3002'
+                  : 'Prefer tables, layered headings, and flow lists instead of long prose blocks.',
+              ].join('\n'),
+              status: 'pending',
+              files_to_create: [outputFile],
+              files_to_modify: [],
+              ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              verification: {
+                type: 'manual',
+                run: verificationRun,
+              },
+            },
+          ],
+        },
+      ],
+      split_plan: false,
+      source_task: {
+        original_request: task,
+        constraint_terms: extractConstraintTerms(task),
+      },
+    },
+  };
+}
+
 export function isWriteToolJsonFailure(message: string): boolean {
   const lower = message.toLowerCase();
   const mentionsWriteTool = lower.includes("tool 'write'") ||
@@ -927,8 +1130,8 @@ function buildStructuredJsonOutputRetryPrompt(
   return [
     `CRITICAL - RETURN ${fileName} AS FINAL JSON`,
     '',
-    'Your previous Write tool call was rejected before execution because the tool input JSON was incomplete, malformed, or passed as the wrong type.',
-    'Do NOT call the Write tool again for this JSON file.',
+    'Your previous structured output could not be parsed or validated.',
+    'Do NOT call the Write tool for this JSON file.',
     '',
     `Return the complete ${fileName} content as the final response JSON object.`,
     'The orchestrator will validate that final JSON and write it to disk.',
@@ -1448,6 +1651,25 @@ function inferComplexityFallback(
     parsedIndex.infrastructureCount >= 2 ||
     /\bmonorepo\b|大型|多模块|多服务|多平台/.test(projectText);
   const hasComplexTaskShape = hasBroadChangeIntent && affectedAreaCount >= 3;
+  const hasLargeMultiSubsystemProject = parsedIndex.hasLargeProjectSignal &&
+    (parsedIndex.languageCount >= 3 || parsedIndex.infrastructureCount >= 2 || parsedIndex.serviceCount >= 2);
+  const hasEngineOrPlatformSurface = /(\bengine\b|\brenderer\b|\bcompiler\b|\bshader\b|\bruntime\b|\bkernel\b|\bplatform\b|\bframework\b|\bsdk\b|\bplugin\b|\bcross[-\s]?platform\b)/i.test(taskText) ||
+    /(\bengine\b|\brenderer\b|\bcompiler\b|\bshader\b|\bruntime\b|\bkernel\b|\bplatform\b|\bframework\b|\bsdk\b|\bplugin\b|\bcross[-\s]?platform\b)/i.test(projectText);
+
+  if (
+    isConservative &&
+    hasBroadChangeIntent &&
+    hasLargeMultiSubsystemProject &&
+    (affectedAreaCount >= 2 || hasEngineOrPlatformSurface)
+  ) {
+    return {
+      complexity: 'complex',
+      confidence: 0.78,
+      reasoning: `local fallback detected conservative broad change in large multi-subsystem project (${signals.join(', ')})`,
+      needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
+      needs_self_critique: true,
+    };
+  }
 
   if ((hasComplexTaskShape && hasLargeProjectContext) || (isConservative && hasComplexTaskShape && affectedAreaCount >= 4)) {
     return {
@@ -1545,6 +1767,9 @@ function selectSpecPhases(
   const phases = workflowConfig.optimizationLevel === 'aggressive' && complexity === 'simple'
     ? [...AGGRESSIVE_SIMPLE_PHASES]
     : [...COMPLEXITY_PHASES[complexity]];
+  if (complexity === 'simple' && isSourceDocumentationTask(taskDescription)) {
+    return ['quick_spec'];
+  }
   const needsResearch = shouldRunResearchPhase(assessment, taskDescription, projectIndex);
   const researchIndex = phases.indexOf('research');
 
@@ -1826,8 +2051,11 @@ export class SpecOrchestrator extends EventEmitter {
       for (const phase of phasesToRun) {
         if (
           phase === 'quick_spec' &&
-          this.config.workflowConfig?.optimizationLevel === 'aggressive' &&
-          complexity === 'simple'
+          complexity === 'simple' &&
+          (
+            this.config.workflowConfig?.optimizationLevel === 'aggressive' ||
+            isSourceDocumentationTask(this.config.taskDescription)
+          )
         ) {
           const phaseNumber = phasesExecuted.length + 1;
           const totalPhases = phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0);
@@ -1897,6 +2125,10 @@ export class SpecOrchestrator extends EventEmitter {
     const desc = task.toLowerCase().trim();
     const wordCount = desc.split(/\s+/).filter(Boolean).length;
     const compactLength = desc.replace(/\s+/g, '').length;
+
+    if (isSourceDocumentationTask(task)) {
+      return 'simple';
+    }
 
     // Very short descriptions (under 30 words) with simple signal words → SIMPLE
     if (wordCount <= 30) {
@@ -2493,14 +2725,21 @@ export class SpecOrchestrator extends EventEmitter {
     const phase: SpecPhase = 'quick_spec';
     this.emitTyped('phase-start', phase, phaseNumber, totalPhases);
 
-    const plan = buildLocalizedAggressiveQuickSpecPlan(
-      this.config.taskDescription ?? 'Complete the requested task',
-      this.config.language,
-      await inferAggressivePatternFiles(
-        this.config.projectDir,
-        this.config.taskDescription ?? '',
-      ),
+    const patternFiles = await inferAggressivePatternFiles(
+      this.config.projectDir,
+      this.config.taskDescription ?? '',
     );
+    const plan = isSourceDocumentationTask(this.config.taskDescription)
+      ? buildSourceDocumentationQuickSpecPlan(
+          this.config.taskDescription ?? 'Complete the requested task',
+          this.config.language,
+          patternFiles,
+        )
+      : buildLocalizedAggressiveQuickSpecPlan(
+          this.config.taskDescription ?? 'Complete the requested task',
+          this.config.language,
+          patternFiles,
+        );
 
     try {
       await writeFile(join(this.config.specDir, 'spec.md'), plan.specMarkdown, 'utf-8');
@@ -2513,7 +2752,7 @@ export class SpecOrchestrator extends EventEmitter {
       const result: SpecPhaseResult = { phase, success: true, errors: [], retries: 0 };
       const patternFiles = plan.implementationPlan.phases[0]?.subtasks[0]?.pattern_files ?? [];
       const fileHint = patternFiles.length > 0 ? `; file hints: ${patternFiles.join(', ')}` : '';
-      this.emitTyped('log', `Aggressive workflow generated quick spec and one-subtask plan without an AI planning session${fileHint}`);
+      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Aggressive workflow'} generated quick spec and one-subtask plan without an AI planning session${fileHint}`);
       this.emitTyped('phase-complete', phase, result);
       return result;
     } catch (error) {

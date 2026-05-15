@@ -145,7 +145,7 @@ export function TaskCreationWizard({
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('balanced');
-  const [enableBatchExecution, setEnableBatchExecution] = useState(false);
+  const [enableBatchExecution, setEnableBatchExecution] = useState(true);
 
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -211,7 +211,7 @@ export function TaskCreationWizard({
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
         setWorkflowMode(draft.workflowMode ?? 'balanced');
-        setEnableBatchExecution(draft.enableBatchExecution ?? false);
+        setEnableBatchExecution(draft.enableBatchExecution ?? true);
         setUseWorktree(draft.useWorktree ?? false);
         setPushNewBranches(draft.pushNewBranches ?? projectPushNewBranches);
         setIsDraftRestored(true);
@@ -237,7 +237,7 @@ export function TaskCreationWizard({
         setReferencedFiles([]);
         setRequireReviewBeforeCoding(false);
         setWorkflowMode('balanced');
-        setEnableBatchExecution(false);
+        setEnableBatchExecution(true);
         setBaseBranch(PROJECT_DEFAULT_BRANCH);
         setUseWorktree(false);
         setPushNewBranches(projectPushNewBranches);
@@ -516,7 +516,7 @@ export function TaskCreationWizard({
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
       metadata.workflowMode = workflowMode;
-      if (enableBatchExecution) metadata.enableBatchExecution = true;
+      metadata.enableBatchExecution = enableBatchExecution;
       metadata.useWorktree = useWorktree;
       if (useWorktree) {
         // Resolve PROJECT_DEFAULT_BRANCH to the actual branch name for worktree creation.
@@ -562,7 +562,7 @@ export function TaskCreationWizard({
     setReferencedFiles([]);
     setRequireReviewBeforeCoding(false);
     setWorkflowMode('balanced');
-    setEnableBatchExecution(false);
+    setEnableBatchExecution(true);
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
     setUseWorktree(false);
     setPushNewBranches(projectPushNewBranches);

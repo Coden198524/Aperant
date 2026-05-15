@@ -638,6 +638,35 @@ describe('resolveAuthFromQueue', () => {
     expect(result?.resolvedProvider).toBe('openai');
     expect(result?.resolvedModelId).toBe('gpt-5.4');
   });
+
+  it('resolves DeepSeek accounts from the queue', async () => {
+    const deepseekAccount = {
+      ...baseAccount,
+      id: 'acc-deepseek',
+      provider: 'deepseek' as const,
+      authType: 'api-key' as const,
+      apiKey: 'sk-deepseek',
+      baseUrl: 'https://api.deepseek.com',
+    };
+
+    _mockDetectProviderFromModel.mockReturnValue(undefined);
+    mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
+      if (modelValue === 'sonnet' && targetProvider === 'deepseek') {
+        return {
+          modelId: 'deepseek-v4-flash',
+          reasoning: { type: 'none' },
+        };
+      }
+      return null;
+    });
+
+    const result = await resolveAuthFromQueue('sonnet', [deepseekAccount]);
+
+    expect(result?.accountId).toBe('acc-deepseek');
+    expect(result?.resolvedProvider).toBe('deepseek');
+    expect(result?.resolvedModelId).toBe('deepseek-v4-flash');
+    expect(result?.baseURL).toBe('https://api.deepseek.com');
+  });
 });
 
 // =============================================================================

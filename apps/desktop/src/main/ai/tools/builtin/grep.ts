@@ -8,7 +8,9 @@
  */
 
 import { execFile } from 'node:child_process';
+import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { minimatch } from 'minimatch';
 import { z } from 'zod/v3';
 
 import { findExecutable } from '../../../platform/index';
@@ -22,6 +24,20 @@ import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 
 const DEFAULT_OUTPUT_MODE = 'files_with_matches';
 const MAX_OUTPUT_LENGTH = 30_000;
+const MAX_FALLBACK_FILE_BYTES = 1024 * 1024;
+const MAX_FALLBACK_FILES = 10_000;
+const EXCLUDED_DIRS = new Set([
+  '.git',
+  '.autocode',
+  '.claude',
+  '.codex',
+  'node_modules',
+  'dist',
+  'build',
+  'out',
+  'coverage',
+  '.next',
+]);
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -138,6 +154,159 @@ function runRipgrep(
   });
 }
 
+function toPortablePath(filePath: string): string {
+  return filePath.split(path.sep).join('/');
+}
+
+function shouldSkipDir(dirName: string): boolean {
+  return EXCLUDED_DIRS.has(dirName);
+}
+
+function matchesType(filePath: string, type?: string): boolean {
+  if (!type) return true;
+  const ext = path.extname(filePath).slice(1).toLowerCase();
+  const normalized = type.toLowerCase();
+  const aliases: Record<string, string[]> = {
+    js: ['js', 'jsx', 'mjs', 'cjs'],
+    ts: ['ts', 'tsx', 'mts', 'cts'],
+    py: ['py'],
+    rust: ['rs'],
+    go: ['go'],
+    java: ['java'],
+    cpp: ['cpp', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 'h'],
+    c: ['c', 'h'],
+    cs: ['cs'],
+    json: ['json'],
+    md: ['md', 'markdown'],
+    html: ['html', 'htm'],
+    css: ['css', 'scss', 'sass', 'less'],
+  };
+  return (aliases[normalized] ?? [normalized]).includes(ext);
+}
+
+function isProbablyBinary(buffer: Buffer): boolean {
+  const sampleLength = Math.min(buffer.length, 8192);
+  for (let i = 0; i < sampleLength; i += 1) {
+    if (buffer[i] === 0) return true;
+  }
+  return false;
+}
+
+function listFiles(root: string, abortSignal?: AbortSignal): string[] {
+  const files: string[] = [];
+  const stack = [root];
+  while (stack.length > 0) {
+    if (abortSignal?.aborted) break;
+    const current = stack.pop()!;
+    let entries: fs.Dirent[];
+    try {
+      entries = fs.readdirSync(current, { withFileTypes: true });
+    } catch {
+      continue;
+    }
+    for (const entry of entries) {
+      const fullPath = path.join(current, entry.name);
+      if (entry.isDirectory()) {
+        if (!shouldSkipDir(entry.name)) stack.push(fullPath);
+      } else if (entry.isFile()) {
+        files.push(fullPath);
+        if (files.length >= MAX_FALLBACK_FILES) return files;
+      }
+    }
+  }
+  return files;
+}
+
+function formatFallbackResults(
+  matches: Array<{ file: string; line?: number; text?: string; count?: number }>,
+  mode: z.infer<typeof inputSchema>['output_mode'],
+): string {
+  if (matches.length === 0) return 'No matches found';
+  const outputMode = mode ?? DEFAULT_OUTPUT_MODE;
+  if (outputMode === 'files_with_matches') {
+    return Array.from(new Set(matches.map((m) => m.file))).join('\n');
+  }
+  if (outputMode === 'count') {
+    return matches
+      .filter((m) => (m.count ?? 0) > 0)
+      .map((m) => `${m.file}:${m.count}`)
+      .join('\n') || 'No matches found';
+  }
+  return matches
+    .map((m) => `${m.file}:${m.line}:${m.text ?? ''}`)
+    .join('\n');
+}
+
+async function runBuiltinSearch(
+  input: z.infer<typeof inputSchema>,
+  searchPath: string,
+  abortSignal?: AbortSignal,
+): Promise<string> {
+  let regex: RegExp;
+  try {
+    regex = new RegExp(input.pattern, 'u');
+  } catch (error) {
+    return `Error: invalid regular expression: ${error instanceof Error ? error.message : String(error)}`;
+  }
+
+  const rootStat = fs.existsSync(searchPath) ? fs.statSync(searchPath) : null;
+  if (!rootStat) return 'No matches found';
+  const files = rootStat.isDirectory() ? listFiles(searchPath, abortSignal) : [searchPath];
+  const outputMode = input.output_mode ?? DEFAULT_OUTPUT_MODE;
+  const matches: Array<{ file: string; line?: number; text?: string; count?: number }> = [];
+
+  for (const filePath of files) {
+    if (abortSignal?.aborted) break;
+    if (!matchesType(filePath, input.type)) continue;
+    if (input.glob) {
+      const portable = toPortablePath(path.relative(searchPath, filePath) || path.basename(filePath));
+      if (!minimatch(portable, input.glob, { dot: true, nocase: process.platform === 'win32' })) {
+        continue;
+      }
+    }
+
+    let stat: fs.Stats;
+    try {
+      stat = fs.statSync(filePath);
+    } catch {
+      continue;
+    }
+    if (stat.size > MAX_FALLBACK_FILE_BYTES) continue;
+
+    let buffer: Buffer;
+    try {
+      buffer = fs.readFileSync(filePath);
+    } catch {
+      continue;
+    }
+    if (isProbablyBinary(buffer)) continue;
+
+    const content = buffer.toString('utf8');
+    const relativeFile = toPortablePath(path.relative(searchPath, filePath) || filePath);
+    if (outputMode === 'files_with_matches') {
+      if (regex.test(content)) matches.push({ file: relativeFile });
+      regex.lastIndex = 0;
+      continue;
+    }
+
+    const lines = content.split(/\r?\n/);
+    let count = 0;
+    for (let index = 0; index < lines.length; index += 1) {
+      regex.lastIndex = 0;
+      if (!regex.test(lines[index])) continue;
+      count += 1;
+      if (outputMode === 'content') {
+        matches.push({ file: relativeFile, line: index + 1, text: lines[index] });
+      }
+    }
+    if (outputMode === 'count' && count > 0) {
+      matches.push({ file: relativeFile, count });
+    }
+  }
+
+  return formatFallbackResults(matches, outputMode);
+}
+
 // ---------------------------------------------------------------------------
 // Tool Definition
 // ---------------------------------------------------------------------------
@@ -168,6 +337,14 @@ export const grepTool = Tool.define({
       context.cwd,
       context.abortSignal,
     );
+
+    if (exitCode === 127) {
+      const fallbackOutput = await runBuiltinSearch(input, resolvedPath, context.abortSignal);
+      if (fallbackOutput.length > MAX_OUTPUT_LENGTH) {
+        return `${fallbackOutput.slice(0, MAX_OUTPUT_LENGTH)}\n\n[Output truncated - ${fallbackOutput.length} characters total]`;
+      }
+      return fallbackOutput;
+    }
 
     // Exit code 1 means no matches (not an error for rg)
     if (exitCode === 1 && !stderr) {

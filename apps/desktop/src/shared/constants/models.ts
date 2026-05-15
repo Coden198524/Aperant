@@ -75,6 +75,9 @@ export const ALL_AVAILABLE_MODELS: ModelOption[] = [
   { value: 'glm-4.7', label: 'GLM-4.7', provider: 'zai', description: 'Previous flagship', capabilities: { thinking: false, tools: true, vision: false, contextWindow: 128000 } },
   { value: 'glm-4.6v', label: 'GLM-4.6V', provider: 'zai', description: 'Multimodal', capabilities: { thinking: false, tools: true, vision: true, contextWindow: 128000 } },
   { value: 'glm-4.5-flash', label: 'GLM-4.5 Flash', provider: 'zai', description: 'Fast', capabilities: { thinking: false, tools: true, vision: false, contextWindow: 128000 } },
+  // DeepSeek
+  { value: 'deepseek-v4-pro', label: 'DeepSeek V4 Pro', provider: 'deepseek', description: 'Flagship', capabilities: { thinking: true, tools: true, vision: false, contextWindow: 128000 } },
+  { value: 'deepseek-v4-flash', label: 'DeepSeek V4 Flash', provider: 'deepseek', description: 'Fast', capabilities: { thinking: true, tools: true, vision: false, contextWindow: 128000 } },
 ];
 
 // Maps model shorthand to actual Claude model IDs
@@ -225,6 +228,26 @@ const OPENAI_COMPATIBLE_FEATURE_THINKING: FeatureThinkingConfig = {
   naming: 'low'
 };
 
+const DEEPSEEK_FEATURE_MODELS: FeatureModelConfig = {
+  insights: 'deepseek-v4-flash',
+  ideation: 'deepseek-v4-pro',
+  roadmap: 'deepseek-v4-pro',
+  githubIssues: 'deepseek-v4-flash',
+  githubPrs: 'deepseek-v4-flash',
+  utility: 'deepseek-v4-flash',
+  naming: 'deepseek-v4-flash'
+};
+
+const DEEPSEEK_FEATURE_THINKING: FeatureThinkingConfig = {
+  insights: 'medium',
+  ideation: 'high',
+  roadmap: 'high',
+  githubIssues: 'medium',
+  githubPrs: 'medium',
+  utility: 'low',
+  naming: 'low'
+};
+
 const OLLAMA_FEATURE_MODELS: FeatureModelConfig = {
   insights: '',
   ideation: '',
@@ -340,6 +363,12 @@ export const PROVIDER_PRESET_DEFINITIONS: Partial<Record<BuiltinProvider, Record
     balanced: { primaryModel: 'gpt-5.5', primaryThinking: 'medium', phaseModels: { spec: 'gpt-5.5', planning: 'gpt-5.5', coding: 'gpt-5.5', qa: 'gpt-5.5' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'medium', qa: 'medium' } },
     quick:    { primaryModel: 'gpt-5.5', primaryThinking: 'low', phaseModels: { spec: 'gpt-5.5', planning: 'gpt-5.5', coding: 'gpt-5.5', qa: 'gpt-5.5' }, phaseThinking: { spec: 'low', planning: 'low', coding: 'low', qa: 'low' } },
   },
+  deepseek: {
+    auto:     { primaryModel: 'deepseek-v4-flash', primaryThinking: 'medium', phaseModels: { spec: 'deepseek-v4-flash', planning: 'deepseek-v4-flash', coding: 'deepseek-v4-flash', qa: 'deepseek-v4-flash' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'low', qa: 'low' } },
+    complex:  { primaryModel: 'deepseek-v4-pro',   primaryThinking: 'high',   phaseModels: { spec: 'deepseek-v4-pro', planning: 'deepseek-v4-pro', coding: 'deepseek-v4-pro', qa: 'deepseek-v4-pro' },                 phaseThinking: { spec: 'high', planning: 'high', coding: 'high', qa: 'high' } },
+    balanced: { primaryModel: 'deepseek-v4-flash', primaryThinking: 'medium', phaseModels: { spec: 'deepseek-v4-flash', planning: 'deepseek-v4-flash', coding: 'deepseek-v4-flash', qa: 'deepseek-v4-flash' }, phaseThinking: { spec: 'medium', planning: 'medium', coding: 'medium', qa: 'medium' } },
+    quick:    { primaryModel: 'deepseek-v4-flash', primaryThinking: 'low',    phaseModels: { spec: 'deepseek-v4-flash', planning: 'deepseek-v4-flash', coding: 'deepseek-v4-flash', qa: 'deepseek-v4-flash' }, phaseThinking: { spec: 'low', planning: 'low', coding: 'low', qa: 'low' } },
+  },
   google: {
     auto:     { primaryModel: 'gemini-2.5-flash',     primaryThinking: 'medium', phaseModels: { spec: 'gemini-2.5-flash', planning: 'gemini-2.5-flash', coding: 'gemini-2.5-flash', qa: 'gemini-2.5-flash' },                 phaseThinking: { spec: 'medium', planning: 'medium', coding: 'low', qa: 'low' } },
     complex:  { primaryModel: 'gemini-2.5-pro',       primaryThinking: 'high',   phaseModels: { spec: 'gemini-2.5-pro', planning: 'gemini-2.5-pro', coding: 'gemini-2.5-pro', qa: 'gemini-2.5-pro' },                         phaseThinking: { spec: 'high', planning: 'high', coding: 'high', qa: 'high' } },
@@ -405,6 +434,10 @@ export function getProviderPresetOrFallback(provider: BuiltinProvider, presetId:
 }
 
 export function getProviderDefaultFeatureModels(provider?: BuiltinProvider): FeatureModelConfig {
+  if (provider === 'deepseek') {
+    return DEEPSEEK_FEATURE_MODELS;
+  }
+
   if (provider === 'openai-compatible') {
     return OPENAI_COMPATIBLE_FEATURE_MODELS;
   }
@@ -417,6 +450,10 @@ export function getProviderDefaultFeatureModels(provider?: BuiltinProvider): Fea
 }
 
 export function getProviderDefaultFeatureThinking(provider?: BuiltinProvider): FeatureThinkingConfig {
+  if (provider === 'deepseek') {
+    return DEEPSEEK_FEATURE_THINKING;
+  }
+
   if (provider === 'openai-compatible') {
     return OPENAI_COMPATIBLE_FEATURE_THINKING;
   }
@@ -489,6 +526,7 @@ export const DEFAULT_MODEL_EQUIVALENCES: Record<string, Partial<Record<BuiltinPr
     mistral: { modelId: 'mistral-large-latest', reasoning: { type: 'none' } },
     groq: { modelId: 'meta-llama/llama-4-maverick', reasoning: { type: 'none' } },
     zai: { modelId: 'glm-5', reasoning: { type: 'none' } },
+    deepseek: { modelId: 'deepseek-v4-pro', reasoning: { type: 'reasoning_effort', level: 'high' } },
   },
   'glm-5': {
     zai: { modelId: 'glm-5', reasoning: { type: 'none' } },
@@ -518,6 +556,7 @@ export const DEFAULT_MODEL_EQUIVALENCES: Record<string, Partial<Record<BuiltinPr
     groq: { modelId: 'llama-3.3-70b-versatile', reasoning: { type: 'none' } },
     xai: { modelId: 'grok-3-mini', reasoning: { type: 'reasoning_effort', level: 'medium' } },
     zai: { modelId: 'glm-4.7', reasoning: { type: 'none' } },
+    deepseek: { modelId: 'deepseek-v4-flash', reasoning: { type: 'reasoning_effort', level: 'medium' } },
   },
   'haiku': {
     anthropic: { modelId: 'claude-haiku-4-5-20251001', reasoning: { type: 'none' } },
@@ -526,6 +565,17 @@ export const DEFAULT_MODEL_EQUIVALENCES: Record<string, Partial<Record<BuiltinPr
     mistral: { modelId: 'mistral-small-latest', reasoning: { type: 'none' } },
     groq: { modelId: 'llama-3.3-70b-versatile', reasoning: { type: 'none' } },
     zai: { modelId: 'glm-4.5-flash', reasoning: { type: 'none' } },
+    deepseek: { modelId: 'deepseek-v4-flash', reasoning: { type: 'reasoning_effort', level: 'low' } },
+  },
+  'deepseek-v4-pro': {
+    deepseek: { modelId: 'deepseek-v4-pro', reasoning: { type: 'reasoning_effort', level: 'high' } },
+    anthropic: { modelId: 'claude-opus-4-6', reasoning: { type: 'adaptive_effort', level: 'high' } },
+    openai: { modelId: 'gpt-5.5', reasoning: { type: 'reasoning_effort', level: 'high' } },
+  },
+  'deepseek-v4-flash': {
+    deepseek: { modelId: 'deepseek-v4-flash', reasoning: { type: 'reasoning_effort', level: 'medium' } },
+    anthropic: { modelId: 'claude-sonnet-4-6', reasoning: { type: 'thinking_tokens', level: 'medium' } },
+    openai: { modelId: 'gpt-5.5', reasoning: { type: 'reasoning_effort', level: 'medium' } },
   },
   // ── OpenAI models ─────────────────────────────────────────────────────────
   'gpt-5.5': {
@@ -637,6 +687,9 @@ export function inferProviderFromModelValue(modelValue: string): BuiltinProvider
   if (modelValue.startsWith('glm-')) {
     return 'zai';
   }
+  if (modelValue.startsWith('deepseek-')) {
+    return 'deepseek';
+  }
   if (modelValue.startsWith('llama-') || modelValue.startsWith('meta-llama/')) {
     return 'groq';
   }
@@ -683,6 +736,9 @@ export function getReasoningConfigForModel(
       return { type: 'reasoning_effort', level: 'medium' };
     }
     if (resolvedProvider === 'openai-compatible') {
+      return { type: 'reasoning_effort', level: 'medium' };
+    }
+    if (resolvedProvider === 'deepseek') {
       return { type: 'reasoning_effort', level: 'medium' };
     }
     if (resolvedProvider === 'google') {

@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import { useTranslation } from 'react-i18next';
 import {
   GitBranch,
@@ -307,6 +307,17 @@ function mapWorktreeStatus(status: WorktreeDiffFile['status']): GitFileStatus {
   }
 }
 
+function mapWorktreeChangedStatus(status: 'M' | 'A' | 'D'): GitFileStatus {
+  switch (status) {
+    case 'A':
+      return 'A';
+    case 'D':
+      return 'D';
+    default:
+      return 'M';
+  }
+}
+
 function mapWorktreeFile(file: WorktreeDiffFile): GitFile {
   return {
     path: file.path,
@@ -316,6 +327,25 @@ function mapWorktreeFile(file: WorktreeDiffFile): GitFile {
     deletions: file.deletions,
     patch: file.patch,
   };
+}
+
+function mapChangedFile(file: { path: string; status: 'M' | 'A' | 'D'; additions: number; deletions: number }): GitFile {
+  return {
+    path: file.path,
+    status: mapWorktreeChangedStatus(file.status),
+    additions: file.additions,
+    deletions: file.deletions,
+  };
+}
+
+function formatWorkspaceSummary(files: GitFile[], t: (key: string, options?: Record<string, unknown>) => string): string {
+  if (files.length === 0) {
+    return t('tasks:gitChanges.noChanges');
+  }
+
+  const additions = files.reduce((sum, file) => sum + file.additions, 0);
+  const deletions = files.reduce((sum, file) => sum + file.deletions, 0);
+  return `${files.length} files changed, ${additions} insertions(+), ${deletions} deletions(-)`;
 }
 
 export function TaskGitChanges({ task }: TaskGitChangesProps) {
@@ -347,24 +377,47 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
   const [diff, setDiff] = useState<string | null>(null);
   const [isLoadingDiff, setIsLoadingDiff] = useState(false);
   const [diffError, setDiffError] = useState<string | null>(null);
+  const requestedWorkspaceDiffRef = useRef<string | null>(null);
 
   const commitGraphRows = useMemo(() => buildCommitGraphRows(commits), [commits]);
 
-  // Load current worktree changes. This captures committed and uncommitted file
-  // changes so the tab remains useful before the task branch has commits.
+  // Load current worktree changes without patches. Individual file diffs are
+  // loaded lazily after selection to keep the task detail modal responsive.
   const loadWorkspaceDiff = useCallback(async () => {
     setIsLoadingWorkspace(true);
     setWorkspaceError(null);
     setHasLoadedWorkspace(false);
 
     try {
-      const result = await window.electronAPI.getWorktreeDiff(task.id, task.projectId);
+      const result = await window.electronAPI.getWorktreeChangedFiles(task.id, task.projectId);
       if (!result.success || !result.data) {
         throw new Error(result.error || 'Failed to load workspace changes');
       }
 
-      setWorkspaceFiles(result.data.files.map(mapWorktreeFile).filter(isVisibleGitFile));
-      setWorkspaceSummary(result.data.summary);
+      const visibleFiles = result.data.map(mapChangedFile).filter(isVisibleGitFile);
+      setWorkspaceFiles(visibleFiles);
+      setWorkspaceSummary(formatWorkspaceSummary(visibleFiles, t));
+      if (visibleFiles.length > 0) {
+        const nextFile = visibleFiles[0];
+        requestedWorkspaceDiffRef.current = nextFile.path;
+        setSelectedFile(nextFile.path);
+        setDiffError(null);
+        setIsLoadingDiff(true);
+        window.electronAPI.getWorktreeFileDiff(task.id, nextFile.path, task.projectId)
+          .then((diffResult) => {
+            if (diffResult.success && diffResult.data !== undefined) {
+              setDiff(diffResult.data);
+            } else {
+              setDiffError(diffResult.error || 'Failed to load diff');
+            }
+          })
+          .catch((err) => {
+            setDiffError(err instanceof Error ? err.message : 'Unknown error');
+          })
+          .finally(() => {
+            setIsLoadingDiff(false);
+          });
+      }
     } catch (err) {
       setWorkspaceFiles([]);
       setWorkspaceSummary('');
@@ -373,7 +426,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
       setIsLoadingWorkspace(false);
       setHasLoadedWorkspace(true);
     }
-  }, [task.id, task.projectId]);
+  }, [task.id, task.projectId, t]);
 
   // Load commit history
   const loadCommits = useCallback(async () => {
@@ -449,6 +502,25 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     }
   }, [task.id, task.projectId]);
 
+  const loadWorkspaceFileDiff = useCallback(async (filePath: string) => {
+    requestedWorkspaceDiffRef.current = filePath;
+    setIsLoadingDiff(true);
+    setDiffError(null);
+    setDiff(null);
+
+    try {
+      const result = await window.electronAPI.getWorktreeFileDiff(task.id, filePath, task.projectId);
+      if (!result.success || result.data === undefined) {
+        throw new Error(result.error || 'Failed to load diff');
+      }
+      setDiff(result.data);
+    } catch (err) {
+      setDiffError(err instanceof Error ? err.message : 'Unknown error');
+    } finally {
+      setIsLoadingDiff(false);
+    }
+  }, [task.id, task.projectId]);
+
   // Reset derived state when switching tasks
   useEffect(() => {
     setWorkspaceFiles([]);
@@ -464,6 +536,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     setSelectedFile(null);
     setDiff(null);
     setDiffError(null);
+    requestedWorkspaceDiffRef.current = null;
     setActiveChangeSet('workspace');
   }, [task.id, task.projectId]);
 
@@ -488,7 +561,6 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
       if (selectedFile !== nextFile.path) {
         setSelectedFile(nextFile.path);
       }
-      setDiff(nextFile.patch ?? '');
       setDiffError(null);
       return;
     }
@@ -512,6 +584,15 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
   }, [activeChangeSet, selectedCommit, loadCommitFiles]);
 
   // Load diff when file is selected
+  useEffect(() => {
+    if (activeChangeSet === 'workspace' && selectedFile) {
+      if (requestedWorkspaceDiffRef.current === selectedFile) {
+        return;
+      }
+      void loadWorkspaceFileDiff(selectedFile);
+    }
+  }, [activeChangeSet, selectedFile, loadWorkspaceFileDiff]);
+
   useEffect(() => {
     if (activeChangeSet === 'commit' && selectedCommit && selectedFile) {
       loadDiff(selectedCommit, selectedFile);
@@ -555,19 +636,20 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
     if (workspaceFiles.length === 0) {
       setSelectedFile(null);
       setDiff(null);
+      requestedWorkspaceDiffRef.current = null;
       return;
     }
 
     const nextFile = workspaceFiles.find((file) => file.path === selectedFile) ?? workspaceFiles[0];
+    requestedWorkspaceDiffRef.current = null;
     setSelectedFile(nextFile.path);
-    setDiff(nextFile.patch ?? '');
   }, [selectedFile, workspaceFiles]);
 
   const selectFile = useCallback((file: GitFile) => {
     setSelectedFile(file.path);
     if (activeChangeSet === 'workspace') {
+      requestedWorkspaceDiffRef.current = null;
       setDiffError(null);
-      setDiff(file.patch ?? '');
     }
   }, [activeChangeSet]);
 
@@ -578,7 +660,7 @@ export function TaskGitChanges({ task }: TaskGitChangesProps) {
 
   // Render diff content
   const renderDiff = () => {
-    if (activeChangeSet === 'workspace' && isLoadingWorkspace) {
+    if (activeChangeSet === 'workspace' && (isLoadingWorkspace || isLoadingDiff)) {
       return (
         <div className="h-full flex items-center justify-center">
           <Loader2 className="h-6 w-6 animate-spin text-muted-foreground" />

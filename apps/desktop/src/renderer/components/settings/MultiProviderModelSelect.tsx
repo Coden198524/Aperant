@@ -29,7 +29,9 @@ export function MultiProviderModelSelect({ value, onChange, className, filterPro
   const searchRef = useRef<HTMLInputElement>(null);
 
   const settings = useSettingsStore(s => s.settings);
-  const providerAccounts = settings.providerAccounts ?? [];
+  const storeProviderAccounts = useSettingsStore(s => s.providerAccounts);
+  const envCredentials = useSettingsStore(s => s.envCredentials);
+  const providerAccounts = storeProviderAccounts.length > 0 ? storeProviderAccounts : (settings.providerAccounts ?? []);
 
   // Dynamic Ollama model fetching
   const [ollamaModels, setOllamaModels] = useState<ModelOption[]>([]);
@@ -145,7 +147,13 @@ export function MultiProviderModelSelect({ value, onChange, className, filterPro
     if (provider === 'anthropic') return true;
     // Ollama doesn't need API keys — just an account entry means it's connected
     if (provider === 'ollama') return providerAccounts.some(a => a.provider === 'ollama');
-    return providerAccounts.some(a => a.provider === provider && (a.apiKey || a.claudeProfileId || a.authType === 'oauth'));
+    if (envCredentials[provider]) return true;
+    return providerAccounts.some(a => {
+      if (a.provider !== provider) return false;
+      if (a.authType === 'oauth') return true;
+      if (a.apiKey || a.claudeProfileId) return true;
+      return a.authType === 'api-key';
+    });
   };
 
   // Filter models by search

@@ -243,7 +243,7 @@
     },
     "batchExecution": {
       "label": "Activer l'exécution par lots",
-      "description": "Exécute les sous-tâches compatibles dans une session partagée. Laissez désactivé pour une exécution par sous-tâche."
+      "description": "Exécute les sous-tâches compatibles dans des sessions d'agent parallèles. Désactivez pour traiter une seule sous-tâche à la fois."
     },
     "gitOptions": {
       "title": "Options Git (optionnel)",

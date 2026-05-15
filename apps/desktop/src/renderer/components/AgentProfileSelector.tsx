@@ -28,6 +28,7 @@ import {
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
   getProviderPreset,
+  ALL_AVAILABLE_MODELS,
 } from '../../shared/constants';
 import type { ModelType, ThinkingLevel } from '../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
@@ -98,6 +99,10 @@ export function AgentProfileSelector({
   const isCustom = profileId === 'custom';
   const currentPhaseModels = phaseModels || DEFAULT_PHASE_MODELS;
   const currentPhaseThinking = phaseThinking || DEFAULT_PHASE_THINKING;
+  const getModelLabel = (modelValue: string) =>
+    ALL_AVAILABLE_MODELS.find(m => m.value === modelValue)?.label
+    || AVAILABLE_MODELS.find(m => m.value === modelValue)?.label?.replace('Claude ', '')
+    || modelValue;
 
   const handleProfileSelect = (selectedId: string) => {
     if (selectedId === 'custom') {
@@ -266,9 +271,7 @@ export function AgentProfileSelector({
             <div className="px-4 pb-4 -mt-1">
               <div className="grid grid-cols-2 gap-2 text-xs">
                 {(Object.keys(PHASE_LABEL_KEYS) as Array<keyof PhaseModelConfig>).map((phase) => {
-                  const modelLabel = activeProvider
-                    ? getProviderModelLabel(currentPhaseModels[phase], activeProvider)
-                    : (AVAILABLE_MODELS.find(m => m.value === currentPhaseModels[phase])?.label?.replace('Claude ', '') || currentPhaseModels[phase]);
+                  const modelLabel = getModelLabel(currentPhaseModels[phase]);
 
                   return (
                     <div key={phase} className="flex items-center justify-between rounded bg-background/50 px-2 py-1">

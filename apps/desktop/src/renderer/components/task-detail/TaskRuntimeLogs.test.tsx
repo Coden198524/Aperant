@@ -199,6 +199,29 @@ describe('TaskRuntimeLogs', () => {
     expect(screen.queryByText(/## Runtime Report/)).not.toBeInTheDocument();
   });
 
+  it('auto-scrolls runtime logs to the latest entry when new logs arrive', async () => {
+    const initialTask = createTask({ logs: ['first runtime log'] });
+    const { rerender } = render(<TaskRuntimeLogs task={initialTask} />);
+    const scrollContainer = screen.getByTestId('runtime-output-scroll');
+    const scrollTo = vi.fn();
+
+    Object.defineProperty(scrollContainer, 'scrollHeight', { configurable: true, value: 1200 });
+    Object.defineProperty(scrollContainer, 'clientHeight', { configurable: true, value: 300 });
+    Object.defineProperty(scrollContainer, 'scrollTo', { configurable: true, value: scrollTo });
+
+    await waitFor(() => {
+      expect(scrollTo).toHaveBeenCalled();
+    });
+    scrollTo.mockClear();
+
+    rerender(<TaskRuntimeLogs task={createTask({ logs: ['first runtime log', 'second runtime log'] })} />);
+
+    await waitFor(() => {
+      expect(screen.getByText(/second runtime log/)).toBeInTheDocument();
+      expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'auto' });
+    });
+  });
+
   it('can switch to model output from phase text logs', async () => {
     render(<TaskRuntimeLogs task={createTask()} />);
 
@@ -206,6 +229,46 @@ describe('TaskRuntimeLogs', () => {
 
     await waitFor(() => {
       expect(screen.getByText('The model is planning the implementation.')).toBeInTheDocument();
+    });
+  });
+
+  it('does not duplicate model output when live stream is followed by persisted logs', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({
+      success: true,
+      data: createActiveEmptyTaskLogs(),
+    })) as typeof window.electronAPI.getTaskLogs;
+
+    render(<TaskRuntimeLogs task={createTask()} />);
+    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
+
+    await waitFor(() => {
+      expect(taskLogsStreamCallback).toBeTruthy();
+      expect(taskLogsChangedCallback).toBeTruthy();
+    });
+
+    taskLogsStreamCallback?.('spec-1', {
+      type: 'text',
+      source: 'sdk',
+      phase: 'planning',
+      timestamp: '2026-01-01T00:00:00.500Z',
+      content: '正在生成计划。',
+      session: 1,
+    });
+
+    const persistedLogs = createTaskLogs();
+    persistedLogs.phases.planning.status = 'active';
+    persistedLogs.phases.planning.entries = [
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'text',
+        phase: 'planning',
+        content: '正在生成计划。',
+      },
+    ];
+    taskLogsChangedCallback?.('spec-1', persistedLogs);
+
+    await waitFor(() => {
+      expect(screen.getAllByText('正在生成计划。')).toHaveLength(1);
     });
   });
 

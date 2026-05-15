@@ -5,11 +5,17 @@ import type { SessionResult } from '../../session/types';
 
 const mockReadFile = vi.fn();
 const mockWriteFile = vi.fn();
+const mockMkdir = vi.fn();
+const mockRename = vi.fn();
+const mockUnlink = vi.fn();
 const mockUpdatePlanFile = vi.fn();
 
 vi.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: (...args: unknown[]) => mockWriteFile(...args),
+  mkdir: (...args: unknown[]) => mockMkdir(...args),
+  rename: (...args: unknown[]) => mockRename(...args),
+  unlink: (...args: unknown[]) => mockUnlink(...args),
 }));
 
 vi.mock('../../../ipc-handlers/task/plan-file-utils', () => ({
@@ -69,7 +75,7 @@ function setupPlanState(initialStatuses: string[]) {
   });
 
   mockWriteFile.mockImplementation((path: string, content: string) => {
-    if (path.endsWith('implementation_plan.json')) {
+    if (path.includes('implementation_plan.json')) {
       planState = JSON.parse(content) as typeof planState;
     }
     return Promise.resolve(undefined);
@@ -122,7 +128,13 @@ describe('executeBatches', () => {
   beforeEach(() => {
     mockReadFile.mockReset();
     mockWriteFile.mockReset();
+    mockMkdir.mockReset();
+    mockRename.mockReset();
+    mockUnlink.mockReset();
     mockUpdatePlanFile.mockReset();
+    mockMkdir.mockResolvedValue(undefined);
+    mockRename.mockResolvedValue(undefined);
+    mockUnlink.mockResolvedValue(undefined);
   });
 
   it('executes an entire batch in a single session and completes the round', async () => {
@@ -179,7 +191,7 @@ describe('executeBatches', () => {
     expect(result.totalCompleted).toBe(2);
   });
 
-  it('caps batch size with maxConcurrentSubtasks when batching', async () => {
+  it('keeps legacy shared batch sessions grouped by batch size', async () => {
     const { updateStatuses } = setupPlanState(['pending', 'pending', 'pending']);
     const runSubtaskSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
     const runBatchSession = vi.fn().mockImplementation(async (batch: Array<{ id: string }>) => {
@@ -195,21 +207,21 @@ describe('executeBatches', () => {
     }));
 
     expect(result.success).toBe(true);
-    expect(runBatchSession).toHaveBeenCalledTimes(2);
-    expect(runBatchSession.mock.calls[0]?.[0]).toHaveLength(2);
-    expect(runBatchSession.mock.calls[1]?.[0]).toHaveLength(1);
+    expect(runBatchSession).toHaveBeenCalledTimes(1);
+    expect(runBatchSession.mock.calls[0]?.[0]).toHaveLength(3);
   });
 
   it('runs independent subtasks concurrently when no batch session handler is provided', async () => {
-    setupPlanState(['pending', 'pending']);
+    const { updateStatuses } = setupPlanState(['pending', 'pending']);
     let inFlight = 0;
     let maxInFlight = 0;
 
-    const runSubtaskSession = vi.fn().mockImplementation(async () => {
+    const runSubtaskSession = vi.fn().mockImplementation(async (subtask: { id: string }) => {
       inFlight++;
       maxInFlight = Math.max(maxInFlight, inFlight);
       await new Promise((resolve) => setTimeout(resolve, 10));
       inFlight--;
+      updateStatuses([subtask.id], 'completed');
       return makeSessionResult('completed');
     });
 
@@ -225,7 +237,81 @@ describe('executeBatches', () => {
     expect(maxInFlight).toBe(2);
   });
 
-  it('caps auto batch sizing at five subtasks per batch', async () => {
+  it('serializes conflicting subtasks when using parallel subtask sessions', async () => {
+    let planState = {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Phase 1',
+          subtasks: [
+            {
+              id: 'subtask-1',
+              title: 'Subtask 1',
+              description: 'Test subtask 1',
+              status: 'pending',
+              files_to_create: [],
+              files_to_modify: ['shared.ts'],
+              pattern_files: [],
+              verification: 'Run tests',
+            },
+            {
+              id: 'subtask-2',
+              title: 'Subtask 2',
+              description: 'Test subtask 2',
+              status: 'pending',
+              files_to_create: [],
+              files_to_modify: ['shared.ts'],
+              pattern_files: [],
+              verification: 'Run tests',
+            },
+          ],
+        },
+      ],
+    };
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.json')) {
+        return Promise.resolve(JSON.stringify(planState));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+    mockWriteFile.mockImplementation((path: string, content: string) => {
+      if (path.includes('implementation_plan.json')) {
+        planState = JSON.parse(content) as typeof planState;
+      }
+      return Promise.resolve(undefined);
+    });
+
+    let inFlight = 0;
+    let maxInFlight = 0;
+    const runSubtaskSession = vi.fn().mockImplementation(async (subtask: { id: string }) => {
+      inFlight++;
+      maxInFlight = Math.max(maxInFlight, inFlight);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      inFlight--;
+      for (const phase of planState.phases) {
+        for (const planSubtask of phase.subtasks) {
+          if (planSubtask.id === subtask.id) {
+            planSubtask.status = 'completed';
+          }
+        }
+      }
+      return makeSessionResult('completed');
+    });
+
+    const result = await executeBatches(createConfig({
+      batchSize: 2,
+      maxConcurrentSubtasks: 2,
+      runBatchSession: undefined,
+      runSubtaskSession,
+    }));
+
+    expect(result.success).toBe(true);
+    expect(runSubtaskSession).toHaveBeenCalledTimes(2);
+    expect(maxInFlight).toBe(1);
+  });
+
+  it('caps auto batch sizing at four subtasks per batch', async () => {
     const { updateStatuses } = setupPlanState(new Array(11).fill('pending'));
     const runBatchSession = vi.fn().mockImplementation(async (batch: Array<{ id: string }>) => {
       updateStatuses(batch.map((subtask) => subtask.id), 'completed');
@@ -240,9 +326,9 @@ describe('executeBatches', () => {
 
     expect(result.success).toBe(true);
     expect(runBatchSession).toHaveBeenCalledTimes(3);
-    expect(runBatchSession.mock.calls[0]?.[0]).toHaveLength(5);
-    expect(runBatchSession.mock.calls[1]?.[0]).toHaveLength(5);
-    expect(runBatchSession.mock.calls[2]?.[0]).toHaveLength(1);
+    expect(runBatchSession.mock.calls[0]?.[0]).toHaveLength(4);
+    expect(runBatchSession.mock.calls[1]?.[0]).toHaveLength(4);
+    expect(runBatchSession.mock.calls[2]?.[0]).toHaveLength(3);
   });
 
   it('resets stale in_progress subtasks before applying the capped batch size', async () => {
@@ -263,7 +349,7 @@ describe('executeBatches', () => {
     }));
 
     expect(result.success).toBe(true);
-    expect(observedInProgressCounts).toEqual([5, 5, 1]);
+    expect(observedInProgressCounts).toEqual([4, 4, 3]);
   });
 
   it('clears stray in_progress subtasks from the previous batch before starting the next batch', async () => {
@@ -293,7 +379,7 @@ describe('executeBatches', () => {
     }));
 
     expect(result.success).toBe(true);
-    expect(observedInProgressCounts).toEqual([5, 5, 1]);
+    expect(observedInProgressCounts).toEqual([4, 4, 3]);
   });
 
   it('returns early when no pending subtasks remain', async () => {

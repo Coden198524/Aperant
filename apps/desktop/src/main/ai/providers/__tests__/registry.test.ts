@@ -176,6 +176,12 @@ describe('transformThinkingConfig', () => {
     expect(config.reasoningEffort).toBe('medium');
   });
 
+  it('maps DeepSeek thinking levels to supported reasoning efforts', () => {
+    expect(transformThinkingConfig('deepseek', 'deepseek-v4-flash', 'low').reasoningEffort).toBe('high');
+    expect(transformThinkingConfig('deepseek', 'deepseek-v4-pro', 'medium').reasoningEffort).toBe('high');
+    expect(transformThinkingConfig('deepseek', 'deepseek-v4-pro', 'xhigh').reasoningEffort).toBe('max');
+  });
+
   it('returns empty config for unsupported provider', () => {
     const config = transformThinkingConfig('groq', 'llama-3.1-70b', 'high');
     expect(config).toEqual({});
@@ -240,8 +246,8 @@ describe('meetsCacheThreshold', () => {
     expect(meetsCacheThreshold('anthropic', 'toolDefinitions', 500)).toBe(false);
   });
 
-  it('returns false for non-Anthropic providers', () => {
-    expect(meetsCacheThreshold('openai', 'toolDefinitions', 5000)).toBe(false);
+  it('returns false for providers without prompt caching thresholds', () => {
+    expect(meetsCacheThreshold('deepseek', 'toolDefinitions', 5000)).toBe(false);
   });
 });
 
@@ -254,7 +260,7 @@ describe('getCacheBreakpoints', () => {
   });
 
   it('returns empty array for non-Anthropic', () => {
-    expect(getCacheBreakpoints('openai', [5000, 5000])).toEqual([]);
+    expect(getCacheBreakpoints('deepseek', [5000, 5000])).toEqual([]);
   });
 
   it('returns empty array for empty messages', () => {

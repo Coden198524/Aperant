@@ -15,6 +15,7 @@ describe('session-efficiency', () => {
           id: 'ui-2',
           title: 'Show plan progress',
           description: 'Render planning progress next to the task badge.',
+          completion_summary: '| Item | Details |\n| --- | --- |\n| What changed | done |',
           files_to_modify: ['src/renderer/TaskBoard.tsx'],
           files_to_create: ['src/renderer/PlanProgress.tsx'],
           pattern_files: ['src/renderer/components/TaskBadge.tsx'],
@@ -32,6 +33,7 @@ describe('session-efficiency', () => {
       title: 'Show plan progress',
       description: 'Render planning progress next to the task badge.',
       phaseName: 'UI polish',
+      phaseFile: undefined,
       filesToModify: ['src/renderer/TaskBoard.tsx'],
       filesToCreate: ['src/renderer/PlanProgress.tsx'],
       patternFiles: ['src/renderer/components/TaskBadge.tsx'],
@@ -40,6 +42,7 @@ describe('session-efficiency', () => {
         run: 'npm run typecheck',
         expected: 'passes',
       },
+      completedSummaries: [],
     });
   });
 
@@ -69,7 +72,8 @@ describe('session-efficiency', () => {
     expect(message).toContain('src/renderer/TaskBoard.tsx');
     expect(message).toContain('src/renderer/PlanProgress.tsx');
     expect(message).toContain('npm run typecheck');
-    expect(message).toContain('Do not read spec.md or implementation_plan.json before implementation');
+    expect(message).toContain('Do not read spec.md, implementation_plan.json, or phase plan files before implementation');
+    expect(message).toContain('or phase plan files');
     expect(message).toContain('one compatible alternative at most');
     expect(message).toContain('Run at most one listed verification');
     expect(message).toContain('Do not try multiple equivalent checks');
@@ -85,6 +89,61 @@ describe('session-efficiency', () => {
     expect(message).toContain('immediately call update_subtask_status');
     expect(message).toContain('before writing any final summary');
     expect(message).toContain('provide only a compact review matrix');
+  });
+
+  it('keeps documentation workflow quality while avoiding redundant output checks', () => {
+    const message = buildFocusedCoderKickoffMessageFromContext(
+      '/specs/010',
+      '/project',
+      '1-1',
+      {
+        id: '1-1',
+        workflowType: 'documentation',
+        title: 'Analyze source and generate documentation',
+        description: 'Analyze game source and generate a markdown implementation document.',
+        filesToModify: [],
+        filesToCreate: ['docs/analysis.md'],
+        patternFiles: ['CMakeLists.txt', 'src/main.cpp', 'src/Game.h'],
+      },
+    );
+
+    expect(message).toContain('Quality comes first');
+    expect(message).toContain('reading all product source files is acceptable');
+    expect(message).toContain('Do not pre-create the parent directory with Bash unless Write fails');
+    expect(message).toContain('After Write succeeds, do not read the generated Markdown back');
+    expect(message).toContain('Treat the successful Write result as verification');
+    expect(message).not.toContain('at most 6 additional source files');
+  });
+
+  it('includes prior completion summaries to avoid rereading completed subtask files', () => {
+    const message = buildFocusedCoderKickoffMessageFromContext(
+      '/specs/006',
+      '/project',
+      '3.4',
+      {
+        id: '3.4',
+        title: 'Implement current pass',
+        description: 'Continue the rendering pipeline.',
+        phaseName: 'Rendering',
+        phaseFile: 'implementation_plan.phase-3.json',
+        filesToModify: ['src/render/pass.cpp'],
+        filesToCreate: [],
+        patternFiles: ['src/render/existing-pass.cpp'],
+        completedSummaries: [
+          {
+            id: '3.2',
+            title: 'Create shader',
+            summary: '| Item | Details | | What changed | Added shader resource bindings |',
+          },
+        ],
+      },
+    );
+
+    expect(message).toContain('Phase plan: implementation_plan.phase-3.json');
+    expect(message).toContain('## Prior Completed Work In This Phase');
+    expect(message).toContain('3.2 Create shader');
+    expect(message).toContain('Added shader resource bindings');
+    expect(message).toContain('instead of rereading completed subtask files');
   });
 
   it('keeps Windows project paths usable in Bash commands', () => {

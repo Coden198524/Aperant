@@ -112,6 +112,12 @@ export function transformThinkingConfig(
       };
     }
 
+    case 'deepseek': {
+      return {
+        reasoningEffort: thinkingLevel === 'xhigh' ? 'max' : 'high',
+      };
+    }
+
     default:
       // Providers without thinking support return empty config
       return {};
@@ -150,6 +156,7 @@ export function normalizeToolId(provider: SupportedProvider, toolId: string): st
 
     case 'openai':
     case 'openai-compatible':
+    case 'deepseek':
     case 'azure': {
       // Sanitize and truncate to max length
       const sanitized = toolId.replace(/[^a-zA-Z0-9_-]/g, '_');

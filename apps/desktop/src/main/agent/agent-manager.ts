@@ -22,6 +22,7 @@ import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';
 import { resolveModelId } from '../ai/config/phase-config';
 import { detectProviderFromModel } from '../ai/providers/factory';
 import { inferProviderFromModelValue, resolveModelEquivalent } from '../../shared/constants/models';
+import { resolveSupportedLanguage } from '../../shared/constants/i18n';
 import type { BuiltinProvider } from '../../shared/types/provider-account';
 import type { AgentExecutorConfig, SerializableSessionConfig, SerializedSecurityProfile } from '../ai/agent/types';
 import { getSecurityProfile } from '../ai/security/security-profile';
@@ -797,7 +798,8 @@ export class AgentManager extends EventEmitter {
     const effectiveProjectDir = worktreePath ?? projectPath;
 
     // Load initial context from spec directory
-    const initialMessages = this.buildTaskExecutionMessages(worktreeSpecDir, specId, effectiveProjectDir);
+    const language = this.resolveAppLanguage();
+    const initialMessages = this.buildTaskExecutionMessages(worktreeSpecDir, specId, effectiveProjectDir, language);
 
     // Build the serializable session config for the worker
     const sessionConfig: SerializableSessionConfig = {
@@ -821,7 +823,7 @@ export class AgentManager extends EventEmitter {
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
       enableBatchExecution,
-      language: this.resolveAppLanguage(),
+      language,
       autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
         cwd: effectiveCwd,
@@ -945,7 +947,8 @@ export class AgentManager extends EventEmitter {
 
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
-    const initialMessages = this.buildDirectTaskExecutionMessages(worktreeSpecDir, specId, effectiveProjectDir);
+    const language = this.resolveAppLanguage();
+    const initialMessages = this.buildDirectTaskExecutionMessages(worktreeSpecDir, specId, effectiveProjectDir, language);
 
     const sessionConfig: SerializableSessionConfig = {
       agentType: 'direct_task',
@@ -968,7 +971,7 @@ export class AgentManager extends EventEmitter {
       responsePersistence: false,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode: 'off',
-      language: this.resolveAppLanguage(),
+      language,
       autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
         cwd: effectiveCwd,
@@ -1530,20 +1533,30 @@ export class AgentManager extends EventEmitter {
       if (existsSync(metadataPath)) {
         const raw = readFileSync(metadataPath, 'utf-8');
         const metadata = JSON.parse(raw) as { enableBatchExecution?: boolean };
-        return metadata.enableBatchExecution === true;
+        return metadata.enableBatchExecution !== false;
       }
     } catch {
       // Fall through
     }
-    return false;
+    return true;
   }
 
   private resolveAppLanguage(): SerializableSessionConfig['language'] {
     const language = readSettingsFile()?.language;
-    if (language === 'en' || language === 'fr' || language === 'zh-CN') {
-      return language;
+    if (typeof language === 'string' && language.trim()) {
+      return resolveSupportedLanguage(language);
     }
     return undefined;
+  }
+
+  private buildCompletionSummaryRequirement(language?: SerializableSessionConfig['language']): string {
+    if (language === 'zh-CN') {
+      return '最终回答必须是简洁的 markdown 表格，使用中文列名和行名，例如：项目、内容、修改内容、验证结果、审核要点。';
+    }
+    if (language === 'fr') {
+      return 'Final answer must be a concise markdown table in French, with localized row labels for changes, verification, and review notes.';
+    }
+    return 'Final answer must be a concise markdown table with rows: What changed, Verification, Review notes.';
   }
 
   private toCrossProviderModelRequest(model: string): string {
@@ -1755,6 +1768,7 @@ export class AgentManager extends EventEmitter {
     specDir: string,
     specId: string,
     projectPath: string,
+    language?: SerializableSessionConfig['language'],
   ): Array<{ role: 'user' | 'assistant'; content: string }> {
     const parts: string[] = [];
     const planPath = path.join(specDir, 'implementation_plan.json');
@@ -1851,7 +1865,7 @@ export class AgentManager extends EventEmitter {
     }
 
     parts.push('## Completion Summary Requirement');
-    parts.push('Final answer must be a concise markdown table with rows: What changed, Verification, Review notes.');
+    parts.push(this.buildCompletionSummaryRequirement(language));
 
     return [{ role: 'user', content: parts.join('\n') }];
   }
@@ -1864,11 +1878,17 @@ export class AgentManager extends EventEmitter {
     specDir: string,
     specId: string,
     projectPath: string,
+    language?: SerializableSessionConfig['language'],
   ): Array<{ role: 'user' | 'assistant'; content: string }> {
     const parts: string[] = [];
 
     parts.push(`You are implementing spec ${specId} in project: ${projectPath}`);
     parts.push(`Spec directory: ${specDir}`);
+    if (language === 'zh-CN') {
+      parts.push('Language: write all non-code prose, progress updates, summaries, task titles, and review notes in Simplified Chinese.');
+    } else if (language === 'fr') {
+      parts.push('Language: write all non-code prose, progress updates, summaries, task titles, and review notes in French.');
+    }
     parts.push('');
 
     // Read spec.md

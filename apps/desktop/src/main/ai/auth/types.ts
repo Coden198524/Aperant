@@ -80,6 +80,7 @@ export const PROVIDER_ENV_VARS: Record<SupportedProvider, string | undefined> = 
   xai: 'XAI_API_KEY',
   openrouter: 'OPENROUTER_API_KEY',
   zai: 'ZHIPU_API_KEY',
+  deepseek: 'DEEPSEEK_API_KEY',
   ollama: undefined,   // No auth required for local Ollama
 } as const;
 
@@ -97,6 +98,7 @@ export const PROVIDER_SETTINGS_KEY: Partial<Record<SupportedProvider, string>> =
   azure: 'globalAzureApiKey',
   openrouter: 'globalOpenRouterApiKey',
   zai: 'globalZAIApiKey',
+  deepseek: 'globalDeepSeekApiKey',
 } as const;
 
 /**
@@ -107,6 +109,7 @@ export const PROVIDER_BASE_URL_ENV: Partial<Record<SupportedProvider, string>> =
   openai: 'OPENAI_BASE_URL',
   azure: 'AZURE_OPENAI_ENDPOINT',
   'openai-compatible': 'OPENAI_BASE_URL',
+  deepseek: 'DEEPSEEK_BASE_URL',
 } as const;
 
 // ============================================

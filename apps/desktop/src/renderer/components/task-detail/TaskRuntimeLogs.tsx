@@ -426,6 +426,41 @@ function getToolLifecycleKey(entry: TaskLogEntry): string | null {
   return [entry.phase, entry.type, entry.tool_call_id].join('\u0001');
 }
 
+function normalizeTextForDedupe(content: string): string {
+  return content
+    .replace(/\r\n?/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function isCompatibleTextScope(left: TaskLogEntry, right: TaskLogEntry): boolean {
+  if (left.type !== 'text' || right.type !== 'text') {
+    return false;
+  }
+
+  if (left.phase !== right.phase) return false;
+  if (left.subtask_id !== right.subtask_id) return false;
+
+  // Persisted task_logs entries may not have a session, while live SDK chunks do.
+  // Treat a missing session as compatible so file refreshes do not duplicate live output.
+  return left.session === right.session || left.session == null || right.session == null;
+}
+
+function isDuplicateOrContainedText(existing: TaskLogEntry, incoming: TaskLogEntry): boolean {
+  if (!isCompatibleTextScope(existing, incoming)) {
+    return false;
+  }
+
+  const existingText = normalizeTextForDedupe(existing.content);
+  const incomingText = normalizeTextForDedupe(incoming.content);
+  if (!existingText || !incomingText) {
+    return false;
+  }
+
+  return existingText === incomingText || existingText.includes(incomingText);
+}
+
 function hasEquivalentNonTextEntry(entries: TaskLogEntry[], entry: TaskLogEntry): boolean {
   const exactKey = getEntryExactKey(entry);
   const toolKey = getToolLifecycleKey(entry);
@@ -437,13 +472,7 @@ function hasEquivalentNonTextEntry(entries: TaskLogEntry[], entry: TaskLogEntry)
 }
 
 function isSameTextScope(left: TaskLogEntry, right: TaskLogEntry): boolean {
-  return (
-    left.type === 'text' &&
-    right.type === 'text' &&
-    left.phase === right.phase &&
-    left.subtask_id === right.subtask_id &&
-    left.session === right.session
-  );
+  return isCompatibleTextScope(left, right);
 }
 
 function mergeLiveTextEntry(entries: TaskLogEntry[], entry: TaskLogEntry): void {
@@ -451,21 +480,22 @@ function mergeLiveTextEntry(entries: TaskLogEntry[], entry: TaskLogEntry): void 
     .map((existing, index) => ({ existing, index }))
     .filter(({ existing }) => isSameTextScope(existing, entry));
 
-  if (sameScopeEntries.some(({ existing }) => existing.content === entry.content || existing.content.includes(entry.content))) {
+  if (sameScopeEntries.some(({ existing }) => isDuplicateOrContainedText(existing, entry))) {
     return;
   }
 
-  const combinedScopeContent = sameScopeEntries.map(({ existing }) => existing.content).join('');
-  if (combinedScopeContent.includes(entry.content)) {
+  const combinedScopeContent = normalizeTextForDedupe(sameScopeEntries.map(({ existing }) => existing.content).join(''));
+  const entryContent = normalizeTextForDedupe(entry.content);
+  if (combinedScopeContent.includes(entryContent)) {
     return;
   }
 
   const prefixMatch = sameScopeEntries
-    .filter(({ existing }) => entry.content.startsWith(existing.content))
+    .filter(({ existing }) => entryContent.startsWith(normalizeTextForDedupe(existing.content)))
     .sort((left, right) => right.existing.content.length - left.existing.content.length)[0];
 
   if (prefixMatch) {
-    if (entry.content.length > prefixMatch.existing.content.length) {
+    if (entryContent.length > normalizeTextForDedupe(prefixMatch.existing.content).length) {
       entries[prefixMatch.index] = { ...prefixMatch.existing, ...entry };
     }
     return;
@@ -854,8 +884,10 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
   const [mode, setMode] = useState<RuntimePanelMode>('runtime');
   const [modelLogs, setModelLogs] = useState<TaskLogsData | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
+  const runtimeScrollRef = useRef<HTMLDivElement | null>(null);
   const modelScrollRef = useRef<HTMLDivElement | null>(null);
   const modelEndRef = useRef<HTMLDivElement | null>(null);
+  const isRuntimePinnedToBottomRef = useRef(true);
   const isModelPinnedToBottomRef = useRef(true);
   const logOrder = useSettingsStore(s => s.settings.logOrder);
   const liveTask = useTaskStore(state =>
@@ -886,8 +918,25 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
   const isModelActive = isTaskModelActive;
   const isModelStreaming = mode === 'model' && isModelActive;
   const modelActivityCopy = getModelActivityCopy(activeModelPhase, t);
+  const latestRuntimeContent = runtimeLogs[runtimeLogs.length - 1]?.content;
   const latestModelEntry = modelOutputEntries[modelOutputEntries.length - 1];
   const latestModelContent = latestModelEntry?.content;
+
+  const scrollRuntimeToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
+    const container = runtimeScrollRef.current;
+    if (!container) return;
+
+    if (typeof container.scrollTo === 'function') {
+      container.scrollTo({
+        top: container.scrollHeight,
+        behavior,
+      });
+    } else {
+      container.scrollTop = container.scrollHeight;
+    }
+    isRuntimePinnedToBottomRef.current = true;
+    setShowJumpToLatest(false);
+  }, []);
 
   const scrollModelToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const container = modelScrollRef.current;
@@ -903,6 +952,16 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     }
     isModelPinnedToBottomRef.current = true;
     setShowJumpToLatest(false);
+  }, []);
+
+  const handleRuntimeScroll = useCallback(() => {
+    const container = runtimeScrollRef.current;
+    if (!container) return;
+
+    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
+    const isPinned = distanceFromBottom < 48;
+    isRuntimePinnedToBottomRef.current = isPinned;
+    setShowJumpToLatest(!isPinned);
   }, []);
 
   const handleModelScroll = useCallback(() => {
@@ -949,6 +1008,35 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
       void window.electronAPI.unwatchTaskLogs(task.specId);
     };
   }, [task.projectId, task.specId]);
+
+  useEffect(() => {
+    if (mode !== 'runtime' || !isRuntimePinnedToBottomRef.current) {
+      return;
+    }
+
+    const frame = window.requestAnimationFrame(() => {
+      scrollRuntimeToLatest('auto');
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [mode, runtimeLogs.length, latestRuntimeContent, scrollRuntimeToLatest]);
+
+  useEffect(() => {
+    if (mode !== 'runtime') {
+      return undefined;
+    }
+
+    isRuntimePinnedToBottomRef.current = true;
+    const frame = window.requestAnimationFrame(() => {
+      scrollRuntimeToLatest('auto');
+    });
+
+    return () => {
+      window.cancelAnimationFrame(frame);
+    };
+  }, [mode, scrollRuntimeToLatest]);
 
   useEffect(() => {
     if (mode !== 'model' || !isModelPinnedToBottomRef.current) {
@@ -1039,12 +1127,31 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
       </div>
 
       {mode === 'runtime' && runtimeLogs.length > 0 ? (
-        <div className="min-h-0 flex-1 overflow-y-auto bg-[#0B1020] p-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent">
-          <div className="space-y-2">
-            {runtimeLogs.map((log, index) => (
-              <RuntimeLogEntry key={`${index}-${log.content.slice(0, 80)}`} log={log} />
-            ))}
+        <div className="relative min-h-0 flex-1 bg-[#0B1020]">
+          <div
+            ref={runtimeScrollRef}
+            className="h-full overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
+            onScroll={handleRuntimeScroll}
+            data-testid="runtime-output-scroll"
+          >
+            <div className="space-y-2">
+              {runtimeLogs.map((log, index) => (
+                <RuntimeLogEntry key={`${index}-${log.content.slice(0, 80)}`} log={log} />
+              ))}
+            </div>
           </div>
+          {showJumpToLatest && (
+            <Button
+              type="button"
+              variant="secondary"
+              size="sm"
+              className="absolute bottom-3 right-3 h-7 gap-1.5 border border-slate-600/60 bg-slate-900/90 px-2 text-[11px] text-slate-100 shadow-lg hover:bg-slate-800"
+              onClick={() => scrollRuntimeToLatest()}
+            >
+              <ArrowDownToLine className="h-3.5 w-3.5" />
+              {t('tasks:logs.jumpToLatest', { defaultValue: 'Latest' })}
+            </Button>
+          )}
         </div>
       ) : mode === 'model' && modelOutputEntries.length > 0 ? (
         <div className="relative min-h-0 flex-1 bg-[#080B10]">

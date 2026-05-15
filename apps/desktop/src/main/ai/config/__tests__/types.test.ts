@@ -39,6 +39,21 @@ describe('buildThinkingProviderOptions', () => {
     });
   });
 
+  it('should return DeepSeek thinking options for DeepSeek models', () => {
+    expect(buildThinkingProviderOptions('deepseek-v4-flash', 'medium')).toEqual({
+      openaiCompatible: {
+        thinking: { type: 'enabled' },
+        reasoning_effort: 'high',
+      },
+    });
+    expect(buildThinkingProviderOptions('deepseek-v4-pro', 'xhigh')).toEqual({
+      openaiCompatible: {
+        thinking: { type: 'enabled' },
+        reasoning_effort: 'max',
+      },
+    });
+  });
+
   it('should return undefined for non-reasoning OpenAI models', () => {
     const result = buildThinkingProviderOptions('gpt-4o', 'high');
     expect(result).toBeUndefined();

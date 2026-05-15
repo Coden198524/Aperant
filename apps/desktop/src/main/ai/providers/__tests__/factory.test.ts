@@ -197,6 +197,21 @@ describe('createProvider', () => {
     );
   });
 
+  it('uses openai-compatible chat transport for DeepSeek', () => {
+    const result = createProvider({
+      config: { provider: SupportedProvider.DeepSeek, apiKey: 'deepseek-key' },
+      modelId: 'deepseek-v4-flash',
+    }) as any;
+
+    expect(result.provider).toBe('openai-compatible-chat');
+    expect(createOpenAICompatible).toHaveBeenCalledWith(
+      expect.objectContaining({
+        name: 'deepseek',
+        baseURL: 'https://api.deepseek.com/v1',
+      }),
+    );
+  });
+
   it('uses .chat() with deploymentName for Azure provider', () => {
     const result = createProvider({
       config: { provider: SupportedProvider.Azure, apiKey: 'test-key', deploymentName: 'my-deploy' },
@@ -255,6 +270,10 @@ describe('detectProviderFromModel', () => {
 
   it('detects XAI from grok- prefix', () => {
     expect(detectProviderFromModel('grok-2')).toBe('xai');
+  });
+
+  it('detects DeepSeek from deepseek- prefix', () => {
+    expect(detectProviderFromModel('deepseek-v4-flash')).toBe('deepseek');
   });
 
   it('returns undefined for unknown model', () => {

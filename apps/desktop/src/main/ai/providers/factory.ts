@@ -257,6 +257,15 @@ function createProviderInstance(config: ProviderConfig) {
         headers,
       });
 
+    case SupportedProvider.DeepSeek:
+      return createOpenAICompatible({
+        name: 'deepseek',
+        apiKey,
+        baseURL: normalizeOpenAICompatibleBaseUrl(baseURL ?? 'https://api.deepseek.com') ?? 'https://api.deepseek.com/v1',
+        headers,
+        fetch: createOpenAICompatibleEndpointFetch(),
+      });
+
     case SupportedProvider.Ollama: {
       // Account settings store the base Ollama URL (e.g., 'http://localhost:11434')
       // but the OpenAI-compatible SDK needs the /v1 path appended.
@@ -424,6 +433,11 @@ export function createProvider(options: CreateProviderOptions): LanguageModel {
       return responsesProvider.responses(modelId);
     }
 
+    const provider = instance as ReturnType<typeof createOpenAICompatible>;
+    return provider.chatModel(modelId);
+  }
+
+  if (config.provider === SupportedProvider.DeepSeek) {
     const provider = instance as ReturnType<typeof createOpenAICompatible>;
     return provider.chatModel(modelId);
   }

@@ -59,6 +59,25 @@ describe('TaskGitChanges', () => {
           ],
         },
       })),
+      getWorktreeChangedFiles: vi.fn(async () => ({
+        success: true,
+        data: [
+          {
+            path: 'src/app.ts',
+            status: 'M',
+            additions: 1,
+            deletions: 0,
+          },
+        ],
+      })),
+      getWorktreeFileDiff: vi.fn(async () => ({
+        success: true,
+        data: [
+          'diff --git a/src/app.ts b/src/app.ts',
+          '@@ -1,1 +1,1 @@',
+          '+new line',
+        ].join('\n'),
+      })),
       getWorktreeCommits: vi.fn(async () => ({ success: true, data: [] })),
       getWorktreeCommitFiles: vi.fn(async () => ({ success: true, data: [] })),
       getWorktreeCommitFileDiff: vi.fn(async () => ({ success: true, data: '' })),
@@ -69,30 +88,27 @@ describe('TaskGitChanges', () => {
     render(<TaskGitChanges task={createTask()} />);
 
     expect((await screen.findAllByText('src/app.ts')).length).toBeGreaterThan(0);
-    expect(screen.getByText('+new line')).toBeInTheDocument();
+    await waitFor(() => {
+      expect(window.electronAPI.getWorktreeFileDiff).toHaveBeenCalledWith('task-1', 'src/app.ts', 'project-1');
+    });
     expect(window.electronAPI.getWorktreeCommitFiles).not.toHaveBeenCalled();
   });
 
   it('hides internal metadata directories from current worktree changes', async () => {
-    window.electronAPI.getWorktreeDiff = vi.fn(async () => ({
+    window.electronAPI.getWorktreeChangedFiles = vi.fn(async () => ({
       success: true,
-      data: {
-        summary: '5 files changed',
-        files: [
-          { path: '.git/index', status: 'modified', additions: 1, deletions: 0, patch: '+git' },
-          { path: '.claude/settings.json', status: 'modified', additions: 1, deletions: 0, patch: '+claude' },
-          { path: '.codex/config.toml', status: 'modified', additions: 1, deletions: 0, patch: '+codex' },
-          { path: '.autocode/specs/task.json', status: 'modified', additions: 1, deletions: 0, patch: '+autocode' },
-          {
-            path: 'src/app.ts',
-            status: 'modified',
-            additions: 1,
-            deletions: 0,
-            patch: 'diff --git a/src/app.ts b/src/app.ts\n@@ -0,0 +1,1 @@\n+app',
-          },
-        ],
-      },
-    })) as typeof window.electronAPI.getWorktreeDiff;
+      data: [
+        { path: '.git/index', status: 'M', additions: 1, deletions: 0 },
+        { path: '.claude/settings.json', status: 'M', additions: 1, deletions: 0 },
+        { path: '.codex/config.toml', status: 'M', additions: 1, deletions: 0 },
+        { path: '.autocode/specs/task.json', status: 'M', additions: 1, deletions: 0 },
+        { path: 'src/app.ts', status: 'M', additions: 1, deletions: 0 },
+      ],
+    })) as typeof window.electronAPI.getWorktreeChangedFiles;
+    window.electronAPI.getWorktreeFileDiff = vi.fn(async () => ({
+      success: true,
+      data: 'diff --git a/src/app.ts b/src/app.ts\n@@ -0,0 +1,1 @@\n+app',
+    })) as typeof window.electronAPI.getWorktreeFileDiff;
 
     render(<TaskGitChanges task={createTask()} />);
 
@@ -104,13 +120,10 @@ describe('TaskGitChanges', () => {
   });
 
   it('falls back to commit history when the worktree has no current changes', async () => {
-    window.electronAPI.getWorktreeDiff = vi.fn(async () => ({
+    window.electronAPI.getWorktreeChangedFiles = vi.fn(async () => ({
       success: true,
-      data: {
-        summary: 'No changes found',
-        files: [],
-      },
-    })) as typeof window.electronAPI.getWorktreeDiff;
+      data: [],
+    })) as typeof window.electronAPI.getWorktreeChangedFiles;
     window.electronAPI.getWorktreeCommits = vi.fn(async () => ({
       success: true,
       data: [
@@ -158,13 +171,10 @@ describe('TaskGitChanges', () => {
   });
 
   it('hides internal metadata directories from commit files', async () => {
-    window.electronAPI.getWorktreeDiff = vi.fn(async () => ({
+    window.electronAPI.getWorktreeChangedFiles = vi.fn(async () => ({
       success: true,
-      data: {
-        summary: 'No changes found',
-        files: [],
-      },
-    })) as typeof window.electronAPI.getWorktreeDiff;
+      data: [],
+    })) as typeof window.electronAPI.getWorktreeChangedFiles;
     window.electronAPI.getWorktreeCommits = vi.fn(async () => ({
       success: true,
       data: [

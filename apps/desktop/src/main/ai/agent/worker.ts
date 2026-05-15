@@ -76,7 +76,7 @@ import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 // Validation
 // =============================================================================
 
-const MAX_PARALLEL_SUBTASKS_PER_BATCH = 1;
+const MAX_PARALLEL_SUBTASKS_PER_BATCH = 3;
 
 if (!parentPort) {
   throw new Error('worker.ts must be run inside a worker_thread');
@@ -491,15 +491,84 @@ function getImplementationPlanLanguageRequirement(
   }
 }
 
+function getStrictLanguageRequirement(language: SerializableSessionConfig['language']): string | null {
+  switch (language) {
+    case 'zh-CN':
+      return [
+        'IMPORTANT: The app language is Simplified Chinese (zh-CN).',
+        'You MUST write every user-facing sentence in Simplified Chinese.',
+        '',
+        'This applies to:',
+        '- progress updates before and after tool calls',
+        '- explanations, summaries, QA reports, markdown documents, and review notes',
+        '- task titles, task descriptions, subtask summaries, and completion reports',
+        '- error explanations and debugging notes',
+        '',
+        'Do NOT write English conversational sentences such as "Now let me build", "I have completed", "Next I will", or "All tests passed". Translate those into Simplified Chinese before output.',
+        '',
+        'Allowed exceptions:',
+        '- source code, file paths, commands, compiler output, API names, class names, function names, and technical identifiers',
+        '- short required status tokens in structured formats when the schema requires them, such as PASSED, FAILED, completed, or pending',
+        '',
+        'If the user explicitly requests another language, follow the user. Otherwise, all non-code prose must be Simplified Chinese.',
+      ].join('\n');
+    case 'fr':
+      return [
+        'IMPORTANT: The app language is French.',
+        'You MUST write every user-facing sentence in French.',
+        'This includes progress updates, explanations, summaries, task descriptions, QA reports, markdown documents, error explanations, and debugging notes.',
+        'Allowed exceptions are source code, file paths, commands, compiler output, API names, class names, function names, and technical identifiers.',
+        'If the user explicitly requests another language, follow the user. Otherwise, all non-code prose must be French.',
+      ].join('\n');
+    default:
+      return null;
+  }
+}
+
 function appendLanguageRequirement(
   content: string,
   language: SerializableSessionConfig['language'],
 ): string {
-  const requirement = getLanguageRequirement(language);
-  if (!requirement) {
+  const requirement = getStrictLanguageRequirement(language) ?? getLanguageRequirement(language);
+  if (!requirement || content.includes('## OUTPUT LANGUAGE REQUIREMENT')) {
     return content;
   }
   return `${content}\n\n## OUTPUT LANGUAGE REQUIREMENT\n${requirement}`;
+}
+
+function appendLanguageRequirementToMessages(
+  messages: SessionConfig['initialMessages'],
+  language: SerializableSessionConfig['language'],
+): SessionConfig['initialMessages'] {
+  const requirement = getStrictLanguageRequirement(language) ?? getLanguageRequirement(language);
+  if (!requirement || messages.length === 0) {
+    return messages;
+  }
+
+  let updated = false;
+  return messages.map((message) => {
+    if (updated || message.role !== 'user' || typeof message.content !== 'string') {
+      return message;
+    }
+    updated = true;
+    return {
+      ...message,
+      content: appendLanguageRequirement(message.content, language),
+    };
+  });
+}
+
+function appendSearchDiscipline(content: string): string {
+  return [
+    content,
+    '',
+    '## SEARCH AND SHELL DISCIPLINE',
+    '- Prefer the Grep tool for content search and Glob for filename search before using Bash search commands.',
+    '- Do not call shell grep, findstr, Select-String, dir /s, or recursive PowerShell searches when Grep or Glob can answer the question.',
+    '- If one targeted search is empty, change the query strategy at most once, then proceed with the best available file evidence.',
+    '- Do not repeat the same search through multiple shell syntaxes.',
+    '- On Windows, do not use Unix-only helpers such as head, tail, sed, awk, or lsof. Use Read/Grep/Glob first; for shell fallback use simple PowerShell or cmd commands only.',
+  ].join('\n');
 }
 
 function getPromptProfileProjectDir(session: SerializableSessionConfig): string {
@@ -635,7 +704,7 @@ async function assemblePrompt(
     ].join('\n');
   }
 
-  return promptWithLanguage;
+  return appendSearchDiscipline(promptWithLanguage);
 }
 
 // =============================================================================
@@ -676,9 +745,12 @@ async function runSingleSession(
   };
 
   // Build initial messages: use provided kickoff message, or fall back to session messages
-  const initialMessages = initialUserMessage
-    ? [{ role: 'user' as const, content: initialUserMessage }]
-    : baseSession.initialMessages;
+  const initialMessages = appendLanguageRequirementToMessages(
+    initialUserMessage
+      ? [{ role: 'user' as const, content: initialUserMessage }]
+      : baseSession.initialMessages,
+    baseSession.language,
+  );
 
   // Resolve context window limit from model metadata
   const contextWindowLimit = getModelContextWindow(phaseModelId);
@@ -686,7 +758,7 @@ async function runSingleSession(
   const sessionConfig: SessionConfig = {
     agentType,
     model,
-    systemPrompt,
+    systemPrompt: appendLanguageRequirement(systemPrompt, baseSession.language),
     initialMessages,
     toolContext,
     maxSteps: resolvePhaseStepBudget(baseSession, phase),
@@ -895,16 +967,72 @@ function buildDirectCompletionSummary(
   const outcome = result?.outcome ?? 'unknown';
   const error = result?.error?.message;
   const reviewNote = isSuccessfulDirectOutcome(result)
-    ? 'Direct mode skipped staged spec, implementation planning, and QA. Review the git changes manually before approval.'
-    : `Direct mode ended with outcome "${outcome}".${error ? ` Error: ${error}` : ''}`;
+    ? localizeDirectSummaryText(
+        session.language,
+        'Direct mode skipped staged spec, implementation planning, and QA. Review the git changes manually before approval.',
+        '关闭模式已跳过阶段化规格、实现计划和 QA。人工审核前请检查完成总结、运行日志和 Git 变更。',
+        'Le mode direct a ignoré la spécification par étapes, le plan de mise en oeuvre et la QA. Relisez les changements Git avant approbation.',
+      )
+    : localizeDirectSummaryText(
+        session.language,
+        `Direct mode ended with outcome "${outcome}".${error ? ` Error: ${error}` : ''}`,
+        `关闭模式结束，结果为 "${outcome}"。${error ? `错误：${error}` : ''}`,
+        `Le mode direct s'est terminé avec le résultat "${outcome}".${error ? ` Erreur : ${error}` : ''}`,
+      );
+  const labels = getDirectSummaryLabels(session.language);
 
   return [
-    '| Item | Details |',
+    `| ${labels.item} | ${labels.details} |`,
     '| --- | --- |',
-    `| What changed | ${escapeTableCell(`Direct model session finished for ${basename(session.specDir)}.`)} |`,
-    `| Verification | ${escapeTableCell(`Session outcome: ${outcome}. Steps: ${result?.stepsExecuted ?? 0}. Tools: ${result?.toolCallCount ?? 0}.`)} |`,
-    `| Review notes | ${escapeTableCell(reviewNote)} |`,
+    `| ${labels.whatChanged} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Direct model session finished for ${basename(session.specDir)}.`, `关闭模式已完成：${basename(session.specDir)}。`, `Session en mode direct terminee pour ${basename(session.specDir)}.`))} |`,
+    `| ${labels.verification} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Session outcome: ${outcome}. Steps: ${result?.stepsExecuted ?? 0}. Tools: ${result?.toolCallCount ?? 0}.`, `会话结果：${outcome}。步骤：${result?.stepsExecuted ?? 0}。工具调用：${result?.toolCallCount ?? 0}。`, `Resultat de session : ${outcome}. Etapes : ${result?.stepsExecuted ?? 0}. Outils : ${result?.toolCallCount ?? 0}.`))} |`,
+    `| ${labels.reviewNotes} | ${escapeTableCell(reviewNote)} |`,
   ].join('\n');
+}
+
+function localizeDirectSummaryText(
+  language: SerializableSessionConfig['language'],
+  en: string,
+  zh: string,
+  fr: string,
+): string {
+  if (language === 'zh-CN') return zh;
+  if (language === 'fr') return fr;
+  return en;
+}
+
+function getDirectSummaryLabels(language: SerializableSessionConfig['language']): {
+  item: string;
+  details: string;
+  whatChanged: string;
+  verification: string;
+  reviewNotes: string;
+} {
+  if (language === 'zh-CN') {
+    return {
+      item: '项目',
+      details: '内容',
+      whatChanged: '修改内容',
+      verification: '验证结果',
+      reviewNotes: '审核要点',
+    };
+  }
+  if (language === 'fr') {
+    return {
+      item: 'Element',
+      details: 'Details',
+      whatChanged: 'Changements',
+      verification: 'Verification',
+      reviewNotes: 'Notes de revue',
+    };
+  }
+  return {
+    item: 'Item',
+    details: 'Details',
+    whatChanged: 'What changed',
+    verification: 'Verification',
+    reviewNotes: 'Review notes',
+  };
 }
 
 function extractDirectTaskDescription(session: SerializableSessionConfig): string {
@@ -1014,8 +1142,8 @@ async function runDefaultSession(
   const sessionConfig: SessionConfig = {
     agentType: session.agentType,
     model,
-    systemPrompt: session.systemPrompt,
-    initialMessages: session.initialMessages,
+    systemPrompt: appendLanguageRequirement(session.systemPrompt, session.language),
+    initialMessages: appendLanguageRequirementToMessages(session.initialMessages, session.language),
     toolContext,
     maxSteps: resolvePhaseStepBudget(session, session.phase),
     thinkingLevel: session.thinkingLevel,
@@ -1171,8 +1299,8 @@ async function runBuildOrchestrator(
     language: session.language,
     abortSignal: abortController.signal,
 
-    // Per-task toggle: default off unless task metadata explicitly enables it.
-    enableBatchExecution: session.enableBatchExecution ?? false,
+    // Per-task toggle: default on; task metadata can explicitly disable it.
+    enableBatchExecution: session.enableBatchExecution ?? true,
     batchSize: 'auto', // Auto-detect based on subtask dependencies
     maxBatchRetries: 2,
     maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,
@@ -1820,10 +1948,10 @@ function buildSpecKickoffMessage(
       baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Return ONLY the compact context.json object; the orchestrator will write ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Use the pre-generated project index first. Run at most two narrow discovery tools, and for empty projects do not run recursive globs. Keep arrays concise and do not include read-operation transcripts, copied source, long analysis, or optional large sections.`;
       break;
     case 'spec_gatherer':
-      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return ONLY the compact requirements.json object; the orchestrator will write ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Prefer the task description and provided context. Keep user_requirements, acceptance_criteria, and constraints short; do not include analysis, source excerpts, or discovery transcripts.`;
+      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return ONLY the compact requirements.json object; the orchestrator will write ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Prefer the task description and provided context. Keep user_requirements, acceptance_criteria, and constraints short; do not include analysis, source excerpts, or discovery transcripts.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
       break;
     case 'spec_researcher':
-      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. This phase may run before spec.md exists, so do not read spec.md unless it is explicitly provided or confirmed to exist. Use the task, prior context.json/requirements.json summaries, and project index first. If no external research is needed, return a compact research.json object with integrations_researched: [], unverified_claims: [], and concise recommendations explaining that existing project patterns are sufficient. Review relevant code in ${promptProjectDir} only when needed and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.`;
+      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. This phase may run before spec.md exists, so do not read spec.md unless it is explicitly provided or confirmed to exist. Use the task, prior context.json/requirements.json summaries, and project index first. If no external research is needed, return a compact research.json object with integrations_researched: [], unverified_claims: [], and concise recommendations explaining that existing project patterns are sufficient. Review relevant code in ${promptProjectDir} only when needed and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
       break;
     case 'spec_writer':
       baseMessage = `Write a compact implementation specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}. Use prior phase context as the source of truth; do not re-read context.json or requirements.json unless missing. Keep spec.md focused, normally 40-80 lines for balanced workflow, with overview, files, core behavior, and acceptance checks only.`;

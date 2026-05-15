@@ -248,7 +248,7 @@
     },
     "batchExecution": {
       "label": "Enable batch execution",
-      "description": "Runs compatible subtasks in a shared batch session. Leave off for per-subtask execution."
+      "description": "Runs compatible subtasks in parallel agent sessions. Turn off to execute one subtask at a time."
     },
     "gitOptions": {
       "title": "Git Options (optional)",

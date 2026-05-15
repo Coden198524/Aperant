@@ -12,6 +12,17 @@ vi.mock('node:child_process', () => ({
   execFile: (...args: unknown[]) => mockExecFile(...args),
 }));
 
+vi.mock('node:fs', async () => {
+  const actual = await vi.importActual<typeof import('node:fs')>('node:fs');
+  return {
+    ...actual,
+    existsSync: vi.fn(actual.existsSync),
+    statSync: vi.fn(actual.statSync),
+    readdirSync: vi.fn(actual.readdirSync),
+    readFileSync: vi.fn(actual.readFileSync),
+  };
+});
+
 const mockFindExecutable = vi.fn(() => '/usr/bin/rg');
 
 vi.mock('../../../../platform/index', () => ({
@@ -26,6 +37,7 @@ vi.mock('../../../security/path-containment', () => ({
 }));
 
 import { assertPathContained } from '../../../security/path-containment';
+import * as fs from 'node:fs';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -128,16 +140,30 @@ describe('Grep Tool', () => {
     expect(result).toContain('unknown file type');
   });
 
-  it('should return error when ripgrep is not installed', async () => {
+  it('should use the built-in search fallback when ripgrep is not installed', async () => {
     mockFindExecutable.mockReturnValue(null as unknown as string);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.statSync).mockImplementation((filePath) => ({
+      isDirectory: () => String(filePath) === '/test/project',
+      size: 20,
+    }) as fs.Stats);
+    vi.mocked(fs.readdirSync).mockImplementation((dirPath) => {
+      if (String(dirPath) === '/test/project') {
+        return [
+          { name: 'src', isDirectory: () => true, isFile: () => false },
+          { name: 'README.md', isDirectory: () => false, isFile: () => true },
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+    vi.mocked(fs.readFileSync).mockReturnValue(Buffer.from('hello from fallback\n'));
 
     const result = await grepTool.config.execute(
-      { pattern: 'test' },
+      { pattern: 'fallback', output_mode: 'content' },
       baseContext,
     ) as string;
 
-    expect(result).toContain('Error:');
-    expect(result).toContain('ripgrep');
+    expect(result).toContain('README.md:1:hello from fallback');
   });
 
   it('should include --files-with-matches flag in default mode', async () => {

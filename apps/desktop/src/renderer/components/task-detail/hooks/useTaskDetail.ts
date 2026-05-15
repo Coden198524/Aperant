@@ -224,19 +224,31 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   // Diff is loaded lazily when the user actually opens the dialog because it can be expensive.
   useEffect(() => {
     if (needsReview) {
+      let cancelled = false;
       setIsLoadingWorktree(true);
       setWorkspaceError(null);
       setWorktreeDiff(null);
 
-      window.electronAPI.getWorktreeStatus(task.id, task.projectId).then((statusResult) => {
-        if (statusResult.success && statusResult.data) {
-          setWorktreeStatus(statusResult.data);
-        }
-      }).catch((err) => {
-        console.error('Failed to load worktree info:', err);
-      }).finally(() => {
-        setIsLoadingWorktree(false);
-      });
+      const timer = window.setTimeout(() => {
+        window.electronAPI.getWorktreeStatus(task.id, task.projectId).then((statusResult) => {
+          if (!cancelled && statusResult.success && statusResult.data) {
+            setWorktreeStatus(statusResult.data);
+          }
+        }).catch((err) => {
+          if (!cancelled) {
+            console.error('Failed to load worktree info:', err);
+          }
+        }).finally(() => {
+          if (!cancelled) {
+            setIsLoadingWorktree(false);
+          }
+        });
+      }, 120);
+
+      return () => {
+        cancelled = true;
+        window.clearTimeout(timer);
+      };
     } else {
       setWorktreeStatus(null);
       setWorktreeDiff(null);

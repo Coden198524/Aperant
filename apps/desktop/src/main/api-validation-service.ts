@@ -216,6 +216,18 @@ export async function validateLLMApiKey(
       return validateAnthropicApiKey(apiKey);
     case 'google':
       return validateGoogleApiKey(apiKey);
+    case 'deepseek':
+      if (!apiKey || !apiKey.trim()) {
+        return {
+          success: false,
+          message: 'DeepSeek API key is required',
+        };
+      }
+      return {
+        success: true,
+        message: 'DeepSeek API key format accepted',
+        details: { provider: 'deepseek' },
+      };
     case 'ollama':
       // Ollama is local, no API key needed
       return {

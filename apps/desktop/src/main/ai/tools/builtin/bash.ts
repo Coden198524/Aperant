@@ -101,6 +101,16 @@ function detectFastCommandFailure(command: string): string | null {
     return null;
   }
 
+  const normalized = command.replace(/\r?\n/g, ' ');
+  const hasShellSearch =
+    /(^|[&|;(]\s*|\s)(grep|egrep|fgrep|findstr)(\.exe)?\b/i.test(normalized) ||
+    /\bSelect-String\b/i.test(normalized) ||
+    /\bdir\s+\/s\b/i.test(normalized) ||
+    /(^|[&|;(]\s*|\s)(head|tail|sed|awk|lsof)(\.exe)?\b/i.test(normalized);
+  if (hasShellSearch) {
+    return 'Error: Inefficient Windows search command. Use the Grep tool for content search, Glob for filename search, or Read with a line range for known files. Do not retry the same search through grep/findstr/Select-String/dir/head/sed/awk.';
+  }
+
   const hasPythonHereDoc = /\bpython(?:\d+(?:\.\d+)?)?\b[^\n\r]*(?:<<\s*['"]?\w+['"]?)/i.test(command);
   if (hasPythonHereDoc) {
     return 'Error: Unsupported Windows shell syntax. Bash here-documents such as `python - <<EOF` are not portable here. Use a simple file read or one short command instead of retrying with equivalent shell quoting.';

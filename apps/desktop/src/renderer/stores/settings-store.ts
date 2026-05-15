@@ -345,6 +345,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         providerAccounts: [...state.providerAccounts, newAccount],
         settings: {
           ...state.settings,
+          providerAccounts: [...(state.settings.providerAccounts ?? state.providerAccounts), newAccount],
           globalPriorityOrder: [newAccount.id, ...(state.settings.globalPriorityOrder ?? [])],
           // Also prepend to cross-provider order if it's been initialized
           crossProviderPriorityOrder: state.settings.crossProviderPriorityOrder
@@ -361,7 +362,13 @@ export const useSettingsStore = create<SettingsState>((set) => ({
     if (result.success && result.data) {
       const updatedAccount = result.data;
       set(state => ({
-        providerAccounts: state.providerAccounts.map(a => a.id === id ? updatedAccount : a)
+        providerAccounts: state.providerAccounts.map(a => a.id === id ? updatedAccount : a),
+        settings: {
+          ...state.settings,
+          providerAccounts: (state.settings.providerAccounts ?? state.providerAccounts).map(a =>
+            a.id === id ? updatedAccount : a
+          ),
+        },
       }));
     }
     return result;
@@ -374,6 +381,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
         providerAccounts: state.providerAccounts.filter(a => a.id !== id),
         settings: {
           ...state.settings,
+          providerAccounts: (state.settings.providerAccounts ?? state.providerAccounts).filter(a => a.id !== id),
           globalPriorityOrder: (state.settings.globalPriorityOrder ?? []).filter(qid => qid !== id),
           crossProviderPriorityOrder: state.settings.crossProviderPriorityOrder?.filter(qid => qid !== id),
         },

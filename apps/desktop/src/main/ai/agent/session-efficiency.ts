@@ -10,6 +10,7 @@ export const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
 
 interface PlanLike {
   phases?: unknown[];
+  workflow_type?: unknown;
 }
 
 interface VerificationLike {
@@ -25,13 +26,16 @@ interface VerificationLike {
 
 export interface CoderKickoffSubtaskContext {
   id: string;
+  workflowType?: string;
   title?: string;
   description?: string;
   phaseName?: string;
+  phaseFile?: string;
   filesToCreate: string[];
   filesToModify: string[];
   patternFiles: string[];
   verification?: string | VerificationLike;
+  completedSummaries?: Array<{ id: string; title?: string; summary: string }>;
 }
 
 function toStringArray(value: unknown): string[] {
@@ -47,6 +51,11 @@ function formatBulletList(items: string[]): string {
 
 function formatPathForPrompt(filePath: string): string {
   return filePath.replace(/\\/g, '/');
+}
+
+function shortenForPrompt(value: string, maxLength = 700): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength).trimEnd()}...`;
 }
 
 function formatVerification(verification: string | VerificationLike | undefined): string | null {
@@ -100,6 +109,24 @@ function formatVerification(verification: string | VerificationLike | undefined)
     : '- Follow the verification instructions recorded in implementation_plan.json.';
 }
 
+function isDocumentationContext(context: CoderKickoffSubtaskContext | null): boolean {
+  const workflowType = context?.workflowType?.toLowerCase().trim();
+  if (workflowType === 'documentation') {
+    return true;
+  }
+
+  const text = [
+    context?.title,
+    context?.description,
+    context?.phaseName,
+    ...(context?.filesToCreate ?? []),
+    ...(context?.filesToModify ?? []),
+  ].filter(Boolean).join(' ').toLowerCase();
+
+  return /\b(documentation|document|docs|source analysis|code analysis)\b/.test(text) ||
+    /文档|源码分析|代码分析|实现方案|实现说明/.test(text);
+}
+
 export function findSubtaskKickoffContext(
   plan: unknown,
   subtaskId: string,
@@ -121,9 +148,21 @@ export function findSubtaskKickoffContext(
     const phaseRecord = phase as {
       name?: unknown;
       subtasks?: unknown[];
+      subtasks_file?: unknown;
     };
     const phaseName = typeof phaseRecord.name === 'string' ? phaseRecord.name : undefined;
     const subtasks = Array.isArray(phaseRecord.subtasks) ? phaseRecord.subtasks : [];
+    const completedSummaries = subtasks
+      .filter((item): item is Record<string, unknown> => !!item && typeof item === 'object')
+      .map((item) => ({
+        id: typeof item.id === 'string' ? item.id : '',
+        title: typeof item.title === 'string' ? item.title : undefined,
+        summary: typeof item.completion_summary === 'string'
+          ? shortenForPrompt(item.completion_summary, 500)
+          : '',
+      }))
+      .filter((item) => item.id !== subtaskId && item.id.length > 0 && item.summary.length > 0)
+      .slice(-5);
 
     for (const subtask of subtasks) {
       if (!subtask || typeof subtask !== 'object') {
@@ -143,11 +182,17 @@ export function findSubtaskKickoffContext(
         continue;
       }
 
+      const workflowType = (plan as PlanLike).workflow_type;
+
       return {
         id: subtaskId,
+        workflowType: typeof workflowType === 'string'
+          ? workflowType
+          : undefined,
         title: typeof subtaskRecord.title === 'string' ? subtaskRecord.title : undefined,
         description: typeof subtaskRecord.description === 'string' ? subtaskRecord.description : undefined,
         phaseName,
+        phaseFile: typeof phaseRecord.subtasks_file === 'string' ? phaseRecord.subtasks_file : undefined,
         filesToCreate: toStringArray(subtaskRecord.files_to_create),
         filesToModify: toStringArray(subtaskRecord.files_to_modify),
         patternFiles: toStringArray(subtaskRecord.pattern_files),
@@ -155,7 +200,50 @@ export function findSubtaskKickoffContext(
           || (subtaskRecord.verification && typeof subtaskRecord.verification === 'object')
           ? subtaskRecord.verification as string | VerificationLike
           : undefined,
+        completedSummaries,
       };
+    }
+  }
+
+  return null;
+}
+
+function loadSplitPlanForSubtask(specDir: string, plan: unknown, subtaskId: string): CoderKickoffSubtaskContext | null {
+  if (!plan || typeof plan !== 'object') {
+    return null;
+  }
+
+  const phases = (plan as PlanLike).phases;
+  if (!Array.isArray(phases)) {
+    return null;
+  }
+
+  for (const phase of phases) {
+    if (!phase || typeof phase !== 'object') {
+      continue;
+    }
+
+    const phaseRecord = phase as { subtasks_file?: unknown; name?: unknown };
+    if (typeof phaseRecord.subtasks_file !== 'string' || phaseRecord.subtasks_file.trim().length === 0) {
+      continue;
+    }
+
+    const phasePath = join(specDir, phaseRecord.subtasks_file);
+    if (!existsSync(phasePath)) {
+      continue;
+    }
+
+    try {
+      const phasePlan = JSON.parse(readFileSync(phasePath, 'utf-8')) as unknown;
+      const context = findSubtaskKickoffContext(phasePlan, subtaskId);
+      if (context) {
+        return {
+          ...context,
+          phaseName: context.phaseName ?? (typeof phaseRecord.name === 'string' ? phaseRecord.name : undefined),
+          phaseFile: phaseRecord.subtasks_file,
+        };
+      }
+    } catch {
     }
   }
 
@@ -174,7 +262,7 @@ function readSubtaskKickoffContext(
   try {
     const raw = readFileSync(planPath, 'utf-8');
     const plan = JSON.parse(raw) as unknown;
-    return findSubtaskKickoffContext(plan, subtaskId);
+    return findSubtaskKickoffContext(plan, subtaskId) ?? loadSplitPlanForSubtask(specDir, plan, subtaskId);
   } catch {
     return null;
   }
@@ -188,6 +276,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
 ): string {
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
+  const documentationOnly = isDocumentationContext(context);
   const lines: string[] = [
     `Implement ONLY subtask "${subtaskId}".`,
     `Project root: ${promptProjectDir}.`,
@@ -200,8 +289,14 @@ export function buildFocusedCoderKickoffMessageFromContext(
   if (context) {
     lines.push('');
     lines.push('## Current Subtask');
+    if (context.workflowType) {
+      lines.push(`- Workflow: ${context.workflowType}`);
+    }
     if (context.phaseName) {
       lines.push(`- Phase: ${context.phaseName}`);
+    }
+    if (context.phaseFile) {
+      lines.push(`- Phase plan: ${formatPathForPrompt(context.phaseFile)}`);
     }
     if (context.title) {
       lines.push(`- Title: ${context.title}`);
@@ -214,6 +309,16 @@ export function buildFocusedCoderKickoffMessageFromContext(
     lines.push(`Read ${promptSpecDir}/implementation_plan.json, locate subtask "${subtaskId}", and implement only that subtask.`);
   }
 
+  if (context?.completedSummaries?.length) {
+    lines.push('');
+    lines.push('## Prior Completed Work In This Phase');
+    lines.push('Use this as context instead of rereading completed subtask files unless the current edit requires exact local lines:');
+    for (const item of context.completedSummaries) {
+      const label = item.title ? `${item.id} ${item.title}` : item.id;
+      lines.push(`- ${label}: ${item.summary}`);
+    }
+  }
+
   lines.push('');
   lines.push('## File Focus');
 
@@ -224,8 +329,15 @@ export function buildFocusedCoderKickoffMessageFromContext(
   if (readFirst.length > 0) {
     lines.push('Read only these files first:');
     lines.push(formatBulletList(readFirst));
+    if (documentationOnly) {
+      lines.push('For documentation analysis, treat glob-like hints as the maximum scope. Do not expand to a full repository listing.');
+    }
   } else if (context?.filesToCreate.length) {
-    lines.push('No existing file read is required. Create or overwrite/update the listed output files directly unless the task is ambiguous.');
+    if (documentationOnly) {
+      lines.push('Create or overwrite/update the listed documentation output after reading only the smallest source set needed to explain the requested subject.');
+    } else {
+      lines.push('No existing file read is required. Create or overwrite/update the listed output files directly unless the task is ambiguous.');
+    }
   } else if (context) {
     lines.push('No file focus was provided by the plan. If the request clearly creates new output, choose conventional target files directly. If it modifies existing code, do at most one narrow root-file check before editing. Do not run repeated globs or broad scans.');
   } else {
@@ -248,7 +360,18 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('');
   lines.push('## Execution Rules');
   if (context) {
-    lines.push('- The Current Subtask section above is already loaded from the plan. Do not read spec.md or implementation_plan.json before implementation.');
+    lines.push('- The Current Subtask section above is already loaded from the plan. Do not read spec.md, implementation_plan.json, or phase plan files before implementation.');
+  }
+  if (documentationOnly) {
+    lines.push('- Documentation-only workflow: do not edit product source files and do not run builds, tests, or AI QA.');
+    lines.push('- Do not call `Glob` with `**/*` or any all-repository recursive pattern. Use targeted source-directory or extension patterns and exclude generated/dependency directories.');
+    lines.push('- Ignore generated or dependency directories such as build, dist, out, target, .git, .autocode, node_modules, vendor, and third_party.');
+    lines.push('- Quality comes first: read enough relevant source files to cover the requested document. For small projects, reading all product source files is acceptable after excluding generated directories.');
+    lines.push('- Start with listed hints, manifests, entry files, and public interfaces, then expand through imports/includes/build manifests until the architecture and main behavior are covered.');
+    lines.push('- Avoid duplicate whole-file reads. Summarize relationships instead of copying source, and only include short code excerpts when they materially improve the document.');
+    lines.push('- For documentation outputs, call Write directly for the target Markdown file. Do not pre-create the parent directory with Bash unless Write fails because the directory is missing.');
+    lines.push('- After Write succeeds, do not read the generated Markdown back. Treat the successful Write result as verification; use at most one simple existence check only if the tool result is ambiguous.');
+    lines.push('- Write structured Markdown with tables and short bullets. Avoid long prose and avoid embedding large code excerpts.');
   }
   lines.push('- Focus on this one subtask until it is done.');
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');

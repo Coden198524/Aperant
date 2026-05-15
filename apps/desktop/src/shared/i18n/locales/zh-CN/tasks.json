@@ -288,7 +288,7 @@
     },
     "batchExecution": {
       "label": "启用批次执行",
-      "description": "将兼容的子任务放在共享批次会话中执行。关闭时按单个子任务执行。"
+      "description": "将兼容的子任务放在并行智能体会话中执行。关闭后一次只执行一个子任务。"
     },
     "gitOptions": {
       "title": "Git 选项（可选）",

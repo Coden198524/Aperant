@@ -6,8 +6,6 @@
  * Used by worker threads, runners (insights, roadmap, ideation), and the client factory.
  */
 
-import { isCommandAvailable } from '../../env-utils';
-
 import { ToolRegistry } from './registry';
 import type { DefinedTool } from './define';
 
@@ -43,9 +41,7 @@ export function buildToolRegistry(): ToolRegistry {
   registry.registerTool('Edit', asDefined(editTool));
   registry.registerTool('Bash', asDefined(bashTool));
   registry.registerTool('Glob', asDefined(globTool));
-  if (isCommandAvailable('rg')) {
-    registry.registerTool('Grep', asDefined(grepTool));
-  }
+  registry.registerTool('Grep', asDefined(grepTool));
   registry.registerTool('WebFetch', asDefined(webFetchTool));
   if (isSearchProviderConfigured()) {
     registry.registerTool('WebSearch', asDefined(webSearchTool));
