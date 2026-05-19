@@ -21,6 +21,7 @@ import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 // ---------------------------------------------------------------------------
 
 const inputSchema = z.object({
+  // This is the source path being documented, not the file this tool writes.
   file_path: z.string().describe('Path to the file or module being documented'),
   description: z.string().describe('What was discovered about this file or module'),
   category: z
@@ -49,6 +50,7 @@ export const recordDiscoveryTool = Tool.define({
       'Record a codebase discovery to session memory. Use this when you learn something important about the codebase structure or behavior.',
     permission: ToolPermission.Auto,
     executionOptions: DEFAULT_EXECUTION_OPTIONS,
+    writePathInputKeys: [],
   },
   inputSchema,
   execute: (input, context) => {

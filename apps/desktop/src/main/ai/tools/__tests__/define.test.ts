@@ -1,6 +1,9 @@
 import { describe, it, expect } from 'vitest';
+import { z } from 'zod/v3';
 
-import { sanitizeFilePathArg } from '../define';
+import { Tool, sanitizeFilePathArg } from '../define';
+import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
+import type { ToolContext } from '../types';
 
 // =============================================================================
 // sanitizeFilePathArg
@@ -53,5 +56,65 @@ describe('sanitizeFilePathArg', () => {
     const input: Record<string, unknown> = { file_path: 'src/components/App.tsx' };
     sanitizeFilePathArg(input);
     expect(input.file_path).toBe('src/components/App.tsx');
+  });
+});
+
+// =============================================================================
+// write-path containment
+// =============================================================================
+
+const baseContext: ToolContext = {
+  cwd: '/test/project',
+  projectDir: '/test/project',
+  specDir: '/test/project/.autocode/specs/003-task',
+  securityProfile: {
+    baseCommands: new Set(),
+    stackCommands: new Set(),
+    scriptCommands: new Set(),
+    customCommands: new Set(),
+    customScripts: { shellScripts: [] },
+    getAllAllowedCommands: () => new Set(),
+  },
+  allowedWritePaths: ['/test/project/.autocode/specs/003-task'],
+} as ToolContext;
+
+describe('Tool.define write-path containment', () => {
+  it('checks file_path by default for non-read-only tools', async () => {
+    const writeLikeTool = Tool.define({
+      metadata: {
+        name: 'WriteLike',
+        description: 'Test write-like tool',
+        permission: ToolPermission.Auto,
+        executionOptions: DEFAULT_EXECUTION_OPTIONS,
+      },
+      inputSchema: z.object({ file_path: z.string() }),
+      execute: () => 'ok',
+    });
+
+    const boundTool = writeLikeTool.bind(baseContext);
+
+    await expect(
+      boundTool.execute?.({ file_path: 'Designer/Setting/' }, {} as never),
+    ).rejects.toThrow('Write denied: WriteLike cannot write to Designer/Setting/');
+  });
+
+  it('allows tools with no input write path to use file_path as a reference', async () => {
+    const referenceTool = Tool.define({
+      metadata: {
+        name: 'ReferenceRecorder',
+        description: 'Records a referenced project path',
+        permission: ToolPermission.Auto,
+        executionOptions: DEFAULT_EXECUTION_OPTIONS,
+        writePathInputKeys: [],
+      },
+      inputSchema: z.object({ file_path: z.string() }),
+      execute: (input) => `recorded:${input.file_path}`,
+    });
+
+    const boundTool = referenceTool.bind(baseContext);
+
+    await expect(
+      boundTool.execute?.({ file_path: 'Designer/Setting/' }, {} as never),
+    ).resolves.toBe('recorded:Designer/Setting/');
   });
 });

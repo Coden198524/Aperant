@@ -96,6 +96,13 @@ export interface ToolMetadata {
   permission: ToolPermission;
   /** Default execution options */
   executionOptions: ToolExecutionOptions;
+  /**
+   * Input keys that contain user-supplied write paths for allowedWritePaths checks.
+   *
+   * Defaults to ['file_path'] for backwards compatibility. Use [] for tools
+   * that write only to internal context-derived paths.
+   */
+  writePathInputKeys?: string[];
 }
 
 /**

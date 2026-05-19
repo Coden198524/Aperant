@@ -164,8 +164,11 @@ function define<TInput extends z.ZodType, TOutput>(
         // Write-path containment: reject writes outside allowed directories
         // Only applies to tools that can modify files (Write, Edit) — not read-only tools
         if (context.allowedWritePaths?.length && metadata.permission !== ToolPermission.ReadOnly) {
-          const writePath = (input as Record<string, unknown>).file_path as string | undefined;
-          if (writePath) {
+          const writePathInputKeys = metadata.writePathInputKeys ?? ['file_path'];
+          for (const key of writePathInputKeys) {
+            const writePath = (input as Record<string, unknown>)[key] as string | undefined;
+            if (!writePath) continue;
+
             const resolved = resolve(writePath);
             const allowed = context.allowedWritePaths.some(dir => resolved.startsWith(resolve(dir)));
             if (!allowed) {

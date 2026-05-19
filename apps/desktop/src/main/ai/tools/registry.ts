@@ -118,9 +118,14 @@ export class ToolRegistry {
   ): Record<string, AITool> {
     const config = getAgentConfig(agentType);
     const allowedNames = new Set([...config.tools, ...config.autoClaudeTools]);
+    const hasSubagentExecutor =
+      Boolean((context as ToolContext & { subagentExecutor?: unknown }).subagentExecutor);
     const result: Record<string, AITool> = {};
 
     for (const [name, definedTool] of Array.from(this.tools.entries())) {
+      if (name === 'SpawnSubagent' && !hasSubagentExecutor) {
+        continue;
+      }
       if (allowedNames.has(name)) {
         result[name] = definedTool.bind(context);
       }

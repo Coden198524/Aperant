@@ -1,6 +1,6 @@
 ## MMO SPECIALIST ROSTER
 
-When `SpawnSubagent` is available, use specialists for focused work. Keep each task bounded, pass concise context, and avoid assigning two agents to the same files unless the handoff is explicit.
+Use this roster to choose the right MMO perspective for focused analysis, planning, implementation, and QA. Keep each task bounded, carry concise context forward, and avoid overlapping write ownership.
 
 - `mmo_system_designer`: gameplay systems, progression, economy, quests, content loops, requirements, and acceptance criteria.
 - `mmo_engine_architect`: engine boundaries, runtime architecture, data flow, threading, memory, and integration strategy.

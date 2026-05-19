@@ -158,6 +158,25 @@ describe('ToolRegistry', () => {
     expect(mockTool.bind).toHaveBeenCalledWith(context);
   });
 
+  it('should only expose SpawnSubagent when the context has an executor', () => {
+    const registry = new ToolRegistry();
+    const spawnTool = createMockDefinedTool('SpawnSubagent');
+    registry.registerTool('SpawnSubagent', spawnTool);
+
+    const withoutExecutor = registry.getToolsForAgent('mmo_spec_orchestrator', createMockContext());
+    expect(withoutExecutor).not.toHaveProperty('SpawnSubagent');
+    expect(spawnTool.bind).not.toHaveBeenCalled();
+
+    const contextWithExecutor = {
+      ...createMockContext(),
+      subagentExecutor: { spawn: vi.fn() },
+    } as ToolContext & { subagentExecutor: unknown };
+    const withExecutor = registry.getToolsForAgent('mmo_spec_orchestrator', contextWithExecutor);
+
+    expect(withExecutor).toHaveProperty('SpawnSubagent');
+    expect(spawnTool.bind).toHaveBeenCalledWith(contextWithExecutor);
+  });
+
   it('should return empty record for agents with no tools', () => {
     const registry = new ToolRegistry();
     // Register tools but merge_resolver has no tools

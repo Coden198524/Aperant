@@ -2168,7 +2168,7 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
       '- Prefer narrow reads and focused edits. Validate with targeted project checks when available.',
     ];
     if (agentType === 'mmo_spec_orchestrator' || agentType === 'mmo_build_orchestrator') {
-      shared.push('', buildMmoSpecialistList(), '', 'Use SpawnSubagent for focused MMO specialist reviews when that tool is available.');
+      shared.push('', buildMmoSpecialistList(), '', 'Use this roster as a coverage checklist for focused MMO review; work directly with the tools available in this session.');
     }
     if (agentType === 'mmo_system_designer') {
       shared.push('', 'Create implementation_plan.json with executable subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending".');
