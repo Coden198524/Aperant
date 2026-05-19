@@ -9,6 +9,7 @@ import * as os from 'os';
 import type { TerminalProcess, WindowGetter } from './types';
 import { getTerminalSessionStore, type TerminalSession } from '../terminal-session-store';
 import { IPC_CHANNELS } from '../../shared/constants';
+import type { SupportedCLI } from '../../shared/types/settings';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 import { safeSendToRenderer } from '../ipc-handlers/utils';
 
@@ -159,10 +160,12 @@ function createSessionObject(terminal: TerminalProcess): TerminalSession {
     isCLIMode: terminal.isCLIMode,
     activeCLI: terminal.activeCLI,
     claudeSessionId: terminal.claudeSessionId,
+    dangerouslySkipPermissions: terminal.dangerouslySkipPermissions,
     outputBuffer: terminal.outputBuffer,
     createdAt: new Date().toISOString(),
     lastActiveAt: new Date().toISOString(),
     worktreeConfig: terminal.worktreeConfig,
+    deepseekState: terminal.deepseekState,
   };
 }
 
@@ -265,9 +268,9 @@ export function updateClaudeSessionId(
 /**
  * Get saved sessions for a project
  */
-export function getSavedSessions(projectPath: string): TerminalSession[] {
+export function getSavedSessions(projectPath: string, cli?: SupportedCLI): TerminalSession[] {
   const store = getTerminalSessionStore();
-  return store.getSessions(projectPath);
+  return store.getSessions(projectPath, cli);
 }
 
 /**
@@ -282,18 +285,19 @@ export function clearSavedSessions(projectPath: string): void {
  * Get available session dates
  */
 export function getAvailableSessionDates(
-  projectPath?: string
+  projectPath?: string,
+  cli?: SupportedCLI
 ): import('../terminal-session-store').SessionDateInfo[] {
   const store = getTerminalSessionStore();
-  return store.getAvailableDates(projectPath);
+  return store.getAvailableDates(projectPath, cli);
 }
 
 /**
  * Get sessions for a specific date
  */
-export function getSessionsForDate(date: string, projectPath: string): TerminalSession[] {
+export function getSessionsForDate(date: string, projectPath: string, cli?: SupportedCLI): TerminalSession[] {
   const store = getTerminalSessionStore();
-  return store.getSessionsForDate(date, projectPath);
+  return store.getSessionsForDate(date, projectPath, cli);
 }
 
 /**

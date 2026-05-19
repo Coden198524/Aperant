@@ -385,9 +385,24 @@ export function TaskFiles({ task }: TaskFilesProps) {
 
   const markdownComponents = useMemo<Components>(() => ({
     a: ({ href, children }) => (
-      <a href={href} target="_blank" rel="noreferrer">
+      <a href={href} target="_blank" rel="noreferrer" className="text-primary underline-offset-2 hover:underline">
         {children}
       </a>
+    ),
+    blockquote: ({ children }) => (
+      <blockquote className="my-3 rounded-r-md border-l-4 border-primary/50 bg-muted/60 px-4 py-2 text-foreground/90 [&_*]:text-foreground/90">
+        {children}
+      </blockquote>
+    ),
+    code: ({ children, className }) => (
+      <code className={cn('rounded bg-muted px-1 py-0.5 font-mono text-[0.85em] text-foreground', className)}>
+        {children}
+      </code>
+    ),
+    pre: ({ children }) => (
+      <pre className="my-4 overflow-x-auto rounded-md border border-border bg-muted/50 p-3 text-foreground">
+        {children}
+      </pre>
     ),
     table: ({ children }) => (
       <div className="my-4 overflow-x-auto">
@@ -494,7 +509,7 @@ export function TaskFiles({ task }: TaskFilesProps) {
     // Render markdown files in reading mode.
     if (selectedFileKind === 'markdown') {
       return (
-        <div className="prose prose-sm dark:prose-invert max-w-none p-4 prose-p:text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground/90 prose-pre:overflow-x-auto prose-a:break-all">
+        <div className="prose prose-sm dark:prose-invert max-w-none p-4 prose-p:text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground prose-li:text-foreground/90 prose-pre:overflow-x-auto prose-a:break-all prose-blockquote:not-italic prose-blockquote:text-foreground/90">
           <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
             {fileContent}
           </ReactMarkdown>

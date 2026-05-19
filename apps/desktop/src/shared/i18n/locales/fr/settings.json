@@ -299,8 +299,8 @@
     },
     "yoloMode": {
       "label": "Mode YOLO",
-      "description": "Démarrer Claude avec le flag --dangerously-skip-permissions, contournant toutes les invites de sécurité. À utiliser avec une extrême prudence.",
-      "warning": "Ce mode contourne le système de permissions de Claude. N'activez que si vous faites entièrement confiance au code exécuté."
+      "description": "Démarrer Claude et Codex avec les options de contournement des permissions, en ignorant les invites de sécurité. À utiliser avec une extrême prudence.",
+      "warning": "Ce mode contourne les systèmes de permissions de Claude et Codex. N'activez que si vous faites entièrement confiance au code exécuté."
     },
     "codeGraph": {
       "label": "Optimisation du graphe de code",
@@ -359,6 +359,12 @@
     "general": {
       "title": "Général",
       "description": "Auto-Build et configuration de l'agent",
+      "projectType": {
+        "label": "Type de projet",
+        "general": "Logiciel général",
+        "gameMmo": "MMO / grand jeu en ligne",
+        "description": "Sélectionne le profil d'agents utilisé pour les specs, la planification, le codage et la QA."
+      },
       "useClaudeMd": "Utiliser CLAUDE.md",
       "useClaudeMdDescription": "Inclure les instructions CLAUDE.md dans le contexte de l'agent"
     },

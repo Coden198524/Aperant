@@ -108,6 +108,9 @@ export const workspaceMock = {
       ],
       terminals: [
         { id: 'system', name: 'System Terminal', path: '', installed: true }
+      ],
+      clis: [
+        { id: 'deepseek', name: 'DeepSeek', path: 'built-in', installed: true }
       ]
     }
   })

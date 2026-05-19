@@ -79,6 +79,8 @@ export const DEFAULT_APP_SETTINGS = {
 
 export const DEFAULT_PROJECT_SETTINGS = {
   model: 'opus',
+  projectType: 'general' as const,
+  preferredCLI: undefined as import('../types/settings').SupportedCLI | undefined,
   memoryBackend: 'file' as const,
   linearSync: false,
   notifications: {

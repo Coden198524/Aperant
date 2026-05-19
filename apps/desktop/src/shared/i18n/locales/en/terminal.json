@@ -1,4 +1,5 @@
 {
+  "taskContextPrompt": "Please read task \"{{title}}\": {{description}}. Confirm receipt, then wait for my next instruction.",
   "expand": {
     "expand": "Expand terminal",
     "collapse": "Collapse terminal"

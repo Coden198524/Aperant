@@ -272,6 +272,20 @@ describe('ProjectStore', () => {
       const content = JSON.parse(readFileSync(storePath, 'utf-8'));
       expect(content.projects[0].settings.model).toBe('sonnet');
     });
+
+    it('should persist project-specific smart terminal CLI preference', async () => {
+      const { ProjectStore } = await import('../project-store');
+      const store = new ProjectStore();
+
+      const project = store.addProject(TEST_PROJECT_PATH);
+      const updated = store.updateProjectSettings(project.id, { preferredCLI: 'deepseek' });
+
+      expect(updated?.settings.preferredCLI).toBe('deepseek');
+
+      const storePath = path.join(USER_DATA_PATH, 'store', 'projects.json');
+      const content = JSON.parse(readFileSync(storePath, 'utf-8'));
+      expect(content.projects[0].settings.preferredCLI).toBe('deepseek');
+    });
   });
 
   describe('getTasks', () => {

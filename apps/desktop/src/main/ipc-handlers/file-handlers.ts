@@ -1,13 +1,37 @@
 import { ipcMain, shell } from 'electron';
+import { execFileSync } from 'child_process';
 import { readdirSync } from 'fs';
-import { readFile, stat } from 'fs/promises';
+import { readFile, stat, writeFile } from 'fs/promises';
 import path from 'path';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { IPCResult, FileNode } from '../../shared/types';
+import { getToolPath } from '../cli-tool-manager';
+import { getIsolatedGitEnv } from '../utils/git-isolation';
 
 // Maximum file size to read (10MB for JSON files, 1MB for others)
 const MAX_FILE_SIZE = 1024 * 1024;
 const MAX_JSON_FILE_SIZE = 10 * 1024 * 1024;
+const MAX_IMAGE_FILE_SIZE = 25 * 1024 * 1024;
+
+const IMAGE_MIME_TYPES = new Map([
+  ['.avif', 'image/avif'],
+  ['.bmp', 'image/bmp'],
+  ['.gif', 'image/gif'],
+  ['.ico', 'image/x-icon'],
+  ['.jpeg', 'image/jpeg'],
+  ['.jpg', 'image/jpeg'],
+  ['.png', 'image/png'],
+  ['.svg', 'image/svg+xml'],
+  ['.webp', 'image/webp']
+]);
+
+function getMaxFileSize(filePath: string): number {
+  return filePath.toLowerCase().endsWith('.json') ? MAX_JSON_FILE_SIZE : MAX_FILE_SIZE;
+}
+
+function getImageMimeType(filePath: string): string | null {
+  return IMAGE_MIME_TYPES.get(path.extname(filePath).toLowerCase()) ?? null;
+}
 
 /**
  * Validates and normalizes a file path for safe reading.
@@ -30,6 +54,62 @@ function validatePath(filePath: string): { valid: true; path: string } | { valid
   }
 
   return { valid: true, path: resolvedPath };
+}
+
+function validatePathInsideProject(
+  projectPath: string,
+  filePath: string
+): { valid: true; projectPath: string; filePath: string; relativePath: string } | { valid: false; error: string } {
+  const projectValidation = validatePath(projectPath);
+  if (!projectValidation.valid) {
+    return { valid: false, error: projectValidation.error };
+  }
+
+  const fileValidation = validatePath(filePath);
+  if (!fileValidation.valid) {
+    return { valid: false, error: fileValidation.error };
+  }
+
+  const relativePath = path.relative(projectValidation.path, fileValidation.path);
+  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
+    return { valid: false, error: 'File must be inside the project directory' };
+  }
+
+  return {
+    valid: true,
+    projectPath: projectValidation.path,
+    filePath: fileValidation.path,
+    relativePath
+  };
+}
+
+function parseGitStatusPaths(statusOutput: string): string[] {
+  const paths: string[] = [];
+
+  for (const rawLine of statusOutput.split(/\r?\n/)) {
+    const line = rawLine.trimEnd();
+    if (!line) continue;
+
+    let filePath = line.slice(3).trim();
+    const renameSeparator = ' -> ';
+    if (filePath.includes(renameSeparator)) {
+      filePath = filePath.slice(filePath.indexOf(renameSeparator) + renameSeparator.length);
+    }
+
+    if (filePath.startsWith('"') && filePath.endsWith('"')) {
+      try {
+        filePath = JSON.parse(filePath) as string;
+      } catch {
+        filePath = filePath.slice(1, -1);
+      }
+    }
+
+    if (filePath) {
+      paths.push(filePath);
+    }
+  }
+
+  return paths;
 }
 
 // Directories to ignore when listing
@@ -109,9 +189,7 @@ export function registerFileHandlers(): void {
         const safePath = validation.path;
         console.log('[FILE_EXPLORER_READ] Normalized path:', safePath);
 
-        // Determine max size based on file type
-        const isJsonFile = safePath.toLowerCase().endsWith('.json');
-        const maxSize = isJsonFile ? MAX_JSON_FILE_SIZE : MAX_FILE_SIZE;
+        const maxSize = getMaxFileSize(safePath);
 
         // Use async file read to avoid blocking; check size after reading to avoid TOCTOU
         const content = await readFile(safePath, 'utf-8');
@@ -129,6 +207,154 @@ export function registerFileHandlers(): void {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to read file'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_EXPLORER_READ_IMAGE,
+    async (_, filePath: string): Promise<IPCResult<{ dataUrl: string; mimeType: string; size: number }>> => {
+      try {
+        const validation = validatePath(filePath);
+        if (!validation.valid) {
+          return { success: false, error: validation.error };
+        }
+
+        const safePath = validation.path;
+        const mimeType = getImageMimeType(safePath);
+        if (!mimeType) {
+          return { success: false, error: 'Unsupported image file type' };
+        }
+
+        const fileStat = await stat(safePath);
+        if (fileStat.isDirectory()) {
+          return { success: false, error: 'Path must be a file' };
+        }
+        if (fileStat.size > MAX_IMAGE_FILE_SIZE) {
+          return { success: false, error: 'Image too large (max 25MB)' };
+        }
+
+        const buffer = await readFile(safePath);
+        return {
+          success: true,
+          data: {
+            dataUrl: `data:${mimeType};base64,${buffer.toString('base64')}`,
+            mimeType,
+            size: buffer.length
+          }
+        };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to read image file'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_EXPLORER_WRITE,
+    async (_, filePath: string, content: string): Promise<IPCResult<void>> => {
+      try {
+        if (typeof content !== 'string') {
+          return { success: false, error: 'Content must be a string' };
+        }
+
+        const validation = validatePath(filePath);
+        if (!validation.valid) {
+          return { success: false, error: validation.error };
+        }
+
+        const safePath = validation.path;
+        const fileStat = await stat(safePath);
+        if (fileStat.isDirectory()) {
+          return { success: false, error: 'Path must be a file' };
+        }
+
+        const maxSize = getMaxFileSize(safePath);
+        const fileSize = Buffer.byteLength(content, 'utf-8');
+        if (fileSize > maxSize) {
+          const maxSizeMB = maxSize / (1024 * 1024);
+          return { success: false, error: `File too large (max ${maxSizeMB}MB)` };
+        }
+
+        await writeFile(safePath, content, 'utf-8');
+        return { success: true };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to write file'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_EXPLORER_DIFF,
+    async (_, projectPath: string, filePath: string): Promise<IPCResult<string>> => {
+      try {
+        const validation = validatePathInsideProject(projectPath, filePath);
+        if (!validation.valid) {
+          return { success: false, error: validation.error };
+        }
+
+        const git = getToolPath('git');
+        const commonOptions = {
+          cwd: validation.projectPath,
+          encoding: 'utf-8' as const,
+          stdio: 'pipe' as const,
+          timeout: 5000,
+          env: getIsolatedGitEnv()
+        };
+
+        try {
+          const status = execFileSync(git, ['status', '--porcelain', '--', validation.relativePath], commonOptions);
+          if (status.trim().startsWith('??')) {
+            return { success: true, data: `__AUTOCODE_UNTRACKED__\n${status}` };
+          }
+        } catch {
+          // Continue to diff. Non-git folders or git failures are reported below.
+        }
+
+        const unstagedDiff = execFileSync(git, ['diff', '--', validation.relativePath], commonOptions);
+        const stagedDiff = execFileSync(git, ['diff', '--cached', '--', validation.relativePath], commonOptions);
+        return { success: true, data: `${unstagedDiff}\n${stagedDiff}`.trim() };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get file diff'
+        };
+      }
+    }
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.FILE_EXPLORER_CHANGED_FILES,
+    async (_, projectPath: string): Promise<IPCResult<string[]>> => {
+      try {
+        const validation = validatePath(projectPath);
+        if (!validation.valid) {
+          return { success: false, error: validation.error };
+        }
+
+        const output = execFileSync(
+          getToolPath('git'),
+          ['status', '--porcelain', '--untracked-files=all'],
+          {
+            cwd: validation.path,
+            encoding: 'utf-8',
+            stdio: 'pipe',
+            timeout: 5000,
+            env: getIsolatedGitEnv()
+          }
+        );
+
+        return { success: true, data: parseGitStatusPaths(output) };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to get changed files'
         };
       }
     }

@@ -303,8 +303,8 @@
     },
     "yoloMode": {
       "label": "YOLO Mode",
-      "description": "Start Claude with --dangerously-skip-permissions flag, bypassing all safety prompts. Use with extreme caution.",
-      "warning": "This mode bypasses Claude's permission system. Only enable if you fully trust the code being executed."
+      "description": "Start Claude and Codex with permission-bypass flags, skipping safety prompts. Use with extreme caution.",
+      "warning": "This mode bypasses Claude and Codex permission systems. Only enable if you fully trust the code being executed."
     },
     "codeGraph": {
       "label": "Code Graph Optimization",
@@ -363,6 +363,12 @@
     "general": {
       "title": "General",
       "description": "Auto-Build and agent config",
+      "projectType": {
+        "label": "Project Type",
+        "general": "General software",
+        "gameMmo": "MMO / large online game",
+        "description": "Selects the agent profile used by spec, planning, coding, and QA workflows."
+      },
       "useClaudeMd": "Use CLAUDE.md",
       "useClaudeMdDescription": "Include CLAUDE.md instructions in agent context"
     },

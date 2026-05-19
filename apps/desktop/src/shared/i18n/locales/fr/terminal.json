@@ -1,4 +1,5 @@
 {
+  "taskContextPrompt": "Veuillez lire la tache \"{{title}}\" : {{description}}. Confirmez la reception, puis attendez ma prochaine instruction.",
   "expand": {
     "expand": "Agrandir le terminal",
     "collapse": "Reduire le terminal"

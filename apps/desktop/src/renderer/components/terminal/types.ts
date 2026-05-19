@@ -1,5 +1,5 @@
 import type { SyntheticListenerMap } from '@dnd-kit/core/dist/hooks/utilities';
-import type { Task, ExecutionPhase } from '../../../shared/types';
+import type { SupportedCLI, Task, ExecutionPhase } from '../../../shared/types';
 import type { TerminalStatus } from '../../stores/terminal-store';
 import { Circle, Search, Code2, Wrench, CheckCircle2, AlertCircle, PauseCircle, KeyRound } from 'lucide-react';
 
@@ -21,6 +21,8 @@ export interface TerminalProps {
   isExpanded?: boolean;
   /** Callback to toggle expanded state */
   onToggleExpand?: () => void;
+  /** Project-level default CLI for starting smart terminal sessions */
+  defaultCLI?: SupportedCLI;
 }
 
 /**

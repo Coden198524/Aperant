@@ -41,15 +41,28 @@ import type {
  * @param customPath - Optional absolute path for 'custom' CLI
  * @returns The command string to write to the PTY
  */
-function getCLICommand(cli: SupportedCLI, customPath?: string): string {
+const CLAUDE_YOLO_MODE_FLAG = ' --dangerously-skip-permissions';
+const CODEX_YOLO_MODE_FLAG = ' --dangerously-bypass-approvals-and-sandbox';
+
+export function getCLIPermissionBypassFlag(cli: SupportedCLI, dangerouslySkipPermissions?: boolean): string {
+  if (!dangerouslySkipPermissions) return '';
+  if (cli === 'claude-code') return CLAUDE_YOLO_MODE_FLAG;
+  if (cli === 'codex') return CODEX_YOLO_MODE_FLAG;
+  return '';
+}
+
+export function getCLICommand(cli: SupportedCLI, customPath?: string, dangerouslySkipPermissions?: boolean): string {
   if (cli === 'custom' && customPath) return customPath;
   const commands: Record<string, string> = {
+    'claude-code': 'claude',
     'gemini': 'gemini',
     'opencode': 'opencode',
     'kilocode': 'kilocode',
     'codex': 'codex',
+    'deepseek': 'deepseek',
   };
-  return commands[cli] ?? cli;
+  const command = commands[cli] ?? cli;
+  return `${command}${getCLIPermissionBypassFlag(cli, dangerouslySkipPermissions)}`;
 }
 
 // ============================================================================
@@ -234,12 +247,6 @@ function escapeShellCommand(cmd: string): string {
   // Unix/macOS: Wrap in single quotes for bash
   return escapeShellArg(cmd);
 }
-
-/**
- * Flag for YOLO mode (skip all permission prompts)
- * Extracted as constant to ensure consistency across invokeClaude and invokeCLIAsync
- */
-const YOLO_MODE_FLAG = ' --dangerously-skip-permissions';
 
 // ============================================================================
 // SHARED HELPERS - Used by both sync and async invokeClaude
@@ -1025,7 +1032,7 @@ export function invokeClaude(
   debugLog('[ClaudeIntegration:invokeClaude] Dangerously skip permissions:', dangerouslySkipPermissions);
 
   // Compute extra flags for YOLO mode
-  const extraFlags = dangerouslySkipPermissions ? YOLO_MODE_FLAG : undefined;
+  const extraFlags = getCLIPermissionBypassFlag('claude-code', dangerouslySkipPermissions) || undefined;
 
   // Track terminal state for cleanup on error
   const wasClaudeMode = terminal.isCLIMode;
@@ -1169,7 +1176,7 @@ export function resumeClaude(
     }
 
     // Preserve YOLO mode flag from terminal's stored state
-    const extraFlags = terminal.dangerouslySkipPermissions ? YOLO_MODE_FLAG : '';
+    const extraFlags = getCLIPermissionBypassFlag('claude-code', terminal.dangerouslySkipPermissions);
 
     const command = `${pathPrefix}${escapedClaudeCmd} --continue${extraFlags}`;
 
@@ -1231,7 +1238,7 @@ export async function invokeCLIAsync(
     debugLog('[ClaudeIntegration:invokeCLIAsync] Dangerously skip permissions:', dangerouslySkipPermissions);
 
     // Compute extra flags for YOLO mode
-    const extraFlags = dangerouslySkipPermissions ? YOLO_MODE_FLAG : undefined;
+    const extraFlags = getCLIPermissionBypassFlag('claude-code', dangerouslySkipPermissions) || undefined;
 
     terminal.isCLIMode = true;
     // Store YOLO mode setting so it persists across profile switches
@@ -1249,12 +1256,15 @@ export async function invokeCLIAsync(
     if (preferredCLI !== 'claude-code') {
       // Non-Claude CLI: change directory if needed, then run the CLI command directly
       const cwdCommand = buildCdCommand(cwd, terminal.shellType);
-      const command = getCLICommand(preferredCLI, settings?.customCLIPath as string | undefined);
+      const command = getCLICommand(preferredCLI, settings?.customCLIPath as string | undefined, dangerouslySkipPermissions);
       debugLog('[ClaudeIntegration:invokeCLIAsync] Non-Claude CLI dispatch:', { preferredCLI, command });
       if (cwdCommand) {
         PtyManager.writeToPty(terminal, `${cwdCommand}${command}\r`);
       } else {
         PtyManager.writeToPty(terminal, `${command}\r`);
+      }
+      if (terminal.projectPath) {
+        SessionHandler.persistSessionAsync(terminal);
       }
       return;
     }
@@ -1412,7 +1422,7 @@ export async function resumeClaudeAsync(
     }
 
     // Preserve YOLO mode flag from terminal's stored state
-    const extraFlags = terminal.dangerouslySkipPermissions ? YOLO_MODE_FLAG : '';
+    const extraFlags = getCLIPermissionBypassFlag('claude-code', terminal.dangerouslySkipPermissions);
 
     const command = `${pathPrefix}${escapedClaudeCmd} --continue${extraFlags}`;
 

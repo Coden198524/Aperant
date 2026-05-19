@@ -28,6 +28,7 @@ describe('useTerminalFileDrop Hook', () => {
       types?: string[];
       relatedTarget?: Node | null;
       currentTarget?: { contains: (node: Node | null) => boolean };
+      files?: File[];
     } = {}
   ): React.DragEvent<HTMLDivElement> {
     const types = options.types ?? (fileRefData ? ['application/json'] : []);
@@ -43,6 +44,7 @@ describe('useTerminalFileDrop Hook', () => {
         types,
         getData,
         setData: vi.fn(),
+        files: (options.files ?? []) as unknown as FileList,
         effectAllowed: 'none' as DataTransfer['effectAllowed'],
         dropEffect: 'none' as DataTransfer['dropEffect']
       } as unknown as DataTransfer,
@@ -155,6 +157,65 @@ describe('useTerminalFileDrop Hook', () => {
       });
 
       expect(mockSendTerminalInput).toHaveBeenCalledWith('test-terminal-5', "'/path/to/my directory' ");
+    });
+
+    it('should insert an external file path dropped from the operating system', () => {
+      const droppedFile = new File(['content'], 'external file.txt');
+      const getPathForFile = vi.fn(() => 'C:\\Users\\LS\\Desktop\\external file.txt');
+      const { result } = renderHook(() =>
+        useTerminalFileDrop({
+          terminalId: 'test-terminal-external-file',
+          sendTerminalInput: mockSendTerminalInput,
+          getPathForFile
+        })
+      );
+
+      const mockEvent = createMockDragEvent(null, {
+        types: ['Files'],
+        files: [droppedFile]
+      });
+
+      act(() => {
+        result.current.handleNativeDrop(mockEvent);
+      });
+
+      expect(getPathForFile).toHaveBeenCalledWith(droppedFile);
+      expect(mockSendTerminalInput).toHaveBeenCalledWith(
+        'test-terminal-external-file',
+        "'C:\\Users\\LS\\Desktop\\external file.txt' "
+      );
+      expect(mockEvent.preventDefault).toHaveBeenCalled();
+      expect(mockEvent.stopPropagation).toHaveBeenCalled();
+    });
+
+    it('should insert multiple external file and folder paths in one drop', () => {
+      const first = new File(['a'], 'a.txt');
+      const second = new File(['b'], 'folder');
+      const getPathForFile = vi
+        .fn()
+        .mockReturnValueOnce('/tmp/a.txt')
+        .mockReturnValueOnce('/tmp/my folder');
+      const { result } = renderHook(() =>
+        useTerminalFileDrop({
+          terminalId: 'test-terminal-external-multiple',
+          sendTerminalInput: mockSendTerminalInput,
+          getPathForFile
+        })
+      );
+
+      const mockEvent = createMockDragEvent(null, {
+        types: ['Files'],
+        files: [first, second]
+      });
+
+      act(() => {
+        result.current.handleNativeDrop(mockEvent);
+      });
+
+      expect(mockSendTerminalInput).toHaveBeenCalledWith(
+        'test-terminal-external-multiple',
+        "'/tmp/a.txt' '/tmp/my folder' "
+      );
     });
   });
 
@@ -281,6 +342,26 @@ describe('useTerminalFileDrop Hook', () => {
 
       expect(result.current.isNativeDragOver).toBe(false);
       expect(mockEvent.preventDefault).not.toHaveBeenCalled();
+    });
+
+    it('should set isNativeDragOver to true when dataTransfer contains external files', () => {
+      const { result } = renderHook(() =>
+        useTerminalFileDrop({
+          terminalId: 'test-terminal-external-dragover',
+          sendTerminalInput: mockSendTerminalInput
+        })
+      );
+
+      const mockEvent = createMockDragEvent(null, { types: ['Files'] });
+
+      act(() => {
+        result.current.handleNativeDragOver(mockEvent);
+      });
+
+      expect(result.current.isNativeDragOver).toBe(true);
+      expect(mockEvent.preventDefault).toHaveBeenCalled();
+      expect(mockEvent.stopPropagation).toHaveBeenCalled();
+      expect(mockEvent.dataTransfer.dropEffect).toBe('copy');
     });
   });
 
@@ -742,6 +823,7 @@ describe('Terminal File Drop - Component Integration', () => {
         types: fileRefData ? ['application/json'] : [],
         getData,
         setData: vi.fn(),
+        files: [] as unknown as FileList,
         effectAllowed: 'none',
         dropEffect: 'none'
       } as unknown as DataTransfer

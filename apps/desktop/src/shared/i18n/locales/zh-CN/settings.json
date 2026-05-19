@@ -243,8 +243,8 @@
     },
     "yoloMode": {
       "label": "YOLO 模式",
-      "description": "允许智能体在没有确认的情况下运行 Bash 命令（慎用）",
-      "warning": "此模式会绕过 Claude 的权限系统。仅在你完全信任正在执行的代码时启用。"
+      "description": "启动 Claude 和 Codex 时跳过权限确认提示。请谨慎使用。",
+      "warning": "此模式会绕过 Claude 和 Codex 的权限系统。仅在完全信任将执行的代码时启用。"
     },
     "codeGraph": {
       "label": "代码图优化",
@@ -434,6 +434,12 @@
     "general": {
       "title": "常规",
       "description": "自动构建与智能体配置",
+      "projectType": {
+        "label": "项目类型",
+        "general": "通用软件",
+        "gameMmo": "大型网络游戏 / MMO",
+        "description": "选择需求、规划、编码和 QA 工作流使用的智能体配置。"
+      },
       "useClaudeMd": "使用 CLAUDE.md",
       "useClaudeMdDescription": "在智能体上下文中包含 CLAUDE.md 指令"
     },

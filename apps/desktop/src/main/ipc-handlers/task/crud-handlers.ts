@@ -233,7 +233,8 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       // Build metadata with source type
       const taskMetadata: TaskMetadata = {
         sourceType: 'manual',
-        ...metadata
+        ...metadata,
+        enableBatchExecution: metadata?.enableBatchExecution === true
       };
 
       // Process and save attached images

@@ -71,6 +71,7 @@ import {
   type ShardableImplementationPlan,
 } from '../schema/plan-shards';
 import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
+import { resolveProjectAgentProfile } from '../config/project-agent-profile';
 
 // =============================================================================
 // Validation
@@ -579,6 +580,13 @@ function shouldUseProjectPromptProfile(session: SerializableSessionConfig, promp
   return !isDirectTaskSession(session) && promptName !== 'direct_task';
 }
 
+function resolvePromptNameForAgent(agentType: AgentType): string {
+  if (agentType.startsWith('mmo_')) {
+    return agentType;
+  }
+  return agentType === 'coder' ? 'coder' : agentType;
+}
+
 function getProjectPromptProfile(session: SerializableSessionConfig): ProjectPromptProfile | null {
   const profileProjectDir = getPromptProfileProjectDir(session);
   if (
@@ -888,20 +896,20 @@ async function run(): Promise<void> {
       postLog(`MCP init failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // Route to orchestrator for build_orchestrator agent type
-    if (session.agentType === 'build_orchestrator') {
+    // Route to orchestrator for build_orchestrator agent types
+    if (session.agentType === 'build_orchestrator' || session.agentType === 'mmo_build_orchestrator') {
       await runBuildOrchestrator(session, toolContext, registry);
       return;
     }
 
-    // Route to QA loop for qa_reviewer agent type
-    if (session.agentType === 'qa_reviewer') {
+    // Route to QA loop for qa_reviewer agent types
+    if (session.agentType === 'qa_reviewer' || session.agentType === 'mmo_qa_reviewer') {
       await runQALoop(session, toolContext, registry);
       return;
     }
 
-    // Route to spec orchestrator for spec_orchestrator agent type
-    if (session.agentType === 'spec_orchestrator') {
+    // Route to spec orchestrator for spec_orchestrator agent types
+    if (session.agentType === 'spec_orchestrator' || session.agentType === 'mmo_spec_orchestrator') {
       if (session.useAgenticOrchestration) {
         await runAgenticSpecOrchestrator(session, toolContext, registry);
       } else {
@@ -1290,6 +1298,7 @@ async function runBuildOrchestrator(
   postLog('Starting BuildOrchestrator pipeline (planning → coding → QA)');
 
   const workflowConfig = getWorkflowConfigFromMode(session.workflowMode);
+  const agentProfile = resolveProjectAgentProfile(session.projectType);
 
   const orchestrator = new BuildOrchestrator({
     specDir: session.specDir,
@@ -1299,8 +1308,8 @@ async function runBuildOrchestrator(
     language: session.language,
     abortSignal: abortController.signal,
 
-    // Per-task toggle: default on; task metadata can explicitly disable it.
-    enableBatchExecution: session.enableBatchExecution ?? true,
+    // Per-task toggle: batch execution is opt-in until the parallel path is fully stable.
+    enableBatchExecution: session.enableBatchExecution === true,
     batchSize: 'auto', // Auto-detect based on subtask dependencies
     maxBatchRetries: 2,
     maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,
@@ -1308,9 +1317,10 @@ async function runBuildOrchestrator(
     // Apply workflow optimization config based on task's workflowMode
     workflowConfig,
     qualityConfig: getQualityConfigFromWorkflowConfig(workflowConfig),
+    agentProfile,
 
     generatePrompt: async (agentType, _phase, context) => {
-      const promptName = agentType === 'coder' ? 'coder' : agentType;
+      const promptName = resolvePromptNameForAgent(agentType);
       let prompt = await assemblePrompt(promptName, session);
 
       // Inject schema validation error feedback on retry so the planner knows what to fix
@@ -1518,10 +1528,10 @@ async function runQALoop(
     projectDir: session.projectDir,
     maxIterations: isFastWorkflow(session) ? 1 : undefined,
     abortSignal: abortController.signal,
+    agentProfile: resolveProjectAgentProfile(session.projectType),
 
     generatePrompt: async (agentType, _context) => {
-      const promptName = agentType === 'qa_fixer' ? 'qa_fixer' : 'qa_reviewer';
-      return assemblePrompt(promptName, session);
+      return assemblePrompt(resolvePromptNameForAgent(agentType), session);
     },
 
     runSession: async (runConfig) => {
@@ -1639,9 +1649,12 @@ async function runSpecOrchestrator(
     projectIndex: projectIndexContent,
     language: session.language,
     abortSignal: abortController.signal,
+    agentProfile: resolveProjectAgentProfile(session.projectType),
 
     generatePrompt: async (_agentType, phase, context) => {
-      const promptName = specPhaseToPromptName(phase);
+      const promptName = session.projectType === 'game-mmo'
+        ? resolvePromptNameForAgent(_agentType)
+        : specPhaseToPromptName(phase);
       let prompt = await assemblePrompt(promptName, session);
 
       // Inject schema validation error feedback on retry so the agent knows what to fix
@@ -1839,12 +1852,12 @@ async function runAgenticSpecOrchestrator(
 
   // Get tools for the orchestrator (includes SpawnSubagent since it's in AGENT_CONFIGS)
   const tools: Record<string, AITool> = {
-    ...registry.getToolsForAgent('spec_orchestrator', orchestratorToolContext),
+    ...registry.getToolsForAgent(session.agentType, orchestratorToolContext),
     ...(mergeMcpTools(mcpClients) as Record<string, AITool>),
   };
 
   const sessionConfig: SessionConfig = {
-    agentType: 'spec_orchestrator',
+    agentType: session.agentType,
     model,
     systemPrompt,
     initialMessages: [{ role: 'user' as const, content: kickoffMessage }],
@@ -1998,6 +2011,74 @@ function buildSpecKickoffMessage(
   return appendLanguageRequirement(contextSections.join(''), language);
 }
 
+function buildMmoAgentRole(agentType: AgentType): string | null {
+  switch (agentType) {
+    case 'mmo_spec_orchestrator':
+      return 'MMO spec orchestrator: translate product intent into shippable requirements, architecture notes, implementation phases, QA gates, rollout risks, and specialist handoffs for a large online game.';
+    case 'mmo_build_orchestrator':
+      return 'MMO build orchestrator: coordinate system design, engine implementation, online gameplay, QA, performance, security, tools, and release work for a large online game task.';
+    case 'mmo_system_designer':
+      return 'MMO systems designer: define gameplay systems, progression, economy, quests, content loops, constraints, and acceptance criteria that scale to a live online world.';
+    case 'mmo_engine_architect':
+      return 'MMO engine architect: design runtime boundaries, core engine integration, threading, memory, platform abstractions, data flow, and long-term maintainability.';
+    case 'mmo_engine_programmer':
+      return 'MMO engine programmer: implement core engine and runtime code with attention to determinism, memory ownership, threading, platform constraints, and integration boundaries.';
+    case 'mmo_rendering_engineer':
+      return 'MMO rendering engineer: implement rendering, shaders, lighting, visibility, GPU resource, and frame-time sensitive changes.';
+    case 'mmo_animation_engineer':
+      return 'MMO animation engineer: implement animation graphs, character state, movement, blending, replication hooks, and runtime animation performance work.';
+    case 'mmo_asset_pipeline_engineer':
+      return 'MMO asset pipeline engineer: implement import, validation, cooking, dependency tracking, compression, versioning, and content production workflows.';
+    case 'mmo_world_streaming_engineer':
+      return 'MMO world streaming engineer: implement world partitioning, streaming, loading, terrain, scene handoff, shard/zone boundaries, and memory budgets.';
+    case 'mmo_tools_engineer':
+      return 'MMO tools engineer: implement editor, content authoring, GM, debugging, build farm, and production support tools.';
+    case 'mmo_build_release_engineer':
+      return 'MMO build and release engineer: implement build, packaging, patching, deployment, rollback, compatibility, and release automation.';
+    case 'mmo_engine_performance_engineer':
+      return 'MMO engine performance engineer: diagnose and fix CPU, GPU, memory, IO, threading, loading, and network performance issues with measurable budgets.';
+    case 'mmo_server_authority_engineer':
+      return 'MMO server authority engineer: implement authoritative simulation, combat validation, anti-exploit rules, persistence boundaries, and server-side correctness.';
+    case 'mmo_network_sync_engineer':
+      return 'MMO network sync engineer: implement replication, prediction, reconciliation, interest management, protocol compatibility, bandwidth budgets, and latency tolerance.';
+    case 'mmo_client_gameplay_engineer':
+      return 'MMO client gameplay engineer: implement client gameplay, UI, combat feel, quest flow, presentation, and integration with authoritative server behavior.';
+    case 'mmo_data_persistence_engineer':
+      return 'MMO data persistence engineer: implement schema, migrations, save/load, economy/account/inventory data, consistency, and recovery behavior.';
+    case 'mmo_security_anticheat_engineer':
+      return 'MMO security and anti-cheat engineer: evaluate trust boundaries, exploit paths, validation gaps, abuse resistance, telemetry, and secure operational controls.';
+    case 'mmo_liveops_engineer':
+      return 'MMO live operations engineer: implement telemetry, feature flags, events, operational dashboards, staged rollout, observability, and incident-ready controls.';
+    case 'mmo_qa_reviewer':
+      return 'MMO QA reviewer: validate correctness, server authority, client/server sync, performance budgets, streaming, content pipeline, tools, data safety, security, and release risks.';
+    case 'mmo_qa_fixer':
+      return 'MMO QA fixer: fix QA findings while preserving game correctness, server authority, performance budgets, data safety, and release stability.';
+    default:
+      return null;
+  }
+}
+
+function buildMmoSpecialistList(): string {
+  return [
+    'Use MMO specialists when the work touches their domain:',
+    '- mmo_engine_architect for engine boundaries and runtime architecture.',
+    '- mmo_engine_programmer for core engine/runtime implementation.',
+    '- mmo_rendering_engineer for renderer, shaders, lighting, visibility, and GPU budgets.',
+    '- mmo_animation_engineer for animation, movement state, and character runtime.',
+    '- mmo_asset_pipeline_engineer for import, cooking, validation, and content pipeline.',
+    '- mmo_world_streaming_engineer for streaming, terrain, zones, shards, and loading.',
+    '- mmo_tools_engineer for editor, content, GM, and debugging tools.',
+    '- mmo_build_release_engineer for build, patching, deployment, and rollback.',
+    '- mmo_engine_performance_engineer for CPU, GPU, memory, IO, loading, and network budgets.',
+    '- mmo_server_authority_engineer for authoritative gameplay and server validation.',
+    '- mmo_network_sync_engineer for replication, prediction, reconciliation, and interest management.',
+    '- mmo_client_gameplay_engineer for client gameplay, combat feel, quests, and UI integration.',
+    '- mmo_data_persistence_engineer for database, save, migration, economy, and account data.',
+    '- mmo_security_anticheat_engineer for exploits, trust boundaries, abuse prevention, and anti-cheat.',
+    '- mmo_liveops_engineer for telemetry, feature flags, events, observability, and rollout safety.',
+  ].join('\n');
+}
+
 /**
  * Build a kickoff user message for an agent session.
  * The AI SDK requires at least one user message; this provides a concrete task directive.
@@ -2011,8 +2092,21 @@ function buildKickoffMessage(
 ): string {
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
+  const mmoRole = buildMmoAgentRole(agentType);
   let baseMessage: string;
-  switch (agentType) {
+  if (mmoRole) {
+    if (agentType === 'mmo_system_designer') {
+      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.json with concrete phases and subtasks. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
+    } else if (agentType === 'mmo_qa_reviewer') {
+      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.json first, then run one focused project-appropriate verification when available. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+    } else if (agentType === 'mmo_qa_fixer') {
+      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, and update ${promptSpecDir}/qa_report.md or implementation_plan.json to show fixes have been applied.`;
+    } else if (subtaskId) {
+      baseMessage = `${mmoRole}\n\nImplement subtask ${subtaskId} from ${promptSpecDir}/implementation_plan.json in project ${promptProjectDir}. Keep changes scoped, update the subtask status to "completed" when done, and preserve MMO runtime correctness and budgets.`;
+    } else {
+      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/implementation_plan.json and implement the next pending subtask in ${promptProjectDir}. Update its status to "completed" when done.`;
+    }
+  } else switch (agentType) {
     case 'planner':
       baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed implementation plan at ${promptSpecDir}/implementation_plan.json. Project root: ${promptProjectDir}`;
       break;
@@ -2042,7 +2136,7 @@ function buildKickoffMessage(
   }
 
   let kickoffMessage = appendLanguageRequirement(baseMessage, language);
-  if (agentType === 'planner') {
+  if (agentType === 'planner' || agentType === 'mmo_system_designer') {
     const planLanguageRequirement = getImplementationPlanLanguageRequirement(language);
     if (planLanguageRequirement) {
       kickoffMessage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planLanguageRequirement}`;
@@ -2058,6 +2152,35 @@ function buildKickoffMessage(
 function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: string): string {
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
+  const mmoRole = buildMmoAgentRole(agentType);
+  if (mmoRole) {
+    const shared = [
+      mmoRole,
+      '',
+      `Spec directory: ${promptSpecDir}`,
+      `Project root: ${promptProjectDir}`,
+      '',
+      'MMO quality bar:',
+      '- Preserve authoritative server behavior and explicit trust boundaries.',
+      '- Consider client/server sync, rollback/reconciliation, latency, bandwidth, and determinism when relevant.',
+      '- Respect frame-time, memory, IO, streaming, and build/release budgets.',
+      '- Protect content pipeline, migration, save data, live operations, and rollout safety.',
+      '- Prefer narrow reads and focused edits. Validate with targeted project checks when available.',
+    ];
+    if (agentType === 'mmo_spec_orchestrator' || agentType === 'mmo_build_orchestrator') {
+      shared.push('', buildMmoSpecialistList(), '', 'Use SpawnSubagent for focused MMO specialist reviews when that tool is available.');
+    }
+    if (agentType === 'mmo_system_designer') {
+      shared.push('', 'Create implementation_plan.json with executable subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending".');
+    }
+    if (agentType === 'mmo_qa_reviewer') {
+      shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`);
+    }
+    if (agentType === 'mmo_qa_fixer') {
+      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Update qa_report.md or implementation_plan.json after fixes.`);
+    }
+    return shared.join('\n');
+  }
   switch (agentType) {
     case 'planner':
       return `You are a planning agent. Read spec.md in ${promptSpecDir} and create implementation_plan.json with phases and subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending". If the system prompt specifies an app language, localize all user-facing planning fields such as feature, phase names, subtask titles, and subtask descriptions to that language.`;

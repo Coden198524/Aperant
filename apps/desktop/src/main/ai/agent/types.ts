@@ -11,6 +11,7 @@ import type { ExecutionProgressData, ProcessType } from '../../../main/agent/typ
 import type { SessionConfig, SessionResult, StreamEvent } from '../session/types';
 import type { RunnerOptions } from '../session/runner';
 import type { CustomMcpServer, TaskLogPhase, TaskWorkflowMode, TokenUsage } from '../../../shared/types';
+import type { ProjectType } from '../../../shared/types';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 
 // =============================================================================
@@ -94,6 +95,8 @@ export interface SerializableSessionConfig {
   useAgenticOrchestration?: boolean;
   /** Workflow execution mode controlling orchestration tradeoffs */
   workflowMode?: TaskWorkflowMode;
+  /** Project-level agent profile domain. Defaults to general. */
+  projectType?: ProjectType;
   /** Whether coding should process compatible subtasks in batch sessions */
   enableBatchExecution?: boolean;
   /** Preferred UI language from app settings */

@@ -19,6 +19,7 @@ import { join, extname } from 'node:path';
 import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
+import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import type { Phase } from '../config/types';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
@@ -172,6 +173,8 @@ export interface SpecOrchestratorConfig {
   abortSignal?: AbortSignal;
   /** Workflow optimization configuration */
   workflowConfig?: WorkflowConfig;
+  /** Project-specific agent routing profile */
+  agentProfile?: ProjectAgentProfile;
   /** Callback to generate the system prompt for a given agent type and phase */
   generatePrompt: (agentType: AgentType, phase: SpecPhase, context: SpecPromptContext) => Promise<string>;
   /** Callback to run an agent session */
@@ -1218,13 +1221,17 @@ function buildJsonTextCandidates(text: string): string[] {
   return [...candidates].filter(Boolean);
 }
 
-function normalizeStructuredJsonOutput(phase: SpecPhase, value: unknown): unknown {
+function normalizeStructuredJsonOutput(
+  phase: SpecPhase,
+  value: unknown,
+  taskDescription?: string,
+): unknown {
   switch (phase) {
     case 'discovery':
     case 'context':
       return normalizeSpecContextOutput(value);
     case 'requirements':
-      return normalizeRequirementsOutput(value);
+      return normalizeRequirementsOutput(value, taskDescription);
     case 'research':
       return normalizeResearchOutput(value);
     default:
@@ -1378,16 +1385,22 @@ function isRecord(value: unknown): value is Record<string, unknown> {
   return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
 }
 
-function normalizeRequirementsOutput(value: unknown): RequirementsOutput | unknown {
+function normalizeRequirementsOutput(
+  value: unknown,
+  fallbackTaskDescription?: string,
+): RequirementsOutput | unknown {
   if (!value || typeof value !== 'object' || Array.isArray(value)) {
     return value;
   }
 
   const record = value as Record<string, unknown>;
-  const taskDescription = stringFrom(record.task_description, record.task, record.taskDescription, record.summary);
+  const taskDescription = stringFrom(record.task_description, record.task, record.taskDescription, record.summary) ||
+    normalizeTaskDescription(fallbackTaskDescription);
   return {
     task_description: taskDescription,
-    workflow_type: normalizeWorkflowType(record.workflow_type, record.workflowType, record.type),
+    workflow_type: isInvestigationTaskDescription(normalizeTaskDescription(taskDescription).toLowerCase())
+      ? 'investigation'
+      : normalizeWorkflowType(record.workflow_type, record.workflowType, record.type),
     services_involved: stringArrayFrom(record.services_involved, record.scoped_services, record.services),
     user_requirements: stringArrayFrom(record.user_requirements, record.requirements, record.functional_requirements, taskDescription),
     acceptance_criteria: stringArrayFrom(record.acceptance_criteria, record.acceptanceCriteria, record.success_criteria, record.validation_scenarios),
@@ -1510,7 +1523,11 @@ function inferRequirementsWorkflowType(
   taskDescription?: string,
   complexity?: ComplexityTier,
 ): RequirementsWorkflowType {
-  const text = (taskDescription ?? '').toLowerCase();
+  const normalizedTask = normalizeTaskDescription(taskDescription);
+  const text = normalizedTask.toLowerCase();
+  if (isSourceDocumentationTask(normalizedTask) || isInvestigationTaskDescription(text)) {
+    return 'investigation';
+  }
   if (/\b(migrate|migration|port)\b|迁移|移植|切换/.test(text)) {
     return 'migration';
   }
@@ -1587,12 +1604,75 @@ function shouldRunResearchPhase(
   return hasProjectExternalResearchSignal((projectIndex ?? '').toLowerCase());
 }
 
+function isInvestigationTaskDescription(text: string): boolean {
+  const hasInvestigationIntent =
+    /\b(analy[sz]e|investigate|inspect|review|understand|summari[sz]e|explain|map|audit|document)\b/i.test(text) ||
+    /(\u5206\u6790|\u8c03\u67e5|\u68b3\u7406|\u9605\u8bfb|\u7406\u89e3|\u89e3\u91ca|\u6982\u8ff0|\u5ba1\u8ba1|\u6587\u6863)/.test(text);
+  const hasImplementationIntent =
+    /\b(implement|add|fix|change|modify|refactor|rewrite|migrate|port|delete|remove|replace|build|create|develop)\b/i.test(text) ||
+    /(\u5b9e\u73b0|\u6dfb\u52a0|\u4fee\u590d|\u4fee\u6539|\u6539\u9020|\u91cd\u6784|\u8fc1\u79fb|\u79fb\u690d|\u5220\u9664|\u66ff\u6362|\u6784\u5efa|\u521b\u5efa|\u5f00\u53d1)/.test(text);
+  const hasDocumentationOnlyConstraint =
+    /\b(do not|don't|without)\b.*\b(modify|change|edit)\b/i.test(text) ||
+    /\b(documentation|docs|markdown|report|analysis)\b.*\bonly\b/i.test(text) ||
+    /(\u4e0d\u4fee\u6539|\u7981\u6b62\u4fee\u6539|\u4ec5|\u53ea).*(\u6587\u6863|\u5206\u6790|\u62a5\u544a|\u6e90\u7801|\u4ee3\u7801)/.test(text);
+
+  return hasInvestigationIntent && (!hasImplementationIntent || hasDocumentationOnlyConstraint);
+}
+
 function hasTaskExternalResearchSignal(text: string): boolean {
   return /(\bapi\b|\bsdk\b|\boauth\b|\bsso\b|\bwebhook\b|\bpayment\b|\bstripe\b|\bcloud\b|\baws\b|\bazure\b|\bgcp\b|\bfirebase\b|\bsupabase\b|\bpostgres\b|\bmysql\b|\bmongodb\b|\bredis\b|\bgraphql\b|\bgrpc\b|\brest\b|\bplugin\b|\bextension\b|\bpackage\b|\blibrary\b|\bdependency\b|\bintegration\b|\bthird[-\s]?party\b|\bexternal\b|\bauth\b|\bdatabase\b|\bqueue\b|\bmessage broker\b|\bkafka\b|\brabbitmq\b|接口|集成|第三方|外部|依赖|包|库|插件|认证|授权|支付|云服务|数据库|消息队列)/i.test(text);
 }
 
 function hasProjectExternalResearchSignal(text: string): boolean {
   return /(\boauth\b|\bsso\b|\bwebhook\b|\bpayment\b|\bstripe\b|\baws\b|\bazure\b|\bgcp\b|\bfirebase\b|\bsupabase\b|\bpostgres\b|\bmysql\b|\bmongodb\b|\bredis\b|\bgraphql\b|\bgrpc\b|\bkafka\b|\brabbitmq\b|\bthird[-\s]?party\b|\bexternal api\b|\bapi client\b|第三方|外部接口|认证|授权|支付|云服务|数据库|消息队列)/i.test(text);
+}
+
+interface MmoAssessmentHints {
+  signals: string[];
+  needsResearch: boolean;
+  needsSelfCritique: boolean;
+  promoteToStandard: boolean;
+}
+
+function inferMmoAssessmentHints(
+  taskDescription: string | undefined,
+  projectIndex: string | undefined,
+): MmoAssessmentHints {
+  const taskText = normalizeTaskDescription(taskDescription).toLowerCase();
+  const projectText = (projectIndex ?? '').toLowerCase();
+  const combinedText = `${taskText}\n${projectText}`;
+  const signals: string[] = [];
+
+  const broadAnalysisTask =
+    /\b(analy[sz]e|inspect|review|understand|summari[sz]e|document|map|overview|architecture|systems?|mechanics?|gameplay|source|codebase)\b/i.test(taskText) ||
+    /(\u5206\u6790|\u68b3\u7406|\u7406\u89e3|\u6982\u8ff0|\u6587\u6863|\u67b6\u6784|\u7cfb\u7edf|\u73a9\u6cd5|\u673a\u5236|\u6e90\u7801|\u4ee3\u7801)/.test(taskText);
+
+  const signalPatterns: Array<{ label: string; pattern: RegExp }> = [
+    { label: 'engine/rendering', pattern: /\b(engine|renderer|rendering|ogre|direct3d|d3d|shader|hlsl)\b|(\u5f15\u64ce|\u6e32\u67d3|\u7740\u8272\u5668)/i },
+    { label: 'server authority', pattern: /\b(server|gateway|login|auth|world|zone|realm|shard|cluster)\b|(\u670d\u52a1\u5668|\u670d\u52a1\u7aef|\u7f51\u5173|\u767b\u5f55|\u4e16\u754c\u670d|\u5206\u7ebf|\u5206\u533a)/i },
+    { label: 'network sync', pattern: /\b(network|socket|packet|protocol|sync|replication|latency)\b|(\u7f51\u7edc|\u534f\u8bae|\u5c01\u5305|\u540c\u6b65|\u5ef6\u8fdf)/i },
+    { label: 'gameplay systems', pattern: /\b(gameplay|combat|quest|skill|item|npc|ai|mechanic|system)\b|(\u73a9\u6cd5|\u6218\u6597|\u4efb\u52a1|\u6280\u80fd|\u9053\u5177|\u7269\u54c1|\u7cfb\u7edf|\u673a\u5236)/i },
+    { label: 'data persistence', pattern: /\b(database|mysql|postgres|redis|sql|db|persistence|storage)\b|(\u6570\u636e\u5e93|\u6301\u4e45\u5316|\u5b58\u50a8)/i },
+    { label: 'asset/world pipeline', pattern: /\b(asset|resource|map|terrain|scene|animation|skeleton|navmesh|world)\b|(\u8d44\u6e90|\u8d44\u4ea7|\u5730\u56fe|\u573a\u666f|\u52a8\u753b|\u9aa8\u9abc|\u4e16\u754c)/i },
+    { label: 'security/anti-cheat', pattern: /\b(anti[-\s]?cheat|gameguard|nprotect|security|cheat|hack)\b|(\u53cd\u4f5c\u5f0a|\u5916\u6302|\u5b89\u5168)/i },
+    { label: 'build/tooling', pattern: /\b(build|cmake|sln|solution|compiler|toolchain|pipeline|packaging)\b|(\u6784\u5efa|\u7f16\u8bd1|\u5de5\u5177\u94fe|\u6253\u5305)/i },
+    { label: 'native/script stack', pattern: /\b(c\+\+|cpp|cxx|lua|c#|csharp)\b/i },
+    { label: 'large MMO shape', pattern: /\b(mmo|mmorpg|world of warcraft|wow|large|massive|multiplayer)\b|(\u5927\u578b|\u7f51\u7edc\u6e38\u620f|\u591a\u4eba|\u9b54\u517d\u4e16\u754c)/i },
+  ];
+
+  for (const { label, pattern } of signalPatterns) {
+    if (pattern.test(combinedText)) {
+      signals.push(label);
+    }
+  }
+
+  const uniqueSignals = uniqueStrings(signals);
+  return {
+    signals: uniqueSignals,
+    needsResearch: broadAnalysisTask && uniqueSignals.length > 0,
+    needsSelfCritique: broadAnalysisTask && uniqueSignals.length >= 2,
+    promoteToStandard: broadAnalysisTask && uniqueSignals.length > 0,
+  };
 }
 
 function inferComplexityFallback(
@@ -1864,6 +1944,7 @@ export class SpecOrchestrator extends EventEmitter {
   constructor(config: SpecOrchestratorConfig) {
     super();
     this.config = config;
+    this.config.agentProfile ??= GENERAL_AGENT_PROFILE;
 
     // Apply workflow configuration defaults
     if (!this.config.workflowConfig) {
@@ -1950,10 +2031,11 @@ export class SpecOrchestrator extends EventEmitter {
 
       // Skip complexity assessment if already completed
       if (this.completedPhases.includes('complexity_assessment')) {
-        if (!this.assessment) {
-          this.assessment = await this.restoreComplexityAssessmentFromFile() ??
-            this.buildFallbackComplexityAssessment('Resume state omitted complexity');
-        }
+        this.assessment = await this.restoreComplexityAssessmentFromFile() ??
+          this.assessment ??
+          this.buildFallbackComplexityAssessment('Resume state omitted complexity');
+        this.applyProjectProfileAssessmentHints();
+        await this.persistComplexityAssessment();
         complexity = this.assessment.complexity;
         this.emitTyped('log', `Skipping complexity assessment (already completed): ${complexity}`);
       } else {
@@ -1969,7 +2051,10 @@ export class SpecOrchestrator extends EventEmitter {
             confidence: 0.9,
             reasoning: `Heuristic: task description matches ${heuristicResult} pattern`,
           };
+          this.applyProjectProfileAssessmentHints();
+          complexity = this.assessment.complexity;
           this.emitTyped('log', `Complexity heuristic: ${heuristicResult} (skipping AI assessment)`);
+          await this.persistComplexityAssessment();
           phasesExecuted.push('complexity_assessment');
           this.completedPhases.push('complexity_assessment');
           await this.saveState();
@@ -1987,8 +2072,10 @@ export class SpecOrchestrator extends EventEmitter {
 
             if (fileResult.valid && fileResult.data) {
               this.assessment = fileResult.data as ComplexityAssessment;
+              this.applyProjectProfileAssessmentHints();
               complexity = this.assessment.complexity;
               this.emitTyped('log', `Restored complexity from file: ${complexity} (confidence: ${(this.assessment.confidence * 100).toFixed(0)}%)`);
+              await this.persistComplexityAssessment();
               phasesExecuted.push('complexity_assessment');
               this.completedPhases.push('complexity_assessment');
               await this.capturePhaseOutput('complexity_assessment');
@@ -2013,6 +2100,7 @@ export class SpecOrchestrator extends EventEmitter {
 
             if (!assessResult.success) {
               this.assessment = this.buildFallbackComplexityAssessment('AI assessment failed');
+              this.applyProjectProfileAssessmentHints();
               this.emitTyped('log', `Complexity fallback: ${this.assessment.complexity} (${this.assessment.reasoning})`);
               await this.persistComplexityAssessment();
               await this.capturePhaseOutput('complexity_assessment');
@@ -2024,7 +2112,9 @@ export class SpecOrchestrator extends EventEmitter {
         } else {
           // Heuristic fallback
           this.assessment = this.buildFallbackComplexityAssessment('AI assessment disabled');
+          this.applyProjectProfileAssessmentHints();
           complexity = this.assessment.complexity;
+          await this.persistComplexityAssessment();
           phasesExecuted.push('complexity_assessment');
           this.completedPhases.push('complexity_assessment');
           await this.saveState();
@@ -2179,6 +2269,44 @@ export class SpecOrchestrator extends EventEmitter {
     };
   }
 
+  private applyProjectProfileAssessmentHints(): void {
+    if (!this.assessment || (this.config.agentProfile ?? GENERAL_AGENT_PROFILE).id !== 'game-mmo') {
+      return;
+    }
+
+    const hints = inferMmoAssessmentHints(this.config.taskDescription, this.config.projectIndex);
+    if (hints.signals.length === 0) {
+      return;
+    }
+
+    const previous = this.assessment;
+    const next: ComplexityAssessment = {
+      ...previous,
+      complexity: hints.promoteToStandard && previous.complexity === 'simple'
+        ? 'standard'
+        : previous.complexity,
+      needs_research: previous.needs_research || hints.needsResearch,
+      needs_self_critique: previous.needs_self_critique || hints.needsSelfCritique,
+    };
+
+    const changed =
+      next.complexity !== previous.complexity ||
+      next.needs_research !== previous.needs_research ||
+      next.needs_self_critique !== previous.needs_self_critique;
+
+    if (!changed) {
+      return;
+    }
+
+    next.reasoning = [
+      previous.reasoning,
+      `MMO routing hints: ${hints.signals.join(', ')}`,
+    ].filter(Boolean).join('; ');
+
+    this.assessment = next;
+    this.emitTyped('log', `Applied MMO routing hints: ${hints.signals.join(', ')}`);
+  }
+
   private async persistComplexityAssessment(): Promise<void> {
     if (!this.assessment) {
       return;
@@ -2248,7 +2376,7 @@ export class SpecOrchestrator extends EventEmitter {
     phaseNumber: number,
     totalPhases: number,
   ): Promise<SpecPhaseResult> {
-    const agentType = PHASE_AGENT_MAP[phase];
+    const agentType = this.getAgentForPhase(phase);
     const errors: string[] = [];
     let schemaRetryContext: string | undefined;
     /** Set when a retry is needed because the model didn't call any tools */
@@ -2317,7 +2445,12 @@ export class SpecOrchestrator extends EventEmitter {
         // Compact structured JSON phases are persisted here; plan files are written by the planner.
         if (structuredJsonFile && result.structuredOutput) {
           try {
-            await writeStructuredJsonOutput(this.config.specDir, structuredJsonFile, result.structuredOutput);
+            const normalized = normalizeStructuredJsonOutput(
+              phase,
+              result.structuredOutput,
+              this.config.taskDescription,
+            );
+            await writeStructuredJsonOutput(this.config.specDir, structuredJsonFile, normalized);
             this.emitTyped('log', `Wrote ${structuredJsonFile} from structured output`);
           } catch (writeErr) {
             this.emitTyped('log', `Failed to write structured ${structuredJsonFile}: ${writeErr}`);
@@ -2493,8 +2626,9 @@ export class SpecOrchestrator extends EventEmitter {
     // totalPhases=1 for the assessment itself; actual phase count is determined after assessment
     this.emitTyped('phase-start', 'complexity_assessment', phaseNumber, 1);
     this.sessionNumber++;
+    const agentType = this.getAgentForPhase('complexity_assessment');
 
-    const prompt = await this.config.generatePrompt('spec_gatherer', 'complexity_assessment', {
+    const prompt = await this.config.generatePrompt(agentType, 'complexity_assessment', {
       phaseNumber,
       totalPhases: 1,
       phaseName: 'complexity_assessment',
@@ -2507,7 +2641,7 @@ export class SpecOrchestrator extends EventEmitter {
     // no preprocess/passthrough). Providers with native structured output
     // (Anthropic, OpenAI) enforce this at the token level.
     const sessionResult = await this.config.runSession({
-      agentType: 'spec_gatherer',
+      agentType,
       phase: 'spec',
       specPhase: 'complexity_assessment',
       systemPrompt: prompt,
@@ -2533,6 +2667,7 @@ export class SpecOrchestrator extends EventEmitter {
       : null;
     if (structuredAssessment) {
       this.assessment = structuredAssessment;
+      this.applyProjectProfileAssessmentHints();
       this.emitTyped('log', `Complexity assessed (structured output): ${this.assessment.complexity} (confidence: ${(this.assessment.confidence * 100).toFixed(0)}%)`);
       await this.persistComplexityAssessment();
       return { phase: 'complexity_assessment', success: true, errors: [], retries: 0 };
@@ -2545,6 +2680,8 @@ export class SpecOrchestrator extends EventEmitter {
 
       if (fileResult.valid && fileResult.data) {
         this.assessment = fileResult.data as ComplexityAssessment;
+        this.applyProjectProfileAssessmentHints();
+        await this.persistComplexityAssessment();
         this.emitTyped('log', `Complexity assessed: ${fileResult.data.complexity} (confidence: ${(fileResult.data.confidence * 100).toFixed(0)}%)`);
         return { phase: 'complexity_assessment', success: true, errors: [], retries: 0 };
       }
@@ -2559,6 +2696,7 @@ export class SpecOrchestrator extends EventEmitter {
         const finalAssessment = normalizeComplexityAssessmentOutput(parsed.value);
         if (finalAssessment) {
           this.assessment = finalAssessment;
+          this.applyProjectProfileAssessmentHints();
           this.emitTyped('log', `Complexity assessed (final JSON): ${this.assessment.complexity} (confidence: ${(this.assessment.confidence * 100).toFixed(0)}%)`);
           await this.persistComplexityAssessment();
           return { phase: 'complexity_assessment', success: true, errors: [], retries: 0 };
@@ -2620,7 +2758,7 @@ export class SpecOrchestrator extends EventEmitter {
       return false;
     }
 
-    const normalized = normalizeStructuredJsonOutput(phase, parsed.value);
+    const normalized = normalizeStructuredJsonOutput(phase, parsed.value, this.config.taskDescription);
     const validation = schema.safeParse(normalized);
     if (!validation.success) {
       this.emitTyped('log', `Final JSON for ${phase} did not match schema: ${validation.error.issues.map((issue) => issue.message).join(', ')}`);
@@ -2912,6 +3050,32 @@ export class SpecOrchestrator extends EventEmitter {
   // ===========================================================================
   // Helpers
   // ===========================================================================
+
+  private getAgentForPhase(phase: SpecPhase): AgentType {
+    const profile = this.config.agentProfile ?? GENERAL_AGENT_PROFILE;
+    if (profile.id === 'game-mmo') {
+      if (phase === 'planning') {
+        return profile.planning;
+      }
+      if (phase === 'validation') {
+        return profile.qaReview;
+      }
+      if (phase === 'quick_spec' || phase === 'spec_writing') {
+        return profile.specOrchestrator;
+      }
+      if (phase === 'self_critique') {
+        return 'mmo_system_designer';
+      }
+      if (phase === 'research' || phase === 'context' || phase === 'historical_context') {
+        return 'mmo_engine_architect';
+      }
+      if (phase === 'discovery' || phase === 'requirements' || phase === 'complexity_assessment') {
+        return 'mmo_system_designer';
+      }
+    }
+
+    return PHASE_AGENT_MAP[phase];
+  }
 
   private outcome(
     success: boolean,

@@ -27,6 +27,7 @@ import {
 } from './qa-reports';
 
 import type { AgentType } from '../config/agent-configs';
+import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import type { Phase } from '../config/types';
 import { QASignoffSchema, validateStructuredOutput } from '../schema';
 import { safeParseJson } from '../../utils/json-repair';
@@ -84,6 +85,8 @@ export interface QALoopConfig {
   maxIterations?: number;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Project-specific agent routing profile */
+  agentProfile?: ProjectAgentProfile;
   /** Callback to generate system prompt */
   generatePrompt: (agentType: AgentType, context: QAPromptContext) => Promise<string>;
   /** Callback to run an agent session */
@@ -181,6 +184,7 @@ export class QALoop extends EventEmitter {
   constructor(config: QALoopConfig) {
     super();
     this.config = config;
+    this.config.agentProfile ??= GENERAL_AGENT_PROFILE;
 
     config.abortSignal?.addEventListener('abort', () => {
       this.aborted = true;
@@ -233,14 +237,15 @@ export class QALoop extends EventEmitter {
 
         // Run QA reviewer
         this.sessionNumber++;
-        const reviewPrompt = await this.config.generatePrompt('qa_reviewer', {
+        const reviewAgentType = this.getReviewAgentType();
+        const reviewPrompt = await this.config.generatePrompt(reviewAgentType, {
           iteration,
           maxIterations,
           previousError: lastErrorContext,
         });
 
         const reviewResult = await this.config.runSession({
-          agentType: 'qa_reviewer',
+          agentType: reviewAgentType,
           phase: 'qa',
           systemPrompt: reviewPrompt,
           specDir: this.config.specDir,
@@ -295,14 +300,15 @@ export class QALoop extends EventEmitter {
           // Run QA fixer
           this.emitTyped('qa-fix-start', iteration);
           this.sessionNumber++;
+          const fixAgentType = this.getFixAgentType();
 
-          const fixPrompt = await this.config.generatePrompt('qa_fixer', {
+          const fixPrompt = await this.config.generatePrompt(fixAgentType, {
             iteration,
             maxIterations,
           });
 
           const fixResult = await this.config.runSession({
-            agentType: 'qa_fixer',
+            agentType: fixAgentType,
             phase: 'qa',
             systemPrompt: fixPrompt,
             specDir: this.config.specDir,
@@ -438,15 +444,16 @@ export class QALoop extends EventEmitter {
     this.emitTyped('log', 'Human feedback detected — running QA Fixer first');
     this.emitTyped('qa-fix-start', 0);
     this.sessionNumber++;
+    const fixAgentType = this.getFixAgentType();
 
-    const fixPrompt = await this.config.generatePrompt('qa_fixer', {
+    const fixPrompt = await this.config.generatePrompt(fixAgentType, {
       iteration: 0,
       maxIterations: this.config.maxIterations ?? MAX_QA_ITERATIONS,
       isHumanFeedback: true,
     });
 
     const result = await this.config.runSession({
-      agentType: 'qa_fixer',
+      agentType: fixAgentType,
       phase: 'qa',
       systemPrompt: fixPrompt,
       specDir: this.config.specDir,
@@ -598,6 +605,14 @@ export class QALoop extends EventEmitter {
   // ===========================================================================
   // Helpers
   // ===========================================================================
+
+  private getReviewAgentType(): AgentType {
+    return (this.config.agentProfile ?? GENERAL_AGENT_PROFILE).qaReview;
+  }
+
+  private getFixAgentType(): AgentType {
+    return (this.config.agentProfile ?? GENERAL_AGENT_PROFILE).qaFix;
+  }
 
   private outcome(
     approved: boolean,

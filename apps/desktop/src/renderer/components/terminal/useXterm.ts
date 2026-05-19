@@ -329,10 +329,11 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
       // For initial restore (isRestored=true), we DO replay to show the saved state
       // as a loading preview while claude --continue starts.
       const terminal = useTerminalStore.getState().terminals.find(t => t.id === terminalId);
-      const isClaudeActive = terminal?.isCLIMode || terminal?.pendingCLIResume;
+      const isClaudeCli = terminal?.isCLIMode === true && (terminal.activeCLI === undefined || terminal.activeCLI === 'claude-code');
+      const shouldSkipReplayForClaudeTui = isClaudeCli || terminal?.pendingCLIResume === true;
       const isInitialRestore = terminal?.isRestored === true;
 
-      if (isClaudeActive && !isInitialRestore) {
+      if (shouldSkipReplayForClaudeTui && !isInitialRestore) {
         skippedReplayRef.current = true;
         debugLog(`[useXterm] Skipping buffer replay for Claude-mode terminal on project switch remount: ${terminalId}`);
       } else {

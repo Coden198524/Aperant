@@ -100,6 +100,8 @@ export const IPC_CHANNELS = {
   TERMINAL_GET_SESSION_DATES: 'terminal:getSessionDates',
   TERMINAL_GET_SESSIONS_FOR_DATE: 'terminal:getSessionsForDate',
   TERMINAL_RESTORE_FROM_DATE: 'terminal:restoreFromDate',
+  TERMINAL_GET_NATIVE_CLI_HISTORY: 'terminal:getNativeCliHistory',
+  TERMINAL_RESUME_NATIVE_CLI_SESSION: 'terminal:resumeNativeCliSession',
   TERMINAL_CHECK_PTY_ALIVE: 'terminal:checkPtyAlive',
   TERMINAL_UPDATE_DISPLAY_ORDERS: 'terminal:updateDisplayOrders',  // Persist terminal display order after drag-drop reorder
 
@@ -554,6 +556,10 @@ export const IPC_CHANNELS = {
   // File explorer operations
   FILE_EXPLORER_LIST: 'fileExplorer:list',
   FILE_EXPLORER_READ: 'fileExplorer:read',
+  FILE_EXPLORER_READ_IMAGE: 'fileExplorer:readImage',
+  FILE_EXPLORER_WRITE: 'fileExplorer:write',
+  FILE_EXPLORER_DIFF: 'fileExplorer:diff',
+  FILE_EXPLORER_CHANGED_FILES: 'fileExplorer:changedFiles',
   FILE_EXPLORER_SHOW_ITEM_IN_FOLDER: 'fileExplorer:showItemInFolder',
 
   // Git operations

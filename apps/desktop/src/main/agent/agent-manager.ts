@@ -32,6 +32,7 @@ import { readSettingsFile } from '../settings-utils';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
 import { buildProviderQueueResolutionErrorMessage } from './provider-queue-errors';
+import { resolveProjectAgentProfile } from '../ai/config/project-agent-profile';
 
 const DEFAULT_SESSION_MAX_STEPS = 160;
 const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
@@ -614,8 +615,12 @@ export class AgentManager extends EventEmitter {
       specModelRequest = specModelShorthand;
     }
 
+    const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
+    const agentProfile = resolveProjectAgentProfile(project?.settings?.projectType);
+    const specAgentType = agentProfile.specOrchestrator;
+
     // Load system prompt from prompts directory
-    const systemPrompt = this.loadPrompt('spec_orchestrator') ?? this.buildDefaultSpecPrompt(taskDescription, specDir);
+    const systemPrompt = this.loadPrompt(specAgentType) ?? this.buildDefaultSpecPrompt(taskDescription, specDir, agentProfile.id);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
     let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
@@ -631,12 +636,12 @@ export class AgentManager extends EventEmitter {
       return;
     }
     const workflowMode = metadata?.workflowMode ?? 'conservative';
-    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'spec_orchestrator');
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, specAgentType);
 
     // Build the serializable session config for the worker
     const resolvedSpecDir = specDir ?? path.join(projectPath, '.autocode', 'specs', taskId);
     const sessionConfig: SerializableSessionConfig = {
-      agentType: 'spec_orchestrator' as const,
+      agentType: specAgentType,
       systemPrompt,
       phase: 'spec' as const,
       initialMessages: [
@@ -657,6 +662,7 @@ export class AgentManager extends EventEmitter {
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
+      projectType: agentProfile.id,
       language: this.resolveAppLanguage(),
       autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
@@ -727,10 +733,12 @@ export class AgentManager extends EventEmitter {
     const modelId = await this.resolveTaskModelId(specDir, 'planning');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'planning');
     const enableBatchExecution = this.resolveTaskEnableBatchExecution(specDir);
-    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'build_orchestrator');
+    const agentProfile = resolveProjectAgentProfile(project?.settings?.projectType);
+    const buildAgentType = agentProfile.buildOrchestrator;
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, buildAgentType);
 
     // Load system prompt (planner prompt for build orchestrator entry point)
-    const systemPrompt = this.loadPrompt('planner') ?? this.buildDefaultPlannerPrompt(specId, projectPath);
+    const systemPrompt = this.loadPrompt(agentProfile.planning) ?? this.loadPrompt('planner') ?? this.buildDefaultPlannerPrompt(specId, projectPath, agentProfile.id);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
     let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
@@ -803,7 +811,7 @@ export class AgentManager extends EventEmitter {
 
     // Build the serializable session config for the worker
     const sessionConfig: SerializableSessionConfig = {
-      agentType: 'build_orchestrator' as const,
+      agentType: buildAgentType,
       systemPrompt,
       initialMessages,
       maxSteps: sessionRuntime.maxSteps,
@@ -822,6 +830,7 @@ export class AgentManager extends EventEmitter {
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
+      projectType: agentProfile.id,
       enableBatchExecution,
       language,
       autoPushToRemote: !isMainBranch(projectPath),
@@ -1026,10 +1035,12 @@ export class AgentManager extends EventEmitter {
     const modelId = await this.resolveTaskModelId(specDir, 'qa');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'qa');
     const workflowMode = this.resolveTaskWorkflowMode(specDir);
-    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'qa_reviewer');
+    const agentProfile = resolveProjectAgentProfile(project?.settings?.projectType);
+    const qaReviewAgentType = agentProfile.qaReview;
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, qaReviewAgentType);
 
     // Load system prompt for QA reviewer
-    const systemPrompt = this.loadPrompt('qa_reviewer') ?? this.buildDefaultQAPrompt(specId, projectPath);
+    const systemPrompt = this.loadPrompt(qaReviewAgentType) ?? this.loadPrompt('qa_reviewer') ?? this.buildDefaultQAPrompt(specId, projectPath, agentProfile.id);
 
     // Resolve auth from provider accounts priority queue (falls back to legacy profile)
     let resolved: Awaited<ReturnType<AgentManager['resolveAuthFromProviderQueue']>>;
@@ -1064,7 +1075,7 @@ export class AgentManager extends EventEmitter {
 
     // Build the serializable session config for the worker
     const sessionConfig: SerializableSessionConfig = {
-      agentType: 'qa_reviewer',
+      agentType: qaReviewAgentType,
       systemPrompt,
       initialMessages: qaInitialMessages,
       maxSteps: sessionRuntime.maxSteps,
@@ -1080,6 +1091,7 @@ export class AgentManager extends EventEmitter {
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
+      projectType: agentProfile.id,
       language: this.resolveAppLanguage(),
       autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
@@ -1533,12 +1545,12 @@ export class AgentManager extends EventEmitter {
       if (existsSync(metadataPath)) {
         const raw = readFileSync(metadataPath, 'utf-8');
         const metadata = JSON.parse(raw) as { enableBatchExecution?: boolean };
-        return metadata.enableBatchExecution !== false;
+        return metadata.enableBatchExecution === true;
       }
     } catch {
       // Fall through
     }
-    return true;
+    return false;
   }
 
   private resolveAppLanguage(): SerializableSessionConfig['language'] {
@@ -1727,7 +1739,10 @@ export class AgentManager extends EventEmitter {
    * Build a minimal default system prompt for spec orchestration
    * when the prompt file is not found.
    */
-  private buildDefaultSpecPrompt(taskDescription: string, specDir?: string): string {
+  private buildDefaultSpecPrompt(taskDescription: string, specDir?: string, projectType: string = 'general'): string {
+    if (projectType === 'game-mmo') {
+      return `You are an MMO game specification orchestrator for a large online game project. Create a production-ready spec for this task with explicit coverage of engine architecture, server authority, networking, content pipeline, tools, performance budgets, live operations, security, QA, and rollout risks:\n\n${taskDescription}${specDir ? `\n\nSpec directory: ${specDir}` : ''}\n\nCreate spec.md and implementation_plan.json with concrete phases and subtasks.`;
+    }
     return `You are a spec creation agent. Your job is to create a detailed specification and implementation plan for the following task:\n\n${taskDescription}${specDir ? `\n\nSpec directory: ${specDir}` : ''}\n\nCreate a spec.md with requirements and an implementation_plan.json with phases and subtasks.`;
   }
 
@@ -1735,7 +1750,10 @@ export class AgentManager extends EventEmitter {
    * Build a minimal default system prompt for the planner/build orchestrator
    * when the prompt file is not found.
    */
-  private buildDefaultPlannerPrompt(specId: string, projectPath: string): string {
+  private buildDefaultPlannerPrompt(specId: string, projectPath: string, projectType: string = 'general'): string {
+    if (projectType === 'game-mmo') {
+      return `You are an MMO systems and engine planning agent. Review spec ${specId} in project ${projectPath} and create implementation_plan.json with subtasks that account for engine architecture, rendering, animation, asset pipeline, world streaming, authoritative server logic, networking, tooling, build/release, performance budgets, and QA gates.`;
+    }
     return `You are a planning agent. Your job is to review the spec and create an implementation plan for spec ${specId} in project ${projectPath}. Read the spec.md and create implementation_plan.json with phases and subtasks.`;
   }
 
@@ -1743,7 +1761,10 @@ export class AgentManager extends EventEmitter {
    * Build a minimal default system prompt for the QA reviewer
    * when the prompt file is not found.
    */
-  private buildDefaultQAPrompt(specId: string, projectPath: string): string {
+  private buildDefaultQAPrompt(specId: string, projectPath: string, projectType: string = 'general'): string {
+    if (projectType === 'game-mmo') {
+      return `You are an MMO QA reviewer. Review spec ${specId} in project ${projectPath}. Validate implementation correctness, deterministic server authority, client/server sync, performance budgets, streaming and asset pipeline behavior, tool workflows, data migration safety, security/anti-cheat boundaries, and build/release impact. Write qa_report.md with Status: PASSED or Status: FAILED.`;
+    }
     return `You are a QA reviewer agent. Your job is to review the implementation of spec ${specId} in project ${projectPath}. Check that all requirements in spec.md are implemented correctly and write a qa_report.md with Status: PASSED or Status: FAILED.`;
   }
 

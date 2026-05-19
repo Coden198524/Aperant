@@ -26,6 +26,7 @@ const mockGetClaudeCliInvocationAsync = vi.fn();
 const mockGetClaudeProfileManager = vi.fn();
 const mockInitializeClaudeProfileManager = vi.fn();
 const mockPersistSession = vi.fn();
+const mockPersistSessionAsync = vi.fn();
 const mockReleaseSessionId = vi.fn();
 
 const createMockDisposable = (): pty.IDisposable => ({ dispose: vi.fn() });
@@ -82,6 +83,7 @@ vi.mock('fs', async (importOriginal) => {
 
 vi.mock('../session-handler', () => ({
   persistSession: mockPersistSession,
+  persistSessionAsync: mockPersistSessionAsync,
   releaseSessionId: mockReleaseSessionId,
 }));
 
@@ -240,6 +242,7 @@ describe('cli-integration-handler', () => {
     mockGetClaudeCliInvocation.mockClear();
     mockGetClaudeProfileManager.mockClear();
     mockPersistSession.mockClear();
+    mockPersistSessionAsync.mockClear();
     mockReleaseSessionId.mockClear();
     mockWriteToPty.mockClear();
     vi.mocked(writeFileSync).mockClear();
@@ -656,6 +659,7 @@ describe('invokeCLIAsync', () => {
     mockGetClaudeCliInvocationAsync.mockClear();
     mockInitializeClaudeProfileManager.mockClear();
     mockPersistSession.mockClear();
+    mockPersistSessionAsync.mockClear();
     mockReleaseSessionId.mockClear();
     mockWriteToPty.mockClear();
     vi.mocked(writeFileSync).mockClear();
@@ -844,6 +848,19 @@ describe('invokeCLIAsync', () => {
       expect(mockInitializeClaudeProfileManager).not.toHaveBeenCalled();
       expect(mockGetClaudeCliInvocationAsync).not.toHaveBeenCalled();
       expect(terminal.isCLIMode).toBe(true);
+      expect(terminal.activeCLI).toBe('codex');
+    });
+
+    it('should include Codex bypass flag when YOLO mode is enabled', async () => {
+      vi.mocked(readSettingsFileAsync).mockResolvedValue({ preferredCLI: 'claude-code' } as never);
+      const terminal = createMockTerminal();
+
+      const { invokeCLIAsync } = await import('../cli-integration-handler');
+      await invokeCLIAsync(terminal, '/tmp/project', undefined, () => null, vi.fn(), true, 'codex');
+
+      const written = mockWriteToPty.mock.calls[0][1] as string;
+      expect(written).toBe(`${buildCdCommand('/tmp/project')}codex --dangerously-bypass-approvals-and-sandbox\r`);
+      expect(terminal.dangerouslySkipPermissions).toBe(true);
       expect(terminal.activeCLI).toBe('codex');
     });
   });

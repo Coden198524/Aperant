@@ -4,9 +4,14 @@ import { FileTreeItem } from './FileTreeItem';
 import { useFileExplorerStore } from '../stores/file-explorer-store';
 import { useVirtualizedTree } from '../hooks/useVirtualizedTree';
 import { Loader2, AlertCircle, FolderOpen } from 'lucide-react';
+import type { FileNode } from '../../shared/types';
 
 interface FileTreeProps {
   rootPath: string;
+  selectedPath?: string | null;
+  changedPaths?: Set<string>;
+  changedDirectoryPaths?: Set<string>;
+  onFileOpen?: (node: FileNode) => void;
 }
 
 // Estimated height of each tree item in pixels
@@ -14,7 +19,18 @@ const ITEM_HEIGHT = 28;
 // Number of items to render outside the visible area for smoother scrolling
 const OVERSCAN = 10;
 
-export function FileTree({ rootPath }: FileTreeProps) {
+function normalizeTreePath(filePath: string): string {
+  const normalized = filePath.replace(/\\/g, '/');
+  return window.platform?.isWindows ? normalized.toLowerCase() : normalized;
+}
+
+export function FileTree({
+  rootPath,
+  selectedPath,
+  changedPaths,
+  changedDirectoryPaths,
+  onFileOpen
+}: FileTreeProps) {
   const parentRef = useRef<HTMLDivElement>(null);
 
   const {
@@ -105,6 +121,8 @@ export function FileTree({ rootPath }: FileTreeProps) {
           const item = flattenedNodes[virtualItem.index];
           if (!item) return null;
 
+          const normalizedPath = normalizeTreePath(item.node.path);
+
           return (
             <div
               key={item.key}
@@ -123,6 +141,10 @@ export function FileTree({ rootPath }: FileTreeProps) {
                 isExpanded={item.isExpanded}
                 isLoading={item.isLoading}
                 onToggle={createToggleHandler(virtualItem.index)}
+                onFileOpen={onFileOpen}
+                isSelected={selectedPath === item.node.path}
+                isChanged={changedPaths?.has(normalizedPath) ?? false}
+                hasChangedDescendant={changedDirectoryPaths?.has(normalizedPath) ?? false}
               />
             </div>
           );

@@ -11,6 +11,7 @@ import {
   type SpecPhase,
   type SpecPhaseResult,
 } from './spec-orchestrator';
+import { MMO_AGENT_PROFILE } from '../config/project-agent-profile';
 
 describe('SpecOrchestrator Write tool retry helpers', () => {
   it('detects malformed Write tool JSON errors', () => {
@@ -1281,6 +1282,247 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(result.complexity).toBe('complex');
       expect(phases).toEqual(['discovery']);
       expect(phases).not.toContain('complexity_assessment');
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('routes MMO complexity assessment through the MMO system designer', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const agentCalls: string[] = [];
+    const generatePrompt = vi.fn(async (agentType: string) => {
+      agentCalls.push(agentType);
+      return 'Assess MMO task complexity.';
+    });
+    const runSession = vi.fn(async (config: { agentType: string; specPhase: SpecPhase }) => {
+      agentCalls.push(config.agentType);
+      if (config.specPhase === 'complexity_assessment') {
+        return {
+          outcome: 'completed' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+          structuredOutput: {
+            complexity: 'standard',
+            confidence: 0.85,
+            reasoning: 'Analyze MMO systems.',
+            needs_research: false,
+            needs_self_critique: false,
+          },
+        };
+      }
+
+      return {
+        outcome: 'cancelled' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 0,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Analyze the MMO gameplay systems.',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        projectIndex: JSON.stringify({ services: { client: { languages: ['C++'] } } }),
+        agentProfile: MMO_AGENT_PROFILE,
+        generatePrompt,
+        runSession,
+      });
+
+      await orchestrator.run();
+
+      expect(generatePrompt.mock.calls[0][0]).toBe('mmo_system_designer');
+      expect(runSession.mock.calls[0][0].agentType).toBe('mmo_system_designer');
+      expect(agentCalls.slice(0, 2)).toEqual(['mmo_system_designer', 'mmo_system_designer']);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds MMO research and self-critique hints for broad game source analysis', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const calls: Array<{ phase: SpecPhase; agentType: string }> = [];
+    const projectIndex = JSON.stringify({
+      project: { size: 'large', sourceFileCount: 1800 },
+      services: {
+        client: { languages: ['C++', 'Lua'], frameworks: ['Ogre3D', 'Direct3D'] },
+        server: { languages: ['C++'], frameworks: ['socket protocol'] },
+        database: { languages: ['SQL'], frameworks: ['MySQL'] },
+      },
+      source_summary: {
+        languages: ['C++', 'Lua', 'HLSL'],
+        project_files: ['XYWL_Client.sln', 'GameServer.sln'],
+        build_files: ['CMakeLists.txt'],
+      },
+    });
+    const runSession = vi.fn(async (config: { agentType: string; specPhase: SpecPhase }) => {
+      calls.push({ phase: config.specPhase, agentType: config.agentType });
+      if (config.specPhase === 'complexity_assessment') {
+        return {
+          outcome: 'completed' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+          structuredOutput: {
+            complexity: 'standard',
+            confidence: 0.8,
+            reasoning: 'Standard analysis.',
+            needs_research: false,
+            needs_self_critique: false,
+          },
+        };
+      }
+
+      if (config.specPhase === 'discovery') {
+        return {
+          outcome: 'completed' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+          structuredOutput: {
+            task_description: 'Analyze MMO source systems and gameplay.',
+            scoped_services: ['client', 'server', 'database'],
+            architecture_summary: 'Large C++/Lua MMO with engine, server, network, and data layers.',
+            files_to_modify: [],
+            files_to_reference: [],
+            design_patterns: [],
+            implementation_notes: ['Document systems.'],
+            risks: ['Broad analysis scope.'],
+            verification_suggestions: ['Review generated docs.'],
+            created_at: '2026-05-20T00:00:00.000Z',
+          },
+        };
+      }
+
+      if (config.specPhase === 'requirements') {
+        return {
+          outcome: 'completed' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+          structuredOutput: {
+            task_description: 'Analyze MMO source systems and gameplay.',
+            workflow_type: 'feature',
+            services_involved: ['client', 'server', 'database'],
+            user_requirements: ['Identify game systems and gameplay mechanics.'],
+            acceptance_criteria: ['The analysis covers engine, server, network, and gameplay systems.'],
+            constraints: ['Do not modify source code.'],
+            created_at: '2026-05-20T00:00:00.000Z',
+          },
+        };
+      }
+
+      return {
+        outcome: 'cancelled' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 0,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: '分析这是一个什么游戏，有哪些系统和玩法。',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        projectIndex,
+        agentProfile: MMO_AGENT_PROFILE,
+        generatePrompt: vi.fn(async () => 'Run MMO phase.'),
+        runSession,
+        language: 'zh-CN',
+      });
+
+      const result = await orchestrator.run();
+      const assessment = JSON.parse(await readFile(join(specDir, 'complexity_assessment.json'), 'utf-8')) as {
+        needs_research?: boolean;
+        needs_self_critique?: boolean;
+        reasoning?: string;
+      };
+
+      expect(result.success).toBe(false);
+      expect(assessment.needs_research).toBe(true);
+      expect(assessment.needs_self_critique).toBe(true);
+      expect(assessment.reasoning).toContain('MMO routing hints');
+      expect(calls.map((call) => call.phase)).toEqual(['complexity_assessment', 'discovery', 'requirements', 'research']);
+      expect(calls[0].agentType).toBe('mmo_system_designer');
+      expect(calls[1].agentType).toBe('mmo_system_designer');
+      expect(calls[2].agentType).toBe('mmo_system_designer');
+      expect(calls[3].agentType).toBe('mmo_engine_architect');
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes investigation requirements workflow for source analysis tasks', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
+      if (config.specPhase === 'requirements') {
+        return {
+          outcome: 'completed' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+          structuredOutput: {
+            task_description: 'Analyze game source systems and gameplay.',
+            workflow_type: 'feature',
+            services_involved: ['client'],
+            user_requirements: ['Analyze systems.'],
+            acceptance_criteria: ['Documentation identifies systems.'],
+            constraints: ['Do not modify source.'],
+            created_at: '2026-05-20T00:00:00.000Z',
+          },
+        };
+      }
+
+      return {
+        outcome: 'cancelled' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 0,
+        durationMs: 1,
+      };
+    });
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Analyze game source systems and gameplay without modifying source code.',
+        complexityOverride: 'standard',
+        workflowConfig: { optimizationLevel: 'balanced' },
+        generatePrompt: vi.fn(async () => 'Run requirements phase.'),
+        runSession,
+      });
+      const runPhase = (orchestrator as unknown as {
+        runPhase: (phase: SpecPhase, phaseNumber: number, totalPhases: number) => Promise<SpecPhaseResult>;
+      }).runPhase.bind(orchestrator);
+
+      const result = await runPhase('requirements', 1, 1);
+      const requirements = JSON.parse(await readFile(join(specDir, 'requirements.json'), 'utf-8')) as {
+        workflow_type?: string;
+      };
+
+      expect(result.success).toBe(true);
+      expect(requirements.workflow_type).toBe('investigation');
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }

@@ -8,8 +8,10 @@ import { existsSync } from 'fs';
 import type { TerminalCreateOptions } from '../../shared/types';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { TerminalSession } from '../terminal-session-store';
+import type { SupportedCLI } from '../../shared/types/settings';
 import * as PtyManager from './pty-manager';
 import * as SessionHandler from './session-handler';
+import * as DeepSeekCliSession from './deepseek-cli-session';
 import type {
   TerminalProcess,
   WindowGetter,
@@ -19,6 +21,8 @@ import { isWindows } from '../platform';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 import { safeSendToRenderer } from '../ipc-handlers/utils';
 import { getClaudeCodeEnv } from '../claude-code-settings';
+import { readSettingsFileAsync } from '../settings-utils';
+import { buildCdCommand } from '../../shared/utils/shell-escape';
 import log from 'electron-log/main.js';
 
 /**
@@ -36,6 +40,22 @@ export interface RestoreOptions {
  * Data handler function type
  */
 export type DataHandlerFn = (terminal: TerminalProcess, data: string) => void;
+
+const CODEX_YOLO_MODE_FLAG = ' --dangerously-bypass-approvals-and-sandbox';
+
+function getCLICommand(cli: SupportedCLI, customPath?: string, dangerouslySkipPermissions?: boolean): string {
+  if (cli === 'custom' && customPath) return customPath;
+  const commands: Record<string, string> = {
+    gemini: 'gemini',
+    opencode: 'opencode',
+    kilocode: 'kilocode',
+    codex: 'codex',
+    deepseek: 'deepseek',
+  };
+  const command = commands[cli] ?? cli;
+  const bypassFlag = dangerouslySkipPermissions && cli === 'codex' ? CODEX_YOLO_MODE_FLAG : '';
+  return `${command}${bypassFlag}`;
+}
 
 /**
  * Create a new terminal process
@@ -184,7 +204,9 @@ export async function restoreTerminal(
   const storedSession = storedSessions.find(s => s.id === session.id);
   const storedIsClaudeMode = storedSession?.isCLIMode ?? session.isCLIMode;
   const storedActiveCLI = storedSession?.activeCLI ?? session.activeCLI ?? 'claude-code';
+  const isStoredNonClaudeCLI = storedIsClaudeMode && storedActiveCLI !== 'claude-code';
   const storedClaudeSessionId = storedSession?.claudeSessionId ?? session.claudeSessionId;
+  const storedDeepSeekState = storedSession?.deepseekState ?? session.deepseekState;
   // Get worktreeConfig from stored session (authoritative) since renderer-passed value may be stale
   const storedWorktreeConfig = storedSession?.worktreeConfig ?? session.worktreeConfig;
 
@@ -228,8 +250,16 @@ export async function restoreTerminal(
     return { success: false, error: 'Terminal not found after creation' };
   }
 
+  if (isStoredNonClaudeCLI) {
+    terminal.outputBuffer = '';
+  }
+
   // Restore title and worktree config from session
   terminal.title = session.title;
+  terminal.isCLIMode = storedIsClaudeMode;
+  terminal.activeCLI = storedActiveCLI;
+  terminal.dangerouslySkipPermissions = storedSession?.dangerouslySkipPermissions ?? session.dangerouslySkipPermissions;
+  terminal.deepseekState = storedDeepSeekState;
   // Only restore worktree config if the worktree directory still exists
   // (effectiveCwd matching session.cwd means no fallback was needed)
   // Use storedWorktreeConfig (from disk) as the authoritative source
@@ -283,6 +313,34 @@ export async function restoreTerminal(
     }
   }
 
+  if (options.resumeClaudeSession && isStoredNonClaudeCLI) {
+    if (storedActiveCLI === 'deepseek') {
+      DeepSeekCliSession.startDeepSeekCli(terminal, terminal.cwd, getWindow);
+      return {
+        success: true,
+        outputBuffer: ''
+      };
+    }
+
+    try {
+      const settings = await readSettingsFileAsync();
+      const cwdCommand = buildCdCommand(terminal.cwd, terminal.shellType);
+      const command = getCLICommand(
+        storedActiveCLI,
+        settings?.customCLIPath as string | undefined,
+        terminal.dangerouslySkipPermissions ?? (settings?.dangerouslySkipPermissions === true)
+      );
+      debugLog('[TerminalLifecycle] Restarting restored non-Claude CLI session:', {
+        terminalId: terminal.id,
+        activeCLI: storedActiveCLI,
+        command,
+      });
+      PtyManager.writeToPty(terminal, `${cwdCommand}${command}\r`);
+    } catch (error) {
+      debugError('[TerminalLifecycle] Failed to restart restored non-Claude CLI session:', error);
+    }
+  }
+
   // Debug: Log the outputBuffer being returned for replay
   const returnBufferLen = session.outputBuffer?.length ?? 0;
   debugLog('[TerminalLifecycle] Returning outputBuffer for terminal:', session.id,
@@ -291,7 +349,7 @@ export async function restoreTerminal(
 
   return {
     success: true,
-    outputBuffer: session.outputBuffer
+    outputBuffer: isStoredNonClaudeCLI ? '' : session.outputBuffer
   };
 }
 
@@ -411,9 +469,10 @@ export async function restoreSessionsFromDate(
   dataHandler: DataHandlerFn,
   options: RestoreOptions,
   cols = 80,
-  rows = 24
+  rows = 24,
+  cli?: SupportedCLI
 ): Promise<{ restored: number; failed: number; sessions: Array<{ id: string; success: boolean; error?: string }> }> {
-  const sessions = SessionHandler.getSessionsForDate(date, projectPath);
+  const sessions = SessionHandler.getSessionsForDate(date, projectPath, cli);
   const results: Array<{ id: string; success: boolean; error?: string }> = [];
 
   for (const session of sessions) {

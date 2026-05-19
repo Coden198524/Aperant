@@ -152,6 +152,7 @@ export type SupportedCLI =
   | 'opencode'      // OpenCode
   | 'kilocode'      // Kilo Code CLI
   | 'codex'         // Codex CLI
+  | 'deepseek'      // Built-in DeepSeek CLI
   | 'custom';
 
 export interface ThemePreviewColors {

@@ -32,6 +32,26 @@ const ALL_AGENT_TYPES: AgentType[] = [
   'direct_task',
   'qa_reviewer',
   'qa_fixer',
+  'mmo_spec_orchestrator',
+  'mmo_build_orchestrator',
+  'mmo_system_designer',
+  'mmo_engine_architect',
+  'mmo_engine_programmer',
+  'mmo_rendering_engineer',
+  'mmo_animation_engineer',
+  'mmo_asset_pipeline_engineer',
+  'mmo_world_streaming_engineer',
+  'mmo_tools_engineer',
+  'mmo_build_release_engineer',
+  'mmo_engine_performance_engineer',
+  'mmo_server_authority_engineer',
+  'mmo_network_sync_engineer',
+  'mmo_client_gameplay_engineer',
+  'mmo_data_persistence_engineer',
+  'mmo_security_anticheat_engineer',
+  'mmo_liveops_engineer',
+  'mmo_qa_reviewer',
+  'mmo_qa_fixer',
   'insights',
   'merge_resolver',
   'commit_message',
@@ -136,7 +156,12 @@ describe('AGENT_CONFIGS', () => {
   });
 
   it('should only give SpawnSubagent to orchestrator agent types', () => {
-    const orchestratorTypes: AgentType[] = ['spec_orchestrator', 'build_orchestrator'];
+    const orchestratorTypes: AgentType[] = [
+      'spec_orchestrator',
+      'build_orchestrator',
+      'mmo_spec_orchestrator',
+      'mmo_build_orchestrator',
+    ];
     const nonOrchestratorTypes = Object.keys(AGENT_CONFIGS).filter(
       t => !orchestratorTypes.includes(t as AgentType)
     ) as AgentType[];
@@ -149,6 +174,30 @@ describe('AGENT_CONFIGS', () => {
     // Non-orchestrators should NOT have SpawnSubagent
     for (const type of nonOrchestratorTypes) {
       expect(AGENT_CONFIGS[type].tools).not.toContain('SpawnSubagent');
+    }
+  });
+
+  it('should configure MMO engine agents with implementation tools and memory context', () => {
+    for (const agentType of [
+      'mmo_engine_architect',
+      'mmo_engine_programmer',
+      'mmo_rendering_engineer',
+      'mmo_animation_engineer',
+      'mmo_asset_pipeline_engineer',
+      'mmo_world_streaming_engineer',
+      'mmo_tools_engineer',
+      'mmo_build_release_engineer',
+      'mmo_engine_performance_engineer',
+    ] as AgentType[]) {
+      const config = AGENT_CONFIGS[agentType];
+      expect(config.tools).toContain('Read');
+      expect(config.tools).toContain('Write');
+      expect(config.tools).toContain('Edit');
+      expect(config.tools).toContain('Bash');
+      expect(config.mcpServers).toContain('context7');
+      expect(config.mcpServers).toContain('memory');
+      expect(config.mcpServers).toContain('autocode');
+      expect(config.thinkingDefault).toBe('high');
     }
   });
 });

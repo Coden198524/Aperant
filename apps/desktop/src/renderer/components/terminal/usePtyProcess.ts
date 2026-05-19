@@ -39,7 +39,7 @@ export function usePtyProcess({
   const currentCwdRef = useRef(cwd);
   // Trigger state to force re-creation after resetForRecreate()
   // Refs don't trigger re-renders, so we need a state to ensure the effect runs
-  const [_recreationTrigger, setRecreationTrigger] = useState(0);
+  const [creationRetryTrigger, setCreationRetryTrigger] = useState(0);
   // Track retry attempts during recreation when dimensions aren't ready
   const recreationRetryCountRef = useRef(0);
   const recreationRetryTimerRef = useRef<NodeJS.Timeout | null>(null);
@@ -69,7 +69,7 @@ export function usePtyProcess({
       // Clear any existing timer before setting a new one
       clearRetryTimer();
       recreationRetryTimerRef.current = setTimeout(() => {
-        setRecreationTrigger((prev) => prev + 1);
+        setCreationRetryTrigger((prev) => prev + 1);
       }, RECREATION_RETRY_DELAY);
       // Keep isCreatingRef.current = true to prevent duplicate creation during retry window
       return true;
@@ -116,16 +116,29 @@ export function usePtyProcess({
     clearRetryTimer();
 
     // During recreation, if dimensions aren't ready, schedule a retry instead of giving up
-    if (skipCreation && isRecreatingRef?.current) {
-      debugLog(`[usePtyProcess] Skipping PTY creation for terminal: ${terminalId} - dimensions not ready during recreation, scheduling retry`);
-      scheduleRetryOrFail('Terminal recreation failed: dimensions not ready');
-      return;
-    }
-
-    // Normal skip (not during recreation) - just return
     if (skipCreation) {
-      debugLog(`[usePtyProcess] Skipping PTY creation for terminal: ${terminalId} - dimensions not ready (skipCreation=true)`);
-      return;
+      const isRecreating = isRecreatingRef?.current === true;
+      if (recreationRetryCountRef.current < MAX_RECREATION_RETRIES) {
+        recreationRetryCountRef.current += 1;
+        debugLog(
+          `[usePtyProcess] Skipping PTY creation for terminal: ${terminalId} - dimensions not ready, scheduling retry ` +
+          `${recreationRetryCountRef.current}/${MAX_RECREATION_RETRIES}${isRecreating ? ' during recreation' : ''}`
+        );
+        window.dispatchEvent(new CustomEvent('terminal-refit-all'));
+        recreationRetryTimerRef.current = setTimeout(() => {
+          setCreationRetryTrigger((prev) => prev + 1);
+        }, RECREATION_RETRY_DELAY);
+        return;
+      } else {
+        debugLog(
+          `[usePtyProcess] Dimensions still not ready for terminal: ${terminalId} after ` +
+          `${MAX_RECREATION_RETRIES} retries; creating PTY with fallback dimensions ${cols}x${rows}`
+        );
+        if (isRecreatingRef?.current) {
+          isRecreatingRef.current = false;
+        }
+        recreationRetryCountRef.current = 0;
+      }
     }
     if (isCreatingRef.current || isCreatedRef.current) {
       debugLog(`[usePtyProcess] Skipping PTY creation for terminal: ${terminalId} - already creating: ${isCreatingRef.current}, already created: ${isCreatedRef.current}`);
@@ -235,7 +248,7 @@ export function usePtyProcess({
       });
     }
 
-  }, [terminalId, cwd, projectPath, cols, rows, skipCreation, getStore, onCreated, clearRetryTimer, scheduleRetryOrFail, isRecreatingRef]);
+  }, [terminalId, cwd, projectPath, cols, rows, skipCreation, getStore, onCreated, clearRetryTimer, scheduleRetryOrFail, isRecreatingRef, creationRetryTrigger]);
 
   // Function to prepare for recreation by preventing the effect from running
   // Call this BEFORE updating the store cwd to avoid race condition
@@ -250,7 +263,7 @@ export function usePtyProcess({
     isCreatedRef.current = false;
     isCreatingRef.current = false;
     // Increment trigger to force the creation effect to run
-    setRecreationTrigger((prev) => prev + 1);
+    setCreationRetryTrigger((prev) => prev + 1);
   }, []);
 
   return {

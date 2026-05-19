@@ -20,6 +20,7 @@ import { Separator } from '../ui/separator';
 import { AVAILABLE_MODELS } from '../../../shared/constants';
 import type {
   Project,
+  ProjectType,
   ProjectSettings as ProjectSettingsType,
   AutoBuildVersionInfo,
   PromptProfileRefreshResult
@@ -217,6 +218,40 @@ export function GeneralSettings({
                   ))}
                 </SelectContent>
               </Select>
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="projectType" className="text-sm font-medium text-foreground">
+                {t('projectSections.general.projectType.label', {
+                  defaultValue: 'Project Type'
+                })}
+              </Label>
+              <Select
+                value={settings.projectType ?? 'general'}
+                onValueChange={(value) =>
+                  setSettings({ ...settings, projectType: value as ProjectType })
+                }
+              >
+                <SelectTrigger id="projectType">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="general">
+                    {t('projectSections.general.projectType.general', {
+                      defaultValue: 'General software'
+                    })}
+                  </SelectItem>
+                  <SelectItem value="game-mmo">
+                    {t('projectSections.general.projectType.gameMmo', {
+                      defaultValue: 'MMO / large online game'
+                    })}
+                  </SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-muted-foreground">
+                {t('projectSections.general.projectType.description', {
+                  defaultValue: 'Selects the agent profile used by spec, planning, coding, and QA workflows.'
+                })}
+              </p>
             </div>
             <div className="flex items-center justify-between pt-2">
               <div className="space-y-0.5">

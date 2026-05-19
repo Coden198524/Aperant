@@ -145,7 +145,7 @@ export function TaskCreationWizard({
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
   const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('balanced');
-  const [enableBatchExecution, setEnableBatchExecution] = useState(true);
+  const [enableBatchExecution, setEnableBatchExecution] = useState(false);
 
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -211,7 +211,7 @@ export function TaskCreationWizard({
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
         setWorkflowMode(draft.workflowMode ?? 'balanced');
-        setEnableBatchExecution(draft.enableBatchExecution ?? true);
+        setEnableBatchExecution(draft.enableBatchExecution === true);
         setUseWorktree(draft.useWorktree ?? false);
         setPushNewBranches(draft.pushNewBranches ?? projectPushNewBranches);
         setIsDraftRestored(true);
@@ -237,7 +237,7 @@ export function TaskCreationWizard({
         setReferencedFiles([]);
         setRequireReviewBeforeCoding(false);
         setWorkflowMode('balanced');
-        setEnableBatchExecution(true);
+        setEnableBatchExecution(false);
         setBaseBranch(PROJECT_DEFAULT_BRANCH);
         setUseWorktree(false);
         setPushNewBranches(projectPushNewBranches);

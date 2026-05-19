@@ -42,6 +42,19 @@ export interface ClaudeCodeVersionInfo {
 }
 
 /**
+ * Codex CLI version information.
+ * Used by the smart terminal toolbar when Codex is the selected CLI.
+ */
+export interface CodexCliVersionInfo {
+  /** Currently installed version, null if not installed */
+  installed: string | null;
+  /** Path to Codex CLI binary if found */
+  path?: string;
+  /** Full detection result with source information */
+  detectionResult: ToolDetectionResult;
+}
+
+/**
  * Available Claude Code CLI versions
  * Used for version rollback feature
  */

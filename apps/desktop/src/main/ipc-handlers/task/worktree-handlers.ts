@@ -1167,6 +1167,15 @@ const CLI_DETECTION: Partial<Record<SupportedCLI, { name: string; paths: Record<
       linux: []
     },
     commands: { darwin: 'codex', win32: 'codex.cmd', linux: 'codex' }
+  },
+  deepseek: {
+    name: 'DeepSeek',
+    paths: {
+      darwin: [],
+      win32: [],
+      linux: []
+    },
+    commands: { darwin: '', win32: '', linux: '' }
   }
 };
 
@@ -1479,9 +1488,17 @@ async function detectInstalledTools(): Promise<DetectedTools> {
   }
 
   // Detect CLIs using command checks (CLIs are command-line tools, not GUI apps)
-  const clis: DetectedTool[] = [];
+  const clis: DetectedTool[] = [
+    {
+      id: 'deepseek',
+      name: 'DeepSeek',
+      path: 'built-in',
+      installed: true
+    }
+  ];
   for (const [id, config] of Object.entries(CLI_DETECTION)) {
     if (id === 'custom' || !config) continue;
+    if (id === 'deepseek') continue;
 
     const command = config.commands[platform];
     if (!command) continue;

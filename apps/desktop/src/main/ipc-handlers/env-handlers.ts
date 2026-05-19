@@ -7,6 +7,7 @@ import { app } from 'electron';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { projectStore } from '../project-store';
 import { parseEnvFile } from './utils';
+import { initializeLocalMemoryDatabase } from '../ai/memory/db';
 
 // GitLab environment variable keys
 const GITLAB_ENV_KEYS = {
@@ -644,6 +645,14 @@ ${existingVars['GRAPHITI_DB_PATH'] ? `GRAPHITI_DB_PATH=${existingVars['GRAPHITI_
 
         // Generate new content
         const newContent = generateEnvContent(config, existingContent);
+
+        const updatedVars = parseEnvFile(newContent);
+        if (updatedVars['GRAPHITI_ENABLED']?.toLowerCase() === 'true') {
+          await initializeLocalMemoryDatabase({
+            dbPath: updatedVars['GRAPHITI_DB_PATH'],
+            database: updatedVars['GRAPHITI_DATABASE'],
+          });
+        }
 
         // Write to file
         writeFileSync(envPath, newContent, 'utf-8');

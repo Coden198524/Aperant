@@ -57,7 +57,8 @@ const CLI_NAMES: Partial<Record<SupportedCLI, string>> = {
   gemini: 'Gemini CLI',
   opencode: 'OpenCode',
   kilocode: 'Kilo Code CLI',
-  codex: 'Codex CLI'
+  codex: 'Codex CLI',
+  deepseek: 'DeepSeek'
 };
 
 // Terminal display names - alphabetically sorted
@@ -553,12 +554,12 @@ export function DevToolsSettings({ settings, onSettingsChange }: DevToolsSetting
             />
           </div>
           <p className="text-xs text-amber-400/80">
-            {t('devtools.yoloMode.description', 'Start Claude with --dangerously-skip-permissions flag, bypassing all safety prompts. Use with extreme caution.')}
+            {t('devtools.yoloMode.description', 'Start Claude and Codex with permission-bypass flags, skipping safety prompts. Use with extreme caution.')}
           </p>
           {settings.dangerouslySkipPermissions && (
             <p className="text-xs text-amber-500 font-medium flex items-center gap-1">
               <AlertTriangle className="h-3 w-3" />
-              {t('devtools.yoloMode.warning', 'This mode bypasses Claude\'s permission system. Only enable if you fully trust the code being executed.')}
+              {t('devtools.yoloMode.warning', 'This mode bypasses Claude and Codex permission systems. Only enable if you fully trust the code being executed.')}
             </p>
           )}
         </div>

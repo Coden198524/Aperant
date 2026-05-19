@@ -110,6 +110,31 @@ export const projectMock = {
     data: ''
   }),
 
+  readImageFile: async () => ({
+    success: true,
+    data: {
+      dataUrl: '',
+      mimeType: 'image/png',
+      size: 0
+    }
+  }),
+
+  writeFile: async () => ({
+    success: true
+  }),
+
+  getFileDiff: async () => ({
+    success: true,
+    data: ''
+  }),
+
+  getChangedFiles: async () => ({
+    success: true,
+    data: []
+  }),
+
+  getPathForFile: () => '',
+
   showItemInFolder: async () => ({
     success: true
   }),

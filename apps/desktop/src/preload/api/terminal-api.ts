@@ -41,7 +41,7 @@ export interface TerminalAPI {
   setTerminalWorktreeConfig: (id: string, config: TerminalWorktreeConfig | undefined) => void;
 
   // Terminal Session Management
-  getTerminalSessions: (projectPath: string) => Promise<IPCResult<import('../../shared/types').TerminalSession[]>>;
+  getTerminalSessions: (projectPath: string, cli?: SupportedCLI) => Promise<IPCResult<import('../../shared/types').TerminalSession[]>>;
   restoreTerminalSession: (
     session: import('../../shared/types').TerminalSession,
     cols?: number,
@@ -50,16 +50,20 @@ export interface TerminalAPI {
   clearTerminalSessions: (projectPath: string) => Promise<IPCResult>;
   resumeClaudeInTerminal: (id: string, sessionId?: string, options?: { migratedSession?: boolean }) => void;
   activateDeferredClaudeResume: (id: string) => void;
-  getTerminalSessionDates: (projectPath?: string) => Promise<IPCResult<import('../../shared/types').SessionDateInfo[]>>;
+  getTerminalSessionDates: (projectPath?: string, cli?: SupportedCLI) => Promise<IPCResult<import('../../shared/types').SessionDateInfo[]>>;
+  getNativeCliHistory: (cli: SupportedCLI, projectPath?: string) => Promise<IPCResult<import('../../shared/types').NativeCliSession[]>>;
+  resumeNativeCliSession: (terminalId: string, cli: SupportedCLI, sessionId: string, cwd?: string) => Promise<IPCResult<{ outputBuffer?: string }>>;
   getTerminalSessionsForDate: (
     date: string,
-    projectPath: string
+    projectPath: string,
+    cli?: SupportedCLI
   ) => Promise<IPCResult<import('../../shared/types').TerminalSession[]>>;
   restoreTerminalSessionsFromDate: (
     date: string,
     projectPath: string,
     cols?: number,
-    rows?: number
+    rows?: number,
+    cli?: SupportedCLI
   ) => Promise<IPCResult<import('../../shared/types').SessionDateRestoreResult>>;
   checkTerminalPtyAlive: (terminalId: string) => Promise<IPCResult<{ alive: boolean }>>;
   updateTerminalDisplayOrders: (
@@ -153,8 +157,8 @@ export const createTerminalAPI = (): TerminalAPI => ({
     ipcRenderer.send(IPC_CHANNELS.TERMINAL_SET_WORKTREE_CONFIG, id, config),
 
   // Terminal Session Management
-  getTerminalSessions: (projectPath: string): Promise<IPCResult<import('../../shared/types').TerminalSession[]>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GET_SESSIONS, projectPath),
+  getTerminalSessions: (projectPath: string, cli?: SupportedCLI): Promise<IPCResult<import('../../shared/types').TerminalSession[]>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GET_SESSIONS, projectPath, cli),
 
   restoreTerminalSession: (
     session: import('../../shared/types').TerminalSession,
@@ -172,22 +176,30 @@ export const createTerminalAPI = (): TerminalAPI => ({
   activateDeferredClaudeResume: (id: string): void =>
     ipcRenderer.send(IPC_CHANNELS.TERMINAL_ACTIVATE_DEFERRED_RESUME, id),
 
-  getTerminalSessionDates: (projectPath?: string): Promise<IPCResult<import('../../shared/types').SessionDateInfo[]>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GET_SESSION_DATES, projectPath),
+  getTerminalSessionDates: (projectPath?: string, cli?: SupportedCLI): Promise<IPCResult<import('../../shared/types').SessionDateInfo[]>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GET_SESSION_DATES, projectPath, cli),
+
+  getNativeCliHistory: (cli: SupportedCLI, projectPath?: string): Promise<IPCResult<import('../../shared/types').NativeCliSession[]>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GET_NATIVE_CLI_HISTORY, cli, projectPath),
+
+  resumeNativeCliSession: (terminalId: string, cli: SupportedCLI, sessionId: string, cwd?: string): Promise<IPCResult<{ outputBuffer?: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_RESUME_NATIVE_CLI_SESSION, terminalId, cli, sessionId, cwd),
 
   getTerminalSessionsForDate: (
     date: string,
-    projectPath: string
+    projectPath: string,
+    cli?: SupportedCLI
   ): Promise<IPCResult<import('../../shared/types').TerminalSession[]>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GET_SESSIONS_FOR_DATE, date, projectPath),
+    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_GET_SESSIONS_FOR_DATE, date, projectPath, cli),
 
   restoreTerminalSessionsFromDate: (
     date: string,
     projectPath: string,
     cols?: number,
-    rows?: number
+    rows?: number,
+    cli?: SupportedCLI
   ): Promise<IPCResult<import('../../shared/types').SessionDateRestoreResult>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_RESTORE_FROM_DATE, date, projectPath, cols, rows),
+    ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_RESTORE_FROM_DATE, date, projectPath, cols, rows, cli),
 
   checkTerminalPtyAlive: (terminalId: string): Promise<IPCResult<{ alive: boolean }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TERMINAL_CHECK_PTY_ALIVE, terminalId),

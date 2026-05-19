@@ -22,6 +22,7 @@ import {
   type CompletablePhase,
 } from '../../../shared/constants/phase-protocol';
 import type { AgentType } from '../config/agent-configs';
+import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import type { Phase } from '../config/types';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
@@ -187,6 +188,8 @@ export interface BuildOrchestratorConfig {
   maxConcurrentSubtasks?: number;
   /** Workflow optimization configuration */
   workflowConfig?: WorkflowConfig;
+  /** Project-specific agent routing profile */
+  agentProfile?: ProjectAgentProfile;
   /** Callback to generate the system prompt for a given agent type and phase */
   generatePrompt: (agentType: AgentType, phase: BuildPhase, context: PromptContext) => Promise<string>;
   /** Callback to run an agent session */
@@ -336,6 +339,7 @@ export class BuildOrchestrator extends EventEmitter {
   constructor(config: BuildOrchestratorConfig) {
     super();
     this.config = config;
+    this.config.agentProfile ??= GENERAL_AGENT_PROFILE;
 
     // Apply workflow configuration defaults
     if (!this.config.workflowConfig) {
@@ -462,6 +466,7 @@ export class BuildOrchestrator extends EventEmitter {
    */
   private async runPlanningPhase(): Promise<{ success: boolean; error?: string }> {
     this.transitionPhase('planning', translatePhaseMessage('planning', 'Creating implementation plan', this.config.language));
+    const agentType = this.getAgentForPhase('planning');
     let planningRetryContext: string | undefined;
     let validationFailures = 0;
 
@@ -477,14 +482,14 @@ export class BuildOrchestrator extends EventEmitter {
       this.iteration++;
       this.emitTyped('iteration-start', this.iteration, 'planning');
 
-      const prompt = await this.config.generatePrompt('planner', 'planning', {
+      const prompt = await this.config.generatePrompt(agentType, 'planning', {
         iteration: this.iteration,
         planningRetryContext,
         attemptCount: attempt,
       });
 
       const result = await this.config.runSession({
-        agentType: 'planner',
+        agentType,
         phase: 'planning',
         systemPrompt: prompt,
         specDir: this.config.specDir,
@@ -582,7 +587,7 @@ export class BuildOrchestrator extends EventEmitter {
 
       const allowStructuredPlanRepair = process.env.AUTOCODE_ENABLE_PLAN_STRUCTURED_REPAIR === '1';
       if (allowStructuredPlanRepair && this.config.getModel) {
-        const model = await this.config.getModel('planner');
+        const model = await this.config.getModel(agentType);
         if (model) {
           const repairResult = await repairJsonWithLLM(
             planPath,
@@ -626,6 +631,7 @@ export class BuildOrchestrator extends EventEmitter {
    */
   private async runCodingPhase(): Promise<{ success: boolean; error?: string }> {
     this.transitionPhase('coding', translatePhaseMessage('coding', 'Starting implementation', this.config.language));
+    const agentType = this.getAgentForPhase('coding');
 
     // Get retry limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig!);
@@ -647,7 +653,7 @@ export class BuildOrchestrator extends EventEmitter {
         }
       }
 
-      let prompt = await this.config.generatePrompt('coder', 'coding', {
+      let prompt = await this.config.generatePrompt(agentType, 'coding', {
         iteration: this.iteration,
         subtask,
         attemptCount: attempt,
@@ -673,7 +679,7 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       return this.config.runSession({
-        agentType: 'coder',
+        agentType,
         phase: 'coding',
         systemPrompt: prompt,
         specDir: this.config.specDir,
@@ -810,6 +816,8 @@ export class BuildOrchestrator extends EventEmitter {
 
     // QA review
     this.transitionPhase('qa_review', 'Running QA review');
+    const reviewAgentType = this.getAgentForPhase('qa_review');
+    const fixAgentType = this.getAgentForPhase('qa_fixing');
 
     // Get QA cycle limit from workflow config
     const retryLimits = getRetryLimits(this.config.workflowConfig!);
@@ -826,13 +834,13 @@ export class BuildOrchestrator extends EventEmitter {
       this.iteration++;
       this.emitTyped('iteration-start', this.iteration, 'qa_review');
 
-      const reviewPrompt = await this.config.generatePrompt('qa_reviewer', 'qa_review', {
+      const reviewPrompt = await this.config.generatePrompt(reviewAgentType, 'qa_review', {
         iteration: this.iteration,
         attemptCount: cycle,
       });
 
       const reviewResult = await this.config.runSession({
-        agentType: 'qa_reviewer',
+        agentType: reviewAgentType,
         phase: 'qa',
         systemPrompt: reviewPrompt,
         specDir: this.config.specDir,
@@ -874,13 +882,13 @@ export class BuildOrchestrator extends EventEmitter {
         this.iteration++;
         this.emitTyped('iteration-start', this.iteration, 'qa_fixing');
 
-        const fixPrompt = await this.config.generatePrompt('qa_fixer', 'qa_fixing', {
+        const fixPrompt = await this.config.generatePrompt(fixAgentType, 'qa_fixing', {
           iteration: this.iteration,
           attemptCount: cycle,
         });
 
         const fixResult = await this.config.runSession({
-          agentType: 'qa_fixer',
+          agentType: fixAgentType,
           phase: 'qa',
           systemPrompt: fixPrompt,
           specDir: this.config.specDir,
@@ -1179,6 +1187,22 @@ export class BuildOrchestrator extends EventEmitter {
   // ===========================================================================
   // Helpers
   // ===========================================================================
+
+  private getAgentForPhase(phase: BuildPhase): AgentType {
+    const profile = this.config.agentProfile ?? GENERAL_AGENT_PROFILE;
+    switch (phase) {
+      case 'planning':
+        return profile.planning;
+      case 'coding':
+        return profile.coding;
+      case 'qa_review':
+        return profile.qaReview;
+      case 'qa_fixing':
+        return profile.qaFix;
+      default:
+        return PHASE_AGENT_MAP[phase];
+    }
+  }
 
   private buildOutcome(success: boolean, durationMs: number, error?: string): BuildOutcome {
     const outcome: BuildOutcome = {

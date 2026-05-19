@@ -68,6 +68,15 @@ export const terminalMock = {
     data: []
   }),
 
+  getNativeCliHistory: async () => ({
+    success: true,
+    data: []
+  }),
+
+  resumeNativeCliSession: async () => ({
+    success: true
+  }),
+
   getTerminalSessionsForDate: async () => ({
     success: true,
     data: []

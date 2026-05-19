@@ -238,6 +238,18 @@ const browserMockAPI: ElectronAPI = {
     success: true
   }),
 
+  checkCodexCliVersion: async () => ({
+    success: true,
+    data: {
+      installed: null,
+      detectionResult: {
+        found: false,
+        source: 'system-path' as const,
+        message: 'Codex CLI not available in browser mock'
+      }
+    }
+  }),
+
   // GitHub API
   github: {
     getGitHubRepositories: async () => ({ success: true, data: [] }),

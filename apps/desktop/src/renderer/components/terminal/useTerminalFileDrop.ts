@@ -6,6 +6,7 @@
  *
  * The hook handles:
  * - Native drag over detection for application/json data
+ * - External file/folder drops from the operating system
  * - File reference parsing and validation
  * - Shell argument escaping for safe command execution
  * - Terminal input insertion via electronAPI
@@ -18,6 +19,8 @@ export interface UseTerminalFileDropOptions {
   terminalId: string;
   /** Callback to send input to terminal - defaults to window.electronAPI.sendTerminalInput */
   sendTerminalInput?: (terminalId: string, input: string) => void;
+  /** Resolve a browser File to an absolute native path. Electron provides this via webUtils. */
+  getPathForFile?: (file: File) => string;
 }
 
 export interface UseTerminalFileDropResult {
@@ -55,22 +58,48 @@ export interface UseTerminalFileDropResult {
  */
 export function useTerminalFileDrop({
   terminalId,
-  sendTerminalInput = (id, input) => window.electronAPI.sendTerminalInput(id, input)
+  sendTerminalInput = (id, input) => window.electronAPI.sendTerminalInput(id, input),
+  getPathForFile = (file) => window.electronAPI.getPathForFile(file)
 }: UseTerminalFileDropOptions): UseTerminalFileDropResult {
   // Native HTML5 drag state for files dragged from FileTreeItem
   // This is needed because FileTreeItem uses native HTML5 drag events,
   // not @dnd-kit, so we must handle native drop events separately
   const [isNativeDragOver, setIsNativeDragOver] = useState(false);
 
-  // Handle native drag over (for files from FileTreeItem)
+  const hasSupportedDropData = useCallback((dataTransfer: DataTransfer) => {
+    return dataTransfer.types.includes('application/json') || dataTransfer.types.includes('Files');
+  }, []);
+
+  const insertPaths = useCallback((paths: string[]) => {
+    const validPaths = paths.filter((path) => path.trim().length > 0);
+    if (validPaths.length === 0) return;
+
+    const input = validPaths.map((path) => escapeShellArg(path)).join(' ') + ' ';
+    sendTerminalInput(terminalId, input);
+  }, [terminalId, sendTerminalInput]);
+
+  const getExternalDropPaths = useCallback((dataTransfer: DataTransfer): string[] => {
+    const files = Array.from(dataTransfer.files ?? []);
+    return files
+      .map((file) => {
+        try {
+          return getPathForFile(file);
+        } catch {
+          return '';
+        }
+      })
+      .filter((path) => path.length > 0);
+  }, [getPathForFile]);
+
+  // Handle native drag over (for files from FileTreeItem or external OS drops)
   const handleNativeDragOver = useCallback((e: DragEvent<HTMLDivElement>) => {
-    // Check if it's a file reference drag (from FileTreeItem)
-    if (e.dataTransfer.types.includes('application/json')) {
+    if (hasSupportedDropData(e.dataTransfer)) {
       e.preventDefault();
       e.stopPropagation();
+      e.dataTransfer.dropEffect = 'copy';
       setIsNativeDragOver(true);
     }
-  }, []);
+  }, [hasSupportedDropData]);
 
   // Handle native drag leave
   const handleNativeDragLeave = useCallback((e: DragEvent<HTMLDivElement>) => {
@@ -85,21 +114,24 @@ export function useTerminalFileDrop({
     setIsNativeDragOver(false);
   }, []);
 
-  // Handle native drop (for files from FileTreeItem)
+  // Handle native drop (for files from FileTreeItem or external OS drops)
   const handleNativeDrop = useCallback((e: DragEvent<HTMLDivElement>) => {
     setIsNativeDragOver(false);
-    // Use parseFileReferenceDrop utility to validate and extract file reference data
+
     const fileRef = parseFileReferenceDrop(e.dataTransfer);
     if (fileRef) {
       e.preventDefault();
       e.stopPropagation();
-      // Use escapeShellArg to safely escape path for shell execution
-      // This handles all shell metacharacters (quotes, $, backticks, etc.)
-      const escapedPath = escapeShellArg(fileRef.path);
-      // Insert the file path into the terminal with a trailing space
-      sendTerminalInput(terminalId, escapedPath + ' ');
+      insertPaths([fileRef.path]);
+      return;
     }
-  }, [terminalId, sendTerminalInput]);
+
+    if (e.dataTransfer.types.includes('Files')) {
+      e.preventDefault();
+      e.stopPropagation();
+      insertPaths(getExternalDropPaths(e.dataTransfer));
+    }
+  }, [getExternalDropPaths, insertPaths]);
 
   return {
     isNativeDragOver,

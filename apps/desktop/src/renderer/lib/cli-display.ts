@@ -7,9 +7,10 @@ export const CLI_LABELS: Record<SupportedCLI, string> = {
   opencode: 'OpenCode',
   kilocode: 'Kilo Code',
   custom: 'Custom CLI',
+  deepseek: 'DeepSeek',
 };
 
-export const QUICK_CLI_OPTIONS: SupportedCLI[] = ['claude-code', 'codex'];
+export const QUICK_CLI_OPTIONS: SupportedCLI[] = ['claude-code', 'codex', 'deepseek'];
 
 export function getCliLabel(cli: SupportedCLI | undefined): string {
   return CLI_LABELS[cli || 'claude-code'];

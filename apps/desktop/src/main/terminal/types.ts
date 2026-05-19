@@ -1,6 +1,6 @@
 import type * as pty from '@lydell/node-pty';
 import type { BrowserWindow } from 'electron';
-import type { SupportedCLI, TerminalWorktreeConfig, WindowsShellType } from '../../shared/types';
+import type { DeepSeekCliState, SupportedCLI, TerminalWorktreeConfig, WindowsShellType } from '../../shared/types';
 
 // Re-export WindowsShellType for backwards compatibility
 export type { WindowsShellType } from '../../shared/types';
@@ -21,6 +21,8 @@ export interface TerminalProcess {
   title: string;
   /** Associated worktree configuration (persisted across restarts) */
   worktreeConfig?: TerminalWorktreeConfig;
+  /** Built-in DeepSeek CLI state scoped to this terminal session */
+  deepseekState?: DeepSeekCliState;
   /** Whether this terminal has a pending Claude resume that should be triggered on activation */
   pendingCLIResume?: boolean;
   /** Whether Claude was invoked with --dangerously-skip-permissions (YOLO mode) */

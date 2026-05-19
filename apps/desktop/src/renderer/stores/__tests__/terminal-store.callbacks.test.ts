@@ -45,9 +45,14 @@ describe('terminal-store callback registration functions', () => {
   let registerOutputCallback: typeof import('../terminal-store').registerOutputCallback;
   let unregisterOutputCallback: typeof import('../terminal-store').unregisterOutputCallback;
   let writeToTerminal: typeof import('../terminal-store').writeToTerminal;
+  let useTerminalStore: typeof import('../terminal-store').useTerminalStore;
   let mockTerminalBufferManager: {
     append: ReturnType<typeof vi.fn>;
     getSize: ReturnType<typeof vi.fn>;
+    get: ReturnType<typeof vi.fn>;
+    set: ReturnType<typeof vi.fn>;
+    clear: ReturnType<typeof vi.fn>;
+    dispose: ReturnType<typeof vi.fn>;
   };
   let mockDebugLog: ReturnType<typeof vi.fn>;
   let mockDebugError: ReturnType<typeof vi.fn>;
@@ -68,16 +73,14 @@ describe('terminal-store callback registration functions', () => {
     mockTerminalBufferManager = {
       append: vi.fn(),
       getSize: vi.fn(() => 100),
+      get: vi.fn(() => ''),
+      set: vi.fn(),
+      clear: vi.fn(),
+      dispose: vi.fn(),
     };
 
     vi.doMock('../../lib/terminal-buffer-manager', () => ({
-      terminalBufferManager: {
-        ...mockTerminalBufferManager,
-        get: vi.fn(() => ''),
-        set: vi.fn(),
-        clear: vi.fn(),
-        dispose: vi.fn(),
-      },
+      terminalBufferManager: mockTerminalBufferManager,
     }));
 
     vi.doMock('uuid', () => ({
@@ -98,6 +101,7 @@ describe('terminal-store callback registration functions', () => {
     registerOutputCallback = storeModule.registerOutputCallback;
     unregisterOutputCallback = storeModule.unregisterOutputCallback;
     writeToTerminal = storeModule.writeToTerminal;
+    useTerminalStore = storeModule.useTerminalStore;
   });
 
   afterEach(() => {
@@ -378,6 +382,44 @@ describe('terminal-store callback registration functions', () => {
 
       // All data should be buffered
       expect(mockTerminalBufferManager.append).toHaveBeenCalledTimes(8);
+    });
+  });
+
+  describe('addRestoredTerminal', () => {
+    it('restores buffered output for built-in DeepSeek CLI sessions', () => {
+      useTerminalStore.getState().addRestoredTerminal({
+        id: 'deepseek-terminal',
+        title: 'DeepSeek',
+        cwd: 'E:/Work/Test',
+        projectPath: 'E:/Work/Test',
+        isCLIMode: true,
+        activeCLI: 'deepseek',
+        outputBuffer: 'previous deepseek output\r\n',
+        createdAt: '2026-05-19T00:00:00.000Z',
+        lastActiveAt: '2026-05-19T00:00:00.000Z',
+      });
+
+      expect(mockTerminalBufferManager.set).toHaveBeenCalledWith('deepseek-terminal', 'previous deepseek output\r\n');
+      expect(mockTerminalBufferManager.clear).not.toHaveBeenCalledWith('deepseek-terminal');
+      expect(useTerminalStore.getState().getTerminal('deepseek-terminal')?.isCLIMode).toBe(true);
+      expect(useTerminalStore.getState().getTerminal('deepseek-terminal')?.activeCLI).toBe('deepseek');
+    });
+
+    it('clears stale buffered output for restored external non-Claude CLI sessions', () => {
+      useTerminalStore.getState().addRestoredTerminal({
+        id: 'codex-terminal',
+        title: 'Codex',
+        cwd: 'E:/Work/Test',
+        projectPath: 'E:/Work/Test',
+        isCLIMode: true,
+        activeCLI: 'codex',
+        outputBuffer: 'stale external tui output\r\n',
+        createdAt: '2026-05-19T00:00:00.000Z',
+        lastActiveAt: '2026-05-19T00:00:00.000Z',
+      });
+
+      expect(mockTerminalBufferManager.clear).toHaveBeenCalledWith('codex-terminal');
+      expect(mockTerminalBufferManager.set).not.toHaveBeenCalledWith('codex-terminal', 'stale external tui output\r\n');
     });
   });
 });

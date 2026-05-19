@@ -12,8 +12,14 @@ export interface Project {
   updatedAt: Date;
 }
 
+export type ProjectType = 'general' | 'game-mmo';
+
 export interface ProjectSettings {
   model: string;
+  /** Agent domain profile used for project-specific orchestration. Defaults to general. */
+  projectType?: ProjectType;
+  /** Project-specific default CLI for smart terminals. Falls back to the app default when unset. */
+  preferredCLI?: import('./settings').SupportedCLI;
   memoryBackend: 'memory' | 'file';
   linearSync: boolean;
   linearTeamId?: string;

@@ -1002,6 +1002,29 @@ describe('useXterm buffer replay', () => {
     expect(setSpy).not.toHaveBeenCalledWith('claude-terminal', 'short');
   });
 
+  it('replays buffered output for DeepSeek CLI terminals on project switch remounts', async () => {
+    useTerminalStore.setState({
+      terminals: [{
+        id: 'deepseek-terminal',
+        title: 'DeepSeek',
+        status: 'claude-active',
+        cwd: 'E:/Work/Test',
+        createdAt: new Date(),
+        isCLIMode: true,
+        activeCLI: 'deepseek',
+      }],
+      activeTerminalId: 'deepseek-terminal',
+    });
+
+    vi.spyOn(terminalBufferManager, 'get').mockReturnValue('previous deepseek output\r\n');
+    const clearIfUnchangedSpy = vi.spyOn(terminalBufferManager, 'clearIfUnchanged').mockImplementation(() => {});
+
+    const { mockWrite } = await renderBufferedTerminal('deepseek-terminal');
+
+    expect(mockWrite).toHaveBeenCalledWith('previous deepseek output\r\n');
+    expect(clearIfUnchangedSpy).toHaveBeenCalledWith('deepseek-terminal', 'previous deepseek output\r\n');
+  });
+
 });
 
 describe('useXterm WebGL context management', () => {

@@ -19,6 +19,7 @@ import type { BrowserWindow } from 'electron';
 import { setUpdateChannel, setUpdateChannelWithDowngradeCheck } from '../app-updater';
 import { getSettingsPath, readSettingsFile } from '../settings-utils';
 import { resetMemoryService } from './context/memory-service-factory';
+import { initializeLocalMemoryDatabase } from '../ai/memory/db';
 import { configureTools, getToolPath, getToolInfo, isPathFromWrongPlatform, preWarmToolCache } from '../cli-tool-manager';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 import type { APIProfile } from '../../shared/types/profile';
@@ -458,6 +459,10 @@ export function registerSettingsHandlers(
           if (profile) {
             newSettings.defaultModel = profile.model;
           }
+        }
+
+        if (newSettings.memoryEnabled === true) {
+          await initializeLocalMemoryDatabase();
         }
 
         writeFileSync(settingsPath, JSON.stringify(newSettings, null, 2), 'utf-8');

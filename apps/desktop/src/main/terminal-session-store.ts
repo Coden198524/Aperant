@@ -1,7 +1,7 @@
 import { app } from 'electron';
 import { join } from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, renameSync, unlinkSync, promises as fsPromises } from 'fs';
-import type { SupportedCLI, TerminalWorktreeConfig } from '../shared/types';
+import type { DeepSeekCliState, SupportedCLI, TerminalWorktreeConfig } from '../shared/types';
 import { debugLog } from '../shared/utils/debug-logger';
 
 /**
@@ -15,6 +15,7 @@ export interface TerminalSession {
   isCLIMode: boolean;
   activeCLI?: SupportedCLI;
   claudeSessionId?: string;  // Claude session ID for resume functionality
+  dangerouslySkipPermissions?: boolean;  // Whether this session should bypass CLI permission prompts
   outputBuffer: string;  // Last 100KB of output for replay
   createdAt: string;  // ISO timestamp
   lastActiveAt: string;  // ISO timestamp
@@ -22,6 +23,8 @@ export interface TerminalSession {
   worktreeConfig?: TerminalWorktreeConfig;
   /** UI display position for ordering terminals after drag-drop */
   displayOrder?: number;
+  /** Built-in DeepSeek CLI state scoped to this terminal session */
+  deepseekState?: DeepSeekCliState;
 }
 
 /**
@@ -417,6 +420,8 @@ export class TerminalSessionStore {
         lastActiveAt: new Date().toISOString(),
         // Preserve existing displayOrder if incoming session doesn't have it
         displayOrder: session.displayOrder ?? existingSession.displayOrder,
+        // Preserve DeepSeek state when a renderer restore payload omits it
+        deepseekState: session.deepseekState ?? existingSession.deepseekState,
       };
     } else {
       const truncatedLen = session.outputBuffer.slice(-MAX_OUTPUT_BUFFER).length;
@@ -466,23 +471,27 @@ export class TerminalSessionStore {
    * duplication issues across days.
    * Validates worktree configs - clears them if worktree no longer exists.
    */
-  getSessions(projectPath: string): TerminalSession[] {
+  getSessions(projectPath: string, cli?: SupportedCLI): TerminalSession[] {
     const today = getDateString();
 
     debugLog('[TerminalSessionStore] Getting sessions for project:', projectPath, 'date:', today);
 
     // First check today
     const todaySessions = this.getTodaysSessions();
-    if (todaySessions[projectPath]?.length > 0) {
+    const todayProjectSessions = todaySessions[projectPath] || [];
+    const matchingTodaySessions = todayProjectSessions.filter(session =>
+      !cli || session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined)
+    );
+    if (matchingTodaySessions.length > 0) {
       // Debug: Log outputBuffer info for each session
-      for (const session of todaySessions[projectPath]) {
+      for (const session of matchingTodaySessions) {
         const bufferLen = session.outputBuffer?.length ?? 0;
         debugLog('[TerminalSessionStore] Session', session.id, 'outputBuffer:', bufferLen, 'bytes',
           'isCLIMode:', session.isCLIMode,
           'hasBuffer:', bufferLen > 0);
       }
       // Validate worktree configs before returning
-      return todaySessions[projectPath].map(session => ({
+      return matchingTodaySessions.map(session => ({
         ...session,
         worktreeConfig: this.validateWorktreeConfig(session.worktreeConfig),
       }));
@@ -494,14 +503,19 @@ export class TerminalSessionStore {
         // Exclude today since we already checked it
         if (date === today) return false;
         const sessions = this.data.sessionsByDate[date][projectPath];
-        return sessions && sessions.length > 0;
+        return sessions && sessions.some(session =>
+          !cli || session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined)
+        );
       })
       .sort((a, b) => b.localeCompare(a));  // Most recent first
 
     if (dates.length > 0) {
       const mostRecentDate = dates[0];
       console.warn(`[TerminalSessionStore] No sessions today, migrating sessions from ${mostRecentDate} to today`);
-      const sessions = this.data.sessionsByDate[mostRecentDate][projectPath] || [];
+      const allOldSessions = this.data.sessionsByDate[mostRecentDate][projectPath] || [];
+      const sessions = allOldSessions.filter(session =>
+        !cli || session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined)
+      );
 
       // Debug: Log outputBuffer info for sessions being migrated
       for (const session of sessions) {
@@ -520,11 +534,21 @@ export class TerminalSessionStore {
         lastActiveAt: new Date().toISOString(),
       }));
 
-      // Add migrated sessions to today
-      todaySessions[projectPath] = migratedSessions;
+      // Add migrated sessions to today without discarding sessions from other CLIs.
+      const existingTodaySessions = todaySessions[projectPath] || [];
+      const migratedIds = new Set(migratedSessions.map(session => session.id));
+      todaySessions[projectPath] = [
+        ...existingTodaySessions.filter(session => !migratedIds.has(session.id)),
+        ...migratedSessions,
+      ];
 
-      // Remove sessions from the old date to prevent duplication
-      delete this.data.sessionsByDate[mostRecentDate][projectPath];
+      // Remove only the migrated sessions from the old date to prevent duplication.
+      const remainingOldSessions = allOldSessions.filter(session => !migratedIds.has(session.id));
+      if (remainingOldSessions.length > 0) {
+        this.data.sessionsByDate[mostRecentDate][projectPath] = remainingOldSessions;
+      } else {
+        delete this.data.sessionsByDate[mostRecentDate][projectPath];
+      }
 
       // Clean up empty date buckets
       if (Object.keys(this.data.sessionsByDate[mostRecentDate]).length === 0) {
@@ -546,12 +570,14 @@ export class TerminalSessionStore {
    * Get sessions for a specific date and project
    * Validates worktree configs - clears them if worktree no longer exists.
    */
-  getSessionsForDate(date: string, projectPath: string): TerminalSession[] {
+  getSessionsForDate(date: string, projectPath: string, cli?: SupportedCLI): TerminalSession[] {
     const dateSessions = this.data.sessionsByDate[date];
     if (!dateSessions) return [];
     const sessions = dateSessions[projectPath] || [];
     // Validate worktree configs before returning
-    return sessions.map(session => ({
+    return sessions
+      .filter(session => !cli || session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined))
+      .map(session => ({
       ...session,
       worktreeConfig: this.validateWorktreeConfig(session.worktreeConfig),
     }));
@@ -567,13 +593,15 @@ export class TerminalSessionStore {
   /**
    * Get available session dates with metadata
    */
-  getAvailableDates(projectPath?: string): SessionDateInfo[] {
+  getAvailableDates(projectPath?: string, cli?: SupportedCLI): SessionDateInfo[] {
     const dates = Object.keys(this.data.sessionsByDate)
       .filter(date => {
         // If projectPath specified, only include dates with sessions for that project
         if (projectPath) {
           const sessions = this.data.sessionsByDate[date][projectPath];
-          return sessions && sessions.length > 0;
+          return sessions && sessions.some(session =>
+            !cli || session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined)
+          );
         }
         return true;
       })
@@ -586,8 +614,11 @@ export class TerminalSessionStore {
 
       for (const [projPath, sessions] of Object.entries(dateSessions)) {
         if (!projectPath || projPath === projectPath) {
-          if (sessions.length > 0) {
-            sessionCount += sessions.length;
+          const matchingSessions = cli
+            ? sessions.filter(session => session.activeCLI === cli || (cli === 'claude-code' && session.activeCLI === undefined))
+            : sessions;
+          if (matchingSessions.length > 0) {
+            sessionCount += matchingSessions.length;
             projectCount++;
           }
         }

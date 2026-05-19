@@ -4,7 +4,14 @@
  */
 
 import { describe, it, expect, afterEach } from 'vitest';
-import { getInMemoryClient } from '../db';
+import { mkdtempSync, rmSync, existsSync } from 'fs';
+import { tmpdir } from 'os';
+import { join } from 'path';
+import {
+  getInMemoryClient,
+  initializeLocalMemoryDatabase,
+  resolveMemoryDatabasePath,
+} from '../db';
 
 afterEach(() => {
   // Nothing to clean up — each test creates a fresh in-memory client
@@ -107,5 +114,43 @@ describe('getInMemoryClient', () => {
     ).resolves.not.toThrow();
 
     client.close();
+  });
+});
+
+describe('local memory database path', () => {
+  it('resolves database names inside the configured storage directory', () => {
+    const dbPath = join(tmpdir(), 'autocode-memory-test');
+    expect(resolveMemoryDatabasePath(dbPath, 'project_memory')).toBe(
+      join(dbPath, 'project_memory.db')
+    );
+  });
+
+  it('does not duplicate the .db extension', () => {
+    const dbPath = join(tmpdir(), 'autocode-memory-test');
+    expect(resolveMemoryDatabasePath(dbPath, 'project_memory.db')).toBe(
+      join(dbPath, 'project_memory.db')
+    );
+  });
+
+  it('creates the configured directory and database file', async () => {
+    const root = mkdtempSync(join(tmpdir(), 'autocode-memory-'));
+    const dbPath = join(root, 'memories');
+
+    try {
+      const result = await initializeLocalMemoryDatabase({
+        dbPath,
+        database: 'project_memory',
+      });
+
+      expect(result.path).toBe(join(dbPath, 'project_memory.db'));
+      expect(existsSync(dbPath)).toBe(true);
+      expect(existsSync(result.path)).toBe(true);
+    } finally {
+      try {
+        rmSync(root, { recursive: true, force: true, maxRetries: 5, retryDelay: 100 });
+      } catch {
+        // libSQL can briefly keep WAL files locked on Windows after close().
+      }
+    }
   });
 });

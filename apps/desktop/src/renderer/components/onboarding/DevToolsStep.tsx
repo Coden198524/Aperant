@@ -85,7 +85,8 @@ const CLI_NAMES: Partial<Record<SupportedCLI, string>> = {
   gemini: 'Gemini CLI',
   opencode: 'OpenCode',
   kilocode: 'Kilo Code CLI',
-  codex: 'Codex CLI'
+  codex: 'Codex CLI',
+  deepseek: 'DeepSeek'
 };
 
 /**

@@ -10,6 +10,10 @@ interface FileTreeItemProps {
   isExpanded: boolean;
   isLoading: boolean;
   onToggle: () => void;
+  onFileOpen?: (node: FileNode) => void;
+  isSelected?: boolean;
+  isChanged?: boolean;
+  hasChangedDescendant?: boolean;
 }
 
 // Get appropriate icon based on file extension
@@ -70,6 +74,10 @@ export function FileTreeItem({
   isExpanded,
   isLoading,
   onToggle,
+  onFileOpen,
+  isSelected = false,
+  isChanged = false,
+  hasChangedDescendant = false,
 }: FileTreeItemProps) {
   const { t } = useTranslation('common');
   const [isDragging, setIsDragging] = useState(false);
@@ -90,6 +98,8 @@ export function FileTreeItem({
     e.stopPropagation();
     if (node.isDirectory) {
       onToggle();
+    } else {
+      onFileOpen?.(node);
     }
   };
 
@@ -97,6 +107,8 @@ export function FileTreeItem({
     e.stopPropagation();
     if (node.isDirectory) {
       onToggle();
+    } else {
+      onFileOpen?.(node);
     }
   };
 
@@ -106,6 +118,8 @@ export function FileTreeItem({
       e.stopPropagation();
       if (node.isDirectory) {
         onToggle();
+      } else {
+        onFileOpen?.(node);
       }
     }
   };
@@ -157,24 +171,28 @@ export function FileTreeItem({
     }
   };
 
+  const showChanged = isChanged || hasChangedDescendant;
+
   return (
     <div
-      role={node.isDirectory ? 'button' : undefined}
-      tabIndex={node.isDirectory ? 0 : undefined}
+      role="button"
+      tabIndex={0}
       draggable
       onDragStart={handleDragStart}
       onDragEnd={handleDragEnd}
-      onKeyDown={node.isDirectory ? handleKeyDown : undefined}
+      onKeyDown={handleKeyDown}
       className={cn(
         'flex items-center gap-1 py-1 px-2 rounded cursor-grab select-none',
         'hover:bg-accent/50 transition-colors',
-        node.isDirectory && 'focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1',
+        'focus:outline-none focus:ring-2 focus:ring-primary focus:ring-offset-1',
+        isSelected && 'bg-primary/15 text-primary ring-1 ring-primary/25',
+        !isSelected && showChanged && 'bg-amber-500/8 hover:bg-amber-500/14',
         isDragging && 'opacity-50 bg-accent ring-2 ring-primary'
       )}
       style={{ paddingLeft: `${depth * 12 + 8}px` }}
       onClick={handleClick}
       onDoubleClick={handleDoubleClick}
-      aria-label={node.isDirectory ? t('accessibility.toggleFolder', { name: node.name }) : undefined}
+      aria-label={node.isDirectory ? t('accessibility.toggleFolder', { name: node.name }) : `Open ${node.name}`}
       aria-expanded={node.isDirectory ? isExpanded : undefined}
     >
       {/* Expand/collapse chevron for directories */}
@@ -206,16 +224,28 @@ export function FileTreeItem({
       {node.isDirectory ? (
         <Folder className={cn(
           'h-4 w-4',
-          isExpanded ? 'text-primary' : 'text-warning'
+          showChanged ? 'text-amber-500' : isExpanded ? 'text-primary' : 'text-warning'
         )} />
       ) : (
-        getFileIcon(node.name)
+        isChanged ? <FileCode className="h-4 w-4 text-emerald-500" /> : getFileIcon(node.name)
       )}
 
       {/* Name */}
-      <span className="text-xs truncate flex-1 text-foreground">
+      <span className={cn(
+        'text-xs truncate flex-1',
+        isSelected ? 'text-primary' : isChanged ? 'text-emerald-500 font-medium' : hasChangedDescendant ? 'text-amber-500 font-medium' : 'text-foreground'
+      )}>
         {node.name}
       </span>
+      {showChanged && (
+        <span
+          className={cn(
+            'h-1.5 w-1.5 shrink-0 rounded-full',
+            isChanged ? 'bg-emerald-500' : 'bg-amber-500'
+          )}
+          aria-hidden="true"
+        />
+      )}
     </div>
   );
 }

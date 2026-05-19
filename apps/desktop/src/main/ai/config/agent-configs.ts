@@ -135,6 +135,26 @@ export type AgentType =
   | 'direct_task'
   | 'qa_reviewer'
   | 'qa_fixer'
+  | 'mmo_spec_orchestrator'
+  | 'mmo_build_orchestrator'
+  | 'mmo_system_designer'
+  | 'mmo_engine_architect'
+  | 'mmo_engine_programmer'
+  | 'mmo_rendering_engineer'
+  | 'mmo_animation_engineer'
+  | 'mmo_asset_pipeline_engineer'
+  | 'mmo_world_streaming_engineer'
+  | 'mmo_tools_engineer'
+  | 'mmo_build_release_engineer'
+  | 'mmo_engine_performance_engineer'
+  | 'mmo_server_authority_engineer'
+  | 'mmo_network_sync_engineer'
+  | 'mmo_client_gameplay_engineer'
+  | 'mmo_data_persistence_engineer'
+  | 'mmo_security_anticheat_engineer'
+  | 'mmo_liveops_engineer'
+  | 'mmo_qa_reviewer'
+  | 'mmo_qa_fixer'
   | 'insights'
   | 'merge_resolver'
   | 'commit_message'
@@ -326,6 +346,260 @@ export const AGENT_CONFIGS: Record<AgentType, AgentConfig> = {
       TOOL_RECORD_GOTCHA,
     ],
     // Keep QA remediation thorough for runtime and cross-platform stability issues.
+    thinkingDefault: 'high',
+  },
+
+  // ============================================================================
+  // MMO / LARGE ONLINE GAME AGENTS
+  // ============================================================================
+  mmo_spec_orchestrator: {
+    tools: [...ALL_BUILTIN_TOOLS, 'SpawnSubagent'],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_GET_SESSION_CONTEXT,
+      TOOL_RECORD_DISCOVERY,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_build_orchestrator: {
+    tools: [...ALL_BUILTIN_TOOLS, 'SpawnSubagent'],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_GET_SESSION_CONTEXT,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_UPDATE_SUBTASK_STATUS,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_system_designer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_GET_SESSION_CONTEXT,
+      TOOL_RECORD_DISCOVERY,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_engine_architect: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_GET_SESSION_CONTEXT,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_engine_programmer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_rendering_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_animation_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_asset_pipeline_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_world_streaming_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_tools_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_build_release_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_engine_performance_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_server_authority_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_network_sync_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_client_gameplay_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_data_persistence_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_security_anticheat_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_liveops_engineer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_RECORD_DISCOVERY,
+      TOOL_RECORD_GOTCHA,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_qa_reviewer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode', 'browser'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_UPDATE_QA_STATUS,
+      TOOL_GET_SESSION_CONTEXT,
+    ],
+    thinkingDefault: 'high',
+  },
+  mmo_qa_fixer: {
+    tools: [...ALL_BUILTIN_TOOLS],
+    mcpServers: ['context7', 'memory', 'autocode', 'browser'],
+    mcpServersOptional: ['linear', 'yunxiao'],
+    autoClaudeTools: [
+      TOOL_UPDATE_SUBTASK_STATUS,
+      TOOL_GET_BUILD_PROGRESS,
+      TOOL_UPDATE_QA_STATUS,
+      TOOL_RECORD_GOTCHA,
+    ],
     thinkingDefault: 'high',
   },
 

@@ -975,6 +975,7 @@ export function App() {
                 {/* TerminalGrid is always mounted but hidden when not active to preserve terminal state */}
                 <div className={activeView === 'terminals' ? 'h-full' : 'hidden'}>
                   <TerminalGrid
+                    projectId={selectedProject?.id}
                     projectPath={selectedProject?.path}
                     onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
                     isActive={activeView === 'terminals'}

@@ -1,4 +1,5 @@
 {
+  "taskContextPrompt": "请阅读任务「{{title}}」：{{description}}。确认收到后等待我的下一步指令。",
   "expand": {
     "expand": "展开终端",
     "collapse": "收起终端"

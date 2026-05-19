@@ -71,6 +71,7 @@ function createTestSession(overrides: Partial<{
   cwd: string;
   projectPath: string;
   isCLIMode: boolean;
+  activeCLI: 'claude-code' | 'codex';
   outputBuffer: string;
   createdAt: string;
   lastActiveAt: string;
@@ -81,6 +82,7 @@ function createTestSession(overrides: Partial<{
     cwd: overrides.cwd ?? TEST_PROJECT_PATH,
     projectPath: overrides.projectPath ?? TEST_PROJECT_PATH,
     isCLIMode: overrides.isCLIMode ?? false,
+    activeCLI: overrides.activeCLI,
     outputBuffer: overrides.outputBuffer ?? 'test output',
     createdAt: overrides.createdAt ?? new Date().toISOString(),
     lastActiveAt: overrides.lastActiveAt ?? new Date().toISOString()
@@ -590,6 +592,19 @@ describe('TerminalSessionStore', () => {
       store.saveSession(createTestSession({ id: 'other', projectPath: otherProjectPath }));
 
       const dates = store.getAvailableDates(TEST_PROJECT_PATH);
+
+      expect(dates).toHaveLength(1);
+      expect(dates[0].sessionCount).toBe(1);
+    });
+
+    it('should filter available dates by Codex CLI sessions', async () => {
+      const { TerminalSessionStore } = await import('../terminal-session-store');
+      const store = new TerminalSessionStore();
+
+      store.saveSession(createTestSession({ id: 'claude', activeCLI: 'claude-code' }));
+      store.saveSession(createTestSession({ id: 'codex', activeCLI: 'codex' }));
+
+      const dates = store.getAvailableDates(TEST_PROJECT_PATH, 'codex');
 
       expect(dates).toHaveLength(1);
       expect(dates[0].sessionCount).toBe(1);

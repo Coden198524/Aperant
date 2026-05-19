@@ -29,6 +29,16 @@ export interface TerminalResizeOptions {
 }
 
 /**
+ * Persisted state for the built-in DeepSeek CLI.
+ * Kept per terminal session because different terminals can use different
+ * models and conversation histories, even within the same project.
+ */
+export interface DeepSeekCliState {
+  modelId: string;
+  messages?: unknown[];
+}
+
+/**
  * Persisted terminal session data for restoring sessions on app restart
  */
 export interface TerminalSession {
@@ -39,6 +49,7 @@ export interface TerminalSession {
   isCLIMode: boolean;
   activeCLI?: import('./settings').SupportedCLI;
   claudeSessionId?: string;  // Claude Code session ID for --resume
+  dangerouslySkipPermissions?: boolean;  // Whether this session should bypass CLI permission prompts
   outputBuffer: string;
   createdAt: string;
   lastActiveAt: string;
@@ -46,6 +57,8 @@ export interface TerminalSession {
   displayOrder?: number;
   /** Associated worktree configuration (validated on restore) */
   worktreeConfig?: TerminalWorktreeConfig;
+  /** Built-in DeepSeek CLI state scoped to this terminal session */
+  deepseekState?: DeepSeekCliState;
 }
 
 export interface TerminalRestoreResult {
@@ -76,6 +89,20 @@ export interface SessionDateRestoreResult {
     success: boolean;
     error?: string;
   }>;
+}
+
+/**
+ * Native CLI conversation/session record discovered from the CLI's own storage.
+ * This is intentionally separate from Autocode terminal snapshots.
+ */
+export interface NativeCliSession {
+  id: string;
+  cli: import('./settings').SupportedCLI;
+  title: string;
+  updatedAt: string;
+  createdAt?: string;
+  projectPath?: string;
+  sourcePath?: string;
 }
 
 /**

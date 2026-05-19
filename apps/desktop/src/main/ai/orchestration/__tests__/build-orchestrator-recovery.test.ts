@@ -56,6 +56,7 @@ vi.mock('../subtask-iterator', () => ({
 }));
 
 import { BuildOrchestrator } from '../build-orchestrator';
+import { MMO_AGENT_PROFILE } from '../../config/project-agent-profile';
 import type { SessionResult } from '../../session/types';
 import type { ExecutionPhase } from '../../../../shared/constants/phase-protocol';
 
@@ -408,5 +409,57 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(2);
     expect(mockRewriteImplementationPlanFiles).toHaveBeenCalledTimes(2);
     expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
+  });
+
+  it('uses MMO profile agents for planning and QA phases', async () => {
+    let plannerRuns = 0;
+    let codingRuns = 0;
+
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.json')) {
+        if (plannerRuns === 0) {
+          return Promise.resolve(JSON.stringify({ phases: [] }));
+        }
+        return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve('Status: PASSED');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'mmo_system_designer') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      agentProfile: MMO_AGENT_PROFILE,
+      generatePrompt: vi.fn().mockResolvedValue('prompt'),
+      runSession,
+    });
+
+    const outcome = await orchestrator.run();
+    const agentTypes = runSession.mock.calls.map(([config]) => config.agentType);
+
+    expect(outcome.success).toBe(true);
+    expect(agentTypes).toContain('mmo_system_designer');
+    expect(agentTypes).toContain('mmo_qa_reviewer');
+    expect(agentTypes).not.toContain('planner');
+    expect(agentTypes).not.toContain('qa_reviewer');
   });
 });

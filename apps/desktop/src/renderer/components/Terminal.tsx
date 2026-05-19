@@ -1,4 +1,5 @@
 import { useEffect, useRef, useCallback, useState, useMemo, forwardRef, useImperativeHandle } from 'react';
+import { useTranslation } from 'react-i18next';
 import { useDroppable, useDndContext } from '@dnd-kit/core';
 import '@xterm/xterm/css/xterm.css';
 import { FileDown } from 'lucide-react';
@@ -27,6 +28,7 @@ const MIN_ROWS = 3;
 // Platform detection for platform-specific timing
 // Windows ConPTY is slower than Unix PTY, so we need longer grace periods
 const platformIsWindows = checkIsWindows();
+const AUTO_INVOKE_CLI_DELAY_MS = platformIsWindows ? 1000 : 300;
 
 // Threshold in milliseconds to allow for async PTY resize acknowledgment
 // Mismatches within this window after a resize are expected and not logged as warnings
@@ -65,7 +67,9 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   isDragging,
   isExpanded,
   onToggleExpand,
+  defaultCLI: projectDefaultCLI,
 }, ref) {
+  const { t } = useTranslation('terminal');
   const isMountedRef = useRef(true);
   const isCreatedRef = useRef(false);
   // Track deliberate terminal recreation (e.g., worktree switching)
@@ -81,6 +85,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   // Track if auto-resume has been attempted to prevent duplicate resume calls
   // This fixes the race condition where isActive and pendingCLIResume update timing can miss the effect trigger
   const hasAttemptedAutoResumeRef = useRef(false);
+  const hasAttemptedAutoInvokeRef = useRef(false);
   // Track when the last resize was sent to PTY for grace period logic
   // This prevents false positive mismatch warnings during async resize acknowledgment
   const lastResizeTimeRef = useRef<number>(0);
@@ -98,6 +103,8 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
   const resizeSequenceRef = useRef<number>(0);
   // Track post-creation dimension check timeout for cleanup
   const postCreationTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const taskContextTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const autoInvokeTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Worktree dialog state
   const [showWorktreeDialog, setShowWorktreeDialog] = useState(false);
@@ -309,6 +316,40 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     },
     onDimensionsReady: handleDimensionsReady,
   });
+
+  useEffect(() => {
+    if (!isActive || !isCreatedRef.current) {
+      return;
+    }
+
+    let isCancelled = false;
+    const refitAndRedraw = () => {
+      if (isCancelled || !xtermRef.current) {
+        return;
+      }
+
+      fit();
+      const currentCols = xtermRef.current.cols;
+      const currentRows = xtermRef.current.rows;
+      if (currentCols >= MIN_COLS && currentRows >= MIN_ROWS) {
+        xtermRef.current.refresh(0, currentRows - 1);
+        resizePtyWithTracking(currentCols, currentRows, 'project activation redraw');
+      }
+    };
+
+    const rafId = typeof requestAnimationFrame !== 'undefined'
+      ? requestAnimationFrame(refitAndRedraw)
+      : null;
+    const timeoutId = setTimeout(refitAndRedraw, 120);
+
+    return () => {
+      isCancelled = true;
+      if (rafId !== null && typeof cancelAnimationFrame !== 'undefined') {
+        cancelAnimationFrame(rafId);
+      }
+      clearTimeout(timeoutId);
+    };
+  }, [isActive, fit, resizePtyWithTracking]);
 
   // Expose fit method to parent components via ref
   // This allows external triggering of terminal resize (e.g., after drag-drop reorder)
@@ -639,6 +680,14 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
         clearTimeout(postCreationTimeoutRef.current);
         postCreationTimeoutRef.current = null;
       }
+      if (taskContextTimeoutRef.current !== null) {
+        clearTimeout(taskContextTimeoutRef.current);
+        taskContextTimeoutRef.current = null;
+      }
+      if (autoInvokeTimeoutRef.current !== null) {
+        clearTimeout(autoInvokeTimeoutRef.current);
+        autoInvokeTimeoutRef.current = null;
+      }
 
       // Dispose synchronously on unmount to prevent race conditions
       // where a new terminal mounts before the old one is cleaned up.
@@ -648,13 +697,38 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     };
   }, [id, dispose, cleanupAutoNaming]);
 
-  const defaultCLI = (settings.preferredCLI || 'claude-code') as SupportedCLI;
+  const defaultCLI = (projectDefaultCLI || settings.preferredCLI || 'claude-code') as SupportedCLI;
 
   const handleInvokeCLI = useCallback((cli?: SupportedCLI) => {
     const selectedCLI = cli || defaultCLI;
     setCLIMode(id, true, selectedCLI);
     window.electronAPI.invokeCLIInTerminal(id, effectiveCwd, selectedCLI);
   }, [id, effectiveCwd, setCLIMode, defaultCLI]);
+
+  const scheduleInvokeCLI = useCallback((cli: SupportedCLI, delayMs: number = AUTO_INVOKE_CLI_DELAY_MS) => {
+    if (autoInvokeTimeoutRef.current !== null) {
+      clearTimeout(autoInvokeTimeoutRef.current);
+    }
+
+    autoInvokeTimeoutRef.current = setTimeout(() => {
+      updateTerminal(id, { autoInvokeCLI: undefined });
+      handleInvokeCLI(cli);
+      autoInvokeTimeoutRef.current = null;
+    }, delayMs);
+  }, [id, updateTerminal, handleInvokeCLI]);
+
+  useEffect(() => {
+    if (!terminal?.autoInvokeCLI || terminal.isCLIMode || hasAttemptedAutoInvokeRef.current) {
+      return;
+    }
+    if (terminal.status !== 'running') {
+      return;
+    }
+
+    hasAttemptedAutoInvokeRef.current = true;
+    const cli = terminal.autoInvokeCLI;
+    scheduleInvokeCLI(cli);
+  }, [terminal?.autoInvokeCLI, terminal?.isCLIMode, terminal?.status, scheduleInvokeCLI]);
 
   const handleClick = useCallback(() => {
     onActivate();
@@ -676,15 +750,26 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
     // Sync to main process so title persists across hot reloads
     window.electronAPI.setTerminalTitle(id, selectedTask.title);
 
-    const contextMessage = `I'm working on: ${selectedTask.title}
+    const contextMessage = t('taskContextPrompt', {
+      title: selectedTask.title,
+      description: selectedTask.description,
+      defaultValue: 'Please read task "{{title}}": {{description}}. Confirm receipt, then wait for my next instruction.',
+    });
 
-Description:
-${selectedTask.description}
+    if (!terminal?.isCLIMode) {
+      scheduleInvokeCLI(defaultCLI, AUTO_INVOKE_CLI_DELAY_MS);
+    }
 
-Please confirm you're ready by saying: I'm ready to work on ${selectedTask.title} - Context is loaded.`;
+    if (taskContextTimeoutRef.current !== null) {
+      clearTimeout(taskContextTimeoutRef.current);
+    }
 
-    window.electronAPI.sendTerminalInput(id, contextMessage + '\r');
-  }, [id, tasks, setAssociatedTask, updateTerminal]);
+    const sendDelayMs = terminal?.isCLIMode ? 0 : AUTO_INVOKE_CLI_DELAY_MS + 2500;
+    taskContextTimeoutRef.current = setTimeout(() => {
+      window.electronAPI.sendTerminalInput(id, `${contextMessage}\r`);
+      taskContextTimeoutRef.current = null;
+    }, sendDelayMs);
+  }, [id, tasks, setAssociatedTask, updateTerminal, terminal?.isCLIMode, scheduleInvokeCLI, defaultCLI, t]);
 
   const handleClearTask = useCallback(() => {
     setAssociatedTask(id, undefined);

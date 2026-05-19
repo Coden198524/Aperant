@@ -27,29 +27,36 @@ import {
   DropdownMenuSeparator,
 } from './ui/dropdown-menu';
 import { FileExplorerPanel } from './FileExplorerPanel';
-import { ClaudeCodeStatusBadge } from './ClaudeCodeStatusBadge';
+import { SmartCLIStatusBadge } from './SmartCLIStatusBadge';
 import { cn } from '../lib/utils';
 import { useTerminalStore } from '../stores/terminal-store';
 import { useTaskStore } from '../stores/task-store';
 import { useFileExplorerStore } from '../stores/file-explorer-store';
-import { saveSettings, useSettingsStore } from '../stores/settings-store';
+import { useSettingsStore } from '../stores/settings-store';
+import { updateProjectSettings, useProjectStore } from '../stores/project-store';
 import { getCliLabel, QUICK_CLI_OPTIONS } from '../lib/cli-display';
+import { terminalBufferManager } from '../lib/terminal-buffer-manager';
 import { TERMINAL_DOM_UPDATE_DELAY_MS, PANEL_CLEANUP_GRACE_PERIOD_MS } from '../../shared/constants';
 import type { SupportedCLI } from '../../shared/types/settings';
-import type { SessionDateInfo } from '../../shared/types';
+import type { NativeCliSession } from '../../shared/types';
 
 interface TerminalGridProps {
+  projectId?: string;
   projectPath?: string;
   onNewTaskClick?: () => void;
   isActive?: boolean;
 }
 
-export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: TerminalGridProps) {
+export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive = false }: TerminalGridProps) {
   const { t } = useTranslation('common');
   const modifierKey = navigator.platform.includes('Mac') ? '⌘' : 'Ctrl';
   const newTerminalShortcut = `${modifierKey}+T`;
   const allTerminals = useTerminalStore((state) => state.terminals);
-  const preferredCLI = useSettingsStore((state) => (state.settings.preferredCLI || 'claude-code') as SupportedCLI);
+  const appPreferredCLI = useSettingsStore((state) => (state.settings.preferredCLI || 'claude-code') as SupportedCLI);
+  const projectPreferredCLI = useProjectStore((state) =>
+    projectId ? state.projects.find((project) => project.id === projectId)?.settings?.preferredCLI : undefined
+  );
+  const preferredCLI = (projectPreferredCLI || appPreferredCLI || 'claude-code') as SupportedCLI;
   const preferredCLILabel = getCliLabel(preferredCLI);
 
   // Track terminals that are in the grace period before being filtered out
@@ -58,6 +65,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
 
   // Ref to track active cleanup timers — avoids including pendingCleanup in effect deps
   const cleanupTimersRef = useRef<Map<string, NodeJS.Timeout>>(new Map());
+  const previousTerminalCountRef = useRef(0);
 
   // Helper to clear all active cleanup timers
   const clearAllCleanupTimers = useCallback(() => {
@@ -89,6 +97,11 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
       return false; // Remove if not in grace period
     });
   }, [allTerminals, projectPath, pendingCleanup]);
+
+  const terminalSessionKey = useMemo(
+    () => terminals.map(t => `${t.id}:${t.isCLIMode ? t.activeCLI || 'claude-code' : 'shell'}`).join('|'),
+    [terminals]
+  );
 
   // Manage grace period timers for exited terminals
   // When a terminal exits, add it to pendingCleanup and schedule its removal
@@ -132,6 +145,8 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
   const setActiveTerminal = useTerminalStore((state) => state.setActiveTerminal);
   const canAddTerminal = useTerminalStore((state) => state.canAddTerminal);
   const setCLIMode = useTerminalStore((state) => state.setCLIMode);
+  const setTerminalStatus = useTerminalStore((state) => state.setTerminalStatus);
+  const updateTerminal = useTerminalStore((state) => state.updateTerminal);
   const reorderTerminals = useTerminalStore((state) => state.reorderTerminals);
 
   // Get tasks from task store for task selection dropdown in terminals
@@ -141,10 +156,31 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
   const fileExplorerOpen = useFileExplorerStore((state) => state.isOpen);
   const toggleFileExplorer = useFileExplorerStore((state) => state.toggle);
 
-  // Session history state
-  const [sessionDates, setSessionDates] = useState<SessionDateInfo[]>([]);
-  const [isLoadingDates, setIsLoadingDates] = useState(false);
+  // Native CLI history state. This reads Codex/Claude CLI storage, not Autocode terminal snapshots.
+  const [nativeCliSessions, setNativeCliSessions] = useState<NativeCliSession[]>([]);
+  const [isLoadingHistory, setIsLoadingHistory] = useState(false);
   const [isRestoring, setIsRestoring] = useState(false);
+  const fetchNativeCliHistory = useCallback(async () => {
+    if (!projectPath) {
+      setNativeCliSessions([]);
+      return;
+    }
+
+    setIsLoadingHistory(true);
+    try {
+      const result = await window.electronAPI.getNativeCliHistory(preferredCLI, projectPath);
+      if (result.success && result.data) {
+        setNativeCliSessions(result.data);
+      } else {
+        setNativeCliSessions([]);
+      }
+    } catch (error) {
+      console.error('Failed to fetch native CLI history:', error);
+      setNativeCliSessions([]);
+    } finally {
+      setIsLoadingHistory(false);
+    }
+  }, [projectPath, preferredCLI]);
 
   // Expanded terminal state - when set, this terminal takes up the full grid space
   const [expandedTerminalId, setExpandedTerminalId] = useState<string | null>(null);
@@ -155,6 +191,23 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
     setPendingCleanup(new Map());
     clearAllCleanupTimers();
   }, [projectPath, clearAllCleanupTimers]);
+
+  useEffect(() => {
+    if (!projectPath) {
+      return;
+    }
+
+    const activeTerminal = allTerminals.find((terminal) => terminal.id === activeTerminalId);
+    if (activeTerminal?.projectPath === projectPath) {
+      return;
+    }
+
+    const nextActiveTerminal = allTerminals
+      .filter((terminal) => terminal.projectPath === projectPath && terminal.status !== 'exited')
+      .sort((terminalA, terminalB) => (terminalA.displayOrder ?? 0) - (terminalB.displayOrder ?? 0))[0];
+
+    setActiveTerminal(nextActiveTerminal?.id ?? null);
+  }, [activeTerminalId, allTerminals, projectPath, setActiveTerminal]);
 
   // TerminalGrid stays mounted while hidden so xterm state is preserved.
   // When the view becomes visible again, force a refit because ResizeObserver
@@ -184,112 +237,77 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
     };
   }, [isActive, terminals.length]);
 
-  // Fetch available session dates when project changes
+  // Fetch native CLI history when project or selected CLI changes.
   useEffect(() => {
     if (!projectPath) {
-      setSessionDates([]);
+      setNativeCliSessions([]);
       return;
     }
 
-    const fetchSessionDates = async () => {
-      setIsLoadingDates(true);
-      try {
-        const result = await window.electronAPI.getTerminalSessionDates(projectPath);
-        if (result.success && result.data) {
-          setSessionDates(result.data);
-        }
-      } catch (error) {
-        console.error('Failed to fetch session dates:', error);
-      } finally {
-        setIsLoadingDates(false);
-      }
-    };
+    void fetchNativeCliHistory();
+  }, [projectPath, preferredCLI, terminalSessionKey, fetchNativeCliHistory]);
 
-    fetchSessionDates();
-  }, [projectPath]);
-
-  // Get addRestoredTerminal from store
-  const addRestoredTerminal = useTerminalStore((state) => state.addRestoredTerminal);
-
-  // Handle restoring sessions from a specific date
-  const handleRestoreFromDate = useCallback(async (date: string) => {
+  const handleResumeNativeCliSession = useCallback(async (session: NativeCliSession) => {
     if (!projectPath || isRestoring) return;
 
     setIsRestoring(true);
     try {
-      // First get the session data for this date (we need it after restore)
-      const sessionsResult = await window.electronAPI.getTerminalSessionsForDate(date, projectPath);
-      const sessionsToRestore = sessionsResult.success ? sessionsResult.data || [] : [];
+      const terminal = addTerminal(projectPath, projectPath, {
+        title: `${getCliLabel(session.cli)}: ${session.title}`,
+        isCLIMode: true,
+        activeCLI: session.cli,
+      });
 
-      console.warn(`[TerminalGrid] Found ${sessionsToRestore.length} sessions to restore from ${date}`);
-
-      if (sessionsToRestore.length === 0) {
-        console.warn('[TerminalGrid] No sessions found for this date');
-        setIsRestoring(false);
+      if (!terminal) {
         return;
       }
 
-      // Close all existing terminals
-      for (const terminal of terminals) {
-        await window.electronAPI.destroyTerminal(terminal.id);
+      const createResult = await window.electronAPI.createTerminal({
+        id: terminal.id,
+        cwd: projectPath,
+        projectPath,
+        cols: 80,
+        rows: 24,
+      });
+
+      if (!createResult.success) {
+        console.warn('[TerminalGrid] Failed to create terminal for native CLI resume:', createResult.error);
         removeTerminal(terminal.id);
+        return;
       }
 
-      // Small delay to ensure cleanup
-      await new Promise(resolve => setTimeout(resolve, 100));
+      setTerminalStatus(terminal.id, 'running');
+      setActiveTerminal(terminal.id);
 
-      // Restore sessions from the selected date (creates PTYs in main process)
-      const result = await window.electronAPI.restoreTerminalSessionsFromDate(
-        date,
-        projectPath,
-        80,
-        24
+      const resumeResult = await window.electronAPI.resumeNativeCliSession(
+        terminal.id,
+        session.cli,
+        session.id,
+        projectPath
       );
 
-      if (result.success && result.data) {
-        console.warn(`[TerminalGrid] Main process restored ${result.data.restored} sessions from ${date}`);
-
-        // Sort sessions by displayOrder before restoring to preserve user's tab ordering
-        const sortedSessions = [...sessionsToRestore].sort((a, b) => {
-          const orderA = a.displayOrder ?? Number.MAX_SAFE_INTEGER;
-          const orderB = b.displayOrder ?? Number.MAX_SAFE_INTEGER;
-          return orderA - orderB;
+      if (resumeResult.success) {
+        if (resumeResult.data?.outputBuffer) {
+          terminalBufferManager.set(terminal.id, resumeResult.data.outputBuffer);
+        }
+        setCLIMode(terminal.id, true, session.cli);
+        updateTerminal(terminal.id, {
+          title: `${getCliLabel(session.cli)}: ${session.title}`,
+          claudeSessionId: session.cli === 'claude-code' ? session.id : undefined,
         });
 
-        // Add each successfully restored session to the renderer's terminal store
-        // Use staggered initialization to prevent race conditions when multiple terminals
-        // try to initialize and measure dimensions simultaneously
-        const TERMINAL_INIT_STAGGER_MS = 75; // Small delay between each terminal
-
-        for (const sessionResult of result.data.sessions) {
-          if (sessionResult.success) {
-            const fullSession = sortedSessions.find(s => s.id === sessionResult.id);
-            if (fullSession) {
-              console.warn(`[TerminalGrid] Adding restored terminal to store: ${fullSession.id}`);
-              addRestoredTerminal(fullSession);
-              // Stagger terminal initialization to prevent race conditions
-              await new Promise(resolve => setTimeout(resolve, TERMINAL_INIT_STAGGER_MS));
-            }
-          }
-        }
-
-        // Trigger terminal refit after grid layout stabilizes to ensure correct dimensions
         setTimeout(() => {
           window.dispatchEvent(new CustomEvent('terminal-refit-all'));
         }, TERMINAL_DOM_UPDATE_DELAY_MS);
-
-        // Refresh session dates to update counts
-        const datesResult = await window.electronAPI.getTerminalSessionDates(projectPath);
-        if (datesResult.success && datesResult.data) {
-          setSessionDates(datesResult.data);
-        }
+      } else {
+        console.warn('[TerminalGrid] Failed to resume native CLI session:', resumeResult.error);
       }
     } catch (error) {
-      console.error('Failed to restore sessions:', error);
+      console.error('Failed to resume native CLI session:', error);
     } finally {
       setIsRestoring(false);
     }
-  }, [projectPath, terminals, removeTerminal, addRestoredTerminal, isRestoring]);
+  }, [projectPath, isRestoring, addTerminal, removeTerminal, setTerminalStatus, setActiveTerminal, setCLIMode, updateTerminal]);
 
   // Setup drag sensors for both file and terminal drag operations
   const sensors = useSensors(
@@ -323,6 +341,21 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
     }
   }, [removeTerminal, expandedTerminalId]);
 
+  const handleAddTerminal = useCallback(() => {
+    if (canAddTerminal(projectPath)) {
+      addTerminal(projectPath, projectPath, {
+        title: getCliLabel(preferredCLI),
+        autoInvokeCLI: preferredCLI,
+      });
+
+      for (const delay of [0, 100, 300]) {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('terminal-refit-all'));
+        }, delay);
+      }
+    }
+  }, [addTerminal, canAddTerminal, projectPath, preferredCLI]);
+
   // Handle keyboard shortcut for new terminal (only when this view is active)
   useEffect(() => {
     if (!isActive) return;
@@ -331,9 +364,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
       // Ctrl+T or Cmd+T for new terminal
       if ((e.ctrlKey || e.metaKey) && e.key === 't') {
         e.preventDefault();
-        if (canAddTerminal(projectPath)) {
-          addTerminal(projectPath, projectPath);
-        }
+        handleAddTerminal();
       }
       // Ctrl+W or Cmd+W to close active terminal
       if ((e.ctrlKey || e.metaKey) && e.key === 'w' && activeTerminalId) {
@@ -344,13 +375,20 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isActive, addTerminal, canAddTerminal, projectPath, activeTerminalId, handleCloseTerminal]);
+  }, [isActive, handleAddTerminal, activeTerminalId, handleCloseTerminal]);
 
-  const handleAddTerminal = useCallback(() => {
-    if (canAddTerminal(projectPath)) {
-      addTerminal(projectPath, projectPath);
+  useEffect(() => {
+    const previousCount = previousTerminalCountRef.current;
+    previousTerminalCountRef.current = terminals.length;
+
+    if (previousCount === 0 && terminals.length > 0) {
+      for (const delay of [0, 100, 300]) {
+        setTimeout(() => {
+          window.dispatchEvent(new CustomEvent('terminal-refit-all'));
+        }, delay);
+      }
     }
-  }, [addTerminal, canAddTerminal, projectPath]);
+  }, [terminals.length]);
 
   // Toggle terminal expand state
   const handleToggleExpand = useCallback((terminalId: string) => {
@@ -367,8 +405,11 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
   }, [terminals, setCLIMode, projectPath, preferredCLI]);
 
   const handlePreferredCLIChange = useCallback((cli: SupportedCLI) => {
-    saveSettings({ preferredCLI: cli });
-  }, []);
+    if (!projectId) {
+      return;
+    }
+    void updateProjectSettings(projectId, { preferredCLI: cli });
+  }, [projectId]);
 
   // Handle drag start - store dragged item data
   const handleDragStart = useCallback((event: DragStartEvent) => {
@@ -476,37 +517,6 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
   // Terminal IDs for SortableContext
   const terminalIds = useMemo(() => terminals.map(t => t.id), [terminals]);
 
-  // Empty state
-  if (terminals.length === 0) {
-    return (
-      <div className="flex h-full flex-col items-center justify-center gap-6 p-8">
-        <div className="flex flex-col items-center gap-3 text-center">
-          <div className="rounded-full bg-card p-4">
-            <Grid2X2 className="h-8 w-8 text-muted-foreground" />
-          </div>
-          <div>
-            <h2 className="text-lg font-semibold text-foreground">
-              {t('terminalGrid.title', { defaultValue: 'Agent Terminals' })}
-            </h2>
-            <p className="mt-1 text-sm text-muted-foreground max-w-md">
-              {t('terminalGrid.emptyDescriptionPrefix', {
-                defaultValue: 'Spawn multiple agent terminals in parallel. Use '
-              })}
-              <kbd className="px-1.5 py-0.5 text-xs bg-card border border-border rounded">{newTerminalShortcut}</kbd>
-              {t('terminalGrid.emptyDescriptionSuffix', {
-                defaultValue: ' to create a new terminal.'
-              })}
-            </p>
-          </div>
-        </div>
-        <Button onClick={handleAddTerminal} className="gap-2">
-          <Plus className="h-4 w-4" />
-          {t('terminalGrid.newTerminal', { defaultValue: 'New Terminal' })}
-        </Button>
-      </div>
-    );
-  }
-
   return (
     <DndContext
       sensors={sensors}
@@ -526,48 +536,56 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
             </span>
           </div>
           <div className="flex items-center gap-2">
-            {/* Claude Code CLI status */}
-            <ClaudeCodeStatusBadge />
+            {/* Current smart terminal CLI status */}
+            <SmartCLIStatusBadge cli={preferredCLI} />
             {/* Session history dropdown */}
-            {projectPath && sessionDates.length > 0 && (
-              <DropdownMenu>
+            {projectPath && (
+              <DropdownMenu onOpenChange={(open) => {
+                if (open) {
+                  void fetchNativeCliHistory();
+                }
+              }}>
                 <DropdownMenuTrigger asChild>
                   <Button
                     variant="outline"
                     size="sm"
                     className="h-7 text-xs gap-1.5"
-                    disabled={isRestoring || isLoadingDates}
+                    disabled={isRestoring || isLoadingHistory}
                   >
                     {isRestoring ? (
                       <Loader2 className="h-3 w-3 animate-spin" />
                     ) : (
                       <History className="h-3 w-3" />
                     )}
-                    {t('terminalGrid.history', { defaultValue: 'History' })}
+                    {t('terminalGrid.history', { defaultValue: `${preferredCLILabel} History` })}
                     <ChevronDown className="h-3 w-3" />
                   </Button>
                 </DropdownMenuTrigger>
-                <DropdownMenuContent align="end" className="w-56">
+                <DropdownMenuContent align="end" className="w-80">
                   <div className="px-2 py-1.5 text-xs font-medium text-muted-foreground">
-                    {t('terminalGrid.restoreSessionsFrom', { defaultValue: 'Restore sessions from...' })}
+                    {t('terminalGrid.restoreCliSession', { defaultValue: `Resume ${preferredCLILabel} CLI session...` })}
                   </div>
                   <DropdownMenuSeparator />
-                  {sessionDates.map((dateInfo) => (
-                    <DropdownMenuItem
-                      key={dateInfo.date}
-                      onClick={() => handleRestoreFromDate(dateInfo.date)}
-                      className="flex items-center justify-between"
-                    >
-                      <span>{dateInfo.label}</span>
-                      <span className="text-xs text-muted-foreground">
-                        {t('terminalGrid.sessionCount', {
-                          count: dateInfo.sessionCount,
-                          defaultValue: '{{count}} session',
-                          defaultValue_plural: '{{count}} sessions'
-                        })}
-                      </span>
+                  {nativeCliSessions.length === 0 ? (
+                    <DropdownMenuItem disabled className="text-xs text-muted-foreground">
+                      {isLoadingHistory
+                        ? t('terminalGrid.loadingHistory', { defaultValue: 'Loading history...' })
+                        : t('terminalGrid.noCliHistory', { defaultValue: `No ${preferredCLILabel} sessions yet` })}
                     </DropdownMenuItem>
-                  ))}
+                  ) : (
+                    nativeCliSessions.slice(0, 25).map((session) => (
+                      <DropdownMenuItem
+                        key={session.id}
+                        onClick={() => handleResumeNativeCliSession(session)}
+                        className="flex flex-col items-start gap-0.5"
+                      >
+                        <span className="max-w-full truncate text-xs">{session.title}</span>
+                        <span className="text-[10px] text-muted-foreground">
+                          {new Date(session.updatedAt).toLocaleString()}
+                        </span>
+                      </DropdownMenuItem>
+                    ))
+                  )}
                 </DropdownMenuContent>
               </DropdownMenu>
             )}
@@ -618,7 +636,11 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
                     className="flex items-center justify-between text-xs"
                   >
                     <span>{getCliLabel(cli)}</span>
-                    {preferredCLI === cli && <span className="text-primary">Default</span>}
+                    {preferredCLI === cli && (
+                      <span className="text-primary">
+                        {t('terminalGrid.projectDefault', { defaultValue: 'Project' })}
+                      </span>
+                    )}
                   </DropdownMenuItem>
                 ))}
               </DropdownMenuContent>
@@ -652,11 +674,41 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
         </div>
 
         {/* Main content area with terminal grid and file explorer sidebar */}
+        {terminals.length === 0 ? (
+          <div className="flex flex-1 flex-col items-center justify-center gap-6 overflow-hidden p-8">
+            <div className="flex flex-col items-center gap-3 text-center">
+              <div className="rounded-full bg-card p-4">
+                <Grid2X2 className="h-8 w-8 text-muted-foreground" />
+              </div>
+              <div>
+                <h2 className="text-lg font-semibold text-foreground">
+                  {t('terminalGrid.title', { defaultValue: 'Agent Terminals' })}
+                </h2>
+                <p className="mt-1 text-sm text-muted-foreground max-w-md">
+                  {t('terminalGrid.emptyDescriptionPrefix', {
+                    defaultValue: 'Spawn multiple agent terminals in parallel. Use '
+                  })}
+                  <kbd className="px-1.5 py-0.5 text-xs bg-card border border-border rounded">{newTerminalShortcut}</kbd>
+                  {t('terminalGrid.emptyDescriptionSuffix', {
+                    defaultValue: ' to create a new terminal.'
+                  })}
+                </p>
+              </div>
+            </div>
+            <Button onClick={handleAddTerminal} className="gap-2">
+              <Plus className="h-4 w-4" />
+              {t('terminalGrid.newTerminal', { defaultValue: 'New Terminal' })}
+            </Button>
+          </div>
+        ) : (
         <div className="flex flex-1 overflow-hidden">
+          {/* File explorer panel (left side, pushes terminal content right) */}
+          {projectPath && <FileExplorerPanel projectPath={projectPath} />}
+
           {/* Terminal grid using resizable panels */}
           <div className={cn(
             "flex-1 overflow-hidden p-2 transition-all duration-300 ease-out",
-            fileExplorerOpen && "pr-0"
+            fileExplorerOpen && "pl-0"
           )}>
             {expandedTerminalId ? (
               // Show only the expanded terminal
@@ -677,6 +729,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
                       terminalCount={1}
                       isExpanded={true}
                       onToggleExpand={() => handleToggleExpand(expandedTerminal.id)}
+                      defaultCLI={preferredCLI}
                     />
                   </div>
                 );
@@ -710,6 +763,7 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
                         terminalCount={terminals.length}
                         isExpanded={false}
                         onToggleExpand={() => handleToggleExpand(terminal.id)}
+                        defaultCLI={preferredCLI}
                       />
                     </div>
                   ))}
@@ -718,9 +772,8 @@ export function TerminalGrid({ projectPath, onNewTaskClick, isActive = false }: 
             )}
           </div>
 
-          {/* File explorer panel (slides from right, pushes content) */}
-          {projectPath && <FileExplorerPanel projectPath={projectPath} />}
         </div>
+        )}
 
         {/* Drag overlay - shows what's being dragged */}
         <DragOverlay>

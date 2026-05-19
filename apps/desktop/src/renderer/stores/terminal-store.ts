@@ -134,6 +134,7 @@ export interface Terminal {
   worktreeConfig?: TerminalWorktreeConfig;  // Associated worktree for isolated development
   isClaudeBusy?: boolean;  // Whether Claude Code is actively processing (for visual indicator)
   activeCLI?: SupportedCLI;  // CLI currently running in this terminal session
+  autoInvokeCLI?: SupportedCLI;  // CLI to start automatically after the PTY is created
   pendingCLIResume?: boolean;  // Whether this terminal has a pending Claude resume (deferred until tab activated)
   displayOrder?: number;  // Display order for tab persistence (lower = further left)
   cliNamedOnce?: boolean;  // Whether this Claude terminal has been auto-named based on initial message (prevents repeated naming)
@@ -155,7 +156,7 @@ interface TerminalState {
   hasRestoredSessions: boolean;  // Track if we've restored sessions for this project
 
   // Actions
-  addTerminal: (cwd?: string, projectPath?: string) => Terminal | null;
+  addTerminal: (cwd?: string, projectPath?: string, options?: { title?: string; isCLIMode?: boolean; activeCLI?: SupportedCLI; autoInvokeCLI?: SupportedCLI }) => Terminal | null;
   addRestoredTerminal: (session: TerminalSession) => Terminal;
   // Add a terminal with a specific ID (for terminals created in main process, like OAuth login terminals)
   addExternalTerminal: (id: string, title: string, cwd?: string, projectPath?: string) => Terminal | null;
@@ -205,7 +206,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
   maxTerminals: 12,
   hasRestoredSessions: false,
 
-  addTerminal: (cwd?: string, projectPath?: string) => {
+  addTerminal: (cwd?: string, projectPath?: string, options?: { title?: string; isCLIMode?: boolean; activeCLI?: SupportedCLI; autoInvokeCLI?: SupportedCLI }) => {
     const state = get();
     const activeCount = getActiveProjectTerminalCount(state.terminals, projectPath);
     if (activeCount >= state.maxTerminals) {
@@ -215,11 +216,13 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
 
     const newTerminal: Terminal = {
       id: uuid(),
-      title: `Terminal ${state.terminals.length + 1}`,
+      title: options?.title || `Terminal ${state.terminals.length + 1}`,
       status: 'idle',
       cwd: cwd || process.env.HOME || '~',
       createdAt: new Date(),
-      isCLIMode: false,
+      isCLIMode: options?.isCLIMode ?? false,
+      activeCLI: options?.activeCLI,
+      autoInvokeCLI: options?.autoInvokeCLI,
       // outputBuffer removed - managed by terminalBufferManager
       projectPath,
       displayOrder: state.terminals.length,  // New terminals appear at the end
@@ -241,7 +244,17 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
     // This ensures useXterm can replay the buffer regardless of whether this is a fresh restore
     // or a re-restore (e.g., after project switch). The buffer must be available before
     // the Terminal component mounts and useXterm tries to read it.
-    if (session.outputBuffer) {
+    const isRestoredClaudeCLI = session.isCLIMode === true && (session.activeCLI === undefined || session.activeCLI === 'claude-code');
+    const isRestoredExternalNonClaudeCLI =
+      session.isCLIMode === true &&
+      session.activeCLI !== undefined &&
+      session.activeCLI !== 'claude-code' &&
+      session.activeCLI !== 'deepseek';
+
+    if (isRestoredExternalNonClaudeCLI) {
+      terminalBufferManager.clear(session.id);
+      debugLog(`[TerminalStore] Skipping stale buffer replay for restored external CLI terminal ${session.id}`);
+    } else if (session.outputBuffer) {
       terminalBufferManager.set(session.id, session.outputBuffer);
       debugLog(`[TerminalStore] Restored buffer for terminal ${session.id}, size: ${session.outputBuffer.length} chars`);
     } else {
@@ -256,7 +269,6 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       // If session was in Claude mode before shutdown, update pendingCLIResume for re-restore scenarios
       // (e.g., after project switch). This ensures the deferred resume logic can trigger even when
       // the terminal already exists in the store.
-      const isRestoredClaudeCLI = session.isCLIMode === true && (session.activeCLI === undefined || session.activeCLI === 'claude-code');
       if (isRestoredClaudeCLI && !existingTerminal.pendingCLIResume) {
         debugLog(`[TerminalStore] Updating pendingCLIResume for existing terminal ${session.id}`);
         set((state) => ({
@@ -280,9 +292,10 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       status: 'idle',  // Will be updated to 'running' when PTY is created
       cwd: session.cwd,
       createdAt: new Date(session.createdAt),
-      // Reset Claude mode to false - Claude Code is killed on app restart
-      // Keep claudeSessionId so users can resume by clicking the invoke button
-      isCLIMode: false,
+      // Claude sessions resume lazily via pendingCLIResume. Non-Claude CLIs
+      // (Codex, Gemini, etc.) should stay in CLI mode so restored terminals
+      // render with the correct status and controls.
+      isCLIMode: session.isCLIMode === true && !isRestoredClaudeCLI,
       activeCLI: session.activeCLI,
       claudeSessionId: session.claudeSessionId,
       // outputBuffer now stored in terminalBufferManager (done above before existence check)
@@ -296,7 +309,7 @@ export const useTerminalStore = create<TerminalState>((set, get) => ({
       // This ensures the renderer knows to trigger 'claude --continue' when the terminal
       // becomes active, without relying on the TERMINAL_PENDING_RESUME IPC event timing
       // (which may be sent before the Terminal component mounts its listener).
-      pendingCLIResume: session.isCLIMode === true && (session.activeCLI === undefined || session.activeCLI === 'claude-code'),
+      pendingCLIResume: isRestoredClaudeCLI,
     };
 
     set((state) => ({

@@ -1,7 +1,7 @@
 import { useRef, forwardRef, useImperativeHandle } from 'react';
 import { useSortable } from '@dnd-kit/sortable';
 import { CSS } from '@dnd-kit/utilities';
-import type { Task } from '../../shared/types';
+import type { SupportedCLI, Task } from '../../shared/types';
 import { Terminal, type TerminalHandle } from './Terminal';
 import { cn } from '../lib/utils';
 
@@ -26,6 +26,7 @@ interface SortableTerminalWrapperProps {
   terminalCount: number;
   isExpanded?: boolean;
   onToggleExpand?: () => void;
+  defaultCLI?: SupportedCLI;
 }
 
 export const SortableTerminalWrapper = forwardRef<SortableTerminalWrapperHandle, SortableTerminalWrapperProps>(
@@ -41,6 +42,7 @@ export const SortableTerminalWrapper = forwardRef<SortableTerminalWrapperHandle,
     terminalCount,
     isExpanded,
     onToggleExpand,
+    defaultCLI,
   }, ref) {
     const terminalRef = useRef<TerminalHandle>(null);
 
@@ -96,6 +98,7 @@ export const SortableTerminalWrapper = forwardRef<SortableTerminalWrapperHandle,
           isDragging={isDragging}
           isExpanded={isExpanded}
           onToggleExpand={onToggleExpand}
+          defaultCLI={defaultCLI}
         />
       </div>
     );

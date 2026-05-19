@@ -57,6 +57,7 @@ import type {
   TerminalRestoreResult,
   SessionDateInfo,
   SessionDateRestoreResult,
+  NativeCliSession,
   RateLimitInfo,
   SDKRateLimitInfo,
   AuthFailureInfo,
@@ -270,7 +271,7 @@ export interface ElectronAPI {
   listWorktrees: (projectId: string, options?: { includeStats?: boolean }) => Promise<IPCResult<WorktreeListResult>>;
   worktreeOpenInIDE: (worktreePath: string, ide: SupportedIDE, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;
   worktreeOpenInTerminal: (worktreePath: string, terminal: SupportedTerminal, customPath?: string) => Promise<IPCResult<{ opened: boolean }>>;
-  worktreeDetectTools: () => Promise<IPCResult<{ ides: Array<{ id: string; name: string; path: string; installed: boolean }>; terminals: Array<{ id: string; name: string; path: string; installed: boolean }> }>>;
+  worktreeDetectTools: () => Promise<IPCResult<{ ides: Array<{ id: string; name: string; path: string; installed: boolean }>; terminals: Array<{ id: string; name: string; path: string; installed: boolean }>; clis: Array<{ id: string; name: string; path: string; installed: boolean }> }>>;
 
   // Task archive operations
   archiveTasks: (projectId: string, taskIds: string[], version?: string) => Promise<IPCResult<boolean>>;
@@ -295,14 +296,16 @@ export interface ElectronAPI {
   setTerminalWorktreeConfig: (id: string, config: TerminalWorktreeConfig | undefined) => void;
 
   // Terminal session management (persistence/restore)
-  getTerminalSessions: (projectPath: string) => Promise<IPCResult<TerminalSession[]>>;
+  getTerminalSessions: (projectPath: string, cli?: SupportedCLI) => Promise<IPCResult<TerminalSession[]>>;
   restoreTerminalSession: (session: TerminalSession, cols?: number, rows?: number) => Promise<IPCResult<TerminalRestoreResult>>;
   clearTerminalSessions: (projectPath: string) => Promise<IPCResult>;
   resumeClaudeInTerminal: (id: string, sessionId?: string, options?: { migratedSession?: boolean }) => void;
   activateDeferredClaudeResume: (id: string) => void;
-  getTerminalSessionDates: (projectPath?: string) => Promise<IPCResult<SessionDateInfo[]>>;
-  getTerminalSessionsForDate: (date: string, projectPath: string) => Promise<IPCResult<TerminalSession[]>>;
-  restoreTerminalSessionsFromDate: (date: string, projectPath: string, cols?: number, rows?: number) => Promise<IPCResult<SessionDateRestoreResult>>;
+  getTerminalSessionDates: (projectPath?: string, cli?: SupportedCLI) => Promise<IPCResult<SessionDateInfo[]>>;
+  getTerminalSessionsForDate: (date: string, projectPath: string, cli?: SupportedCLI) => Promise<IPCResult<TerminalSession[]>>;
+  restoreTerminalSessionsFromDate: (date: string, projectPath: string, cols?: number, rows?: number, cli?: SupportedCLI) => Promise<IPCResult<SessionDateRestoreResult>>;
+  getNativeCliHistory: (cli: SupportedCLI, projectPath?: string) => Promise<IPCResult<NativeCliSession[]>>;
+  resumeNativeCliSession: (terminalId: string, cli: SupportedCLI, sessionId: string, cwd?: string) => Promise<IPCResult<{ outputBuffer?: string }>>;
   saveTerminalBuffer: (terminalId: string, serialized: string) => Promise<void>;
   checkTerminalPtyAlive: (terminalId: string) => Promise<IPCResult<{ alive: boolean }>>;
   updateTerminalDisplayOrders: (
@@ -461,6 +464,7 @@ export interface ElectronAPI {
   codexAuthLogin: () => Promise<{ success: boolean; data?: { accessToken: string; refreshToken: string; expiresAt: number; email?: string }; error?: string }>;
   codexAuthStatus: () => Promise<{ success: boolean; data?: { isAuthenticated: boolean; expiresAt?: number }; error?: string }>;
   codexAuthLogout: () => Promise<{ success: boolean; error?: string }>;
+  checkCodexCliVersion: () => Promise<IPCResult<import('./cli').CodexCliVersionInfo>>;
 
   // Dialog operations
   selectDirectory: () => Promise<string | null>;
@@ -939,6 +943,11 @@ export interface ElectronAPI {
   // File explorer operations
   listDirectory: (dirPath: string) => Promise<IPCResult<FileNode[]>>;
   readFile: (filePath: string) => Promise<IPCResult<string>>;
+  readImageFile: (filePath: string) => Promise<IPCResult<{ dataUrl: string; mimeType: string; size: number }>>;
+  writeFile: (filePath: string, content: string) => Promise<IPCResult<void>>;
+  getFileDiff: (projectPath: string, filePath: string) => Promise<IPCResult<string>>;
+  getChangedFiles: (projectPath: string) => Promise<IPCResult<string[]>>;
+  getPathForFile: (file: File) => string;
   showItemInFolder: (filePath: string) => Promise<IPCResult<void>>;
 
   // Git operations

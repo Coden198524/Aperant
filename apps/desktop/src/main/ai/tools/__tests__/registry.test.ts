@@ -201,6 +201,12 @@ describe('getDefaultThinkingLevel (registry)', () => {
     expect(getDefaultThinkingLevel('qa_fixer')).toBe('high');
     expect(getDefaultThinkingLevel('direct_task')).toBe('xhigh');
   });
+
+  it('should expose MMO engine agents through the registry config', () => {
+    expect(AGENT_CONFIGS.mmo_engine_programmer.tools).toContain('Edit');
+    expect(AGENT_CONFIGS.mmo_engine_programmer.mcpServers).toContain('memory');
+    expect(AGENT_CONFIGS.mmo_qa_reviewer.mcpServers).toContain('browser');
+  });
 });
 
 // =============================================================================

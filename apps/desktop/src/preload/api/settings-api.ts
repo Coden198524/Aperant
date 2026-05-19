@@ -45,6 +45,9 @@ export interface SettingsAPI {
   testProviderConnection: (provider: string, config: any) => Promise<IPCResult<{ success: boolean; error?: string }>>;
   checkEnvCredentials: () => Promise<IPCResult<Record<string, boolean>>>;
 
+  // Codex CLI status
+  checkCodexCliVersion: () => Promise<IPCResult<import('../../shared/types/cli').CodexCliVersionInfo>>;
+
   // Codex OAuth authentication
   codexAuthLogin: () => Promise<{ success: boolean; data?: { accessToken: string; refreshToken: string; expiresAt: number; email?: string }; error?: string }>;
   codexAuthStatus: () => Promise<{ success: boolean; data?: { isAuthenticated: boolean; expiresAt?: number }; error?: string }>;
@@ -111,6 +114,10 @@ export const createSettingsAPI = (): SettingsAPI => ({
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_TEST_CONNECTION, provider, config),
   checkEnvCredentials: (): Promise<IPCResult<Record<string, boolean>>> =>
     ipcRenderer.invoke(IPC_CHANNELS.PROVIDER_ACCOUNTS_CHECK_ENV),
+
+  // Codex CLI status
+  checkCodexCliVersion: (): Promise<IPCResult<import('../../shared/types/cli').CodexCliVersionInfo>> =>
+    ipcRenderer.invoke('codex-cli-check-version'),
 
   // Codex OAuth authentication
   codexAuthLogin: () =>

@@ -5,6 +5,7 @@
 
 import type { TerminalCreateOptions } from '../../shared/types';
 import type { TerminalSession } from '../terminal-session-store';
+import { IPC_CHANNELS } from '../../shared/constants';
 
 // Internal modules
 import type {
@@ -18,6 +19,10 @@ import * as SessionHandler from './session-handler';
 import * as TerminalLifecycle from './terminal-lifecycle';
 import * as TerminalEventHandler from './terminal-event-handler';
 import * as ClaudeIntegration from './cli-integration-handler';
+import * as DeepSeekCliSession from './deepseek-cli-session';
+import { isDeepSeekStoredSession } from './deepseek-history';
+import { projectStore } from '../project-store';
+import { safeSendToRenderer } from '../ipc-handlers/utils';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 
 export class TerminalManager {
@@ -103,6 +108,7 @@ export class TerminalManager {
    * Destroy a terminal process
    */
   async destroy(id: string): Promise<TerminalOperationResult> {
+    DeepSeekCliSession.disposeDeepSeekCli(id);
     return TerminalLifecycle.destroyTerminal(
       id,
       this.terminals,
@@ -117,6 +123,9 @@ export class TerminalManager {
    */
   async killAll(): Promise<void> {
     this.migratedSessionFlags.clear();
+    for (const terminalId of this.terminals.keys()) {
+      DeepSeekCliSession.disposeDeepSeekCli(terminalId);
+    }
     this.saveTimer = await TerminalLifecycle.destroyAllTerminals(
       this.terminals,
       this.saveTimer
@@ -130,6 +139,9 @@ export class TerminalManager {
     debugLog('[TerminalManager:write] Writing to terminal:', id, 'data length:', data.length);
     const terminal = this.terminals.get(id);
     if (terminal) {
+      if (DeepSeekCliSession.handleDeepSeekInput(terminal, data, this.getWindow)) {
+        return;
+      }
       debugLog('[TerminalManager:write] Terminal found, calling writeToPty...');
       PtyManager.writeToPty(terminal, data);
       debugLog('[TerminalManager:write] writeToPty completed');
@@ -156,6 +168,16 @@ export class TerminalManager {
   async invokeCLIAsync(id: string, cwd?: string, profileId?: string, dangerouslySkipPermissions?: boolean, cliOverride?: import('../../shared/types/settings').SupportedCLI): Promise<void> {
     const terminal = this.terminals.get(id);
     if (!terminal) {
+      return;
+    }
+
+    const settings = cliOverride ? undefined : await import('../settings-utils').then(m => m.readSettingsFileAsync());
+    const projectPreferredCLI = terminal.projectPath
+      ? projectStore.getProjects().find((project) => project.path === terminal.projectPath)?.settings?.preferredCLI
+      : undefined;
+    const selectedCLI = cliOverride || projectPreferredCLI || (settings?.preferredCLI as import('../../shared/types/settings').SupportedCLI | undefined) || 'claude-code';
+    if (selectedCLI === 'deepseek') {
+      DeepSeekCliSession.startDeepSeekCli(terminal, cwd, this.getWindow);
       return;
     }
 
@@ -250,6 +272,81 @@ export class TerminalManager {
     await ClaudeIntegration.resumeClaudeAsync(terminal, sessionId, this.getWindow, options);
   }
 
+  async resumeNativeCliSession(
+    id: string,
+    cli: import('../../shared/types/settings').SupportedCLI,
+    sessionId: string,
+    cwd?: string
+  ): Promise<TerminalOperationResult> {
+    const terminal = this.terminals.get(id);
+    if (!terminal) {
+      return { success: false, error: 'Terminal not found' };
+    }
+
+    if (cli === 'deepseek') {
+      const projectPath = cwd || terminal.projectPath || terminal.cwd;
+      const savedSession = projectPath
+        ? this.findDeepSeekSession(projectPath, sessionId)
+        : undefined;
+
+      if (!savedSession || !isDeepSeekStoredSession(savedSession)) {
+        return { success: false, error: 'DeepSeek session not found' };
+      }
+
+      terminal.isCLIMode = true;
+      terminal.activeCLI = 'deepseek';
+      terminal.deepseekState = savedSession.deepseekState;
+      terminal.outputBuffer = savedSession.outputBuffer || '';
+      terminal.title = 'DeepSeek';
+      if (savedSession.outputBuffer) {
+        safeSendToRenderer(this.getWindow, IPC_CHANNELS.TERMINAL_OUTPUT, terminal.id, savedSession.outputBuffer);
+      }
+      DeepSeekCliSession.startDeepSeekCli(terminal, savedSession.cwd || projectPath, this.getWindow);
+      return { success: true, outputBuffer: savedSession.outputBuffer || '' };
+    }
+
+    const settings = await import('../settings-utils').then(m => m.readSettingsFileAsync());
+    const dangerouslySkipPermissions = settings?.dangerouslySkipPermissions === true;
+
+    const cwdCommand = (await import('../../shared/utils/shell-escape')).buildCdCommand(cwd || terminal.projectPath || terminal.cwd, terminal.shellType);
+    const cliCommand = ClaudeIntegration.getCLICommand(cli, settings?.customCLIPath as string | undefined, dangerouslySkipPermissions);
+    const resumeCommand = cli === 'claude-code'
+      ? `${cliCommand} --resume ${sessionId}`
+      : `${cliCommand} resume ${sessionId}`;
+
+    terminal.isCLIMode = true;
+    terminal.activeCLI = cli;
+    terminal.dangerouslySkipPermissions = dangerouslySkipPermissions;
+    terminal.claudeSessionId = cli === 'claude-code' ? sessionId : undefined;
+    terminal.outputBuffer = '';
+    if (cli === 'claude-code') {
+      terminal.title = 'Claude';
+    } else if (cli === 'codex') {
+      terminal.title = 'Codex';
+    }
+
+    const command = cwdCommand ? `${cwdCommand}${resumeCommand}` : resumeCommand;
+    PtyManager.writeToPty(terminal, `${command}\r`);
+
+    if (terminal.projectPath) {
+      SessionHandler.persistSessionAsync(terminal);
+    }
+
+    return { success: true };
+  }
+
+  private findDeepSeekSession(projectPath: string, sessionId: string): TerminalSession | undefined {
+    const savedSession = SessionHandler.getSavedSessions(projectPath, 'deepseek')
+      .find(session => session.id === sessionId);
+    if (savedSession && isDeepSeekStoredSession(savedSession)) {
+      return savedSession;
+    }
+
+    return SessionHandler.getAvailableSessionDates(projectPath, 'deepseek')
+      .flatMap((dateInfo) => SessionHandler.getSessionsForDate(dateInfo.date, projectPath, 'deepseek'))
+      .find(session => session.id === sessionId && isDeepSeekStoredSession(session));
+  }
+
   /**
    * Store YOLO mode flag for a session being migrated during profile swap.
    * Called from the profile change handler before the renderer recreates terminals.
@@ -297,8 +394,8 @@ export class TerminalManager {
   /**
    * Get saved sessions for a project
    */
-  getSavedSessions(projectPath: string): TerminalSession[] {
-    return SessionHandler.getSavedSessions(projectPath);
+  getSavedSessions(projectPath: string, cli?: import('../../shared/types/settings').SupportedCLI): TerminalSession[] {
+    return SessionHandler.getSavedSessions(projectPath, cli);
   }
 
   /**
@@ -311,15 +408,15 @@ export class TerminalManager {
   /**
    * Get available session dates
    */
-  getAvailableSessionDates(projectPath?: string): import('../terminal-session-store').SessionDateInfo[] {
-    return SessionHandler.getAvailableSessionDates(projectPath);
+  getAvailableSessionDates(projectPath?: string, cli?: import('../../shared/types/settings').SupportedCLI): import('../terminal-session-store').SessionDateInfo[] {
+    return SessionHandler.getAvailableSessionDates(projectPath, cli);
   }
 
   /**
    * Get sessions for a specific date
    */
-  getSessionsForDate(date: string, projectPath: string): TerminalSession[] {
-    return SessionHandler.getSessionsForDate(date, projectPath);
+  getSessionsForDate(date: string, projectPath: string, cli?: import('../../shared/types/settings').SupportedCLI): TerminalSession[] {
+    return SessionHandler.getSessionsForDate(date, projectPath, cli);
   }
 
   /**
@@ -339,7 +436,8 @@ export class TerminalManager {
     date: string,
     projectPath: string,
     cols = 80,
-    rows = 24
+    rows = 24,
+    cli?: import('../../shared/types/settings').SupportedCLI
   ): Promise<{ restored: number; failed: number; sessions: Array<{ id: string; success: boolean; error?: string }> }> {
     return TerminalLifecycle.restoreSessionsFromDate(
       date,
@@ -366,7 +464,8 @@ export class TerminalManager {
         }
       },
       cols,
-      rows
+      rows,
+      cli
     );
   }
 
