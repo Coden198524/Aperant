@@ -21,6 +21,20 @@ interface CodeLineClassification {
 const RUNTIME_BOUNDARY_PATTERNS = [
   /Worker thread online:/g,
   /Starting agent session:/g,
+  /Starting SpecOrchestrator pipeline/g,
+  /Fast workflow enabled:/g,
+  /Generating project index\.\.\./g,
+  /Project index generated/g,
+  /Project index generation failed/g,
+  /No project instructions found/g,
+  /Spec phase \d+\/\d+:/g,
+  /Running [\w-]+ session/g,
+  /Applied MMO routing hints:/g,
+  /Complexity (?:assessed|fallback|heuristic|override|escalated)/g,
+  /Running (?:simple|standard|complex) workflow:/g,
+  /Skipping [\w-]+/g,
+  /Wrote [\w.-]+ from/g,
+  /Phase [\w-]+ (?:output validation|schema validation|failed)/g,
   /Session complete:/g,
   /\|\s*Item\s*\|\s*Details\s*\|/g,
 ];
@@ -220,6 +234,20 @@ function looksStructuredRuntimeLog(content: string): boolean {
     /^\d{4}[-/]\d{1,2}[-/]\d{1,2}/.test(trimmed) ||
     /^Worker thread online:/i.test(trimmed) ||
     /^Starting agent session:/i.test(trimmed) ||
+    /^Starting SpecOrchestrator pipeline/i.test(trimmed) ||
+    /^Fast workflow enabled:/i.test(trimmed) ||
+    /^Generating project index/i.test(trimmed) ||
+    /^Project index generated/i.test(trimmed) ||
+    /^Project index generation failed/i.test(trimmed) ||
+    /^No project instructions found/i.test(trimmed) ||
+    /^Spec phase \d+\/\d+:/i.test(trimmed) ||
+    /^Running [\w-]+ session/i.test(trimmed) ||
+    /^Applied MMO routing hints:/i.test(trimmed) ||
+    /^Complexity (assessed|fallback|heuristic|override|escalated)/i.test(trimmed) ||
+    /^Running (simple|standard|complex) workflow:/i.test(trimmed) ||
+    /^Skipping [\w-]+/i.test(trimmed) ||
+    /^Wrote [\w.-]+ from/i.test(trimmed) ||
+    /^Phase [\w-]+ (output validation|schema validation|failed)/i.test(trimmed) ||
     /^Session complete:/i.test(trimmed) ||
     /^\|/.test(trimmed)
   );
@@ -319,6 +347,20 @@ function splitRuntimeLogBlocks(content: string): string[] {
     const isLifecycleLine =
       /^Worker thread online:/i.test(trimmed) ||
       /^Starting agent session:/i.test(trimmed) ||
+      /^Starting SpecOrchestrator pipeline/i.test(trimmed) ||
+      /^Fast workflow enabled:/i.test(trimmed) ||
+      /^Generating project index/i.test(trimmed) ||
+      /^Project index generated/i.test(trimmed) ||
+      /^Project index generation failed/i.test(trimmed) ||
+      /^No project instructions found/i.test(trimmed) ||
+      /^Spec phase \d+\/\d+:/i.test(trimmed) ||
+      /^Running [\w-]+ session/i.test(trimmed) ||
+      /^Applied MMO routing hints:/i.test(trimmed) ||
+      /^Complexity (assessed|fallback|heuristic|override|escalated)/i.test(trimmed) ||
+      /^Running (simple|standard|complex) workflow:/i.test(trimmed) ||
+      /^Skipping [\w-]+/i.test(trimmed) ||
+      /^Wrote [\w.-]+ from/i.test(trimmed) ||
+      /^Phase [\w-]+ (output validation|schema validation|failed)/i.test(trimmed) ||
       /^Session complete:/i.test(trimmed);
     const isTableLine = /^\|/.test(trimmed);
 

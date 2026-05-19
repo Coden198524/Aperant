@@ -67,9 +67,6 @@ function resolveWorkerPath(): string {
  * ```
  */
 export class WorkerBridge extends EventEmitter {
-  private static readonly TEXT_DELTA_LOG_FLUSH_MS = 250;
-  private static readonly TEXT_DELTA_LOG_MAX_CHARS = 240;
-
   private worker: Worker | null = null;
   private progressTracker: ProgressTracker = new ProgressTracker();
   private taskId: string = '';
@@ -80,8 +77,6 @@ export class WorkerBridge extends EventEmitter {
   private historicalTokenUsage: TokenUsage | null = null; // Baseline from previous sessions
   private activeTokenUsageSessionId: string | undefined;
   private tokenUsageSessionBaseline: TokenUsage | null = null;
-  private bufferedTextDeltaLog = '';
-  private textDeltaFlushTimer: NodeJS.Timeout | null = null;
 
   /**
    * Spawn a worker thread with the given configuration.
@@ -138,7 +133,6 @@ export class WorkerBridge extends EventEmitter {
 
     this.worker.on('error', (error: Error) => {
       console.error(`[WorkerBridge:${this.taskId}] Worker error:`, error);
-      this.flushBufferedTextDeltaLog(this.taskId, this.projectId);
       this.emitTyped('error', this.taskId, error.message, this.projectId);
       this.cleanup();
     });
@@ -148,7 +142,6 @@ export class WorkerBridge extends EventEmitter {
       // Code 0 = clean exit; non-zero = crash/error
       // Only emit exit if we haven't already emitted from a 'result' message
       if (this.worker) {
-        this.flushBufferedTextDeltaLog(this.taskId, this.projectId);
         this.emitTyped('exit', this.taskId, code === 0 ? 0 : code, this.processType, this.projectId);
         this.cleanup();
       }
@@ -197,31 +190,26 @@ export class WorkerBridge extends EventEmitter {
   private handleWorkerMessage(message: WorkerMessage): void {
     switch (message.type) {
       case 'log':
-        this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
         this.emitTyped('log', message.taskId, message.data, message.projectId);
         break;
 
       case 'error':
-        this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
         this.emitTyped('error', message.taskId, message.data, message.projectId);
         break;
 
       case 'execution-progress':
-        this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
         this.emitExecutionProgress(message.taskId, message.data, message.projectId);
         break;
 
       case 'stream-event':
         if (message.data.type === 'text-delta') {
           this.emitTaskLogStreamTextDelta(message);
-          this.bufferTextDeltaLog(message.taskId, message.data.text, message.projectId);
           break;
         }
         if (message.data.type === 'tool-call' || message.data.type === 'tool-result' || message.data.type === 'error') {
           this.emitTaskLogStreamEvent(message);
         }
 
-        this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
         // Feed the progress tracker and emit progress updates
         this.progressTracker.processEvent(message.data);
         this.emitProgressFromTracker(message.taskId, message.projectId);
@@ -238,12 +226,10 @@ export class WorkerBridge extends EventEmitter {
         break;
 
       case 'task-event':
-        this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
         this.emitTyped('task-event', message.taskId, message.data as TaskEventPayload, message.projectId);
         break;
 
       case 'task-token-usage':
-        this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
         console.log('[worker-bridge] Received task-token-usage, before merge:', {
           lastTokenUsage: this.lastTokenUsage,
           historicalTokenUsage: this.historicalTokenUsage,
@@ -255,45 +241,9 @@ export class WorkerBridge extends EventEmitter {
         break;
 
       case 'result':
-        this.flushBufferedTextDeltaLog(message.taskId, message.projectId);
         this.handleResult(message.taskId, message.data, message.projectId);
         break;
     }
-  }
-
-  private bufferTextDeltaLog(taskId: string, text: string, projectId?: string): void {
-    if (!text) return;
-
-    this.bufferedTextDeltaLog += text;
-
-    if (this.bufferedTextDeltaLog.length >= WorkerBridge.TEXT_DELTA_LOG_MAX_CHARS) {
-      this.flushBufferedTextDeltaLog(taskId, projectId);
-      return;
-    }
-
-    this.scheduleTextDeltaFlush(taskId, projectId);
-  }
-
-  private scheduleTextDeltaFlush(taskId: string, projectId?: string): void {
-    if (this.textDeltaFlushTimer) return;
-
-    this.textDeltaFlushTimer = setTimeout(() => {
-      this.textDeltaFlushTimer = null;
-      this.flushBufferedTextDeltaLog(taskId, projectId);
-    }, WorkerBridge.TEXT_DELTA_LOG_FLUSH_MS);
-    this.textDeltaFlushTimer.unref?.();
-  }
-
-  private flushBufferedTextDeltaLog(taskId: string, projectId?: string): void {
-    if (this.textDeltaFlushTimer) {
-      clearTimeout(this.textDeltaFlushTimer);
-      this.textDeltaFlushTimer = null;
-    }
-
-    if (!this.bufferedTextDeltaLog) return;
-
-    this.emitTyped('log', taskId, this.bufferedTextDeltaLog, projectId);
-    this.bufferedTextDeltaLog = '';
   }
 
   private emitTaskLogStreamTextDelta(message: WorkerMessage & { type: 'stream-event' }): void {
@@ -490,11 +440,6 @@ export class WorkerBridge extends EventEmitter {
   }
 
   private cleanup(): void {
-    if (this.textDeltaFlushTimer) {
-      clearTimeout(this.textDeltaFlushTimer);
-      this.textDeltaFlushTimer = null;
-    }
-    this.bufferedTextDeltaLog = '';
     this.worker = null;
     this.lastTokenUsage = null;
     this.activeTokenUsageSessionId = undefined;

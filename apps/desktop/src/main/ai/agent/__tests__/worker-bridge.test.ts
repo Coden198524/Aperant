@@ -226,7 +226,7 @@ describe('WorkerBridge', () => {
       expect(handler.mock.calls[1]?.[1]?.sequenceNumber).toBe(2);
     });
 
-    it('buffers text-delta logs and flushes before non-text stream events', () => {
+    it('does not mirror text-delta model output into runtime logs', () => {
       const handler = vi.fn();
       bridge.on('log', handler);
       bridge.spawn(createConfig());
@@ -242,14 +242,13 @@ describe('WorkerBridge', () => {
         data: { type: 'text-delta', text: 'output' } as never,
       } satisfies WorkerMessage);
 
-      // Non-text stream events force a flush of buffered text logs.
       getWorker().emit('message', {
         type: 'stream-event',
         taskId: 'task-123',
         data: { type: 'tool-call', toolName: 'Read', toolCallId: 'call-1', args: {} } as never,
       } satisfies WorkerMessage);
 
-      expect(handler).toHaveBeenCalledWith('task-123', 'some output', undefined);
+      expect(handler).not.toHaveBeenCalledWith('task-123', 'some output', undefined);
     });
 
     it('emits task-log-stream immediately for text-delta events', () => {
