@@ -865,6 +865,122 @@ describe('useXterm keyboard handlers', () => {
   });
 });
 
+describe('useXterm viewport layout repair', () => {
+  const originalRequestAnimationFrame = global.requestAnimationFrame;
+  const originalCancelAnimationFrame = global.cancelAnimationFrame;
+
+  beforeAll(() => {
+    global.requestAnimationFrame = vi.fn((cb: FrameRequestCallback) => setTimeout(cb, 0) as unknown as number);
+    global.cancelAnimationFrame = vi.fn((id: number) => clearTimeout(id));
+  });
+
+  afterAll(() => {
+    global.requestAnimationFrame = originalRequestAnimationFrame;
+    global.cancelAnimationFrame = originalCancelAnimationFrame;
+  });
+
+  beforeEach(() => {
+    vi.useFakeTimers();
+    vi.clearAllMocks();
+    mockSettingsStoreState.settings.gpuAcceleration = 'off';
+
+    global.ResizeObserver = vi.fn().mockImplementation(function() {
+      return { observe: vi.fn(), unobserve: vi.fn(), disconnect: vi.fn() };
+    });
+
+    (window as unknown as { electronAPI: unknown }).electronAPI = {
+      sendTerminalInput: vi.fn(),
+      openExternal: vi.fn(),
+    };
+  });
+
+  afterEach(() => {
+    vi.clearAllTimers();
+    vi.useRealTimers();
+    vi.restoreAllMocks();
+  });
+
+  it('repairs xterm viewport styles after opening the terminal', async () => {
+    const xtermElement = document.createElement('div');
+    xtermElement.className = 'xterm';
+
+    const viewport = document.createElement('div');
+    viewport.className = 'xterm-viewport';
+    viewport.style.overflowY = 'hidden';
+
+    const screen = document.createElement('div');
+    screen.className = 'xterm-screen';
+
+    xtermElement.append(viewport, screen);
+
+    (XTerm as unknown as Mock).mockImplementation(function() {
+      return {
+        element: xtermElement,
+        open: vi.fn((container: HTMLElement) => container.appendChild(xtermElement)),
+        loadAddon: vi.fn(),
+        attachCustomKeyEventHandler: vi.fn(),
+        hasSelection: vi.fn(() => false),
+        getSelection: vi.fn(() => ''),
+        paste: vi.fn(),
+        input: vi.fn(),
+        onData: vi.fn(),
+        onResize: vi.fn(),
+        dispose: vi.fn(),
+        write: vi.fn(),
+        writeln: vi.fn(),
+        scrollToBottom: vi.fn(),
+        buffer: {
+          active: {
+            viewportY: 0,
+            baseY: 0,
+          },
+        },
+        cols: 80,
+        rows: 24,
+        options: {
+          cursorBlink: true,
+          cursorStyle: 'block',
+          fontSize: 14,
+          fontFamily: 'monospace',
+          fontWeight: 'normal',
+          lineHeight: 1,
+          letterSpacing: 0,
+          theme: { cursorAccent: '#000000' },
+          scrollback: 1000,
+        },
+        refresh: vi.fn(),
+      };
+    });
+
+    const { FitAddon } = await import('@xterm/addon-fit');
+    vi.mocked(FitAddon).mockImplementation(function() {
+      return { fit: vi.fn(), dispose: vi.fn() };
+    } as never);
+
+    const TestWrapper = () => {
+      const { terminalRef } = useXterm({ terminalId: 'viewport-terminal' });
+      return React.createElement('div', { ref: terminalRef, 'data-testid': 'terminal-host' });
+    };
+
+    const result = render(React.createElement(TestWrapper));
+    const host = result.getByTestId('terminal-host');
+
+    await act(async () => {
+      await vi.advanceTimersByTimeAsync(0);
+    });
+
+    expect(host.style.overflow).toBe('hidden');
+    expect(xtermElement.style.width).toBe('100%');
+    expect(xtermElement.style.height).toBe('100%');
+    expect(xtermElement.style.overflow).toBe('hidden');
+    expect(viewport.style.overflowY).toBe('auto');
+    expect(viewport.style.overflowX).toBe('hidden');
+    expect(viewport.style.top).toBe('0px');
+    expect(viewport.style.bottom).toBe('0px');
+    expect(screen.style.minHeight).toBe('100%');
+  });
+});
+
 describe('useXterm buffer replay', () => {
   const originalRequestAnimationFrame = global.requestAnimationFrame;
   const originalCancelAnimationFrame = global.cancelAnimationFrame;
@@ -965,7 +1081,7 @@ describe('useXterm buffer replay', () => {
 
     const { mockWrite } = await renderBufferedTerminal('normal-terminal');
 
-    expect(mockWrite).toHaveBeenCalledWith('old output\r\n');
+    expect(mockWrite).toHaveBeenCalledWith('old output\r\n', expect.any(Function));
     expect(clearIfUnchangedSpy).toHaveBeenCalledWith('normal-terminal', 'old output\r\n');
     expect(getSpy).toHaveBeenCalledWith('normal-terminal');
   });
@@ -1021,7 +1137,7 @@ describe('useXterm buffer replay', () => {
 
     const { mockWrite } = await renderBufferedTerminal('deepseek-terminal');
 
-    expect(mockWrite).toHaveBeenCalledWith('previous deepseek output\r\n');
+    expect(mockWrite).toHaveBeenCalledWith('previous deepseek output\r\n', expect.any(Function));
     expect(clearIfUnchangedSpy).toHaveBeenCalledWith('deepseek-terminal', 'previous deepseek output\r\n');
   });
 

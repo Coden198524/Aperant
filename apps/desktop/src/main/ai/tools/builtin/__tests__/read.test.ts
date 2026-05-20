@@ -161,6 +161,24 @@ describe('Read Tool', () => {
     expect(fs.openSync).not.toHaveBeenCalled();
   });
 
+  it('should apply large-file preview limits when returning cached content', async () => {
+    const content = Array.from({ length: 500 }, (_, i) => `line${i + 1} ${'x'.repeat(1200)}`).join('\n');
+    const fakeCache = {
+      getSync: vi.fn().mockReturnValue(content),
+      set: vi.fn(),
+    };
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/project/large.ts' },
+      { ...baseContext, fileCache: fakeCache } as unknown as ToolContext,
+    ) as string;
+
+    expect(result).toContain('[Large file:');
+    expect(result).toContain('line300');
+    expect(result).not.toContain('line301');
+    expect(fs.openSync).not.toHaveBeenCalled();
+  });
+
   it('should show truncation notice when there are more lines beyond limit', async () => {
     const lines = Array.from({ length: 10 }, (_, i) => `line${i + 1}`);
     setupTextFile(lines.join('\n'));
@@ -171,6 +189,53 @@ describe('Read Tool', () => {
     ) as string;
 
     expect(result).toContain('Showing lines 1-3 of 10 total lines');
+  });
+
+  it('should default large text files to a smaller preview', async () => {
+    const content = Array.from({ length: 500 }, (_, i) => `line${i + 1}`).join('\n');
+    setupTextFile(content);
+    vi.mocked(fs.fstatSync).mockReturnValue({
+      isDirectory: () => false,
+      size: 600 * 1024,
+      mtimeMs: 123,
+    } as unknown as fs.Stats);
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/project/large.ts' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('[Large file: 600KB');
+    expect(result).toContain('line300');
+    expect(result).not.toContain('line301');
+    expect(result).toContain('Showing lines 1-300 of 500 total lines');
+  });
+
+  it('should summarize the active task log instead of returning full large content', async () => {
+    const content = [
+      '{"phases":{"coding":{"entries":[',
+      '{"type":"tool_start","tool_name":"Read"},',
+      '{"type":"tool_end","tool_name":"Read"},',
+      '{"type":"text","content":"hello"},',
+      '{"type":"error","content":"bad"}',
+      ']}}}',
+    ].join('\n');
+    setupTextFile(content);
+    vi.mocked(fs.fstatSync).mockReturnValue({
+      isDirectory: () => false,
+      size: 300 * 1024,
+      mtimeMs: 123,
+    } as unknown as fs.Stats);
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/specs/001/task_logs.json' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('[Task log file:');
+    expect(result).toContain('tool_start=1');
+    expect(result).toContain('Full task logs are intentionally not returned');
+    expect(result).not.toContain('{"phases"');
   });
 
   it('should return error when file not found', async () => {

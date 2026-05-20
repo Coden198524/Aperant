@@ -78,7 +78,7 @@ export const SortableTerminalWrapper = forwardRef<SortableTerminalWrapperHandle,
         ref={setNodeRef}
         style={style}
         className={cn(
-          'h-full',
+          'h-full min-h-0 min-w-0',
           isDragging && 'opacity-50'
         )}
         {...attributes}

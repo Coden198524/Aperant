@@ -118,3 +118,54 @@ describe('Tool.define write-path containment', () => {
     ).resolves.toBe('recorded:Designer/Setting/');
   });
 });
+
+describe('Tool.define read-only usage guard', () => {
+  it('returns a compact guard message after repeated identical read-only calls', async () => {
+    const readLikeTool = Tool.define({
+      metadata: {
+        name: 'Read',
+        description: 'Test read-like tool',
+        permission: ToolPermission.ReadOnly,
+        executionOptions: DEFAULT_EXECUTION_OPTIONS,
+      },
+      inputSchema: z.object({ file_path: z.string() }),
+      execute: (input) => `read:${input.file_path}`,
+    });
+
+    const context: ToolContext = {
+      ...baseContext,
+      allowedWritePaths: undefined,
+      toolUsageState: { totalCalls: 0, toolCalls: {}, readOnlySignatureCalls: {} },
+      toolUsageLimits: { maxDuplicateReadOnlyCalls: 2 },
+    };
+    const boundTool = readLikeTool.bind(context);
+
+    await expect(boundTool.execute?.({ file_path: '/test/project/a.ts' }, {} as never)).resolves.toBe('read:/test/project/a.ts');
+    await expect(boundTool.execute?.({ file_path: '/test/project/a.ts' }, {} as never)).resolves.toBe('read:/test/project/a.ts');
+    await expect(boundTool.execute?.({ file_path: '/test/project/a.ts' }, {} as never)).resolves.toContain('Repeated Read call skipped');
+  });
+
+  it('enforces per-tool read-only budgets', async () => {
+    const grepLikeTool = Tool.define({
+      metadata: {
+        name: 'Grep',
+        description: 'Test grep-like tool',
+        permission: ToolPermission.ReadOnly,
+        executionOptions: DEFAULT_EXECUTION_OPTIONS,
+      },
+      inputSchema: z.object({ pattern: z.string() }),
+      execute: (input) => `grep:${input.pattern}`,
+    });
+
+    const context: ToolContext = {
+      ...baseContext,
+      allowedWritePaths: undefined,
+      toolUsageState: { totalCalls: 0, toolCalls: {}, readOnlySignatureCalls: {} },
+      toolUsageLimits: { readOnlyToolCallLimits: { Grep: 1 } },
+    };
+    const boundTool = grepLikeTool.bind(context);
+
+    await expect(boundTool.execute?.({ pattern: 'alpha' }, {} as never)).resolves.toBe('grep:alpha');
+    await expect(boundTool.execute?.({ pattern: 'beta' }, {} as never)).resolves.toContain('Tool budget exceeded for Grep');
+  });
+});

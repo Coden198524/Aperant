@@ -39,6 +39,27 @@ export interface ToolContext {
   fileCache?: FileContentCache;
   /** Current task workflow mode, used for mode-specific tool behavior */
   workflowMode?: TaskWorkflowMode;
+  /** Session-scoped accounting used to prevent wasteful repeated read/search tool loops */
+  toolUsageState?: ToolUsageState;
+  /** Optional per-session overrides for generic tool usage limits */
+  toolUsageLimits?: ToolUsageLimits;
+}
+
+/**
+ * Session-scoped tool usage counters. This is intentionally lightweight and
+ * lives on ToolContext so copied tool contexts can share the same counters.
+ */
+export interface ToolUsageState {
+  totalCalls: number;
+  toolCalls: Record<string, number>;
+  readOnlySignatureCalls: Record<string, number>;
+}
+
+export interface ToolUsageLimits {
+  /** Per-tool call caps for read-only exploration tools. */
+  readOnlyToolCallLimits?: Record<string, number>;
+  /** Max times an identical read/search call may be repeated before it is skipped. */
+  maxDuplicateReadOnlyCalls?: number;
 }
 
 // ---------------------------------------------------------------------------

@@ -37,6 +37,23 @@ const EXCLUDED_DIRS = new Set([
   'out',
   'coverage',
   '.next',
+  '.nuxt',
+  '.svelte-kit',
+  '.turbo',
+  '.cache',
+  '.gradle',
+  '.idea',
+  '.vscode',
+  'bower_components',
+  'vendor',
+  'third_party',
+  'third-party',
+  'extern',
+  'external',
+  'target',
+  'bin',
+  'obj',
+  '__pycache__',
 ]);
 
 // ---------------------------------------------------------------------------
@@ -108,6 +125,9 @@ function buildRgArgs(
 
   // Always add these defaults
   args.push('--no-heading', '--color', 'never');
+  for (const dir of EXCLUDED_DIRS) {
+    args.push('--glob', `!**/${dir}/**`);
+  }
 
   args.push(input.pattern, searchPath);
 
@@ -360,7 +380,7 @@ export const grepTool = Tool.define({
     }
 
     if (stdout.length > MAX_OUTPUT_LENGTH) {
-      return `${stdout.slice(0, MAX_OUTPUT_LENGTH)}\n\n[Output truncated — ${stdout.length} characters total]`;
+      return `${stdout.slice(0, MAX_OUTPUT_LENGTH)}\n\n[Output truncated - ${stdout.length} characters total]`;
     }
 
     return stdout.trimEnd();

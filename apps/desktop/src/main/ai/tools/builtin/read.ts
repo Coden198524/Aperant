@@ -28,6 +28,9 @@ import type { FileContentCache } from '../cache/file-cache';
 const DEFAULT_LINE_LIMIT = 2000;
 const BALANCED_DEFAULT_LINE_LIMIT = 400;
 const AGGRESSIVE_DEFAULT_LINE_LIMIT = 120;
+const LARGE_TEXT_FILE_BYTES = 512 * 1024;
+const LARGE_TEXT_DEFAULT_LINE_LIMIT = 300;
+const TASK_LOG_SUMMARY_BYTES = 256 * 1024;
 const MAX_LINE_LENGTH = 2000;
 
 const IMAGE_EXTENSIONS = new Set([
@@ -95,6 +98,18 @@ function isPdfFile(filePath: string): boolean {
   return path.extname(filePath).toLowerCase() === PDF_EXTENSION;
 }
 
+function normalizePath(filePath: string): string {
+  return path.resolve(filePath).replace(/\\/g, '/').toLowerCase();
+}
+
+function isTaskLogFile(filePath: string): boolean {
+  return path.basename(filePath).toLowerCase() === 'task_logs.json';
+}
+
+function isActiveTaskLogFile(filePath: string, specDir: string): boolean {
+  return normalizePath(filePath) === normalizePath(path.join(specDir, 'task_logs.json'));
+}
+
 function getDefaultLineLimit(workflowMode: string | undefined): number {
   if (workflowMode === 'aggressive') {
     return AGGRESSIVE_DEFAULT_LINE_LIMIT;
@@ -109,17 +124,32 @@ function formatReadContent(
   content: string,
   startLine: number,
   lineLimit: number,
+  options: { note?: string } = {},
 ): string {
   const lines = content.split(/\r?\n/);
   const sliced = lines.slice(startLine, startLine + lineLimit);
   const result = formatWithLineNumbers(sliced.join('\n'), startLine);
 
   const totalLines = lines.length;
+  const prefix = options.note ? `${options.note}\n\n` : '';
   if (startLine + lineLimit < totalLines) {
-    return `${result}\n\n[Showing lines ${startLine + 1}-${startLine + lineLimit} of ${totalLines} total lines]`;
+    return `${prefix}${result}\n\n[Showing lines ${startLine + 1}-${startLine + lineLimit} of ${totalLines} total lines]`;
   }
 
-  return result;
+  return `${prefix}${result}`;
+}
+
+function summarizeTaskLog(content: string, filePath: string): string {
+  const count = (pattern: RegExp) => (content.match(pattern) ?? []).length;
+  return [
+    `[Task log file: ${filePath}]`,
+    `Size: ${Buffer.byteLength(content, 'utf-8')} bytes`,
+    `Entries: tool_start=${count(/"type"\s*:\s*"tool_start"/g)}, tool_end=${count(/"type"\s*:\s*"tool_end"/g)}, text=${count(/"type"\s*:\s*"text"/g)}, error=${count(/"type"\s*:\s*"error"/g)}`,
+    `Tools: Read=${count(/"tool_name"\s*:\s*"Read"/g)}, Glob=${count(/"tool_name"\s*:\s*"Glob"/g)}, Grep=${count(/"tool_name"\s*:\s*"Grep"/g)}, Bash=${count(/"tool_name"\s*:\s*"Bash"/g)}, Write=${count(/"tool_name"\s*:\s*"Write"/g)}, Edit=${count(/"tool_name"\s*:\s*"Edit"/g)}`,
+    '',
+    'Full task logs are intentionally not returned by default because they can contain large prior tool outputs and amplify context usage.',
+    'Use explicit offset/limit only when this task is specifically debugging the log file.',
+  ].join('\n');
 }
 
 // ---------------------------------------------------------------------------
@@ -155,10 +185,30 @@ export const readTool = Tool.define({
         if (cached.length === 0) {
           return `[File exists but is empty: ${file_path}]`;
         }
+        const cachedSize = Buffer.byteLength(cached, 'utf-8');
+        if (
+          isTaskLogFile(resolvedPath) &&
+          isActiveTaskLogFile(resolvedPath, context.specDir) &&
+          offset === undefined &&
+          limit === undefined &&
+          cachedSize > TASK_LOG_SUMMARY_BYTES
+        ) {
+          return summarizeTaskLog(cached, file_path);
+        }
+        const hasExplicitRange = offset !== undefined || limit !== undefined;
+        const largeFileDefault = cachedSize > LARGE_TEXT_FILE_BYTES && !hasExplicitRange;
+        const lineLimit = limit ?? (largeFileDefault
+          ? LARGE_TEXT_DEFAULT_LINE_LIMIT
+          : getDefaultLineLimit(context.workflowMode));
         return formatReadContent(
           cached,
           offset ?? 0,
-          limit ?? getDefaultLineLimit(context.workflowMode),
+          lineLimit,
+          largeFileDefault
+            ? {
+                note: `[Large file: ${Math.round(cachedSize / 1024)}KB. Showing the first ${lineLimit} lines by default; use offset/limit for a specific range.]`,
+              }
+            : undefined,
         );
       }
     }
@@ -205,6 +255,16 @@ export const readTool = Tool.define({
       // Text files — read from same fd
       const content = fs.readFileSync(fd, 'utf-8');
 
+      if (
+        isTaskLogFile(resolvedPath) &&
+        isActiveTaskLogFile(resolvedPath, context.specDir) &&
+        offset === undefined &&
+        limit === undefined &&
+        stat.size > TASK_LOG_SUMMARY_BYTES
+      ) {
+        return summarizeTaskLog(content, file_path);
+      }
+
       // Cache the content if no offset/limit (full file read)
       if (cache && !offset && !limit) {
         cache.set(resolvedPath, content, stat.mtimeMs);
@@ -215,8 +275,22 @@ export const readTool = Tool.define({
       }
 
       const startLine = offset ?? 0;
-      const lineLimit = limit ?? getDefaultLineLimit(context.workflowMode);
-      return formatReadContent(content, startLine, lineLimit);
+      const hasExplicitRange = offset !== undefined || limit !== undefined;
+      const largeFileDefault = stat.size > LARGE_TEXT_FILE_BYTES && !hasExplicitRange;
+      const lineLimit = limit ?? (largeFileDefault
+        ? LARGE_TEXT_DEFAULT_LINE_LIMIT
+        : getDefaultLineLimit(context.workflowMode));
+
+      return formatReadContent(
+        content,
+        startLine,
+        lineLimit,
+        largeFileDefault
+          ? {
+              note: `[Large file: ${Math.round(stat.size / 1024)}KB. Showing the first ${lineLimit} lines by default; use offset/limit for a specific range.]`,
+            }
+          : undefined,
+      );
     } finally {
       fs.closeSync(fd);
     }

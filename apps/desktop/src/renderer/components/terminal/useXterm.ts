@@ -13,6 +13,9 @@ import { debugLog, debugError } from '../../../shared/utils/debug-logger';
 import { useSettingsStore } from '../../stores/settings-store';
 import type { WebGLContextManagerType } from '../../lib/webgl-context-manager';
 
+const XTERM_VIEWPORT_SELECTOR = '.xterm-viewport';
+const XTERM_SCREEN_SELECTOR = '.xterm-screen';
+
 interface UseXtermOptions {
   terminalId: string;
   onCommandEnter?: (command: string) => void;
@@ -50,6 +53,44 @@ export interface UseXtermReturn {
   rows: number;
   /** Whether dimensions have been measured and are ready */
   dimensionsReady: boolean;
+}
+
+function repairTerminalViewport(xterm: XTerm | null, container: HTMLElement | null): void {
+  if (!xterm?.element || !container) {
+    return;
+  }
+
+  container.style.minHeight = '0';
+  container.style.overflow = 'hidden';
+
+  xterm.element.style.width = '100%';
+  xterm.element.style.height = '100%';
+  xterm.element.style.minHeight = '0';
+  xterm.element.style.overflow = 'hidden';
+
+  const viewport = xterm.element.querySelector<HTMLElement>(XTERM_VIEWPORT_SELECTOR);
+  if (viewport) {
+    viewport.style.overflowY = 'auto';
+    viewport.style.overflowX = 'hidden';
+    viewport.style.top = '0';
+    viewport.style.bottom = '0';
+    viewport.style.left = '0';
+    viewport.style.right = '0';
+  }
+
+  const screen = xterm.element.querySelector<HTMLElement>(XTERM_SCREEN_SELECTOR);
+  if (screen) {
+    screen.style.minHeight = '100%';
+  }
+}
+
+function isTerminalAtBottom(xterm: XTerm): boolean {
+  const buffer = xterm.buffer?.active;
+  return !buffer || buffer.viewportY >= buffer.baseY;
+}
+
+function scrollTerminalToBottom(xterm: XTerm): void {
+  (xterm as { scrollToBottom?: () => void }).scrollToBottom?.();
 }
 
 export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsReady }: UseXtermOptions): UseXtermReturn {
@@ -135,6 +176,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
     xterm.loadAddon(serializeAddon);
 
     xterm.open(terminalRef.current);
+    repairTerminalViewport(xterm, terminalRef.current);
 
     // WebGL acceleration: lazily load the WebGL module and acquire a context.
     // The dynamic import() ensures NO GPU code (WebGL2 probing, context creation)
@@ -297,7 +339,9 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
           // Check if container has valid dimensions
           const rect = terminalRef.current.getBoundingClientRect();
           if (rect.width > 0 && rect.height > 0) {
+            repairTerminalViewport(xtermRef.current, terminalRef.current);
             fitAddonRef.current.fit();
+            repairTerminalViewport(xtermRef.current, terminalRef.current);
             const cols = xtermRef.current.cols;
             const rows = xtermRef.current.rows;
             setDimensions({ cols, rows });
@@ -338,7 +382,17 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
         debugLog(`[useXterm] Skipping buffer replay for Claude-mode terminal on project switch remount: ${terminalId}`);
       } else {
         debugLog(`[useXterm] Replaying buffered output for terminal: ${terminalId}, buffer size: ${bufferedOutput.length} chars`);
-        xterm.write(bufferedOutput);
+        const wasAtBottom = isTerminalAtBottom(xterm);
+        repairTerminalViewport(xterm, terminalRef.current);
+        xterm.write(bufferedOutput, () => {
+          if (isDisposedRef.current || xtermRef.current !== xterm) {
+            return;
+          }
+          repairTerminalViewport(xterm, terminalRef.current);
+          if (wasAtBottom) {
+            scrollTerminalToBottom(xterm);
+          }
+        });
         terminalBufferManager.clearIfUnchanged(terminalId, bufferedOutput);
         debugLog(`[useXterm] Buffer replay complete and cleared for terminal: ${terminalId}`);
       }
@@ -401,6 +455,7 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
       xterm.options.scrollback = settings.scrollback;
 
       // Refresh terminal to apply visual changes
+      repairTerminalViewport(xterm, terminalRef.current);
       xterm.refresh(0, xterm.rows - 1);
     };
 
@@ -433,7 +488,18 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
     // Create a write function that writes directly to this xterm instance
     const writeCallback = (data: string) => {
       if (xtermRef.current && !isDisposedRef.current) {
-        xtermRef.current.write(data);
+        const xterm = xtermRef.current;
+        const wasAtBottom = isTerminalAtBottom(xterm);
+        repairTerminalViewport(xterm, terminalRef.current);
+        xterm.write(data, () => {
+          if (isDisposedRef.current || xtermRef.current !== xterm) {
+            return;
+          }
+          repairTerminalViewport(xterm, terminalRef.current);
+          if (wasAtBottom) {
+            scrollTerminalToBottom(xterm);
+          }
+        });
       }
     };
 
@@ -454,7 +520,9 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
         // Check if container has valid dimensions before fitting
         const rect = terminalRef.current.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
+          repairTerminalViewport(xtermRef.current, terminalRef.current);
           fitAddonRef.current.fit();
+          repairTerminalViewport(xtermRef.current, terminalRef.current);
           const cols = xtermRef.current.cols;
           const rows = xtermRef.current.rows;
           setDimensions({ cols, rows });
@@ -492,7 +560,9 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
       if (fitAddonRef.current && xtermRef.current && terminalRef.current) {
         const rect = terminalRef.current.getBoundingClientRect();
         if (rect.width > 0 && rect.height > 0) {
+          repairTerminalViewport(xtermRef.current, terminalRef.current);
           fitAddonRef.current.fit();
+          repairTerminalViewport(xtermRef.current, terminalRef.current);
           const cols = xtermRef.current.cols;
           const rows = xtermRef.current.rows;
           setDimensions({ cols, rows });
@@ -549,7 +619,9 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
       // Validate container has valid dimensions before fitting
       const rect = terminalRef.current.getBoundingClientRect();
       if (rect.width > 0 && rect.height > 0) {
+        repairTerminalViewport(xtermRef.current, terminalRef.current);
         fitAddonRef.current.fit();
+        repairTerminalViewport(xtermRef.current, terminalRef.current);
         const cols = xtermRef.current.cols;
         const rows = xtermRef.current.rows;
         setDimensions({ cols, rows });
@@ -561,13 +633,35 @@ export function useXterm({ terminalId, onCommandEnter, onResize, onDimensionsRea
 
   const write = useCallback((data: string) => {
     if (xtermRef.current) {
-      xtermRef.current.write(data);
+      const xterm = xtermRef.current;
+      const wasAtBottom = isTerminalAtBottom(xterm);
+      repairTerminalViewport(xterm, terminalRef.current);
+      xterm.write(data, () => {
+        if (isDisposedRef.current || xtermRef.current !== xterm) {
+          return;
+        }
+        repairTerminalViewport(xterm, terminalRef.current);
+        if (wasAtBottom) {
+          scrollTerminalToBottom(xterm);
+        }
+      });
     }
   }, []);
 
   const writeln = useCallback((data: string) => {
     if (xtermRef.current) {
-      xtermRef.current.writeln(data);
+      const xterm = xtermRef.current;
+      const wasAtBottom = isTerminalAtBottom(xterm);
+      repairTerminalViewport(xterm, terminalRef.current);
+      xterm.writeln(data, () => {
+        if (isDisposedRef.current || xtermRef.current !== xterm) {
+          return;
+        }
+        repairTerminalViewport(xterm, terminalRef.current);
+        if (wasAtBottom) {
+          scrollTerminalToBottom(xterm);
+        }
+      });
     }
   }, []);
 

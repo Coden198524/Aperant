@@ -29,7 +29,7 @@ import { refreshOAuthTokenReactive } from '../auth/resolver';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolRegistry } from '../tools/registry';
 import { SubagentExecutorImpl } from '../orchestration/subagent-executor';
-import type { ToolContext } from '../tools/types';
+import type { ToolContext, ToolUsageState } from '../tools/types';
 import type { SecurityProfile } from '../security/bash-validator';
 import type {
   WorkerConfig,
@@ -159,6 +159,12 @@ const logWriter = config.session.specDir
 // Session-scoped file content cache for this worker
 const fileCache = new FileContentCache();
 
+const toolUsageState: ToolUsageState = {
+  totalCalls: 0,
+  toolCalls: {},
+  readOnlySignatureCalls: {},
+};
+
 // =============================================================================
 // Messaging Helpers
 // =============================================================================
@@ -275,6 +281,7 @@ function buildToolContext(session: SerializableSessionConfig, securityProfile: S
     abortSignal: abortController.signal,
     fileCache,
     workflowMode: session.workflowMode,
+    toolUsageState,
   };
 }
 

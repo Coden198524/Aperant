@@ -174,7 +174,7 @@ describe('Glob Tool', () => {
     }));
   });
 
-  it('should exclude node_modules and .git from results', async () => {
+  it('should exclude generic generated and dependency directories from results', async () => {
     vi.mocked(fs.existsSync).mockReturnValue(true);
     vi.mocked(fs.globSync).mockReturnValue(['src/index.ts']);
     vi.mocked(fs.statSync).mockReturnValue({
@@ -193,7 +193,26 @@ describe('Glob Tool', () => {
     expect(opts.exclude).toBeDefined();
     expect(opts.exclude?.('node_modules')).toBe(true);
     expect(opts.exclude?.('.git')).toBe(true);
+    expect(opts.exclude?.('.autocode/task_logs.json')).toBe(true);
+    expect(opts.exclude?.('vendor/pkg/file.ts')).toBe(true);
+    expect(opts.exclude?.('third_party/pkg/file.ts')).toBe(true);
+    expect(opts.exclude?.('dist/app.js')).toBe(true);
     expect(opts.exclude?.('src')).toBe(false);
+  });
+
+  it('summarizes large result sets instead of returning every path', async () => {
+    const paths = Array.from({ length: 350 }, (_, i) => `/test/project/src/feature${i}/file.ts`);
+    setupGlobMatches(paths);
+
+    const result = await globTool.config.execute(
+      { pattern: '**/*.ts' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('Glob matched 350 files');
+    expect(result).toContain('Top directories:');
+    expect(result).toContain('First 100 recently modified files:');
+    expect(result).not.toContain('/test/project/src/feature349/file.ts');
   });
 
   it('should call assertPathContained for path security', async () => {

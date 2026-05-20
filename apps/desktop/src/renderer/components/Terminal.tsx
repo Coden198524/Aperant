@@ -916,8 +916,7 @@ export const Terminal = forwardRef<TerminalHandle, TerminalProps>(function Termi
 
       <div
         ref={terminalRef}
-        className="flex-1 p-1"
-        style={{ minHeight: 0 }}
+        className="relative flex-1 min-h-0 overflow-hidden p-1"
       />
 
       {/* Worktree creation dialog */}

@@ -22,16 +22,26 @@ import { tool } from 'ai';
 import type { Tool as AITool } from 'ai';
 import { z } from 'zod/v3';
 
-import { resolve } from 'node:path';
+import { relative, resolve } from 'node:path';
 
 import { bashSecurityHook } from '../security/bash-validator';
 import type {
   ToolContext,
   ToolDefinitionConfig,
   ToolMetadata,
+  ToolUsageLimits,
+  ToolUsageState,
 } from './types';
 import { ToolPermission } from './types';
 import { truncateToolOutput, SAFETY_NET_MAX_BYTES } from './truncation';
+
+const DEFAULT_READ_ONLY_TOOL_LIMITS: Record<string, number> = {
+  Read: 160,
+  Glob: 80,
+  Grep: 80,
+};
+
+const DEFAULT_MAX_DUPLICATE_READ_ONLY_CALLS = 3;
 
 // ---------------------------------------------------------------------------
 // Defined Tool
@@ -124,6 +134,98 @@ export function sanitizeFilePathArg(input: Record<string, unknown>): void {
   }
 }
 
+function getToolUsageState(context: ToolContext): ToolUsageState {
+  if (!context.toolUsageState) {
+    context.toolUsageState = {
+      totalCalls: 0,
+      toolCalls: {},
+      readOnlySignatureCalls: {},
+    };
+  }
+  return context.toolUsageState;
+}
+
+function stableStringify(value: unknown): string {
+  if (Array.isArray(value)) {
+    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
+  }
+  if (value && typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
+  }
+  return JSON.stringify(value);
+}
+
+function normalizeSignatureValue(value: unknown, context: ToolContext): unknown {
+  if (typeof value !== 'string') {
+    return value;
+  }
+
+  const normalized = value.replace(/\\/g, '/');
+  const projectDir = context.projectDir.replace(/\\/g, '/');
+  if (!normalized.toLowerCase().startsWith(projectDir.toLowerCase())) {
+    return normalized;
+  }
+
+  const rel = relative(projectDir, normalized).replace(/\\/g, '/');
+  return rel && !rel.startsWith('..') ? rel : normalized;
+}
+
+function buildReadOnlySignature(
+  toolName: string,
+  input: Record<string, unknown>,
+  context: ToolContext,
+): string {
+  const normalizedInput: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(input)) {
+    normalizedInput[key] = normalizeSignatureValue(value, context);
+  }
+  return `${toolName}:${stableStringify(normalizedInput)}`;
+}
+
+function resolveToolUsageLimits(context: ToolContext): Required<ToolUsageLimits> {
+  return {
+    readOnlyToolCallLimits: {
+      ...DEFAULT_READ_ONLY_TOOL_LIMITS,
+      ...(context.toolUsageLimits?.readOnlyToolCallLimits ?? {}),
+    },
+    maxDuplicateReadOnlyCalls:
+      context.toolUsageLimits?.maxDuplicateReadOnlyCalls ?? DEFAULT_MAX_DUPLICATE_READ_ONLY_CALLS,
+  };
+}
+
+function guardReadOnlyToolUsage(
+  toolName: string,
+  input: Record<string, unknown>,
+  context: ToolContext,
+): string | null {
+  const limits = resolveToolUsageLimits(context);
+  const state = getToolUsageState(context);
+
+  state.totalCalls += 1;
+  state.toolCalls[toolName] = (state.toolCalls[toolName] ?? 0) + 1;
+
+  const toolLimit = limits.readOnlyToolCallLimits[toolName];
+  if (toolLimit !== undefined && state.toolCalls[toolName] > toolLimit) {
+    return [
+      `Tool budget exceeded for ${toolName}: ${state.toolCalls[toolName]} calls in this session, limit ${toolLimit}.`,
+      'Use the evidence already gathered, or run a narrower non-repeated query only after starting a new session.',
+    ].join('\n');
+  }
+
+  const signature = buildReadOnlySignature(toolName, input, context);
+  const repeated = (state.readOnlySignatureCalls[signature] ?? 0) + 1;
+  state.readOnlySignatureCalls[signature] = repeated;
+  if (repeated > limits.maxDuplicateReadOnlyCalls) {
+    return [
+      `Repeated ${toolName} call skipped: the same input has already been used ${repeated - 1} times in this session.`,
+      'Use the earlier result, change offset/limit for a targeted range, or narrow the query instead of repeating it.',
+    ].join('\n');
+  }
+
+  return null;
+}
+
 // ---------------------------------------------------------------------------
 // Tool.define()
 // ---------------------------------------------------------------------------
@@ -159,6 +261,15 @@ function define<TInput extends z.ZodType, TOutput>(
             input as Record<string, unknown>,
             context,
           );
+        } else {
+          const guardMessage = guardReadOnlyToolUsage(
+            metadata.name,
+            input as Record<string, unknown>,
+            context,
+          );
+          if (guardMessage) {
+            return guardMessage as TOutput;
+          }
         }
 
         // Write-path containment: reject writes outside allowed directories
