@@ -32,8 +32,8 @@ const inputSchema = z.object({
 
 /** Maximum number of file results to return before truncation */
 const MAX_RESULTS = 300;
-const SUMMARY_THRESHOLD = 300;
-const SUMMARY_SAMPLE_SIZE = 100;
+const SUMMARY_THRESHOLD = 120;
+const SUMMARY_SAMPLE_SIZE = 50;
 const EXCLUDED_DIRS = new Set([
   '.git',
   '.autocode',

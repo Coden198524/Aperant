@@ -118,6 +118,16 @@ const COMPLEXITY_PHASES: Record<ComplexityTier, SpecPhase[]> = {
 
 const AGGRESSIVE_SIMPLE_PHASES: SpecPhase[] = ['quick_spec'];
 
+type DocumentationProfile = 'general-source' | 'game-mmo-source';
+
+const GAME_MMO_DOCUMENTATION_FOCUS = [
+  'gameplay systems, progression loops, combat, quests, items, economy, social, and faction mechanics',
+  'client runtime, engine integration, rendering, animation, asset loading, world/scene streaming, and UI integration',
+  'server authority, simulation boundaries, network protocol, replication, synchronization, prediction, and reconciliation',
+  'data/config/content pipeline, persistence, account state, economy state, migrations, and tooling data contracts',
+  'GM/editor/production tools, build/release pipeline, performance budgets, security/anti-cheat, telemetry, and live operations',
+] as const;
+
 /** Maps each phase to the output files it typically produces */
 const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
   discovery: ['context.json'],
@@ -207,6 +217,15 @@ interface QuickSpecPlan {
       }>;
     }>;
     split_plan: false;
+    documentation_depth?: 'standard' | 'deep' | 'architecture';
+    project_type?: ProjectAgentProfile['id'];
+    documentation_profile?: DocumentationProfile;
+    documentation_focus?: string[];
+    document_outputs?: {
+      final_markdown: string;
+      outline: string;
+      evidence_index: string;
+    };
     source_task: {
       original_request: string;
       constraint_terms: string[];
@@ -490,6 +509,8 @@ const DOCUMENTATION_ENTRY_FILE_NAMES = [
   'main', 'index', 'app', 'application', 'program', 'server', 'client',
   'game', 'engine', 'core',
 ];
+
+const DOCUMENTATION_SUPPORT_FILES = ['doc_outline.json', 'evidence_index.json'];
 
 const SOURCE_FILE_EXTENSIONS = new Set([
   '.ts',
@@ -914,26 +935,121 @@ function inferDocumentationOutputFile(task: string): string {
   return 'docs/analysis.md';
 }
 
+function inferDocumentationDepth(task: string): 'standard' | 'deep' | 'architecture' {
+  if (/\b(architecture|system design|large[-\s]?scale|end-to-end|deep|comprehensive)\b/i.test(task) ||
+    /(\u67b6\u6784|\u7cfb\u7edf\u8bbe\u8ba1|\u5927\u578b|\u5b8c\u6574|\u6df1\u5ea6|\u5168\u9762)/.test(task)) {
+    return 'architecture';
+  }
+  if (/\b(source analysis|code analysis|implementation analysis|flow|data flow|call chain)\b/i.test(task) ||
+    /(\u6e90\u7801\u5206\u6790|\u4ee3\u7801\u5206\u6790|\u5b9e\u73b0\u5206\u6790|\u6d41\u7a0b|\u6570\u636e\u6d41|\u8c03\u7528\u94fe)/.test(task)) {
+    return 'deep';
+  }
+  return 'standard';
+}
+
+function getDocumentationQualityGuidance(
+  outputFile: string,
+  depth: 'standard' | 'deep' | 'architecture',
+  language?: SupportedLanguage,
+): string[] {
+  if (language === 'zh-CN') {
+    return [
+      `文档深度：${depth}。`,
+      '先写 `doc_outline.json`：包含文档类型、目标读者、章节列表、每节要回答的问题、预计引用的文件。',
+      '再写 `evidence_index.json`：记录已阅读文件、每个关键结论的证据文件、推断项和未确认项。',
+      `最后写 \`${outputFile}\`：按大纲生成结构化 Markdown。`,
+      '最终 Markdown 必须包含：概览、范围、关键文件/模块、核心流程、数据/状态流、边界与风险、未确认项。',
+      '关键结论要标明来源文件；事实、推断、风险要分开写。',
+      '可以使用表格、流程列表和短小 Mermaid 图；不要复制大段源码。',
+    ];
+  }
+
+  return [
+    `Documentation depth: ${depth}.`,
+    'First write `doc_outline.json` with document type, audience, sections, questions each section answers, and planned source references.',
+    'Then write `evidence_index.json` with files read, evidence-backed claims, inferred claims, and open questions.',
+    `Finally write \`${outputFile}\` as structured Markdown from the outline and evidence.`,
+    'Final Markdown must include: overview, scope, key files/modules, core flows, data/state flow, boundaries and risks, and open questions.',
+    'Mark source files for important claims; separate facts, inferences, and risks.',
+    'Use tables, flow lists, and small Mermaid diagrams where useful; do not copy large source blocks.',
+  ];
+}
+
+function getDocumentationProfile(agentProfile?: ProjectAgentProfile): DocumentationProfile {
+  return agentProfile?.id === 'game-mmo' ? 'game-mmo-source' : 'general-source';
+}
+
+function getGameMmoDocumentationQualityGuidance(language?: SupportedLanguage): string[] {
+  if (language === 'zh-CN') {
+    return [
+      '游戏项目必须按大型网络游戏专业维度组织：玩法系统、客户端/引擎、服务端权威、网络同步、数据配置/持久化、工具链、性能、安全反作弊、运营。',
+      '每个重要系统要说明：入口文件、运行时归属、关键数据、状态变化、跨端协议/同步边界、配置来源、生产工具入口、风险和待验证点。',
+      '文档要区分策划数值/内容配置、客户端表现、服务端判定、网络协议、存档/经济状态和 GM/运营工具，避免把不同层混在一起。',
+      '优先输出系统矩阵、跨端流程、数据生命周期、状态机/时序图、协议/配置证据表，以及性能和安全关注点。',
+    ];
+  }
+
+  return [
+    'For game projects, structure the document around large-online-game dimensions: gameplay systems, client/engine, server authority, network sync, data/config/persistence, tooling, performance, security/anti-cheat, and live operations.',
+    'For each important system, identify entry files, runtime ownership, key data, state transitions, cross-end protocol/sync boundaries, configuration sources, production-tool entry points, risks, and open questions.',
+    'Separate design/content data, client presentation, server adjudication, network protocol, save/economy state, and GM/liveops tools instead of merging them into one generic flow.',
+    'Prefer system matrices, cross-end flows, data lifecycle notes, state/sequence diagrams, protocol/config evidence tables, and performance/security notes.',
+  ];
+}
+
+function getProfiledDocumentationQualityGuidance(
+  outputFile: string,
+  depth: 'standard' | 'deep' | 'architecture',
+  language: SupportedLanguage | undefined,
+  profile: DocumentationProfile,
+): string[] {
+  const guidance = getDocumentationQualityGuidance(outputFile, depth, language);
+  return profile === 'game-mmo-source'
+    ? [...guidance, ...getGameMmoDocumentationQualityGuidance(language)]
+    : guidance;
+}
+
 function buildSourceDocumentationQuickSpecPlan(
   taskDescription: string | undefined,
   language?: SupportedLanguage,
   patternFiles: string[] = [],
+  agentProfile?: ProjectAgentProfile,
 ): QuickSpecPlan {
   const task = normalizeTaskDescription(taskDescription);
   const feature = oneLine(task, 120);
   const outputFile = inferDocumentationOutputFile(task);
+  const documentationDepth = inferDocumentationDepth(task);
+  const documentationProfile = getDocumentationProfile(agentProfile);
+  const isGameMmoDocumentation = documentationProfile === 'game-mmo-source';
+  const qualityGuidance = getProfiledDocumentationQualityGuidance(
+    outputFile,
+    documentationDepth,
+    language,
+    documentationProfile,
+  );
   const isChinese = language === 'zh-CN';
   const phaseName = isChinese ? '\u6587\u6863\u5206\u6790' : 'Documentation analysis';
   const title = isChinese ? '\u5206\u6790\u6e90\u7801\u5e76\u751f\u6210\u6587\u6863' : 'Analyze source and generate documentation';
   const outputHint = isChinese
-    ? `\u751f\u6210\u6216\u66f4\u65b0\u7528\u6237\u8981\u6c42\u7684 Markdown \u6587\u6863\u3002\u672a\u6307\u5b9a\u8f93\u51fa\u6587\u4ef6\u65f6\u4f7f\u7528 ${outputFile}\u3002`
-    : `Create or update the requested Markdown document. When no output file is specified, use ${outputFile}.`;
+    ? `\u751f\u6210\u6216\u66f4\u65b0\u7528\u6237\u8981\u6c42\u7684 Markdown \u6587\u6863\u3002\u672a\u6307\u5b9a\u8f93\u51fa\u6587\u4ef6\u65f6\u4f7f\u7528 ${outputFile}\u3002\u540c\u65f6\u751f\u6210 doc_outline.json \u548c evidence_index.json\u3002`
+    : `Create or update the requested Markdown document. When no output file is specified, use ${outputFile}. Also create doc_outline.json and evidence_index.json.`;
   const readRule = isChinese
-    ? '\u53ea\u505a\u6587\u6863\u5206\u6790\uff0c\u4e0d\u4fee\u6539\u4ea7\u54c1\u4ee3\u7801\u3002\u5148\u7528\u9879\u76ee\u7d22\u5f15\u548c\u7528\u6237\u6307\u5b9a\u6587\u4ef6\u5b9a\u4f4d\u8303\u56f4\uff0c\u518d\u7cbe\u8bfb\u5c11\u91cf\u5173\u952e\u6e90\u7801\u6587\u4ef6\u3002'
-    : 'This is documentation analysis only; do not modify product code. Use the project index and user-specified files to narrow scope, then read only a small set of key source files.';
+    ? '\u53ea\u505a\u6587\u6863\u5206\u6790\uff0c\u4e0d\u4fee\u6539\u4ea7\u54c1\u4ee3\u7801\u3002\u5148\u7528\u9879\u76ee\u7d22\u5f15\u548c\u7528\u6237\u6307\u5b9a\u6587\u4ef6\u5b9a\u4f4d\u8303\u56f4\uff0c\u518d\u6cbf\u5165\u53e3\u3001\u516c\u5171\u63a5\u53e3\u3001\u914d\u7f6e\u548c\u6838\u5fc3\u8c03\u7528\u94fe\u6269\u5c55\u8bc1\u636e\u3002'
+    : 'This is documentation analysis only; do not modify product code. Use the project index and user-specified files to narrow scope, then expand evidence through entry points, public interfaces, configuration, and core call chains.';
   const verificationRun = isChinese
-    ? '\u786e\u8ba4 Markdown \u6587\u6863\u5df2\u751f\u6210\uff0c\u4e14\u5305\u542b\u7ed3\u6784\u5316\u7684\u6e90\u7801\u5206\u6790\u7ed3\u679c\u3002\u4e0d\u8981\u4e3a\u7eaf\u6587\u6863\u4efb\u52a1\u8fd0\u884c\u7f16\u8bd1\u6216 QA\u3002'
-    : 'Confirm the Markdown document exists and contains structured source analysis. Do not run build or QA for documentation-only tasks.';
+    ? `\u786e\u8ba4 ${outputFile}\u3001doc_outline.json \u548c evidence_index.json \u5df2\u751f\u6210\uff0cMarkdown \u5305\u542b\u7ed3\u6784\u5316\u6e90\u7801\u5206\u6790\u3001\u8bc1\u636e\u6587\u4ef6\u3001\u6d41\u7a0b/\u6570\u636e\u6d41\u548c\u672a\u786e\u8ba4\u9879\u3002\u4e0d\u8981\u4e3a\u7eaf\u6587\u6863\u4efb\u52a1\u8fd0\u884c\u7f16\u8bd1\u6216 QA\u3002`
+    : `Confirm ${outputFile}, doc_outline.json, and evidence_index.json exist, and the Markdown contains structured source analysis, evidence files, flows/data flow, and open questions. Do not run build or QA for documentation-only tasks.`;
+  const profileSpecLines = isGameMmoDocumentation
+    ? isChinese
+      ? [
+          '- 文档画像：大型网络游戏 / MMO 源码专业分析。',
+          '- 重点覆盖：玩法系统、客户端/引擎、服务端权威、网络同步、数据配置/持久化、工具链、性能、安全反作弊、运营。',
+        ]
+      : [
+          '- Documentation profile: large online game / MMO source analysis.',
+          '- Cover gameplay systems, client/engine, server authority, network sync, data/config/persistence, tooling, performance, security/anti-cheat, and live operations.',
+        ]
+    : [];
   const specMarkdown = isChinese
     ? [
         `# \u6587\u6863\u5206\u6790\u4efb\u52a1\uff1a${feature}`,
@@ -943,12 +1059,18 @@ function buildSourceDocumentationQuickSpecPlan(
         '',
         '## \u8303\u56f4',
         `- \u8f93\u51fa Markdown \u6587\u6863\uff1a\`${outputFile}\`\u3002`,
-        '- \u53ea\u9605\u8bfb\u4e0e\u95ee\u9898\u76f4\u63a5\u76f8\u5173\u7684\u6e90\u7801\u6587\u4ef6\u3002',
+        '- \u8f93\u51fa\u652f\u6491\u6587\u4ef6\uff1a`doc_outline.json`\u3001`evidence_index.json`\u3002',
+        `- \u6587\u6863\u6df1\u5ea6\uff1a${documentationDepth}\u3002`,
+        '- \u9605\u8bfb\u8db3\u591f\u7684\u5173\u952e\u6e90\u7801\u6587\u4ef6\uff0c\u652f\u6301\u7ed3\u8bba\u53ef\u8ffd\u6eaf\u3002',
         '- \u4e0d\u505a\u4ea7\u54c1\u4ee3\u7801\u6539\u52a8\u3002',
+        ...profileSpecLines,
+        '',
+        '## \u8d28\u91cf\u6807\u51c6',
+        ...qualityGuidance.map((item) => `- ${item}`),
         '',
         '## \u9a8c\u6536',
         '- \u6587\u6863\u5df2\u751f\u6210\u6216\u66f4\u65b0\u3002',
-        '- \u5185\u5bb9\u6709\u7ed3\u6784\uff0c\u80fd\u652f\u6301\u4eba\u5de5\u5ba1\u6838\u3002',
+        '- \u6587\u6863\u5305\u542b\u4ee3\u7801\u8bc1\u636e\u3001\u6838\u5fc3\u6d41\u7a0b\u3001\u8fb9\u754c\u98ce\u9669\u548c\u672a\u786e\u8ba4\u9879\u3002',
         '',
       ].join('\n')
     : [
@@ -959,12 +1081,18 @@ function buildSourceDocumentationQuickSpecPlan(
         '',
         '## Scope',
         `- Output Markdown documentation: \`${outputFile}\`.`,
-        '- Read only source files directly relevant to the request.',
+        '- Output support files: `doc_outline.json`, `evidence_index.json`.',
+        `- Documentation depth: ${documentationDepth}.`,
+        '- Read enough key source files to make conclusions traceable.',
         '- Do not change product code.',
+        ...profileSpecLines,
+        '',
+        '## Quality Standard',
+        ...qualityGuidance.map((item) => `- ${item}`),
         '',
         '## Acceptance',
         '- Documentation is created or updated.',
-        '- The content is structured and reviewable.',
+        '- The document includes code evidence, core flows, boundaries/risks, and open questions.',
         '',
       ].join('\n');
 
@@ -988,12 +1116,13 @@ function buildSourceDocumentationQuickSpecPlan(
                 '',
                 readRule,
                 outputHint,
+                ...qualityGuidance,
                 isChinese
                   ? '\u4f18\u5148\u7528\u8868\u683c\u3001\u5206\u5c42\u6807\u9898\u3001\u6d41\u7a0b\u5217\u8868\u5448\u73b0\uff0c\u907f\u514d\u5927\u6bb5\u5806\u53e0\u6587\u5b57\u3002'
                   : 'Prefer tables, layered headings, and flow lists instead of long prose blocks.',
               ].join('\n'),
               status: 'pending',
-              files_to_create: [outputFile],
+              files_to_create: [outputFile, ...DOCUMENTATION_SUPPORT_FILES],
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
               verification: {
@@ -1005,6 +1134,17 @@ function buildSourceDocumentationQuickSpecPlan(
         },
       ],
       split_plan: false,
+      documentation_depth: documentationDepth,
+      project_type: agentProfile?.id,
+      documentation_profile: documentationProfile,
+      documentation_focus: isGameMmoDocumentation
+        ? [...GAME_MMO_DOCUMENTATION_FOCUS]
+        : undefined,
+      document_outputs: {
+        final_markdown: outputFile,
+        outline: 'doc_outline.json',
+        evidence_index: 'evidence_index.json',
+      },
       source_task: {
         original_request: task,
         constraint_terms: extractConstraintTerms(task),
@@ -2282,7 +2422,7 @@ export class SpecOrchestrator extends EventEmitter {
     const previous = this.assessment;
     const next: ComplexityAssessment = {
       ...previous,
-      complexity: hints.promoteToStandard && previous.complexity === 'simple'
+      complexity: !this.config.complexityOverride && hints.promoteToStandard && previous.complexity === 'simple'
         ? 'standard'
         : previous.complexity,
       needs_research: previous.needs_research || hints.needsResearch,
@@ -2872,6 +3012,7 @@ export class SpecOrchestrator extends EventEmitter {
           this.config.taskDescription ?? 'Complete the requested task',
           this.config.language,
           patternFiles,
+          this.config.agentProfile,
         )
       : buildLocalizedAggressiveQuickSpecPlan(
           this.config.taskDescription ?? 'Complete the requested task',

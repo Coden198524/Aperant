@@ -211,8 +211,22 @@ describe('Glob Tool', () => {
 
     expect(result).toContain('Glob matched 350 files');
     expect(result).toContain('Top directories:');
-    expect(result).toContain('First 100 recently modified files:');
+    expect(result).toContain('First 50 recently modified files:');
     expect(result).not.toContain('/test/project/src/feature349/file.ts');
+  });
+
+  it('summarizes medium result sets to keep model context compact', async () => {
+    const paths = Array.from({ length: 150 }, (_, i) => `/test/project/src/feature${i}/file.ts`);
+    setupGlobMatches(paths);
+
+    const result = await globTool.config.execute(
+      { pattern: '**/*.ts' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('Glob matched 150 files');
+    expect(result).toContain('First 50 recently modified files:');
+    expect(result).not.toContain('/test/project/src/feature149/file.ts');
   });
 
   it('should call assertPathContained for path security', async () => {

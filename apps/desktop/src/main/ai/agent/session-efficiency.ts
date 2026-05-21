@@ -11,6 +11,9 @@ export const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
 interface PlanLike {
   phases?: unknown[];
   workflow_type?: unknown;
+  project_type?: unknown;
+  documentation_profile?: unknown;
+  documentation_focus?: unknown;
 }
 
 interface VerificationLike {
@@ -36,6 +39,9 @@ export interface CoderKickoffSubtaskContext {
   patternFiles: string[];
   verification?: string | VerificationLike;
   completedSummaries?: Array<{ id: string; title?: string; summary: string }>;
+  projectType?: string;
+  documentationProfile?: string;
+  documentationFocus?: string[];
 }
 
 function toStringArray(value: unknown): string[] {
@@ -127,6 +133,18 @@ function isDocumentationContext(context: CoderKickoffSubtaskContext | null): boo
     /文档|源码分析|代码分析|实现方案|实现说明/.test(text);
 }
 
+function isGameMmoDocumentationContext(context: CoderKickoffSubtaskContext | null): boolean {
+  return isDocumentationContext(context) && (
+    context?.projectType === 'game-mmo' ||
+    context?.documentationProfile === 'game-mmo-source' ||
+    context?.documentationFocus?.some((item) => /\b(gameplay|client\/engine|server authority|network sync|anti-cheat|live operations)\b/i.test(item)) === true
+  );
+}
+
+function isGameMmoImplementationContext(context: CoderKickoffSubtaskContext | null): boolean {
+  return !isDocumentationContext(context) && context?.projectType === 'game-mmo';
+}
+
 export function findSubtaskKickoffContext(
   plan: unknown,
   subtaskId: string,
@@ -183,12 +201,17 @@ export function findSubtaskKickoffContext(
       }
 
       const workflowType = (plan as PlanLike).workflow_type;
+      const projectType = (plan as PlanLike).project_type;
+      const documentationProfile = (plan as PlanLike).documentation_profile;
 
       return {
         id: subtaskId,
         workflowType: typeof workflowType === 'string'
           ? workflowType
           : undefined,
+        projectType: typeof projectType === 'string' ? projectType : undefined,
+        documentationProfile: typeof documentationProfile === 'string' ? documentationProfile : undefined,
+        documentationFocus: toStringArray((plan as PlanLike).documentation_focus),
         title: typeof subtaskRecord.title === 'string' ? subtaskRecord.title : undefined,
         description: typeof subtaskRecord.description === 'string' ? subtaskRecord.description : undefined,
         phaseName,
@@ -277,6 +300,8 @@ export function buildFocusedCoderKickoffMessageFromContext(
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
   const documentationOnly = isDocumentationContext(context);
+  const gameMmoDocumentation = isGameMmoDocumentationContext(context);
+  const gameMmoImplementation = isGameMmoImplementationContext(context);
   const lines: string[] = [
     `Implement ONLY subtask "${subtaskId}".`,
     `Project root: ${promptProjectDir}.`,
@@ -366,12 +391,31 @@ export function buildFocusedCoderKickoffMessageFromContext(
     lines.push('- Documentation-only workflow: do not edit product source files and do not run builds, tests, or AI QA.');
     lines.push('- Do not call `Glob` with `**/*` or any all-repository recursive pattern. Use targeted source-directory or extension patterns and exclude generated/dependency directories.');
     lines.push('- Ignore generated or dependency directories such as build, dist, out, target, .git, .autocode, node_modules, vendor, and third_party.');
-    lines.push('- Quality comes first: read enough relevant source files to cover the requested document. For small projects, reading all product source files is acceptable after excluding generated directories.');
-    lines.push('- Start with listed hints, manifests, entry files, and public interfaces, then expand through imports/includes/build manifests until the architecture and main behavior are covered.');
+    lines.push('- Quality comes first: read enough relevant source files to support traceable conclusions. For small projects, reading all product source files is acceptable after excluding generated directories.');
+    lines.push('- Start with listed hints, manifests, entry files, and public interfaces, then expand through imports/includes/build manifests until the architecture, main behavior, data/state flow, and important boundaries are covered.');
+    lines.push('- First write `doc_outline.json` with document type, target audience, sections, questions each section answers, and planned source references.');
+    lines.push('- Then write `evidence_index.json` with files read, evidence-backed claims, inferred claims, risks, and open questions. Every major conclusion in the final document should map to evidence or be marked as inference.');
+    lines.push('- Then write the final Markdown document from the outline and evidence index.');
+    lines.push('- The final Markdown must include overview, scope, key files/modules, core flows, data/state flow, boundaries/risks, and open questions. Use file paths for important claims.');
+    if (gameMmoDocumentation) {
+      lines.push('- Game project documentation profile: write for large-online-game/MMO engineering, not a generic source summary.');
+      lines.push('- Cover these dimensions when evidence exists: gameplay systems, progression/economy/quests/items/combat, client runtime, engine/rendering/animation/assets/world streaming, server authority, network sync/protocol, data/config/persistence, GM/editor tools, build/release, performance, security/anti-cheat, telemetry, and live operations.');
+      lines.push('- For each important game system, identify source entry points, runtime owner, authoritative side, key data/config files, state transitions, cross-end protocol or sync boundary, production tool path, risks, and open questions.');
+      lines.push('- Prefer system matrices, cross-end sequence flows, data lifecycle sections, state-machine notes, protocol/config evidence tables, and performance/security callouts.');
+    }
     lines.push('- Avoid duplicate whole-file reads. Summarize relationships instead of copying source, and only include short code excerpts when they materially improve the document.');
-    lines.push('- For documentation outputs, call Write directly for the target Markdown file. Do not pre-create the parent directory with Bash unless Write fails because the directory is missing.');
-    lines.push('- After Write succeeds, do not read the generated Markdown back. Treat the successful Write result as verification; use at most one simple existence check only if the tool result is ambiguous.');
-    lines.push('- Write structured Markdown with tables and short bullets. Avoid long prose and avoid embedding large code excerpts.');
+    lines.push('- For documentation outputs, call Write directly for `doc_outline.json`, `evidence_index.json`, and the target Markdown file. Do not pre-create the parent directory with Bash unless Write fails because the directory is missing.');
+    lines.push('- After Write succeeds, do not read generated files back. Treat successful Write results as verification; use at most one simple existence check only if a tool result is ambiguous.');
+    lines.push('- Write structured Markdown with tables, layered headings, flow lists, and small Mermaid diagrams where useful. Avoid long prose and avoid embedding large code excerpts.');
+  }
+  if (gameMmoImplementation) {
+    lines.push('- MMO implementation quality: identify the touched domain before editing: client-only, server-authoritative, network/protocol, persistence/economy, engine/runtime, content pipeline/tools, performance, security, or liveops.');
+    lines.push('- Preserve runtime owner boundaries, authoritative-side decisions, trust boundaries, data/config sources, protocol/save/tooling contracts, and patch compatibility.');
+    lines.push('- For gameplay state, irreversible rewards, economy, inventory, progression, combat, movement, or account data, treat the server as authoritative and the client as intent only.');
+    lines.push('- For networked changes, consider replication, prediction, reconciliation, interest management, ordering, bandwidth, protocol versioning, and latency tolerance.');
+    lines.push('- For engine/runtime changes, protect initialization order, update/teardown behavior, memory ownership, threading, frame-time, IO, streaming, and platform/build configuration.');
+    lines.push('- For data or content changes, preserve schema/content compatibility, migration/rollback behavior, validation, cooking/import paths, GM/editor workflows, and recovery paths.');
+    lines.push('- In the completion summary, state verification run and residual MMO risks for relevant domains: server authority, network sync, persistence/data, performance, security, tools/content pipeline, and liveops/release.');
   }
   lines.push('- Focus on this one subtask until it is done.');
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');

@@ -28,7 +28,7 @@ describe('session-efficiency', () => {
       }],
     }, 'ui-2');
 
-    expect(context).toEqual({
+    expect(context).toMatchObject({
       id: 'ui-2',
       title: 'Show plan progress',
       description: 'Render planning progress next to the task badge.',
@@ -109,10 +109,64 @@ describe('session-efficiency', () => {
 
     expect(message).toContain('Quality comes first');
     expect(message).toContain('reading all product source files is acceptable');
+    expect(message).toContain('doc_outline.json');
+    expect(message).toContain('evidence_index.json');
+    expect(message).toContain('Every major conclusion');
+    expect(message).toContain('data/state flow');
     expect(message).toContain('Do not pre-create the parent directory with Bash unless Write fails');
-    expect(message).toContain('After Write succeeds, do not read the generated Markdown back');
-    expect(message).toContain('Treat the successful Write result as verification');
+    expect(message).toContain('After Write succeeds, do not read generated files back');
+    expect(message).toContain('Treat successful Write results as verification');
     expect(message).not.toContain('at most 6 additional source files');
+  });
+
+  it('adds MMO documentation execution rules for game project documentation', () => {
+    const message = buildFocusedCoderKickoffMessageFromContext(
+      '/specs/011',
+      '/project',
+      '1-1',
+      {
+        id: '1-1',
+        workflowType: 'documentation',
+        projectType: 'game-mmo',
+        documentationProfile: 'game-mmo-source',
+        documentationFocus: ['server authority, network sync, anti-cheat, live operations'],
+        title: 'Analyze MMO source documentation',
+        description: 'Generate professional MMO source documentation.',
+        filesToModify: [],
+        filesToCreate: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
+        patternFiles: ['GameServer.cpp', 'Client/Game.cpp'],
+      },
+    );
+
+    expect(message).toContain('large-online-game/MMO engineering');
+    expect(message).toContain('server authority');
+    expect(message).toContain('network sync/protocol');
+    expect(message).toContain('GM/editor tools');
+    expect(message).toContain('anti-cheat');
+    expect(message).toContain('system matrices');
+  });
+
+  it('adds MMO coding quality rules for game implementation subtasks', () => {
+    const message = buildFocusedCoderKickoffMessageFromContext(
+      '/specs/012',
+      '/project',
+      '2-3',
+      {
+        id: '2-3',
+        projectType: 'game-mmo',
+        title: 'Implement combat replication',
+        description: 'Update server combat replication and client reconciliation.',
+        filesToModify: ['Server/Combat.cpp', 'Client/CombatPrediction.cpp'],
+        filesToCreate: [],
+        patternFiles: ['Server/Replication.cpp'],
+      },
+    );
+
+    expect(message).toContain('MMO implementation quality');
+    expect(message).toContain('server-authoritative');
+    expect(message).toContain('replication');
+    expect(message).toContain('protocol/save/tooling contracts');
+    expect(message).toContain('completion summary');
   });
 
   it('includes prior completion summaries to avoid rereading completed subtask files', () => {

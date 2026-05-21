@@ -464,7 +464,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         projectDir: specDir,
         taskDescription: 'Refactor local task execution flow',
         complexityOverride: 'complex',
-        workflowConfig: { optimizationLevel: 'balanced' },
+        workflowConfig: { optimizationLevel: 'aggressive' },
         generatePrompt: vi.fn(async () => 'Run phase.'),
         runSession,
       });
@@ -857,11 +857,18 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
       const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
         workflow_type: string;
+        documentation_depth?: string;
+        document_outputs?: {
+          final_markdown?: string;
+          outline?: string;
+          evidence_index?: string;
+        };
         phases: Array<{ name: string; subtasks: Array<{
           title: string;
           description: string;
           verification?: { run?: string };
           pattern_files?: string[];
+          files_to_create?: string[];
         }> }>;
       };
 
@@ -871,6 +878,15 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(result.phasesExecuted).toEqual(['complexity_assessment', 'quick_spec']);
       expect(spec).toContain('文档分析任务');
       expect(plan.workflow_type).toBe('documentation');
+      expect(plan.documentation_depth).toBeTruthy();
+      expect(plan.document_outputs?.outline).toBe('doc_outline.json');
+      expect(plan.document_outputs?.evidence_index).toBe('evidence_index.json');
+      expect(plan.phases[0].subtasks[0].files_to_create).toEqual(expect.arrayContaining([
+        'doc_outline.json',
+        'evidence_index.json',
+      ]));
+      expect(plan.phases[0].subtasks[0].description).toContain('doc_outline.json');
+      expect(plan.phases[0].subtasks[0].description).toContain('evidence_index.json');
       expect(plan.phases).toHaveLength(1);
       expect(plan.phases[0].name).toBe('文档分析');
       expect(plan.phases[0].subtasks).toHaveLength(1);
@@ -914,11 +930,56 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(result.success).toBe(true);
       expect(runSession).not.toHaveBeenCalled();
       expect(plan.workflow_type).toBe('documentation');
-      expect(subtask.files_to_create).toEqual(['docs/analysis.md']);
+      expect(subtask.files_to_create).toEqual([
+        'docs/analysis.md',
+        'doc_outline.json',
+        'evidence_index.json',
+      ]);
       expect(subtask.pattern_files).toContain('CMakeLists.txt');
       expect(subtask.pattern_files).toContain('src/main.cpp');
       expect(subtask.pattern_files).toContain('src/Game.h');
       expect(subtask.pattern_files?.some((file) => file.includes('**'))).toBe(false);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('adds MMO documentation profile requirements for game project documentation', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const runSession = vi.fn();
+
+    try {
+      await writeFile(join(specDir, 'GameServer.cpp'), 'void sync_combat() {}\n', 'utf-8');
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Analyze MMO source architecture and generate a Markdown document without changing code.',
+        complexityOverride: 'simple',
+        useAiAssessment: false,
+        workflowConfig: { optimizationLevel: 'aggressive' },
+        agentProfile: MMO_AGENT_PROFILE,
+        generatePrompt: vi.fn(async () => 'should not be used'),
+        runSession,
+      });
+
+      const result = await orchestrator.run();
+      const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
+      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+        project_type?: string;
+        documentation_profile?: string;
+        documentation_focus?: string[];
+        phases: Array<{ subtasks: Array<{ description: string }> }>;
+      };
+
+      expect(result.success).toBe(true);
+      expect(runSession).not.toHaveBeenCalled();
+      expect(plan.project_type).toBe('game-mmo');
+      expect(plan.documentation_profile).toBe('game-mmo-source');
+      expect(plan.documentation_focus?.join('\n')).toContain('server authority');
+      expect(spec).toContain('large online game / MMO source analysis');
+      expect(plan.phases[0].subtasks[0].description).toContain('server authority');
+      expect(plan.phases[0].subtasks[0].description).toContain('network sync');
+      expect(plan.phases[0].subtasks[0].description).toContain('live operations');
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }

@@ -23,7 +23,7 @@ import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 // ---------------------------------------------------------------------------
 
 const DEFAULT_OUTPUT_MODE = 'files_with_matches';
-const MAX_OUTPUT_LENGTH = 30_000;
+const MAX_OUTPUT_LENGTH = 12_000;
 const MAX_FALLBACK_FILE_BYTES = 1024 * 1024;
 const MAX_FALLBACK_FILES = 10_000;
 const EXCLUDED_DIRS = new Set([

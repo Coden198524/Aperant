@@ -60,7 +60,7 @@ import {
 import { createMcpClientsForAgent, mergeMcpTools, closeAllMcpClients } from '../mcp/client';
 import type { McpClientResult } from '../mcp/types';
 import { runProjectIndexer } from '../project/project-indexer';
-import type { TaskLogPhase, TaskWorkflowMode } from '../../../shared/types';
+import type { ProjectType, TaskLogPhase, TaskWorkflowMode } from '../../../shared/types';
 import { FileContentCache } from '../tools/cache/file-cache';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 import { specPhaseToPromptName } from './spec-phase-prompts';
@@ -122,23 +122,29 @@ function getWorkflowConfigFromMode(mode?: TaskWorkflowMode): WorkflowConfig | un
   return OPTIMIZATION_PRESETS[mode];
 }
 
-function getQualityConfigFromWorkflowConfig(workflowConfig?: WorkflowConfig): import('../orchestration/quality-integration').QualityConfig | undefined {
+function getQualityConfigFromWorkflowConfig(
+  workflowConfig?: WorkflowConfig,
+  projectType?: ProjectType,
+): import('../orchestration/quality-integration').QualityConfig | undefined {
   if (!workflowConfig) {
     return undefined;
   }
 
   const qualityChecks = workflowConfig.qualityChecks ?? {};
   const conservativeMode = workflowConfig.optimizationLevel === 'conservative';
+  const gameMmoMode = projectType === 'game-mmo';
 
   return {
     enablePreQASmokeTests: qualityChecks.enableSmokeTests ?? false,
-    enableIncrementalValidation: conservativeMode,
-    enablePatternInjection: qualityChecks.enablePatternInjection ?? false,
-    enablePreImplementationChecklist: qualityChecks.enablePreImplementationChecklist ?? false,
+    enableIncrementalValidation: conservativeMode || gameMmoMode,
+    enablePatternInjection: qualityChecks.enablePatternInjection ?? gameMmoMode,
+    enablePreImplementationChecklist: qualityChecks.enablePreImplementationChecklist ?? gameMmoMode,
     enableSelfCritique: qualityChecks.enableSelfCritique ?? false,
-    enableContextAwareRecovery: conservativeMode,
+    enableContextAwareRecovery: conservativeMode || gameMmoMode,
     enableActiveMemoryLearning: false,
-    enableTieredQualityStandards: qualityChecks.enableTieredQualityStandards ?? false,
+    enableTieredQualityStandards: qualityChecks.enableTieredQualityStandards ?? gameMmoMode,
+    enableDocumentationQualityGate: true,
+    projectType,
   };
 }
 
@@ -1323,7 +1329,7 @@ async function runBuildOrchestrator(
 
     // Apply workflow optimization config based on task's workflowMode
     workflowConfig,
-    qualityConfig: getQualityConfigFromWorkflowConfig(workflowConfig),
+    qualityConfig: getQualityConfigFromWorkflowConfig(workflowConfig, session.projectType),
     agentProfile,
 
     generatePrompt: async (agentType, _phase, context) => {
@@ -2086,6 +2092,20 @@ function buildMmoSpecialistList(): string {
   ].join('\n');
 }
 
+function buildMmoCodingQualityChecklist(): string {
+  return [
+    'MMO coding quality checklist:',
+    '- Identify the touched domain before editing: client-only, server-authoritative, network/protocol, persistence/economy, engine/runtime, content pipeline/tools, performance, security, or liveops.',
+    '- Preserve runtime owner boundaries, authoritative-side decisions, trust boundaries, data/config sources, protocol/save/tooling contracts, and patch compatibility.',
+    '- For gameplay state, irreversible rewards, economy, inventory, progression, combat, movement, or account data, treat the server as authoritative and the client as intent only.',
+    '- For networked changes, consider replication, prediction, reconciliation, interest management, ordering, bandwidth, protocol versioning, and latency tolerance.',
+    '- For engine/runtime changes, protect initialization order, update/teardown behavior, memory ownership, threading, frame-time, IO, streaming, and platform/build configuration.',
+    '- For data or content changes, preserve schema/content compatibility, migration/rollback behavior, validation, cooking/import paths, GM/editor workflows, and recovery paths.',
+    '- For live-player impact, preserve observability, telemetry, feature flags, staged rollout, rollback, and operational diagnostics.',
+    '- In completion summaries, explicitly state verification run and residual MMO risks for server authority, network sync, persistence/data, performance, security, tools/content pipeline, and liveops/release when relevant.',
+  ].join('\n');
+}
+
 /**
  * Build a kickoff user message for an agent session.
  * The AI SDK requires at least one user message; this provides a concrete task directive.
@@ -2109,7 +2129,19 @@ function buildKickoffMessage(
     } else if (agentType === 'mmo_qa_fixer') {
       baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, and update ${promptSpecDir}/qa_report.md or implementation_plan.json to show fixes have been applied.`;
     } else if (subtaskId) {
-      baseMessage = `${mmoRole}\n\nImplement subtask ${subtaskId} from ${promptSpecDir}/implementation_plan.json in project ${promptProjectDir}. Keep changes scoped, update the subtask status to "completed" when done, and preserve MMO runtime correctness and budgets.`;
+      baseMessage = [
+        mmoRole,
+        '',
+        buildFocusedCoderKickoffMessage(
+          promptSpecDir,
+          promptProjectDir,
+          subtaskId,
+        ),
+        '',
+        'Preserve MMO runtime correctness, cross-end boundaries, performance budgets, security assumptions, and live operations safety.',
+        '',
+        buildMmoCodingQualityChecklist(),
+      ].join('\n');
     } else {
       baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/implementation_plan.json and implement the next pending subtask in ${promptProjectDir}. Update its status to "completed" when done.`;
     }
@@ -2173,6 +2205,8 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
       '- Respect frame-time, memory, IO, streaming, and build/release budgets.',
       '- Protect content pipeline, migration, save data, live operations, and rollout safety.',
       '- Prefer narrow reads and focused edits. Validate with targeted project checks when available.',
+      '',
+      buildMmoCodingQualityChecklist(),
     ];
     if (agentType === 'mmo_spec_orchestrator' || agentType === 'mmo_build_orchestrator') {
       shared.push('', buildMmoSpecialistList(), '', 'Use this roster as a coverage checklist for focused MMO review; work directly with the tools available in this session.');

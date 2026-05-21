@@ -25,6 +25,9 @@ const DEFAULT_LIVE_TEXT_FLUSH_MS = 1000;
 const DEFAULT_LIVE_TEXT_MAX_CHARS = 1200;
 const TEXT_ENTRY_MAX_CHARS = 4000;
 const FIELD_MAX_CHARS = 2000;
+const TOOL_DETAIL_MAX_CHARS = 3000;
+const TOOL_DETAIL_PREVIEW_CHARS = 1600;
+const TOOL_DETAIL_PREVIEW_LINES = 80;
 
 interface TaskLogWriterOptions {
   liveTextFlushMs?: number;
@@ -50,18 +53,71 @@ function toLogPhase(phase: Phase | undefined): TaskLogPhase {
   }
 }
 
-function sanitizeLogText(value: unknown, maxLength = FIELD_MAX_CHARS): string {
+function normalizeLogText(value: unknown): string {
   const text = typeof value === 'string'
     ? value
     : value === undefined || value === null
       ? ''
       : String(value);
 
-  const normalized = text
+  return text
     .replace(/\r\n/g, '\n')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
+}
 
+function sanitizeLogText(value: unknown, maxLength = FIELD_MAX_CHARS): string {
+  const normalized = normalizeLogText(value);
   return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+}
+
+function stringifyToolResult(result: unknown): string {
+  if (typeof result === 'string') {
+    return result;
+  }
+  try {
+    return JSON.stringify(result, null, 2);
+  } catch {
+    return String(result);
+  }
+}
+
+function takeToolPreview(text: string): string {
+  const lines = text.split('\n');
+  const byLines = lines.slice(0, TOOL_DETAIL_PREVIEW_LINES).join('\n');
+  return byLines.length > TOOL_DETAIL_PREVIEW_CHARS
+    ? `${byLines.slice(0, TOOL_DETAIL_PREVIEW_CHARS)}\n... [preview truncated]`
+    : byLines;
+}
+
+function summarizeToolResult(toolName: string, isError: boolean, result: unknown): string | undefined {
+  if (result === null || result === undefined) {
+    return undefined;
+  }
+
+  const raw = normalizeLogText(stringifyToolResult(result));
+  if (!raw.trim()) {
+    return undefined;
+  }
+
+  const lines = raw.split('\n');
+  const shouldCompact = raw.length > TOOL_DETAIL_PREVIEW_CHARS || lines.length > TOOL_DETAIL_PREVIEW_LINES;
+  if (!shouldCompact) {
+    return raw;
+  }
+
+  const status = isError ? 'error' : 'success';
+  const preview = takeToolPreview(raw);
+  return sanitizeLogText([
+    '[Tool result summary]',
+    `Tool: ${toolName}`,
+    `Status: ${status}`,
+    `Size: ${lines.length} lines / ${raw.length} chars / ${Buffer.byteLength(raw, 'utf-8')} bytes`,
+    '',
+    'Preview:',
+    preview,
+    '',
+    'Output compacted in task_logs.json. Re-run the tool with a narrower range or pattern when exact output is needed.',
+  ].join('\n'), TOOL_DETAIL_MAX_CHARS);
 }
 
 function sanitizeEntry(entry: Partial<TaskLogEntry>, fallbackPhase: TaskLogPhase): TaskLogEntry {
@@ -75,7 +131,7 @@ function sanitizeEntry(entry: Partial<TaskLogEntry>, fallbackPhase: TaskLogPhase
     ...(entry.tool_name ? { tool_name: sanitizeLogText(entry.tool_name, 200) } : {}),
     ...(entry.tool_input ? { tool_input: sanitizeLogText(entry.tool_input) } : {}),
     ...(entry.tool_call_id ? { tool_call_id: sanitizeLogText(entry.tool_call_id, 200) } : {}),
-    ...(entry.detail ? { detail: sanitizeLogText(entry.detail, 10240) } : {}),
+    ...(entry.detail ? { detail: sanitizeLogText(entry.detail, TOOL_DETAIL_MAX_CHARS) } : {}),
     ...(entry.collapsed !== undefined ? { collapsed: Boolean(entry.collapsed) } : {}),
   };
 }
@@ -321,13 +377,7 @@ export class TaskLogWriter {
     const status = isError ? 'Error' : 'Done';
     const content = `[${toolName}] ${status}`;
 
-    // Serialize result as detail (expandable in UI)
-    let detail: string | undefined;
-    if (result !== null && result !== undefined) {
-      const raw = typeof result === 'string' ? result : JSON.stringify(result, null, 2);
-      // Cap at 10KB to match Python behavior
-      detail = raw.length > 10240 ? `${raw.slice(0, 10240)}\n\n... [truncated]` : raw;
-    }
+    const detail = summarizeToolResult(toolName, isError, result);
 
     this.addEntry(phase, 'tool_end', content, {
       tool_name: toolName,

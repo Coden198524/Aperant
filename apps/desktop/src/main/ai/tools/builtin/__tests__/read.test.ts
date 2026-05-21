@@ -52,6 +52,17 @@ function setupTextFile(content: string, isDir = false) {
   vi.mocked(fs.closeSync).mockImplementation(() => undefined);
 }
 
+function setupTextFileBuffer(content: Buffer, isDir = false) {
+  const fakeFd = 42;
+  vi.mocked(fs.openSync).mockReturnValue(fakeFd as unknown as number);
+  vi.mocked(fs.fstatSync).mockReturnValue({
+    isDirectory: () => isDir,
+    size: content.length,
+  } as unknown as fs.Stats);
+  vi.mocked(fs.readFileSync).mockImplementation(() => content as unknown as string);
+  vi.mocked(fs.closeSync).mockImplementation(() => undefined);
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -174,8 +185,8 @@ describe('Read Tool', () => {
     ) as string;
 
     expect(result).toContain('[Large file:');
-    expect(result).toContain('line300');
-    expect(result).not.toContain('line301');
+    expect(result).toContain('line200');
+    expect(result).not.toContain('line201');
     expect(fs.openSync).not.toHaveBeenCalled();
   });
 
@@ -206,9 +217,37 @@ describe('Read Tool', () => {
     ) as string;
 
     expect(result).toContain('[Large file: 600KB');
-    expect(result).toContain('line300');
-    expect(result).not.toContain('line301');
-    expect(result).toContain('Showing lines 1-300 of 500 total lines');
+    expect(result).toContain('line200');
+    expect(result).not.toContain('line201');
+    expect(result).toContain('Showing lines 1-200 of 500 total lines');
+  });
+
+  it('should cap default reads in normal mode', async () => {
+    const content = Array.from({ length: 550 }, (_, i) => `line${i + 1}`).join('\n');
+    setupTextFile(content);
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/project/file.ts' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('line500');
+    expect(result).not.toContain('line501');
+    expect(result).toContain('Showing lines 1-500 of 550 total lines');
+  });
+
+  it('should decode legacy Chinese text files when UTF-8 is invalid', async () => {
+    setupTextFileBuffer(Buffer.from([0xc4, 0xe3, 0xba, 0xc3, 0x0a, 0xca, 0xc0, 0xbd, 0xe7]));
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/project/legacy.lua' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('[Decoded as gb18030');
+    expect(result).toContain('你好');
+    expect(result).toContain('世界');
+    expect(result).not.toContain('\uFFFD');
   });
 
   it('should summarize the active task log instead of returning full large content', async () => {

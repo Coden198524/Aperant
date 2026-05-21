@@ -181,6 +181,33 @@ describe('TaskLogWriter', () => {
     expect(raw).not.toContain('\u0000');
   });
 
+  it('stores compact summaries for large tool results', () => {
+    const { specDir, writer } = createWriterFixture();
+    const longResult = Array.from({ length: 200 }, (_, index) => `line-${index + 1} ${'x'.repeat(80)}`).join('\n');
+
+    writer.startPhase('coding', 'Starting implementation');
+    writer.processEvent(
+      {
+        type: 'tool-result',
+        toolCallId: 'tool-large',
+        toolName: 'Read',
+        result: longResult,
+        isError: false,
+        durationMs: 1,
+      },
+      'coding',
+    );
+
+    const logs = readTaskLogs(specDir);
+    const toolEnd = logs.phases.coding.entries.find((entry) => entry.tool_call_id === 'tool-large');
+
+    expect(toolEnd?.detail).toContain('[Tool result summary]');
+    expect(toolEnd?.detail).toContain('Tool: Read');
+    expect(toolEnd?.detail).toContain('Size: 200 lines');
+    expect(toolEnd?.detail?.length).toBeLessThan(3000);
+    expect(toolEnd?.detail).not.toContain('line-200');
+  });
+
   it('flushes pending text for the active subtask when a phase ends', () => {
     const writer = createWriter();
     writer.startPhase('coding', 'Starting implementation');

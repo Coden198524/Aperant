@@ -14,6 +14,7 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import { TextDecoder } from 'node:util';
 import { z } from 'zod/v3';
 
 import { assertPathContained } from '../../security/path-containment';
@@ -25,13 +26,14 @@ import type { FileContentCache } from '../cache/file-cache';
 // Constants
 // ---------------------------------------------------------------------------
 
-const DEFAULT_LINE_LIMIT = 2000;
+const DEFAULT_LINE_LIMIT = 500;
 const BALANCED_DEFAULT_LINE_LIMIT = 400;
 const AGGRESSIVE_DEFAULT_LINE_LIMIT = 120;
 const LARGE_TEXT_FILE_BYTES = 512 * 1024;
-const LARGE_TEXT_DEFAULT_LINE_LIMIT = 300;
+const LARGE_TEXT_DEFAULT_LINE_LIMIT = 200;
 const TASK_LOG_SUMMARY_BYTES = 256 * 1024;
 const MAX_LINE_LENGTH = 2000;
+const LEGACY_TEXT_ENCODINGS = ['gb18030', 'big5', 'shift_jis', 'windows-1252'] as const;
 
 const IMAGE_EXTENSIONS = new Set([
   '.png',
@@ -118,6 +120,61 @@ function getDefaultLineLimit(workflowMode: string | undefined): number {
     return BALANCED_DEFAULT_LINE_LIMIT;
   }
   return DEFAULT_LINE_LIMIT;
+}
+
+function countMatches(text: string, pattern: RegExp): number {
+  return text.match(pattern)?.length ?? 0;
+}
+
+function scoreDecodedText(text: string): number {
+  const replacementCount = countMatches(text, /\uFFFD/g);
+  const controlCount = countMatches(text, /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g);
+  const extendedLatinCount = countMatches(text, /[\u00A0-\u00FF]/g);
+  const cjkCount = countMatches(text, /[\u3040-\u30FF\u3400-\u9FFF\uF900-\uFAFF]/g);
+  const singleCjkPenalty = cjkCount > 0 && cjkCount < 2 ? 10 : 0;
+  const cjkBonus = cjkCount >= 2 ? Math.min(cjkCount, 100) * 2 : 0;
+  return (replacementCount * 1000) + (controlCount * 100) + (extendedLatinCount * 3) + singleCjkPenalty - cjkBonus;
+}
+
+function decodeTextBuffer(input: Buffer | string): { content: string; note?: string } {
+  if (typeof input === 'string') {
+    return { content: input };
+  }
+
+  const utf8 = input.toString('utf8');
+  const utf8ReplacementCount = countMatches(utf8, /\uFFFD/g);
+  if (utf8ReplacementCount === 0) {
+    return { content: utf8 };
+  }
+
+  const candidates: Array<{ encoding: string; content: string; score: number }> = [
+    { encoding: 'utf-8', content: utf8, score: scoreDecodedText(utf8) },
+  ];
+
+  for (const encoding of LEGACY_TEXT_ENCODINGS) {
+    try {
+      const content = new TextDecoder(encoding).decode(input);
+      candidates.push({ encoding, content, score: scoreDecodedText(content) });
+    } catch {
+      // Ignore encodings not supported by the current Node/ICU build.
+    }
+  }
+
+  candidates.sort((a, b) => a.score - b.score);
+  const best = candidates[0];
+  if (!best || best.encoding === 'utf-8') {
+    return { content: utf8 };
+  }
+
+  return {
+    content: best.content,
+    note: `[Decoded as ${best.encoding}; file was not valid UTF-8.]`,
+  };
+}
+
+function joinReadNotes(...notes: Array<string | undefined>): string | undefined {
+  const filtered = notes.filter((note): note is string => Boolean(note));
+  return filtered.length > 0 ? filtered.join('\n') : undefined;
 }
 
 function formatReadContent(
@@ -253,7 +310,8 @@ export const readTool = Tool.define({
       }
 
       // Text files — read from same fd
-      const content = fs.readFileSync(fd, 'utf-8');
+      const decoded = decodeTextBuffer(fs.readFileSync(fd));
+      const content = decoded.content;
 
       if (
         isTaskLogFile(resolvedPath) &&
@@ -281,15 +339,18 @@ export const readTool = Tool.define({
         ? LARGE_TEXT_DEFAULT_LINE_LIMIT
         : getDefaultLineLimit(context.workflowMode));
 
+      const note = joinReadNotes(
+        decoded.note,
+        largeFileDefault
+          ? `[Large file: ${Math.round(stat.size / 1024)}KB. Showing the first ${lineLimit} lines by default; use offset/limit for a specific range.]`
+          : undefined,
+      );
+
       return formatReadContent(
         content,
         startLine,
         lineLimit,
-        largeFileDefault
-          ? {
-              note: `[Large file: ${Math.round(stat.size / 1024)}KB. Showing the first ${lineLimit} lines by default; use offset/limit for a specific range.]`,
-            }
-          : undefined,
+        note ? { note } : undefined,
       );
     } finally {
       fs.closeSync(fd);
