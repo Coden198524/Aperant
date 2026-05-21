@@ -295,6 +295,15 @@
     "description": "Description",
     "descriptionPlaceholder": "Describe the feature, bug fix, or improvement you want to implement. Be as specific as possible about requirements, constraints, and expected behavior.",
     "imageAddedSuccess": "Image added successfully!",
+    "improveDescription": {
+      "button": "Improve with AI",
+      "improving": "Improving...",
+      "tooltip": "Rewrite this description more precisely so coding agents can understand it with less ambiguity.",
+      "tooShort": "Enter a description first",
+      "error": "Failed to improve description: {{error}}",
+      "rateLimit": "Rate limit reached. Try again in a moment.",
+      "authError": "Authentication required. Check your provider settings."
+    },
     "taskTitle": "Task Title",
     "titlePlaceholder": "Leave empty to auto-generate from description",
     "titleHelpText": "A short, descriptive title will be generated automatically if left empty.",

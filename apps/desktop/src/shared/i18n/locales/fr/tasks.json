@@ -286,6 +286,15 @@
     "description": "Description",
     "descriptionPlaceholder": "Décrivez la fonctionnalité, la correction de bug ou l'amélioration que vous souhaitez implémenter. Soyez aussi précis que possible sur les exigences, les contraintes et le comportement attendu.",
     "imageAddedSuccess": "Image ajoutée avec succès !",
+    "improveDescription": {
+      "button": "Améliorer avec l'IA",
+      "improving": "Amélioration...",
+      "tooltip": "Réécrit cette description plus précisément pour que les agents de codage la comprennent avec moins d'ambiguïté.",
+      "tooShort": "Saisissez d'abord une description",
+      "error": "Échec de l'amélioration : {{error}}",
+      "rateLimit": "Limite de débit atteinte. Réessayez dans un instant.",
+      "authError": "Authentification requise. Vérifiez les paramètres du fournisseur."
+    },
     "taskTitle": "Titre de la tâche",
     "titlePlaceholder": "Laissez vide pour générer automatiquement à partir de la description",
     "titleHelpText": "Un titre court et descriptif sera généré automatiquement s'il est laissé vide.",

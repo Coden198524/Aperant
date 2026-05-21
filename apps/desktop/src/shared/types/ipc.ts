@@ -245,6 +245,11 @@ export interface ElectronAPI {
   checkTaskRunning: (taskId: string, projectId?: string) => Promise<IPCResult<boolean>>;
   resumePausedTask: (taskId: string, projectId?: string) => Promise<IPCResult>;
 
+  // AI-assisted description rewrite (used by the create-task wizard)
+  improveDescription: (
+    payload: { description: string; title?: string }
+  ) => Promise<IPCResult<{ improved: string; original: string }>>;
+
   // Image operations
   loadImageThumbnail: (projectPath: string, specId: string, imagePath: string) => Promise<IPCResult<string>>;
 

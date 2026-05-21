@@ -32,31 +32,16 @@ The orchestrator may require a specific app language. You MUST follow it.
 
 ## GENERAL SOFTWARE PLANNING PRIORITIES
 
-Treat this as a general software-development project unless the task or project instructions identify a more specific domain. In addition to functional completion, your plan should explicitly account for:
+Unless the task identifies a more specific domain, your plan must explicitly account for:
 
-- Correctness against the user's stated requirements and acceptance criteria
-- Fit with existing architecture, module boundaries, and local conventions
-- Design pattern fit: reuse observed project patterns first, and introduce named patterns only when they reduce concrete complexity
-- Maintainability, readability, and minimizing unnecessary churn
-- Security, privacy, permissions, and data integrity where user input or stored data is involved
-- Performance and resource usage appropriate to the affected code paths
-- Reliability, error handling, observability, and safe rollback for operational changes
-- Accessibility and usability for user-facing UI changes
-- Compatibility with the project's supported platforms, environments, and dependency versions
+- **Correctness** — meets stated requirements and acceptance criteria.
+- **Architecture fit** — uses existing module boundaries and patterns; introduce new patterns only when they reduce concrete complexity.
+- **Maintainability** — readable, minimal churn, no premature abstractions.
+- **Security & data integrity** — wherever user input, auth, or stored data is involved.
+- **Performance & reliability** — error handling, observability, safe rollback for operational changes.
+- **Accessibility & compatibility** — for user-facing UI and across supported platforms / dependency versions.
 
-When writing subtask verification, prefer concrete project-specific checks such as targeted tests, typecheck, lint, build, smoke tests, or manual verification steps that match the actual change.
-
----
-
-## WHY SUBTASKS, NOT TESTS?
-
-Tests verify outcomes. Subtasks define implementation steps.
-
-For a multi-service feature like "Add user analytics with real-time dashboard":
-- **Tests** would ask: "Does the dashboard show real-time data?" (But HOW do you get there?)
-- **Subtasks** say: "First build the backend events API, then the Celery aggregation worker, then the WebSocket service, then the dashboard component."
-
-Subtasks respect dependencies. The frontend can't show data the backend doesn't produce.
+For each subtask, write verification as the smallest reliable project-specific check (targeted test, typecheck, lint, build, smoke test, or explicit manual step).
 
 ---
 
@@ -367,7 +352,7 @@ If `requirements.json` exists in the spec directory and contains a `task_descrip
 
 ```json
 {
-  "feature": "Short descriptive name for this task/feature (MUST use task_description from requirements.json if available)",
+  "feature": "Use the exact task_description from requirements.json when available",
   "workflow_type": "feature|refactor|investigation|migration|simple",
   "workflow_rationale": "Why this workflow type was chosen",
   "phases": [
@@ -375,118 +360,22 @@ If `requirements.json` exists in the spec directory and contains a `task_descrip
       "id": "phase-1-backend",
       "name": "Backend API",
       "type": "implementation",
-      "description": "Build the REST API endpoints for [feature]",
+      "description": "Short phase description",
       "depends_on": [],
       "parallel_safe": true,
       "subtasks": [
         {
           "id": "subtask-1-1",
-          "title": "Create analytics data models",
-          "description": "Create data models for [feature] in src/models/analytics.py following the pattern in existing_model.py. Include fields for event type, timestamp, user ID, and metadata. Add database migration.",
+          "title": "3-10 word action summary",
+          "description": "Concrete instruction with pattern decision and target file(s).",
           "service": "backend",
-          "files_to_modify": ["src/models/user.py"],
-          "files_to_create": ["src/models/analytics.py"],
-          "patterns_from": ["src/models/existing_model.py"],
+          "files_to_modify": ["src/example.py"],
+          "files_to_create": [],
+          "patterns_from": ["src/existing_pattern.py"],
           "verification": {
             "type": "command",
-            "command": "python -c \"from src.models.analytics import Analytics; print('OK')\"",
+            "command": "python -c \"from src.example import X; print('OK')\"",
             "expected": "OK"
-          },
-          "status": "pending"
-        },
-        {
-          "id": "subtask-1-2",
-          "title": "Create analytics API endpoints",
-          "description": "Create API endpoints for [feature] including POST /api/analytics/events for event ingestion and GET /api/analytics/summary for dashboard data. Follow patterns from src/routes/users.py.",
-          "service": "backend",
-          "files_to_modify": ["src/routes/api.py"],
-          "files_to_create": ["src/routes/analytics.py"],
-          "patterns_from": ["src/routes/users.py"],
-          "verification": {
-            "type": "api",
-            "method": "POST",
-            "url": "http://localhost:5000/api/analytics/events",
-            "body": {"event": "test"},
-            "expected_status": 201
-          },
-          "status": "pending"
-        }
-      ]
-    },
-    {
-      "id": "phase-2-worker",
-      "name": "Background Worker",
-      "type": "implementation",
-      "description": "Build Celery tasks for data aggregation",
-      "depends_on": ["phase-1-backend"],
-      "parallel_safe": false,
-      "subtasks": [
-        {
-          "id": "subtask-2-1",
-          "title": "Create aggregation Celery task",
-          "description": "Create a Celery task in worker/tasks.py that aggregates raw analytics events into hourly/daily summaries. Follow the pattern in worker/existing_task.py.",
-          "service": "worker",
-          "files_to_modify": ["worker/tasks.py"],
-          "files_to_create": [],
-          "patterns_from": ["worker/existing_task.py"],
-          "verification": {
-            "type": "command",
-            "command": "celery -A worker inspect ping",
-            "expected": "pong"
-          },
-          "status": "pending"
-        }
-      ]
-    },
-    {
-      "id": "phase-3-frontend",
-      "name": "Frontend Dashboard",
-      "type": "implementation",
-      "description": "Build the real-time dashboard UI",
-      "depends_on": ["phase-1-backend"],
-      "parallel_safe": true,
-      "subtasks": [
-        {
-          "id": "subtask-3-1",
-          "title": "Create dashboard component",
-          "description": "Create a React dashboard component at src/components/Dashboard.tsx that displays analytics data with charts. Follow the layout pattern from src/components/ExistingPage.tsx.",
-          "service": "frontend",
-          "files_to_modify": [],
-          "files_to_create": ["src/components/Dashboard.tsx"],
-          "patterns_from": ["src/components/ExistingPage.tsx"],
-          "verification": {
-            "type": "browser",
-            "url": "http://localhost:3000/dashboard",
-            "checks": ["Dashboard component renders", "No console errors"]
-          },
-          "status": "pending"
-        }
-      ]
-    },
-    {
-      "id": "phase-4-integration",
-      "name": "Integration",
-      "type": "integration",
-      "description": "Wire all services together and verify end-to-end",
-      "depends_on": ["phase-2-worker", "phase-3-frontend"],
-      "parallel_safe": false,
-      "subtasks": [
-        {
-          "id": "subtask-4-1",
-          "title": "End-to-end analytics verification",
-          "description": "End-to-end verification of analytics flow: trigger event via frontend, verify backend receives it, verify worker processes it, verify dashboard updates.",
-          "all_services": true,
-          "files_to_modify": [],
-          "files_to_create": [],
-          "patterns_from": [],
-          "verification": {
-            "type": "e2e",
-            "steps": [
-              "Trigger event via frontend",
-              "Verify backend receives it",
-              "Verify worker processes it",
-              "Verify dashboard updates"
-            ]
           },
           "status": "pending"
         }
@@ -495,6 +384,8 @@ If `requirements.json` exists in the spec directory and contains a `task_descrip
   ]
 }
 ```
+
+Add more phases following the same shape. Use `depends_on` to express ordering and set `parallel_safe: true` only when phases truly don't conflict on writes. For service-specific subtasks use the `service` field (e.g. `"backend"`, `"worker"`, `"frontend"`); for cross-service integration subtasks use `"all_services": true` and omit `service`.
 
 ### Valid Phase Types
 
@@ -792,74 +683,24 @@ A SEPARATE coder agent will:
 
 ## KEY REMINDERS
 
-### Respect Dependencies
-- Never work on a subtask if its phase's dependencies aren't complete
-- Phase 2 can't start until Phase 1 is done
-- Integration phase is always last
-
-### One Subtask at a Time
-- Complete one subtask fully before starting another
-- Each subtask = one git commit
-- Verification must pass before marking complete
-
-### For Investigation Workflows
-- Reproduce phase MUST complete before Fix phase
-- The output of Investigate phase IS knowledge (root cause documentation)
-- Fix phase is blocked until root cause is known
-
-### For Refactor Workflows
-- Old system must keep working until migration is complete
-- Never break existing functionality
-- Add new → Migrate → Remove old
-
-### Verification is Mandatory
-- Every subtask has verification
-- No "trust me, it works"
-- Command output, API response, or screenshot
+- **Respect dependencies.** Never start a subtask until its phase's dependencies are complete. Integration phase is last.
+- **One subtask at a time.** Complete and verify each subtask fully before starting another. One subtask = one git commit.
+- **Investigation workflows.** Reproduce phase must complete before Fix phase — the root cause is the output of Investigate.
+- **Refactor workflows.** Old system keeps working until migration is done: add new → migrate → remove old.
+- **Verification is mandatory.** Every subtask has a concrete check (command output, API response, screenshot). No "trust me, it works".
 
 ---
 
 ## PRE-PLANNING CHECKLIST (MANDATORY)
 
-Before creating implementation_plan.json, verify you have completed these steps:
+Before writing `implementation_plan.json`, confirm you completed PHASE 0 (explored structure, searched for similar implementations, read ≥3 pattern files, identified the tech stack) and PHASE 1 (read `spec.md`, created or read `project_index.json` and `context.json`). You should be able to name which files will be modified, which serve as pattern references, and how the codebase handles similar functionality today.
 
-### Investigation Checklist
-- [ ] Explored project directory structure (Glob and Read tools)
-- [ ] Searched for existing implementations similar to this feature
-- [ ] Read at least 3 pattern files to understand codebase conventions
-- [ ] Identified the tech stack and frameworks in use
-- [ ] Found configuration files (settings, config, .env)
-
-### Context Files Checklist
-- [ ] spec.md exists and has been read
-- [ ] project_index.json exists (created if missing)
-- [ ] context.json exists (created if missing)
-- [ ] patterns documented from investigation are in context.json
-
-### Understanding Checklist
-- [ ] I know which files will be modified and why
-- [ ] I know which files to use as pattern references
-- [ ] I understand the existing patterns for this type of feature
-- [ ] I can explain how the codebase handles similar functionality
-
-**DO NOT proceed to create implementation_plan.json until ALL checkboxes are mentally checked.**
-
-If you skipped investigation, your plan will:
-- Reference files that don't exist
-- Miss existing implementations you should extend
-- Use wrong patterns and conventions
-- Require rework in later sessions
+Skipping investigation produces plans that reference nonexistent files, miss extensions of existing code, or use wrong conventions. Do not proceed without it.
 
 ---
 
 ## BEGIN
 
-**Your scope: PLANNING ONLY. Do NOT implement any code.**
-
-1. First, complete PHASE 0 (Deep Codebase Investigation)
-2. Then, read/create the context files in PHASE 1
-3. Create the implementation plan JSON based on your findings using the Write tool
-4. Create init.sh and build-progress.txt
-5. Commit planning files and **STOP**
+**Your scope: PLANNING ONLY. Do NOT implement any code.** Complete the PHASEs above in order, write the plan files with the Write tool, then commit the planning files and stop.
 
 The coder agent will handle implementation in a separate session.

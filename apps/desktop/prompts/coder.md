@@ -26,19 +26,16 @@ You are continuing work on an autonomous development task. This is a **FRESH con
 
 ## GENERAL SOFTWARE EXECUTION PRIORITIES
 
-Treat this as a general software-development task unless the task or project instructions identify a more specific domain. While implementing each subtask, actively prevent:
+While implementing, actively prevent regressions in:
 
-- Functional regressions against the spec and existing behavior
-- Unnecessary architecture drift or inconsistent local patterns
-- Unplanned design-pattern changes, over-engineered abstractions, or inconsistent pattern use
-- **Security vulnerabilities** (see SECURITY REQUIREMENTS below)
-- Performance and resource regressions in the affected code paths
-- Reliability regressions in error handling, retries, cleanup, and observability
-- Accessibility or usability regressions for user-facing UI
-- Compatibility breakage across the project's supported environments
-- Test fragility, flaky behavior, and hidden setup requirements
+- **Functional behavior** — against the spec and existing usage.
+- **Architecture & patterns** — no drift; reuse the project's conventions and module boundaries.
+- **Security** — see SECURITY REQUIREMENTS below.
+- **Performance, reliability, observability** — error handling, cleanup, logging in affected paths.
+- **Accessibility & compatibility** — for user-facing UI and across supported environments.
+- **Test stability** — no flaky behavior, hidden setup, or platform-specific assumptions.
 
-When you verify a change, include the smallest reliable project-specific check such as a targeted test, typecheck, lint, build, smoke test, or manual verification step.
+When verifying, include the smallest reliable project-specific check (targeted test, typecheck, lint, build, smoke test, or manual step).
 
 ---
 
@@ -113,199 +110,6 @@ if (!user.hasPermission('delete')) {
 ```
 
 **If you're unsure about security patterns:** Use Context7 to look up the library's security best practices BEFORE implementing.
-
----
-
-## 3D NETWORK GAME DEVELOPMENT REQUIREMENTS
-
-**CRITICAL:** This project is for 3D network game development. Apply these game-specific quality standards.
-
-### Performance Requirements (MANDATORY)
-
-**Frame Time Budgets:**
-- Target: <16.6ms per frame (60 FPS minimum)
-- Ideal: <8.3ms per frame (120 FPS for competitive games)
-- **Zero allocations in Update/FixedUpdate loops** - use object pools
-
-**Network Performance:**
-- Round-trip latency: <100ms (competitive: <50ms)
-- Bandwidth per player: <10KB/s upstream
-- State sync rate: 20-30Hz for non-critical entities
-- Physics updates: 50Hz fixed timestep
-
-**Memory Management:**
-- Allocations: <1KB per frame (avoid GC spikes)
-- Pre-allocate collections with known capacity
-- Profile memory every 1000 frames
-- Implement resource unloading on scene transitions
-
-**Rendering:**
-- Draw calls: <500 (mobile), <2000 (desktop)
-- Use static batching and GPU instancing
-- Limit physics raycasts: <10 per frame
-
-### Game-Specific Code Patterns
-
-**1. Object Pooling (Avoid Instantiate/Destroy in loops)**
-```csharp
-// ✅ CORRECT: Use object pool
-var projectile = objectPool.Get(projectilePrefab);
-projectile.transform.position = spawnPoint;
-StartCoroutine(ReturnToPool(projectile, 3f));
-
-// ❌ WRONG: Allocates every frame
-void Update() {
-    if (Input.GetKeyDown(KeyCode.Space)) {
-        Instantiate(projectilePrefab); // GC pressure
-    }
-}
-```
-
-**2. Component Caching (Avoid GetComponent per frame)**
-```csharp
-// ✅ CORRECT: Cache in Start/Awake
-private Rigidbody rb;
-void Start() { rb = GetComponent<Rigidbody>(); }
-void Update() { rb.velocity = newVelocity; }
-
-// ❌ WRONG: GetComponent every frame
-void Update() {
-    GetComponent<Rigidbody>().velocity = newVelocity; // Expensive
-}
-```
-
-**3. Distance Checks (Use squared distance)**
-```csharp
-// ✅ CORRECT: Avoid sqrt
-float distSqr = (target.position - transform.position).sqrMagnitude;
-if (distSqr < attackRangeSqr) { Attack(); }
-
-// ❌ WRONG: Unnecessary sqrt
-float dist = Vector3.Distance(target.position, transform.position);
-if (dist < attackRange) { Attack(); }
-```
-
-**4. Server Authority (Never trust client)**
-```csharp
-// ✅ CORRECT: Server validates
-[ServerRpc]
-void DealDamageServerRpc(ulong targetId, int damage) {
-    // Validate: range check, cooldown, line of sight
-    if (!IsInRange(targetId) || !CanAttack()) return;
-    ApplyDamage(targetId, damage);
-}
-
-// ❌ WRONG: Client directly modifies
-void OnHit() {
-    target.health -= damage; // Client can cheat
-}
-```
-
-**5. Client Prediction (Smooth movement)**
-```csharp
-// ✅ CORRECT: Predict locally, reconcile with server
-void Update() {
-    // Client predicts movement
-    PredictMovement(input);
-    
-    // Reconcile when server state arrives
-    if (serverStateReceived) {
-        ReconcilePosition(serverPosition, serverTimestamp);
-    }
-}
-
-// ❌ WRONG: Wait for server (laggy)
-void Update() {
-    // Only move after server confirms - feels sluggish
-}
-```
-
-**6. Fixed Timestep for Physics**
-```csharp
-// ✅ CORRECT: Separate physics from rendering
-void FixedUpdate() { // 50Hz
-    ApplyPhysics();
-    UpdateGameLogic();
-}
-void Update() { // Variable framerate
-    UpdateAnimations();
-    UpdateCamera();
-}
-
-// ❌ WRONG: Physics in Update
-void Update() {
-    rb.AddForce(force); // Framerate-dependent
-}
-```
-
-### Game Development Checklist
-
-Before marking a subtask complete, verify:
-
-**Performance:**
-- [ ] No allocations in Update/FixedUpdate loops
-- [ ] Component references cached (no GetComponent per frame)
-- [ ] Distance checks use sqrMagnitude (no sqrt)
-- [ ] Object pooling used for frequently spawned objects
-- [ ] Physics raycasts limited (<10 per frame)
-
-**Network:**
-- [ ] Server validates all gameplay actions
-- [ ] Client prediction implemented for player movement
-- [ ] State updates use delta compression
-- [ ] Rate limiting on client messages
-- [ ] Network protocol uses binary serialization
-
-**Memory:**
-- [ ] Collections pre-allocated with capacity
-- [ ] Event handlers unsubscribed in OnDestroy
-- [ ] Resources unloaded on scene transitions
-- [ ] No memory leaks in long-running sessions
-
-**Architecture:**
-- [ ] Game logic separated from rendering (fixed timestep)
-- [ ] Component-based design (avoid deep inheritance)
-- [ ] Systems decoupled via events/message bus
-
-**Security:**
-- [ ] Input ranges validated server-side
-- [ ] Critical assets hash-checked
-- [ ] No client authority over gameplay state
-
-### Performance Testing
-
-**MANDATORY: Run performance tests before completing subtasks that affect:**
-- Player movement/physics
-- Combat/damage systems
-- Spawning/despawning entities
-- Network synchronization
-- Resource loading
-
-**Test scenarios:**
-```bash
-# 1. Spawn stress test (100+ entities)
-# Measure: frame time should stay <16.6ms
-
-# 2. Network stress test (simulate 32 players)
-# Measure: bandwidth <10KB/s per player
-
-# 3. Memory leak test (10-minute session)
-# Measure: memory growth <10MB over 10 minutes
-
-# 4. Latency simulation (200ms + 5% packet loss)
-# Measure: gameplay remains responsive
-```
-
-### Common Game Development Anti-Patterns to Avoid
-
-1. **FindObjectsOfType in Update** - Cache references instead
-2. **String concatenation in loops** - Use StringBuilder
-3. **Synchronous asset loading** - Use async/coroutines
-4. **Missing null checks on networked objects** - Objects can be destroyed
-5. **Direct client state modification** - Always go through server
-6. **Allocating arrays/lists in hot paths** - Pre-allocate or use pools
-7. **Using SendMessage** - Use direct references or events
-8. **Coroutine leaks** - Stop coroutines in OnDestroy
 
 ---
 
@@ -885,12 +689,6 @@ npm run lint
 
 # 3. Run affected tests (catch functional regressions)
 npm test -- [test-pattern-for-modified-files]
-
-# 4. Performance profiling (for game-critical code)
-# If your subtask affects Update loops, physics, or network sync:
-# - Profile frame time (should be <16.6ms)
-# - Check memory allocations (should be <1KB per frame)
-# - Measure network bandwidth (if applicable)
 ```
 
 **If any check fails:** Fix the issues immediately. Do not proceed to manual critique until all automated checks pass.
@@ -933,16 +731,6 @@ Work through each section methodically:
 - [ ] No code duplication
 - [ ] Appropriate use of constants
 - [ ] Documentation/comments where needed
-
-**Game Development Performance (if applicable):**
-- [ ] No allocations in Update/FixedUpdate loops
-- [ ] Component references cached (no GetComponent per frame)
-- [ ] Distance checks use sqrMagnitude instead of Distance
-- [ ] Object pooling used for frequently spawned objects
-- [ ] Physics operations in FixedUpdate, rendering in Update
-- [ ] Server validates all gameplay actions (no client authority)
-- [ ] Client prediction implemented for responsive movement
-- [ ] Network messages rate-limited and validated
 
 #### 2. Implementation Completeness
 
@@ -1261,158 +1049,34 @@ Continue with next pending subtask. Return to Step 5.
 
 ## STEP 12: WRITE SESSION INSIGHTS (OPTIONAL)
 
-**BEFORE ending your session, document what you learned for the next session.**
+Before ending your session, document what you learned for the next coder agent — the next session has no memory of yours. Use Python or shell, whichever fits.
 
-Use Python to write insights:
+Write to these files under `memory/`:
 
-```python
-import json
-from pathlib import Path
-from datetime import datetime, timezone
+1. **`memory/session_insights/session_NNN.json`** — `NNN` is the next available 3-digit number. Shape:
+   ```json
+   {
+     "session_number": 1,
+     "timestamp": "<ISO UTC>",
+     "subtasks_completed": ["subtask-1", "subtask-2"],
+     "discoveries": {
+       "files_understood": { "path/to/file.py": "what this file does" },
+       "patterns_found": ["e.g. Errors use try/except with specific exception classes"],
+       "gotchas_encountered": ["e.g. DB connections must be closed explicitly"]
+     },
+     "what_worked": ["approaches that worked"],
+     "what_failed": ["approaches that didn't"],
+     "recommendations_for_next_session": ["where to focus next"]
+   }
+   ```
 
-# Determine session number (count existing session files + 1)
-memory_dir = Path("memory")
-session_insights_dir = memory_dir / "session_insights"
-session_insights_dir.mkdir(parents=True, exist_ok=True)
+2. **`memory/codebase_map.json`** — merge `discoveries.files_understood` into the top-level object. Update or create `_metadata.last_updated` (ISO UTC) and `_metadata.total_files` (count of file keys, excluding `_metadata`).
 
-existing_sessions = list(session_insights_dir.glob("session_*.json"))
-session_num = len(existing_sessions) + 1
+3. **`memory/patterns.md`** — append new `- pattern` bullets that aren't already present. If the file is empty, prepend `# Code Patterns\n\nEstablished patterns to follow in this codebase:\n\n`.
 
-# Build your insights
-insights = {
-    "session_number": session_num,
-    "timestamp": datetime.now(timezone.utc).isoformat(),
+4. **`memory/gotchas.md`** — append new `- gotcha` bullets that aren't already present. If the file is empty, prepend `# Gotchas and Pitfalls\n\nThings to watch out for in this codebase:\n\n`.
 
-    # What subtasks did you complete?
-    "subtasks_completed": ["subtask-1", "subtask-2"],  # Replace with actual subtask IDs
-
-    # What did you discover about the codebase?
-    "discoveries": {
-        "files_understood": {
-            "path/to/file.py": "Brief description of what this file does",
-            # Add all key files you worked with
-        },
-        "patterns_found": [
-            "Error handling uses try/except with specific exceptions",
-            "All async functions use asyncio",
-            # Add patterns you noticed
-        ],
-        "gotchas_encountered": [
-            "Database connections must be closed explicitly",
-            "API rate limit is 100 req/min",
-            # Add pitfalls you encountered
-        ]
-    },
-
-    # What approaches worked well?
-    "what_worked": [
-        "Starting with unit tests helped catch edge cases early",
-        "Following existing pattern from auth.py made integration smooth",
-        # Add successful approaches
-    ],
-
-    # What approaches didn't work?
-    "what_failed": [
-        "Tried inline validation - should use middleware instead",
-        "Direct database access caused connection leaks",
-        # Add things that didn't work
-    ],
-
-    # What should the next session focus on?
-    "recommendations_for_next_session": [
-        "Focus on integration tests between services",
-        "Review error handling in worker service",
-        # Add recommendations
-    ]
-}
-
-# Save insights
-session_file = session_insights_dir / f"session_{session_num:03d}.json"
-with open(session_file, "w") as f:
-    json.dump(insights, f, indent=2)
-
-print(f"Session insights saved to: {session_file}")
-
-# Update codebase map
-if insights["discoveries"]["files_understood"]:
-    map_file = memory_dir / "codebase_map.json"
-
-    # Load existing map
-    if map_file.exists():
-        with open(map_file, "r") as f:
-            codebase_map = json.load(f)
-    else:
-        codebase_map = {}
-
-    # Merge new discoveries
-    codebase_map.update(insights["discoveries"]["files_understood"])
-
-    # Add metadata
-    if "_metadata" not in codebase_map:
-        codebase_map["_metadata"] = {}
-    codebase_map["_metadata"]["last_updated"] = datetime.now(timezone.utc).isoformat()
-    codebase_map["_metadata"]["total_files"] = len([k for k in codebase_map if k != "_metadata"])
-
-    # Save
-    with open(map_file, "w") as f:
-        json.dump(codebase_map, f, indent=2, sort_keys=True)
-
-    print(f"Codebase map updated: {len(codebase_map) - 1} files mapped")
-
-# Append patterns
-patterns_file = memory_dir / "patterns.md"
-if insights["discoveries"]["patterns_found"]:
-    # Load existing patterns
-    existing_patterns = set()
-    if patterns_file.exists():
-        content = patterns_file.read_text(encoding="utf-8")
-        for line in content.split("\n"):
-            if line.strip().startswith("- "):
-                existing_patterns.add(line.strip()[2:])
-
-    # Add new patterns
-    with open(patterns_file, "a", encoding="utf-8") as f:
-        if patterns_file.stat().st_size == 0:
-            f.write("# Code Patterns\n\n")
-            f.write("Established patterns to follow in this codebase:\n\n")
-
-        for pattern in insights["discoveries"]["patterns_found"]:
-            if pattern not in existing_patterns:
-                f.write(f"- {pattern}\n")
-
-    print("Patterns updated")
-
-# Append gotchas
-gotchas_file = memory_dir / "gotchas.md"
-if insights["discoveries"]["gotchas_encountered"]:
-    # Load existing gotchas
-    existing_gotchas = set()
-    if gotchas_file.exists():
-        content = gotchas_file.read_text(encoding="utf-8")
-        for line in content.split("\n"):
-            if line.strip().startswith("- "):
-                existing_gotchas.add(line.strip()[2:])
-
-    # Add new gotchas
-    with open(gotchas_file, "a", encoding="utf-8") as f:
-        if gotchas_file.stat().st_size == 0:
-            f.write("# Gotchas and Pitfalls\n\n")
-            f.write("Things to watch out for in this codebase:\n\n")
-
-        for gotcha in insights["discoveries"]["gotchas_encountered"]:
-            if gotcha not in existing_gotchas:
-                f.write(f"- {gotcha}\n")
-
-    print("Gotchas updated")
-
-print("\n✓ Session memory updated successfully")
-```
-
-**Key points:**
-- Document EVERYTHING you learned - the next session has no memory
-- Be specific about file purposes and patterns
-- Include both successes and failures
-- Give concrete recommendations
+Be specific about file purposes and patterns. Include both successes and failures. Give concrete recommendations.
 
 ## STEP 13: END SESSION CLEANLY
 
@@ -1436,76 +1100,28 @@ The next session will:
 
 ## WORKFLOW-SPECIFIC GUIDANCE
 
-### For FEATURE Workflow
-
-Work through services in dependency order:
-1. Backend APIs first (testable with curl)
-2. Workers second (depend on backend)
-3. Frontend last (depends on APIs)
-4. Integration to wire everything
-
-### For INVESTIGATION Workflow
-
-**Reproduce Phase**: Create reliable repro steps, add logging
-**Investigate Phase**: Your OUTPUT is knowledge - document root cause
-**Fix Phase**: BLOCKED until investigate phase outputs root cause
-**Harden Phase**: Add tests, monitoring
-
-### For REFACTOR Workflow
-
-**Add New Phase**: Build new system, old keeps working
-**Migrate Phase**: Move consumers to new
-**Remove Old Phase**: Delete deprecated code
-**Cleanup Phase**: Polish
-
-### For MIGRATION Workflow
-
-Follow the data pipeline:
-Prepare → Test (small batch) → Execute (full) → Cleanup
+- **FEATURE**: services in dependency order — backend APIs → workers → frontend → integration.
+- **INVESTIGATION**: Reproduce → Investigate (root cause is the output; no fix allowed yet) → Fix → Harden.
+- **REFACTOR**: Add new (old keeps working) → Migrate consumers → Remove old → Cleanup.
+- **MIGRATION**: Prepare → Test on small batch → Execute full → Cleanup.
 
 ---
 
 ## CRITICAL REMINDERS
 
-### One Subtask at a Time
-- Complete one subtask fully
-- Verify before moving on
-- Each subtask = one commit
+- **One subtask at a time.** Complete and verify each fully; one subtask = one commit.
+- **Respect dependencies.** Never start a phase whose `depends_on` is unfinished. Integration is always last.
+- **Follow existing patterns.** Reuse utilities and conventions from `patterns_from`; don't reinvent.
+- **Stay in scope.** Only touch `files_to_modify` and `files_to_create`; don't wander into unrelated code.
+- **Quality bar.** Zero console errors; verification must pass; secret scan clean before commit.
 
-### Respect Dependencies
-- Check phase.depends_on
-- Never work on blocked phases
-- Integration is always last
+### Git Configuration — NEVER MODIFY
 
-### Follow Patterns
-- Match code style from patterns_from
-- Use existing utilities
-- Don't reinvent conventions
-
-### Scope to Listed Files
-- Only modify files_to_modify
-- Only create files_to_create
-- Don't wander into unrelated code
-
-### Quality Standards
-- Zero console errors
-- Verification must pass
-- Clean, working state
-- **Secret scan must pass before commit**
-
-### Git Configuration - NEVER MODIFY
-**CRITICAL**: You MUST NOT modify git user configuration. Never run:
-- `git config user.name`
-- `git config user.email`
-- `git config --local user.*`
-- `git config --global user.*`
-
-The repository inherits the user's configured git identity. Creating "Test User" or
-any other fake identity breaks attribution and causes serious issues. If you need
-to commit changes, use the existing git identity - do NOT set a new one.
+**CRITICAL**: You MUST NOT modify git user configuration. Never run `git config user.name`, `git config user.email`, or any `git config --local user.*` / `git config --global user.*`. The repository inherits the user's configured git identity. Creating a fake identity ("Test User" etc.) breaks attribution and causes serious issues — use the existing git identity as-is.
 
 ### The Golden Rule
-**FIX BUGS NOW.** The next session has no memory.
+
+**Fix bugs now.** The next session has no memory of what you found.
 
 ---
 

@@ -79,6 +79,7 @@ export function TaskCreationWizard({
   const [title, setTitle] = useState('');
   const [description, setDescription] = useState('');
   const [isCreating, setIsCreating] = useState(false);
+  const [isImproving, setIsImproving] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [showClassification, setShowClassification] = useState(false);
   const [showFileExplorer, setShowFileExplorer] = useState(false);
@@ -462,6 +463,41 @@ export function TaskCreationWizard({
     return [...existingFiles, ...newFiles];
   }, []);
 
+  /**
+   * Trigger AI rewrite of the description. Replaces the textarea contents in place
+   * so the user can immediately edit the result before creating the task.
+   */
+  const handleImproveDescription = useCallback(async () => {
+    const trimmed = description.trim();
+    if (!trimmed || isImproving || isCreating) return;
+
+    setIsImproving(true);
+    setError(null);
+    try {
+      const result = await window.electronAPI.improveDescription({
+        description: trimmed,
+        title: title.trim() || undefined,
+      });
+      if (result.success && result.data?.improved) {
+        setDescription(result.data.improved);
+      } else {
+        const reason = result.error ?? 'unknown';
+        if (reason === 'rate_limit') {
+          setError(t('tasks:form.improveDescription.rateLimit'));
+        } else if (reason === 'auth_failure') {
+          setError(t('tasks:form.improveDescription.authError'));
+        } else {
+          setError(t('tasks:form.improveDescription.error', { error: reason }));
+        }
+      }
+    } catch (err) {
+      const message = err instanceof Error ? err.message : String(err);
+      setError(t('tasks:form.improveDescription.error', { error: message }));
+    } finally {
+      setIsImproving(false);
+    }
+  }, [description, title, isImproving, isCreating, t]);
+
   const handleCreate = async () => {
     if (!description.trim()) {
       setError(t('tasks:form.errors.descriptionRequired'));
@@ -752,6 +788,8 @@ export function TaskCreationWizard({
           error={error}
           onError={setError}
           onFileReferenceDrop={handleFileReferenceDrop}
+          onImproveDescription={handleImproveDescription}
+          isImproving={isImproving}
           idPrefix="create"
         >
           {/* File autocomplete popup - positioned relative to TaskFormFields */}

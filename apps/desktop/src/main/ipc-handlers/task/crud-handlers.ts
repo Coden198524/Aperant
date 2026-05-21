@@ -7,6 +7,7 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, Dirent
 import { updateRoadmapFeatureOutcome } from '../../utils/roadmap-utils';
 import { projectStore } from '../../project-store';
 import { titleGenerator } from '../../title-generator';
+import { descriptionImprover } from '../../description-improver';
 import { AgentManager } from '../../agent';
 import { findTaskAndProject } from './shared';
 import { buildSpecId } from '../shared/spec-id';
@@ -874,6 +875,37 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           success: false,
           error: error instanceof Error ? error.message : 'Unknown error loading thumbnail'
         };
+      }
+    }
+  );
+
+  /**
+   * Improve a raw task description using AI.
+   * Returns a rewritten, more precise version while preserving the user's intent.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_IMPROVE_DESCRIPTION,
+    async (
+      _,
+      payload: { description: string; title?: string }
+    ): Promise<IPCResult<{ improved: string; original: string }>> => {
+      try {
+        if (!payload?.description?.trim()) {
+          return { success: false, error: 'Description is required' };
+        }
+
+        const improved = await descriptionImprover.improve(payload.description, payload.title);
+        if (!improved) {
+          return { success: false, error: 'AI returned an empty response' };
+        }
+
+        return {
+          success: true,
+          data: { improved, original: payload.description }
+        };
+      } catch (error) {
+        const message = error instanceof Error ? error.message : 'Unknown error';
+        return { success: false, error: message };
       }
     }
   );

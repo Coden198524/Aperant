@@ -92,6 +92,11 @@ export const taskMock = {
 
   resumePausedTask: async () => ({ success: true }),
 
+  improveDescription: async (payload: { description: string; title?: string }) => ({
+    success: true as const,
+    data: { improved: payload.description, original: payload.description }
+  }),
+
   // Worktree change detection
   checkWorktreeChanges: async (_taskId: string) => ({
     success: true as const,

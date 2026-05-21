@@ -56,6 +56,11 @@ export interface TaskAPI {
   checkTaskRunning: (taskId: string, projectId?: string) => Promise<IPCResult<boolean>>;
   resumePausedTask: (taskId: string, projectId?: string) => Promise<IPCResult>;
 
+  // AI-assisted description rewrite (used by the create-task wizard)
+  improveDescription: (
+    payload: { description: string; title?: string }
+  ) => Promise<IPCResult<{ improved: string; original: string }>>;
+
   // Worktree Change Detection
   checkWorktreeChanges: (taskId: string, projectId?: string) => Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>>;
 
@@ -169,6 +174,11 @@ export const createTaskAPI = (): TaskAPI => ({
 
   resumePausedTask: (taskId: string, projectId?: string): Promise<IPCResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_RESUME_PAUSED, taskId, projectId),
+
+  improveDescription: (
+    payload: { description: string; title?: string }
+  ): Promise<IPCResult<{ improved: string; original: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_IMPROVE_DESCRIPTION, payload),
 
   // Worktree Change Detection
   checkWorktreeChanges: (taskId: string, projectId?: string): Promise<IPCResult<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number }>> =>

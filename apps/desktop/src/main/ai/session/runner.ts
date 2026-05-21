@@ -624,7 +624,7 @@ const AGENT_MAX_OUTPUT_TOKENS: Partial<Record<string, number>> = {
   mmo_data_persistence_engineer: 12_000,
   mmo_security_anticheat_engineer: 12_000,
   mmo_liveops_engineer: 12_000,
-  direct_task: 6_000,
+  direct_task: 32_000,
   qa_reviewer: 8_000,
   qa_fixer: 8_000,
   mmo_qa_reviewer: 8_000,

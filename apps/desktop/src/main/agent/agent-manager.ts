@@ -67,7 +67,7 @@ const AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS = {
 const DIRECT_WORKFLOW_PHASE_STEP_BUDGETS = {
   spec: 0,
   planning: 0,
-  coding: 16,
+  coding: 60,
   qa: 0,
 } as const;
 

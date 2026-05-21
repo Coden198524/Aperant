@@ -11,7 +11,7 @@
  */
 import { useRef, useState, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, Info, Gauge } from 'lucide-react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, Info, Gauge, Sparkles, Loader2 } from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
@@ -104,6 +104,11 @@ interface TaskFormFieldsProps {
 
   /** Callback when a file reference is dropped (from FileTreeItem drag) */
   onFileReferenceDrop?: (reference: string, data: FileReferenceData) => void;
+
+  /** Optional callback to trigger AI-assisted description rewrite. When provided, an "Improve" button appears next to the Description label. */
+  onImproveDescription?: () => void;
+  /** True while the AI rewrite is in flight. Disables the button and shows a spinner. */
+  isImproving?: boolean;
 }
 
 export function TaskFormFields({
@@ -147,7 +152,9 @@ export function TaskFormFields({
   onError,
   idPrefix = '',
   children,
-  onFileReferenceDrop
+  onFileReferenceDrop,
+  onImproveDescription,
+  isImproving = false
 }: TaskFormFieldsProps) {
   const { t } = useTranslation(['tasks', 'common']);
   // Use external ref if provided (for @ mention autocomplete), otherwise use internal ref
@@ -301,9 +308,39 @@ export function TaskFormFields({
       <div className="space-y-6">
         {/* Description (Primary - Required) */}
         <div className="space-y-2">
-          <Label htmlFor={`${prefix}description`} className="text-sm font-medium text-foreground">
-            {t('tasks:form.description')} <span className="text-destructive">*</span>
-          </Label>
+          <div className="flex items-center justify-between gap-2">
+            <Label htmlFor={`${prefix}description`} className="text-sm font-medium text-foreground">
+              {t('tasks:form.description')} <span className="text-destructive">*</span>
+            </Label>
+            {onImproveDescription && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="sm"
+                onClick={onImproveDescription}
+                disabled={disabled || isImproving || !description.trim()}
+                className="h-7 gap-1.5 px-2 text-xs text-muted-foreground hover:text-foreground hover:bg-muted"
+                title={
+                  !description.trim()
+                    ? t('tasks:form.improveDescription.tooShort')
+                    : t('tasks:form.improveDescription.tooltip')
+                }
+                aria-label={t('tasks:form.improveDescription.tooltip')}
+              >
+                {isImproving ? (
+                  <>
+                    <Loader2 className="h-3 w-3 animate-spin" />
+                    {t('tasks:form.improveDescription.improving')}
+                  </>
+                ) : (
+                  <>
+                    <Sparkles className="h-3 w-3" />
+                    {t('tasks:form.improveDescription.button')}
+                  </>
+                )}
+              </Button>
+            )}
+          </div>
           <div className="relative">
             {/* Optional overlay (e.g., @ mention highlighting) */}
             {descriptionOverlay}
