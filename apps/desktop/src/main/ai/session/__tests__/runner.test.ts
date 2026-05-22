@@ -565,7 +565,7 @@ describe('runAgentSession', () => {
     await runAgentSession(createMockConfig({ agentType: 'direct_task', phase: 'coding' }));
 
     const callArgs = mockStreamText.mock.calls[0][0];
-    expect(callArgs.maxOutputTokens).toBe(6000);
+    expect(callArgs.maxOutputTokens).toBe(32000);
   });
 
   it('should keep system prompt for openai-compatible chat models even when model id is codex', async () => {

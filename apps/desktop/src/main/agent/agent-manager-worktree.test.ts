@@ -241,7 +241,7 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.agentType).toBe('direct_task');
     expect(executorConfig.session.workflowMode).toBe('off');
     expect(executorConfig.session.phase).toBe('coding');
-    expect(executorConfig.session.maxSteps).toBe(16);
+    expect(executorConfig.session.maxSteps).toBe(60);
     expect(executorConfig.session.thinkingLevel).toBe('xhigh');
     expect(executorConfig.session.responsePersistence).toBe(false);
     expect(executorConfig.session.mcpOptions).toMatchObject({
