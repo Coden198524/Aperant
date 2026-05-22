@@ -18,7 +18,7 @@ import { DEFAULT_FEATURE_THINKING } from '../../shared/constants/models';
 import type { FeatureThinkingConfig, ThinkingLevel } from '../../shared/types/settings';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 import type { DeepSeekCliState } from '../../shared/types/terminal';
-import { buildThinkingProviderOptions } from '../ai/config/types';
+import { buildThinkingProviderOptions } from '@autocode/core';
 import { createProvider } from '../ai/providers/factory';
 import { SupportedProvider } from '@autocode/core';
 import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';

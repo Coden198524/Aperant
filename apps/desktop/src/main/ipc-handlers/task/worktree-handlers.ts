@@ -13,7 +13,7 @@ import { MergeOrchestrator } from '../../ai/merge/orchestrator';
 import { createMergeResolverFn } from '../../ai/runners/merge-resolver';
 import { createPR } from '../../ai/runners/github/pr-creator';
 import { createGitBlitReviewRequest, parseGitBlitTicketId } from '../../ai/runners/gitblit/review-request-creator';
-import type { ModelShorthand } from '../../ai/config/types';
+import type { ModelShorthand } from '@autocode/core';
 import { findTaskAndProject } from './shared';
 import { updateRoadmapFeatureOutcome } from '../../utils/roadmap-utils';
 import { getToolPath } from '../../cli-tool-manager';

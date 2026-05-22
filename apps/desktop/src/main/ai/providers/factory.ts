@@ -20,7 +20,7 @@ import { createOpenRouter } from '@openrouter/ai-sdk-provider';
 import { createXai } from '@ai-sdk/xai';
 import type { LanguageModel } from 'ai';
 
-import { MODEL_PROVIDER_MAP } from '../config/types';
+import { MODEL_PROVIDER_MAP } from '@autocode/core';
 import { createOAuthProviderFetch } from './oauth-fetch';
 import {
   createOpenAICompatibleEndpointFetch,

@@ -22,7 +22,7 @@ import { createIPCCommunicators } from './utils/ipc-communicator';
 import { AgentManager } from '../../agent/agent-manager';
 import { BatchProcessor } from '../../ai/runners/github/batch-processor';
 import type { GitHubIssue } from '../../ai/runners/github/duplicate-detector';
-import type { ModelShorthand, ThinkingLevel } from '../../ai/config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 
 // Debug logging
 const { debug: debugLog } = createContextLogger('GitHub AutoFix');

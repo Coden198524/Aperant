@@ -24,7 +24,7 @@ import type { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
 import { StepMemoryState } from '../memory/injection/step-memory-state';
 import { buildMemoryAwareStopCondition } from '../memory/injection/memory-stop-condition';
 
-import { buildThinkingProviderOptions } from '../config/types';
+import { buildThinkingProviderOptions } from '@autocode/core';
 import { createStreamHandler } from './stream-handler';
 import type { FullStreamPart } from './stream-handler';
 import { classifyError, isAuthenticationError, isRateLimitError, isModelNotFoundError } from './error-classifier';

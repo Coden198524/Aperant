@@ -21,7 +21,7 @@ import {
   ADAPTIVE_THINKING_MODELS,
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
-} from './types';
+} from '@autocode/core';
 
 // ============================================
 // Spec Phase Thinking Levels

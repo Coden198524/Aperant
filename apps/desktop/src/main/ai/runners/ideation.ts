@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { createSimpleClient } from '../client/factory';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
-import type { ModelShorthand, ThinkingLevel } from '../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import type { SecurityProfile } from '../security/bash-validator';
 
 // =============================================================================

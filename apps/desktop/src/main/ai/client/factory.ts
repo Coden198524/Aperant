@@ -21,8 +21,8 @@ import {
 } from '../config/agent-configs';
 import type { McpServerResolveOptions } from '../config/agent-configs';
 import { resolveModelId } from '../config/phase-config';
-import type { ThinkingLevel } from '../config/types';
-import { resolveReasoningParams } from '../config/types';
+import type { ThinkingLevel } from '@autocode/core';
+import { resolveReasoningParams } from '@autocode/core';
 import { createMcpClientsForAgent, closeAllMcpClients, mergeMcpTools } from '../mcp/client';
 import type { McpClientResult } from '../mcp/types';
 import { createProvider, detectProviderFromModel } from '../providers/factory';

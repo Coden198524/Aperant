@@ -1,12 +1,28 @@
 /**
  * AI Configuration Types
  *
- * See apps/desktop/src/main/ai/config/types.ts and apps/desktop/src/shared/constants/models.ts.
- * Provides model resolution maps, thinking budget configuration, and phase config types
- * for the Vercel AI SDK integration layer.
+ * Model resolution maps, thinking budget configuration, phase config types,
+ * and reasoning-API shape for the Vercel AI SDK integration layer.
  */
 
-import type { SupportedProvider } from '@autocode/core';
+import type { SupportedProvider } from '../providers/types';
+
+// ============================================
+// Reasoning API Shape
+// ============================================
+
+/** How a provider exposes its thinking/reasoning configuration. */
+export type ReasoningType =
+  | 'thinking_tokens'     // Anthropic: budget-based thinking
+  | 'adaptive_effort'     // Anthropic Opus 4.6: effort level + budget cap
+  | 'reasoning_effort'    // OpenAI o-series: reasoning_effort param
+  | 'thinking_toggle'     // Google: thinking enabled/disabled
+  | 'none';               // No reasoning/thinking API
+
+export interface ReasoningConfig {
+  type: ReasoningType;
+  level?: 'low' | 'medium' | 'high' | 'xhigh';
+}
 
 // ============================================
 // Model Shorthand Types
@@ -30,9 +46,6 @@ export type Phase = 'spec' | 'planning' | 'coding' | 'qa';
 
 /**
  * Model shorthand to full model ID mapping.
- * Must stay in sync with:
- * - apps/desktop/src/main/ai/config/types.ts MODEL_ID_MAP
- * - apps/desktop/src/shared/constants/models.ts MODEL_ID_MAP
  */
 export const MODEL_ID_MAP: Record<ModelShorthand, string> = {
   'opus-4.7': 'claude-opus-4-7',
@@ -57,9 +70,6 @@ export const MODEL_BETAS_MAP: Partial<Record<ModelShorthand, string[]>> = {
 
 /**
  * Thinking level to budget tokens mapping.
- * Must stay in sync with:
- * - apps/desktop/src/main/ai/config/types.ts THINKING_BUDGET_MAP
- * - apps/desktop/src/shared/constants/models.ts THINKING_BUDGET_MAP
  */
 export const THINKING_BUDGET_MAP: Record<ThinkingLevel, number> = {
   low: 1024,
@@ -155,8 +165,6 @@ export const MODEL_PROVIDER_MAP: Record<string, SupportedProvider> = {
 // ============================================
 // Reasoning Parameter Resolution
 // ============================================
-
-import type { ReasoningConfig } from '../../../shared/constants/models';
 
 export function resolveReasoningParams(config: ReasoningConfig): Record<string, unknown> {
   switch (config.type) {

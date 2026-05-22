@@ -16,7 +16,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createSimpleClient } from '../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import { parseLLMJson } from '../schema/structured-output';
 import { ExtractedInsightsSchema } from '../schema/insight-extractor';
 import { ExtractedInsightsOutputSchema } from '../schema/output';

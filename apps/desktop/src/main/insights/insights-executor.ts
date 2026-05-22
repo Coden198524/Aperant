@@ -11,7 +11,7 @@ import type { TaskCategory, TaskComplexity, TaskMetadata } from '../../shared/ty
 import { InsightsConfig } from './config';
 import { detectRateLimit, createSDKRateLimitInfo } from '../rate-limit-detector';
 import { runInsightsQuery } from '../ai/runners/insights';
-import type { ModelShorthand } from '../ai/config/types';
+import type { ModelShorthand } from '@autocode/core';
 
 /**
  * Message processor result

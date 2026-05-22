@@ -20,7 +20,7 @@ import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import type { Phase } from '../config/types';
+import type { Phase } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   validateJsonFile,

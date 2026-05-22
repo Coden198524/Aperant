@@ -28,7 +28,7 @@ import {
   type GitHubIssue as TriageGitHubIssue,
   type TriageResult as EngineTriageResult,
 } from '../../ai/runners/github/triage-engine';
-import type { ModelShorthand, ThinkingLevel } from '../../ai/config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 
 // Debug logging
 const { debug: debugLog } = createContextLogger('GitHub Triage');

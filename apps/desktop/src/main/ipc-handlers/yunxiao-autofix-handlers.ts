@@ -14,7 +14,7 @@ import type {
   YunxiaoProposedBatch,
   YunxiaoWorkItem,
 } from '../../shared/types';
-import type { ModelShorthand, ThinkingLevel } from '../ai/config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import type { GitHubIssue } from '../ai/runners/github/duplicate-detector';
 import { BatchProcessor } from '../ai/runners/github/batch-processor';
 import { AgentManager } from '../agent';

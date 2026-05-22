@@ -11,12 +11,12 @@
  */
 
 import type { SupportedProvider } from '@autocode/core';
-import type { ThinkingLevel, EffortLevel } from '../config/types';
+import type { ThinkingLevel, EffortLevel } from '@autocode/core';
 import {
   THINKING_BUDGET_MAP,
   EFFORT_LEVEL_MAP,
   ADAPTIVE_THINKING_MODELS,
-} from '../config/types';
+} from '@autocode/core';
 
 // ============================================
 // Thinking Token Transforms

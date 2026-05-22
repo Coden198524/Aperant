@@ -32,7 +32,7 @@ import {
   type MRContext,
   type MRReviewEngineConfig,
 } from '../../ai/runners/gitlab/mr-review-engine';
-import type { ModelShorthand, ThinkingLevel } from '../../ai/config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 
 // Debug logging
 const { debug: debugLog } = createContextLogger('GitLab MR');

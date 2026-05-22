@@ -5,6 +5,12 @@
 
 import type { AgentProfile, PhaseModelConfig, FeatureModelConfig, FeatureThinkingConfig, PhaseThinkingConfig, ThinkingLevel, PipelinePhase } from '../types/settings';
 import type { BuiltinProvider } from '../types/provider-account';
+import type { ReasoningType, ReasoningConfig } from '@autocode/core';
+
+// ReasoningType / ReasoningConfig now live in @autocode/core. Re-export them
+// here so renderer code that imports from '../shared/constants/models' keeps
+// working without changes.
+export type { ReasoningType, ReasoningConfig };
 
 // ============================================
 // Available Models
@@ -498,18 +504,6 @@ export const MEMORY_BACKENDS = [
 // ============================================
 // Reasoning Configuration Types
 // ============================================
-
-export type ReasoningType =
-  | 'thinking_tokens'     // Anthropic: budget-based thinking
-  | 'adaptive_effort'     // Anthropic Opus 4.6: effort level + budget cap
-  | 'reasoning_effort'    // OpenAI o-series: reasoning_effort param
-  | 'thinking_toggle'     // Google: thinking enabled/disabled
-  | 'none';               // No reasoning/thinking API
-
-export interface ReasoningConfig {
-  type: ReasoningType;
-  level?: 'low' | 'medium' | 'high' | 'xhigh';
-}
 
 export interface ProviderModelSpec {
   modelId: string;

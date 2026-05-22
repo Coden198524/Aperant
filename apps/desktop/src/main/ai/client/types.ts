@@ -10,7 +10,7 @@ import type { LanguageModel } from 'ai';
 import type { Tool as AITool } from 'ai';
 
 import type { AgentType } from '../config/agent-configs';
-import type { ModelShorthand, Phase, ThinkingLevel } from '../config/types';
+import type { ModelShorthand, Phase, ThinkingLevel } from '@autocode/core';
 import type { McpClientResult } from '../mcp/types';
 import type { ToolContext } from '../tools/types';
 import type { QueueResolvedAuth } from '../auth/types';

@@ -24,8 +24,8 @@ import * as crypto from 'node:crypto';
 
 import { createSimpleClient } from '../../client/factory';
 import type { SimpleClientResult } from '../../client/types';
-import type { ModelShorthand, ThinkingLevel } from '../../config/types';
-import { buildThinkingProviderOptions } from '../../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import { buildThinkingProviderOptions } from '@autocode/core';
 import { parseLLMJson } from '../../schema/structured-output';
 import { SpecialistOutputSchema, SynthesisResultSchema, FindingValidationArraySchema } from '../../schema/pr-review';
 import {

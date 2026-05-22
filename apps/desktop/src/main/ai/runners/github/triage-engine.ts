@@ -11,7 +11,7 @@
 import { generateText, Output } from 'ai';
 
 import { createSimpleClient } from '../../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '../../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import { parseLLMJson } from '../../schema/structured-output';
 import { TriageResultSchema } from '../../schema/triage';
 import { TriageResultOutputSchema } from '../../schema/output';

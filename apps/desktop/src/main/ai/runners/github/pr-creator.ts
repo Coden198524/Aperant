@@ -21,7 +21,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createSimpleClient } from '../../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '../../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import { generateCommitMessage } from '../commit-message';
 
 // =============================================================================

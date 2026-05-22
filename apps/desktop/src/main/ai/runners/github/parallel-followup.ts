@@ -20,7 +20,7 @@ import { generateText, Output } from 'ai';
 import * as crypto from 'node:crypto';
 
 import { createSimpleClient } from '../../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '../../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import { safeParseJson } from '../../../utils/json-repair';
 import { ResolutionVerificationSchema, ReviewFindingsArraySchema } from '../../schema/pr-review';
 import {

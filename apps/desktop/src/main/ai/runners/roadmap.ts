@@ -17,7 +17,7 @@ import { createSimpleClient } from '../client/factory';
 import type { SimpleClientResult } from '../client/types';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
-import type { ModelShorthand, ThinkingLevel } from '../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import type { SecurityProfile } from '../security/bash-validator';
 import { runProjectIndexer } from '../project/project-indexer';
 import { safeParseJson } from '../../utils/json-repair';

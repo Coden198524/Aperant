@@ -41,7 +41,7 @@ import {
   ParallelOrchestratorReviewer,
   type ParallelOrchestratorConfig,
 } from "../../ai/runners/github/parallel-orchestrator";
-import type { ModelShorthand, ThinkingLevel } from "../../ai/config/types";
+import type { ModelShorthand, ThinkingLevel } from "@autocode/core";
 import { getPRStatusPoller } from "../../services/pr-status-poller";
 import { safeBreadcrumb, safeCaptureException } from "../../sentry";
 import { sanitizeForSentry } from "../../../shared/utils/sentry-privacy";

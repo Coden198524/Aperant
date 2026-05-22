@@ -12,7 +12,7 @@ import { generateText } from 'ai';
 import * as crypto from 'node:crypto';
 
 import { createSimpleClient } from '../../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '../../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import { parseLLMJson } from '../../schema/structured-output';
 import { MRReviewResultSchema } from '../../schema/pr-review';
 

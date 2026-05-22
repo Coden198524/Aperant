@@ -1,6 +1,6 @@
 import { describe, it, expect } from 'vitest';
-import { buildThinkingProviderOptions } from '../types';
-import type { ThinkingLevel } from '../types';
+import { buildThinkingProviderOptions } from '@autocode/core';
+import type { ThinkingLevel } from '@autocode/core';
 
 describe('buildThinkingProviderOptions', () => {
   it('should return Anthropic thinking options for Claude models', () => {

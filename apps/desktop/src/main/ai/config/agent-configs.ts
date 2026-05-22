@@ -14,7 +14,7 @@
  * - Autocode tools: Custom build management tools
  */
 
-import type { ThinkingLevel } from './types';
+import type { ThinkingLevel } from '@autocode/core';
 
 // =============================================================================
 // Base Tools (Built-in Claude Code tools)

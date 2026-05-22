@@ -12,7 +12,7 @@
 import { generateText } from 'ai';
 
 import { createSimpleClient } from '../../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '../../config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import type { GitHubIssue } from './duplicate-detector';
 
 // =============================================================================

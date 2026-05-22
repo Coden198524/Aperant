@@ -19,7 +19,7 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync, unlinkS
 import { join, dirname } from 'node:path';
 import type { TaskLogs, TaskLogPhase, TaskLogPhaseStatus, TaskLogEntry, TaskLogEntryType } from '../../../shared/types';
 import type { StreamEvent } from '../session/types';
-import type { Phase } from '../config/types';
+import type { Phase } from '@autocode/core';
 
 const DEFAULT_LIVE_TEXT_FLUSH_MS = 1000;
 const DEFAULT_LIVE_TEXT_MAX_CHARS = 1200;

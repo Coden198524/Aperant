@@ -15,7 +15,7 @@ import type { LanguageModel } from 'ai';
 import type { ZodSchema } from 'zod';
 
 import type { AgentType } from '../config/agent-configs';
-import type { ModelShorthand, Phase, ThinkingLevel } from '../config/types';
+import type { ModelShorthand, Phase, ThinkingLevel } from '@autocode/core';
 import type { McpClientResult } from '../mcp/types';
 import type { ToolContext } from '../tools/types';
 

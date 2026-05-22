@@ -18,7 +18,7 @@ import { runIdeation, IDEATION_TYPES } from '../ai/runners/ideation';
 import type { IdeationType, IdeationStreamEvent } from '../ai/runners/ideation';
 import { runRoadmapGeneration } from '../ai/runners/roadmap';
 import type { RoadmapStreamEvent } from '../ai/runners/roadmap';
-import type { ModelShorthand, ThinkingLevel } from '../ai/config/types';
+import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import { resolvePromptsDir } from '../ai/prompts/prompt-loader';
 import { getActiveProviderFeatureSettings } from '../ipc-handlers/feature-settings-helper';
 
