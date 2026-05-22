@@ -6,7 +6,7 @@
  * for the Vercel AI SDK integration layer.
  */
 
-import type { SupportedProvider } from '../providers/types';
+import type { SupportedProvider } from '@autocode/core';
 
 // ============================================
 // Model Shorthand Types

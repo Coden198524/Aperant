@@ -6,7 +6,7 @@
  * across OAuth tokens, API keys, and environment variables.
  */
 
-import type { SupportedProvider } from '../providers/types';
+import type { SupportedProvider } from '@autocode/core';
 import type { ReasoningConfig } from '../../../shared/constants/models';
 
 // ============================================

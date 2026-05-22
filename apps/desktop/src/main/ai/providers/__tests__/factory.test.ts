@@ -84,7 +84,7 @@ vi.mock('@openrouter/ai-sdk-provider', () => ({
 import { createAnthropic } from '@ai-sdk/anthropic';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createProvider, detectProviderFromModel, createProviderFromModelId } from '../factory';
-import { SupportedProvider } from '../types';
+import { SupportedProvider } from '@autocode/core';
 
 describe('createProvider', () => {
   const allProviders = Object.values(SupportedProvider);

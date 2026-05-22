@@ -27,7 +27,7 @@ import {
   isOfficialOpenAIBaseUrl,
   normalizeOpenAICompatibleBaseUrl,
 } from './openai-base-url';
-import { type ProviderConfig, SupportedProvider } from './types';
+import { type ProviderConfig, SupportedProvider } from '@autocode/core';
 
 // =============================================================================
 // OAuth Token Detection

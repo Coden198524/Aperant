@@ -16,7 +16,7 @@
 
 import * as path from 'node:path';
 import { ensureValidToken, reactiveTokenRefresh } from '../../claude-profile/token-refresh';
-import type { SupportedProvider } from '../providers/types';
+import type { SupportedProvider } from '@autocode/core';
 import { detectProviderFromModel } from '../providers/factory';
 import type { AuthResolverContext, QueueResolvedAuth, ResolvedAuth } from './types';
 import {

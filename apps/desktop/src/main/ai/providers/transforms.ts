@@ -10,7 +10,7 @@
  * See apps/desktop/src/main/ai/providers/transforms.ts for the TypeScript implementation.
  */
 
-import type { SupportedProvider } from './types';
+import type { SupportedProvider } from '@autocode/core';
 import type { ThinkingLevel, EffortLevel } from '../config/types';
 import {
   THINKING_BUDGET_MAP,

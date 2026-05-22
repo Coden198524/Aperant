@@ -51,7 +51,7 @@ vi.mock('ai', () => ({
 }));
 
 import { buildRegistry, resolveModel } from '../registry';
-import { SupportedProvider } from '../types';
+import { SupportedProvider } from '@autocode/core';
 import {
   isAdaptiveModel,
   getThinkingKwargsForModel,

@@ -20,7 +20,7 @@ import type { ProviderAccount } from '../../shared/types/provider-account';
 import type { DeepSeekCliState } from '../../shared/types/terminal';
 import { buildThinkingProviderOptions } from '../ai/config/types';
 import { createProvider } from '../ai/providers/factory';
-import { SupportedProvider } from '../ai/providers/types';
+import { SupportedProvider } from '@autocode/core';
 import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';
 import { buildToolRegistry } from '../ai/tools/build-registry';
 import type { ToolContext } from '../ai/tools/types';

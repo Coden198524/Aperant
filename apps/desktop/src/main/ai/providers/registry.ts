@@ -21,7 +21,7 @@ import { createProviderRegistry } from 'ai';
 import type { LanguageModel } from 'ai';
 import type { ProviderV3 } from '@ai-sdk/provider';
 
-import { type ProviderConfig, SupportedProvider } from './types';
+import { type ProviderConfig, SupportedProvider } from '@autocode/core';
 
 // =============================================================================
 // Registry Types

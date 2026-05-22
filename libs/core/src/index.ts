@@ -10,5 +10,12 @@
  * branch for the migration plan.
  */
 
-// Scaffold marker — replace with real exports as code migrates.
 export const CORE_PACKAGE_VERSION = '0.0.0';
+
+// Provider types — first migration (Phase 2, leaf node).
+export {
+  SupportedProvider,
+  type ProviderConfig,
+  type ModelResolution,
+  type ProviderCapabilities,
+} from './providers/types';

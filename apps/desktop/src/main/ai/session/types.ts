@@ -59,7 +59,7 @@ export interface SessionConfig {
   /** Subtask ID being worked on (if applicable) */
   subtaskId?: string;
   /** AI provider type */
-  provider?: import('../providers/types').SupportedProvider;
+  provider?: import('@autocode/core').SupportedProvider;
   /** Context window limit in tokens for reactive compaction guard */
   contextWindowLimit?: number;
   /** Persist OpenAI Responses API state across tool-call steps. Disable for one-shot sessions. */

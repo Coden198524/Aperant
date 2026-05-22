@@ -23,7 +23,7 @@ import {
   createOpenAICompatibleEndpointFetch,
   normalizeOpenAICompatibleBaseUrl,
 } from '../providers/openai-base-url';
-import type { SupportedProvider } from '../providers/types';
+import type { SupportedProvider } from '@autocode/core';
 import { getModelContextWindow } from '../../../shared/constants/models';
 import { refreshOAuthTokenReactive } from '../auth/resolver';
 import { buildToolRegistry } from '../tools/build-registry';
