@@ -67,6 +67,10 @@ VS Code for shared types and the `.autocode/specs` task protocol.
   compaction, Windows fast-failure rules, denied/background messages, and
   execution result formatting. Host runtimes still own shell selection,
   process execution, abort handling, and command security hooks.
+- Shared tool registry policy: builtin registration order, optional WebSearch
+  registration, Autocode tool registration names, per-agent tool selection, and
+  SpawnSubagent executor gating. Host runtimes still own concrete tool
+  implementations and AI SDK binding.
 - Platform adapter interfaces for host-specific workspace, terminal,
   notification, task execution, secrets, and git integrations.
 
@@ -142,20 +146,23 @@ moved into core.
 19. **Bash tool policy** - shared timeout clamping, output truncation,
     compiler error compaction, Windows fast-failure rules,
     denied/background messages, and execution result formatting. Done.
-20. **Provider registry adapters** - AI SDK provider constructors stay in
+20. **Tool registry policy** - shared builtin registration order, optional
+    WebSearch registration, Autocode tool registration names, per-agent tool
+    selection, and SpawnSubagent executor gating. Done.
+21. **Provider registry adapters** - AI SDK provider constructors stay in
     consuming runtimes and translate shared core plans into concrete SDK
     instances.
-21. **Auth resolver** - non-Electron resolver logic only. OS keychain reads
+22. **Auth resolver** - non-Electron resolver logic only. OS keychain reads
     stay in the consuming app and are injected.
-22. **Builtin tools** - registry construction and remaining host bindings
+23. **Builtin tools** - remaining host bindings
     construction.
-23. **AI client factory** - shared client creation once dependencies are
+24. **AI client factory** - shared client creation once dependencies are
     extracted.
-24. **Session runtime** - runner, error classification, continuation, and
+25. **Session runtime** - runner, error classification, continuation, and
     stream handling.
-25. **Utility runners** - commit messages, title generation, changelog,
+26. **Utility runners** - commit messages, title generation, changelog,
     merge resolver, and similar leaf runners.
-26. **Orchestration** - planner, coder, and QA pipeline where it is truly
+27. **Orchestration** - planner, coder, and QA pipeline where it is truly
     frontend-independent.
 
 The desktop app keeps its IPC handlers, renderer, Electron bootstrap, PTY

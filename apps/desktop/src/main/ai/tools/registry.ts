@@ -7,6 +7,7 @@
  */
 
 import type { Tool as AITool } from 'ai';
+import { selectRegisteredToolNamesForAgent } from '@autocode/core';
 
 import {
   type AgentConfig,
@@ -106,18 +107,19 @@ export class ToolRegistry {
     agentType: AgentType,
     context: ToolContext,
   ): Record<string, AITool> {
-    const config = getAgentConfig(agentType);
-    const allowedNames = new Set([...config.tools, ...config.autoClaudeTools]);
     const hasSubagentExecutor = Boolean(
       (context as ToolContext & { subagentExecutor?: unknown }).subagentExecutor,
     );
     const result: Record<string, AITool> = {};
+    const selectedNames = selectRegisteredToolNamesForAgent(
+      agentType,
+      this.tools.keys(),
+      { hasSubagentExecutor },
+    );
 
-    for (const [name, definedTool] of Array.from(this.tools.entries())) {
-      if (name === 'SpawnSubagent' && !hasSubagentExecutor) {
-        continue;
-      }
-      if (allowedNames.has(name)) {
+    for (const name of selectedNames) {
+      const definedTool = this.tools.get(name);
+      if (definedTool) {
         result[name] = definedTool.bind(context);
       }
     }

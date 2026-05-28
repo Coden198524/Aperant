@@ -165,9 +165,24 @@ agent runtime without copying desktop-specific code.
      security hook rejection, Windows command preflight failures, background
      starts, timeout caps, and aggressive compiler output behavior.
 
+15. Tool registry policy:
+   - Shared builtin registration order, optional WebSearch registration,
+     Autocode tool registration names, per-agent tool selection, and
+     SpawnSubagent executor gating now live in
+     `libs/core/src/tools/registry.ts`.
+   - Desktop `ToolRegistry` still owns `DefinedTool` storage and AI SDK binding
+     through each concrete tool's `bind(context)` method.
+   - Desktop `buildToolRegistry` now follows the shared registration plan while
+     mapping names to desktop-local implementations.
+   - Core smoke covers registration plans, optional WebSearch, per-agent
+     selection, empty tool agents, and SpawnSubagent gating.
+   - Desktop registry tests continue to cover registration/retrieval, binding
+     context, agent filtering, MCP server resolution, and provider-dependent
+     WebSearch registration.
+
 ## Next slices
 
-15. Runtime package:
+16. Runtime package:
    - After security, schema, project, and auth boundaries are stable, move AI
      client creation, tools, session runner, and lightweight orchestration into
      a runtime layer.

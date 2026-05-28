@@ -439,6 +439,33 @@ async function main() {
       core.formatBashExecutionResult({ command: 'false', stdout: '', stderr: 'warn', exitCode: 1 }),
       /STDERR:\nwarn\nExit code: 1/,
     );
+    assert.deepEqual(
+      core.buildToolRegistrationPlan({ webSearchEnabled: false }).slice(0, 7),
+      ['Read', 'Write', 'Edit', 'Bash', 'Glob', 'Grep', 'WebFetch'],
+    );
+    assert.equal(core.buildToolRegistrationPlan({ webSearchEnabled: false }).includes('WebSearch'), false);
+    assert.equal(core.buildToolRegistrationPlan({ webSearchEnabled: true }).includes('WebSearch'), true);
+    assert.ok(core.getAllowedToolNamesForAgent('coder').includes('Read'));
+    assert.equal(
+      core.selectRegisteredToolNamesForAgent('merge_resolver', ['Read', 'Write']).length,
+      0,
+    );
+    assert.equal(
+      core.selectRegisteredToolNamesForAgent(
+        'mmo_spec_orchestrator',
+        ['SpawnSubagent'],
+        { hasSubagentExecutor: false },
+      ).includes('SpawnSubagent'),
+      false,
+    );
+    assert.equal(
+      core.selectRegisteredToolNamesForAgent(
+        'mmo_spec_orchestrator',
+        ['SpawnSubagent'],
+        { hasSubagentExecutor: true },
+      ).includes('SpawnSubagent'),
+      true,
+    );
     assert.equal(core.shouldExcludeSearchPath('node_modules/pkg/index.ts'), true);
     assert.equal(core.shouldExcludeSearchPath('src/index.ts'), false);
     assert.match(

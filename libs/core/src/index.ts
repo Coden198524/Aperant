@@ -179,6 +179,18 @@ export {
 } from './tools/bash.js';
 
 export {
+  AUTOCODE_TOOL_REGISTRATION_ORDER,
+  LOCAL_TOOL_REGISTRATION_ORDER,
+  SPAWN_SUBAGENT_TOOL_NAME,
+  buildToolRegistrationPlan,
+  getAllowedToolNamesForAgent,
+  selectRegisteredToolNamesForAgent,
+  shouldExposeRegisteredTool,
+  type ToolRegistrationPlanOptions,
+  type ToolSelectionOptions,
+} from './tools/registry.js';
+
+export {
   SAFETY_NET_MAX_BYTES,
   TOOL_OUTPUT_MAX_BYTES,
   TOOL_OUTPUT_MAX_LINES,

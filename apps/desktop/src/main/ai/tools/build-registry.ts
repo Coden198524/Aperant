@@ -6,6 +6,7 @@
  * Used by worker threads, runners (insights, roadmap, ideation), and the client factory.
  */
 
+import { buildToolRegistrationPlan } from '@autocode/core';
 import { ToolRegistry } from './registry';
 import type { DefinedTool } from './define';
 
@@ -31,27 +32,36 @@ import {
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 const asDefined = (t: unknown): DefinedTool => t as DefinedTool;
 
+const TOOL_IMPLEMENTATIONS: Record<string, DefinedTool> = {
+  Read: asDefined(readTool),
+  Write: asDefined(writeTool),
+  Edit: asDefined(editTool),
+  Bash: asDefined(bashTool),
+  Glob: asDefined(globTool),
+  Grep: asDefined(grepTool),
+  WebFetch: asDefined(webFetchTool),
+  WebSearch: asDefined(webSearchTool),
+  SpawnSubagent: asDefined(spawnSubagentTool),
+  mcp__autocode__update_subtask_status: asDefined(updateSubtaskStatusTool),
+  mcp__autocode__get_build_progress: asDefined(getBuildProgressTool),
+  mcp__autocode__record_discovery: asDefined(recordDiscoveryTool),
+  mcp__autocode__record_gotcha: asDefined(recordGotchaTool),
+  mcp__autocode__get_session_context: asDefined(getSessionContextTool),
+  mcp__autocode__update_qa_status: asDefined(updateQaStatusTool),
+};
+
 /**
  * Build and return a ToolRegistry with all builtin tools registered.
  */
 export function buildToolRegistry(): ToolRegistry {
   const registry = new ToolRegistry();
-  registry.registerTool('Read', asDefined(readTool));
-  registry.registerTool('Write', asDefined(writeTool));
-  registry.registerTool('Edit', asDefined(editTool));
-  registry.registerTool('Bash', asDefined(bashTool));
-  registry.registerTool('Glob', asDefined(globTool));
-  registry.registerTool('Grep', asDefined(grepTool));
-  registry.registerTool('WebFetch', asDefined(webFetchTool));
-  if (isSearchProviderConfigured()) {
-    registry.registerTool('WebSearch', asDefined(webSearchTool));
+  for (const name of buildToolRegistrationPlan({
+    webSearchEnabled: isSearchProviderConfigured(),
+  })) {
+    const definedTool = TOOL_IMPLEMENTATIONS[name];
+    if (definedTool) {
+      registry.registerTool(name, definedTool);
+    }
   }
-  registry.registerTool('SpawnSubagent', asDefined(spawnSubagentTool));
-  registry.registerTool('mcp__autocode__update_subtask_status', asDefined(updateSubtaskStatusTool));
-  registry.registerTool('mcp__autocode__get_build_progress', asDefined(getBuildProgressTool));
-  registry.registerTool('mcp__autocode__record_discovery', asDefined(recordDiscoveryTool));
-  registry.registerTool('mcp__autocode__record_gotcha', asDefined(recordGotchaTool));
-  registry.registerTool('mcp__autocode__get_session_context', asDefined(getSessionContextTool));
-  registry.registerTool('mcp__autocode__update_qa_status', asDefined(updateQaStatusTool));
   return registry;
 }
