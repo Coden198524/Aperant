@@ -3,6 +3,7 @@ import { execFileSync } from 'child_process';
 import { readdirSync } from 'fs';
 import { readFile, stat, writeFile } from 'fs/promises';
 import path from 'path';
+import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-rules';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { IPCResult, FileNode } from '../../shared/types';
 import { getToolPath } from '../cli-tool-manager';
@@ -112,14 +113,6 @@ function parseGitStatusPaths(statusOutput: string): string[] {
   return paths;
 }
 
-// Directories to ignore when listing
-const IGNORED_DIRS = new Set([
-  'node_modules', '.git', '__pycache__', 'dist', 'build',
-  '.next', '.nuxt', 'coverage', '.cache', '.venv', 'venv',
-  'out', '.turbo', '.worktrees',
-  'vendor', 'target', '.gradle', '.maven'
-]);
-
 /**
  * Register all file-related IPC handlers
  */
@@ -148,7 +141,7 @@ export function registerFileHandlers(): void {
             continue;
           }
           // Skip ignored directories
-          if (entry.isDirectory() && IGNORED_DIRS.has(entry.name)) continue;
+          if (entry.isDirectory() && shouldSkipAutocodeWorkspaceDir(entry.name)) continue;
 
           nodes.push({
             path: path.join(validation.path, entry.name),

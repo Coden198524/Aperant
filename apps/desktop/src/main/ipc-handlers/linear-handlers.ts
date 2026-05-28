@@ -1,6 +1,10 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
-import { createImportedAutocodeTask, getAutocodeProjectEnvPath } from '@autocode/core';
+import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  createImportedAutocodeTask,
+  getAutocodeProjectEnvPath,
+} from '@autocode/core';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { IPCResult, LinearIssue, LinearTeam, LinearProject, LinearImportResult, LinearSyncStatus, Project, TaskMetadata } from '../../shared/types';
 import { existsSync, readFileSync } from 'fs';
@@ -473,7 +477,7 @@ ${safeDescription || 'No description provided.'}
 
             const task = createImportedAutocodeTask({
               projectRoot: project.path,
-              dataDirName: project.autoBuildPath || '.autocode',
+              dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
               title: safeTitle,
               description,
               metadata,

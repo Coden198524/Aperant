@@ -1,7 +1,11 @@
 import { ipcMain, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { generateText } from 'ai';
-import { createImportedAutocodeTask, getAutocodeProjectEnvPath } from '@autocode/core';
+import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  createImportedAutocodeTask,
+  getAutocodeProjectEnvPath,
+} from '@autocode/core';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   IPCResult,
@@ -1328,7 +1332,7 @@ ${formattedDescription}
 
             const task = createImportedAutocodeTask({
               projectRoot: project.path,
-              dataDirName: project.autoBuildPath || '.autocode',
+              dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
               title: safeTitle,
               description,
               fallbackSlug: 'yunxiao',

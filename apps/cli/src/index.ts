@@ -325,8 +325,8 @@ function printHelp(): void {
   console.log(`Autocode CLI
 
 Usage:
-  autocode info [--cwd <path>] [--data-dir .autocode] [--json]
-  autocode tasks [--cwd <path>] [--data-dir .autocode] [--json]
+  autocode info [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
+  autocode tasks [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
   autocode create --title <title> --description <text>
   autocode run <task-id> [--cli claude-code|codex|gemini|opencode|kilocode|deepseek|custom]
   autocode run <task-id> --runtime agent [--json]
@@ -339,7 +339,7 @@ Usage:
 Commands:
   info       Print workspace and shared core information.
   tasks      List shared Autocode task files.
-  create     Create a task under .autocode/specs.
+  create     Create a task under ${DEFAULT_DATA_DIR}/specs.
   run        Write a task prompt and runner using @autocode/core.
   logs       Show recent task log entries.
   done       Mark a task complete in the shared plan file.

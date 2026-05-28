@@ -1,5 +1,5 @@
 import type { BrowserWindow } from 'electron';
-import { createImportedAutocodeTask } from '@autocode/core';
+import { AUTOCODE_PROJECT_DATA_DIR_NAME, createImportedAutocodeTask } from '@autocode/core';
 import type { Project, YunxiaoIssueSyncResult, YunxiaoWorkItem } from '../../shared/types';
 import { IPC_CHANNELS } from '../../shared/constants';
 import { isClosedYunxiaoStatus } from '../../shared/utils/yunxiao-status';
@@ -157,7 +157,7 @@ function createBacklogTaskFromYunxiaoItem(project: Project, item: YunxiaoWorkIte
 
   const task = createImportedAutocodeTask({
     projectRoot: project.path,
-    dataDirName: project.autoBuildPath || '.autocode',
+    dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
     title: safeTitle,
     description,
     fallbackSlug: 'yunxiao',

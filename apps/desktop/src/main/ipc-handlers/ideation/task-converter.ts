@@ -6,13 +6,14 @@ import path from 'path';
 import { existsSync, writeFileSync } from 'fs';
 import type { IpcMainInvokeEvent } from 'electron';
 import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
   buildAutocodeSpecId,
   createAutocodeTask,
   getAutocodeIdeationFilePath,
   type AutocodeTask,
   type AutocodeTaskMetadata,
 } from '@autocode/core';
-import { AUTO_BUILD_PATHS } from '../../../shared/constants';
 import type {
   IPCResult,
   Task,
@@ -212,13 +213,13 @@ export async function convertIdeaToTask(
 
       const coreTask = createAutocodeTask({
         projectRoot: project.path,
-        dataDirName: project.autoBuildPath || '.autocode',
+        dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
         specId,
         title: idea.title,
         description: taskDescription,
         metadata: metadata as unknown as AutocodeTaskMetadata,
       });
-      writeFileSync(path.join(coreTask.specsPath, AUTO_BUILD_PATHS.SPEC_FILE), buildSpecContent(idea), 'utf-8');
+      writeFileSync(path.join(coreTask.specsPath, AUTOCODE_TASK_ARTIFACTS.specFile), buildSpecContent(idea), 'utf-8');
 
       // Update idea status to archived (converted ideas are archived)
       idea.status = 'archived';

@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { formatAutocodeIgnoredDirNamesForPrompt } from '@autocode/core/workspace/ignore-rules';
 
 export const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
   spec: 80,
@@ -390,7 +391,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
   if (documentationOnly) {
     lines.push('- Documentation-only workflow: do not edit product source files and do not run builds, tests, or AI QA.');
     lines.push('- Do not call `Glob` with `**/*` or any all-repository recursive pattern. Use targeted source-directory or extension patterns and exclude generated/dependency directories.');
-    lines.push('- Ignore generated or dependency directories such as build, dist, out, target, .git, .autocode, node_modules, vendor, and third_party.');
+    lines.push(`- Ignore generated or dependency directories such as ${formatAutocodeIgnoredDirNamesForPrompt()}.`);
     lines.push('- Quality comes first: read enough relevant source files to support traceable conclusions. For small projects, reading all product source files is acceptable after excluding generated directories.');
     lines.push('- Start with listed hints, manifests, entry files, and public interfaces, then expand through imports/includes/build manifests until the architecture, main behavior, data/state flow, and important boundaries are covered.');
     lines.push('- First write `doc_outline.json` with document type, target audience, sections, questions each section answers, and planned source references.');

@@ -17,6 +17,7 @@ import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { promisify } from 'node:util';
 import { exec } from 'node:child_process';
+import { AUTOCODE_COMMON_IGNORED_DIR_NAMES } from '@autocode/core/workspace/ignore-rules';
 import type { GraphDatabase } from '../database';
 import { parseFile, type ParseResult } from '../parser/tree-sitter-parser';
 import { isLanguageSupported, getSupportedExtensions } from '../parser/language-registry';
@@ -30,14 +31,7 @@ const execAsync = promisify(exec);
 
 const DEFAULT_MAX_CONCURRENCY = 4; // Parallel file parsing
 const DEFAULT_EXCLUDE_PATTERNS = [
-	'node_modules/**',
-	'.git/**',
-	'dist/**',
-	'build/**',
-	'out/**',
-	'target/**',
-	'bin/**',
-	'obj/**',
+	...AUTOCODE_COMMON_IGNORED_DIR_NAMES.map((dirName) => `${dirName}/**`),
 	'*.min.js',
 	'*.min.css',
 	'*.map',

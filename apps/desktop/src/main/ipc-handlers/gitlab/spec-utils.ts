@@ -5,7 +5,11 @@
 
 import { mkdir, writeFile, readFile, stat } from 'fs/promises';
 import path from 'path';
-import { createImportedAutocodeTask } from '@autocode/core';
+import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  createImportedAutocodeTask,
+  getAutocodeSpecsDir,
+} from '@autocode/core';
 import type { Project } from '../../../shared/types';
 import type { GitLabAPIIssue, GitLabAPINoteBasic, GitLabConfig } from './types';
 import { labelMatchesWholeWord } from '../shared/label-utils';
@@ -389,7 +393,10 @@ export async function createSpecForIssue(
     const safeProject = sanitizeText(config.project, 200);
     const safeInstanceUrl = sanitizeInstanceUrl(config.instanceUrl);
 
-    const specsDir = path.join(project.path, project.autoBuildPath, 'specs');
+    const specsDir = getAutocodeSpecsDir({
+      projectRoot: project.path,
+      dataDirName: project.autoBuildPath,
+    });
 
     // Ensure specs directory exists
     await mkdir(specsDir, { recursive: true });
@@ -449,7 +456,7 @@ export async function createSpecForIssue(
 
     const task = createImportedAutocodeTask({
       projectRoot: project.path,
-      dataDirName: project.autoBuildPath || '.autocode',
+      dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
       specId: specDirName,
       title: safeIssue.title,
       description: taskContent,

@@ -20,7 +20,7 @@ import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import type { Phase } from '@autocode/core';
+import { isAutocodeProjectDataPath, type Phase } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   validateJsonFile,
@@ -571,7 +571,7 @@ function extractExplicitTaskFiles(taskDescription: string): string[] {
   const normalized = taskDescription.replace(/\\/g, '/');
   for (const match of normalized.matchAll(EXPLICIT_FILE_PATTERN)) {
     const file = match[1]?.replace(/^\.?\//, '').trim();
-    if (!file || file.startsWith('.autocode/')) {
+    if (!file || isAutocodeProjectDataPath(file)) {
       continue;
     }
     const lower = file.toLowerCase();

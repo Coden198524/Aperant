@@ -142,7 +142,7 @@ export class ProjectStore {
       // Validate that .autocode folder still exists for existing project
       // If manually deleted, reset autoBuildPath so UI prompts for reinitialization
       if (existing.autoBuildPath && !isInitialized(existing.path)) {
-        console.warn(`[ProjectStore] .autocode folder was deleted for project "${existing.name}" - resetting autoBuildPath`);
+        console.warn(`[ProjectStore] ${AUTOCODE_PROJECT_DATA_DIR_NAME} folder was deleted for project "${existing.name}" - resetting autoBuildPath`);
         existing.autoBuildPath = '';
         existing.updatedAt = new Date();
         this.save();
@@ -153,7 +153,7 @@ export class ProjectStore {
     // Derive name from path if not provided
     const projectName = name || path.basename(absolutePath);
 
-    // Determine autocode path (supports both 'autocode' and '.autocode')
+    // Determine the configured Autocode project data path.
     const autoBuildPath = getAutoBuildPath(absolutePath) || '';
 
     const project: Project = {
@@ -279,7 +279,7 @@ export class ProjectStore {
 
       // Check if .autocode folder still exists
       if (!isInitialized(project.path)) {
-        console.warn(`[ProjectStore] .autocode folder missing for project "${project.name}" at ${project.path}`);
+        console.warn(`[ProjectStore] ${AUTOCODE_PROJECT_DATA_DIR_NAME} folder missing for project "${project.name}" at ${project.path}`);
         project.autoBuildPath = '';
         project.updatedAt = new Date();
         resetProjectIds.push(project.id);
@@ -289,7 +289,7 @@ export class ProjectStore {
 
     if (hasChanges) {
       this.save();
-      console.warn(`[ProjectStore] Reset ${resetProjectIds.length} project(s) due to missing .autocode folder`);
+      console.warn(`[ProjectStore] Reset ${resetProjectIds.length} project(s) due to missing ${AUTOCODE_PROJECT_DATA_DIR_NAME} folder`);
     }
 
     return resetProjectIds;

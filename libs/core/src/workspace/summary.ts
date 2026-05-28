@@ -1,6 +1,8 @@
 import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, join } from 'node:path';
 
+import { shouldSkipAutocodeWorkspaceDir } from './ignore-rules.js';
+
 export interface WorkspaceSummary {
   rootPath: string;
   name: string;
@@ -12,18 +14,6 @@ export interface WorkspaceSummary {
   hasGit: boolean;
   totalFilesSampled: number;
 }
-
-const IGNORED_DIRS = new Set([
-  '.git',
-  '.autocode',
-  '.claude',
-  '.vscode',
-  'node_modules',
-  'dist',
-  'out',
-  'build',
-  'coverage',
-]);
 
 const LANGUAGE_BY_EXTENSION: Record<string, string> = {
   '.ts': 'TypeScript',
@@ -153,7 +143,7 @@ function detectLanguages(rootPath: string): { languages: string[]; totalFilesSam
       }
 
       if (stat.isDirectory()) {
-        if (!IGNORED_DIRS.has(entry)) {
+        if (!shouldSkipAutocodeWorkspaceDir(entry)) {
           visit(fullPath, depth + 1);
         }
         continue;

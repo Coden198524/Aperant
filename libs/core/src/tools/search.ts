@@ -1,33 +1,8 @@
 import * as path from 'node:path';
+import { AUTOCODE_COMMON_IGNORED_DIR_NAMES } from '../workspace/ignore-rules.js';
 
 export const SEARCH_EXCLUDED_DIRS = [
-  '.git',
-  '.autocode',
-  '.claude',
-  '.codex',
-  'node_modules',
-  'dist',
-  'build',
-  'out',
-  'coverage',
-  '.next',
-  '.nuxt',
-  '.svelte-kit',
-  '.turbo',
-  '.cache',
-  '.gradle',
-  '.idea',
-  '.vscode',
-  'bower_components',
-  'vendor',
-  'third_party',
-  'third-party',
-  'extern',
-  'external',
-  'target',
-  'bin',
-  'obj',
-  '__pycache__',
+  ...AUTOCODE_COMMON_IGNORED_DIR_NAMES,
 ] as const;
 
 const SEARCH_EXCLUDED_DIR_SET: ReadonlySet<string> = new Set(SEARCH_EXCLUDED_DIRS);

@@ -35,6 +35,7 @@ import type {
   ProjectSecurityProfile,
   SerializedSecurityProfile,
 } from './types.js';
+import { shouldSkipAutocodeWorkspaceDir } from '../workspace/ignore-rules.js';
 
 // ---------------------------------------------------------------------------
 // Constants
@@ -117,7 +118,7 @@ function collectGlobFiles(dir: string, ext: string, depth: number): string[] {
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      if (entry.name.startsWith('.') || shouldSkipAutocodeWorkspaceDir(entry.name)) continue;
       const fullPath = path.join(dir, entry.name);
       if (entry.isFile() && entry.name.endsWith(ext)) {
         results.push(fullPath);

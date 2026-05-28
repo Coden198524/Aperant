@@ -1,6 +1,6 @@
 import { ipcMain, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
-import { IPC_CHANNELS, AUTO_BUILD_PATHS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP } from '../../../shared/constants';
+import { IPC_CHANNELS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP } from '../../../shared/constants';
 import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, SupportedCLI, AppSettings } from '../../../shared/types';
 import path from 'path';
 import { minimatch } from 'minimatch';
@@ -17,6 +17,7 @@ import {
   AUTOCODE_COMMON_BASE_BRANCHES,
   AUTOCODE_DEFAULT_BASE_BRANCH,
   AUTOCODE_GIT_BRANCH_REGEX,
+  AUTOCODE_TASK_ARTIFACTS,
   buildAutocodeTaskBranchName,
   getAutocodeProjectDataDir,
   getAutocodeProjectEnvPath,
@@ -25,6 +26,7 @@ import {
   getAutocodeSpecsDir,
   isAutocodeGitBranchName,
   normalizeAutocodeBaseBranch,
+  shouldHideAutocodeTaskGitChangePath,
   validateAutocodeWorktreeBranch,
   type ModelShorthand,
 } from '@autocode/core';
@@ -57,7 +59,6 @@ const PRINTABLE_CHARS_REGEX = /^[\x20-\x7E\u00A0-\uFFFF]*$/;
 const PR_CREATION_TIMEOUT_MS = 120000;
 const WORKTREE_GIT_TIMEOUT_MS = 10000;
 const MAX_UNTRACKED_PATCH_BYTES = 512 * 1024;
-const HIDDEN_GIT_CHANGE_DIRS = new Set(['.git', '.claude', '.codex', '.autocode']);
 
 type WorktreeDiffFileBase = Omit<WorktreeDiffFile, 'additions' | 'deletions' | 'patch'>;
 
@@ -66,10 +67,7 @@ function normalizeGitPath(filePath: string): string {
 }
 
 export function shouldHideTaskGitChangePath(filePath: string | undefined | null): boolean {
-  if (!filePath) return false;
-  const normalized = normalizeGitPath(filePath).replace(/^\.\//, '');
-  const [firstSegment] = normalized.split('/');
-  return HIDDEN_GIT_CHANGE_DIRS.has(firstSegment);
+  return shouldHideAutocodeTaskGitChangePath(filePath);
 }
 
 function isVisibleTaskGitChange(file: { path?: string; previousPath?: string }): boolean {
@@ -1908,7 +1906,7 @@ async function updateTaskStatusAfterPRCreation(
     worktreeMetadata: false
   };
 
-  const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+  const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
   const metadataPath = path.join(specDir, 'task_metadata.json');
 
   // Await status persistence to ensure completion before resolving
@@ -1934,7 +1932,7 @@ async function updateTaskStatusAfterPRCreation(
       dataDirName: autoBuildPath,
       specId,
     });
-    const worktreePlanPath = path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+    const worktreePlanPath = path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
     const worktreeMetadataPath = path.join(worktreeSpecDir, 'task_metadata.json');
 
     try {
@@ -2611,7 +2609,7 @@ export function registerWorktreeHandlers(
               // OPTIMIZATION: Use async I/O and parallel updates to prevent UI blocking
               // NOTE: The worktree has the same directory structure as main project
               const planPaths: { path: string; isMain: boolean }[] = [
-                { path: path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), isMain: true },
+                { path: path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan), isMain: true },
               ];
               // Add worktree plan path if worktree exists
               if (worktreePath) {
@@ -2620,7 +2618,7 @@ export function registerWorktreeHandlers(
                   dataDirName: project.autoBuildPath,
                   specId: task.specId,
                 });
-                planPaths.push({ path: path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), isMain: false });
+                planPaths.push({ path: path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan), isMain: false });
               }
 
               // Update plan file with retry logic for transient failures
@@ -3273,7 +3271,7 @@ export function registerWorktreeHandlers(
           dataDirName: project.autoBuildPath,
           specId: task.specId,
         });
-        const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+        const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 
         // Use EAFP pattern (try/catch) instead of LBYL (existsSync check) to avoid TOCTOU race conditions
         const isFileNotFound = (err: unknown): boolean =>
@@ -3307,7 +3305,7 @@ export function registerWorktreeHandlers(
             dataDirName: project.autoBuildPath,
             specId: task.specId,
           });
-          const worktreePlanPath = path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+          const worktreePlanPath = path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
           try {
             const worktreePlanContent = await fsPromises.readFile(worktreePlanPath, 'utf-8');
             const worktreePlan = JSON.parse(worktreePlanContent);

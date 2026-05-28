@@ -1,6 +1,8 @@
 import { ipcMain } from "electron";
 import type { BrowserWindow } from "electron";
 import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
   getAutocodeCompetitorAnalysisPath,
   getAutocodeManualCompetitorsPath,
   getAutocodeRoadmapDir,
@@ -10,10 +12,7 @@ import {
   type AutocodeTask,
   type AutocodeTaskMetadata,
 } from "@autocode/core";
-import {
-  IPC_CHANNELS,
-  AUTO_BUILD_PATHS,
-} from "../../shared/constants";
+import { IPC_CHANNELS } from "../../shared/constants";
 import type {
   IPCResult,
   Roadmap,
@@ -530,7 +529,7 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
 
         const coreTask = createAutocodeTask({
           projectRoot: project.path,
-          dataDirName: project.autoBuildPath || ".autocode",
+          dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
           title: feature.title,
           description: taskDescription,
           metadata: metadata as unknown as AutocodeTaskMetadata,
@@ -542,7 +541,7 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
         const specDir = coreTask.specsPath;
 
         // Create spec.md (required by backend spec creation process)
-        await writeFileWithRetry(path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE), taskDescription, { encoding: 'utf-8' });
+        await writeFileWithRetry(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile), taskDescription, { encoding: 'utf-8' });
 
         // NOTE: We do NOT auto-start spec creation here - user should explicitly start the task
         // from the kanban board when they're ready

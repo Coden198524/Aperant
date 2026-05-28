@@ -13,6 +13,7 @@ import * as path from 'node:path';
 
 import { createTechnologyStack } from './types.js';
 import type { TechnologyStack } from './types.js';
+import { shouldSkipAutocodeWorkspaceDir } from '../workspace/ignore-rules.js';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -67,7 +68,7 @@ function findFileRecursive(dir: string, ext: string, depth: number): boolean {
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      if (entry.name.startsWith('.') || shouldSkipAutocodeWorkspaceDir(entry.name)) continue;
       if (entry.isFile() && entry.name.endsWith(ext)) {
         return true;
       }
@@ -118,7 +119,7 @@ function collectFilesRecursive(dir: string, ext: string, results: string[], dept
   try {
     const entries = fs.readdirSync(dir, { withFileTypes: true });
     for (const entry of entries) {
-      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      if (entry.name.startsWith('.') || shouldSkipAutocodeWorkspaceDir(entry.name)) continue;
       const fullPath = path.join(dir, entry.name);
       if (entry.isFile() && entry.name.endsWith(ext)) {
         results.push(fullPath);

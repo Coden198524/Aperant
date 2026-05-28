@@ -263,6 +263,23 @@ export {
 } from './workspace/summary.js';
 
 export {
+  AUTOCODE_BUILD_OUTPUT_DIR_NAMES,
+  AUTOCODE_COMMON_IGNORED_DIR_NAMES,
+  AUTOCODE_DEPENDENCY_DIR_NAMES,
+  AUTOCODE_GENERATED_DIR_NAMES,
+  AUTOCODE_PROMPT_IGNORED_DIR_NAMES,
+  AUTOCODE_TASK_GIT_CHANGE_HIDDEN_DIR_NAMES,
+  AUTOCODE_TOOL_GENERATED_DIR_NAMES,
+  formatAutocodeIgnoredDirNamesForPrompt,
+  isAutocodeGeneratedPath,
+  isAutocodeProjectDataPath,
+  normalizeAutocodeRelativePathSegments,
+  shouldHideAutocodeTaskGitChangePath,
+  shouldSkipAutocodeWorkspaceDir,
+  shouldSkipAutocodeWorkspacePath,
+} from './workspace/ignore-rules.js';
+
+export {
   BUILTIN_TO_SUPPORTED_PROVIDER,
   NO_AUTH_PROVIDERS,
   PROVIDER_BASE_URL_ENV,

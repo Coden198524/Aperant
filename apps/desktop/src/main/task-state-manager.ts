@@ -5,10 +5,11 @@ import type { TaskEventPayload } from './agent/task-event-schema';
 import type { Project, Task, TaskStatus, ReviewReason, ExecutionPhase } from '../shared/types';
 import { taskMachine, XSTATE_TO_PHASE, mapStateToLegacy, type TaskEvent } from '../shared/state-machines';
 import { IPC_CHANNELS } from '../shared/constants';
+import { AUTOCODE_TASK_ARTIFACTS } from '@autocode/core';
 import { safeSendToRenderer } from './ipc-handlers/utils';
 import { getPlanPath, persistPlanStatusAndReasonSync } from './ipc-handlers/task/plan-file-utils';
 import { findTaskWorktree } from './worktree-paths';
-import { getSpecsDir, AUTO_BUILD_PATHS } from '../shared/constants';
+import { getSpecsDir } from '../shared/constants';
 import { existsSync } from 'fs';
 import path from 'path';
 
@@ -366,7 +367,7 @@ export class TaskStateManager {
       worktreePath,
       specsBaseDir,
       task.specId,
-      AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN
+      AUTOCODE_TASK_ARTIFACTS.implementationPlan
     );
     if (existsSync(worktreePlanPath)) {
       persistPlanStatusAndReasonSync(worktreePlanPath, status, reviewReason, project.id, xstateState, executionPhase);

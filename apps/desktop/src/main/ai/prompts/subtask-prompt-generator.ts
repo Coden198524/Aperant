@@ -13,6 +13,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-rules';
 
 import { loadPrompt } from './prompt-loader';
 import type {
@@ -537,10 +538,6 @@ function collectFiles(
   maxCount: number,
 ): Array<{ name: string; path: string }> {
   const results: Array<{ name: string; path: string }> = [];
-  const skipDirs = new Set([
-    'node_modules', '.git', '__pycache__', '.venv', 'venv',
-    'dist', 'build', 'out', '.cache',
-  ]);
 
   function walk(currentDir: string, depth: number): void {
     if (results.length >= maxCount || depth > 8) return;
@@ -552,7 +549,7 @@ function collectFiles(
         if (results.length >= maxCount) break;
 
         if (entry.isDirectory()) {
-          if (!skipDirs.has(entry.name) && !entry.name.startsWith('.')) {
+          if (!entry.name.startsWith('.') && !shouldSkipAutocodeWorkspaceDir(entry.name)) {
             walk(join(currentDir, entry.name), depth + 1);
           }
         } else if (entry.isFile()) {

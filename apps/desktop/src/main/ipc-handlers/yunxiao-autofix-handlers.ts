@@ -2,7 +2,7 @@ import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { createImportedAutocodeTask } from '@autocode/core';
+import { AUTOCODE_PROJECT_DATA_DIR_NAME, createImportedAutocodeTask } from '@autocode/core';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   Project,
@@ -395,7 +395,7 @@ async function createAndStartSpecForWorkItem(
   const now = new Date().toISOString();
   const task = createImportedAutocodeTask({
     projectRoot: project.path,
-    dataDirName: project.autoBuildPath || '.autocode',
+    dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
     title: safeTitle,
     description,
     fallbackSlug: 'yunxiao',

@@ -1,12 +1,14 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
   createAutocodeAgentRuntimePlan,
   getAutocodeAgentRuntimeModeLabel,
   resolveAutocodeTaskStartEvent,
   startAutocodeAgentRuntime,
 } from '@autocode/core';
-import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
+import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
 import type { TaskEvent } from '../../../shared/state-machines/task-machine';
 import path from 'path';
@@ -150,12 +152,12 @@ function hasPlanSubtasksInAnyPath(planFilePaths: string[]): boolean {
 
 function getPlanFilePathsForTask(project: Project, task: Task, specsBaseDir: string): string[] {
   const paths = [
-    path.join(project.path, specsBaseDir, task.specId, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+    path.join(project.path, specsBaseDir, task.specId, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
   ];
 
   const worktreePath = findTaskWorktree(project.path, task.specId);
   if (worktreePath) {
-    paths.push(path.join(worktreePath, specsBaseDir, task.specId, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+    paths.push(path.join(worktreePath, specsBaseDir, task.specId, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
   }
 
   return paths;
@@ -179,7 +181,7 @@ function createRuntimePlanForTask(input: {
 }) {
   return createAutocodeAgentRuntimePlan({
     projectRoot: input.project.path,
-    dataDirName: input.project.autoBuildPath || '.autocode',
+    dataDirName: input.project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
     projectId: input.project.id,
     taskId: input.taskId,
     task: input.task,
@@ -195,7 +197,7 @@ function hasDirectReviewArtifact(specDir: string): boolean {
     return true;
   }
 
-  const planContent = safeReadFileSync(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+  const planContent = safeReadFileSync(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
   if (!planContent) {
     return false;
   }
@@ -360,7 +362,7 @@ export function registerTaskExecutionHandlers(
       console.error(`${logPrefix} Failed to watch spec dir for ${taskId}:`, err);
     });
 
-    const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+    const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
     const hasSpec = existsSync(specFilePath);
     const planHasSubtasks = hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
     const runtimePlan = createRuntimePlanForTask({
@@ -523,7 +525,7 @@ export function registerTaskExecutionHandlers(
 
       // Check if spec.md exists (indicates spec creation was already done or in progress)
       // Check main project path for spec file (spec is created before worktree)
-      const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+      const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
       const hasSpec = existsSync(specFilePath);
 
       const runtimePlan = createRuntimePlanForTask({
@@ -622,7 +624,7 @@ export function registerTaskExecutionHandlers(
 
       if (approved) {
         // Write approval to QA report
-        const qaReportPath = path.join(specDir, AUTO_BUILD_PATHS.QA_REPORT);
+        const qaReportPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.qaReport);
         try {
           writeFileSync(
             qaReportPath,
@@ -655,7 +657,7 @@ export function registerTaskExecutionHandlers(
         if (isErrorRecovery) {
           const specsBaseDir = getSpecsDir(project.autoBuildPath);
           const specDirForState = path.join(project.path, specsBaseDir, task.specId);
-          const planHasSubtasks = hasPlanSubtasks(path.join(specDirForState, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+          const planHasSubtasks = hasPlanSubtasks(path.join(specDirForState, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
 
           taskStateManager.prepareForRestart(taskId);
 
@@ -715,7 +717,7 @@ export function registerTaskExecutionHandlers(
 
           // Step 3: Clean untracked files that came from the merge
           // IMPORTANT: Exclude .autocode directory to preserve specs and worktree data
-          const cleanResult = spawnSync(getToolPath('git'), ['clean', '-fd', '-e', '.autocode'], {
+          const cleanResult = spawnSync(getToolPath('git'), ['clean', '-fd', '-e', AUTOCODE_PROJECT_DATA_DIR_NAME], {
             cwd: project.path,
             encoding: 'utf-8',
             stdio: 'pipe',
@@ -837,8 +839,8 @@ export function registerTaskExecutionHandlers(
           }
 
           const planPaths = new Set<string>([
-            path.join(targetSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
-            path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+            path.join(targetSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
+            path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
           ]);
 
           for (const planPath of planPaths) {
@@ -895,13 +897,13 @@ export function registerTaskExecutionHandlers(
           }
 
           const reopenedWorktreePlan = reopenCompletedPlanForFollowupFix(
-            path.join(targetSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+            path.join(targetSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
             feedback || 'Address the reported human review issues.'
           );
           let reopenedSourcePlan = false;
           if (targetSpecDir !== specDir) {
             reopenedSourcePlan = reopenCompletedPlanForFollowupFix(
-              path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
+              path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
               feedback || 'Address the reported human review issues.'
             );
           }
@@ -1076,7 +1078,7 @@ export function registerTaskExecutionHandlers(
           specsBaseDirForValidation,
           task.specId
         );
-        const specFilePath = path.join(specDirForValidation, AUTO_BUILD_PATHS.SPEC_FILE);
+        const specFilePath = path.join(specDirForValidation, AUTOCODE_TASK_ARTIFACTS.specFile);
 
         // Check if spec.md exists and has meaningful content (at least 100 chars)
         const MIN_SPEC_CONTENT_LENGTH = 100;
@@ -1198,10 +1200,10 @@ export function registerTaskExecutionHandlers(
           });
 
           // Check if spec.md exists
-          const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+          const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
           const hasSpec = existsSync(specFilePath);
           // FIX (#1562): Check actual plan file for subtasks, not just task.subtasks.length
-          const updatePlanFilePath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+          const updatePlanFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
           let updatePlanHasSubtasks = false;
           const updatePlanContent = safeReadFileSync(updatePlanFilePath);
           if (updatePlanContent) {
@@ -1370,7 +1372,7 @@ export function registerTaskExecutionHandlers(
       );
 
       // Update implementation_plan.json
-      const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+      const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
       console.log(`[Recovery] Writing to plan file at: ${planPath} (task location: ${task.location || 'main'})`);
 
       // Also update the OTHER location if task exists in both main and worktree
@@ -1382,11 +1384,11 @@ export function registerTaskExecutionHandlers(
 
       // Collect all plan file paths that need updating
       const planPathsToUpdate: string[] = [planPath];
-      if (mainSpecDir !== specDir && existsSync(path.join(mainSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN))) {
-        planPathsToUpdate.push(path.join(mainSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+      if (mainSpecDir !== specDir && existsSync(path.join(mainSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan))) {
+        planPathsToUpdate.push(path.join(mainSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
       }
-      if (worktreeSpecDir && worktreeSpecDir !== specDir && existsSync(path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN))) {
-        planPathsToUpdate.push(path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN));
+      if (worktreeSpecDir && worktreeSpecDir !== specDir && existsSync(path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan))) {
+        planPathsToUpdate.push(path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
       }
       console.log(`[Recovery] Will update ${planPathsToUpdate.length} plan file(s):`, planPathsToUpdate);
 
@@ -1686,7 +1688,7 @@ export function registerTaskExecutionHandlers(
             // Check if spec.md exists to determine whether to run spec creation or task execution
             // Check main project path for spec file (spec is created before worktree)
             // mainSpecDir is declared earlier in the handler scope
-            const specFilePath = path.join(mainSpecDir, AUTO_BUILD_PATHS.SPEC_FILE);
+            const specFilePath = path.join(mainSpecDir, AUTOCODE_TASK_ARTIFACTS.specFile);
             const hasSpec = existsSync(specFilePath);
             const runtimePlan = createRuntimePlanForTask({
               taskId,

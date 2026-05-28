@@ -8,16 +8,9 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-rules';
 
 import type { FileMatch } from './types.js';
-
-/** Directories that should never be searched. */
-const SKIP_DIRS = new Set([
-  'node_modules', '.git', '__pycache__', '.venv', 'venv', 'dist', 'build',
-  '.next', '.nuxt', 'target', 'vendor', '.idea', '.vscode', 'autocode',
-  '.autocode', '.pytest_cache', '.mypy_cache', 'coverage', '.turbo', '.cache',
-  'out',
-]);
 
 /** File extensions considered code files. */
 const CODE_EXTENSIONS = new Set([
@@ -35,7 +28,7 @@ function* iterCodeFiles(directory: string): Generator<string> {
   }
 
   for (const entry of entries) {
-    if (SKIP_DIRS.has(entry.name)) continue;
+    if (shouldSkipAutocodeWorkspaceDir(entry.name)) continue;
 
     const fullPath = path.join(directory, entry.name);
 

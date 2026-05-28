@@ -19,25 +19,13 @@ import type {
   ProjectSourceSummary,
   ServiceInfo,
 } from './types.js';
+import { shouldSkipAutocodeWorkspaceDir } from '../workspace/ignore-rules.js';
 
 // ---------------------------------------------------------------------------
 // Constants
 // ---------------------------------------------------------------------------
 
-const SKIP_DIRS = new Set([
-  'node_modules',
-  '.git',
-  '__pycache__',
-  '.venv',
-  'venv',
-  'dist',
-  'build',
-  '.next',
-  '.nuxt',
-  'target',
-  'vendor',
-  '.autocode',
-  'coverage',
+const PROJECT_INDEXER_EXTRA_SKIP_DIRS = new Set([
   '.nyc_output',
 ]);
 
@@ -130,11 +118,7 @@ const GENERIC_PROJECT_EXTENSIONS = new Set([
   '.xcworkspace',
 ]);
 
-const SUMMARY_SKIP_DIRS = new Set([
-  ...SKIP_DIRS,
-  '.vs',
-  '.idea',
-  '.vscode',
+const SUMMARY_EXTRA_SKIP_DIRS = new Set([
   'Cache',
   'Binaries',
   'Intermediate',
@@ -430,6 +414,14 @@ function detectLanguageAndFramework(serviceDir: string): DetectedService {
   }
 
   return result;
+}
+
+function shouldSkipProjectIndexDir(dirName: string): boolean {
+  return shouldSkipAutocodeWorkspaceDir(dirName) || PROJECT_INDEXER_EXTRA_SKIP_DIRS.has(dirName);
+}
+
+function shouldSkipProjectSummaryDir(dirName: string): boolean {
+  return shouldSkipProjectIndexDir(dirName) || SUMMARY_EXTRA_SKIP_DIRS.has(dirName);
 }
 
 function detectGenericService(serviceDir: string, summary?: ProjectSourceSummary): DetectedService {
@@ -967,7 +959,7 @@ function detectProjectType(projectDir: string): 'single' | 'monorepo' {
   let serviceDirsFound = 0;
   for (const entry of listDirectory(projectDir)) {
     if (!entry.isDirectory()) continue;
-    if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+    if (entry.name.startsWith('.') || shouldSkipProjectIndexDir(entry.name)) continue;
 
     const entryPath = path.join(projectDir, entry.name);
     const hasRootFile = SERVICE_ROOT_FILES.some((f) => exists(path.join(entryPath, f)));
@@ -1001,7 +993,7 @@ function findAndAnalyzeServices(
 
       for (const entry of listDirectory(location)) {
         if (!entry.isDirectory()) continue;
-        if (SKIP_DIRS.has(entry.name) || entry.name.startsWith('.')) continue;
+        if (entry.name.startsWith('.') || shouldSkipProjectIndexDir(entry.name)) continue;
 
         const entryPath = path.join(location, entry.name);
         const hasRootFile = SERVICE_ROOT_FILES.some((f) => exists(path.join(entryPath, f)));
@@ -1076,7 +1068,7 @@ function buildSourceSummary(projectDir: string): ProjectSourceSummary {
   const projectFiles = new Set<string>();
   const configFiles = new Set<string>();
   const rootDirectories = listDirectory(projectDir)
-    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !SUMMARY_SKIP_DIRS.has(entry.name))
+    .filter((entry) => entry.isDirectory() && !entry.name.startsWith('.') && !shouldSkipProjectSummaryDir(entry.name))
     .map((entry) => entry.name)
     .slice(0, 20);
 
@@ -1107,7 +1099,7 @@ function buildSourceSummary(projectDir: string): ProjectSourceSummary {
 
       const entryPath = path.join(dir, entry.name);
       if (entry.isDirectory()) {
-        if (entry.name.startsWith('.') || SUMMARY_SKIP_DIRS.has(entry.name)) {
+        if (entry.name.startsWith('.') || shouldSkipProjectSummaryDir(entry.name)) {
           continue;
         }
         visit(entryPath, depth + 1);

@@ -12,6 +12,10 @@ import type { FSWatcher } from 'chokidar';
 import { readFile } from 'fs/promises';
 import { join } from 'path';
 import { existsSync, readdirSync, statSync } from 'fs';
+import {
+  AUTOCODE_COMMON_IGNORED_DIR_NAMES,
+  shouldSkipAutocodeWorkspaceDir,
+} from '@autocode/core/workspace/ignore-rules';
 import type { GraphDatabase } from './graph-database';
 import { makeNodeId } from './graph-database';
 import type { TreeSitterLoader } from './tree-sitter-loader';
@@ -44,14 +48,7 @@ export class IncrementalIndexer {
 
     this.watcher = watch(this.projectRoot, {
       ignored: [
-        '**/node_modules/**',
-        '**/.git/**',
-        '**/.autocode/**',
-        '**/dist/**',
-        '**/build/**',
-        '**/.next/**',
-        '**/__pycache__/**',
-        '**/target/**', // Rust
+        ...AUTOCODE_COMMON_IGNORED_DIR_NAMES.map((dirName) => `**/${dirName}/**`),
         '**/*.min.js',
       ],
       persistent: true,
@@ -312,11 +309,6 @@ export class IncrementalIndexer {
 
   private collectSupportedFiles(dir: string, extensions: string[]): string[] {
     const files: string[] = [];
-    const IGNORED_DIRS = new Set([
-      'node_modules', '.git', '.autocode', 'dist', 'build',
-      '.next', '__pycache__', 'target', '.venv',
-    ]);
-
     const walk = (currentDir: string) => {
       if (!existsSync(currentDir)) return;
 
@@ -328,7 +320,7 @@ export class IncrementalIndexer {
       }
 
       for (const entry of entries) {
-        if (IGNORED_DIRS.has(entry)) continue;
+        if (shouldSkipAutocodeWorkspaceDir(entry)) continue;
 
         const fullPath = join(currentDir, entry);
         let stat;

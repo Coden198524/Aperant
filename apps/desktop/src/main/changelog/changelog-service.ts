@@ -3,12 +3,16 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { app } from 'electron';
-import { AUTOCODE_PROJECT_ENV_FILE_NAME } from '@autocode/core';
+import {
+  AUTOCODE_PROJECT_ENV_FILE_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
+  getAutocodeSpecsRelativeDir,
+} from '@autocode/core';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
-import { AUTO_BUILD_PATHS, DEFAULT_CHANGELOG_PATH } from '../../shared/constants';
+import { DEFAULT_CHANGELOG_PATH } from '../../shared/constants';
 import { getToolPath, getToolInfo } from '../cli-tool-manager';
 import type {
   ChangelogTask,
@@ -241,13 +245,13 @@ export class ChangelogService extends EventEmitter {
    * Get completed tasks from a project
    */
   getCompletedTasks(projectPath: string, tasks: Task[], specsBaseDir?: string): ChangelogTask[] {
-    const specsDir = path.join(projectPath, specsBaseDir || AUTO_BUILD_PATHS.SPECS_DIR);
+    const specsDir = path.join(projectPath, specsBaseDir || getAutocodeSpecsRelativeDir());
 
     return tasks
       .filter(task => isCompletedTask(task.status, task.reviewReason) && !task.metadata?.archivedAt)
       .map(task => {
         const specDir = path.join(specsDir, task.specId);
-        const hasSpecs = existsSync(specDir) && existsSync(path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE));
+        const hasSpecs = existsSync(specDir) && existsSync(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
 
         return {
           id: task.id,
@@ -265,7 +269,7 @@ export class ChangelogService extends EventEmitter {
    * Load spec files for given tasks
    */
   async loadTaskSpecs(projectPath: string, taskIds: string[], tasks: Task[], specsBaseDir?: string): Promise<TaskSpecContent[]> {
-    const specsDir = path.join(projectPath, specsBaseDir || AUTO_BUILD_PATHS.SPECS_DIR);
+    const specsDir = path.join(projectPath, specsBaseDir || getAutocodeSpecsRelativeDir());
     this.debug('loadTaskSpecs called', { projectPath, specsDir, taskCount: taskIds.length });
 
     const results: TaskSpecContent[] = [];
@@ -287,26 +291,26 @@ export class ChangelogService extends EventEmitter {
 
       try {
         // Load spec.md
-        const specPath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+        const specPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
         if (existsSync(specPath)) {
           content.spec = readFileSync(specPath, 'utf-8');
           this.debug('Loaded spec.md', { specId: task.specId, length: content.spec.length });
         }
 
         // Load requirements.json
-        const requirementsPath = path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS);
+        const requirementsPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements);
         if (existsSync(requirementsPath)) {
           content.requirements = JSON.parse(readFileSync(requirementsPath, 'utf-8'));
         }
 
         // Load qa_report.md
-        const qaReportPath = path.join(specDir, AUTO_BUILD_PATHS.QA_REPORT);
+        const qaReportPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.qaReport);
         if (existsSync(qaReportPath)) {
           content.qaReport = readFileSync(qaReportPath, 'utf-8');
         }
 
         // Load implementation_plan.json
-        const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+        const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
         if (existsSync(planPath)) {
           content.implementationPlan = JSON.parse(readFileSync(planPath, 'utf-8')) as ImplementationPlan;
         }

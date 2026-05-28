@@ -29,9 +29,10 @@ import {
   createMinimalAutocodePlan,
   mapAutocodeTaskStatusToPlanStatus,
   resetAutocodeStuckSubtasksInPlan,
+  AUTOCODE_TASK_ARTIFACTS,
   type MutableAutocodePlan,
 } from '@autocode/core';
-import { AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
+import { getSpecsDir } from '../../../shared/constants';
 import type { TaskStatus, Project, Task, TokenUsage } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
@@ -87,7 +88,7 @@ function isFileNotFoundError(err: unknown): boolean {
 export function getPlanPath(project: Project, task: Task): string {
   const specsBaseDir = getSpecsDir(project.autoBuildPath);
   const specDir = path.join(project.path, specsBaseDir, task.specId);
-  return path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+  return path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 }
 
 /**

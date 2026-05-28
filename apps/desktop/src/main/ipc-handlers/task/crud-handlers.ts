@@ -1,6 +1,7 @@
 import { ipcMain, nativeImage } from 'electron';
 import {
   AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
   createManualAutocodeTask,
   getAutocodeRoadmapFilePath,
   getAutocodeSpecDir,
@@ -8,7 +9,7 @@ import {
   type AutocodeTaskMetadata,
   type AutocodeTaskRequirements,
 } from '@autocode/core';
-import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir, VALID_THINKING_LEVELS, sanitizeThinkingLevel } from '../../../shared/constants';
+import { IPC_CHANNELS, getSpecsDir, VALID_THINKING_LEVELS, sanitizeThinkingLevel } from '../../../shared/constants';
 import type { IPCResult, Task, TaskMetadata, TaskOutcome } from '../../../shared/types';
 import path from 'path';
 import { execFileSync } from 'child_process';
@@ -310,7 +311,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
 
       const coreTask = createManualAutocodeTask({
         projectRoot: project.path,
-        dataDirName: project.autoBuildPath || '.autocode',
+        dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
         title: finalTitle,
         description,
         metadata: taskMetadata as AutocodeTaskMetadata,
@@ -496,7 +497,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         }
 
         // Update implementation_plan.json
-        const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+        const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
         try {
           const planContent = readFileSync(planPath, 'utf-8');
           const plan = JSON.parse(planContent);
@@ -518,7 +519,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         }
 
         // Update spec.md if it exists
-        const specPath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
+        const specPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
         try {
           let specContent = readFileSync(specPath, 'utf-8');
 
@@ -688,7 +689,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           return { success: false, error: 'Cannot delete subtasks while the task is running' };
         }
 
-        const specsBaseDir = getSpecsDir(project.autoBuildPath || '.autocode');
+        const specsBaseDir = getSpecsDir(project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME);
         const specPaths = findAllSpecPaths(
           project.path,
           specsBaseDir,
@@ -704,7 +705,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         let updatedAnyPlan = false;
 
         for (const specPath of specPaths) {
-          const planPath = path.join(specPath, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+          const planPath = path.join(specPath, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
           const updatedPlan = await updatePlanFile<MutableImplementationPlan>(planPath, (plan) => {
             if (!Array.isArray(plan.phases)) {
               return plan;
@@ -796,7 +797,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           console.error(`[IPC] TASK_LOAD_IMAGE_THUMBNAIL: Unknown project: "${projectPath}"`);
           return { success: false, error: 'Unknown project' };
         }
-        const autoBuildPath = project.autoBuildPath || '.autocode';
+        const autoBuildPath = project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME;
 
         // Build full path to the image
         const specsDir = getSpecsDir(autoBuildPath);

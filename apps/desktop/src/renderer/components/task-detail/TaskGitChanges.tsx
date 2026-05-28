@@ -18,6 +18,7 @@ import { Badge } from '../ui/badge';
 import { cn } from '../../lib/utils';
 import { useToast } from '../../hooks/use-toast';
 import type { Task, WorktreeDiffFile } from '../../../shared/types';
+import { shouldHideAutocodeTaskGitChangePath } from '@autocode/core/workspace/ignore-rules';
 
 interface TaskGitChangesProps {
   task: Task;
@@ -77,13 +78,8 @@ const GRAPH_COLORS = [
   '#ec4899',
   '#84cc16'
 ];
-const HIDDEN_GIT_CHANGE_DIRS = new Set(['.git', '.claude', '.codex', '.autocode']);
-
 function shouldHideGitChangePath(filePath: string | undefined): boolean {
-  if (!filePath) return false;
-  const normalized = filePath.replace(/\\/g, '/').replace(/^\.\//, '');
-  const [firstSegment] = normalized.split('/');
-  return HIDDEN_GIT_CHANGE_DIRS.has(firstSegment);
+  return shouldHideAutocodeTaskGitChangePath(filePath);
 }
 
 function isVisibleGitFile(file: Pick<GitFile, 'path' | 'previousPath'>): boolean {

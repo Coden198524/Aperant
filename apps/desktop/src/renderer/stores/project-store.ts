@@ -1,4 +1,5 @@
 import { create } from 'zustand';
+import { AUTOCODE_PROJECT_DATA_DIR_NAME } from '@autocode/core/tasks/artifacts';
 import type {
   Project,
   ProjectSettings,
@@ -446,8 +447,8 @@ export async function initializeProject(
       console.log('[ProjectStore] IPC succeeded, result.data:', result.data);
       // Update the project's autoBuildPath in local state
       if (result.data.success) {
-        console.log('[ProjectStore] Updating project autoBuildPath to .autocode');
-        store.updateProject(projectId, { autoBuildPath: '.autocode' });
+        console.log(`[ProjectStore] Updating project autoBuildPath to ${AUTOCODE_PROJECT_DATA_DIR_NAME}`);
+        store.updateProject(projectId, { autoBuildPath: AUTOCODE_PROJECT_DATA_DIR_NAME });
       } else {
         console.log('[ProjectStore] result.data.success is false, not updating project');
       }

@@ -62,6 +62,11 @@
       "import": "./dist/project/data-paths.js",
       "default": "./dist/project/data-paths.js"
     },
+    "./workspace/ignore-rules": {
+      "types": "./dist/workspace/ignore-rules.d.ts",
+      "import": "./dist/workspace/ignore-rules.js",
+      "default": "./dist/workspace/ignore-rules.js"
+    },
     "./frontend/task-view-model": {
       "types": "./dist/frontend/task-view-model.d.ts",
       "import": "./dist/frontend/task-view-model.js",

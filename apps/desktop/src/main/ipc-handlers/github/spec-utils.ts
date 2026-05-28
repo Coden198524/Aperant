@@ -4,8 +4,12 @@
 
 import path from 'path';
 import { writeFileSync, readFileSync } from 'fs';
-import { createImportedAutocodeTask, buildAutocodeSpecId } from '@autocode/core';
-import { AUTO_BUILD_PATHS } from '../../../shared/constants';
+import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
+  createImportedAutocodeTask,
+  buildAutocodeSpecId,
+} from '@autocode/core';
 import type { Project, TaskMetadata } from '../../../shared/types';
 import { withSpecNumberLock } from '../../utils/spec-number-lock';
 import { debugLog } from './utils/logger';
@@ -118,7 +122,7 @@ export async function createSpecForIssue(
 
     const task = createImportedAutocodeTask({
       projectRoot: project.path,
-      dataDirName: project.autoBuildPath || '.autocode',
+      dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
       specId,
       title: safeTitle,
       description: safeDescription,
@@ -186,7 +190,7 @@ Please analyze this issue and provide:
  * Used to immediately update the plan file so the frontend shows the correct status
  */
 export function updateImplementationPlanStatus(specDir: string, status: string): void {
-  const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+  const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 
   try {
     const content = readFileSync(planPath, 'utf-8');

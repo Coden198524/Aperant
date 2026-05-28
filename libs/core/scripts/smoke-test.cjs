@@ -271,6 +271,11 @@ async function main() {
     assert.equal(core.AUTOCODE_TASK_ARTIFACTS.implementationPlan, 'implementation_plan.json');
     assert.equal(core.getAutocodeSpecsRelativeDir('.autocode'), '.autocode/specs');
     assert.equal(core.isAutocodeTaskArtifactFileName('qa_report.md'), true);
+    assert.ok(core.AUTOCODE_TOOL_GENERATED_DIR_NAMES.includes('.codex'));
+    assert.equal(core.shouldSkipAutocodeWorkspaceDir('node_modules'), true);
+    assert.equal(core.shouldHideAutocodeTaskGitChangePath('.cursor/rules.json'), true);
+    assert.equal(core.isAutocodeGeneratedPath('.autocode/tool-output/result.json'), true);
+    assert.ok(core.formatAutocodeIgnoredDirNamesForPrompt().includes('.codex'));
     assert.equal(core.AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER, '__project_default__');
     assert.equal(core.normalizeAutocodeBaseBranch('origin/develop'), 'develop');
     assert.equal(core.normalizeAutocodeBaseBranch('__project_default__'), null);

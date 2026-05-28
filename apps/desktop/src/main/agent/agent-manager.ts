@@ -5,6 +5,7 @@ import { execFileSync, execSync } from 'child_process';
 import {
   AUTOCODE_COMMON_BASE_BRANCHES,
   AUTOCODE_DEFAULT_BASE_BRANCH,
+  AUTOCODE_TASK_ARTIFACTS,
   buildAutocodeDefaultDirectTaskPrompt,
   buildAutocodeDefaultPlannerPrompt,
   buildAutocodeDefaultQAPrompt,
@@ -15,6 +16,7 @@ import {
   buildAutocodeTaskExecutionMessages,
   getAutocodeSpecDir,
   getAutocodeSpecsDir,
+  getAutocodeSpecsRelativeDir,
   inferAutocodePinnedProviderFromModel,
   isAutocodeCommonBaseBranch,
   loadAutocodeTaskRuntimeMetadataConfig,
@@ -40,7 +42,6 @@ import {
 } from './types';
 import type { IdeationConfig, TaskWorkflowMode } from '../../shared/types';
 import { resetStuckSubtasks } from '../ipc-handlers/task/plan-file-utils';
-import { AUTO_BUILD_PATHS } from '../../shared/constants';
 import { projectStore } from '../project-store';
 import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';
 import { resolveModelId } from '../ai/config/phase-config';
@@ -464,7 +465,7 @@ export class AgentManager extends EventEmitter {
 
           // Process each spec directory
           for (const specDirName of specDirs) {
-            const planPath = path.join(specsDir, specDirName, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+            const planPath = path.join(specsDir, specDirName, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 
             // Check if implementation_plan.json exists
             if (!existsSync(planPath)) {
@@ -565,7 +566,7 @@ export class AgentManager extends EventEmitter {
 
     // Reset stuck subtasks if restarting an existing spec creation task
     if (specDir) {
-      const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+      const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
       console.log('[AgentManager] Resetting stuck subtasks before spec creation restart:', planPath);
       try {
         const { success, resetCount } = await resetStuckSubtasks(planPath);
@@ -1333,8 +1334,13 @@ export class AgentManager extends EventEmitter {
       // Reset stuck subtasks before restart to avoid picking up stale in-progress states
       if (context.specId || context.specDir) {
         const planPath = context.specDir
-          ? path.join(context.specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN)
-          : path.join(context.projectPath, AUTO_BUILD_PATHS.SPECS_DIR, context.specId, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+          ? path.join(context.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan)
+          : path.join(
+              context.projectPath,
+              getAutocodeSpecsRelativeDir(),
+              context.specId,
+              AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+            );
 
         console.log('[AgentManager] Resetting stuck subtasks before restart:', planPath);
         try {

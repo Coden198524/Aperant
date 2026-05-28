@@ -357,10 +357,10 @@ export function initializeProject(projectPath: string): InitializationResult {
   const legacyAutoBuildPath = getLegacyProjectDataPath(projectPath);
 
   if (existsSync(dotAutoBuildPath)) {
-    debug('Already initialized - .autocode exists');
+    debug(`Already initialized - ${AUTOCODE_PROJECT_DATA_DIR_NAME} exists`);
     return {
       success: false,
-      error: 'Project already has autocode initialized (.autocode exists)'
+      error: `Project already has autocode initialized (${AUTOCODE_PROJECT_DATA_DIR_NAME} exists)`
     };
   }
 
@@ -372,7 +372,7 @@ export function initializeProject(projectPath: string): InitializationResult {
   }
 
   try {
-    debug('Creating .autocode data directory', { dotAutoBuildPath });
+    debug(`Creating ${AUTOCODE_PROJECT_DATA_DIR_NAME} data directory`, { dotAutoBuildPath });
 
     // Create the .autocode directory
     mkdirSync(dotAutoBuildPath, { recursive: true });
@@ -463,19 +463,19 @@ export function getAutoBuildPath(projectPath: string): string | null {
   debug('getAutoBuildPath called', { projectPath, dotAutoBuildPath, legacyAutoBuildPath });
 
   if (existsSync(dotAutoBuildPath)) {
-    debug('Returning .autocode (installed version)');
+    debug(`Returning ${AUTOCODE_PROJECT_DATA_DIR_NAME} (installed version)`);
     return AUTOCODE_PROJECT_DATA_DIR_NAME;
   }
 
   if (existsSync(legacyAutoBuildPath)) {
     if (migrateLegacyProjectDataDirectory(projectPath)) {
-      debug('Returning .autocode after legacy migration');
+      debug(`Returning ${AUTOCODE_PROJECT_DATA_DIR_NAME} after legacy migration`);
       return AUTOCODE_PROJECT_DATA_DIR_NAME;
     }
     debug('Returning legacy .auto-claude path because migration failed');
     return AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME;
   }
 
-  debug('No .autocode folder found - project not initialized');
+  debug(`No ${AUTOCODE_PROJECT_DATA_DIR_NAME} folder found - project not initialized`);
   return null;
 }

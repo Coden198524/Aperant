@@ -34,6 +34,7 @@ import {
   getAutocodeProjectPromptsDir,
   getAutocodeProjectPromptsRelativeDir,
 } from '@autocode/core/project/data-paths';
+import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-rules';
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
@@ -94,25 +95,6 @@ interface PackageManifestInfo {
   packageManager: string;
   scripts: Record<string, string>;
 }
-
-const EXCLUDED_DIRECTORIES = new Set([
-  '.autocode',
-  '.git',
-  '.hg',
-  '.svn',
-  '.next',
-  '.nuxt',
-  '.turbo',
-  '.venv',
-  'build',
-  'coverage',
-  'dist',
-  'node_modules',
-  'out',
-  'target',
-  'vendor',
-  'venv',
-]);
 
 const SOURCE_EXTENSIONS = new Set([
   '.c',
@@ -192,7 +174,7 @@ function scanProject(projectPath: string): ScanStats {
       if (stats.totalFileCount >= maxFiles) return;
       if (entry.isSymbolicLink()) continue;
       if (entry.isDirectory()) {
-        if (EXCLUDED_DIRECTORIES.has(entry.name)) continue;
+        if (shouldSkipAutocodeWorkspaceDir(entry.name)) continue;
         visit(join(dir, entry.name), depth + 1);
         continue;
       }

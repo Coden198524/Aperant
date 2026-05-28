@@ -1,6 +1,7 @@
 import { ipcMain } from "electron";
 import type { BrowserWindow } from "electron";
 import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
   createAutocodeTask,
   type AutocodeTask,
   type AutocodeTaskMetadata,
@@ -160,7 +161,7 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
 
         const coreTask = createAutocodeTask({
           projectRoot: project.path,
-          dataDirName: project.autoBuildPath || ".autocode",
+          dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
           title,
           description,
           metadata: taskMetadata as unknown as AutocodeTaskMetadata,

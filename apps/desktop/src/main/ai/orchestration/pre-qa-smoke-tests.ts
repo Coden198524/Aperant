@@ -15,6 +15,10 @@ import { exec } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile, readdir } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  isAutocodeProjectDataPath,
+  shouldSkipAutocodeWorkspaceDir,
+} from '@autocode/core/workspace/ignore-rules';
 import { scanFiles } from '../security/secret-scanner';
 
 const execAsync = promisify(exec);
@@ -79,20 +83,6 @@ interface SmokeCheck {
 }
 
 const MAX_SECRET_SCAN_FILES = 1000;
-const SECRET_SCAN_SKIP_DIRS = new Set([
-  '.autocode',
-  '.git',
-  '.hg',
-  '.svn',
-  '.venv',
-  'build',
-  'coverage',
-  'dist',
-  'node_modules',
-  'out',
-  'venv',
-  '__pycache__',
-]);
 
 // =============================================================================
 // Smoke Test Configuration
@@ -460,9 +450,9 @@ function shouldSkipSecretScanDir(name: string, relativePath: string): boolean {
   const normalizedName = name.toLowerCase();
   const normalizedPath = normalizeRelativePath(relativePath);
 
-  return SECRET_SCAN_SKIP_DIRS.has(normalizedName) ||
+  return shouldSkipAutocodeWorkspaceDir(normalizedName) ||
     normalizedPath === null ||
-    normalizedPath.startsWith('.autocode/');
+    isAutocodeProjectDataPath(normalizedPath);
 }
 
 function uniqueNormalizedPaths(paths: string[]): string[] {
@@ -485,7 +475,7 @@ function normalizeRelativePath(filePath: string): string | null {
   if (normalized === '..' || normalized.startsWith('../') || normalized.includes('/../')) {
     return null;
   }
-  if (normalized === '.autocode' || normalized.startsWith('.autocode/')) {
+  if (isAutocodeProjectDataPath(normalized)) {
     return null;
   }
   return normalized;
