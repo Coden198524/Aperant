@@ -1,4 +1,4 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+﻿import { describe, it, expect, beforeEach } from 'vitest';
 
 import { ProgressTracker } from '../progress-tracker';
 import type { StreamEvent } from '../types';
@@ -28,12 +28,12 @@ describe('ProgressTracker', () => {
   // ===========================================================================
 
   describe('tool call detection', () => {
-    it('should detect planning from implementation_plan.json write', () => {
+    it('should detect planning from implementation_plan.md write', () => {
       const result = tracker.processEvent({
         type: 'tool-call',
         toolName: 'Write',
         toolCallId: 'c1',
-        args: { file_path: '/project/.autocode/specs/001/implementation_plan.json' },
+        args: { file_path: '/project/.autocode/specs/001/implementation_plan.md' },
       });
 
       expect(result).not.toBeNull();
@@ -42,14 +42,14 @@ describe('ProgressTracker', () => {
       expect(tracker.currentPhase).toBe('planning');
     });
 
-    it('should ignore implementation_plan.json writes during coding', () => {
+    it('should ignore implementation_plan.md writes during coding', () => {
       tracker.forcePhase('coding', 'Coding...');
 
       const result = tracker.processEvent({
         type: 'tool-call',
         toolName: 'Edit',
         toolCallId: 'c1',
-        args: { file_path: '/project/.autocode/specs/001/implementation_plan.json' },
+        args: { file_path: '/project/.autocode/specs/001/implementation_plan.md' },
       });
 
       expect(result).toBeNull();
@@ -415,7 +415,7 @@ describe('ProgressTracker', () => {
         type: 'tool-call',
         toolName: 'Write',
         toolCallId: 'c2',
-        args: { file_path: '/project/implementation_plan.json' },
+        args: { file_path: '/project/implementation_plan.md' },
       });
 
       expect(result).toBeNull();

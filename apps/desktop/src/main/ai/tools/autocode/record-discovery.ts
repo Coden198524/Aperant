@@ -9,10 +9,16 @@
  */
 
 import * as fs from 'node:fs';
-import * as path from 'node:path';
+import {
+  createEmptyAutocodeSessionCodebaseMap,
+  getAutocodeSessionCodebaseMapPath,
+  getAutocodeSessionMemoryDir,
+  parseAutocodeSessionCodebaseMap,
+  recordAutocodeSessionDiscovery,
+  stringifyAutocodeSessionCodebaseMap,
+} from '@autocode/core';
 import { z } from 'zod/v3';
 
-import { safeParseJson } from '../../../utils/json-repair';
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 
@@ -31,15 +37,6 @@ const inputSchema = z.object({
 });
 
 // ---------------------------------------------------------------------------
-// Internal Types
-// ---------------------------------------------------------------------------
-
-interface CodebaseMap {
-  discovered_files: Record<string, { description: string; category: string; discovered_at: string }>;
-  last_updated: string | null;
-}
-
-// ---------------------------------------------------------------------------
 // Tool Definition
 // ---------------------------------------------------------------------------
 
@@ -55,17 +52,17 @@ export const recordDiscoveryTool = Tool.define({
   inputSchema,
   execute: (input, context) => {
     const { file_path, description, category = 'general' } = input;
-    const memoryDir = path.join(context.specDir, 'memory');
+    const memoryDir = getAutocodeSessionMemoryDir(context.specDir);
 
     try {
       fs.mkdirSync(memoryDir, { recursive: true });
 
-      const mapFile = path.join(memoryDir, 'codebase_map.json');
-      let codebaseMap: CodebaseMap = { discovered_files: {}, last_updated: null };
+      const mapFile = getAutocodeSessionCodebaseMapPath(context.specDir);
+      let codebaseMap = createEmptyAutocodeSessionCodebaseMap();
 
       if (fs.existsSync(mapFile)) {
         try {
-          const parsed = safeParseJson<CodebaseMap>(fs.readFileSync(mapFile, 'utf-8'));
+          const parsed = parseAutocodeSessionCodebaseMap(fs.readFileSync(mapFile, 'utf-8'));
           if (parsed) codebaseMap = parsed;
           // Start fresh if corrupt (parsed === null)
         } catch {
@@ -73,15 +70,14 @@ export const recordDiscoveryTool = Tool.define({
         }
       }
 
-      codebaseMap.discovered_files[file_path] = {
+      codebaseMap = recordAutocodeSessionDiscovery(codebaseMap, {
+        filePath: file_path,
         description,
         category,
-        discovered_at: new Date().toISOString(),
-      };
-      codebaseMap.last_updated = new Date().toISOString();
+      });
 
       const tmp = `${mapFile}.tmp`;
-      fs.writeFileSync(tmp, JSON.stringify(codebaseMap, null, 2), 'utf-8');
+      fs.writeFileSync(tmp, stringifyAutocodeSessionCodebaseMap(codebaseMap), 'utf-8');
       fs.renameSync(tmp, mapFile);
 
       return `Recorded discovery for '${file_path}': ${description}`;

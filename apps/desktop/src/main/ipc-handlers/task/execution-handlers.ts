@@ -115,14 +115,14 @@ async function ensureProfileManagerInitialized(): Promise<
 
 /**
  * Get the spec directory for file watching, preferring the worktree path if it exists.
- * When a task runs in a worktree, implementation_plan.json is written there,
+ * When a task runs in a worktree, implementation_plan.md is written there,
  * not in the main project's spec directory.
  */
 function getSpecDirForWatcher(projectPath: string, specsBaseDir: string, specId: string): string {
   const worktreePath = findTaskWorktree(projectPath, specId);
   if (worktreePath) {
     const worktreeSpecDir = path.join(worktreePath, specsBaseDir, specId);
-    if (existsSync(path.join(worktreeSpecDir, 'implementation_plan.json'))) {
+    if (existsSync(path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan))) {
       return worktreeSpecDir;
     }
   }
@@ -130,20 +130,11 @@ function getSpecDirForWatcher(projectPath: string, specsBaseDir: string, specId:
 }
 
 /**
- * Check whether implementation_plan.json contains at least one subtask.
+ * Check whether implementation_plan.md contains at least one subtask.
  */
 function hasPlanSubtasks(planFilePath: string): boolean {
-  const planContent = safeReadFileSync(planFilePath);
-  if (!planContent) {
-    return false;
-  }
-
-  try {
-    const plan = JSON.parse(planContent);
-    return checkSubtasksCompletion(plan).totalCount > 0;
-  } catch {
-    return false;
-  }
+  const plan = loadImplementationPlanFromFilesSync(planFilePath);
+  return plan ? checkSubtasksCompletion(plan).totalCount > 0 : false;
 }
 
 function hasPlanSubtasksInAnyPath(planFilePaths: string[]): boolean {
@@ -197,17 +188,8 @@ function hasDirectReviewArtifact(specDir: string): boolean {
     return true;
   }
 
-  const planContent = safeReadFileSync(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
-  if (!planContent) {
-    return false;
-  }
-
-  try {
-    const plan = JSON.parse(planContent) as Record<string, unknown>;
-    return Boolean(plan.direct_execution);
-  } catch {
-    return false;
-  }
+  const plan = loadImplementationPlanFromFilesSync(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan)) as Record<string, unknown> | null;
+  return Boolean(plan?.direct_execution);
 }
 
 const IMPLEMENTATION_FAILURE_FEEDBACK_PATTERNS: RegExp[] = [
@@ -248,7 +230,7 @@ function buildHumanInputContent(feedback: string, imageReferences: string): stri
     `## Instructions\n\n` +
     `- Fix the reported implementation issues.\n` +
     `- Re-run the relevant build/test/validation steps.\n` +
-    `- Update implementation_plan.json as you make progress.\n`
+    `- Update implementation_plan.md as you make progress.\n`
   );
 }
 
@@ -482,7 +464,7 @@ export function registerTaskExecutionHandlers(
       // - lastSequenceByTask doesn't drop events from the new process
       taskStateManager.prepareForRestart(taskId);
 
-      // Check if implementation_plan.json has valid subtasks BEFORE XState handling.
+      // Check if implementation_plan.md has valid subtasks BEFORE XState handling.
       // This is more reliable than task.subtasks.length which may not be loaded yet.
       const specsBaseDir = getSpecsDir(project.autoBuildPath);
       const specDir = path.join(
@@ -517,7 +499,7 @@ export function registerTaskExecutionHandlers(
       }
 
       // Start file watcher for this task
-      // Use worktree path if it exists, since the backend writes implementation_plan.json there
+      // Use worktree path if it exists, since the backend writes implementation_plan.md there
       const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
       fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
         console.error(`[TASK_START] Failed to watch spec dir for ${taskId}:`, err);
@@ -731,7 +713,7 @@ export function registerTaskExecutionHandlers(
         }
 
         // Write feedback for QA fixer - write to WORKTREE spec dir if it exists
-        // The QA process runs in the worktree where the build and implementation_plan.json are
+        // The QA process runs in the worktree where the build and implementation_plan.md are
         const targetSpecDir = hasWorktree && worktreeSpecDir ? worktreeSpecDir : specDir;
         const fixRequestPath = path.join(targetSpecDir, 'QA_FIX_REQUEST.md');
 
@@ -950,7 +932,7 @@ export function registerTaskExecutionHandlers(
         taskStateManager.prepareForRestart(taskId);
 
         // Restart QA process - use worktree path if it exists, otherwise main project
-        // The QA process needs to run where the implementation_plan.json with completed subtasks is
+        // The QA process needs to run where the implementation_plan.md with completed subtasks is
         const qaProjectPath = hasWorktree ? worktreePath : project.path;
         console.warn('[TASK_REVIEW] Starting QA process with projectPath:', qaProjectPath);
         agentManager.startQAProcess(taskId, qaProjectPath, task.specId, project.id);
@@ -1193,7 +1175,7 @@ export function registerTaskExecutionHandlers(
           }
 
           // Start file watcher for this task
-          // Use worktree path if it exists, since the backend writes implementation_plan.json there
+          // Use worktree path if it exists, since the backend writes implementation_plan.md there
           const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
           fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
             console.error(`[TASK_UPDATE_STATUS] Failed to watch spec dir for ${taskId}:`, err);
@@ -1205,15 +1187,8 @@ export function registerTaskExecutionHandlers(
           // FIX (#1562): Check actual plan file for subtasks, not just task.subtasks.length
           const updatePlanFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
           let updatePlanHasSubtasks = false;
-          const updatePlanContent = safeReadFileSync(updatePlanFilePath);
-          if (updatePlanContent) {
-            try {
-              const plan = JSON.parse(updatePlanContent);
-              updatePlanHasSubtasks = checkSubtasksCompletion(plan).totalCount > 0;
-            } catch {
-              // Invalid/corrupt plan file - treat as no subtasks
-            }
-          }
+          const updatePlan = loadImplementationPlanFromFilesSync(updatePlanFilePath);
+          updatePlanHasSubtasks = updatePlan ? checkSubtasksCompletion(updatePlan).totalCount > 0 : false;
           const runtimePlan = createRuntimePlanForTask({
             taskId,
             task,
@@ -1371,7 +1346,7 @@ export function registerTaskExecutionHandlers(
         task.specId
       );
 
-      // Update implementation_plan.json
+      // Update implementation_plan.md
       const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
       console.log(`[Recovery] Writing to plan file at: ${planPath} (task location: ${task.location || 'main'})`);
 
@@ -1396,18 +1371,7 @@ export function registerTaskExecutionHandlers(
         // Read the plan to analyze subtask progress
         // Using safe read to avoid TOCTOU race conditions
         let plan: Record<string, unknown> | null = null;
-        const planContent = safeReadFileSync(planPath);
-        if (planContent) {
-          try {
-            plan = JSON.parse(planContent);
-          } catch (parseError) {
-            console.error('[Recovery] Failed to parse plan file as JSON:', parseError);
-            return {
-              success: false,
-              error: 'Plan file contains invalid JSON. The file may be corrupted.'
-            };
-          }
-        }
+        plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
 
         // Determine the target status intelligently based on subtask progress
         // If targetStatus is explicitly provided, use it; otherwise calculate from subtasks
@@ -1469,11 +1433,10 @@ export function registerTaskExecutionHandlers(
             plan.xstateState = 'human_review';
 
             // Write to ALL plan file locations to ensure consistency
-            const planContent = JSON.stringify(plan, null, 2);
             let writeSucceededForComplete = false;
             for (const pathToUpdate of planPathsToUpdate) {
               try {
-                writeFileAtomicSync(pathToUpdate, planContent);
+                saveImplementationPlanToFilesSync(pathToUpdate, plan as ShardableImplementationPlan);
                 console.log(`[Recovery] Successfully wrote to: ${pathToUpdate}`);
                 writeSucceededForComplete = true;
               } catch (writeError) {
@@ -1660,10 +1623,9 @@ export function registerTaskExecutionHandlers(
             if (plan) {
               plan.status = 'in_progress';
               plan.planStatus = 'in_progress';
-              const restartPlanContent = JSON.stringify(plan, null, 2);
               for (const pathToUpdate of planPathsToUpdate) {
                 try {
-                  writeFileAtomicSync(pathToUpdate, restartPlanContent);
+                  saveImplementationPlanToFilesSync(pathToUpdate, plan as ShardableImplementationPlan);
                   console.log(`[Recovery] Wrote restart status to: ${pathToUpdate}`);
                 } catch (writeError) {
                   console.error(`[Recovery] Failed to write plan file for restart at ${pathToUpdate}:`, writeError);
@@ -1679,7 +1641,7 @@ export function registerTaskExecutionHandlers(
 
             // Start the task execution
             // Start file watcher for this task
-            // Use worktree path if it exists, since the backend writes implementation_plan.json there
+            // Use worktree path if it exists, since the backend writes implementation_plan.md there
             const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
             fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
               console.error(`[Recovery] Failed to watch spec dir for ${taskId}:`, err);

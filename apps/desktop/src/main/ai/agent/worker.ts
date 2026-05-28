@@ -485,9 +485,9 @@ function getImplementationPlanLanguageRequirement(
 ): string | null {
   switch (language) {
     case 'zh-CN':
-      return 'When writing implementation_plan.json, all user-facing planning fields must be in Simplified Chinese. This includes `feature`, phase `name` and `description`, subtask `title`, subtask `description`, acceptance criteria, and progress notes. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed, but do not leave the planning text itself in English.';
+      return 'When writing implementation_plan.md, all user-facing planning text must be in Simplified Chinese. This includes the Feature metadata, phase names, subtask titles, subtask descriptions, acceptance criteria, and progress notes. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed, but do not leave the planning text itself in English.';
     case 'fr':
-      return 'When writing implementation_plan.json, all user-facing planning fields must be in French. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed.';
+      return 'When writing implementation_plan.md, all user-facing planning text must be in French. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed.';
     default:
       return null;
   }
@@ -704,7 +704,7 @@ async function assemblePrompt(
       '',
       '## AGGRESSIVE WORKFLOW CODING LIMITS',
       'This task is running in aggressive mode. Keep coding to one compact implementation session.',
-      '- Use the kickoff subtask details as primary context; do not start by reading spec.md or implementation_plan.json when Current Subtask is present.',
+      '- Use the kickoff subtask details as primary context; do not start by reading spec.md or implementation_plan.md when Current Subtask is present.',
       '- Avoid broad repository discovery. Read only files required for the implementation.',
       '- On Windows project roots such as E:\\path, use that path directly in commands; do not rewrite it as /e/path.',
       '- Prefer one target write/edit pass, one targeted verification, then completion.',
@@ -1080,8 +1080,6 @@ function persistDirectTaskCompletion(
         ? plan.feature
         : basename(specDir);
       plan.workflow_type = 'direct';
-      plan.split_plan = false;
-      plan.plan_files = undefined;
       plan.status = success ? 'human_review' : 'error';
       plan.planStatus = success ? 'review' : 'pending';
       plan.reviewReason = success ? 'completed' : 'errors';
@@ -1971,7 +1969,7 @@ function buildSpecKickoffMessage(
       baseMessage = `Write a compact implementation specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}. Use prior phase context as the source of truth; do not re-read context.json or requirements.json unless missing. Keep spec.md focused, normally 40-80 lines for balanced workflow, with overview, files, core behavior, and acceptance checks only.`;
       break;
     case 'planner':
-      baseMessage = `Create a concise implementation plan for: ${taskDescription}. Use the prior phase context already provided in this kickoff before reading files. If you need spec.md, read only the relevant section with a line limit. Create ${promptSpecDir}/implementation_plan.json with concrete coding subtasks. Project root: ${promptProjectDir}.`;
+      baseMessage = `Create a concise implementation plan for: ${taskDescription}. Use the prior phase context already provided in this kickoff before reading files. If you need spec.md, read only the relevant section with a line limit. Create ${promptSpecDir}/implementation_plan.md with concrete checklist subtasks. Project root: ${promptProjectDir}.`;
       break;
     case 'spec_critic':
       baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
@@ -1980,7 +1978,7 @@ function buildSpecKickoffMessage(
       baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and return ONLY the compact context.json object; the orchestrator will write ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Use narrow reads only, and do not include transcripts, copied source, or long analysis.`;
       break;
     case 'spec_validation':
-      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.json are complete, consistent, and ready for implementation. Use targeted reads with limits; do not read entire large files unless required. Fix only blocking issues. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
+      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.md are complete, consistent, and ready for implementation. Use targeted reads with limits; do not read entire large files unless required. Fix only blocking issues. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
       break;
     default:
       baseMessage = `Complete the spec creation task described in your system prompt. Task: ${taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
@@ -2111,11 +2109,11 @@ function buildKickoffMessage(
   let baseMessage: string;
   if (mmoRole) {
     if (agentType === 'mmo_system_designer') {
-      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.json with concrete phases and subtasks. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
+      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.md with concrete checklist phases and subtasks. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
     } else if (agentType === 'mmo_qa_reviewer') {
-      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.json first, then run one focused project-appropriate verification when available. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, then run one focused project-appropriate verification when available. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
     } else if (agentType === 'mmo_qa_fixer') {
-      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, and update ${promptSpecDir}/qa_report.md or implementation_plan.json to show fixes have been applied.`;
+      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, and update ${promptSpecDir}/qa_report.md or implementation_plan.md to show fixes have been applied.`;
     } else if (subtaskId) {
       baseMessage = [
         mmoRole,
@@ -2131,11 +2129,11 @@ function buildKickoffMessage(
         buildMmoCodingQualityChecklist(),
       ].join('\n');
     } else {
-      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/implementation_plan.json and implement the next pending subtask in ${promptProjectDir}. Update its status to "completed" when done.`;
+      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/implementation_plan.md and implement the next pending subtask in ${promptProjectDir}. Mark its checkbox as completed when done.`;
     }
   } else switch (agentType) {
     case 'planner':
-      baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed implementation plan at ${promptSpecDir}/implementation_plan.json. Project root: ${promptProjectDir}`;
+      baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed OpenSpec-style checklist plan at ${promptSpecDir}/implementation_plan.md. Project root: ${promptProjectDir}`;
       break;
     case 'coder':
       if (subtaskId) {
@@ -2145,14 +2143,14 @@ function buildKickoffMessage(
           subtaskId,
         );
       } else {
-        baseMessage = `Read ${promptSpecDir}/implementation_plan.json and implement the next pending subtask. Project root: ${promptProjectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+        baseMessage = `Read ${promptSpecDir}/implementation_plan.md and implement the next pending subtask. Project root: ${promptProjectDir}. After completing the subtask, mark its checkbox as [x] and add a _Completion_ note in implementation_plan.md.`;
       }
       break;
     case 'direct_task':
       baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. End with a short markdown review table.`;
       break;
     case 'qa_reviewer':
-      baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.json statuses, completion summaries, and file hints. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Read source only when the check fails or the plan lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read spec.md, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+      baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, and file hints. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Read source only when the check fails or the plan lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read spec.md, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
       break;
     case 'qa_fixer':
       baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/qa_report.md to indicate fixes have been applied.`;
@@ -2200,27 +2198,27 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
       shared.push('', buildMmoSpecialistList(), '', 'Use this roster as a coverage checklist for focused MMO review; work directly with the tools available in this session.');
     }
     if (agentType === 'mmo_system_designer') {
-      shared.push('', 'Create implementation_plan.json with executable subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending".');
+      shared.push('', 'Create implementation_plan.md as an OpenSpec-style checklist with executable subtasks. Use [ ] for pending subtasks and concise metadata bullets for files, dependencies, requirements, and verification.');
     }
     if (agentType === 'mmo_qa_reviewer') {
       shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`);
     }
     if (agentType === 'mmo_qa_fixer') {
-      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Update qa_report.md or implementation_plan.json after fixes.`);
+      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Update qa_report.md or implementation_plan.md after fixes.`);
     }
     return shared.join('\n');
   }
   switch (agentType) {
     case 'planner':
-      return `You are a planning agent. Read spec.md in ${promptSpecDir} and create implementation_plan.json with phases and subtasks. Each subtask must have id, description, and status fields. Set all statuses to "pending". If the system prompt specifies an app language, localize all user-facing planning fields such as feature, phase names, subtask titles, and subtask descriptions to that language.`;
+      return `You are a planning agent. Read spec.md in ${promptSpecDir} and create implementation_plan.md as an OpenSpec-style checklist with phases and subtasks. Use [ ] for pending, [/] for in progress, [x] for completed, [-] for blocked, and [!] for failed. If the system prompt specifies an app language, localize all user-facing planning text to that language.`;
     case 'coder':
-      return `You are a coding agent. Implement the current pending subtask from implementation_plan.json in ${promptSpecDir}. Project root: ${promptProjectDir}. After completing the subtask, update its status to "completed" in implementation_plan.json.`;
+      return `You are a coding agent. Implement the current pending subtask from implementation_plan.md in ${promptSpecDir}. Project root: ${promptProjectDir}. After completing the subtask, mark it [x] and add a _Completion_ note in implementation_plan.md.`;
     case 'direct_task':
       return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. End with a markdown table: What changed, Verification, Review notes.`;
     case 'qa_reviewer':
-      return `You are a QA reviewer. Use minimal verification: inspect ${promptSpecDir}/implementation_plan.json, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Avoid broad searches and repeated full-file reads. Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
+      return `You are a QA reviewer. Use minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Avoid broad searches and repeated full-file reads. Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
     case 'qa_fixer':
-      return `You are a QA fixer. Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix the issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/implementation_plan.json qa_signoff status to "fixes_applied".`;
+      return `You are a QA fixer. Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix the issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/implementation_plan.md to show fixes have been applied.`;
     default:
       return `You are an AI agent. Complete the task described in ${promptSpecDir}/spec.md for the project at ${promptProjectDir}.`;
   }

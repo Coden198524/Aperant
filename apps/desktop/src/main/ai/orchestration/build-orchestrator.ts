@@ -23,17 +23,13 @@ import {
 } from '../../../shared/constants/phase-protocol';
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import type { Phase } from '@autocode/core';
+import { AUTOCODE_TASK_ARTIFACTS, type Phase } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   ImplementationPlanSchema,
-  ImplementationPlanOutputSchema,
-  validateAndNormalizeJsonFile,
   validateImplementationPlanLanguage,
-  repairJsonWithLLM,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
   writeImplementationPlanFiles,
-  rewriteImplementationPlanFiles,
   loadImplementationPlanFromFiles,
   saveImplementationPlanToFiles,
 } from '../schema';
@@ -64,8 +60,7 @@ const ERROR_RETRY_DELAY_MS = 5_000;
 function isWriteToolPlanOutputFailure(message: string): boolean {
   const lower = message.toLowerCase();
   return lower.includes("tool 'write'") &&
-    (lower.includes('implementation_plan.json') ||
-      lower.includes('implementation_plan.phase-') ||
+    (lower.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan) ||
       lower.includes('input json failed') ||
       lower.includes('json parsing failed') ||
       lower.includes('invalid input') ||
@@ -74,10 +69,7 @@ function isWriteToolPlanOutputFailure(message: string): boolean {
 
 function isImplementationPlanFileFailure(message: string): boolean {
   const lower = message.toLowerCase();
-  return lower.includes('implementation_plan.json') ||
-    lower.includes('implementation_plan.phase-') ||
-    lower.includes('subtasks_file') ||
-    lower.includes('plan_files');
+  return lower.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 }
 
 function hasExecutableSubtasks(plan: ImplementationPlan | null): boolean {
@@ -103,15 +95,14 @@ function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string 
     '',
     `Previous planning attempt failed because a Write tool call was malformed or too large: ${errorMessage}`,
     '',
-    'Retry by writing smaller implementation plan files with the Write tool.',
-    'Do not return one giant plan JSON as final text.',
+    `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with the Write tool.`,
+    'Use checklist Markdown, not JSON.',
     'Use forward slashes in file_path, including Windows paths.',
     'Each Write input must be one object with file_path and content.',
-    'If the plan is large, write implementation_plan.phase-1.json, implementation_plan.phase-2.json, etc. first.',
-    'Then write a compact implementation_plan.json index with split_plan, plan_files, and phases that reference subtasks_file.',
-    'Keep descriptions concise so each file is valid and schema-compatible.',
+    'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" items with _Files_, _Depends on_, _Requirements_, and _Verification_ metadata.',
+    'Keep descriptions concise so the single Markdown file stays readable.',
     'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    'For genuinely complex tasks, preserve necessary subtasks by splitting files instead of dropping work.',
+    'For genuinely complex tasks, preserve necessary subtasks with concise bullets instead of splitting files.',
     'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
@@ -130,9 +121,9 @@ function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): s
     'Retry by using the Write tool to rewrite the implementation plan files.',
     'Do not paste the full plan into the final response.',
     'Use forward slashes in file_path, including Windows paths.',
-    'For large plans, write phase files first, then write a compact implementation_plan.json index with subtasks_file references.',
+    `Rewrite ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
     'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    'For genuinely complex tasks, preserve necessary subtasks by splitting files instead of dropping work.',
+    'For genuinely complex tasks, keep descriptions concise instead of splitting files.',
     'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   ].join('\n');
 }
@@ -282,7 +273,7 @@ export interface BuildOutcome {
 // Implementation Plan Types
 // =============================================================================
 
-/** Structure of implementation_plan.json */
+/** Structure of implementation_plan.md */
 interface ImplementationPlan {
   feature?: string;
   workflow_type?: string;
@@ -356,7 +347,7 @@ export class BuildOrchestrator extends EventEmitter {
    * Run the full build lifecycle.
    *
    * Phase progression:
-   * 1. Check if implementation_plan.json is missing or non-executable
+   * 1. Check if implementation_plan.md is missing or non-executable
    *    - Missing/empty/invalid: Run planning phase to create a usable plan
    *    - Valid with subtasks: Skip to coding
    * 2. Run coding phase (iterate subtasks)
@@ -390,14 +381,17 @@ export class BuildOrchestrator extends EventEmitter {
       // This is critical when the spec_orchestrator creates the plan (before the
       // build orchestrator runs) — it may omit `status` fields or use alternate
       // field names, causing the subtask iterator to find 0 pending subtasks.
-      const preCodingPlanPath = join(this.config.specDir, 'implementation_plan.json');
-      const preCodingValidation = await validateAndNormalizeJsonFile(preCodingPlanPath, ImplementationPlanSchema);
-      if (!preCodingValidation.valid) {
-        const errorDetail = preCodingValidation.errors.join('; ');
+      const preCodingPlan = await loadImplementationPlanFromFiles(this.config.specDir);
+      const preCodingValidation = preCodingPlan ? ImplementationPlanSchema.safeParse(preCodingPlan) : null;
+      if (!preCodingValidation?.success) {
+        const errorDetail = preCodingValidation
+          ? preCodingValidation.error.issues.map((issue) => issue.message).join('; ')
+          : `${AUTOCODE_TASK_ARTIFACTS.implementationPlan} not found`;
         this.emitTyped('log', `${translateLogMessage('Pre-coding plan validation failed', this.config.language)}: ${errorDetail}`);
         return this.buildOutcome(false, Date.now() - startTime,
           `Implementation plan is invalid and cannot be executed: ${errorDetail}`);
       }
+      await saveImplementationPlanToFiles(this.config.specDir, preCodingValidation.data as never);
 
       // Check if build is already complete
       if (await this.isBuildComplete()) {
@@ -462,7 +456,7 @@ export class BuildOrchestrator extends EventEmitter {
   // ===========================================================================
 
   /**
-   * Run the planning phase: invoke planner agent to create implementation_plan.json.
+   * Run the planning phase: invoke planner agent to create implementation_plan.md.
    */
   private async runPlanningPhase(): Promise<{ success: boolean; error?: string }> {
     this.transitionPhase('planning', translatePhaseMessage('planning', 'Creating implementation plan', this.config.language));
@@ -514,7 +508,7 @@ export class BuildOrchestrator extends EventEmitter {
         const errorMessage = result.error?.message ?? 'Planning session failed';
         if (attempt < maxPlanningRetries && (isWriteToolPlanOutputFailure(errorMessage) || isImplementationPlanFileFailure(errorMessage))) {
           planningRetryContext = buildPlanningStructuredOutputRetryPrompt(errorMessage);
-          this.emitTyped('log', 'Planning failed while writing implementation plan files; retrying with split Write guidance...');
+          this.emitTyped('log', 'Planning failed while writing implementation plan; retrying with Markdown guidance...');
           continue;
         }
         return { success: false, error: errorMessage };
@@ -537,41 +531,34 @@ export class BuildOrchestrator extends EventEmitter {
       // Validate + normalize the implementation plan using Zod schema.
       // Zod coercion handles LLM field name variations (title→description,
       // subtask_id→id, status normalization, etc.) and writes back canonical data.
-      const planPath = join(this.config.specDir, 'implementation_plan.json');
-      const validationErrorsFromRewrite: string[] = [];
-      try {
-        const rewrite = await rewriteImplementationPlanFiles(this.config.specDir);
-        if (rewrite?.split) {
-          this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
-        }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        validationErrorsFromRewrite.push(`Failed to write split implementation plan files: ${message}`);
-        this.emitTyped('log', `Planning file rewrite failed: ${message}. Checking whether the main implementation_plan.json can still be used...`);
+      const hydratedPlan = await loadImplementationPlanFromFiles(this.config.specDir);
+      const parsedPlan = hydratedPlan ? ImplementationPlanSchema.safeParse(hydratedPlan) : null;
+      const validation = parsedPlan?.success
+        ? { valid: true as const, data: parsedPlan.data, errors: [] as string[] }
+        : {
+            valid: false as const,
+            errors: parsedPlan
+              ? parsedPlan.error.issues.map((issue) => issue.message)
+              : [`File not found or unreadable: ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`],
+          };
+      if (validation.valid) {
+        await saveImplementationPlanToFiles(this.config.specDir, validation.data as never);
       }
-
-      const validation = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
-      const hydratedPlan = validation.valid
-        ? await loadImplementationPlanFromFiles(this.config.specDir)
-        : null;
-      const languageErrors = validation.valid && hydratedPlan
-        ? validateImplementationPlanLanguage(hydratedPlan as never, this.config.language)
+      const normalizedPlan = validation.valid ? validation.data as ImplementationPlan : null;
+      const languageErrors = validation.valid && normalizedPlan
+        ? validateImplementationPlanLanguage(normalizedPlan as never, this.config.language)
         : [];
-      const executionErrors = validation.valid && !hasExecutableSubtasks(hydratedPlan as ImplementationPlan | null)
-        ? ['Implementation plan has no executable subtasks. If using split plan files, ensure every subtasks_file exists and contains subtasks.']
+      const executionErrors = validation.valid && !hasExecutableSubtasks(normalizedPlan)
+        ? ['Implementation plan has no executable subtasks.']
         : [];
       const validationErrors = validation.valid
         ? [
-            ...(executionErrors.length > 0 ? validationErrorsFromRewrite : []),
             ...executionErrors,
             ...languageErrors,
           ]
-        : [...validationErrorsFromRewrite, ...validation.errors, ...languageErrors];
+        : [...validation.errors, ...languageErrors];
 
       if (validation.valid && validationErrors.length === 0) {
-        if (validationErrorsFromRewrite.length > 0) {
-          this.emitTyped('log', 'Split plan file rewrite failed, but the main implementation_plan.json is executable. Continuing without stopping the task.');
-        }
         // Sync to source if in worktree mode
         if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
           await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);
@@ -583,31 +570,7 @@ export class BuildOrchestrator extends EventEmitter {
       // Plan is invalid. Default to a full planner retry so complex plans can
       // be rewritten with smaller phase files instead of another large schema output.
       validationFailures++;
-      this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Retrying with split Write guidance...`);
-
-      const allowStructuredPlanRepair = process.env.AUTOCODE_ENABLE_PLAN_STRUCTURED_REPAIR === '1';
-      if (allowStructuredPlanRepair && this.config.getModel) {
-        const model = await this.config.getModel(agentType);
-        if (model) {
-          const repairResult = await repairJsonWithLLM(
-            planPath,
-            ImplementationPlanSchema,
-            ImplementationPlanOutputSchema,
-            model,
-            validationErrors,
-            IMPLEMENTATION_PLAN_SCHEMA_HINT,
-          );
-          if (repairResult.valid) {
-            this.emitTyped('log', translateLogMessage('Lightweight repair succeeded', this.config.language));
-            if (this.config.sourceSpecDir && this.config.syncSpecToSource) {
-              await this.config.syncSpecToSource(this.config.specDir, this.config.sourceSpecDir);
-            }
-            this.markPhaseCompleted('planning');
-            return { success: true };
-          }
-          this.emitTyped('log', `Lightweight repair failed: ${repairResult.errors.join(', ')}`);
-        }
-      }
+      this.emitTyped('log', `Plan validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}. Retrying with Markdown plan guidance...`);
 
       // Lightweight repair failed or unavailable — fall back to full re-plan
       if (validationFailures >= maxPlanningRetries) {
@@ -998,7 +961,7 @@ export class BuildOrchestrator extends EventEmitter {
   // ===========================================================================
 
   // normalizeSubtaskIds() REMOVED — replaced by Zod schema coercion in
-  // validateAndNormalizeJsonFile(). The ImplementationPlanSchema handles:
+  // ImplementationPlanSchema handles:
   // - subtask_id → id, task_id → id
   // - title → description, name → description
   // - phase_id → id
@@ -1047,7 +1010,7 @@ export class BuildOrchestrator extends EventEmitter {
   }
 
   // validateImplementationPlan() REMOVED — replaced by Zod schema validation
-  // via validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema).
+  // via parsing implementation_plan.md and validating with ImplementationPlanSchema.
   // The Zod schema provides:
   // - Structural validation (required fields, types, array shapes)
   // - Coercion of LLM field name variations (title→description, etc.)
@@ -1069,14 +1032,12 @@ export class BuildOrchestrator extends EventEmitter {
   private async shouldRunPlanningPhase(): Promise<boolean> {
     try {
       if (this.config.workflowConfig?.optimizationLevel === 'aggressive') {
-        const planPath = join(this.config.specDir, 'implementation_plan.json');
-        const validation = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
-        if (validation.valid) {
-          const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
-          if (hasExecutableSubtasks(plan)) {
-            this.emitTyped('log', 'Aggressive workflow: using existing quick implementation plan and skipping planner session');
-            return false;
-          }
+        const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
+        const validation = plan ? ImplementationPlanSchema.safeParse(plan) : null;
+        if (validation?.success && hasExecutableSubtasks(validation.data as ImplementationPlan)) {
+          await saveImplementationPlanToFiles(this.config.specDir, validation.data as never);
+          this.emitTyped('log', 'Aggressive workflow: using existing quick implementation plan and skipping planner session');
+          return false;
         }
       }
 

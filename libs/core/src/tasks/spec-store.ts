@@ -5,6 +5,11 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   normalizeAutocodeProjectDataDirName,
 } from './artifacts.js';
+import {
+  loadAutocodeImplementationPlanSync,
+  saveAutocodeImplementationPlanSync,
+} from './plan-store.js';
+import type { MutableAutocodePlan } from './plan-file.js';
 
 export type AutocodeTaskStatus =
   | 'backlog'
@@ -47,7 +52,7 @@ export type AutocodeExecutionPhase =
   | 'stopped';
 
 export interface AutocodeTaskMetadata {
-  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab';
+  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
   category?: AutocodeTaskCategory;
   complexity?: AutocodeTaskComplexity;
   impact?: AutocodeTaskImpact;
@@ -269,7 +274,7 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
     phases: [],
   };
 
-  writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan), plan);
+  saveAutocodeImplementationPlanSync(specDir, plan as MutableAutocodePlan);
   writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata), metadata);
   writeJson(
     join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements),
@@ -336,8 +341,7 @@ export function updateAutocodeTaskPlanStatus(input: UpdateAutocodeTaskPlanStatus
     dataDirName: input.dataDirName,
     specId: task.specId,
   });
-  const planPath = join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
-  const plan = readJson<ImplementationPlanFile>(planPath) ?? {
+  const plan = loadAutocodeImplementationPlanSync(specDir) as ImplementationPlanFile | null ?? {
     feature: task.title,
     description: task.description,
     created_at: task.createdAt,
@@ -363,7 +367,7 @@ export function updateAutocodeTaskPlanStatus(input: UpdateAutocodeTaskPlanStatus
     delete plan.executionPhase;
   }
 
-  writeJson(planPath, plan);
+  saveAutocodeImplementationPlanSync(specDir, plan as unknown as MutableAutocodePlan);
 
   const updated = readAutocodeTask({
     projectRoot: input.projectRoot,
@@ -393,7 +397,7 @@ export function slugifySpecTitle(title: string): string {
 
 function readAutocodeTask(input: AutocodeTaskPathsInput & { specId: string }): AutocodeTask | null {
   const specDir = getAutocodeSpecDir(input);
-  const plan = readJson<ImplementationPlanFile>(join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
+  const plan = loadAutocodeImplementationPlanSync(specDir) as ImplementationPlanFile | null;
   const requirements = readJson<Record<string, unknown>>(join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements));
   const metadata = readJson<AutocodeTaskMetadata>(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata)) ?? undefined;
   const specTitle = readSpecTitle(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));

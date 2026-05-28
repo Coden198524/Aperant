@@ -2,6 +2,7 @@ import chokidar, { FSWatcher } from 'chokidar';
 import { existsSync } from 'fs';
 import path from 'path';
 import { EventEmitter } from 'events';
+import { getAutocodeImplementationPlanPath } from '@autocode/core';
 import type { ImplementationPlan } from '../shared/types';
 import {
   listImplementationPlanWatchFiles,
@@ -17,7 +18,7 @@ interface WatcherInfo {
 }
 
 /**
- * Watches implementation_plan.json files for real-time progress updates
+ * Watches implementation_plan.md files for real-time progress updates
  */
 export class FileWatcher extends EventEmitter {
   private watchers: Map<string, WatcherInfo> = new Map();
@@ -73,7 +74,7 @@ export class FileWatcher extends EventEmitter {
         return;
       }
 
-      const planPath = path.join(specDir, 'implementation_plan.json');
+      const planPath = getAutocodeImplementationPlanPath(specDir);
       const watchFiles = listImplementationPlanWatchFiles(specDir);
 
       // Check if plan file exists

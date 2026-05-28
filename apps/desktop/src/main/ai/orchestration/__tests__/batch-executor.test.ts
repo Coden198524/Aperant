@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi } from 'vitest';
 import { executeBatches } from '../batch-executor';
 import type { BatchExecutorConfig } from '../batch-executor';
 import type { SessionResult } from '../../session/types';
@@ -9,6 +9,8 @@ const mockMkdir = vi.fn();
 const mockRename = vi.fn();
 const mockUnlink = vi.fn();
 const mockUpdatePlanFile = vi.fn();
+const mockLoadImplementationPlanFromFiles = vi.fn();
+const mockSaveImplementationPlanToFiles = vi.fn();
 
 vi.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
@@ -20,6 +22,11 @@ vi.mock('node:fs/promises', () => ({
 
 vi.mock('../../../ipc-handlers/task/plan-file-utils', () => ({
   updatePlanFile: (...args: unknown[]) => mockUpdatePlanFile(...args),
+}));
+
+vi.mock('../../schema/plan-shards', () => ({
+  loadImplementationPlanFromFiles: (...args: unknown[]) => mockLoadImplementationPlanFromFiles(...args),
+  saveImplementationPlanToFiles: (...args: unknown[]) => mockSaveImplementationPlanToFiles(...args),
 }));
 
 vi.mock('../../utils/json-repair', () => ({
@@ -67,22 +74,14 @@ function createPlan(statuses: string[]) {
 function setupPlanState(initialStatuses: string[]) {
   let planState = createPlan(initialStatuses);
 
-  mockReadFile.mockImplementation((path: string) => {
-    if (path.endsWith('implementation_plan.json')) {
-      return Promise.resolve(JSON.stringify(planState));
-    }
-    return Promise.reject(new Error('ENOENT'));
-  });
-
-  mockWriteFile.mockImplementation((path: string, content: string) => {
-    if (path.includes('implementation_plan.json')) {
-      planState = JSON.parse(content) as typeof planState;
-    }
+  mockLoadImplementationPlanFromFiles.mockImplementation(() => Promise.resolve(structuredClone(planState)));
+  mockSaveImplementationPlanToFiles.mockImplementation((_specDir: string, plan: typeof planState) => {
+    planState = structuredClone(plan);
     return Promise.resolve(undefined);
   });
 
   mockUpdatePlanFile.mockImplementation((path: string, updater: (plan: typeof planState) => typeof planState) => {
-    if (path.endsWith('implementation_plan.json')) {
+    if (path.endsWith('implementation_plan.md')) {
       const nextPlan = updater(structuredClone(planState));
       planState = nextPlan;
       return Promise.resolve(nextPlan);
@@ -132,6 +131,8 @@ describe('executeBatches', () => {
     mockRename.mockReset();
     mockUnlink.mockReset();
     mockUpdatePlanFile.mockReset();
+    mockLoadImplementationPlanFromFiles.mockReset();
+    mockSaveImplementationPlanToFiles.mockReset();
     mockMkdir.mockResolvedValue(undefined);
     mockRename.mockResolvedValue(undefined);
     mockUnlink.mockResolvedValue(undefined);
@@ -269,16 +270,9 @@ describe('executeBatches', () => {
       ],
     };
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        return Promise.resolve(JSON.stringify(planState));
-      }
-      return Promise.reject(new Error('ENOENT'));
-    });
-    mockWriteFile.mockImplementation((path: string, content: string) => {
-      if (path.includes('implementation_plan.json')) {
-        planState = JSON.parse(content) as typeof planState;
-      }
+    mockLoadImplementationPlanFromFiles.mockImplementation(() => Promise.resolve(structuredClone(planState)));
+    mockSaveImplementationPlanToFiles.mockImplementation((_specDir: string, plan: typeof planState) => {
+      planState = structuredClone(plan);
       return Promise.resolve(undefined);
     });
 

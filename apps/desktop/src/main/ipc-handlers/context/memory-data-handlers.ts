@@ -1,42 +1,17 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
+import {
+  toAutocodeContextSearchResult,
+  toAutocodeRendererMemory,
+} from '@autocode/core';
 import { IPC_CHANNELS } from '../../../shared/constants';
 import type {
   IPCResult,
   RendererMemory,
   ContextSearchResult,
-  MemoryType,
 } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import { getMemoryService } from './memory-service-factory';
-import type { Memory } from '../../ai/memory/types';
-
-// ============================================================
-// MAPPING HELPER
-// ============================================================
-
-function toRendererMemory(m: Memory): RendererMemory {
-  return {
-    id: m.id,
-    type: m.type as MemoryType,
-    content: m.content,
-    confidence: m.confidence,
-    tags: m.tags,
-    relatedFiles: m.relatedFiles,
-    relatedModules: m.relatedModules,
-    createdAt: m.createdAt,
-    lastAccessedAt: m.lastAccessedAt,
-    accessCount: m.accessCount,
-    scope: m.scope as RendererMemory['scope'],
-    source: m.source as RendererMemory['source'],
-    needsReview: m.needsReview,
-    userVerified: m.userVerified,
-    citationText: m.citationText,
-    pinned: m.pinned,
-    methodology: m.methodology,
-    deprecated: m.deprecated,
-  };
-}
 
 // ============================================================
 // REGISTER HANDLERS
@@ -65,7 +40,7 @@ export function registerMemoryDataHandlers(
           sort: 'recency',
           excludeDeprecated: true,
         });
-        return { success: true, data: memories.map(toRendererMemory) };
+        return { success: true, data: memories.map(toAutocodeRendererMemory) };
       } catch {
         // Graceful degradation: return empty list if memory service is unavailable
         return { success: true, data: [] };
@@ -148,11 +123,7 @@ export function registerMemoryDataHandlers(
         });
         return {
           success: true,
-          data: memories.map((m) => ({
-            content: m.content,
-            score: m.confidence,
-            type: m.type,
-          })),
+          data: memories.map(toAutocodeContextSearchResult),
         };
       } catch {
         // Graceful degradation: return empty list if memory service is unavailable

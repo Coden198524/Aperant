@@ -131,5 +131,13 @@ declare module 'vscode' {
       value?: string;
       ignoreFocusOut?: boolean;
     }): Promise<string | undefined>;
+    function showQuickPick<T extends { label: string }>(
+      items: readonly T[],
+      options?: {
+        title?: string;
+        placeHolder?: string;
+        ignoreFocusOut?: boolean;
+      },
+    ): Promise<T | undefined>;
   }
 }

@@ -453,7 +453,7 @@ function getComplexPlanningGuidance(profile: ProjectPromptProfile): string {
   return [
     '- For genuinely complex tasks, especially migrations, removals, replacements, refactors, or cross-system changes, do not compress the plan into the normal phase/subtask target.',
     '- Split complex plans by dependency boundary such as runtime behavior, UI/editor surfaces, build/tooling, CI/release, data/assets, compatibility, migration tooling, and validation/rollback when those areas are relevant.',
-    '- Use `split_plan: true` with phase files when preserving the necessary work would make one `implementation_plan.json` dense or hard to review.',
+    '- Keep `implementation_plan.md` concise with checklist Markdown when preserving necessary work would otherwise make the plan hard to review.',
   ].join('\n');
 }
 
@@ -517,7 +517,7 @@ You are the Spec Agent for this project. Create only the spec and plan needed fo
 ## OUTPUTS
 
 Use the Write tool to create \`spec.md\` in the spec directory.
-Use the Write tool to create \`implementation_plan.json\` in the spec directory.
+Use the Write tool to create \`implementation_plan.md\` in the spec directory.
 
 Do not modify project source code in this phase.
 
@@ -528,7 +528,7 @@ ${buildToolCallJsonGuidance()}
 1. Read the task and the project index from the kickoff message.
 2. Inspect only the files needed to identify the change.
 3. Write a short \`spec.md\` with overview, scope, files, change details, and success criteria.
-4. Write \`implementation_plan.json\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
+4. Write \`implementation_plan.md\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
 
 ## PLAN SIZE LIMITS
 
@@ -545,33 +545,21 @@ ${buildToolCallJsonGuidance()}
 
 ## IMPLEMENTATION PLAN SHAPE
 
-\`\`\`json
-{
-  "feature": "Task name",
-  "workflow_type": "simple",
-  "phases": [
-    {
-      "id": "1",
-      "phase": 1,
-      "name": "Implementation",
-      "depends_on": [],
-      "subtasks": [
-        {
-          "id": "1-1",
-          "title": "Short action summary",
-          "description": "Concrete implementation notes",
-          "status": "pending",
-          "files_to_create": [],
-          "files_to_modify": ["path/to/file"],
-          "verification": {
-            "type": "command",
-            "run": "smallest relevant verification command"
-          }
-        }
-      ]
-    }
-  ]
-}
+\`\`\`markdown
+# Implementation Plan
+
+Feature: Task name
+Workflow: simple
+Status: pending
+
+- [ ] 1. Implementation
+
+- [ ] 1.1 Short action summary
+  - Concrete implementation notes
+  - _Files to modify: path/to/file_
+  - _Depends on: none_
+  - _Requirements: 1.1_
+  - _Verification: smallest relevant verification command_
 \`\`\`
 
 ## PROJECT COMMANDS
@@ -606,7 +594,7 @@ You are the Planner Agent for this project. Convert the existing spec into a con
 
 ## REQUIRED OUTPUT
 
-Use the Write tool to create the implementation plan files in the spec directory. For complex plans, write one small phase file per phase first, then write a compact \`implementation_plan.json\` index that references those phase files. Do not return a giant plan JSON as final text.
+Use the Write tool to create \`implementation_plan.md\` in the spec directory. Do not return the full plan as final text.
 
 ${buildToolCallJsonGuidance()}
 
@@ -626,7 +614,7 @@ ${getComplexPlanningGuidance(profile)}
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 - Put verification on each subtask using the smallest relevant command or manual check.
-- For large plans, split during generation: write \`implementation_plan.phase-1.json\`, \`implementation_plan.phase-2.json\`, etc., then write a compact \`implementation_plan.json\` index with \`split_plan: true\`, \`plan_files\`, and phases that use \`subtasks_file\`.
+- For large plans, keep one concise checklist Markdown file; do not split the plan into phase files.
 
 ## DESIGN PATTERN DECISION
 
@@ -637,9 +625,9 @@ ${getComplexPlanningGuidance(profile)}
 
 ## PLAN REQUIREMENTS
 
-- Use \`phases[].subtasks[]\`.
-- Each subtask needs \`id\`, \`title\`, \`description\`, \`status: "pending"\`, file lists, and verification.
-- When a design pattern matters, include the decision in subtask \`description\`, \`notes\`, or \`patterns_from\`.
+- Use OpenSpec-style checklist Markdown with \`- [ ] 1. Phase title\` and \`- [ ] 1.1 Subtask title\`.
+- Each subtask needs an id, title, concise description bullets, pending checkbox, file metadata, and verification.
+- When a design pattern matters, include the decision in a subtask bullet.
 - Prefer targeted verification commands:
 ${formatCommands([
   ...profile.commands.typecheck,
@@ -656,7 +644,7 @@ function buildCoderPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the Coding Agent. Implement the next pending subtask in \`implementation_plan.json\`.
+You are the Coding Agent. Implement the next pending subtask in \`implementation_plan.md\`.
 
 ${buildToolCallJsonGuidance()}
 
@@ -666,7 +654,7 @@ ${buildToolCallJsonGuidance()}
 2. Read the files listed on the subtask first. Search only when those files are insufficient.
 3. Implement the subtask using existing project conventions.
 4. Run the smallest relevant verification command that is available.
-5. Update the subtask status in \`implementation_plan.json\` to \`completed\` and add a structured \`completion_summary\` for human review. Use this compact Markdown review matrix exactly: \`| Item | Details |\`, \`| --- | --- |\`, \`| What changed | ... |\`, \`| Verification | ... |\`, \`| Review notes | ... |\`. Keep each cell concise and concrete. Use \`blocked\` or \`failed\` only when you cannot proceed.
+5. Update the subtask checkbox in \`implementation_plan.md\` to \`[x]\` and add \`_Completion: ..._\` for human review. Use \`[-]\` for blocked or \`[!]\` for failed only when you cannot proceed.
 
 ## PROJECT COMMANDS
 
@@ -698,7 +686,7 @@ function buildQaReviewerPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the QA Reviewer. Validate the implementation against \`spec.md\` and \`implementation_plan.json\`.
+You are the QA Reviewer. Validate the implementation against \`spec.md\` and \`implementation_plan.md\`.
 
 ## REQUIRED OUTPUT
 
@@ -710,7 +698,7 @@ ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
-1. Read \`implementation_plan.json\` first and check that all subtasks are completed.
+1. Read \`implementation_plan.md\` first and check that all subtasks are completed.
 2. Read only the relevant parts of \`spec.md\` if the plan does not already contain enough acceptance detail.
 3. Inspect changed files once; use line limits or targeted searches for large files.
 4. Run the smallest relevant verification command available.
@@ -750,7 +738,7 @@ ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
-1. Read \`qa_report.md\`, \`spec.md\`, and \`implementation_plan.json\`.
+1. Read \`qa_report.md\`, \`spec.md\`, and \`implementation_plan.md\`.
 2. Fix only the reported blocking issues.
 3. Run the smallest relevant verification command available.
 4. Update the plan or QA notes only as needed to show fixes were applied.

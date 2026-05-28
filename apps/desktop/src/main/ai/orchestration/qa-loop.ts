@@ -1,4 +1,4 @@
-/**
+﻿/**
  * QA Validation Loop
  * ==================
  *
@@ -6,7 +6,7 @@
  *
  * Coordinates the QA review/fix iteration cycle:
  *   1. QA Reviewer agent validates the build
- *   2. If rejected → QA Fixer agent applies fixes
+ *   2. If rejected 鈫?QA Fixer agent applies fixes
  *   3. Loop back to reviewer
  *   4. Repeat until approved, max iterations, or escalation
  *
@@ -28,9 +28,12 @@ import {
 
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import type { Phase } from '@autocode/core';
+import {
+  loadAutocodeImplementationPlan,
+  saveAutocodeImplementationPlan,
+  type Phase,
+} from '@autocode/core';
 import { QASignoffSchema, validateStructuredOutput } from '../schema';
-import { safeParseJson } from '../../utils/json-repair';
 import type { SessionResult } from '../session/types';
 
 // =============================================================================
@@ -50,7 +53,7 @@ const RECURRING_ISSUE_THRESHOLD = 3;
 // Types
 // =============================================================================
 
-/** QA signoff status from implementation_plan.json */
+/** QA signoff status from implementation_plan.md */
 type QAStatus = 'approved' | 'rejected' | 'fixes_applied' | 'unknown';
 
 /** A single QA issue found during review */
@@ -158,7 +161,7 @@ export interface QAOutcome {
   error?: string;
 }
 
-/** QA signoff structure from implementation_plan.json */
+/** QA signoff structure from implementation_plan.md */
 interface QASignoff {
   status: string;
   qa_session?: number;
@@ -171,7 +174,7 @@ interface QASignoff {
 // =============================================================================
 
 /**
- * Orchestrates the QA validation loop: review → fix → re-review.
+ * Orchestrates the QA validation loop: review 鈫?fix 鈫?re-review.
  *
  * Replaces the Python `run_qa_validation_loop()` from `qa/loop.py`.
  */
@@ -260,7 +263,7 @@ export class QALoop extends EventEmitter {
           return this.outcome(false, iteration, Date.now() - startTime, 'cancelled');
         }
 
-        // Read QA signoff from implementation_plan.json
+        // Read QA signoff from implementation_plan.md
         const signoff = await this.readQASignoff();
         const status = this.resolveQAStatus(signoff);
         const issues = signoff?.issues_found ?? [];
@@ -281,7 +284,7 @@ export class QALoop extends EventEmitter {
 
           // Check for recurring issues
           if (this.hasRecurringIssues(issues)) {
-            this.emitTyped('log', 'Recurring issues detected — escalating to human review');
+            this.emitTyped('log', 'Recurring issues detected 鈥?escalating to human review');
             const recurringIssues = this.getRecurringIssues(issues);
             try {
               const escalationReport = generateEscalationReport(this.iterationHistory, recurringIssues);
@@ -335,20 +338,20 @@ export class QALoop extends EventEmitter {
           continue;
         }
 
-        // status === 'unknown' — QA agent didn't update implementation_plan.json
+        // status === 'unknown' 鈥?QA agent didn't update implementation_plan.md
         consecutiveErrors++;
-        const errorMsg = 'QA agent did not update implementation_plan.json with qa_signoff';
+        const errorMsg = 'QA agent did not record a QA status in implementation_plan.md';
         await this.recordIteration(iteration, 'error', [{ title: 'QA error', description: errorMsg }], iterationDuration);
 
         lastErrorContext = {
           errorType: 'missing_implementation_plan_update',
           errorMessage: errorMsg,
           consecutiveErrors,
-          expectedAction: 'You MUST update implementation_plan.json with a qa_signoff object containing status: approved or status: rejected',
+          expectedAction: 'You MUST call mcp__autocode__update_qa_status with status: approved or status: rejected',
         };
 
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {
-          this.emitTyped('log', `${MAX_CONSECUTIVE_ERRORS} consecutive errors — escalating to human`);
+          this.emitTyped('log', `${MAX_CONSECUTIVE_ERRORS} consecutive errors 鈥?escalating to human`);
           await this.writeReports('max_iterations');
           return this.outcome(false, iteration, Date.now() - startTime, 'consecutive_errors');
         }
@@ -370,13 +373,11 @@ export class QALoop extends EventEmitter {
   // ===========================================================================
 
   /**
-   * Read QA signoff from implementation_plan.json.
+   * Read QA signoff from implementation_plan.md.
    */
   private async readQASignoff(): Promise<QASignoff | null> {
     try {
-      const planPath = join(this.config.specDir, 'implementation_plan.json');
-      const raw = await readFile(planPath, 'utf-8');
-      const plan = safeParseJson<{ qa_signoff?: unknown }>(raw);
+      const plan = await loadAutocodeImplementationPlan(this.config.specDir) as { qa_signoff?: unknown } | null;
       if (!plan) return null;
       const qa_signoff = plan.qa_signoff;
       if (!qa_signoff) return null;
@@ -404,9 +405,7 @@ export class QALoop extends EventEmitter {
    */
   private async isBuildComplete(): Promise<boolean> {
     try {
-      const planPath = join(this.config.specDir, 'implementation_plan.json');
-      const raw = await readFile(planPath, 'utf-8');
-      const plan = safeParseJson<{ phases?: Array<{ subtasks: Array<{ status: string }> }> }>(raw);
+      const plan = await loadAutocodeImplementationPlan(this.config.specDir) as { phases?: Array<{ subtasks: Array<{ status: string }> }> } | null;
 
       if (!plan || !plan.phases) return false;
 
@@ -441,7 +440,7 @@ export class QALoop extends EventEmitter {
    * Process human feedback by running the fixer agent first.
    */
   private async processHumanFeedback(): Promise<void> {
-    this.emitTyped('log', 'Human feedback detected — running QA Fixer first');
+    this.emitTyped('log', 'Human feedback detected 鈥?running QA Fixer first');
     this.emitTyped('qa-fix-start', 0);
     this.sessionNumber++;
     const fixAgentType = this.getFixAgentType();
@@ -508,7 +507,7 @@ export class QALoop extends EventEmitter {
   }
 
   /**
-   * Record an iteration in the history and persist it to implementation_plan.json.
+   * Record an iteration in the history and persist it to implementation_plan.md.
    */
   private async recordIteration(
     iteration: number,
@@ -526,14 +525,12 @@ export class QALoop extends EventEmitter {
 
     this.iterationHistory.push(record);
 
-    // Persist to implementation_plan.json
+    // Persist to implementation_plan.md
     try {
-      const planPath = join(this.config.specDir, 'implementation_plan.json');
-      const raw = await readFile(planPath, 'utf-8');
-      const plan = safeParseJson<{
+      const plan = await loadAutocodeImplementationPlan(this.config.specDir) as {
         qa_iteration_history?: QAIterationRecord[];
         qa_stats?: Record<string, unknown>;
-      }>(raw);
+      } | null;
 
       if (!plan) return;
 
@@ -549,9 +546,9 @@ export class QALoop extends EventEmitter {
         last_status: status,
       };
 
-      await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+      await saveAutocodeImplementationPlan(this.config.specDir, plan as never);
     } catch {
-      // Non-fatal — iteration is still tracked in memory
+      // Non-fatal 鈥?iteration is still tracked in memory
     }
   }
 

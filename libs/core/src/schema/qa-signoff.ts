@@ -2,7 +2,7 @@
  * QA Signoff Schema
  * =================
  *
- * Zod schema for validating qa_signoff data embedded in implementation_plan.json.
+ * Zod schema for validating qa_signoff data embedded in implementation_plan.md.
  * Written by the QA reviewer/fixer agents and read by the QA loop.
  *
  * Handles LLM variations like:

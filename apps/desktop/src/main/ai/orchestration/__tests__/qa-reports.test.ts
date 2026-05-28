@@ -64,7 +64,7 @@ describe('generateQAReport', () => {
 
     expect(report).toContain('APPROVED');
     expect(report).toContain('PASSED');
-    expect(report).toContain('Total Iterations');
+    expect(report).toContain('Total iterations');
     expect(report).toContain('2');
   });
 
@@ -77,7 +77,7 @@ describe('generateQAReport', () => {
 
     expect(report).toContain('ESCALATED');
     expect(report).toContain('FAILED');
-    expect(report).toContain('escalated to human review');
+    expect(report).toContain('escalate to manual review');
   });
 
   it('produces a report with MAX ITERATIONS REACHED label', () => {
@@ -96,8 +96,8 @@ describe('generateQAReport', () => {
   it('handles empty iteration history gracefully', () => {
     const report = generateQAReport([], 'approved');
 
-    expect(report).toContain('No iterations recorded');
-    expect(report).toContain('Total Iterations');
+    expect(report).toContain('No QA iterations were recorded');
+    expect(report).toContain('Total iterations');
   });
 
   it('includes issue details in iteration history section', () => {
@@ -126,9 +126,9 @@ describe('generateQAReport', () => {
 
     const report = generateQAReport(iterations, 'approved');
 
-    expect(report).toContain('Approved Iterations');
-    expect(report).toContain('Rejected Iterations');
-    expect(report).toContain('Error Iterations');
+    expect(report).toContain('Approved iterations');
+    expect(report).toContain('Rejected iterations');
+    expect(report).toContain('Error iterations');
   });
 });
 
@@ -155,7 +155,7 @@ describe('generateEscalationReport', () => {
 
     const report = generateEscalationReport(iterations, recurringIssues);
 
-    expect(report).toContain('Human Intervention Required');
+    expect(report).toContain('Manual Review Required');
     expect(report).toContain('Database connection leak');
     expect(report).toContain('src/db.ts');
     expect(report).toContain('Connection is never closed');
@@ -172,10 +172,10 @@ describe('generateEscalationReport', () => {
 
     const report = generateEscalationReport(iterations, [issue]);
 
-    expect(report).toContain('Total QA Iterations');
-    expect(report).toContain('Total Issues Found');
-    expect(report).toContain('Unique Issues');
-    expect(report).toContain('Fix Success Rate');
+    expect(report).toContain('Total QA iterations');
+    expect(report).toContain('Total issues found');
+    expect(report).toContain('Unique issue titles');
+    expect(report).toContain('Fix success rate');
   });
 
   it('includes recommended actions section', () => {
@@ -222,9 +222,9 @@ describe('generateManualTestPlan', () => {
     const plan = await generateManualTestPlan(SPEC_DIR, PROJECT_DIR);
 
     expect(plan).toContain('Manual Test Plan');
-    expect(plan).toContain('Pre-Test Setup');
+    expect(plan).toContain('Before Testing');
     expect(plan).toContain('Functional Tests');
-    expect(plan).toContain('Sign-off');
+    expect(plan).toContain('Sign-Off');
   });
 
   it('extracts acceptance criteria from spec.md when available', async () => {
@@ -257,7 +257,7 @@ Not relevant here.
 
     const plan = await generateManualTestPlan(SPEC_DIR, PROJECT_DIR);
 
-    expect(plan).toContain('No automated test framework detected');
+    expect(plan).toContain('No automated test infrastructure detected');
   });
 
   it('notes "supplemental manual verification" when a test framework is present', async () => {
@@ -267,7 +267,7 @@ Not relevant here.
 
     const plan = await generateManualTestPlan(SPEC_DIR, PROJECT_DIR);
 
-    expect(plan).toContain('supplement to automated tests');
+    expect(plan).toContain('supplement automated test coverage');
   });
 });
 

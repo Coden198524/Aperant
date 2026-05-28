@@ -1,19 +1,23 @@
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync } from 'node:fs';
 import { join } from 'node:path';
 import {
   createAutocodeAgentRuntimePlan,
+  createAutocodeAgentRuntimeStartRequest,
   type AutocodeAgentRuntimePlan,
+  type AutocodeAgentRuntimeStartRequest,
 } from '../runtime/agent-runtime.js';
 import { buildProjectIndex, type ProjectIndex } from '../project/index.js';
 import { summarizeWorkspace, type WorkspaceSummary } from '../workspace/summary.js';
 import {
   buildAutocodeTaskRunnerShellCommand,
   createAutocodeTaskRunPlan,
+  mapAutocodeAgentRuntimeModeToTaskRunPhase,
   type AutocodeTaskRunPlan,
   type CreateAutocodeTaskRunPlanInput,
 } from './cli-runner.js';
 import { AUTOCODE_TASK_ARTIFACTS, normalizeAutocodeProjectDataDirName } from './artifacts.js';
 import { readAutocodeTaskLogs, updateAutocodeTaskLogPhase, type AutocodeTaskLogs } from './logs.js';
+import { loadAutocodeImplementationPlanSync } from './plan-store.js';
 import {
   createAutocodeTask,
   getAutocodeSpecDir,
@@ -58,6 +62,20 @@ export interface CreateAutocodeAgentRuntimeStartPlanInput extends AutocodeTaskPa
 
 export interface StartedAutocodeTaskRun {
   plan: AutocodeTaskRunPlan;
+  task: AutocodeTask;
+  command: string;
+}
+
+export interface CreateStartedAutocodeAgentRuntimeInput extends CreateAutocodeAgentRuntimeStartPlanInput {
+  cli: CreateAutocodeTaskRunPlanInput['cli'];
+  customCommand?: string;
+  bypassPermissions?: boolean;
+}
+
+export interface StartedAutocodeAgentRuntime {
+  runtimePlan: AutocodeAgentRuntimePlan;
+  request: AutocodeAgentRuntimeStartRequest;
+  taskRunPlan: AutocodeTaskRunPlan;
   task: AutocodeTask;
   command: string;
 }
@@ -143,6 +161,47 @@ export function createStartedAutocodeTaskRun(input: CreateAutocodeTaskRunPlanInp
   };
 }
 
+export function createStartedAutocodeAgentRuntime(
+  input: CreateStartedAutocodeAgentRuntimeInput,
+): StartedAutocodeAgentRuntime {
+  const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
+  const runtimePlan = createAutocodeAgentRuntimeStartPlan({ ...input, dataDirName });
+  const started = createStartedAutocodeTaskRun({
+    projectRoot: input.projectRoot,
+    dataDirName,
+    taskId: input.taskId,
+    cli: input.cli,
+    customCommand: input.customCommand,
+    bypassPermissions: input.bypassPermissions,
+    phase: mapAutocodeAgentRuntimeModeToTaskRunPhase(runtimePlan.mode),
+  });
+
+  return {
+    runtimePlan,
+    request: createAutocodeAgentRuntimeStartRequest(runtimePlan, {
+      runner: {
+        phase: started.plan.phase,
+        promptFilePath: started.plan.promptFilePath,
+        runnerFilePath: started.plan.runnerFilePath,
+        process: {
+          command: 'node',
+          args: [started.plan.runnerFilePath],
+          cwd: started.plan.cwd,
+          shellCommand: started.command,
+        },
+        terminal: {
+          name: `Autocode: ${started.plan.task.specId}`,
+          command: started.command,
+          cwd: started.plan.cwd,
+        },
+      },
+    }),
+    taskRunPlan: started.plan,
+    task: started.task,
+    command: started.command,
+  };
+}
+
 export function createAutocodeAgentRuntimeStartPlan(
   input: CreateAutocodeAgentRuntimeStartPlanInput,
 ): AutocodeAgentRuntimePlan {
@@ -219,19 +278,13 @@ export function markAutocodeTaskStopped(input: AutocodeTaskActionInput & {
 }
 
 function hasAutocodePlanSubtasks(planPath: string): boolean {
-  try {
-    const plan = JSON.parse(readFileSync(planPath, 'utf8')) as {
-      phases?: Array<{ subtasks?: unknown[]; chunks?: unknown[] }>;
-    };
-    return plan.phases?.some((phase) => {
-      const subtasks = Array.isArray(phase.subtasks)
-        ? phase.subtasks
-        : Array.isArray(phase.chunks)
-          ? phase.chunks
-          : [];
-      return subtasks.length > 0;
-    }) === true;
-  } catch {
-    return false;
-  }
+  const plan = loadAutocodeImplementationPlanSync(planPath);
+  return plan?.phases?.some((phase) => {
+    const subtasks = Array.isArray(phase.subtasks)
+      ? phase.subtasks
+      : Array.isArray(phase.chunks)
+        ? phase.chunks
+        : [];
+    return subtasks.length > 0;
+  }) === true;
 }

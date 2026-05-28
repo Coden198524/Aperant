@@ -13,6 +13,7 @@ import type { MemoryServiceImpl } from '../memory/memory-service';
 import type { ProjectType } from '../../../shared/types';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { loadAutocodeImplementationPlanSync } from '@autocode/core';
 
 // Import all quality improvement modules
 import { runPreQASmokeTests, formatSmokeTestResults } from './pre-qa-smoke-tests';
@@ -218,7 +219,7 @@ export async function runPreQAQualityChecks(
   const appliedConfig = { ...DEFAULT_CONFIG, ...config };
 
   if (appliedConfig.enableDocumentationQualityGate) {
-    const documentationResult = runDocumentationQualityGate(specDir, appliedConfig.projectType);
+    const documentationResult = runDocumentationQualityGate(projectDir, specDir, appliedConfig.projectType);
     if (documentationResult.isDocumentationWorkflow && documentationResult.issues.length > 0) {
       return {
         shouldProceedToQA: false,
@@ -268,6 +269,7 @@ function getDocumentationOutputs(plan: Record<string, unknown>): {
   finalMarkdown: string;
   outline: string;
   evidenceIndex: string;
+  base: 'spec' | 'project';
 } {
   const outputs = plan.document_outputs && typeof plan.document_outputs === 'object'
     ? plan.document_outputs as Record<string, unknown>
@@ -287,6 +289,7 @@ function getDocumentationOutputs(plan: Record<string, unknown>): {
     finalMarkdown: markdownFromPlan || 'docs/analysis.md',
     outline: typeof outputs.outline === 'string' ? outputs.outline : 'doc_outline.json',
     evidenceIndex: typeof outputs.evidence_index === 'string' ? outputs.evidence_index : 'evidence_index.json',
+    base: outputs.base === 'project' ? 'project' : 'spec',
   };
 }
 
@@ -478,11 +481,11 @@ function validateGameMmoCodingSummary(subtask: SubtaskInfo, sessionResult: Sessi
 }
 
 function runDocumentationQualityGate(
+  projectDir: string,
   specDir: string,
   projectType?: ProjectType,
 ): { isDocumentationWorkflow: boolean; issues: string[] } {
-  const planPath = join(specDir, 'implementation_plan.json');
-  const plan = readJsonFile(planPath);
+  const plan = loadAutocodeImplementationPlanSync(specDir);
   const isDocumentationWorkflow = typeof plan?.workflow_type === 'string' &&
     plan.workflow_type.toLowerCase() === 'documentation';
   if (!isDocumentationWorkflow || !plan) {
@@ -492,9 +495,10 @@ function runDocumentationQualityGate(
   const outputs = getDocumentationOutputs(plan);
   const issues: string[] = [];
   const isGameMmoDocumentation = projectType === 'game-mmo' || isGameMmoDocumentationPlan(plan);
-  const outlinePath = join(specDir, outputs.outline);
-  const evidencePath = join(specDir, outputs.evidenceIndex);
-  const markdownPath = join(specDir, outputs.finalMarkdown);
+  const outputBaseDir = outputs.base === 'project' ? projectDir : specDir;
+  const outlinePath = join(outputBaseDir, outputs.outline);
+  const evidencePath = join(outputBaseDir, outputs.evidenceIndex);
+  const markdownPath = join(outputBaseDir, outputs.finalMarkdown);
 
   issues.push(...validateJsonDocument(outlinePath, ['document_type', 'audience', 'sections']));
   issues.push(...validateJsonDocument(evidencePath, ['files_read', 'evidence_backed_claims', 'open_questions']));

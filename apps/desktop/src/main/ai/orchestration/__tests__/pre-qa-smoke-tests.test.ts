@@ -1,11 +1,19 @@
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+﻿import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
+import {
+  saveAutocodeImplementationPlan,
+  type MutableAutocodePlan,
+} from '@autocode/core';
 
 import { runPreQASmokeTests } from '../pre-qa-smoke-tests';
 import { runPreQAQualityChecks, validateSubtaskQuality } from '../quality-integration';
 import type { SessionResult } from '../../session/types';
+
+async function writeImplementationPlan(specDir: string, plan: Record<string, unknown>): Promise<void> {
+  await saveAutocodeImplementationPlan(specDir, plan as MutableAutocodePlan);
+}
 
 describe('pre-QA smoke tests', () => {
   let projectDir: string;
@@ -68,7 +76,7 @@ describe('pre-QA smoke tests', () => {
   });
 
   it('blocks documentation workflows missing outline and evidence files', async () => {
-    await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+    await writeImplementationPlan(specDir, {
       feature: 'Source documentation',
       workflow_type: 'documentation',
       document_outputs: {
@@ -80,14 +88,14 @@ describe('pre-QA smoke tests', () => {
         id: '1',
         name: 'Documentation',
         subtasks: [{
-          id: '1-1',
+          id: '1.1',
           title: 'Write docs',
           description: 'Write documentation',
           status: 'completed',
           files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
         }],
       }],
-    }), 'utf-8');
+    });
     await mkdir(join(specDir, 'docs'), { recursive: true });
     await writeFile(join(specDir, 'docs', 'analysis.md'), '# Analysis\n\nToo short.\n', 'utf-8');
 
@@ -99,7 +107,7 @@ describe('pre-QA smoke tests', () => {
   });
 
   it('passes documentation workflows with outline, evidence, and structured markdown', async () => {
-    await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+    await writeImplementationPlan(specDir, {
       feature: 'Source documentation',
       workflow_type: 'documentation',
       document_outputs: {
@@ -111,14 +119,14 @@ describe('pre-QA smoke tests', () => {
         id: '1',
         name: 'Documentation',
         subtasks: [{
-          id: '1-1',
+          id: '1.1',
           title: 'Write docs',
           description: 'Write documentation',
           status: 'completed',
           files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
         }],
       }],
-    }), 'utf-8');
+    });
     await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
       document_type: 'source-analysis',
       audience: 'developer',
@@ -165,7 +173,7 @@ describe('pre-QA smoke tests', () => {
   });
 
   it('blocks MMO documentation that lacks game engineering dimensions', async () => {
-    await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+    await writeImplementationPlan(specDir, {
       feature: 'MMO source documentation',
       workflow_type: 'documentation',
       project_type: 'game-mmo',
@@ -179,14 +187,14 @@ describe('pre-QA smoke tests', () => {
         id: '1',
         name: 'Documentation',
         subtasks: [{
-          id: '1-1',
+          id: '1.1',
           title: 'Write MMO docs',
           description: 'Write documentation',
           status: 'completed',
           files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
         }],
       }],
-    }), 'utf-8');
+    });
     await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
       document_type: 'source-analysis',
       audience: 'game engineer',
@@ -229,7 +237,7 @@ describe('pre-QA smoke tests', () => {
   });
 
   it('passes MMO documentation with professional game engineering coverage', async () => {
-    await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+    await writeImplementationPlan(specDir, {
       feature: 'MMO source documentation',
       workflow_type: 'documentation',
       project_type: 'game-mmo',
@@ -243,14 +251,14 @@ describe('pre-QA smoke tests', () => {
         id: '1',
         name: 'Documentation',
         subtasks: [{
-          id: '1-1',
+          id: '1.1',
           title: 'Write MMO docs',
           description: 'Write documentation',
           status: 'completed',
           files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
         }],
       }],
-    }), 'utf-8');
+    });
     await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
       document_type: 'mmo-source-analysis',
       audience: 'game engineer',
@@ -314,7 +322,7 @@ describe('pre-QA smoke tests', () => {
   });
 
   it('blocks MMO documentation when outline and evidence index are too generic', async () => {
-    await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+    await writeImplementationPlan(specDir, {
       feature: 'MMO source documentation',
       workflow_type: 'documentation',
       project_type: 'game-mmo',
@@ -328,14 +336,14 @@ describe('pre-QA smoke tests', () => {
         id: '1',
         name: 'Documentation',
         subtasks: [{
-          id: '1-1',
+          id: '1.1',
           title: 'Write MMO docs',
           description: 'Write documentation',
           status: 'completed',
           files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
         }],
       }],
-    }), 'utf-8');
+    });
     await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
       document_type: 'mmo-source-analysis',
       audience: 'game engineer',

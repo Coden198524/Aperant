@@ -6,6 +6,7 @@ export const AUTOCODE_INSIGHTS_DIR_NAME = 'insights';
 export const AUTOCODE_INSIGHTS_SESSIONS_DIR_NAME = 'sessions';
 export const AUTOCODE_PROJECT_LOCKS_DIR_NAME = '.locks';
 export const AUTOCODE_PROJECT_PROMPTS_DIR_NAME = 'prompts';
+export const AUTOCODE_PROJECT_DOCS_DIR_NAME = 'project-docs';
 export const AUTOCODE_TOOL_OUTPUT_DIR_NAME = 'tool-output';
 export const AUTOCODE_SMART_TERMINAL_DIR_NAME = 'smart-terminal';
 export const AUTOCODE_DEEPSEEK_SMART_TERMINAL_DIR_NAME = 'deepseek';
@@ -19,6 +20,12 @@ export const AUTOCODE_GENERATION_PROGRESS_FILE_NAME = 'generation_progress.json'
 export const AUTOCODE_SPEC_NUMBER_LOCK_FILE_NAME = 'spec-numbering.lock';
 export const AUTOCODE_PROJECT_PROMPT_PROFILE_FILE_NAME = 'prompt_profile.json';
 export const AUTOCODE_GITHUB_TMP_COMMENT_BODY_FILE_NAME = 'tmp_comment_body.txt';
+export const AUTOCODE_PROJECT_DOCS_INDEX_FILE_NAME = 'index.md';
+export const AUTOCODE_PROJECT_DOCS_PRODUCT_FILE_NAME = 'product.md';
+export const AUTOCODE_PROJECT_DOCS_ARCHITECTURE_FILE_NAME = 'architecture.md';
+export const AUTOCODE_PROJECT_DOCS_TECHNICAL_FILE_NAME = 'technical.md';
+export const AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME = 'doc_outline.json';
+export const AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME = 'evidence_index.json';
 
 export const AUTOCODE_ROADMAP_FILE_NAME = 'roadmap.json';
 export const AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME = 'roadmap_discovery.json';
@@ -120,6 +127,26 @@ export function getAutocodeProjectPromptProfileRelativePath(dataDirName?: string
 
 export function getAutocodeProjectPromptProfilePath(projectRoot: string, dataDirName?: string): string {
   return getAutocodeProjectDataPath(projectRoot, [AUTOCODE_PROJECT_PROMPT_PROFILE_FILE_NAME], dataDirName);
+}
+
+export function getAutocodeProjectDocsRelativeDir(dataDirName?: string): string {
+  return getAutocodeProjectDataRelativePath([AUTOCODE_PROJECT_DOCS_DIR_NAME], dataDirName);
+}
+
+export function getAutocodeProjectDocsDir(projectRoot: string, dataDirName?: string): string {
+  return getAutocodeProjectDataPath(projectRoot, [AUTOCODE_PROJECT_DOCS_DIR_NAME], dataDirName);
+}
+
+export function getAutocodeProjectDocsRelativePath(fileName: string, dataDirName?: string): string {
+  return getAutocodeProjectDataRelativePath([AUTOCODE_PROJECT_DOCS_DIR_NAME, fileName], dataDirName);
+}
+
+export function getAutocodeProjectDocsPath(
+  projectRoot: string,
+  fileName: string,
+  dataDirName?: string,
+): string {
+  return getAutocodeProjectDataPath(projectRoot, [AUTOCODE_PROJECT_DOCS_DIR_NAME, fileName], dataDirName);
 }
 
 export function getAutocodeToolOutputDir(projectRoot: string, dataDirName?: string): string {

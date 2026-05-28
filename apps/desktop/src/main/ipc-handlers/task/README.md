@@ -1,4 +1,4 @@
-# Task Handlers Module
+﻿# Task Handlers Module
 
 This directory contains the refactored task-related IPC handlers, previously consolidated in a single 1,873-line file. The code has been reorganized into smaller, focused modules for better maintainability.
 
@@ -144,7 +144,7 @@ Each task spec has its own isolated worktree at `.worktrees/{spec-name}/`:
 - User reviews in worktree before merging to main
 
 ### Status Management
-Tasks maintain status in `implementation_plan.json`:
+Tasks maintain status in `implementation_plan.md`:
 - UI statuses: `backlog`, `in_progress`, `ai_review`, `human_review`, `done`
 - Python statuses: `pending`, `in_progress`, `review`, `completed`
 - Status mapping handled by project-store

@@ -52,6 +52,11 @@
       "import": "./dist/tasks/task-status.js",
       "default": "./dist/tasks/task-status.js"
     },
+    "./tasks/plan-store": {
+      "types": "./dist/tasks/plan-store.d.ts",
+      "import": "./dist/tasks/plan-store.js",
+      "default": "./dist/tasks/plan-store.js"
+    },
     "./tasks/worktree-paths": {
       "types": "./dist/tasks/worktree-paths.d.ts",
       "import": "./dist/tasks/worktree-paths.js",
@@ -61,6 +66,11 @@
       "types": "./dist/project/data-paths.d.ts",
       "import": "./dist/project/data-paths.js",
       "default": "./dist/project/data-paths.js"
+    },
+    "./project/project-docs": {
+      "types": "./dist/project/project-docs.d.ts",
+      "import": "./dist/project/project-docs.js",
+      "default": "./dist/project/project-docs.js"
     },
     "./workspace/ignore-rules": {
       "types": "./dist/workspace/ignore-rules.d.ts",
@@ -77,6 +87,11 @@
       "import": "./dist/runtime/agent-runtime.js",
       "default": "./dist/runtime/agent-runtime.js"
     },
+    "./runtime/agent-runtime-adapters": {
+      "types": "./dist/runtime/agent-runtime-adapters.d.ts",
+      "import": "./dist/runtime/agent-runtime-adapters.js",
+      "default": "./dist/runtime/agent-runtime-adapters.js"
+    },
     "./runtime/agent-messages": {
       "types": "./dist/runtime/agent-messages.d.ts",
       "import": "./dist/runtime/agent-messages.js",
@@ -91,6 +106,11 @@
       "types": "./dist/runtime/session-runtime-options.d.ts",
       "import": "./dist/runtime/session-runtime-options.js",
       "default": "./dist/runtime/session-runtime-options.js"
+    },
+    "./memory": {
+      "types": "./dist/memory/index.d.ts",
+      "import": "./dist/memory/index.js",
+      "default": "./dist/memory/index.js"
     }
   },
   "files": [

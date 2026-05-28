@@ -1,15 +1,17 @@
 import {
   buildAutocodeTaskRunnerShellCommand,
   buildAutocodeWorkspaceState,
-  createAutocodeAgentRuntimeStartPlan,
+  createAutocodeProjectDocumentationTask,
   createAutocodeTaskRunPlan,
   createManualAutocodeTask,
+  createStartedAutocodeAgentRuntime,
   createStartedAutocodeTaskRun,
   markAutocodeTaskDone,
   markAutocodeTaskStopped,
   requestAutocodeTaskChanges,
   updateAutocodeTaskPlanStatus,
   type AutocodeCli,
+  type AutocodeProjectDocType,
 } from '@autocode/core';
 import { getConfiguredDataDirName } from '../adapters/workspace-adapter.js';
 
@@ -24,6 +26,18 @@ export function createManualTask(projectRoot: string, title: string, description
     dataDirName: getConfiguredDataDirName(),
     title,
     description,
+  });
+}
+
+export function createProjectDocumentationTask(projectRoot: string, options: {
+  documentType?: AutocodeProjectDocType;
+  outputDir?: string;
+} = {}) {
+  return createAutocodeProjectDocumentationTask({
+    projectRoot,
+    dataDirName: getConfiguredDataDirName(),
+    documentType: options.documentType,
+    outputDir: options.outputDir,
   });
 }
 
@@ -57,11 +71,18 @@ export function createStartedRunPlan(projectRoot: string, taskId: string, option
   });
 }
 
-export function createAgentRuntimeStartPlan(projectRoot: string, taskId: string) {
-  return createAutocodeAgentRuntimeStartPlan({
+export function createStartedAgentRuntime(projectRoot: string, taskId: string, options: {
+  cli: AutocodeCli;
+  customCommand?: string;
+  bypassPermissions: boolean;
+}) {
+  return createStartedAutocodeAgentRuntime({
     projectRoot,
     dataDirName: getConfiguredDataDirName(),
     taskId,
+    cli: options.cli,
+    customCommand: options.customCommand,
+    bypassPermissions: options.bypassPermissions,
   });
 }
 

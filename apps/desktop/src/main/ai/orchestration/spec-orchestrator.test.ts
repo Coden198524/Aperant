@@ -1,8 +1,12 @@
-import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+﻿import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
+import {
+  loadAutocodeImplementationPlan,
+  saveAutocodeImplementationPlan,
+} from '@autocode/core';
 
 import {
   buildWriteToolJsonRetryPrompt,
@@ -31,18 +35,18 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
     expect(prompt).toContain('CRITICAL - RETRY QUICK SPEC FILE WRITES');
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/spec.md');
-    expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/implementation_plan.json');
+    expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/implementation_plan.md');
     expect(prompt).toContain('Use the Write tool to create');
     expect(prompt).toContain('20-60 line');
     expect(prompt).not.toContain('\\');
   });
 
-  it('tells planner retries to use split Write files', () => {
+  it('tells planner retries to write one Markdown implementation plan', () => {
     const prompt = buildWriteToolJsonRetryPrompt('planning', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
     expect(prompt).toContain('RETRY IMPLEMENTATION PLAN WITH WRITE TOOL');
-    expect(prompt).toContain('implementation_plan.phase-1.json');
-    expect(prompt).toContain('subtasks_file');
+    expect(prompt).toContain('implementation_plan.md');
+    expect(prompt).toContain('Write checklist Markdown, not JSON');
     expect(prompt).toContain('Required Write tool input shape');
   });
 
@@ -205,12 +209,12 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const looseContext = {
       project_root: 'E:/Work/Test/aitest',
-      task: '开发网页版项目看板',
+      task: 'Create a web project dashboard',
       tech_stack: {
         detected: 'none',
         recommended: 'HTML5 Canvas + CSS + JavaScript',
       },
-      architecture_summary: '空项目，创建静态 Web 工具。',
+      architecture_summary: 'Empty project; create a static web tool.',
       files_to_modify: [
         'E:/Work/Test/aitest/index.html',
         'E:/Work/Test/aitest/styles.css',
@@ -222,9 +226,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         'HTML5 Canvas rendering',
         'DOM event handling',
       ],
-      implementation_notes: ['使用原生 HTML/CSS/JavaScript。'],
-      risks: ['需要手动浏览器验证。'],
-      verification_suggestions: ['打开 index.html 验证。'],
+      implementation_notes: ['Use native HTML, CSS, and JavaScript.'],
+      risks: ['Manual browser verification is required.'],
+      verification_suggestions: ['Open index.html to verify.'],
     };
     const runSession = vi.fn(async () => ({
       outcome: 'completed' as const,
@@ -239,7 +243,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '开发网页版项目看板',
+        taskDescription: 'Create a web project dashboard',
         useAiAssessment: false,
         generatePrompt: vi.fn(async () => 'Return context JSON.'),
         runSession,
@@ -253,7 +257,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const written = JSON.parse(await readFile(join(specDir, 'context.json'), 'utf-8'));
 
       expect(result).toEqual({ phase: 'discovery', success: true, errors: [], retries: 0 });
-      expect(written.task_description).toBe('开发网页版项目看板');
+      expect(written.task_description).toBe('Create a web project dashboard');
       expect(written.files_to_modify[0]).toEqual({
         path: 'E:/Work/Test/aitest/index.html',
         reason: 'Relevant file for the requested change',
@@ -275,11 +279,11 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
   it('normalizes loose requirements JSON before writing requirements output', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const looseRequirements = {
-      task: '开发网页版项目看板',
+      task: 'Create a web project dashboard',
       type: 'feature',
-      requirements: ['创建项目看板页面', '支持新增、筛选和状态更新'],
-      success_criteria: ['打开 index.html 可运行', 'node --check main.js 通过'],
-      risks: ['需要人工浏览器冒烟验证'],
+      requirements: ['Create the dashboard page', 'Support add, filter, and status updates'],
+      success_criteria: ['Open index.html successfully', 'node --check main.js passes'],
+      risks: ['Manual browser smoke testing is required'],
     };
     const runSession = vi.fn(async () => ({
       outcome: 'completed' as const,
@@ -294,7 +298,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '开发网页版项目看板',
+        taskDescription: 'Create a web project dashboard',
         useAiAssessment: false,
         generatePrompt: vi.fn(async () => 'Return requirements JSON.'),
         runSession,
@@ -309,11 +313,11 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
       expect(result).toEqual({ phase: 'requirements', success: true, errors: [], retries: 0 });
       expect(written).toMatchObject({
-        task_description: '开发网页版项目看板',
+        task_description: 'Create a web project dashboard',
         workflow_type: 'feature',
-        user_requirements: ['创建项目看板页面', '支持新增、筛选和状态更新'],
-        acceptance_criteria: ['打开 index.html 可运行', 'node --check main.js 通过'],
-        constraints: ['需要人工浏览器冒烟验证'],
+        user_requirements: ['Create the dashboard page', 'Support add, filter, and status updates'],
+        acceptance_criteria: ['Open index.html successfully', 'node --check main.js passes'],
+        constraints: ['Manual browser smoke testing is required'],
       });
       expect(written.created_at).toEqual(expect.any(String));
       expect(runSession).toHaveBeenCalledTimes(1);
@@ -431,21 +435,21 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }
 
       if (config.specPhase === 'planning') {
-        await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+        await saveAutocodeImplementationPlan(specDir, {
           feature: 'Refactor local task execution flow',
           workflow_type: 'refactor',
           phases: [{
             id: '1',
             name: 'Implementation',
             subtasks: [{
-              id: '1-1',
+              id: '1.1',
               title: 'Refactor flow',
               description: 'Refactor local task execution flow.',
               status: 'pending',
               verification: { type: 'manual', run: 'Run tests' },
             }],
           }],
-        }, null, 2), 'utf-8');
+        });
       }
 
       return {
@@ -487,11 +491,11 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('splits complex conservative implementation plans into phase files', async () => {
+  it('keeps complex conservative implementation plans in one Markdown file', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
       if (config.specPhase === 'planning') {
-        await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+        await saveAutocodeImplementationPlan(specDir, {
           feature: 'Refactor platform workflow',
           workflow_type: 'refactor',
           phases: Array.from({ length: 8 }, (_, phaseIndex) => ({
@@ -499,7 +503,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
             name: `Phase ${phaseIndex + 1}`,
             subtasks: [
               {
-                id: `${phaseIndex + 1}-1`,
+                id: `${phaseIndex + 1}.1`,
                 title: `Task ${phaseIndex + 1}`,
                 description: `Implement phase ${phaseIndex + 1}.`,
                 status: 'pending',
@@ -507,7 +511,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
               },
             ],
           })),
-        }, null, 2), 'utf-8');
+        });
       }
 
       return {
@@ -536,18 +540,21 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }).runPhase.bind(orchestrator);
 
       const result = await runPhase('planning', 1, 1);
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
-        split_plan?: boolean;
-        plan_files?: string[];
-        phases: Array<{ subtasks_file?: string; subtasks?: unknown[] }>;
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
+        phases: Array<{ subtasks?: unknown[] }>;
       };
+      const planContent = await readFile(join(specDir, 'implementation_plan.md'), 'utf-8');
 
       expect(result.success).toBe(true);
-      expect(plan.split_plan).toBe(true);
-      expect(plan.plan_files).toHaveLength(8);
-      expect(plan.phases[0].subtasks ?? []).toHaveLength(0);
-      expect(plan.phases[0].subtasks_file).toBe('implementation_plan.phase-1.json');
-      await expect(readFile(join(specDir, 'implementation_plan.phase-1.json'), 'utf-8')).resolves.toContain('"subtasks"');
+      expect(Object.keys(plan as Record<string, unknown>)).toEqual(expect.not.arrayContaining([
+        'split' + '_plan',
+        'plan' + '_files',
+      ]));
+      expect(plan.phases).toHaveLength(8);
+      expect(plan.phases[0].subtasks ?? []).toHaveLength(1);
+      expect(planContent).toContain('- [ ] 8. Phase 8');
+      const legacyShardPath = join(specDir, ['implementation_plan', 'phase-1', 'json'].join('.'));
+      await expect(readFile(legacyShardPath, 'utf-8')).rejects.toThrow();
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }
@@ -593,7 +600,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn(async () => {
       await writeFile(join(specDir, 'spec.md'), '# Quick Spec: Local Notes Tool\n', 'utf-8');
-      await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+      await saveAutocodeImplementationPlan(specDir, {
         feature: 'Local Notes Tool',
         workflow_type: 'simple',
         phases: [
@@ -603,7 +610,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
             name: 'Implementation',
             subtasks: [
               {
-                id: '1-1',
+                id: '1.1',
                 title: 'Add note model',
                 description: 'Create note data structures and persistence helpers.',
                 status: 'pending',
@@ -626,7 +633,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
             ],
           },
         ],
-      }, null, 2), 'utf-8');
+      });
 
       return {
         outcome: 'completed' as const,
@@ -654,7 +661,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }).runPhase.bind(orchestrator);
 
       const result = await runPhase('quick_spec', 1, 1);
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         phases: Array<{ subtasks: Array<{
           title: string;
           description: string;
@@ -706,7 +713,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
       const result = await orchestrator.run();
       const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         feature: string;
         source_task?: {
           original_request?: string;
@@ -743,7 +750,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: 'Task: 用 C++ 实现一个控制台待办事项工具',
+        taskDescription: 'Task: 鐢?C++ 瀹炵幇涓€涓帶鍒跺彴寰呭姙浜嬮」宸ュ叿',
         complexityOverride: 'simple',
         workflowConfig: { optimizationLevel: 'aggressive' },
         generatePrompt: vi.fn(async () => 'should not be used'),
@@ -752,7 +759,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       });
 
       const result = await orchestrator.run();
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         phases: Array<{ subtasks: Array<{
           files_to_create?: string[];
           pattern_files?: string[];
@@ -775,21 +782,21 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       phases.push(config.specPhase);
       if (config.specPhase === 'quick_spec') {
         await writeFile(join(specDir, 'spec.md'), '# Quick Spec\n\nImplement the local app.\n', 'utf-8');
-        await writeFile(join(specDir, 'implementation_plan.json'), JSON.stringify({
+        await saveAutocodeImplementationPlan(specDir, {
           feature: 'Local app',
           workflow_type: 'simple',
           phases: [{
             id: '1',
             name: 'Implementation',
             subtasks: [{
-              id: '1-1',
+              id: '1.1',
               title: 'Implement complete task',
               description: 'Implement the local app.',
               status: 'pending',
               verification: { type: 'manual', run: 'Open the app locally.' },
             }],
           }],
-        }, null, 2), 'utf-8');
+        });
       }
 
       return {
@@ -813,7 +820,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '实现一个小型本地可运行应用，用一个文件说明运行方式',
+        taskDescription: 'Build a small local app and document how to run it.',
         workflowConfig: { optimizationLevel: 'balanced' },
         projectIndex: emptyProjectIndex,
         generatePrompt: vi.fn(async () => 'Run phase.'),
@@ -821,7 +828,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       });
 
       const result = await orchestrator.run();
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         workflow_type: string;
         phases: Array<{ subtasks: unknown[] }>;
       };
@@ -846,7 +853,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '分析源码架构并生成一份中文 Markdown 文档',
+        taskDescription: 'Analyze source structure and generate one Markdown document.',
         workflowConfig: { optimizationLevel: 'balanced' },
         generatePrompt: vi.fn(async () => 'should not be used'),
         runSession,
@@ -855,7 +862,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
       const result = await orchestrator.run();
       const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         workflow_type: string;
         documentation_depth?: string;
         document_outputs?: {
@@ -913,7 +920,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '分析游戏源码，生成游戏实现方案的markdown文档。',
+        taskDescription: 'Analyze game source code and generate a Markdown implementation document.',
         workflowConfig: { optimizationLevel: 'aggressive' },
         generatePrompt: vi.fn(async () => 'should not be used'),
         runSession,
@@ -921,7 +928,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       });
 
       const result = await orchestrator.run();
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         workflow_type: string;
         phases: Array<{ subtasks: Array<{ files_to_create?: string[]; pattern_files?: string[] }> }>;
       };
@@ -964,7 +971,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
       const result = await orchestrator.run();
       const spec = await readFile(join(specDir, 'spec.md'), 'utf-8');
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         project_type?: string;
         documentation_profile?: string;
         documentation_focus?: string[];
@@ -993,7 +1000,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '分析游戏源码，生成游戏实现方案的markdown文档，不修改任何源码',
+        taskDescription: 'Analyze game source code, generate a Markdown implementation document, and do not modify any source code.',
         workflowConfig: { optimizationLevel: 'balanced' },
         generatePrompt: vi.fn(async () => 'should not be used'),
         runSession,
@@ -1001,7 +1008,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       });
 
       const result = await orchestrator.run();
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         workflow_type: string;
         phases: Array<{ subtasks: unknown[] }>;
       };
@@ -1500,7 +1507,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: '分析这是一个什么游戏，有哪些系统和玩法。',
+        taskDescription: 'Analyze what kind of game this is and what systems and gameplay it has.',
         workflowConfig: { optimizationLevel: 'balanced' },
         projectIndex,
         agentProfile: MMO_AGENT_PROFILE,
@@ -1605,7 +1612,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       });
 
       const result = await orchestrator.run();
-      const plan = JSON.parse(await readFile(join(specDir, 'implementation_plan.json'), 'utf-8')) as {
+      const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
         phases: Array<{ subtasks: Array<{ files_to_create?: string[] }> }>;
       };
 

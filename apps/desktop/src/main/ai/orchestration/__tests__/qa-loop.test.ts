@@ -1,4 +1,4 @@
-import path from 'node:path';
+﻿import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 
 // ---------------------------------------------------------------------------
@@ -8,11 +8,18 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 const mockReadFile = vi.fn();
 const mockWriteFile = vi.fn();
 const mockUnlink = vi.fn();
+const mockLoadAutocodeImplementationPlan = vi.fn();
+const mockSaveAutocodeImplementationPlan = vi.fn();
 
 vi.mock('node:fs/promises', () => ({
   readFile: (...args: unknown[]) => mockReadFile(...args),
   writeFile: (...args: unknown[]) => mockWriteFile(...args),
   unlink: (...args: unknown[]) => mockUnlink(...args),
+}));
+
+vi.mock('@autocode/core', () => ({
+  loadAutocodeImplementationPlan: (...args: unknown[]) => mockLoadAutocodeImplementationPlan(...args),
+  saveAutocodeImplementationPlan: (...args: unknown[]) => mockSaveAutocodeImplementationPlan(...args),
 }));
 
 vi.mock('../../utils/json-repair', () => ({
@@ -64,9 +71,9 @@ function completedPlan(qaStatus?: 'approved' | 'rejected' | 'unknown') {
   } else if (qaStatus === 'rejected') {
     plan.qa_signoff = { status: 'rejected', issues_found: [{ title: 'Test failure', type: 'critical' }] };
   }
-  // qaStatus === 'unknown' → no qa_signoff key
+  // qaStatus === 'unknown' 鈫?no qa_signoff key
 
-  return JSON.stringify(plan);
+  return plan;
 }
 
 function makeSessionResult(outcome: SessionResult['outcome']): SessionResult {
@@ -98,6 +105,8 @@ describe('QALoop', () => {
     mockReadFile.mockReset();
     mockWriteFile.mockReset().mockResolvedValue(undefined);
     mockUnlink.mockReset().mockResolvedValue(undefined);
+    mockLoadAutocodeImplementationPlan.mockReset();
+    mockSaveAutocodeImplementationPlan.mockReset().mockResolvedValue(undefined);
   });
 
   // -------------------------------------------------------------------------
@@ -106,13 +115,13 @@ describe('QALoop', () => {
 
   it('returns error outcome when build is not complete', async () => {
     // Plan with a non-completed subtask
-    const plan = JSON.stringify({
+    const plan = {
       phases: [{ subtasks: [{ status: 'pending' }] }],
-    });
+    };
 
     // No QA_FIX_REQUEST.md either
+    mockLoadAutocodeImplementationPlan.mockResolvedValue(plan);
     mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) return Promise.resolve(plan);
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -131,8 +140,8 @@ describe('QALoop', () => {
   it('returns approved immediately when QA signoff is already "approved"', async () => {
     const plan = completedPlan('approved');
 
+    mockLoadAutocodeImplementationPlan.mockResolvedValue(plan);
     mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) return Promise.resolve(plan);
       // QA_FIX_REQUEST.md does not exist
       return Promise.reject(new Error('ENOENT'));
     });
@@ -161,14 +170,14 @@ describe('QALoop', () => {
       return makeSessionResult('completed');
     });
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        _planReadCount++;
-        // Before the reviewer has run, return no signoff (build complete, no qa yet)
-        if (sessionCallCount === 0) return Promise.resolve(completedPlan());
-        // After the reviewer ran, return approved
-        return Promise.resolve(completedPlan('approved'));
-      }
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      _planReadCount++;
+      // Before the reviewer has run, return no signoff (build complete, no qa yet)
+      if (sessionCallCount === 0) return Promise.resolve(completedPlan());
+      // After the reviewer ran, return approved
+      return Promise.resolve(completedPlan('approved'));
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -198,17 +207,17 @@ describe('QALoop', () => {
       return makeSessionResult('completed');
     });
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        planReadCount++;
-        if (planReadCount === 1) return Promise.resolve(completedPlan()); // isBuildComplete
-        // Reviewer on iteration 1 ran when sessionCallCount >= 1
-        // Serve rejected until fixer has run (sessionCallCount >= 2), then approved
-        if (sessionCallCount < 2) {
-          return Promise.resolve(completedPlan('rejected'));
-        }
-        return Promise.resolve(completedPlan('approved'));
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      planReadCount++;
+      if (planReadCount === 1) return Promise.resolve(completedPlan()); // isBuildComplete
+      // Reviewer on iteration 1 ran when sessionCallCount >= 1
+      // Serve rejected until fixer has run (sessionCallCount >= 2), then approved
+      if (sessionCallCount < 2) {
+        return Promise.resolve(completedPlan('rejected'));
       }
+      return Promise.resolve(completedPlan('approved'));
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -234,21 +243,20 @@ describe('QALoop', () => {
     // so recurring_issues threshold is never reached within maxIterations=2
     let planReadCount = 0;
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        planReadCount++;
-        if (planReadCount === 1) return Promise.resolve(completedPlan()); // build complete check
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      planReadCount++;
+      if (planReadCount === 1) return Promise.resolve(completedPlan()); // build complete check
 
-        // Return distinct issues each time to avoid recurring_issues escalation
-        const plan = JSON.stringify({
-          phases: [{ subtasks: [{ status: 'completed' }] }],
-          qa_signoff: {
-            status: 'rejected',
-            issues_found: [{ title: `Unique issue ${planReadCount}`, type: 'warning' }],
-          },
-        });
-        return Promise.resolve(plan);
-      }
+      // Return distinct issues each time to avoid recurring_issues escalation
+      return Promise.resolve({
+        phases: [{ subtasks: [{ status: 'completed' }] }],
+        qa_signoff: {
+          status: 'rejected',
+          issues_found: [{ title: `Unique issue ${planReadCount}`, type: 'warning' }],
+        },
+      });
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -267,16 +275,15 @@ describe('QALoop', () => {
   it('escalates after MAX_CONSECUTIVE_ERRORS (3) consecutive unknown status responses', async () => {
     let planReadCount = 0;
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        planReadCount++;
-        if (planReadCount === 1) return Promise.resolve(completedPlan()); // build complete
-        // Return a plan with no qa_signoff — "unknown" status
-        const planWithNoSignoff = JSON.stringify({
-          phases: [{ subtasks: [{ status: 'completed' }] }],
-        });
-        return Promise.resolve(planWithNoSignoff);
-      }
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      planReadCount++;
+      if (planReadCount === 1) return Promise.resolve(completedPlan()); // build complete
+      // Return a plan with no qa_signoff -> "unknown" status
+      return Promise.resolve({
+        phases: [{ subtasks: [{ status: 'completed' }] }],
+      });
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -294,19 +301,19 @@ describe('QALoop', () => {
 
   it('escalates when the same issue recurs 3 or more times', async () => {
     const recurringIssue = { title: 'Null pointer exception', type: 'critical' as const };
-    const rejectedPlan = JSON.stringify({
+    const rejectedPlan = {
       phases: [{ subtasks: [{ status: 'completed' }] }],
       qa_signoff: { status: 'rejected', issues_found: [recurringIssue] },
-    });
+    };
 
     let planReadCount = 0;
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        planReadCount++;
-        if (planReadCount === 1) return Promise.resolve(completedPlan()); // build complete
-        return Promise.resolve(rejectedPlan);
-      }
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      planReadCount++;
+      if (planReadCount === 1) return Promise.resolve(completedPlan()); // build complete
+      return Promise.resolve(rejectedPlan);
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -325,8 +332,8 @@ describe('QALoop', () => {
   it('returns cancelled outcome when aborted before first iteration runs', async () => {
     const controller = new AbortController();
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) return Promise.resolve(completedPlan());
+    mockLoadAutocodeImplementationPlan.mockResolvedValue(completedPlan());
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -349,12 +356,12 @@ describe('QALoop', () => {
   it('returns error outcome when fixer session fails', async () => {
     let planReadCount = 0;
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        planReadCount++;
-        if (planReadCount === 1) return Promise.resolve(completedPlan());
-        return Promise.resolve(completedPlan('rejected'));
-      }
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      planReadCount++;
+      if (planReadCount === 1) return Promise.resolve(completedPlan());
+      return Promise.resolve(completedPlan('rejected'));
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -377,12 +384,12 @@ describe('QALoop', () => {
   it('returns cancelled when reviewer session is cancelled', async () => {
     let planReadCount = 0;
 
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        planReadCount++;
-        if (planReadCount === 1) return Promise.resolve(completedPlan());
-        return Promise.resolve(completedPlan());
-      }
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      planReadCount++;
+      if (planReadCount === 1) return Promise.resolve(completedPlan());
+      return Promise.resolve(completedPlan());
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -402,9 +409,9 @@ describe('QALoop', () => {
 
   it('processes QA_FIX_REQUEST.md before running the review loop', async () => {
     // QA_FIX_REQUEST.md exists
+    mockLoadAutocodeImplementationPlan.mockResolvedValue(completedPlan('approved'));
     mockReadFile.mockImplementation((path: string) => {
       if (path.endsWith('QA_FIX_REQUEST.md')) return Promise.resolve('Fix this please');
-      if (path.endsWith('implementation_plan.json')) return Promise.resolve(completedPlan('approved'));
       return Promise.reject(new Error('ENOENT'));
     });
 
@@ -428,12 +435,12 @@ describe('QALoop', () => {
 
   it('emits qa-complete event with the final outcome', async () => {
     let planReadCount = 0;
-    mockReadFile.mockImplementation((path: string) => {
-      if (path.endsWith('implementation_plan.json')) {
-        planReadCount++;
-        if (planReadCount === 1) return Promise.resolve(completedPlan());
-        return Promise.resolve(completedPlan('approved'));
-      }
+    mockLoadAutocodeImplementationPlan.mockImplementation(() => {
+      planReadCount++;
+      if (planReadCount === 1) return Promise.resolve(completedPlan());
+      return Promise.resolve(completedPlan('approved'));
+    });
+    mockReadFile.mockImplementation((_path: string) => {
       return Promise.reject(new Error('ENOENT'));
     });
 

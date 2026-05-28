@@ -15,6 +15,6 @@ describe('spec phase prompt mapping', () => {
 
     expect(prompt).toContain('Use Edit for the smallest affected section');
     expect(prompt).toContain('do NOT rewrite the whole file with Write');
-    expect(prompt).toContain('split implementation plan format');
+    expect(prompt).toContain('single concise Markdown checklist');
   });
 });

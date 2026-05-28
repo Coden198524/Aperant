@@ -1,9 +1,8 @@
-import type { BrowserWindow } from "electron";
+﻿import type { BrowserWindow } from "electron";
 import { ipcMain } from "electron";
 import path from "path";
-import { existsSync, readFileSync } from "fs";
-import { AUTOCODE_TASK_ARTIFACTS } from "@autocode/core";
-import { safeParseJson } from "../utils/json-repair";
+import { existsSync } from "fs";
+import { AUTOCODE_TASK_ARTIFACTS, loadAutocodeImplementationPlanSync } from "@autocode/core";
 import { IPC_CHANNELS, getSpecsDir } from "../../shared/constants";
 import type {
   SDKRateLimitInfo,
@@ -41,14 +40,14 @@ export function registerAgenteventsHandlers(
   taskStateManager.configure(getMainWindow);
 
   // ============================================
-  // Debug: Renderer → Main log bridge
+  // Debug: Renderer 鈫?Main log bridge
   // ============================================
   ipcMain.on(IPC_CHANNELS.RENDERER_LOG, (_event, message: string) => {
     console.log(`[RENDERER] ${message}`);
   });
 
   // ============================================
-  // Agent Manager Events → Renderer
+  // Agent Manager Events 鈫?Renderer
   // ============================================
 
   agentManager.on("log", (taskId: string, log: string, projectId?: string) => {
@@ -124,7 +123,7 @@ export function registerAgenteventsHandlers(
     const { task: exitTask, project: exitProject } = findTaskAndProject(taskId, projectId);
     const exitProjectId = exitProject?.id || projectId;
 
-    // Skip handleProcessExited for successful spec-creation exits — the spec → build
+    // Skip handleProcessExited for successful spec-creation exits 鈥?the spec 鈫?build
     // transition (line 132+) will start a new agent, and calling handleProcessExited
     // here would mark the task as stuck (no terminal event seen for spec creation).
     const isSpecToBuildTransition = processType === 'spec-creation' && code === 0;
@@ -135,7 +134,7 @@ export function registerAgenteventsHandlers(
     // Fallback safety net: If XState failed to transition the task out of an active state,
     // force it to human_review after a short delay. This prevents tasks from getting stuck
     // when the process exits without XState properly handling it.
-    // Skip for spec→build transitions: a new process starts immediately, and the timer
+    // Skip for spec鈫抌uild transitions: a new process starts immediately, and the timer
     // would incorrectly force USER_STOPPED on the newly started execution process.
     // We check XState's current state directly to avoid stale cache issues from projectStore.
     // Store timer reference so it can be cancelled if task restarts within the window.
@@ -160,7 +159,7 @@ export function registerAgenteventsHandlers(
               type: 'QA_PASSED', iteration: 0, testsRun: {}
             }, checkTask, checkProject);
           } else {
-            // Non-zero exit code — task was stopped or crashed
+            // Non-zero exit code 鈥?task was stopped or crashed
             const hasPlan = hasPlanWithSubtasks(checkProject, checkTask);
             console.warn(
               `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
@@ -181,7 +180,7 @@ export function registerAgenteventsHandlers(
 
     // Send final plan state to renderer BEFORE unwatching
     // This ensures the renderer has the final subtask data (fixes 0/0 subtask bug)
-    // Always prefer the worktree plan — it has the most current subtask data
+    // Always prefer the worktree plan 鈥?it has the most current subtask data
     // from agent execution. The file watcher may have been watching main project.
     let finalPlan = fileWatcher.getCurrentPlan(taskId, exitProjectId);
     if (exitTask && exitProject) {
@@ -195,12 +194,10 @@ export function registerAgenteventsHandlers(
           AUTOCODE_TASK_ARTIFACTS.implementationPlan
         );
         try {
-          const content = readFileSync(worktreePlanPath, 'utf-8');
-          const parsed = safeParseJson<ImplementationPlan>(content);
+          const parsed = loadAutocodeImplementationPlanSync(worktreePlanPath) as ImplementationPlan | null;
           if (parsed) {
             finalPlan = parsed;
           }
-          // If null, JSON is corrupt even after repair — keep fileWatcher plan
         } catch {
           // Worktree plan file not readable - keep fileWatcher plan
         }
@@ -245,8 +242,7 @@ export function registerAgenteventsHandlers(
 
             if (!parsedPlan && planFileExists) {
               try {
-                const planContent = readFileSync(planPath, "utf-8");
-                parsedPlan = safeParseJson<ImplementationPlan>(planContent);
+                parsedPlan = loadAutocodeImplementationPlanSync(planPath) as ImplementationPlan | null;
               } catch {
                 parsedPlan = null;
               }
@@ -296,7 +292,7 @@ export function registerAgenteventsHandlers(
           }
 
           if (existsSync(specFilePath)) {
-            console.warn(`[Task ${taskId}] Spec created successfully — starting task execution`);
+            console.warn(`[Task ${taskId}] Spec created successfully 鈥?starting task execution`);
             // Re-watch the spec directory for the build phase
             fileWatcher.watch(taskId, specDir, specProject.id).catch((err) => {
               console.error(`[agent-events-handlers] Failed to re-watch spec dir for ${taskId}:`, err);
@@ -317,7 +313,7 @@ export function registerAgenteventsHandlers(
               specProject.id
             );
           } else {
-            console.warn(`[Task ${taskId}] Spec creation succeeded but spec.md not found — not starting execution`);
+            console.warn(`[Task ${taskId}] Spec creation succeeded but spec.md not found 鈥?not starting execution`);
           }
         }
       }
@@ -343,8 +339,7 @@ export function registerAgenteventsHandlers(
       if (task && project) {
         try {
           const planPath = getPlanPath(project, task);
-          const planContent = readFileSync(planPath, "utf-8");
-          const plan = JSON.parse(planContent);
+          const plan = loadAutocodeImplementationPlanSync(planPath) as { lastEvent?: { sequence?: unknown } } | null;
           const lastSeq = plan?.lastEvent?.sequence;
           if (typeof lastSeq === "number" && lastSeq >= 0) {
             taskStateManager.setLastSequence(taskId, lastSeq);
@@ -464,7 +459,7 @@ export function registerAgenteventsHandlers(
         // Re-watch the worktree path if the file watcher is still watching the main project path.
         // This handles the case where the task started before the worktree existed:
         // the initial watch fell back to the main project spec dir, but now the worktree
-        // is available and implementation_plan.json is being written there.
+        // is available and implementation_plan.md is being written there.
         const currentWatchDir = fileWatcher.getWatchedSpecDir(taskId, project.id);
         if (currentWatchDir && currentWatchDir !== worktreeSpecDir && existsSync(worktreePlanPath)) {
           console.warn(`[agent-events-handlers] Re-watching worktree path for ${taskId}: ${worktreeSpecDir}`);
@@ -503,11 +498,11 @@ export function registerAgenteventsHandlers(
   });
 
   // ============================================
-  // File Watcher Events → Renderer
+  // File Watcher Events 鈫?Renderer
   // ============================================
 
   fileWatcher.on("progress", (taskId: string, plan: ImplementationPlan, projectId?: string) => {
-    // File watcher events don't carry projectId — fall back to lookup
+    // File watcher events don't carry projectId 鈥?fall back to lookup
     const { task, project } = findTaskAndProject(taskId, projectId);
     const resolvedProjectId = project?.id ?? projectId;
 
@@ -524,7 +519,7 @@ export function registerAgenteventsHandlers(
       const hasNonPending = Object.keys(statusCounts).some(k => k !== 'pending');
       if (hasNonPending) {
         console.warn(
-          `[FileWatcher→Renderer] Task ${taskId} subtask statuses:`,
+          `[FileWatcher鈫扲enderer] Task ${taskId} subtask statuses:`,
           statusCounts,
           `| projectId: ${resolvedProjectId ?? 'UNKNOWN'}`,
         );
@@ -534,7 +529,7 @@ export function registerAgenteventsHandlers(
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_PROGRESS, taskId, plan, resolvedProjectId);
 
     // Re-stamp XState status fields if the backend overwrote the plan file without them.
-    // The planner agent writes implementation_plan.json via the Write tool, which replaces
+    // The planner agent writes implementation_plan.md via the Write tool, which replaces
     // the entire file and strips the frontend's status/xstateState/executionPhase fields.
     // This causes tasks to snap back to backlog on refresh.
     const planWithStatus = plan as { xstateState?: string; executionPhase?: string; status?: string };
@@ -564,7 +559,7 @@ export function registerAgenteventsHandlers(
   });
 
   fileWatcher.on("error", (taskId: string, error: string, projectId?: string) => {
-    // File watcher events don't carry projectId — fall back to lookup
+    // File watcher events don't carry projectId 鈥?fall back to lookup
     const { project } = findTaskAndProject(taskId, projectId);
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_ERROR, taskId, error, project?.id ?? projectId);
   });

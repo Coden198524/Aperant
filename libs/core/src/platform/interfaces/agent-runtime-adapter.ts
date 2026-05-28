@@ -1,7 +1,6 @@
-import type { AutocodeAgentRuntimePlan } from '../../runtime/agent-runtime.js';
+import type { AutocodeAgentRuntimeStarter } from '../../runtime/agent-runtime.js';
 
-export interface AgentRuntimeAdapter {
-  startRuntime(plan: AutocodeAgentRuntimePlan): Promise<void> | void;
+export interface AgentRuntimeAdapter extends AutocodeAgentRuntimeStarter {
   stopRuntime(taskId: string, projectId?: string): Promise<void> | void;
   isRuntimeRunning?(taskId: string, projectId?: string): boolean;
 }

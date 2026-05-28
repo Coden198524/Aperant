@@ -1,7 +1,12 @@
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, writeFile, readFile, rm } from 'node:fs/promises';
+﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { mkdtemp, rm } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
+import {
+  loadAutocodeImplementationPlan,
+  saveAutocodeImplementationPlan,
+  type MutableAutocodePlan,
+} from '@autocode/core';
 
 import { iterateSubtasks } from '../subtask-iterator';
 import type { SessionResult } from '../../session/types';
@@ -17,13 +22,21 @@ function makeResult(outcome: SessionResult['outcome']): SessionResult {
   };
 }
 
+async function savePlan(specDir: string, plan: MutableAutocodePlan): Promise<void> {
+  await saveAutocodeImplementationPlan(specDir, plan);
+}
+
+async function loadPlan<T = MutableAutocodePlan>(specDir: string): Promise<T> {
+  const plan = await loadAutocodeImplementationPlan(specDir);
+  expect(plan).not.toBeNull();
+  return plan as T;
+}
+
 describe('iterateSubtasks completion gating', () => {
   let specDir: string;
-  let planPath: string;
 
   beforeEach(async () => {
     specDir = await mkdtemp(join(tmpdir(), 'subtask-iter-test-'));
-    planPath = join(specDir, 'implementation_plan.json');
   });
 
   afterEach(async () => {
@@ -41,7 +54,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     const result = await iterateSubtasks({
       specDir,
@@ -51,9 +64,9 @@ describe('iterateSubtasks completion gating', () => {
       runSubtaskSession: async () => makeResult('max_steps'),
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ status: string }> }>;
-    };
+    }>(specDir);
 
     expect(result.totalSubtasks).toBe(1);
     expect(result.completedSubtasks).toBe(0);
@@ -72,7 +85,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     const result = await iterateSubtasks({
       specDir,
@@ -82,9 +95,9 @@ describe('iterateSubtasks completion gating', () => {
       runSubtaskSession: async () => makeResult('completed'),
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ status: string }> }>;
-    };
+    }>(specDir);
 
     expect(result.totalSubtasks).toBe(1);
     expect(result.completedSubtasks).toBe(1);
@@ -103,7 +116,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     let runs = 0;
     const result = await iterateSubtasks({
@@ -113,18 +126,18 @@ describe('iterateSubtasks completion gating', () => {
       autoContinueDelayMs: 0,
       runSubtaskSession: async () => {
         runs++;
-        const currentPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+        const currentPlan = await loadPlan<{
           phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
-        };
+        }>(specDir);
         currentPlan.phases[0].subtasks[0].status = 'completed';
-        await writeFile(planPath, JSON.stringify(currentPlan, null, 2), 'utf-8');
+        await savePlan(specDir, currentPlan);
         return makeResult('error');
       },
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ status: string }> }>;
-    };
+    }>(specDir);
 
     expect(runs).toBe(1);
     expect(result.totalSubtasks).toBe(1);
@@ -144,7 +157,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     let runs = 0;
     const result = await iterateSubtasks({
@@ -154,11 +167,11 @@ describe('iterateSubtasks completion gating', () => {
       autoContinueDelayMs: 0,
       runSubtaskSession: async () => {
         runs++;
-        const stalePlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+        const stalePlan = await loadPlan<{
           phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
-        };
+        }>(specDir);
         stalePlan.phases[0].subtasks[0].status = 'in_progress';
-        await writeFile(planPath, JSON.stringify(stalePlan, null, 2), 'utf-8');
+        await savePlan(specDir, stalePlan);
         return {
           ...makeResult('error'),
           completedSubtaskIds: ['s1'],
@@ -169,9 +182,9 @@ describe('iterateSubtasks completion gating', () => {
       },
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ status: string; completion_summary?: string }> }>;
-    };
+    }>(specDir);
 
     expect(runs).toBe(1);
     expect(result.completedSubtasks).toBe(1);
@@ -191,7 +204,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     let runs = 0;
     const result = await iterateSubtasks({
@@ -201,11 +214,11 @@ describe('iterateSubtasks completion gating', () => {
       autoContinueDelayMs: 0,
       runSubtaskSession: async () => {
         runs++;
-        const stalePlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+        const stalePlan = await loadPlan<{
           phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
-        };
+        }>(specDir);
         stalePlan.phases[0].subtasks[0].status = 'in_progress';
-        await writeFile(planPath, JSON.stringify(stalePlan, null, 2), 'utf-8');
+        await savePlan(specDir, stalePlan);
         return {
           ...makeResult('max_steps'),
           completedSubtaskIds: ['s1'],
@@ -216,9 +229,9 @@ describe('iterateSubtasks completion gating', () => {
       },
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ status: string; completion_summary?: string }> }>;
-    };
+    }>(specDir);
 
     expect(runs).toBe(1);
     expect(result.completedSubtasks).toBe(1);
@@ -245,7 +258,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     const started: string[] = [];
     const result = await iterateSubtasks({
@@ -257,9 +270,9 @@ describe('iterateSubtasks completion gating', () => {
       runSubtaskSession: async () => makeResult('completed'),
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ id: string; status: string; completed_at?: string }> }>;
-    };
+    }>(specDir);
 
     expect(started).toEqual(['s2']);
     expect(result.totalSubtasks).toBe(2);
@@ -280,7 +293,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     await iterateSubtasks({
       specDir,
@@ -295,9 +308,9 @@ describe('iterateSubtasks completion gating', () => {
       }),
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ completion_summary?: string; notes?: string }> }>;
-    };
+    }>(specDir);
 
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('| What changed |');
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain(
@@ -321,7 +334,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     const table = [
       '| Item | Details |',
@@ -344,9 +357,9 @@ describe('iterateSubtasks completion gating', () => {
       }),
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ completion_summary?: string }> }>;
-    };
+    }>(specDir);
 
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).toBe(table);
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).not.toContain('Session outcome');
@@ -364,7 +377,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     const longSummary = [
       'Implemented the complete task detail summary surface.',
@@ -385,9 +398,9 @@ describe('iterateSubtasks completion gating', () => {
       }),
     });
 
-    const updatedPlan = JSON.parse(await readFile(planPath, 'utf-8')) as {
+    const updatedPlan = await loadPlan<{
       phases: Array<{ subtasks: Array<{ completion_summary?: string }> }>;
-    };
+    }>(specDir);
 
     expect(updatedPlan.phases[0].subtasks[0].completion_summary?.length).toBeGreaterThan(500);
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('manual audit');
@@ -405,7 +418,7 @@ describe('iterateSubtasks completion gating', () => {
         },
       ],
     };
-    await writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    await savePlan(specDir, plan);
 
     let snapshotDuringRun: Record<string, unknown> | null = null;
 
@@ -415,7 +428,7 @@ describe('iterateSubtasks completion gating', () => {
       maxRetries: 1,
       autoContinueDelayMs: 0,
       runSubtaskSession: async () => {
-        snapshotDuringRun = JSON.parse(await readFile(planPath, 'utf-8')) as Record<string, unknown>;
+        snapshotDuringRun = await loadPlan<Record<string, unknown> & MutableAutocodePlan>(specDir);
         return makeResult('completed');
       },
     });

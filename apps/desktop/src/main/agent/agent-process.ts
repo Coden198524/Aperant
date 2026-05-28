@@ -3,7 +3,11 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync } from 'fs';
 import { app } from 'electron';
-import { AUTOCODE_PROJECT_ENV_FILE_NAME, getAutocodeProjectEnvPath } from '@autocode/core';
+import {
+  AUTOCODE_PROJECT_ENV_FILE_NAME,
+  getAutocodeProjectEnvPath,
+  loadAutocodeImplementationPlanSync,
+} from '@autocode/core';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -948,14 +952,10 @@ export class AgentProcessManager {
       // This ensures token counts continue accumulating across multiple sessions
       let initialTokenUsage: TokenUsage | null = null;
       try {
-        const planPath = path.join(executorConfig.session.specDir, 'implementation_plan.json');
-        if (existsSync(planPath)) {
-          const planContent = readFileSync(planPath, 'utf-8');
-          const plan = JSON.parse(planContent);
-          if (plan.tokenUsage && typeof plan.tokenUsage === 'object') {
-            initialTokenUsage = plan.tokenUsage as TokenUsage;
-            console.log('[AgentProcess] Restored historical token usage from plan:', initialTokenUsage);
-          }
+        const plan = loadAutocodeImplementationPlanSync(executorConfig.session.specDir);
+        if (plan?.tokenUsage && typeof plan.tokenUsage === 'object') {
+          initialTokenUsage = plan.tokenUsage as TokenUsage;
+          console.log('[AgentProcess] Restored historical token usage from plan:', initialTokenUsage);
         }
       } catch (err) {
         // Non-fatal - worker will start with null token usage

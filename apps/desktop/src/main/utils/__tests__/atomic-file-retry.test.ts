@@ -6,7 +6,11 @@
  */
 
 import { describe, expect, it, beforeEach, vi } from 'vitest';
-import { rename as originalRename, readFile as originalReadFile } from 'fs/promises';
+import {
+  rename as originalRename,
+  readFile as originalReadFile,
+  writeFile as originalWriteFile,
+} from 'fs/promises';
 
 // Track call counts per mock
 let renameCallCount = 0;
@@ -16,6 +20,8 @@ let readFileCallCount = 0;
 let renameMockFn: ((...args: any[]) => Promise<void>) | null = null;
 // biome-ignore lint/suspicious/noExplicitAny: mock functions need flexible types
 let readFileMockFn: ((...args: any[]) => Promise<string | Buffer>) | null = null;
+// biome-ignore lint/suspicious/noExplicitAny: mock functions need flexible types
+let writeFileMockFn: ((...args: any[]) => Promise<void>) | null = null;
 
 vi.mock('fs/promises', async (importOriginal) => {
   const original = await importOriginal<typeof import('fs/promises')>();
@@ -30,6 +36,10 @@ vi.mock('fs/promises', async (importOriginal) => {
       readFileCallCount++;
       if (readFileMockFn) return readFileMockFn(...args);
       return original.readFile(...args);
+    },
+    writeFile: (...args: Parameters<typeof originalWriteFile>) => {
+      if (writeFileMockFn) return writeFileMockFn(...args);
+      return original.writeFile(...args);
     },
   };
 });
@@ -52,6 +62,7 @@ describe('transient error retry behavior', () => {
     readFileCallCount = 0;
     renameMockFn = null;
     readFileMockFn = null;
+    writeFileMockFn = null;
 
     if (existsSync(TEST_DIR)) {
       await rm(TEST_DIR, { recursive: true, force: true });
@@ -94,13 +105,27 @@ describe('transient error retry behavior', () => {
       err.code = 'EACCES';
       throw err;
     };
+    writeFileMockFn = async (...args: unknown[]) => {
+      if (path.resolve(String(args[0])) === path.resolve(filePath)) {
+        const err = new Error('EACCES: permission denied') as NodeJS.ErrnoException;
+        err.code = 'EACCES';
+        throw err;
+      }
+      const { writeFile: realWriteFile } = await vi.importActual<typeof import('fs/promises')>('fs/promises');
+      return realWriteFile(
+        args[0] as string,
+        args[1] as string | Buffer,
+        args[2] as Parameters<typeof realWriteFile>[2]
+      );
+    };
 
     await expect(
       writeFileWithRetry(filePath, 'content', { maxRetries: 2, retryDelay: 1 })
     ).rejects.toThrow(AtomicFileError);
 
-    // Should have attempted 3 times (initial + 2 retries)
-    expect(renameCallCount).toBe(3);
+    // Should have attempted at least 3 times (initial + 2 retries).
+    // Windows may perform extra inner rename attempts before using the direct-write fallback.
+    expect(renameCallCount).toBeGreaterThanOrEqual(3);
   });
 
   it('should retry reads on EAGAIN and succeed when error clears', async () => {

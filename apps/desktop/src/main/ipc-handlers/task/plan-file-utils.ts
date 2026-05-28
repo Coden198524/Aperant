@@ -1,7 +1,7 @@
-/**
+﻿/**
  * Plan File Utilities
  *
- * Provides thread-safe operations for reading and writing implementation_plan.json files.
+ * Provides thread-safe operations for reading and writing implementation_plan.md files.
  * Uses an in-memory lock to serialize updates and prevent race conditions when multiple
  * IPC handlers try to update the same plan file concurrently.
  *
@@ -99,10 +99,10 @@ export function mapStatusToPlanStatus(status: TaskStatus): string {
 }
 
 /**
- * Persist task status to implementation_plan.json file.
+ * Persist task status to implementation_plan.md file.
  * This is thread-safe and prevents race conditions when multiple handlers update the same file.
  *
- * @param planPath - Path to the implementation_plan.json file
+ * @param planPath - Path to the implementation_plan.md file
  * @param status - The TaskStatus to persist
  * @param projectId - Optional project ID to invalidate cache (recommended for performance)
  * @returns true if status was persisted, false if plan file doesn't exist
@@ -110,19 +110,18 @@ export function mapStatusToPlanStatus(status: TaskStatus): string {
 export async function persistPlanStatus(planPath: string, status: TaskStatus, projectId?: string): Promise<boolean> {
   return withPlanLock(planPath, async () => {
     try {
-      console.warn(`[plan-file-utils] Reading implementation_plan.json to update status to: ${status}`, { planPath });
+      console.warn(`[plan-file-utils] Reading implementation_plan.md to update status to: ${status}`, { planPath });
       // Read file directly without existence check to avoid TOCTOU race condition
-      const planContent = readFileSync(planPath, 'utf-8');
-      const plan = safeParseJson<Record<string, unknown>>(planContent);
+      const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
       if (!plan) {
-        console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - status not persisted`);
+        console.warn(`[plan-file-utils] Unreadable Markdown plan in ${planPath} - status not persisted`);
         return false;
       }
 
       applyAutocodePlanStatus(plan as MutableAutocodePlan, status);
 
-      writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
-      console.warn(`[plan-file-utils] Successfully persisted status: ${status} to implementation_plan.json`);
+      saveImplementationPlanToFilesSync(planPath, plan);
+      console.warn(`[plan-file-utils] Successfully persisted status: ${status} to implementation_plan.md`);
 
       // Invalidate tasks cache since status changed
       if (projectId) {
@@ -133,7 +132,7 @@ export async function persistPlanStatus(planPath: string, status: TaskStatus, pr
     } catch (err) {
       // File not found is expected - return false
       if (isFileNotFoundError(err)) {
-        console.warn(`[plan-file-utils] implementation_plan.json not found at ${planPath} - status not persisted`);
+        console.warn(`[plan-file-utils] implementation_plan.md not found at ${planPath} - status not persisted`);
         return false;
       }
       console.warn(`[plan-file-utils] Could not persist status to ${planPath}:`, err);
@@ -151,7 +150,7 @@ export async function persistPlanStatus(planPath: string, status: TaskStatus, pr
  * createPlanIfNotExists) that may be in flight for the same file. Using this function while
  * async operations are pending can result in:
  * - Lost updates (this write may overwrite changes from an async operation, or vice versa)
- * - Corrupted JSON (if writes interleave at the filesystem level)
+ * - Corrupted plan content (if writes interleave at the filesystem level)
  * - Inconsistent state between what was written and what the async operation expected to read
  *
  * ONLY use this function when ALL of the following conditions are met:
@@ -162,7 +161,7 @@ export async function persistPlanStatus(planPath: string, status: TaskStatus, pr
  * When possible, prefer using the async `persistPlanStatus` function instead, which properly
  * participates in the locking mechanism and prevents race conditions.
  *
- * @param planPath - Path to the implementation_plan.json file
+ * @param planPath - Path to the implementation_plan.md file
  * @param status - The TaskStatus to persist
  * @param projectId - Optional project ID to invalidate cache (recommended for performance)
  * @returns true if status was persisted, false otherwise
@@ -170,16 +169,15 @@ export async function persistPlanStatus(planPath: string, status: TaskStatus, pr
 export function persistPlanStatusSync(planPath: string, status: TaskStatus, projectId?: string): boolean {
   try {
     // Read file directly without existence check to avoid TOCTOU race condition
-    const planContent = readFileSync(planPath, 'utf-8');
-    const plan = safeParseJson<Record<string, unknown>>(planContent);
+    const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
     if (!plan) {
-      console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - sync status not persisted`);
+      console.warn(`[plan-file-utils] Unreadable Markdown plan in ${planPath} - sync status not persisted`);
       return false;
     }
 
     applyAutocodePlanStatus(plan as MutableAutocodePlan, status);
 
-    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(planPath, plan);
 
     // Invalidate tasks cache since status changed
     if (projectId) {
@@ -205,10 +203,9 @@ export function persistPlanStatusSync(planPath: string, status: TaskStatus, proj
  */
 export function persistPlanLastEventSync(planPath: string, event: TaskEventPayload): boolean {
   try {
-    const planContent = readFileSync(planPath, 'utf-8');
-    const plan = safeParseJson<Record<string, unknown>>(planContent);
+    const plan = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
     if (!plan) {
-      console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - lastEvent not persisted`);
+      console.warn(`[plan-file-utils] Unreadable Markdown plan in ${planPath} - lastEvent not persisted`);
       return false;
     }
 
@@ -220,7 +217,7 @@ export function persistPlanLastEventSync(planPath: string, event: TaskEventPaylo
     };
     plan.updated_at = new Date().toISOString();
 
-    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(planPath, plan);
     return true;
   } catch (err) {
     if (isFileNotFoundError(err)) {
@@ -250,18 +247,10 @@ export function persistPlanStatusAndReasonSync(
   try {
     let plan: Record<string, unknown>;
 
-    try {
-      const planContent = readFileSync(planPath, 'utf-8');
-      const parsed = safeParseJson<Record<string, unknown>>(planContent);
-      if (!parsed) {
-        console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - status/reason not persisted`);
-        return false;
-      }
-      plan = parsed;
-    } catch (readErr) {
-      if (!isFileNotFoundError(readErr)) {
-        throw readErr;
-      }
+    const existing = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+    if (existing) {
+      plan = existing;
+    } else {
       // File doesn't exist - create a minimal plan with just status fields
       // The spec runner will populate the full plan later
       const planDir = path.dirname(planPath);
@@ -279,7 +268,7 @@ export function persistPlanStatusAndReasonSync(
       executionPhase,
     });
 
-    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(planPath, plan);
 
     if (projectId) {
       projectStore.invalidateTasksCache(projectId);
@@ -305,18 +294,10 @@ export function persistPlanPhaseSync(
   try {
     let plan: Record<string, unknown>;
 
-    try {
-      const planContent = readFileSync(planPath, 'utf-8');
-      const parsed = safeParseJson<Record<string, unknown>>(planContent);
-      if (!parsed) {
-        console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - phase not persisted`);
-        return false;
-      }
-      plan = parsed;
-    } catch (readErr) {
-      if (!isFileNotFoundError(readErr)) {
-        throw readErr;
-      }
+    const existing = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+    if (existing) {
+      plan = existing;
+    } else {
       // File doesn't exist - create minimal plan
       const planDir = path.dirname(planPath);
       mkdirSync(planDir, { recursive: true });
@@ -328,7 +309,7 @@ export function persistPlanPhaseSync(
 
     applyAutocodePlanPhase(plan as MutableAutocodePlan, phase);
 
-    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(planPath, plan);
 
     if (projectId) {
       projectStore.invalidateTasksCache(projectId);
@@ -352,18 +333,10 @@ export function persistPlanTokenUsageSync(
   try {
     let plan: Record<string, unknown>;
 
-    try {
-      const planContent = readFileSync(planPath, 'utf-8');
-      const parsed = safeParseJson<Record<string, unknown>>(planContent);
-      if (!parsed) {
-        console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - token usage not persisted`);
-        return false;
-      }
-      plan = parsed;
-    } catch (readErr) {
-      if (!isFileNotFoundError(readErr)) {
-        throw readErr;
-      }
+    const existing = loadImplementationPlanFromFilesSync(planPath) as Record<string, unknown> | null;
+    if (existing) {
+      plan = existing;
+    } else {
       const planDir = path.dirname(planPath);
       mkdirSync(planDir, { recursive: true });
       plan = createMinimalAutocodePlan(
@@ -374,7 +347,7 @@ export function persistPlanTokenUsageSync(
 
     applyAutocodePlanTokenUsage(plan as MutableAutocodePlan, usage);
 
-    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(planPath, plan);
 
     if (projectId) {
       projectStore.invalidateTasksCache(projectId);
@@ -390,7 +363,7 @@ export function persistPlanTokenUsageSync(
 /**
  * Read and update the plan file atomically.
  *
- * @param planPath - Path to the implementation_plan.json file
+ * @param planPath - Path to the implementation_plan.md file
  * @param updater - Function that receives the current plan and returns the updated plan
  * @returns The updated plan, or null if the file doesn't exist
  */
@@ -400,11 +373,11 @@ export async function updatePlanFile<T extends Record<string, unknown>>(
 ): Promise<T | null> {
   return withPlanLock(planPath, async () => {
     try {
-      console.warn(`[plan-file-utils] Reading implementation_plan.json for update`, { planPath });
+      console.warn(`[plan-file-utils] Reading implementation_plan.md for update`, { planPath });
       // Read file directly without existence check to avoid TOCTOU race condition
       const plan = loadImplementationPlanFromFilesSync(planPath) as T | null;
       if (!plan) {
-        console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - update skipped`);
+        console.warn(`[plan-file-utils] Unreadable Markdown plan in ${planPath} - update skipped`);
         return null;
       }
 
@@ -413,12 +386,12 @@ export async function updatePlanFile<T extends Record<string, unknown>>(
       (updatedPlan as Record<string, unknown>).updated_at = new Date().toISOString();
 
       saveImplementationPlanToFilesSync(planPath, updatedPlan);
-      console.warn(`[plan-file-utils] Successfully updated implementation_plan.json`);
+      console.warn(`[plan-file-utils] Successfully updated implementation_plan.md`);
       return updatedPlan;
     } catch (err) {
       // File not found is expected - return null
       if (isFileNotFoundError(err)) {
-        console.warn(`[plan-file-utils] implementation_plan.json not found at ${planPath} - update skipped`);
+        console.warn(`[plan-file-utils] implementation_plan.md not found at ${planPath} - update skipped`);
         return null;
       }
       console.warn(`[plan-file-utils] Could not update plan at ${planPath}:`, err);
@@ -430,7 +403,7 @@ export async function updatePlanFile<T extends Record<string, unknown>>(
 /**
  * Create a new plan file if it doesn't exist.
  *
- * @param planPath - Path to the implementation_plan.json file
+ * @param planPath - Path to the implementation_plan.md file
  * @param task - The task to create the plan for
  * @param status - Initial status for the plan
  * @param xstateState - Optional XState machine state for restoration
@@ -475,7 +448,7 @@ export async function createPlanIfNotExists(
       }
     }
 
-    writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
+    saveImplementationPlanToFilesSync(planPath, plan);
   });
 }
 
@@ -484,19 +457,19 @@ export async function createPlanIfNotExists(
  * This enables automatic recovery when tasks are interrupted by rate limits or errors.
  * Thread-safe with withPlanLock.
  *
- * @param planPath - Path to the implementation_plan.json file
+ * @param planPath - Path to the implementation_plan.md file
  * @param projectId - Optional project ID to invalidate cache (recommended for performance)
  * @returns Object with success flag and count of reset subtasks
  */
 export async function resetStuckSubtasks(planPath: string, projectId?: string): Promise<{ success: boolean; resetCount: number }> {
   return withPlanLock(planPath, async () => {
     try {
-      console.log(`[plan-file-utils] Reading implementation_plan.json to reset stuck subtasks`, { planPath });
+      console.log(`[plan-file-utils] Reading implementation_plan.md to reset stuck subtasks`, { planPath });
 
       // Read file directly without existence check to avoid TOCTOU race condition
       const plan = loadImplementationPlanFromFilesSync(planPath);
       if (!plan) {
-        console.warn(`[plan-file-utils] Unrepairable JSON in ${planPath} - subtask reset skipped`);
+        console.warn(`[plan-file-utils] Unreadable Markdown plan in ${planPath} - subtask reset skipped`);
         return { success: false, resetCount: 0 };
       }
 
@@ -506,7 +479,7 @@ export async function resetStuckSubtasks(planPath: string, projectId?: string): 
       if (resetCount > 0) {
         plan.updated_at = new Date().toISOString();
         saveImplementationPlanToFilesSync(planPath, plan);
-        console.log(`[plan-file-utils] Successfully reset ${resetCount} stuck subtask(s) in implementation_plan.json`);
+        console.log(`[plan-file-utils] Successfully reset ${resetCount} stuck subtask(s) in implementation_plan.md`);
 
         // Invalidate tasks cache since subtask status changed
         if (projectId) {
@@ -520,7 +493,7 @@ export async function resetStuckSubtasks(planPath: string, projectId?: string): 
     } catch (err) {
       // File not found is expected - return success with 0 count
       if (isFileNotFoundError(err)) {
-        console.warn(`[plan-file-utils] implementation_plan.json not found at ${planPath} - no subtasks to reset`);
+        console.warn(`[plan-file-utils] implementation_plan.md not found at ${planPath} - no subtasks to reset`);
         return { success: false, resetCount: 0 };
       }
       console.warn(`[plan-file-utils] Could not reset stuck subtasks at ${planPath}:`, err);
@@ -594,7 +567,7 @@ export function syncPlanPhasesToMainSync(
   try {
     const plan = loadImplementationPlanFromFilesSync(mainPlanPath);
     if (!plan) {
-      console.warn(`[plan-file-utils] Unrepairable JSON in ${mainPlanPath} - phase sync skipped`);
+      console.warn(`[plan-file-utils] Unreadable Markdown plan in ${mainPlanPath} - phase sync skipped`);
       return false;
     }
 

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+﻿import { describe, expect, it } from 'vitest';
 
 import {
   buildFocusedCoderKickoffMessageFromContext,
@@ -33,7 +33,6 @@ describe('session-efficiency', () => {
       title: 'Show plan progress',
       description: 'Render planning progress next to the task badge.',
       phaseName: 'UI polish',
-      phaseFile: undefined,
       filesToModify: ['src/renderer/TaskBoard.tsx'],
       filesToCreate: ['src/renderer/PlanProgress.tsx'],
       patternFiles: ['src/renderer/components/TaskBadge.tsx'],
@@ -72,8 +71,7 @@ describe('session-efficiency', () => {
     expect(message).toContain('src/renderer/TaskBoard.tsx');
     expect(message).toContain('src/renderer/PlanProgress.tsx');
     expect(message).toContain('npm run typecheck');
-    expect(message).toContain('Do not read spec.md, implementation_plan.json, or phase plan files before implementation');
-    expect(message).toContain('or phase plan files');
+    expect(message).toContain('Do not read spec.md or implementation_plan.md before implementation');
     expect(message).toContain('one compatible alternative at most');
     expect(message).toContain('Run at most one listed verification');
     expect(message).toContain('Do not try multiple equivalent checks');
@@ -179,7 +177,6 @@ describe('session-efficiency', () => {
         title: 'Implement current pass',
         description: 'Continue the rendering pipeline.',
         phaseName: 'Rendering',
-        phaseFile: 'implementation_plan.phase-3.json',
         filesToModify: ['src/render/pass.cpp'],
         filesToCreate: [],
         patternFiles: ['src/render/existing-pass.cpp'],
@@ -193,7 +190,6 @@ describe('session-efficiency', () => {
       },
     );
 
-    expect(message).toContain('Phase plan: implementation_plan.phase-3.json');
     expect(message).toContain('## Prior Completed Work In This Phase');
     expect(message).toContain('3.2 Create shader');
     expect(message).toContain('Added shader resource bindings');

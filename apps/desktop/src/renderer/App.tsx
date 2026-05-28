@@ -57,7 +57,7 @@ import { AppUpdateNotification } from './components/AppUpdateNotification';
 import { ProactiveSwapListener } from './components/ProactiveSwapListener';
 import { GitHubSetupModal } from './components/GitHubSetupModal';
 import { useProjectStore, loadProjects, addProject, initializeProject, removeProject, updateProjectSettings } from './stores/project-store';
-import { useTaskStore, loadTasks } from './stores/task-store';
+import { useTaskStore, loadTasks, createProjectDocumentationTask } from './stores/task-store';
 import { useSettingsStore, loadSettings, loadProfiles, saveSettings } from './stores/settings-store';
 import { useClaudeProfileStore, loadClaudeProfiles } from './stores/claude-profile-store';
 import { useTerminalStore, restoreTerminalSessions } from './stores/terminal-store';
@@ -911,6 +911,17 @@ export function App() {
     }
   };
 
+  const handleCreateProjectDocs = async () => {
+    const projectId = activeProjectId || selectedProjectId;
+    if (!projectId) return;
+
+    const task = await createProjectDocumentationTask(projectId, { documentType: 'full' });
+    if (task) {
+      setActiveView('kanban');
+      setSelectedTask(task);
+    }
+  };
+
   return (
     <ViewStateProvider>
       <TooltipProvider>
@@ -920,6 +931,7 @@ export function App() {
         <Sidebar
           onSettingsClick={() => setIsSettingsDialogOpen(true)}
           onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
+          onProjectDocsClick={handleCreateProjectDocs}
           activeView={activeView}
           onViewChange={setActiveView}
         />

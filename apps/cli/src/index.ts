@@ -13,21 +13,28 @@ import {
   buildAutocodeTaskLogEntryViewModel,
   buildAutocodeWorkspaceSummaryViewModel,
   buildProjectIndex,
-  createAutocodeAgentRuntimeStartPlan,
+  createProcessAgentRuntimeAdapter,
+  createAutocodeProjectDocumentationTask,
   createManualAutocodeTask,
+  createStartedAutocodeAgentRuntime,
   createStartedAutocodeTaskRun,
-  getAutocodeAgentRuntimeModeLabel,
+  formatAutocodeProjectDocTypeList,
   getAutocodeBooleanOption,
   getAutocodeStringOption,
   hasAutocodeJsonOption,
+  isAutocodeProjectDocType,
   isAutocodeCli,
   markAutocodeTaskDone,
   parseAutocodeCommandArgs,
   readAutocodeTaskLogs,
   requestAutocodeTaskChanges,
   summarizeWorkspace,
+  startAutocodeAgentRuntime,
   type AutocodeCli,
+  type NotificationAdapter,
+  type ProcessAdapter,
   type AutocodeTask,
+  type AutocodeProjectDocType,
   type AutocodeTaskLogEntry,
   type AutocodeTaskLogs,
   type ParsedAutocodeCommandArgs,
@@ -55,9 +62,13 @@ async function main(): Promise<void> {
     case 'create-task':
       createTask(parsed);
       return;
+    case 'docs':
+    case 'project-docs':
+      createProjectDocsTask(parsed);
+      return;
     case 'run':
     case 'start':
-      runTask(parsed);
+      await runTask(parsed);
       return;
     case 'done':
       markDone(parsed);
@@ -164,26 +175,100 @@ function createTask(parsed: ParsedAutocodeCommandArgs): void {
   console.log(task.specsPath);
 }
 
-function runTask(parsed: ParsedAutocodeCommandArgs): void {
+function createProjectDocsTask(parsed: ParsedAutocodeCommandArgs): void {
+  const context = resolveContext(parsed);
+  const action = parsed.positionals[0] ?? 'generate';
+  if (action === 'list-types' || action === 'types') {
+    if (isJson(parsed)) {
+      writeJson({ types: formatAutocodeProjectDocTypeList().split(', ') });
+      return;
+    }
+    console.log(`Project document types: ${formatAutocodeProjectDocTypeList()}`);
+    return;
+  }
+  if (action !== 'generate' && action !== 'create') {
+    throw new Error('Unsupported docs command. Use "autocode docs generate" or "autocode docs types".');
+  }
+
+  const rawType = getStringOption(parsed, 'type')
+    ?? getStringOption(parsed, 'doc-type')
+    ?? parsed.positionals[1]
+    ?? 'full';
+  if (!isAutocodeProjectDocType(rawType)) {
+    throw new Error(`Unsupported project document type "${rawType}". Supported values: ${formatAutocodeProjectDocTypeList()}.`);
+  }
+  const documentType: AutocodeProjectDocType = rawType;
+  const outputDir = getStringOption(parsed, 'output-dir') ?? getStringOption(parsed, 'output');
+  const result = createAutocodeProjectDocumentationTask({
+    ...context,
+    documentType,
+    outputDir,
+    title: getStringOption(parsed, 'title'),
+  });
+
+  if (isJson(parsed)) {
+    writeJson({
+      ...context,
+      task: result.task,
+      documentType,
+      outputDir: result.plan.outputDir,
+      outputs: result.plan.outputs,
+    });
+    return;
+  }
+
+  console.log(`Created project documentation task ${result.task.specId}: ${result.task.title}`);
+  console.log(`Spec dir: ${result.task.specsPath}`);
+  console.log('Outputs:');
+  for (const output of result.plan.outputs) {
+    console.log(`  - ${output.relativePath}`);
+  }
+  console.log(`Run: autocode run ${result.task.specId} --runtime agent --execute`);
+}
+
+async function runTask(parsed: ParsedAutocodeCommandArgs): Promise<void> {
   const context = resolveContext(parsed);
   const taskId = resolveTaskId(parsed);
   const runtime = getStringOption(parsed, 'runtime') ?? 'file';
   if (runtime === 'agent') {
-    if (getBooleanOption(parsed, 'execute')) {
-      throw new Error('Agent runtime execution is not enabled in the CLI adapter yet. Use --runtime file --execute.');
-    }
-    const runtimePlan = createAutocodeAgentRuntimeStartPlan({
+    const cli = resolveCli(getStringOption(parsed, 'cli') ?? DEFAULT_CLI);
+    const customCommand = getStringOption(parsed, 'custom-command') ?? getStringOption(parsed, 'custom');
+    const started = createStartedAutocodeAgentRuntime({
       ...context,
       taskId,
+      cli,
+      customCommand,
+      bypassPermissions: getBooleanOption(parsed, 'bypass-permissions'),
     });
+    const runtimePlan = started.runtimePlan;
+    const request = started.request;
+    const payload = {
+      ...context,
+      runtime: 'agent',
+      runtimePlan,
+      task: started.task,
+      phase: started.taskRunPlan.phase,
+      command: started.command,
+      request,
+      plan: started.taskRunPlan,
+    };
+
     if (isJson(parsed)) {
-      writeJson({ ...context, runtime: 'agent', runtimePlan });
+      writeJson(payload);
     } else {
-      console.log(
-        `Prepared agent runtime plan for ${runtimePlan.specId}: ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} (${runtimePlan.mode}).`,
-      );
+      console.log(request.messages.prepared);
       console.log(`Spec dir: ${runtimePlan.specDir}`);
-      console.log('Agent runtime execution is adapter-driven; this CLI build only prints the shared plan.');
+      console.log(`Prompt: ${started.taskRunPlan.promptFilePath}`);
+      console.log(`Runner: ${started.taskRunPlan.runnerFilePath}`);
+      console.log(`Command: ${started.command}`);
+    }
+
+    if (getBooleanOption(parsed, 'execute')) {
+      const adapter = createProcessAgentRuntimeAdapter({
+        process: createCliProcessAdapter(),
+        notification: isJson(parsed) ? undefined : createCliNotificationAdapter(),
+      });
+      await startAutocodeAgentRuntime(request, adapter);
     }
     return;
   }
@@ -317,6 +402,41 @@ function isJson(parsed: ParsedAutocodeCommandArgs): boolean {
   return hasAutocodeJsonOption(parsed);
 }
 
+function createCliProcessAdapter(): ProcessAdapter {
+  return {
+    startProcess(options) {
+      const result = spawnSync(options.command, options.args, {
+        cwd: options.cwd,
+        stdio: 'inherit',
+        shell: options.shell,
+      });
+      const exitCode = result.status ?? (result.error ? 1 : 0);
+      process.exitCode = exitCode;
+
+      return {
+        status: exitCode === 0 ? 'completed' : 'failed',
+        exitCode,
+        signal: result.signal,
+        message: result.error?.message,
+      };
+    },
+  };
+}
+
+function createCliNotificationAdapter(): NotificationAdapter {
+  return {
+    async info(message: string) {
+      console.log(message);
+    },
+    async warn(message: string) {
+      console.warn(message);
+    },
+    async error(message: string) {
+      console.error(message);
+    },
+  };
+}
+
 function writeJson(value: unknown): void {
   console.log(JSON.stringify(value, null, 2));
 }
@@ -328,8 +448,9 @@ Usage:
   autocode info [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
   autocode tasks [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
   autocode create --title <title> --description <text>
+  autocode docs generate [--type full|product|architecture|technical]
   autocode run <task-id> [--cli claude-code|codex|gemini|opencode|kilocode|deepseek|custom]
-  autocode run <task-id> --runtime agent [--json]
+  autocode run <task-id> --runtime agent [--execute] [--json]
   autocode run <task-id> --cli custom --custom-command "<command>"
   autocode run <task-id> --execute
   autocode logs <task-id> [--json]
@@ -340,6 +461,7 @@ Commands:
   info       Print workspace and shared core information.
   tasks      List shared Autocode task files.
   create     Create a task under ${DEFAULT_DATA_DIR}/specs.
+  docs       Create a project documentation task used as context by future spec and coding phases.
   run        Write a task prompt and runner using @autocode/core.
   logs       Show recent task log entries.
   done       Mark a task complete in the shared plan file.

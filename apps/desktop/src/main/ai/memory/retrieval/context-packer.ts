@@ -8,7 +8,7 @@
  *   - Citation chips: [^ Memory: citationText]
  */
 
-import type { Memory, MemoryType, UniversalPhase } from '../types';
+import type { Memory, MemoryType, UniversalPhase } from '@autocode/core';
 
 // ============================================================
 // TYPES & CONFIG

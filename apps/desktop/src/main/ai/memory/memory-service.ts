@@ -16,7 +16,7 @@ import type {
   MemorySource,
   WorkUnitRef,
   MemoryRelation,
-} from './types';
+} from '@autocode/core';
 import type { EmbeddingService } from './embedding-service';
 import { buildMemoryContextualText } from './embedding-service';
 import { searchBM25 } from './retrieval/bm25-search';

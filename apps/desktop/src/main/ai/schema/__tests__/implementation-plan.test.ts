@@ -390,12 +390,12 @@ describe('PlanPhaseSchema', () => {
     expect(result.success).toBe(true);
     if (result.success) {
       expect(result.data.subtasks).toHaveLength(3);
-      expect(result.data.subtasks[0].id).toBe('phase_1-1');
+      expect(result.data.subtasks[0].id).toBe('phase_1.1');
       expect(result.data.subtasks[0].title).toBe('Add package.json and lockfile');
       expect(result.data.subtasks[0].status).toBe('pending');
       expect(result.data.subtasks[0].files_to_modify).toEqual([]);
       expect(result.data.subtasks[0].files_to_create).toEqual([]);
-      expect(result.data.subtasks[2].id).toBe('phase_1-3');
+      expect(result.data.subtasks[2].id).toBe('phase_1.3');
       expect(result.data.subtasks[2].title).toBe('Add linting (ESLint)');
     }
   });
@@ -433,8 +433,8 @@ describe('PlanPhaseSchema', () => {
     });
     expect(result.success).toBe(true);
     if (result.success) {
-      expect(result.data.subtasks[0].id).toBe('3-1');
-      expect(result.data.subtasks[1].id).toBe('3-2');
+      expect(result.data.subtasks[0].id).toBe('3.1');
+      expect(result.data.subtasks[1].id).toBe('3.2');
     }
   });
 
@@ -577,7 +577,7 @@ describe('ImplementationPlanSchema', () => {
     if (result.success) {
       expect(result.data.phases).toHaveLength(1);
       expect(result.data.phases[0].subtasks).toHaveLength(3);
-      expect(result.data.phases[0].subtasks[0].id).toBe('1-1');
+      expect(result.data.phases[0].subtasks[0].id).toBe('1.1');
       expect(result.data.phases[0].subtasks[0].title).toBe('script.js: Increase PARTICLE_MAX_TRAIL constant');
       expect(result.data.phases[0].subtasks[0].files_to_modify).toEqual(['script.js']);
       expect(result.data.phases[0].subtasks[0].status).toBe('pending');
@@ -719,7 +719,7 @@ describe('ImplementationPlanSchema', () => {
       const phase1 = result.data.phases[0];
       expect(phase1.name).toBe('Bootstrap modern tooling and project scripts');
       expect(phase1.subtasks).toHaveLength(4);
-      expect(phase1.subtasks[0].id).toBe('phase_1_tooling_bootstrap-1');
+      expect(phase1.subtasks[0].id).toBe('phase_1_tooling_bootstrap.1');
       expect(phase1.subtasks[0].title).toBe('Add package.json and lockfile');
       expect(phase1.subtasks[0].status).toBe('pending');
       expect(phase1.subtasks[3].title).toBe('Add npm scripts: dev, build, test, lint, format');

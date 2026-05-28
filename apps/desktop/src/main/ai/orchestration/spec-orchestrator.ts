@@ -20,18 +20,16 @@ import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import { isAutocodeProjectDataPath, type Phase } from '@autocode/core';
+import { AUTOCODE_TASK_ARTIFACTS, isAutocodeProjectDataPath, type Phase } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   validateJsonFile,
-  validateAndNormalizeJsonFile,
   ComplexityAssessmentSchema,
   ImplementationPlanSchema,
   validateImplementationPlanLanguage,
   ComplexityAssessmentOutputSchema,
   buildValidationRetryPrompt,
   IMPLEMENTATION_PLAN_SCHEMA_HINT,
-  rewriteImplementationPlanFiles,
   loadImplementationPlanFromFiles,
   saveImplementationPlanToFiles,
   SpecContextOutputSchema,
@@ -137,8 +135,8 @@ const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
   context: ['context.json'],
   spec_writing: ['spec.md'],
   self_critique: ['spec.md'],
-  planning: ['implementation_plan.json'],
-  quick_spec: ['spec.md', 'implementation_plan.json'],
+  planning: [AUTOCODE_TASK_ARTIFACTS.implementationPlan],
+  quick_spec: [AUTOCODE_TASK_ARTIFACTS.specFile, AUTOCODE_TASK_ARTIFACTS.implementationPlan],
 };
 
 const STRUCTURED_JSON_PHASE_OUTPUTS: Partial<Record<SpecPhase, string>> = {
@@ -216,7 +214,6 @@ interface QuickSpecPlan {
         };
       }>;
     }>;
-    split_plan: false;
     documentation_depth?: 'standard' | 'deep' | 'architecture';
     project_type?: ProjectAgentProfile['id'];
     documentation_profile?: DocumentationProfile;
@@ -357,8 +354,6 @@ interface MinimalPlanPhase {
 
 interface MutableImplementationPlan extends Record<string, unknown> {
   phases?: MinimalPlanPhase[];
-  split_plan?: boolean;
-  plan_files?: unknown;
 }
 
 function hasExecutableSubtasks(plan: MinimalImplementationPlan | null): boolean {
@@ -495,7 +490,7 @@ const COMMON_LOW_VALUE_ROOT_FILES = new Set([
   'task_logs.json',
   'task_metadata.json',
   'requirements.json',
-  'implementation_plan.json',
+  AUTOCODE_TASK_ARTIFACTS.implementationPlan,
   'spec.md',
 ]);
 
@@ -788,7 +783,7 @@ function _buildAggressiveQuickSpecPlan(
           depends_on: [],
           subtasks: [
             {
-              id: '1-1',
+              id: '1.1',
               title,
               description: [
                 task,
@@ -807,7 +802,6 @@ function _buildAggressiveQuickSpecPlan(
           ],
         },
       ],
-      split_plan: false,
       source_task: {
         original_request: task,
         constraint_terms: extractConstraintTerms(task),
@@ -895,7 +889,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
           depends_on: [],
           subtasks: [
             {
-              id: '1-1',
+              id: '1.1',
               title,
               description: [
                 task,
@@ -915,7 +909,6 @@ function buildLocalizedAggressiveQuickSpecPlan(
           ],
         },
       ],
-      split_plan: false,
       source_task: {
         original_request: task,
         constraint_terms: extractConstraintTerms(task),
@@ -1109,7 +1102,7 @@ function buildSourceDocumentationQuickSpecPlan(
           depends_on: [],
           subtasks: [
             {
-              id: '1-1',
+              id: '1.1',
               title,
               description: [
                 task,
@@ -1133,7 +1126,6 @@ function buildSourceDocumentationQuickSpecPlan(
           ],
         },
       ],
-      split_plan: false,
       documentation_depth: documentationDepth,
       project_type: agentProfile?.id,
       documentation_profile: documentationProfile,
@@ -1172,21 +1164,20 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       'CRITICAL - RETRY IMPLEMENTATION PLAN WITH WRITE TOOL',
       '',
       'Your previous Write tool call was rejected before execution.',
-      'Retry by writing smaller implementation plan files instead of returning one giant JSON response.',
+      `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} instead of returning plan text in the final response.`,
       '',
       'Rules for the retry:',
-      `- Use the Write tool to create ${normalizedSpecDir}/implementation_plan.json.`,
+      `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
       '- Pass a JSON object, not a string containing JSON.',
       '- Include BOTH required keys in the same object: file_path and content.',
       '- Use forward slashes in file_path, including Windows paths.',
-      '- Keep each Write content short enough that the JSON closes correctly.',
-      '- If the plan is large, write implementation_plan.phase-1.json, implementation_plan.phase-2.json, etc. first.',
-      '- Then write a compact implementation_plan.json index with split_plan, plan_files, and phases that reference subtasks_file.',
-      '- Keep descriptions concise and preserve necessary subtasks by splitting into files, not by dropping work.',
-      '- Do not embed source code, long analysis, or copied documentation in JSON fields.',
+      '- Write checklist Markdown, not JSON.',
+      '- Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" items.',
+      '- Keep descriptions concise and preserve necessary subtasks in the single Markdown file.',
+      '- Do not embed source code, long analysis, or copied documentation.',
       '',
       'Required Write tool input shape:',
-      `{"file_path":"${normalizedSpecDir}/implementation_plan.json","content":"..."}`,
+      `{"file_path":"${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}","content":"..."}`,
     ].join('\n');
   }
 
@@ -1198,11 +1189,11 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       '',
       'Rules for the retry:',
       `- Use the Write tool to create ${normalizedSpecDir}/spec.md.`,
-      `- Use the Write tool to create ${normalizedSpecDir}/implementation_plan.json.`,
+      `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
       '- Pass a JSON object, not a string containing JSON.',
       '- Include BOTH required keys in each Write object: file_path and content.',
       '- For spec.md, write a compact 20-60 line version first.',
-      '- Keep implementation_plan.json concise and schema-compatible.',
+      `- Keep ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} concise and parseable.`,
       '- Do not paste the implementation plan into the final response.',
     ].join('\n');
   }
@@ -2046,17 +2037,15 @@ function buildPlanStructuredOutputValidationRetryPrompt(
 
   lines.push(
     '### How to fix:',
-    '1. Use the Write tool to rewrite the implementation plan files.',
-    '2. Use phases[].subtasks[] with concise pending subtasks for small plans.',
-    '3. For large plans, write implementation_plan.phase-1.json, implementation_plan.phase-2.json, etc. first.',
-    '4. Then write a compact implementation_plan.json index with split_plan, plan_files, and phases that reference subtasks_file.',
-    '5. Keep each Write payload small enough that the tool-call JSON closes correctly.',
-    '6. Do not paste the full plan into the final response.',
-    '7. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
+    `1. Use the Write tool to rewrite ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
+    '2. Use checklist Markdown with "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" items.',
+    '3. Keep each subtask concise and include _Files_, _Depends on_, _Requirements_, and _Verification_ metadata when useful.',
+    '4. Do not paste the full plan into the final response.',
+    '5. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
   );
 
   if (phase === 'quick_spec') {
-    lines.push('8. If spec.md is missing, use Write to recreate a compact spec.md as well.');
+    lines.push('6. If spec.md is missing, use Write to recreate a compact spec.md as well.');
   }
 
   return lines.join('\n');
@@ -2673,7 +2662,7 @@ export class SpecOrchestrator extends EventEmitter {
               continue;
             }
 
-            if (isPlanningPhase && missingFiles.includes('implementation_plan.json')) {
+            if (isPlanningPhase && missingFiles.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan)) {
               toolUseRetryContext = buildWriteToolJsonRetryPrompt(phase, this.config.specDir);
               continue;
             }
@@ -2705,7 +2694,7 @@ export class SpecOrchestrator extends EventEmitter {
         }
 
         // Schema validation for phases with structured output requirements
-        // (e.g., planning phase must produce valid implementation_plan.json)
+        // (e.g., planning phase must produce valid implementation_plan.md)
         const schemaValidation = await this.validatePhaseSchema(phase);
         if (schemaValidation && !schemaValidation.valid) {
           errors.push(`Schema validation failed: ${schemaValidation.errors.join(', ')}`);
@@ -2919,75 +2908,48 @@ export class SpecOrchestrator extends EventEmitter {
     phase: SpecPhase,
   ): Promise<{ valid: boolean; errors: string[] } | null> {
     if (phase === 'planning' || phase === 'quick_spec') {
-      const planPath = join(this.config.specDir, 'implementation_plan.json');
-      const rewriteErrors: string[] = [];
+      const planFileName = AUTOCODE_TASK_ARTIFACTS.implementationPlan;
       try {
-        try {
-          const rewrite = await rewriteImplementationPlanFiles(this.config.specDir, {
-            forceSplit: shouldForceSplitImplementationPlan(
-              this.assessment?.complexity ?? this.config.complexityOverride,
-              this.config.workflowConfig,
-            ),
-            threshold: 16,
-          });
-          if (rewrite?.split) {
-            this.emitTyped('log', `Split implementation plan into ${rewrite.filesWritten.length - 1} phase files (${rewrite.totalSubtasks} subtasks)`);
-          }
-        } catch (error) {
-          const message = error instanceof Error ? error.message : String(error);
-          if (
-            message.includes('implementation_plan.json') ||
-            message.includes('implementation_plan.phase-') ||
-            message.includes('subtasks_file') ||
-            message.includes('plan_files')
-          ) {
-            rewriteErrors.push(`Failed to write implementation plan files: ${message}`);
-            this.emitTyped('log', `Planning file rewrite failed: ${message}. Checking whether the main implementation_plan.json can still be used...`);
-          } else {
-            throw error;
-          }
+        const hydratedPlan = await loadImplementationPlanFromFiles(this.config.specDir);
+        const parsedPlan = hydratedPlan ? ImplementationPlanSchema.safeParse(hydratedPlan) : null;
+        const result = parsedPlan?.success
+          ? { valid: true as const, data: parsedPlan.data, errors: [] as string[] }
+          : {
+              valid: false as const,
+              errors: parsedPlan
+                ? parsedPlan.error.issues.map((issue) => issue.message)
+                : [`File not found or unreadable: ${planFileName}`],
+            };
+        if (result.valid) {
+          await saveImplementationPlanToFiles(this.config.specDir, result.data as never);
         }
-
-        const result = await validateAndNormalizeJsonFile(planPath, ImplementationPlanSchema);
-        const hydratedPlan = result.valid
-          ? await loadImplementationPlanFromFiles(this.config.specDir)
-          : null;
-        const languageErrors = result.valid && hydratedPlan
-          ? validateImplementationPlanLanguage(hydratedPlan as never, this.config.language)
+        const normalizedPlan = result.valid ? result.data : null;
+        const languageErrors = result.valid && normalizedPlan
+          ? validateImplementationPlanLanguage(normalizedPlan as never, this.config.language)
           : [];
-        const executionErrors = result.valid && !hasExecutableSubtasks(hydratedPlan)
-          ? ['Implementation plan has no executable subtasks. If using split plan files, ensure every subtasks_file exists and contains subtasks.']
+        const executionErrors = result.valid && !hasExecutableSubtasks(normalizedPlan)
+          ? ['Implementation plan has no executable subtasks.']
           : [];
         const compactErrors = result.valid && executionErrors.length === 0 && languageErrors.length === 0
           ? await this.compactAggressiveSimplePlan()
           : [];
 
-        if (result.valid && rewriteErrors.length > 0 && executionErrors.length === 0 && languageErrors.length === 0 && compactErrors.length === 0) {
-          this.emitTyped('log', 'Split plan file rewrite failed, but the main implementation_plan.json is executable. Continuing without stopping the task.');
-        }
-
         return {
           valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0 && compactErrors.length === 0,
           errors: result.valid
             ? [
-                ...(executionErrors.length > 0 ? rewriteErrors : []),
                 ...executionErrors,
                 ...languageErrors,
                 ...compactErrors,
               ]
-            : [...rewriteErrors, ...result.errors, ...languageErrors, ...compactErrors],
+            : [...result.errors, ...languageErrors, ...compactErrors],
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
-        if (
-          message.includes('implementation_plan.json') ||
-          message.includes('implementation_plan.phase-') ||
-          message.includes('subtasks_file') ||
-          message.includes('plan_files')
-        ) {
+        if (message.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan)) {
           return {
             valid: false,
-            errors: [`Failed to write implementation plan files: ${message}`],
+            errors: [`Failed to write implementation plan: ${message}`],
           };
         }
         return null; // File doesn't exist yet — handled by validatePhaseOutputs
@@ -3022,11 +2984,7 @@ export class SpecOrchestrator extends EventEmitter {
 
     try {
       await writeFile(join(this.config.specDir, 'spec.md'), plan.specMarkdown, 'utf-8');
-      await writeFile(
-        join(this.config.specDir, 'implementation_plan.json'),
-        JSON.stringify(plan.implementationPlan, null, 2),
-        'utf-8',
-      );
+      await saveImplementationPlanToFiles(this.config.specDir, plan.implementationPlan as never);
 
       const result: SpecPhaseResult = { phase, success: true, errors: [], retries: 0 };
       const patternFiles = plan.implementationPlan.phases[0]?.subtasks[0]?.pattern_files ?? [];
@@ -3073,8 +3031,6 @@ export class SpecOrchestrator extends EventEmitter {
         })
         .join('\n');
 
-      plan.split_plan = false;
-      plan.plan_files = undefined;
       plan.phases = [
         {
           id: firstPhase?.id ?? firstPhase?.phase ?? '1',
@@ -3082,7 +3038,7 @@ export class SpecOrchestrator extends EventEmitter {
           name: firstPhase?.name ?? 'Implementation',
           subtasks: [
             {
-              id: '1-1',
+              id: '1.1',
               title: 'Implement complete task',
               description: [
                 'Implement the complete requested change in one focused coding session.',
@@ -3116,9 +3072,6 @@ export class SpecOrchestrator extends EventEmitter {
 
     let implementationPlanValid = false;
     let executablePlan = false;
-    let splitPlan = false;
-    let planFileCount = 0;
-
     try {
       await access(join(this.config.specDir, 'spec.md'));
       addRow('spec.md', 'present');
@@ -3127,24 +3080,21 @@ export class SpecOrchestrator extends EventEmitter {
     }
 
     try {
-      const result = await validateAndNormalizeJsonFile(
-        join(this.config.specDir, 'implementation_plan.json'),
-        ImplementationPlanSchema,
+      const plan = await loadImplementationPlanFromFiles(this.config.specDir);
+      const result = plan ? ImplementationPlanSchema.safeParse(plan) : null;
+      implementationPlanValid = result?.success === true;
+      addRow(
+        AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+        result?.success
+          ? 'valid'
+          : `invalid: ${result ? result.error.issues.map((issue) => issue.message).join('; ') : 'file missing'}`,
       );
-      implementationPlanValid = result.valid;
-      addRow('implementation_plan.json', result.valid ? 'valid' : `invalid: ${result.errors.join('; ')}`);
 
-      const plan = result.valid ? await loadImplementationPlanFromFiles(this.config.specDir) : null;
       executablePlan = hasExecutableSubtasks(plan);
-      splitPlan = Boolean((plan as { split_plan?: boolean } | null)?.split_plan);
-      planFileCount = Array.isArray((plan as { plan_files?: unknown[] } | null)?.plan_files)
-        ? ((plan as { plan_files?: unknown[] }).plan_files?.length ?? 0)
-        : 0;
       addRow('executable subtasks', executablePlan ? 'present' : 'missing');
-      addRow('split plan', splitPlan ? `yes (${planFileCount} files)` : 'no');
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      addRow('implementation_plan.json', `unreadable: ${message}`);
+      addRow(AUTOCODE_TASK_ARTIFACTS.implementationPlan, `unreadable: ${message}`);
     }
 
     const passed = rows.every(([, status]) => !status.startsWith('missing') && !status.startsWith('invalid') && !status.startsWith('unreadable')) &&

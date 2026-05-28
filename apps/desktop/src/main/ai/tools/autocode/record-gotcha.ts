@@ -9,7 +9,12 @@
  */
 
 import * as fs from 'node:fs';
-import * as path from 'node:path';
+import {
+  formatAutocodeGotchaMarkdownEntry,
+  formatAutocodeGotchasFileHeader,
+  getAutocodeSessionGotchasPath,
+  getAutocodeSessionMemoryDir,
+} from '@autocode/core';
 import { z } from 'zod/v3';
 
 import { Tool } from '../define';
@@ -42,14 +47,12 @@ export const recordGotchaTool = Tool.define({
   inputSchema,
   execute: (input, context) => {
     const { gotcha, context: ctx } = input;
-    const memoryDir = path.join(context.specDir, 'memory');
+    const memoryDir = getAutocodeSessionMemoryDir(context.specDir);
 
     try {
       fs.mkdirSync(memoryDir, { recursive: true });
 
-      const gotchasFile = path.join(memoryDir, 'gotchas.md');
-      const now = new Date();
-      const timestamp = `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, '0')}-${String(now.getUTCDate()).padStart(2, '0')} ${String(now.getUTCHours()).padStart(2, '0')}:${String(now.getUTCMinutes()).padStart(2, '0')}`;
+      const gotchasFile = getAutocodeSessionGotchasPath(context.specDir);
 
       // Determine whether file is new or empty without a separate existsSync check
       let isNew: boolean;
@@ -60,13 +63,8 @@ export const recordGotchaTool = Tool.define({
         if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
         isNew = true;
       }
-      const header = isNew ? '# Gotchas & Pitfalls\n\nThings to watch out for in this codebase.\n' : '';
-
-      let entry = `\n## [${timestamp}]\n${gotcha}`;
-      if (ctx) {
-        entry += `\n\n_Context: ${ctx}_`;
-      }
-      entry += '\n';
+      const header = isNew ? formatAutocodeGotchasFileHeader() : '';
+      const entry = formatAutocodeGotchaMarkdownEntry({ gotcha, context: ctx });
 
       fs.writeFileSync(gotchasFile, header + entry, { flag: isNew ? 'w' : 'a', encoding: 'utf-8' });
 

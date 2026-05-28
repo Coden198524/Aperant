@@ -66,6 +66,7 @@ export type SidebarView = 'kanban' | 'terminals' | 'roadmap' | 'context' | 'idea
 interface SidebarProps {
   onSettingsClick: () => void;
   onNewTaskClick: () => void;
+  onProjectDocsClick?: () => void;
   activeView?: SidebarView;
   onViewChange?: (view: SidebarView) => void;
 }
@@ -110,6 +111,7 @@ const yunxiaoNavItems: NavItem[] = [
 export function Sidebar({
   onSettingsClick,
   onNewTaskClick,
+  onProjectDocsClick,
   activeView = 'kanban',
   onViewChange
 }: SidebarProps) {
@@ -498,6 +500,27 @@ export function Sidebar({
               <TooltipContent side="right">{t('actions.newTask')}</TooltipContent>
             )}
           </Tooltip>
+          {onProjectDocsClick && (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  className="w-full"
+                  variant="outline"
+                  size={isCollapsed ? "icon" : "default"}
+                  onClick={onProjectDocsClick}
+                  disabled={!selectedProjectId || !selectedProject?.autoBuildPath}
+                >
+                  <FileText className={isCollapsed ? "h-4 w-4" : "mr-2 h-4 w-4"} />
+                  {!isCollapsed && t('actions.projectDocs', { defaultValue: 'Project Docs' })}
+                </Button>
+              </TooltipTrigger>
+              {isCollapsed && (
+                <TooltipContent side="right">
+                  {t('actions.projectDocs', { defaultValue: 'Project Docs' })}
+                </TooltipContent>
+              )}
+            </Tooltip>
+          )}
           {!isCollapsed && selectedProject && !selectedProject.autoBuildPath && (
             <p className="mt-2 text-xs text-muted-foreground text-center">
               {t('messages.initializeToCreateTasks')}

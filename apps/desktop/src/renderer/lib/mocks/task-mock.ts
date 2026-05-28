@@ -27,6 +27,31 @@ export const taskMock = {
     }
   }),
 
+  createProjectDocumentationTask: async (
+    projectId: string,
+    options: { documentType?: 'full' | 'product' | 'architecture' | 'technical'; outputDir?: string } = {}
+  ) => ({
+    success: true,
+    data: {
+      id: `task-${Date.now()}`,
+      projectId,
+      specId: `00${mockTasks.length + 1}-project-docs`,
+      title: 'Generate project documentation',
+      description: 'Create project documents for future spec and coding context.',
+      status: 'backlog' as const,
+      subtasks: [],
+      logs: [],
+      metadata: {
+        sourceType: 'project_docs' as const,
+        category: 'documentation' as const,
+        projectDocumentType: options.documentType ?? 'full',
+        projectDocumentOutputDir: options.outputDir ?? '.autocode/project-docs',
+      },
+      createdAt: new Date(),
+      updatedAt: new Date()
+    }
+  }),
+
   deleteTask: async () => ({ success: true }),
 
   deleteSubtask: async (_taskId: string, _subtaskId: string, _projectId?: string) => ({

@@ -14,8 +14,7 @@ import { Worker } from 'worker_threads';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
-import electron from 'electron';
-const { app } = electron;
+import { app } from 'electron';
 
 import type { AgentManagerEvents, ExecutionProgressData, ProcessType } from '../../agent/types';
 import type { TaskEventPayload } from '../../agent/task-event-schema';

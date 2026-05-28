@@ -1,11 +1,14 @@
-import { ipcMain, nativeImage } from 'electron';
+﻿import { ipcMain, nativeImage } from 'electron';
 import {
   AUTOCODE_PROJECT_DATA_DIR_NAME,
   AUTOCODE_TASK_ARTIFACTS,
+  createAutocodeProjectDocumentationTask,
   createManualAutocodeTask,
   getAutocodeRoadmapFilePath,
   getAutocodeSpecDir,
+  isAutocodeProjectDocType,
   type AutocodeTask,
+  type AutocodeProjectDocType,
   type AutocodeTaskMetadata,
   type AutocodeTaskRequirements,
 } from '@autocode/core';
@@ -335,6 +338,48 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
   );
 
   /**
+   * Create a project documentation task.
+   *
+   * The generated task writes product/architecture/technical project docs.
+   * Later spec and coding phases read those docs as shared project context.
+   */
+  ipcMain.handle(
+    IPC_CHANNELS.TASK_CREATE_PROJECT_DOCS,
+    async (
+      _,
+      projectId: string,
+      options?: { documentType?: AutocodeProjectDocType; outputDir?: string }
+    ): Promise<IPCResult<Task>> => {
+      const project = projectStore.getProject(projectId);
+      if (!project) {
+        return { success: false, error: 'Project not found' };
+      }
+
+      const documentType = options?.documentType ?? 'full';
+      if (!isAutocodeProjectDocType(documentType)) {
+        return { success: false, error: `Unsupported project document type: ${documentType}` };
+      }
+
+      try {
+        const result = createAutocodeProjectDocumentationTask({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
+          documentType,
+          outputDir: options?.outputDir,
+        });
+        const task = toDesktopTask(result.task, projectId);
+        projectStore.invalidateTasksCache(projectId);
+        return { success: true, data: task };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to create project documentation task',
+        };
+      }
+    }
+  );
+
+  /**
    * Delete a task
    *
    * This handler:
@@ -496,23 +541,20 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           finalTitle = await generateTitleWithFallback(descriptionToUse, 'TASK_UPDATE', taskId);
         }
 
-        // Update implementation_plan.json
+        // Update implementation_plan.md
         const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
         try {
-          const planContent = readFileSync(planPath, 'utf-8');
-          const plan = JSON.parse(planContent);
-
-          if (finalTitle !== undefined) {
-            plan.feature = finalTitle;
-          }
-          if (updates.description !== undefined) {
-            plan.description = updates.description;
-          }
-          plan.updated_at = new Date().toISOString();
-
-          writeFileSync(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+          await updatePlanFile(planPath, (plan) => {
+            if (finalTitle !== undefined) {
+              plan.feature = finalTitle;
+            }
+            if (updates.description !== undefined) {
+              plan.description = updates.description;
+            }
+            return plan;
+          });
         } catch (planErr: unknown) {
-          // File missing or invalid JSON - continue anyway
+          // File missing or unreadable - continue anyway
           if ((planErr as NodeJS.ErrnoException).code !== 'ENOENT') {
             console.error('[TASK_UPDATE] Error updating implementation plan:', planErr);
           }
@@ -664,7 +706,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
   );
 
   /**
-   * Delete a subtask from implementation_plan.json.
+   * Delete a subtask from implementation_plan.md.
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_DELETE_SUBTASK,

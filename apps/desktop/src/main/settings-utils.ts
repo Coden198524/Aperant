@@ -12,15 +12,13 @@
 
 import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { promises as fsPromises } from 'fs';
-import { createRequire } from 'module';
 import path from 'path';
 import { isMainThread } from 'worker_threads';
+import { app as electronApp } from 'electron';
 
-// Conditionally import electron only in main thread
-const requireFromModule = createRequire(import.meta.url);
 let app: Electron.App | undefined;
-if (isMainThread) {
-  const { app: electronApp } = requireFromModule('electron') as typeof import('electron');
+const isSettingsRuntime = isMainThread || process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
+if (isSettingsRuntime) {
   app = electronApp;
 }
 

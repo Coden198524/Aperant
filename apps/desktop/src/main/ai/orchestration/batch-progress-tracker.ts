@@ -1,9 +1,9 @@
-/**
+﻿/**
  * Batch Progress Tracker
  * =======================
  *
  * Tracks progress during batch subtask execution by parsing model output
- * for progress markers and verifying against implementation_plan.json.
+ * for progress markers and verifying against implementation_plan.md.
  */
 
 import type { BatchProgress } from './batch-types';
@@ -21,7 +21,7 @@ const PROGRESS_MARKER_REGEX = /\[SUBTASK_COMPLETED:\s*([^\]]+)\]/g;
  *
  * Tracks subtask completion during batch execution by:
  * 1. Parsing progress markers from model output
- * 2. Verifying actual file status in implementation_plan.json
+ * 2. Verifying actual file status in implementation_plan.md
  * 3. Reconciling differences between markers and file state
  */
 export class BatchProgressTracker {
@@ -53,7 +53,7 @@ export class BatchProgressTracker {
   }
 
   /**
-   * Verifies actual progress by reading implementation_plan.json.
+   * Verifies actual progress by reading implementation_plan.md.
    *
    * @param specDir - Spec directory path
    * @returns Progress information from the file

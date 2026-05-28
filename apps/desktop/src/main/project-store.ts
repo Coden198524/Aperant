@@ -1,11 +1,11 @@
 import { isMainThread } from 'worker_threads';
-import electron from 'electron';
+import { app as electronApp } from 'electron';
 
 // Only expose Electron app where ProjectStore is expected to run.
 let app: Electron.App | undefined;
 const isProjectStoreRuntime = isMainThread || process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
 if (isProjectStoreRuntime) {
-  app = electron.app;
+  app = electronApp;
 }
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';

@@ -1,4 +1,4 @@
-import { EventEmitter } from 'events';
+﻿import { EventEmitter } from 'events';
 import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
@@ -7,6 +7,7 @@ import {
   AUTOCODE_PROJECT_ENV_FILE_NAME,
   AUTOCODE_TASK_ARTIFACTS,
   getAutocodeSpecsRelativeDir,
+  loadAutocodeImplementationPlanSync,
 } from '@autocode/core';
 
 // ESM-compatible __dirname
@@ -309,10 +310,13 @@ export class ChangelogService extends EventEmitter {
           content.qaReport = readFileSync(qaReportPath, 'utf-8');
         }
 
-        // Load implementation_plan.json
+        // Load implementation_plan.md
         const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
         if (existsSync(planPath)) {
-          content.implementationPlan = JSON.parse(readFileSync(planPath, 'utf-8')) as ImplementationPlan;
+          const plan = loadAutocodeImplementationPlanSync(planPath) as ImplementationPlan | null;
+          if (plan) {
+            content.implementationPlan = plan;
+          }
         }
       } catch (error) {
         content.error = error instanceof Error ? error.message : 'Failed to load spec files';

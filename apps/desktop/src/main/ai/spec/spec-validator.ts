@@ -12,9 +12,14 @@
  */
 
 import { generateText } from 'ai';
-import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  loadAutocodeImplementationPlanSync,
+  saveAutocodeImplementationPlanSync,
+} from '@autocode/core';
 import { AUTOCODE_PROJECT_INDEX_FILE_NAME } from '@autocode/core/project/data-paths';
 import { createSimpleClient } from '../client/factory';
 import { safeParseJson } from '../../utils/json-repair';
@@ -158,33 +163,13 @@ function normalizeStatus(value: unknown): string {
 }
 
 /**
- * Attempt to auto-fix common implementation_plan.json issues.
+ * Attempt to auto-fix common implementation_plan.md issues.
  * Ported from: `auto_fix_plan()` in auto_fix.py
  *
  * @returns true if any fixes were applied
  */
 export function autoFixPlan(specDir: string): boolean {
-  const planFile = join(specDir, 'implementation_plan.json');
-
-  let plan: Record<string, unknown> | null = null;
-  let jsonRepaired = false;
-
-  let content: string;
-  try {
-    content = readFileSync(planFile, 'utf-8');
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') return false;
-    throw err;
-  }
-  plan = safeParseJson<Record<string, unknown>>(content);
-  if (!plan) {
-    // Try local repairJsonSyntax as a secondary pass
-    const repaired = repairJsonSyntax(content);
-    if (repaired) {
-      plan = safeParseJson<Record<string, unknown>>(repaired);
-      if (plan) jsonRepaired = true;
-    }
-  }
+  const plan = loadAutocodeImplementationPlanSync(specDir) as Record<string, unknown> | null;
   if (!plan) return false;
 
   let fixed = false;
@@ -290,15 +275,15 @@ export function autoFixPlan(specDir: string): boolean {
     }
   }
 
-  if (fixed || jsonRepaired) {
+  if (fixed) {
     try {
-      writeFileSync(planFile, JSON.stringify(plan, null, 2), 'utf-8');
+      saveAutocodeImplementationPlanSync(specDir, plan);
     } catch {
       return false;
     }
   }
 
-  return fixed || jsonRepaired;
+  return fixed;
 }
 
 // ---------------------------------------------------------------------------
@@ -422,7 +407,7 @@ export function validateSpecDocument(specDir: string): ValidationResult {
 }
 
 /**
- * Validate implementation_plan.json exists and has valid schema.
+ * Validate implementation_plan.md exists and has valid schema.
  * Ported from: ImplementationPlanValidator in implementation_plan_validator.py
  *
  * Includes DAG validation (cycle detection) and field existence checks.
@@ -432,23 +417,10 @@ export function validateImplementationPlan(specDir: string): ValidationResult {
   const warnings: string[] = [];
   const fixes: string[] = [];
 
-  const planFile = join(specDir, 'implementation_plan.json');
-
-  let raw: string;
-  try {
-    raw = readFileSync(planFile, 'utf-8');
-  } catch (err: unknown) {
-    if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      errors.push('implementation_plan.json not found');
-      fixes.push('Run the planning phase to generate implementation_plan.json');
-      return { valid: false, checkpoint: 'plan', errors, warnings, fixes };
-    }
-    throw err;
-  }
-  const plan = safeParseJson<Record<string, unknown>>(raw);
+  const plan = loadAutocodeImplementationPlanSync(specDir) as Record<string, unknown> | null;
   if (!plan) {
-    errors.push('implementation_plan.json is invalid JSON');
-    fixes.push('Regenerate implementation_plan.json or fix JSON syntax');
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.implementationPlan} not found or invalid`);
+    fixes.push(`Run the planning phase to generate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`);
     return { valid: false, checkpoint: 'plan', errors, warnings, fixes };
   }
 
@@ -456,7 +428,7 @@ export function validateImplementationPlan(specDir: string): ValidationResult {
   for (const field of IMPLEMENTATION_PLAN_REQUIRED_FIELDS) {
     if (!(field in plan)) {
       errors.push(`Missing required field: ${field}`);
-      fixes.push(`Add '${field}' to implementation_plan.json`);
+      fixes.push(`Add '${field}' to ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`);
     }
   }
 
@@ -658,7 +630,7 @@ Key Principle: Read the error, understand the schema, fix the file. Be surgical.
 
 Schemas:
 - context.json requires: task_description (string)
-- implementation_plan.json requires: feature (string), workflow_type (string: feature|refactor|investigation|migration|simple|bugfix), phases (array of {phase|id, name, subtasks})
+- implementation_plan.md requires checklist Markdown that parses to feature, workflow_type, and phases with subtasks
 - Each subtask requires: id (string), description (string), status (string: pending|in_progress|completed|blocked|failed)
 - spec.md requires sections: ## Overview, ## Workflow Type, ## Task Scope, ## Estimated Manual Effort, ## Success Criteria
 
@@ -761,9 +733,9 @@ function buildFixerPrompt(specDir: string, checkpoint: string, errors: string[])
       fileContents.push(`## spec.md (current):\n\`\`\`markdown\n${readFileSync(sf, 'utf-8').slice(0, 5000)}\n\`\`\``);
     } catch { /* ignore */ }
   } else if (checkpoint === 'plan') {
-    const pf = join(specDir, 'implementation_plan.json');
+    const pf = join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
     try {
-      fileContents.push(`## implementation_plan.json (current):\n\`\`\`json\n${readFileSync(pf, 'utf-8').slice(0, 8000)}\n\`\`\``);
+      fileContents.push(`## ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} (current):\n\`\`\`markdown\n${readFileSync(pf, 'utf-8').slice(0, 8000)}\n\`\`\``);
     } catch { /* ignore */ }
   }
 

@@ -1,7 +1,7 @@
-## IMPLEMENTATION PROCESS
+﻿## IMPLEMENTATION PROCESS
 
 1. Read the kickoff message first. If a subtask id is provided, work only on that subtask.
-2. Read `implementation_plan.json` only as needed to understand the current phase, files, dependencies, and verification.
+2. Read `implementation_plan.md` only as needed to understand the current phase, files, dependencies, and verification.
 3. Read the target files and the listed pattern files before editing.
 4. Implement the smallest coherent change that satisfies the subtask.
 5. Preserve existing public contracts, save formats, protocols, command names, IPC names, and content formats unless the plan explicitly changes them.

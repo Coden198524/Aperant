@@ -34,6 +34,10 @@
         "title": "Autocode: Create Task"
       },
       {
+        "command": "autocode.generateProjectDocs",
+        "title": "Autocode: Generate Project Documentation"
+      },
+      {
         "command": "autocode.openPlanFile",
         "title": "Autocode: Open Latest Plan File"
       },
@@ -73,6 +77,9 @@
         },
         {
           "command": "autocode.createTask"
+        },
+        {
+          "command": "autocode.generateProjectDocs"
         },
         {
           "command": "autocode.startTask"

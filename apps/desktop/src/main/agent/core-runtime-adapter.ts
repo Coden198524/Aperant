@@ -1,10 +1,11 @@
-import type { AgentRuntimeAdapter, AutocodeAgentRuntimePlan } from '@autocode/core';
+import type { AgentRuntimeAdapter, AutocodeAgentRuntimeStartRequest } from '@autocode/core';
 import type { AgentManager } from './agent-manager';
 import type { SpecCreationMetadata, TaskExecutionOptions } from './types';
 
 export function createDesktopAgentRuntimeAdapter(agentManager: AgentManager): AgentRuntimeAdapter {
   return {
-    startRuntime(plan: AutocodeAgentRuntimePlan): Promise<void> {
+    startRuntime(request: AutocodeAgentRuntimeStartRequest): Promise<void> {
+      const { plan } = request;
       if (plan.mode === 'direct') {
         return agentManager.startDirectTaskExecution(
           plan.taskId,

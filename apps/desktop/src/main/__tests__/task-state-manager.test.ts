@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TaskStateManager } from '../task-state-manager';
 import type { Task, Project } from '../../shared/types';
 
@@ -8,7 +8,7 @@ vi.mock('../ipc-handlers/utils', () => ({
 }));
 
 vi.mock('../ipc-handlers/task/plan-file-utils', () => ({
-  getPlanPath: vi.fn(() => '/mock/path/implementation_plan.json'),
+  getPlanPath: vi.fn(() => '/mock/path/implementation_plan.md'),
   persistPlanStatusAndReasonSync: vi.fn()
 }));
 
@@ -458,7 +458,7 @@ describe('TaskStateManager', () => {
     });
 
     it('should NOT mark exit code 0 as unexpected (plan_review stays intact)', () => {
-      // Simulate: PLANNING_STARTED → PLANNING_COMPLETE (requireReview) → process exits code 0
+      // Simulate: PLANNING_STARTED 鈫?PLANNING_COMPLETE (requireReview) 鈫?process exits code 0
       const planningStarted = {
         type: 'PLANNING_STARTED',
         taskId: mockTask.id,

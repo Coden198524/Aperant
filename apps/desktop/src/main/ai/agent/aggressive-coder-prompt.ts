@@ -15,7 +15,7 @@ export function buildAggressiveCoderPrompt(): string {
     '## CONTEXT RULES',
     '',
     '- The kickoff message is the source of truth for the current subtask.',
-    '- Do not read spec.md or implementation_plan.json at the start when the kickoff includes "Current Subtask".',
+    '- Do not read spec.md or implementation_plan.md at the start when the kickoff includes "Current Subtask".',
     '- Read only listed pattern files, files to modify, or directly relevant existing files.',
     '- For create-only subtasks, create or overwrite/update the listed target files directly unless the request is ambiguous.',
     '- If no files are listed, do one minimal target discovery only: check obvious root files by name or a narrow glob, then edit the best match.',
@@ -53,7 +53,7 @@ export function buildAggressiveCoderPrompt(): string {
     '',
     '- As soon as targeted verification passes, immediately call update_subtask_status for this subtask before any final narrative.',
     '- Do not write a long final summary before update_subtask_status; that can trigger a redundant retry.',
-    '- Prefer the update_subtask_status tool if available; otherwise edit only this subtask status and completion_summary in implementation_plan.json immediately.',
+    '- Prefer the update_subtask_status tool if available; otherwise update only this subtask checkbox and _Completion_ note in implementation_plan.md immediately.',
     '- After the status update succeeds, output only a compact completion_summary review matrix: | Item | Details | with What changed, Verification, and Review notes.',
     '- Do not commit or push unless the user or task explicitly requires it.',
   ].join('\n');

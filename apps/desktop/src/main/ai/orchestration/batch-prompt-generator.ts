@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Batch Prompt Generator
  * =======================
  *
@@ -62,12 +62,12 @@ export async function generateBatchPrompt(config: BatchPromptConfig): Promise<st
  * @returns Environment context string
  */
 function generateEnvironmentContext(projectDir: string, specDir: string): string {
-  return `# 环境信息
+  return `# Environment
 
-**工作目录**: ${projectDir}
-**规范目录**: ${specDir}
+**Project directory**: ${projectDir}
+**Spec directory**: ${specDir}
 
-你将在项目目录中工作，实现规范中定义的子任务。`;
+Work in the project directory and implement the subtasks defined in the spec.`;
 }
 
 /**
@@ -82,16 +82,15 @@ function generateContinuationContext(previousProgress: {
   blocked: string[];
   notStarted: string[];
 }): string {
-  return `# 续接会话
+  return `# Continuation
 
-这是一个续接会话。之前的会话因上下文窗口耗尽而中断。
+This is a continuation session after the previous context window ended.
+**Completed**: ${previousProgress.completed.length}
+**In progress**: ${previousProgress.inProgress.length}
+**Blocked**: ${previousProgress.blocked.length}
+**Not started**: ${previousProgress.notStarted.length}
 
-**已完成**: ${previousProgress.completed.length} 个子任务
-**进行中**: ${previousProgress.inProgress.length} 个子任务
-**被阻塞**: ${previousProgress.blocked.length} 个子任务
-**未开始**: ${previousProgress.notStarted.length} 个子任务
-
-请继续完成剩余的子任务。`;
+Continue with the remaining subtasks.`;
 }
 
 /**
@@ -105,26 +104,25 @@ function generateTaskManifest(subtasks: SubtaskInfo[]): string {
     .map((st, i) => {
       const fileOps: string[] = [];
       if (st.filesToCreate && st.filesToCreate.length > 0) {
-        fileOps.push(`- 创建: ${st.filesToCreate.join(', ')}`);
+        fileOps.push(`- Create: ${st.filesToCreate.join(', ')}`);
       }
       if (st.filesToModify && st.filesToModify.length > 0) {
-        fileOps.push(`- 修改: ${st.filesToModify.join(', ')}`);
+        fileOps.push(`- Modify: ${st.filesToModify.join(', ')}`);
       }
 
-      return `### 子任务 ${i + 1}/${subtasks.length}: ${st.id}
+      return `### Subtask ${i + 1}/${subtasks.length}: ${st.id}
 
-**描述**: ${st.description}
+**Description**: ${st.description}
 
-${fileOps.length > 0 ? `**文件操作**:\n${fileOps.join('\n')}` : ''}
+${fileOps.length > 0 ? `**File operations**:\n${fileOps.join('\n')}` : ''}
 
-${st.verification ? `**验证**: ${st.verification}` : ''}`;
+${st.verification ? `**Verification**: ${st.verification}` : ''}`;
     })
     .join('\n\n');
 
-  return `## 任务清单
+  return `## Task Manifest
 
-你需要按顺序完成以下 ${subtasks.length} 个子任务：
-
+Complete the following ${subtasks.length} subtasks in order:
 ${manifest}`;
 }
 
@@ -139,41 +137,38 @@ function generateBatchInstructions(count: number, attempt: number): string {
   const retryContext =
     attempt > 0
       ? `
-### ⚠️ 重试提示
-这是第 ${attempt + 1} 次尝试。之前的批量执行未完全成功。
-请特别注意之前可能失败的子任务。
-`
+### Retry context
+This is attempt ${attempt + 1}. A previous batch run did not fully complete, so pay special attention to unfinished subtasks.`
       : '';
 
-  return `## 执行协议
+  return `## Execution Protocol
 
-你将在单个会话中完成 ${count} 个子任务。请遵循以下协议：
+You will complete ${count} subtasks in one session.
 
-### 1. 执行顺序
-- 严格按照上述顺序（1 → ${count}）完成子任务
-- 不要跳过任何子任务
-- 如果某个子任务被阻塞，在 implementation_plan.json 中标记为 "blocked" 并继续下一个
+### 1. Execution order
+- Complete subtasks strictly in order, from 1 through ${count}.
+- Do not skip subtasks.
+- If a subtask is blocked, mark it as [-] in implementation_plan.md and continue with the next subtask.
 
-### 2. 进度跟踪
-完成每个子任务后，你必须：
-1. 更新 implementation_plan.json，将该子任务的 status 设为 "completed"，并添加 completion_summary。必须使用 Markdown 审核矩阵：| Item | Details |、| --- | --- |、| What changed | ... |、| Verification | ... |、| Review notes | ... |
-2. 在输出中添加进度标记：\`[SUBTASK_COMPLETED: {id}]\`
-3. 提交代码（每 2-3 个子任务提交一次）
+### 2. Progress tracking
+After each subtask:
+1. Update implementation_plan.md, mark the subtask as [x], and add \`_Completion: ..._\`.
+2. Include the progress marker \`[SUBTASK_COMPLETED: {id}]\` in your output.
+3. Commit code every 2-3 subtasks when practical.
 
-### 3. 验证要求
-- 每个子任务完成后必须运行验证
-- 验证失败时必须修复后再继续
-- 不要跳过验证步骤
+### 3. Verification
+- Run the relevant verification after each subtask.
+- Fix verification failures before continuing.
+- Do not skip verification.
 
-### 4. 质量标准
-- 遵循模式文件中的代码风格
-- 无 console.log 或调试语句
-- 适当的错误处理
-- 保持代码整洁
+### 4. Quality bar
+- Follow the style in referenced pattern files.
+- Avoid stray debug logging.
+- Handle errors deliberately.
+- Keep the code focused and clean.
 ${retryContext}
-## 开始执行
-
-现在开始执行这 ${count} 个子任务。记住：按顺序、验证、更新状态、提交代码。`;
+## Start
+Start these ${count} subtasks now. Work in order, verify, update status, and commit as needed.`;
 }
 
 /**
@@ -238,10 +233,9 @@ ${f.content}
     )
     .join('\n\n');
 
-  return `## 模式文件
+  return `## Pattern Files
 
-以下是相关的模式文件，请遵循其中的代码风格和模式：
-
+Use these related files as style and implementation references:
 ${filesSection}`;
 }
 

@@ -1,4 +1,4 @@
-import { EventEmitter } from 'events';
+﻿import { EventEmitter } from 'events';
 import path from 'path';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync, execSync } from 'child_process';
@@ -11,6 +11,7 @@ import {
   buildAutocodeDefaultQAPrompt,
   buildAutocodeDefaultSpecPrompt,
   buildAutocodeDirectTaskExecutionMessages,
+  buildAutocodeProjectDocsReferencePrompt,
   buildAutocodeQAInitialMessages,
   buildAutocodeSessionRuntimeOptions,
   buildAutocodeTaskExecutionMessages,
@@ -424,7 +425,7 @@ export class AgentManager extends EventEmitter {
 
   /**
    * Run startup recovery scan to detect and reset stuck subtasks on app launch
-   * Scans all projects for implementation_plan.json files and resets any stuck subtasks
+   * Scans all projects for implementation_plan.md files and resets any stuck subtasks
    */
   async runStartupRecoveryScan(): Promise<void> {
     console.log('[AgentManager] Running startup recovery scan for stuck subtasks...');
@@ -467,7 +468,7 @@ export class AgentManager extends EventEmitter {
           for (const specDirName of specDirs) {
             const planPath = path.join(specsDir, specDirName, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 
-            // Check if implementation_plan.json exists
+            // Check if implementation_plan.md exists
             if (!existsSync(planPath)) {
               continue;
             }
@@ -634,6 +635,15 @@ export class AgentManager extends EventEmitter {
       dataDirName: project?.autoBuildPath,
       specId: taskId,
     });
+    const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
+      projectRoot: projectPath,
+      dataDirName: project?.autoBuildPath,
+    });
+    const specInitialContent = [
+      `Task: ${taskDescription}\n\nProject directory: ${projectPath}${specDir ? `\nSpec directory: ${specDir}` : ''}${baseBranch ? `\nBase branch: ${baseBranch}` : ''}${metadata?.requireReviewBeforeCoding ? '\nRequire review before coding: true' : '\nAuto-approve: true'}`,
+      projectDocsReference,
+    ].filter(Boolean).join('\n\n');
+
     const sessionConfig: SerializableSessionConfig = {
       agentType: specAgentType,
       systemPrompt,
@@ -641,7 +651,7 @@ export class AgentManager extends EventEmitter {
       initialMessages: [
         {
           role: 'user',
-          content: `Task: ${taskDescription}\n\nProject directory: ${projectPath}${specDir ? `\nSpec directory: ${specDir}` : ''}${baseBranch ? `\nBase branch: ${baseBranch}` : ''}${metadata?.requireReviewBeforeCoding ? '\nRequire review before coding: true' : '\nAuto-approve: true'}`,
+          content: specInitialContent,
         },
       ],
       maxSteps: sessionRuntime.maxSteps,
@@ -816,6 +826,7 @@ export class AgentManager extends EventEmitter {
       specDir: worktreeSpecDir,
       specId,
       projectRoot: effectiveProjectDir,
+      dataDirName: project?.autoBuildPath,
       language,
     });
 
@@ -981,6 +992,7 @@ export class AgentManager extends EventEmitter {
       specDir: worktreeSpecDir,
       specId,
       projectRoot: effectiveProjectDir,
+      dataDirName: project?.autoBuildPath,
       language,
     });
 
@@ -1111,6 +1123,7 @@ export class AgentManager extends EventEmitter {
       specDir: effectiveSpecDir,
       specId,
       projectRoot: effectiveProjectDir,
+      dataDirName: project?.autoBuildPath,
     });
 
     // Build the serializable session config for the worker

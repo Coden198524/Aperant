@@ -1,6 +1,6 @@
 import { create } from 'zustand';
 import { arrayMove } from '@dnd-kit/sortable';
-import type { Task, TaskStatus, SubtaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft, ImageAttachment, TaskOrderState, TokenUsage, TaskStartOptions } from '../../shared/types';
+import type { Task, TaskStatus, SubtaskStatus, ImplementationPlan, Subtask, TaskMetadata, ExecutionProgress, ExecutionPhase, ReviewReason, TaskDraft, ImageAttachment, TaskOrderState, TokenUsage, TaskStartOptions, ProjectDocumentType } from '../../shared/types';
 import { wouldPhaseRegress } from '../../shared/constants/phase-protocol';
 import { debugLog, debugWarn } from '../../shared/utils/debug-logger';
 import { useProjectStore } from './project-store';
@@ -926,6 +926,30 @@ export async function createTask(
       store.setError(result.error || 'Failed to create task');
       return null;
     }
+  } catch (error) {
+    store.setError(error instanceof Error ? error.message : 'Unknown error');
+    return null;
+  }
+}
+
+/**
+ * Create a project documentation task.
+ */
+export async function createProjectDocumentationTask(
+  projectId: string,
+  options: { documentType?: ProjectDocumentType; outputDir?: string } = {}
+): Promise<Task | null> {
+  const store = useTaskStore.getState();
+
+  try {
+    const result = await window.electronAPI.createProjectDocumentationTask(projectId, options);
+    if (result.success && result.data) {
+      store.addTask(result.data);
+      return result.data;
+    }
+
+    store.setError(result.error || 'Failed to create project documentation task');
+    return null;
   } catch (error) {
     store.setError(error instanceof Error ? error.message : 'Unknown error');
     return null;

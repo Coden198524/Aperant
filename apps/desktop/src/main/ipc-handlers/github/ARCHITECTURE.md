@@ -1,119 +1,119 @@
-# GitHub Handlers Architecture
+﻿# GitHub Handlers Architecture
 
 ## Module Dependency Graph
 
 ```
-┌─────────────────────────────────────────────────────────────────────┐
-│                         github-handlers.ts                          │
-│                    (Main Entry Point - 33 lines)                    │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             │ imports
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                          github/index.ts                            │
-│                  (Handler Orchestrator - 37 lines)                  │
-│                                                                     │
-│  Responsibilities:                                                  │
-│  - Registers all handler modules                                   │
-│  - Exports public API                                              │
-│  - Coordinates module initialization                               │
-└────────────────────────────┬────────────────────────────────────────┘
-                             │
-                             │ orchestrates
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                        Handler Modules                              │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ repository-handlers.ts (127 lines)                        │    │
-│  │ • Check GitHub connection                                 │    │
-│  │ • Fetch repositories                                      │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ issue-handlers.ts (125 lines)                             │    │
-│  │ • Fetch issues (with filtering)                           │    │
-│  │ • Fetch single issue                                      │    │
-│  │ • Transform API responses                                 │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ investigation-handlers.ts (211 lines)                     │    │
-│  │ • AI-powered issue investigation                          │    │
-│  │ • Progress tracking                                       │    │
-│  │ • Event emission to renderer                              │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ import-handlers.ts (107 lines)                            │    │
-│  │ • Bulk issue import                                       │    │
-│  │ • Error aggregation                                       │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ release-handlers.ts (126 lines)                           │    │
-│  │ • Create GitHub releases                                  │    │
-│  │ • Validate gh CLI availability                            │    │
-│  │ • Check authentication status                             │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ oauth-handlers.ts (220 lines)                             │    │
-│  │ • Check gh CLI installation                               │    │
-│  │ • Check authentication status                             │    │
-│  │ • Start OAuth flow via gh CLI                             │    │
-│  │ • Retrieve OAuth tokens                                   │    │
-│  │ • Get authenticated user info                             │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-                             │
-                             │ depends on
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                      Shared Infrastructure                          │
-├─────────────────────────────────────────────────────────────────────┤
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ utils.ts (85 lines)                                       │    │
-│  │ • getGitHubConfig() - Extract config from .env           │    │
-│  │ • getTokenFromGhCli() - Get token from gh CLI             │    │
-│  │ • githubFetch() - GitHub API wrapper                     │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ spec-utils.ts (169 lines)                                 │    │
-│  │ • createSpecForIssue() - Create spec directory            │    │
-│  │ • buildIssueContext() - Build context string              │    │
-│  │ • buildInvestigationTask() - Generate task description    │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-│  ┌───────────────────────────────────────────────────────────┐    │
-│  │ types.ts (48 lines)                                       │    │
-│  │ • GitHubConfig                                            │    │
-│  │ • GitHubAPIIssue                                          │    │
-│  │ • GitHubAPIRepository                                     │    │
-│  │ • ReleaseOptions                                          │    │
-│  └───────────────────────────────────────────────────────────┘    │
-│                                                                     │
-└─────────────────────────────────────────────────────────────────────┘
-                             │
-                             │ uses
-                             ▼
-┌─────────────────────────────────────────────────────────────────────┐
-│                      External Dependencies                          │
-├─────────────────────────────────────────────────────────────────────┤
-│  • electron (IPC communication)                                     │
-│  • fs (File system operations)                                      │
-│  • path (Path manipulation)                                         │
-│  • child_process (gh CLI execution)                                 │
-│  • ../../shared/constants                                           │
-│  • ../../shared/types                                               │
-│  • ../project-store                                                 │
-│  • ../agent                                                         │
-└─────────────────────────────────────────────────────────────────────┘
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹?                        github-handlers.ts                          鈹?
+鈹?                   (Main Entry Point - 33 lines)                    鈹?
+鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+                             鈹?
+                             鈹?imports
+                             鈻?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹?                         github/index.ts                            鈹?
+鈹?                 (Handler Orchestrator - 37 lines)                  鈹?
+鈹?                                                                    鈹?
+鈹? Responsibilities:                                                  鈹?
+鈹? - Registers all handler modules                                   鈹?
+鈹? - Exports public API                                              鈹?
+鈹? - Coordinates module initialization                               鈹?
+鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+                             鈹?
+                             鈹?orchestrates
+                             鈻?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹?                       Handler Modules                              鈹?
+鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?repository-handlers.ts (127 lines)                        鈹?   鈹?
+鈹? 鈹?鈥?Check GitHub connection                                 鈹?   鈹?
+鈹? 鈹?鈥?Fetch repositories                                      鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?issue-handlers.ts (125 lines)                             鈹?   鈹?
+鈹? 鈹?鈥?Fetch issues (with filtering)                           鈹?   鈹?
+鈹? 鈹?鈥?Fetch single issue                                      鈹?   鈹?
+鈹? 鈹?鈥?Transform API responses                                 鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?investigation-handlers.ts (211 lines)                     鈹?   鈹?
+鈹? 鈹?鈥?AI-powered issue investigation                          鈹?   鈹?
+鈹? 鈹?鈥?Progress tracking                                       鈹?   鈹?
+鈹? 鈹?鈥?Event emission to renderer                              鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?import-handlers.ts (107 lines)                            鈹?   鈹?
+鈹? 鈹?鈥?Bulk issue import                                       鈹?   鈹?
+鈹? 鈹?鈥?Error aggregation                                       鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?release-handlers.ts (126 lines)                           鈹?   鈹?
+鈹? 鈹?鈥?Create GitHub releases                                  鈹?   鈹?
+鈹? 鈹?鈥?Validate gh CLI availability                            鈹?   鈹?
+鈹? 鈹?鈥?Check authentication status                             鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?oauth-handlers.ts (220 lines)                             鈹?   鈹?
+鈹? 鈹?鈥?Check gh CLI installation                               鈹?   鈹?
+鈹? 鈹?鈥?Check authentication status                             鈹?   鈹?
+鈹? 鈹?鈥?Start OAuth flow via gh CLI                             鈹?   鈹?
+鈹? 鈹?鈥?Retrieve OAuth tokens                                   鈹?   鈹?
+鈹? 鈹?鈥?Get authenticated user info                             鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+                             鈹?
+                             鈹?depends on
+                             鈻?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹?                     Shared Infrastructure                          鈹?
+鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?utils.ts (85 lines)                                       鈹?   鈹?
+鈹? 鈹?鈥?getGitHubConfig() - Extract config from .env           鈹?   鈹?
+鈹? 鈹?鈥?getTokenFromGhCli() - Get token from gh CLI             鈹?   鈹?
+鈹? 鈹?鈥?githubFetch() - GitHub API wrapper                     鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?spec-utils.ts (169 lines)                                 鈹?   鈹?
+鈹? 鈹?鈥?createSpecForIssue() - Create spec directory            鈹?   鈹?
+鈹? 鈹?鈥?buildIssueContext() - Build context string              鈹?   鈹?
+鈹? 鈹?鈥?buildInvestigationTask() - Generate task description    鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹? 鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹? 鈹?types.ts (48 lines)                                       鈹?   鈹?
+鈹? 鈹?鈥?GitHubConfig                                            鈹?   鈹?
+鈹? 鈹?鈥?GitHubAPIIssue                                          鈹?   鈹?
+鈹? 鈹?鈥?GitHubAPIRepository                                     鈹?   鈹?
+鈹? 鈹?鈥?ReleaseOptions                                          鈹?   鈹?
+鈹? 鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?   鈹?
+鈹?                                                                    鈹?
+鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+                             鈹?
+                             鈹?uses
+                             鈻?
+鈹屸攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹?                     External Dependencies                          鈹?
+鈹溾攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
+鈹? 鈥?electron (IPC communication)                                     鈹?
+鈹? 鈥?fs (File system operations)                                      鈹?
+鈹? 鈥?path (Path manipulation)                                         鈹?
+鈹? 鈥?child_process (gh CLI execution)                                 鈹?
+鈹? 鈥?../../shared/constants                                           鈹?
+鈹? 鈥?../../shared/types                                               鈹?
+鈹? 鈥?../project-store                                                 鈹?
+鈹? 鈥?../agent                                                         鈹?
+鈹斺攢鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹?
 ```
 
 ## Data Flow
@@ -122,31 +122,31 @@
 
 ```
 Renderer Process
-     │
-     │ IPC: GITHUB_INVESTIGATE_ISSUE
-     ▼
+     鈹?
+     鈹?IPC: GITHUB_INVESTIGATE_ISSUE
+     鈻?
 investigation-handlers.ts
-     │
-     ├──► utils.getGitHubConfig() ──────► Get GitHub token & repo
-     │
-     ├──► utils.githubFetch() ───────────► Fetch issue from GitHub API
-     │
-     ├──► utils.githubFetch() ───────────► Fetch comments from GitHub API
-     │
-     ├──► spec-utils.buildIssueContext() ► Build context string
-     │
-     ├──► spec-utils.buildInvestigationTask() ► Generate task description
-     │
-     ├──► spec-utils.createSpecForIssue() ─┬─► Create spec directory
-     │                                      ├─► Write implementation_plan.json
-     │                                      ├─► Write requirements.json
-     │                                      └─► Write task_metadata.json
-     │
-     ├──► AgentManager.startSpecCreation() ► Start AI agent
-     │
-     └──► Send progress & completion events
-          │
-          ▼
+     鈹?
+     鈹溾攢鈹€鈻?utils.getGitHubConfig() 鈹€鈹€鈹€鈹€鈹€鈹€鈻?Get GitHub token & repo
+     鈹?
+     鈹溾攢鈹€鈻?utils.githubFetch() 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈻?Fetch issue from GitHub API
+     鈹?
+     鈹溾攢鈹€鈻?utils.githubFetch() 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈻?Fetch comments from GitHub API
+     鈹?
+     鈹溾攢鈹€鈻?spec-utils.buildIssueContext() 鈻?Build context string
+     鈹?
+     鈹溾攢鈹€鈻?spec-utils.buildInvestigationTask() 鈻?Generate task description
+     鈹?
+     鈹溾攢鈹€鈻?spec-utils.createSpecForIssue() 鈹€鈹攢鈻?Create spec directory
+     鈹?                                     鈹溾攢鈻?Write implementation_plan.md
+     鈹?                                     鈹溾攢鈻?Write requirements.json
+     鈹?                                     鈹斺攢鈻?Write task_metadata.json
+     鈹?
+     鈹溾攢鈹€鈻?AgentManager.startSpecCreation() 鈻?Start AI agent
+     鈹?
+     鈹斺攢鈹€鈻?Send progress & completion events
+          鈹?
+          鈻?
      Renderer Process
      (Progress updates & results)
 ```
@@ -155,22 +155,22 @@ investigation-handlers.ts
 
 ```
 Renderer Process
-     │
-     │ IPC: GITHUB_IMPORT_ISSUES (with issue numbers)
-     ▼
+     鈹?
+     鈹?IPC: GITHUB_IMPORT_ISSUES (with issue numbers)
+     鈻?
 import-handlers.ts
-     │
-     └──► For each issue number:
-          │
-          ├──► utils.githubFetch() ──────────► Fetch issue details
-          │
-          ├──► spec-utils.createSpecForIssue() ► Create spec
-          │
-          └──► AgentManager.startSpecCreation() ► Start agent
-     │
-     └──► Return import results
-          │
-          ▼
+     鈹?
+     鈹斺攢鈹€鈻?For each issue number:
+          鈹?
+          鈹溾攢鈹€鈻?utils.githubFetch() 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈻?Fetch issue details
+          鈹?
+          鈹溾攢鈹€鈻?spec-utils.createSpecForIssue() 鈻?Create spec
+          鈹?
+          鈹斺攢鈹€鈻?AgentManager.startSpecCreation() 鈻?Start agent
+     鈹?
+     鈹斺攢鈹€鈻?Return import results
+          鈹?
+          鈻?
      Renderer Process
      (Import summary)
 ```

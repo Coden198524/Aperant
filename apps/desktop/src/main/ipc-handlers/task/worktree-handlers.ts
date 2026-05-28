@@ -1,4 +1,4 @@
-import { ipcMain, shell, app } from 'electron';
+﻿import { ipcMain, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP } from '../../../shared/constants';
 import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, SupportedCLI, AppSettings } from '../../../shared/types';
@@ -25,7 +25,9 @@ import {
   getAutocodeSpecDir,
   getAutocodeSpecsDir,
   isAutocodeGitBranchName,
+  loadAutocodeImplementationPlan,
   normalizeAutocodeBaseBranch,
+  saveAutocodeImplementationPlan,
   shouldHideAutocodeTaskGitChangePath,
   validateAutocodeWorktreeBranch,
   type ModelShorthand,
@@ -2603,7 +2605,7 @@ export function registerWorktreeHandlers(
                 }
               }
 
-              // Persist the status change to implementation_plan.json
+              // Persist the status change to implementation_plan.md
               // Issue #243: We must update BOTH the main project's plan AND the worktree's plan (if it exists)
               // because ProjectStore prefers the worktree version when deduplicating tasks.
               // OPTIMIZATION: Use async I/O and parallel updates to prevent UI blocking
@@ -2631,8 +2633,10 @@ export function registerWorktreeHandlers(
                 try {
                   await withRetry(
                     async () => {
-                      const planContent = await fsPromises.readFile(planPath, 'utf-8');
-                      const plan = JSON.parse(planContent);
+                      const plan = await loadAutocodeImplementationPlan(planPath) as Record<string, unknown> | null;
+                      if (!plan) {
+                        throw Object.assign(new Error('Implementation plan not found or unreadable'), { code: 'ENOENT' });
+                      }
                       plan.status = newStatus;
                       plan.planStatus = planStatus;
                       plan.reviewReason = reviewReason;
@@ -2641,12 +2645,11 @@ export function registerWorktreeHandlers(
                         plan.stagedAt = new Date().toISOString();
                         plan.stagedInMainProject = true;
                       }
-                      await fsPromises.writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+                      await saveAutocodeImplementationPlan(planPath, plan as never);
 
                       // Verify the write succeeded by reading back
-                      const verifyContent = await fsPromises.readFile(planPath, 'utf-8');
-                      const verifyPlan = JSON.parse(verifyContent);
-                      if (verifyPlan.status !== newStatus || verifyPlan.planStatus !== planStatus) {
+                      const verifyPlan = await loadAutocodeImplementationPlan(planPath) as Record<string, unknown> | null;
+                      if (!verifyPlan || verifyPlan.status !== newStatus || verifyPlan.planStatus !== planStatus) {
                         throw new Error('Write verification failed - status mismatch');
                       }
                     },
@@ -2795,7 +2798,7 @@ export function registerWorktreeHandlers(
           `(source: ${taskBaseBranch ? 'task metadata' : projectMainBranch ? 'project settings' : 'default'})`);
 
         // Run preview using the TypeScript MergeOrchestrator in dry-run mode
-        // (no AI resolver needed for preview — only conflict detection and analysis)
+        // (no AI resolver needed for preview 鈥?only conflict detection and analysis)
         const storageDir = getAutocodeProjectDataDir(project.path, project.autoBuildPath);
         const orchestrator = new MergeOrchestrator({
           projectDir: project.path,
@@ -2812,7 +2815,7 @@ export function registerWorktreeHandlers(
           console.warn('[IPC] Refreshing evolution data from worktree:', worktreePath);
           orchestrator.evolutionTracker.refreshFromGit(task.specId, worktreePath, effectiveBaseBranch);
         } else {
-          console.warn('[IPC] No worktree found for preview — evolution data may be stale');
+          console.warn('[IPC] No worktree found for preview 鈥?evolution data may be stale');
         }
 
         console.warn('[IPC] Running TypeScript merge preview for task:', task.specId);
@@ -3277,25 +3280,17 @@ export function registerWorktreeHandlers(
         const isFileNotFound = (err: unknown): boolean =>
           !!(err && typeof err === 'object' && 'code' in err && err.code === 'ENOENT');
 
-        // Read, update, and write the plan file
-        let planContent: string;
-        try {
-          planContent = await fsPromises.readFile(planPath, 'utf-8');
-        } catch (readErr) {
-          if (isFileNotFound(readErr)) {
-            return { success: false, error: 'Implementation plan not found' };
-          }
-          throw readErr;
+        const plan = await loadAutocodeImplementationPlan(planPath) as Record<string, unknown> | null;
+        if (!plan) {
+          return { success: false, error: 'Implementation plan not found' };
         }
-
-        const plan = JSON.parse(planContent);
 
         // Clear the staged state flags
         delete plan.stagedInMainProject;
         delete plan.stagedAt;
         plan.updated_at = new Date().toISOString();
 
-        await fsPromises.writeFile(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+        await saveAutocodeImplementationPlan(planPath, plan as never);
 
         // Also update worktree plan if it exists
         const worktreePath = findTaskWorktree(project.path, task.specId);
@@ -3307,12 +3302,13 @@ export function registerWorktreeHandlers(
           });
           const worktreePlanPath = path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
           try {
-            const worktreePlanContent = await fsPromises.readFile(worktreePlanPath, 'utf-8');
-            const worktreePlan = JSON.parse(worktreePlanContent);
-            delete worktreePlan.stagedInMainProject;
-            delete worktreePlan.stagedAt;
-            worktreePlan.updated_at = new Date().toISOString();
-            await fsPromises.writeFile(worktreePlanPath, JSON.stringify(worktreePlan, null, 2), 'utf-8');
+            const worktreePlan = await loadAutocodeImplementationPlan(worktreePlanPath) as Record<string, unknown> | null;
+            if (worktreePlan) {
+              delete worktreePlan.stagedInMainProject;
+              delete worktreePlan.stagedAt;
+              worktreePlan.updated_at = new Date().toISOString();
+              await saveAutocodeImplementationPlan(worktreePlanPath, worktreePlan as never);
+            }
           } catch (e) {
             // Non-fatal - worktree plan update is best-effort
             // ENOENT is expected when worktree has no plan file

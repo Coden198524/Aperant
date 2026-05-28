@@ -18,7 +18,12 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createSimpleClient } from '../client/factory';
-import { getAutocodeSpecDir, type ModelShorthand, type ThinkingLevel } from '@autocode/core';
+import {
+  getAutocodeSpecDir,
+  loadAutocodeImplementationPlanSync,
+  type ModelShorthand,
+  type ThinkingLevel,
+} from '@autocode/core';
 import { safeParseJson } from '../../utils/json-repair';
 
 // =============================================================================
@@ -146,18 +151,15 @@ function getSpecContext(specDir: string): SpecContext {
     }
   }
 
-  // Try to read implementation_plan.json for GitHub issue
-  const planFile = join(specDir, 'implementation_plan.json');
-  if (existsSync(planFile)) {
-    const planData = safeParseJson<Record<string, unknown>>(readFileSync(planFile, 'utf-8'));
-    if (planData) {
-      const metadata = (planData.metadata as Record<string, unknown>) ?? {};
-      if (metadata.githubIssueNumber) {
-        context.githubIssue = metadata.githubIssueNumber as number;
-      }
-      if (!context.title) {
-        context.title = String(planData.feature ?? planData.title ?? '');
-      }
+  // Try to read implementation_plan.md for GitHub issue
+  const planData = loadAutocodeImplementationPlanSync(specDir) as Record<string, unknown> | null;
+  if (planData) {
+    const metadata = (planData.metadata as Record<string, unknown>) ?? {};
+    if (metadata.githubIssueNumber) {
+      context.githubIssue = metadata.githubIssueNumber as number;
+    }
+    if (!context.title) {
+      context.title = String(planData.feature ?? planData.title ?? '');
     }
   }
 

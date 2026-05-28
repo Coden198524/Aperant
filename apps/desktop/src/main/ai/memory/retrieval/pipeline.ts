@@ -10,7 +10,7 @@
  */
 
 import type { Client } from '@libsql/client';
-import type { Memory, UniversalPhase } from '../types';
+import type { Memory, UniversalPhase } from '@autocode/core';
 import type { EmbeddingService } from '../embedding-service';
 import { detectQueryType, QUERY_TYPE_WEIGHTS } from './query-classifier';
 import { searchBM25 } from './bm25-search';

@@ -1,9 +1,9 @@
-/**
+﻿/**
  * Subtask Iterator
  * ================
  *
  * See apps/desktop/src/main/ai/orchestration/subtask-iterator.ts for the TypeScript implementation.
- * Reads implementation_plan.json, finds the next pending subtask, invokes
+ * Reads implementation_plan.md, finds the next pending subtask, invokes
  * the coder agent session, and tracks completion/retry/stuck state.
  */
 
@@ -28,7 +28,7 @@ import {
 
 /** Configuration for the subtask iterator */
 export interface SubtaskIteratorConfig {
-  /** Spec directory containing implementation_plan.json */
+  /** Spec directory containing implementation_plan.md */
   specDir: string;
   /** Project root directory */
   projectDir: string;
@@ -122,7 +122,7 @@ interface PlanSubtask {
  * Iterate through all pending subtasks in the implementation plan.
  *
  * Replaces the inner subtask loop in agents/coder.py:
- * - Reads implementation_plan.json for the next pending subtask
+ * - Reads implementation_plan.md for the next pending subtask
  * - Invokes the coder agent session
  * - Re-reads the plan after each session (the agent updates subtask status)
  * - Tracks retry counts and marks subtasks as stuck after max retries
@@ -317,7 +317,7 @@ export async function iterateSubtasks(
         return { totalSubtasks, completedSubtasks, stuckSubtasks, cancelled: true };
       }
 
-      // Continue the loop — subtask will be retried
+      // Continue the loop 鈥?subtask will be retried
       continue;
     }
 
@@ -334,7 +334,7 @@ export async function iterateSubtasks(
         return { totalSubtasks, completedSubtasks, stuckSubtasks, cancelled: true };
       }
 
-      // Continue — subtask will be retried with fresh auth
+      // Continue 鈥?subtask will be retried with fresh auth
       continue;
     }
 
@@ -351,7 +351,7 @@ export async function iterateSubtasks(
     }
 
     // For errors, the subtask will be retried on next loop iteration
-    // (implementation_plan.json status remains in_progress or pending)
+    // (implementation_plan.md status remains in_progress or pending)
 
     // Analyze failure and suggest recovery strategy
     if (result.outcome === 'error' && config.qualityConfig?.enableContextAwareRecovery === true) {
@@ -417,14 +417,14 @@ async function finalizeAcceptedSubtask(
 }
 
 /**
- * Ensure a subtask is marked as completed in implementation_plan.json.
+ * Ensure a subtask is marked as completed in implementation_plan.md.
  *
  * The coder agent is instructed to update the subtask status itself, but it
  * doesn't always do so reliably. This function is called after each successful
  * coder session as a fallback: if the subtask is still pending or in_progress,
  * it is marked completed with a timestamp.
  *
- * Only ADD/UPDATE fields — never removes existing data.
+ * Only ADD/UPDATE fields 鈥?never removes existing data.
  */
 async function ensureSubtaskMarkedCompleted(
   specDir: string,
@@ -439,7 +439,7 @@ async function ensureSubtaskMarkedCompleted(
 
     for (const phase of plan.phases) {
       for (const subtask of phase.subtasks) {
-        // Normalize subtask_id → id (Fix 2: planner sometimes writes subtask_id)
+        // Normalize subtask_id 鈫?id (Fix 2: planner sometimes writes subtask_id)
         const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
         if (withLegacyId.subtask_id && !subtask.id) {
           subtask.id = withLegacyId.subtask_id;
@@ -536,7 +536,7 @@ function extractCompletionSummaryTable(content: string): string | undefined {
     .filter(Boolean);
   const start = lines.findIndex((line, index) => {
     const next = lines[index + 1] ?? '';
-    return /^\|\s*(Item|项目)\s*\|\s*(Details|详情)\s*\|$/i.test(line) &&
+    return /^\|\s*(Item|椤圭洰)\s*\|\s*(Details|璇︽儏)\s*\|$/i.test(line) &&
       /^\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|$/.test(next);
   });
 
@@ -615,7 +615,7 @@ async function markSubtaskInProgress(
 /**
  * Re-stamp executionPhase on the plan file after a coder session.
  *
- * During a coder session, the model reads implementation_plan.json, edits
+ * During a coder session, the model reads implementation_plan.md, edits
  * subtask statuses, and writes the file back. If the model read the plan
  * before persistPlanPhaseSync set executionPhase to 'coding', the model's
  * write overwrites executionPhase with the stale value (e.g., 'planning').
@@ -632,7 +632,7 @@ export async function restampExecutionPhase(
   try {
     const plan = await loadImplementationPlanFromFiles(specDir);
     if (!plan) {
-      console.warn(`[restampExecutionPhase] Could not parse implementation_plan.json in ${specDir} — skipping restamp`);
+      console.warn(`[restampExecutionPhase] Could not parse implementation_plan.md in ${specDir} 鈥?skipping restamp`);
       return;
     }
 
@@ -707,7 +707,7 @@ async function syncExecutionStateToMain(
 // =============================================================================
 
 /**
- * Load and parse implementation_plan.json.
+ * Load and parse implementation_plan.md.
  */
 async function loadImplementationPlan(
   specDir: string,
@@ -827,7 +827,7 @@ const MAX_RATE_LIMIT_WAIT_MS_DEFAULT = 7_200_000;
 /**
  * Run insight extraction for a completed subtask session.
  *
- * This is fire-and-forget — it never blocks the build loop.
+ * This is fire-and-forget 鈥?it never blocks the build loop.
  * Returns null on any error so the caller can safely ignore failures.
  */
 async function extractInsightsAfterSession(

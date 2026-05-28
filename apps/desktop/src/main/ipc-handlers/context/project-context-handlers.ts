@@ -1,47 +1,25 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { existsSync, readFileSync } from 'fs';
-import { getAutocodeProjectIndexPath } from '@autocode/core';
+import {
+  getAutocodeProjectIndexPath,
+  toAutocodeRendererMemory,
+} from '@autocode/core';
 import { IPC_CHANNELS } from '../../../shared/constants';
 import type {
   IPCResult,
   ProjectContextData,
   ProjectIndex,
   RendererMemory,
-  MemoryType,
 } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import { buildMemoryStatus } from './memory-status-handlers';
 import { getMemoryService } from './memory-service-factory';
 import { runProjectIndexer } from '../../ai/project/project-indexer';
-import type { Memory } from '../../ai/memory/types';
 
 // ============================================================
 // HELPERS
 // ============================================================
-
-function toRendererMemory(m: Memory): RendererMemory {
-  return {
-    id: m.id,
-    type: m.type as MemoryType,
-    content: m.content,
-    confidence: m.confidence,
-    tags: m.tags,
-    relatedFiles: m.relatedFiles,
-    relatedModules: m.relatedModules,
-    createdAt: m.createdAt,
-    lastAccessedAt: m.lastAccessedAt,
-    accessCount: m.accessCount,
-    scope: m.scope as RendererMemory['scope'],
-    source: m.source as RendererMemory['source'],
-    needsReview: m.needsReview,
-    userVerified: m.userVerified,
-    citationText: m.citationText,
-    pinned: m.pinned,
-    methodology: m.methodology,
-    deprecated: m.deprecated,
-  };
-}
 
 /**
  * Load project index from file
@@ -72,7 +50,7 @@ async function loadRecentMemories(projectId: string): Promise<RendererMemory[]> 
       sort: 'recency',
       excludeDeprecated: true,
     });
-    return memories.map(toRendererMemory);
+    return memories.map(toAutocodeRendererMemory);
   } catch {
     // Memory service unavailable — return empty list
     return [];

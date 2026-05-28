@@ -1,12 +1,17 @@
-import { existsSync, readdirSync, readFileSync, writeFileSync, type Dirent } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, type Dirent } from 'node:fs';
 import { join } from 'node:path';
 import { safeParseAutocodeJson } from './json-repair.js';
 import {
   inferAutocodeExecutionProgress,
   inferAutocodeExecutionProgressFromXState,
+  type MutableAutocodePlan,
   type AutocodeTokenUsage,
 } from './plan-file.js';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import {
+  loadAutocodeImplementationPlanSync,
+  saveAutocodeImplementationPlanSync,
+} from './plan-store.js';
 import {
   getAutocodeSpecsDir,
   type AutocodeExecutionPhase,
@@ -248,16 +253,10 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
   let hasJsonError = false;
   let jsonErrorMessage = '';
   if (existsSync(planPath)) {
-    try {
-      const content = readFileSync(planPath, 'utf8');
-      plan = safeParseAutocodeJson<ImplementationPlanFile>(content);
-      if (!plan) {
-        hasJsonError = true;
-        jsonErrorMessage = `Malformed JSON in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`;
-      }
-    } catch (error) {
+    plan = loadAutocodeImplementationPlanSync(input.specDir) as ImplementationPlanFile | null;
+    if (!plan) {
       hasJsonError = true;
-      jsonErrorMessage = error instanceof Error ? error.message : String(error);
+      jsonErrorMessage = `Malformed Markdown in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`;
     }
   }
 
@@ -423,7 +422,7 @@ function correctStaleAutocodeTaskStatus(input: {
       executionPhase: 'complete',
     };
     try {
-      writeFileSync(input.planPath, JSON.stringify(correctedPlan, null, 2), 'utf8');
+      saveAutocodeImplementationPlanSync(input.planPath, correctedPlan as unknown as MutableAutocodePlan);
       Object.assign(input.plan, correctedPlan);
     } catch {
       return { status: input.status, ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}) };

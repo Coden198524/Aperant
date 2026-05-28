@@ -1,8 +1,8 @@
-/**
+﻿/**
  * Implementation Plan Compaction
  * ==============================
  *
- * Keeps implementation_plan.json small enough for downstream agents to read
+ * Keeps implementation_plan.md small enough for downstream agents to read
  * reliably. Planner prompts can drift toward large analysis-heavy JSON; this
  * module preserves the executable plan surface and drops bulky optional fields
  * before the plan is written to disk.

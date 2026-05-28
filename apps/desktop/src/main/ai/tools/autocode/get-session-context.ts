@@ -13,10 +13,18 @@
  */
 
 import * as fs from 'node:fs';
-import * as path from 'node:path';
+import {
+  AUTOCODE_NO_SESSION_MEMORY_MESSAGE,
+  buildAutocodeSessionContext,
+  getAutocodeSessionCodebaseMapPath,
+  getAutocodeSessionGotchasPath,
+  getAutocodeSessionMemoryDir,
+  getAutocodeSessionPatternsPath,
+  parseAutocodeSessionCodebaseMap,
+  type AutocodeSessionCodebaseMap,
+} from '@autocode/core';
 import { z } from 'zod/v3';
 
-import { safeParseJson } from '../../../utils/json-repair';
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 
@@ -25,14 +33,6 @@ import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 // ---------------------------------------------------------------------------
 
 const inputSchema = z.object({});
-
-// ---------------------------------------------------------------------------
-// Internal Types
-// ---------------------------------------------------------------------------
-
-interface CodebaseMap {
-  discovered_files?: Record<string, { description?: string }>;
-}
 
 // ---------------------------------------------------------------------------
 // Tool Definition
@@ -48,66 +48,46 @@ export const getSessionContextTool = Tool.define({
   },
   inputSchema,
   execute: (_input, context) => {
-    const memoryDir = path.join(context.specDir, 'memory');
+    const memoryDir = getAutocodeSessionMemoryDir(context.specDir);
 
     if (!fs.existsSync(memoryDir)) {
-      return 'No session memory found. This appears to be the first session.';
+      return AUTOCODE_NO_SESSION_MEMORY_MESSAGE;
     }
 
-    const parts: string[] = [];
+    let codebaseMap: AutocodeSessionCodebaseMap | null = null;
+    let gotchasMarkdown: string | null = null;
+    let patternsMarkdown: string | null = null;
 
     // Load codebase map (discoveries)
-    const mapFile = path.join(memoryDir, 'codebase_map.json');
+    const mapFile = getAutocodeSessionCodebaseMapPath(context.specDir);
     if (fs.existsSync(mapFile)) {
       try {
-        const map = safeParseJson<CodebaseMap>(fs.readFileSync(mapFile, 'utf-8'));
-        if (!map) throw new Error('Invalid JSON');
-        const discoveries = Object.entries(map.discovered_files ?? {});
-        if (discoveries.length > 0) {
-          parts.push('## Codebase Discoveries');
-          // Limit to 20 entries to avoid flooding context
-          for (const [filePath, info] of discoveries.slice(0, 20)) {
-            parts.push(`- \`${filePath}\`: ${info.description ?? 'No description'}`);
-          }
-        }
+        codebaseMap = parseAutocodeSessionCodebaseMap(fs.readFileSync(mapFile, 'utf-8'));
       } catch {
         // Skip corrupt file
       }
     }
 
     // Load gotchas
-    const gotchasFile = path.join(memoryDir, 'gotchas.md');
+    const gotchasFile = getAutocodeSessionGotchasPath(context.specDir);
     if (fs.existsSync(gotchasFile)) {
       try {
-        const content = fs.readFileSync(gotchasFile, 'utf-8');
-        if (content.trim()) {
-          parts.push('\n## Gotchas');
-          // Take last 1000 chars to avoid too much context
-          parts.push(content.length > 1000 ? content.slice(-1000) : content);
-        }
+        gotchasMarkdown = fs.readFileSync(gotchasFile, 'utf-8');
       } catch {
         // Skip
       }
     }
 
     // Load patterns
-    const patternsFile = path.join(memoryDir, 'patterns.md');
+    const patternsFile = getAutocodeSessionPatternsPath(context.specDir);
     if (fs.existsSync(patternsFile)) {
       try {
-        const content = fs.readFileSync(patternsFile, 'utf-8');
-        if (content.trim()) {
-          parts.push('\n## Patterns');
-          parts.push(content.length > 1000 ? content.slice(-1000) : content);
-        }
+        patternsMarkdown = fs.readFileSync(patternsFile, 'utf-8');
       } catch {
         // Skip
       }
     }
 
-    if (parts.length === 0) {
-      return 'No session context available yet.';
-    }
-
-    return parts.join('\n');
+    return buildAutocodeSessionContext({ codebaseMap, gotchasMarkdown, patternsMarkdown });
   },
 });

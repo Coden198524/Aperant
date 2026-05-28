@@ -2,7 +2,7 @@
  * update_qa_status Tool
  * =====================
  *
- * Updates the QA sign-off status in implementation_plan.json.
+ * Updates the QA sign-off status in implementation_plan.md.
  * See apps/desktop/src/main/ai/tools/autocode/update-qa-status.ts for the TypeScript implementation.
  *
  * Tool name: mcp__autocode__update_qa_status
@@ -15,11 +15,18 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { z } from 'zod/v3';
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  applyAutocodePlanQaSignoff,
+} from '@autocode/core';
 
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 import { safeParseJson } from '../../../utils/json-repair';
-import { writeFileAtomic } from '../../../utils/atomic-file';
+import {
+  loadImplementationPlanFromFiles,
+  saveImplementationPlanToFiles,
+} from '../../schema/plan-shards';
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -48,17 +55,7 @@ interface QAIssue {
   [key: string]: unknown;
 }
 
-interface QASignoff {
-  status: string;
-  qa_session: number;
-  issues_found: QAIssue[];
-  tests_passed: Record<string, unknown>;
-  timestamp: string;
-  ready_for_qa_revalidation: boolean;
-}
-
 interface ImplementationPlan {
-  qa_signoff?: QASignoff;
   last_updated?: string;
   [key: string]: unknown;
 }
@@ -71,17 +68,17 @@ export const updateQaStatusTool = Tool.define({
   metadata: {
     name: 'mcp__autocode__update_qa_status',
     description:
-      'Update the QA sign-off status in implementation_plan.json. Use this after completing a QA review to record the outcome.',
+      'Update the QA sign-off status in implementation_plan.md. Use this after completing a QA review to record the outcome.',
     permission: ToolPermission.Auto,
     executionOptions: DEFAULT_EXECUTION_OPTIONS,
   },
   inputSchema,
   execute: async (input, context) => {
     const { status, issues: issuesStr, tests_passed: testsStr } = input;
-    const planFile = path.join(context.specDir, 'implementation_plan.json');
+    const planFile = path.join(context.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 
     if (!fs.existsSync(planFile)) {
-      return 'Error: implementation_plan.json not found';
+      return 'Error: implementation_plan.md not found';
     }
 
     // Parse issues
@@ -104,30 +101,17 @@ export const updateQaStatusTool = Tool.define({
       }
     }
 
-    const planContent = fs.readFileSync(planFile, 'utf-8');
-    const plan = safeParseJson<ImplementationPlan>(planContent);
+    const plan = await loadImplementationPlanFromFiles(context.specDir) as ImplementationPlan | null;
     if (!plan) {
-      return 'Error: implementation_plan.json contains unrepairable JSON';
+      return 'Error: implementation_plan.md could not be parsed';
     }
 
-    // Increment qa_session on new review or rejection
-    const current = plan.qa_signoff;
-    let qaSession = current?.qa_session ?? 0;
-    if (status === 'in_review' || status === 'rejected') {
-      qaSession++;
-    }
-
-    plan.qa_signoff = {
+    const qaSession = applyAutocodePlanQaSignoff(plan, {
       status,
-      qa_session: qaSession,
-      issues_found: issues,
-      tests_passed: testsPassed,
-      timestamp: new Date().toISOString(),
-      ready_for_qa_revalidation: status === 'fixes_applied',
-    };
-    plan.last_updated = new Date().toISOString();
-
-    await writeFileAtomic(planFile, JSON.stringify(plan, null, 2), { encoding: 'utf-8' });
+      issues,
+      testsPassed,
+    });
+    await saveImplementationPlanToFiles(context.specDir, plan);
 
     return `Updated QA status to '${status}' (session ${qaSession})`;
   },

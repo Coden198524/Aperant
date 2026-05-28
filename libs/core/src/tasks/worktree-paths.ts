@@ -5,6 +5,7 @@ import {
   getAutocodeSpecsRelativeDir,
   normalizeAutocodeProjectDataDirName,
 } from './artifacts.js';
+import { AUTOCODE_GITHUB_DIR_NAME } from '../project/data-paths.js';
 
 export const AUTOCODE_WORKTREES_DIR_NAME = 'worktrees';
 export const AUTOCODE_TASK_WORKTREES_DIR_NAME = 'tasks';
@@ -52,6 +53,15 @@ export function getAutocodePrWorktreesRelativeDir(dataDirName?: string): string 
     normalizeAutocodeProjectDataDirName(dataDirName),
     AUTOCODE_WORKTREES_DIR_NAME,
     AUTOCODE_PR_WORKTREES_DIR_NAME,
+  ].join('/');
+}
+
+export function getAutocodeLegacyGithubPrWorktreesRelativeDir(dataDirName?: string): string {
+  return [
+    normalizeAutocodeProjectDataDirName(dataDirName),
+    AUTOCODE_GITHUB_DIR_NAME,
+    AUTOCODE_PR_WORKTREES_DIR_NAME,
+    AUTOCODE_WORKTREES_DIR_NAME,
   ].join('/');
 }
 
@@ -153,4 +163,32 @@ export function getAutocodeTerminalWorktreeCandidatePaths(projectRoot: string, n
     getAutocodeTerminalWorktreePath(projectRoot, name, AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME),
     join(projectRoot, AUTOCODE_LEGACY_WORKTREE_DIR_NAME, `terminal-${name}`),
   ];
+}
+
+export function getAutocodeWorktreeIsolationRelativeDirs(): string[] {
+  return [
+    getAutocodeTaskWorktreesRelativeDir(AUTOCODE_PROJECT_DATA_DIR_NAME),
+    getAutocodeTaskWorktreesRelativeDir(AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME),
+    getAutocodePrWorktreesRelativeDir(AUTOCODE_PROJECT_DATA_DIR_NAME),
+    getAutocodePrWorktreesRelativeDir(AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME),
+    getAutocodeLegacyGithubPrWorktreesRelativeDir(AUTOCODE_PROJECT_DATA_DIR_NAME),
+    getAutocodeLegacyGithubPrWorktreesRelativeDir(AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME),
+    AUTOCODE_LEGACY_WORKTREE_DIR_NAME,
+  ];
+}
+
+export function detectAutocodeWorktreeIsolation(projectDir: string): [boolean, string | null] {
+  const resolved = resolve(projectDir);
+  const portable = resolved.replace(/\\/g, '/');
+
+  for (const relativeDir of getAutocodeWorktreeIsolationRelativeDirs()) {
+    const marker = `/${relativeDir.replace(/\\/g, '/').replace(/^\/+|\/+$/g, '')}/`;
+    const markerIndex = portable.indexOf(marker);
+    if (markerIndex >= 0) {
+      const parentProjectPath = resolved.slice(0, markerIndex);
+      return [true, parentProjectPath || sep];
+    }
+  }
+
+  return [false, null];
 }

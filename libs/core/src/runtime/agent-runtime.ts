@@ -47,6 +47,65 @@ export interface AutocodeAgentRuntimePlan {
   executionPhase: 'planning' | 'coding';
 }
 
+export interface AutocodeAgentRuntimeLaunchCommand {
+  command: string;
+  args: string[];
+  cwd: string;
+  shell?: boolean;
+  shellCommand: string;
+}
+
+export interface AutocodeAgentRuntimeTerminalCommand {
+  name: string;
+  command: string;
+  cwd?: string;
+}
+
+export interface AutocodeAgentRuntimeRunner {
+  phase: string;
+  promptFilePath: string;
+  runnerFilePath: string;
+  process: AutocodeAgentRuntimeLaunchCommand;
+  terminal: AutocodeAgentRuntimeTerminalCommand;
+}
+
+export interface AutocodeAgentRuntimeMessages {
+  prepared: string;
+  starting: string;
+  started: string;
+  completed: string;
+  failed: string;
+  stopped: string;
+}
+
+export interface CreateAutocodeAgentRuntimeStartRequestOptions {
+  runner?: AutocodeAgentRuntimeRunner;
+  messages?: Partial<AutocodeAgentRuntimeMessages>;
+}
+
+export interface AutocodeAgentRuntimeStartRequest {
+  runtimeId: string;
+  plan: AutocodeAgentRuntimePlan;
+  label: string;
+  messages: AutocodeAgentRuntimeMessages;
+  runner?: AutocodeAgentRuntimeRunner;
+}
+
+export type AutocodeAgentRuntimeStartStatus = 'started' | 'completed' | 'failed';
+
+export interface AutocodeAgentRuntimeStartResult {
+  runtimeId: string;
+  status: AutocodeAgentRuntimeStartStatus;
+  message: string;
+  terminalName?: string;
+  process?: {
+    status: AutocodeAgentRuntimeStartStatus;
+    exitCode?: number | null;
+    signal?: string | null;
+    message?: string;
+  };
+}
+
 export interface AutocodeAgentRuntimeTaskInput {
   id: string;
   specId: string;
@@ -76,7 +135,9 @@ export interface ResolveAutocodeTaskStartEventInput {
 }
 
 export interface AutocodeAgentRuntimeStarter {
-  startRuntime(plan: AutocodeAgentRuntimePlan): Promise<void> | void;
+  startRuntime(
+    request: AutocodeAgentRuntimeStartRequest,
+  ): Promise<AutocodeAgentRuntimeStartResult | void> | AutocodeAgentRuntimeStartResult | void;
 }
 
 export function createAutocodeAgentRuntimePlan(
@@ -162,10 +223,39 @@ export function resolveAutocodeTaskStartEvent(
 }
 
 export async function startAutocodeAgentRuntime(
-  plan: AutocodeAgentRuntimePlan,
+  requestOrPlan: AutocodeAgentRuntimeStartRequest | AutocodeAgentRuntimePlan,
   starter: AutocodeAgentRuntimeStarter,
-): Promise<void> {
-  await starter.startRuntime(plan);
+): Promise<AutocodeAgentRuntimeStartResult> {
+  const request = isAutocodeAgentRuntimeStartRequest(requestOrPlan)
+    ? requestOrPlan
+    : createAutocodeAgentRuntimeStartRequest(requestOrPlan);
+  const result = await starter.startRuntime(request);
+
+  return result ?? {
+    runtimeId: request.runtimeId,
+    status: 'started',
+    message: request.messages.started,
+  };
+}
+
+export function createAutocodeAgentRuntimeStartRequest(
+  plan: AutocodeAgentRuntimePlan,
+  options: CreateAutocodeAgentRuntimeStartRequestOptions = {},
+): AutocodeAgentRuntimeStartRequest {
+  const label = getAutocodeAgentRuntimeModeLabel(plan.mode);
+  const messages = createAutocodeAgentRuntimeMessages(plan, label, options.messages);
+
+  return {
+    runtimeId: createAutocodeAgentRuntimeId(plan),
+    plan,
+    label,
+    messages,
+    ...(options.runner ? { runner: options.runner } : {}),
+  };
+}
+
+export function createAutocodeAgentRuntimeId(plan: AutocodeAgentRuntimePlan): string {
+  return [plan.projectId, plan.projectRoot, plan.taskId].filter(Boolean).join(':');
 }
 
 export function getAutocodeAgentRuntimeModeLabel(mode: AutocodeAgentRuntimeMode): string {
@@ -192,6 +282,28 @@ function buildAutocodeAgentRuntimeOptions(
     ...(metadata?.useWorktree !== undefined ? { useWorktree: metadata.useWorktree } : {}),
     ...(typeof metadata?.useLocalBranch === 'boolean' ? { useLocalBranch: metadata.useLocalBranch } : {}),
     ...(metadata?.pushNewBranches !== undefined ? { pushNewBranches: metadata.pushNewBranches } : {}),
+  };
+}
+
+function isAutocodeAgentRuntimeStartRequest(
+  value: AutocodeAgentRuntimeStartRequest | AutocodeAgentRuntimePlan,
+): value is AutocodeAgentRuntimeStartRequest {
+  return 'plan' in value && 'runtimeId' in value;
+}
+
+function createAutocodeAgentRuntimeMessages(
+  plan: AutocodeAgentRuntimePlan,
+  label: string,
+  overrides: Partial<AutocodeAgentRuntimeMessages> | undefined,
+): AutocodeAgentRuntimeMessages {
+  return {
+    prepared: `Prepared agent runtime for ${plan.specId}: ${label} (${plan.mode}).`,
+    starting: `Starting Autocode ${label}: ${plan.taskTitle}.`,
+    started: `Started Autocode ${label}: ${plan.taskTitle}.`,
+    completed: `Autocode ${label} completed: ${plan.taskTitle}.`,
+    failed: `Autocode ${label} failed: ${plan.taskTitle}.`,
+    stopped: `Stopped Autocode ${label}: ${plan.taskTitle}.`,
+    ...overrides,
   };
 }
 

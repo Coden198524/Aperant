@@ -2,8 +2,6 @@
  * QA Report Generation
  * ====================
  *
- * See apps/desktop/src/main/ai/orchestration/qa-reports.ts for the TypeScript implementation.
- *
  * Handles:
  * - QA summary report (qa_report.md)
  * - Escalation report (QA_ESCALATION.md)
@@ -88,7 +86,6 @@ export function issuesSimilar(a: QAIssue, b: QAIssue, threshold = ISSUE_SIMILARI
   const keyA = normalizeIssueKey(a);
   const keyB = normalizeIssueKey(b);
 
-  // Combine key and description for richer comparison
   const textA = `${keyA} ${(a.description ?? '').toLowerCase().trim()}`;
   const textB = `${keyB} ${(b.description ?? '').toLowerCase().trim()}`;
 
@@ -112,12 +109,11 @@ export function generateQAReport(
 ): string {
   const now = new Date().toISOString();
   const totalIterations = iterations.length;
-  const approvedIterations = iterations.filter((r) => r.status === 'approved').length;
-  const rejectedIterations = iterations.filter((r) => r.status === 'rejected').length;
-  const errorIterations = iterations.filter((r) => r.status === 'error').length;
-  const totalIssues = iterations.reduce((sum, r) => sum + r.issues.length, 0);
-
-  const totalDurationMs = iterations.reduce((sum, r) => sum + r.durationMs, 0);
+  const approvedIterations = iterations.filter((record) => record.status === 'approved').length;
+  const rejectedIterations = iterations.filter((record) => record.status === 'rejected').length;
+  const errorIterations = iterations.filter((record) => record.status === 'error').length;
+  const totalIssues = iterations.reduce((sum, record) => sum + record.issues.length, 0);
+  const totalDurationMs = iterations.reduce((sum, record) => sum + record.durationMs, 0);
   const totalDurationSec = (totalDurationMs / 1000).toFixed(1);
 
   const statusLabel =
@@ -126,71 +122,70 @@ export function generateQAReport(
       : finalStatus === 'escalated'
         ? 'ESCALATED'
         : 'MAX ITERATIONS REACHED';
+  const resultLabel = finalStatus === 'approved' ? 'PASSED' : 'FAILED';
 
-  const statusEmoji = finalStatus === 'approved' ? 'PASSED' : 'FAILED';
+  let report = `# QA Report
 
-  let report = `# QA 报告
+**Generated**: ${now}
+**Final status**: ${statusLabel}
+**Result**: ${resultLabel}
 
-**生成时间**: ${now}
-**最终状态**: ${statusLabel}
-**结果**: ${statusEmoji}
+## Summary
 
-## 摘要
-
-| 指标 | 值 |
-|--------|-------|
-| 总迭代次数 | ${totalIterations} |
-| 通过迭代次数 | ${approvedIterations} |
-| 拒绝迭代次数 | ${rejectedIterations} |
-| 错误迭代次数 | ${errorIterations} |
-| 发现的问题总数 | ${totalIssues} |
-| 总耗时 | ${totalDurationSec}s |
+| Metric | Value |
+| --- | --- |
+| Total iterations | ${totalIterations} |
+| Approved iterations | ${approvedIterations} |
+| Rejected iterations | ${rejectedIterations} |
+| Error iterations | ${errorIterations} |
+| Total issues found | ${totalIssues} |
+| Total duration | ${totalDurationSec}s |
 
 `;
 
   if (iterations.length === 0) {
-    report += `## 未记录迭代。\n`;
+    report += '## Iteration History\n\nNo QA iterations were recorded.\n';
     return report;
   }
 
-  report += `## 迭代历史\n\n`;
+  report += '## Iteration History\n\n';
 
   for (const record of iterations) {
     const durationSec = (record.durationMs / 1000).toFixed(1);
-    const statusIcon = record.status === 'approved' ? '通过' : record.status === 'rejected' ? '失败' : '错误';
+    const statusText = record.status === 'approved' ? 'approved' : record.status === 'rejected' ? 'rejected' : 'error';
 
-    report += `### 迭代 ${record.iteration} — ${statusIcon}\n\n`;
-    report += `- **状态**: ${record.status}\n`;
-    report += `- **耗时**: ${durationSec}s\n`;
-    report += `- **时间戳**: ${record.timestamp}\n`;
-    report += `- **发现的问题**: ${record.issues.length}\n`;
+    report += `### Iteration ${record.iteration} - ${statusText}\n\n`;
+    report += `- **Status**: ${record.status}\n`;
+    report += `- **Duration**: ${durationSec}s\n`;
+    report += `- **Timestamp**: ${record.timestamp}\n`;
+    report += `- **Issues found**: ${record.issues.length}\n`;
 
     if (record.issues.length > 0) {
-      report += `\n#### 问题\n\n`;
+      report += '\n#### Issues\n\n';
       for (const issue of record.issues) {
         const typeTag = issue.type ? ` \`[${issue.type.toUpperCase()}]\`` : '';
         report += `- **${issue.title}**${typeTag}\n`;
         if (issue.location) {
-          report += `  - 位置: \`${issue.location}\`\n`;
+          report += `  - Location: \`${issue.location}\`\n`;
         }
         if (issue.description) {
           report += `  - ${issue.description}\n`;
         }
         if (issue.fix_required) {
-          report += `  - 需要修复: ${issue.fix_required}\n`;
+          report += `  - Required fix: ${issue.fix_required}\n`;
         }
       }
     }
 
-    report += `\n`;
+    report += '\n';
   }
 
   if (finalStatus === 'approved') {
-    report += `## 结果\n\nQA 验证成功通过。实现满足所有验收标准。\n`;
+    report += '## Outcome\n\nQA verification passed. The implementation satisfies the acceptance criteria.\n';
   } else if (finalStatus === 'max_iterations') {
-    report += `## 结果\n\nQA 验证达到最大 ${MAX_QA_ITERATIONS} 次迭代但未通过。需要人工审核。\n`;
+    report += `## Outcome\n\nQA reached the maximum of ${MAX_QA_ITERATIONS} iterations without approval. Manual review is required.\n`;
   } else {
-    report += `## 结果\n\n由于反复出现问题，QA 验证已升级至人工审核。详情请参阅 QA_ESCALATION.md。\n`;
+    report += '## Outcome\n\nRecurring issues caused QA to escalate to manual review. See QA_ESCALATION.md for details.\n';
   }
 
   return report;
@@ -209,14 +204,13 @@ export function generateEscalationReport(
 ): string {
   const now = new Date().toISOString();
   const totalIterations = iterations.length;
-  const totalIssues = iterations.reduce((sum, r) => sum + r.issues.length, 0);
+  const totalIssues = iterations.reduce((sum, record) => sum + record.issues.length, 0);
   const uniqueIssueTitles = new Set(
-    iterations.flatMap((r) => r.issues.map((i) => i.title.toLowerCase())),
+    iterations.flatMap((record) => record.issues.map((issue) => issue.title.toLowerCase())),
   ).size;
-  const approvedCount = iterations.filter((r) => r.status === 'approved').length;
+  const approvedCount = iterations.filter((record) => record.status === 'approved').length;
   const fixSuccessRate = totalIterations > 0 ? (approvedCount / totalIterations).toFixed(1) : '0';
 
-  // Compute most common issues
   const titleCounts = new Map<string, number>();
   for (const record of iterations) {
     for (const issue of record.issues) {
@@ -228,63 +222,59 @@ export function generateEscalationReport(
     .sort((a, b) => b[1] - a[1])
     .slice(0, 5);
 
-  let report = `# QA 升级 — 需要人工干预
+  let report = `# QA Escalation - Manual Review Required
 
-**生成时间**: ${now}
-**迭代**: ${totalIterations}/${MAX_QA_ITERATIONS}
-**原因**: 检测到反复出现的问题（${RECURRING_ISSUE_THRESHOLD}+ 次）
+**Generated**: ${now}
+**Iterations**: ${totalIterations}/${MAX_QA_ITERATIONS}
+**Reason**: Recurring issues were detected ${RECURRING_ISSUE_THRESHOLD}+ times.
 
-## 摘要
+## Summary
 
-- **QA 总迭代次数**: ${totalIterations}
-- **发现的问题总数**: ${totalIssues}
-- **唯一问题数**: ${uniqueIssueTitles}
-- **修复成功率**: ${fixSuccessRate}%
+- **Total QA iterations**: ${totalIterations}
+- **Total issues found**: ${totalIssues}
+- **Unique issue titles**: ${uniqueIssueTitles}
+- **Fix success rate**: ${fixSuccessRate}%
 
-## 反复出现的问题
+## Recurring Issues
 
-这些问题已出现 ${RECURRING_ISSUE_THRESHOLD}+ 次但未解决：
+These issues have recurred ${RECURRING_ISSUE_THRESHOLD}+ times and still need attention.
 
 `;
 
   for (let i = 0; i < recurringIssues.length; i++) {
     const issue = recurringIssues[i];
     report += `### ${i + 1}. ${issue.title}\n\n`;
-    report += `- **位置**: ${issue.location ?? '无'}\n`;
-    report += `- **类型**: ${issue.type ?? '无'}\n`;
+    report += `- **Location**: ${issue.location ?? 'none'}\n`;
+    report += `- **Type**: ${issue.type ?? 'none'}\n`;
     if (issue.description) {
-      report += `- **描述**: ${issue.description}\n`;
+      report += `- **Description**: ${issue.description}\n`;
     }
     if (issue.fix_required) {
-      report += `- **需要修复**: ${issue.fix_required}\n`;
+      report += `- **Required fix**: ${issue.fix_required}\n`;
     }
-    report += `\n`;
+    report += '\n';
   }
 
   if (topIssues.length > 0) {
-    report += `## 最常见的问题（全部）\n\n`;
+    report += '## Most Common Issues\n\n';
     for (const [title, count] of topIssues) {
-      report += `- **${title}** (${count} 次)\n`;
+      report += `- **${title}** (${count} times)\n`;
     }
-    report += `\n`;
+    report += '\n';
   }
 
-  report += `## 建议的操作
+  report += `## Recommended Actions
 
-1. 手动审查反复出现的问题
-2. 检查问题是否源于：
-   - 规范不清晰
-   - 复杂的边缘情况
-   - 基础设施/环境问题
-   - 测试框架限制
-3. 如需要，更新规范或验收标准
-4. 在 \`QA_FIX_REQUEST.md\` 中创建修复请求并重新运行 QA
+1. Manually inspect the recurring issues.
+2. Check whether the root cause is unclear requirements, complex edge cases, infrastructure problems, or test framework limitations.
+3. Update the spec or acceptance criteria when needed.
+4. Add human fix notes in \`QA_FIX_REQUEST.md\` and rerun QA.
 
-## 相关文件
+## Related Files
 
-- \`QA_FIX_REQUEST.md\` — 在此编写人工修复说明
-- \`qa_report.md\` — 最新的 QA 报告
-- \`implementation_plan.json\` — 完整的迭代历史
+- \`QA_FIX_REQUEST.md\` - manual fix instructions
+- \`qa_report.md\` - latest QA summary
+- \`implementation_plan.md\` - implementation and QA state
 `;
 
   return report;
@@ -299,17 +289,15 @@ export function generateEscalationReport(
  */
 export async function generateManualTestPlan(specDir: string, projectDir: string): Promise<string> {
   const now = new Date().toISOString();
-  const specName = specDir.split('/').pop() ?? specDir;
+  const specName = specDir.split(/[\\/]/).pop() ?? specDir;
 
-  // Read spec.md for acceptance criteria if available
   let specContent = '';
   try {
     specContent = await readFile(join(specDir, 'spec.md'), 'utf-8');
   } catch {
-    // spec.md not available — proceed without it
+    // spec.md is optional.
   }
 
-  // Extract acceptance criteria from spec content
   const acceptanceCriteria: string[] = [];
   if (specContent.includes('## Acceptance Criteria')) {
     let inCriteria = false;
@@ -327,29 +315,26 @@ export async function generateManualTestPlan(specDir: string, projectDir: string
     }
   }
 
-  // Detect if this is a no-test project
   const noTest = isNoTestProject(specDir, projectDir);
 
-  let plan = `# 手动测试计划 — ${specName}
+  let plan = `# Manual Test Plan - ${specName}
 
-**生成时间**: ${now}
-**原因**: ${noTest ? '未检测到自动化测试框架' : '补充手动验证清单'}
+**Generated**: ${now}
+**Reason**: ${noTest ? 'No automated test infrastructure detected' : 'Supplemental manual verification'}
 
-## 概述
+## Overview
 
-${
-    noTest
-      ? '此项目没有自动化测试基础设施。请使用下面的清单手动验证实现。'
-      : '使用此清单作为自动化测试的补充，以进行完整验证。'
-  }
+${noTest
+  ? 'This project does not appear to have automated tests. Use this checklist for manual verification.'
+  : 'Use this checklist to supplement automated test coverage.'}
 
-## 测试前准备
+## Before Testing
 
-1. [ ] 确保所有依赖项已安装
-2. [ ] 启动所有必需的服务
-3. [ ] 设置测试环境变量
+1. [ ] Install all dependencies.
+2. [ ] Start required services.
+3. [ ] Configure test environment variables.
 
-## 验收标准验证
+## Acceptance Criteria Verification
 
 `;
 
@@ -358,59 +343,59 @@ ${
       plan += `${i + 1}. [ ] ${acceptanceCriteria[i]}\n`;
     }
   } else {
-    plan += `1. [ ] 核心功能按预期工作
-2. [ ] 边缘情况得到处理
-3. [ ] 错误状态得到妥善处理
-4. [ ] UI/UX 符合要求（如适用）
+    plan += `1. [ ] Core functionality works as expected.
+2. [ ] Edge cases are handled.
+3. [ ] Error states are handled cleanly.
+4. [ ] UI/UX meets requirements when applicable.
 `;
   }
 
   plan += `
 
-## 功能测试
+## Functional Tests
 
-### 正常路径
-- [ ] 主要用例正常工作
-- [ ] 生成预期的输出
-- [ ] 无控制台错误
+### Happy Path
+- [ ] Primary use case works.
+- [ ] Expected output is produced.
+- [ ] No console errors are observed.
 
-### 边缘情况
-- [ ] 空输入处理
-- [ ] 无效输入处理
-- [ ] 边界条件
+### Edge Cases
+- [ ] Empty input is handled.
+- [ ] Invalid input is handled.
+- [ ] Boundary conditions are handled.
 
-### 错误处理
-- [ ] 错误显示适当的消息
-- [ ] 系统从错误中优雅恢复
-- [ ] 失败时无数据丢失
+### Error Handling
+- [ ] Errors display appropriate messages.
+- [ ] The system recovers gracefully.
+- [ ] Failed operations do not lose data.
 
-## 非功能测试
+## Non-Functional Tests
 
-### 性能
-- [ ] 响应时间可接受
-- [ ] 未观察到内存泄漏
-- [ ] 无过度资源使用
+### Performance
+- [ ] Response time is acceptable.
+- [ ] No memory leak is observed.
+- [ ] Resource usage is reasonable.
 
-### 安全性
-- [ ] 输入已正确清理
-- [ ] 无敏感数据暴露
-- [ ] 身份验证正常工作（如适用）
+### Security
+- [ ] Input is sanitized.
+- [ ] No sensitive data is exposed.
+- [ ] Authentication works when applicable.
 
-## 浏览器/环境测试（如适用）
+## Browser / Environment Tests
 
 - [ ] Chrome
 - [ ] Firefox
 - [ ] Safari
-- [ ] 移动视口
+- [ ] Mobile viewport
 
-## 签署
+## Sign-Off
 
-**测试人员**: _______________
-**日期**: _______________
-**结果**: [ ] 通过  [ ] 失败
+**Tester**: _______________
+**Date**: _______________
+**Result**: [ ] Pass  [ ] Fail
 
-### 备注
-_添加测试期间发现的任何观察或问题_
+### Notes
+_Add observations or issues found during manual testing._
 
 `;
 
@@ -428,7 +413,6 @@ _添加测试期间发现的任何观察或问题_
  * @param projectDir Project root directory
  */
 export function isNoTestProject(specDir: string, projectDir: string): boolean {
-  // Check for test config files
   const testConfigFiles = [
     'pytest.ini',
     'pyproject.toml',
@@ -450,7 +434,6 @@ export function isNoTestProject(specDir: string, projectDir: string): boolean {
     }
   }
 
-  // Check for test directories with test files
   const testDirs = ['tests', 'test', '__tests__', 'spec'];
   const testFilePatterns = [
     /^test_.*\.(py|js|ts)$/,
@@ -473,7 +456,7 @@ export function isNoTestProject(specDir: string, projectDir: string): boolean {
         }
       }
     } catch {
-      // Can't read directory — skip
+      // Ignore unreadable test directories.
     }
   }
 

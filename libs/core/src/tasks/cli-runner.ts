@@ -1,5 +1,6 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs.js';
 import {
   getAutocodeSpecDir,
   listAutocodeTasks,
@@ -7,13 +8,14 @@ import {
   type AutocodeTask,
 } from './spec-store.js';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import { loadAutocodeImplementationPlanSync } from './plan-store.js';
 import {
   getAutocodeCliPermissionArgs,
   resolveAutocodeCliInvocation,
   type AutocodeCli,
 } from './cli-catalog.js';
 
-export type AutocodeTaskRunPhase = 'spec' | 'planning' | 'coding';
+export type AutocodeTaskRunPhase = 'direct' | 'spec' | 'planning' | 'coding';
 
 export interface CreateAutocodeTaskRunPlanInput {
   projectRoot: string;
@@ -22,6 +24,7 @@ export interface CreateAutocodeTaskRunPlanInput {
   cli: AutocodeCli;
   customCommand?: string;
   bypassPermissions?: boolean;
+  phase?: AutocodeTaskRunPhase;
 }
 
 export interface AutocodeTaskRunPlan {
@@ -51,11 +54,12 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
     dataDirName: input.dataDirName,
     specId: task.specId,
   });
-  const phase = resolveRunPhase(specDir);
+  const phase = input.phase ?? resolveRunPhase(specDir);
   const prompt = buildTaskRunPrompt({
     task,
     phase,
     projectRoot: input.projectRoot,
+    dataDirName: input.dataDirName,
     specDir,
   });
   const promptFilePath = join(specDir, PROMPT_FILE_NAME);
@@ -84,8 +88,8 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
     cwd: input.projectRoot,
     command: cliInvocation.command,
     args: [...cliInvocation.args, ...permissionArgs],
-    planStatus: phase === 'coding' ? 'coding' : 'planning',
-    executionPhase: phase === 'coding' ? 'coding' : 'planning',
+    planStatus: isCodingRunPhase(phase) ? 'coding' : 'planning',
+    executionPhase: isCodingRunPhase(phase) ? 'coding' : 'planning',
     promptFilePath,
     runnerFilePath,
     prompt,
@@ -100,6 +104,12 @@ export function buildAutocodeTaskRunnerShellCommand(plan: Pick<AutocodeTaskRunPl
   return ['node', plan.runnerFilePath].map(quoteShellArg).join(' ');
 }
 
+export function mapAutocodeAgentRuntimeModeToTaskRunPhase(
+  mode: 'direct' | 'spec' | 'planning' | 'coding',
+): AutocodeTaskRunPhase {
+  return mode;
+}
+
 function resolveTask(projectRoot: string, dataDirName: string, taskId: string): AutocodeTask | null {
   return listAutocodeTasks({ projectRoot, dataDirName })
     .find((task) => task.id === taskId || task.specId === taskId) ?? null;
@@ -107,9 +117,7 @@ function resolveTask(projectRoot: string, dataDirName: string, taskId: string): 
 
 function resolveRunPhase(specDir: string): AutocodeTaskRunPhase {
   const hasSpec = existsSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
-  const plan = readJson<{ phases?: Array<{ subtasks?: unknown[]; chunks?: unknown[] }> }>(
-    join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
-  );
+  const plan = loadAutocodeImplementationPlanSync(specDir) as { phases?: Array<{ subtasks?: unknown[]; chunks?: unknown[] }> } | null;
   const hasSubtasks = plan?.phases?.some((phase) => {
     const subtasks = Array.isArray(phase.subtasks) ? phase.subtasks : Array.isArray(phase.chunks) ? phase.chunks : [];
     return subtasks.length > 0;
@@ -125,6 +133,7 @@ function buildTaskRunPrompt(input: {
   task: AutocodeTask;
   phase: AutocodeTaskRunPhase;
   projectRoot: string;
+  dataDirName?: string;
   specDir: string;
 }): string {
   const header = [
@@ -136,9 +145,33 @@ function buildTaskRunPrompt(input: {
     `Task title: ${input.task.title}`,
     '',
   ].join('\n');
+  const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
+    projectRoot: input.projectRoot,
+    dataDirName: input.dataDirName,
+  });
+  const contextReference = projectDocsReference ? `${projectDocsReference}\n\n` : '';
+
+  if (input.phase === 'direct') {
+    return `${header}${contextReference}${[
+      '## Goal',
+      '',
+      'Implement the requested task directly without creating or waiting for a separate Autocode spec workflow.',
+      '',
+      '## Task Description',
+      '',
+      input.task.description || input.task.title,
+      '',
+      '## Required Workflow',
+      '',
+      '- Inspect the relevant project files before editing.',
+      '- Apply the smallest useful code changes that satisfy the task.',
+      '- Run the most relevant validation command for the project.',
+      `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary}.`,
+    ].join('\n')}`;
+  }
 
   if (input.phase === 'spec') {
-    return `${header}${[
+    return `${header}${contextReference}${[
       '## Goal',
       '',
       'Create the initial task specification artifacts for this task.',
@@ -151,14 +184,13 @@ function buildTaskRunPrompt(input: {
       '',
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} with overview, scope, implementation notes, and success criteria.`,
       `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if the current task description needs structured requirements.`,
-      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete phases and subtasks.`,
-      '- Keep the plan compatible with Autocode: phases[].subtasks[] should include id, title, description, and status.',
-      '- Set new subtask statuses to "pending".',
+      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as an OpenSpec-style Markdown checklist with concrete phases and subtasks.`,
+      '- Use [ ] for pending subtasks and concise metadata bullets for files, dependencies, requirements, and verification.',
     ].join('\n')}`;
   }
 
   if (input.phase === 'planning') {
-    return `${header}${[
+    return `${header}${contextReference}${[
       '## Goal',
       '',
       'Create or repair the implementation plan for the existing spec.',
@@ -166,13 +198,13 @@ function buildTaskRunPrompt(input: {
       '## Required Output',
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
-      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete phases and subtasks.`,
+      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as an OpenSpec-style Markdown checklist with concrete phases and subtasks.`,
       '- Keep subtasks small enough to implement and verify independently.',
-      '- Set new subtask statuses to "pending".',
+      '- Set new subtask checkboxes to [ ].',
     ].join('\n')}`;
   }
 
-  return `${header}${[
+  return `${header}${contextReference}${[
     '## Goal',
     '',
     'Implement the task according to the existing spec and implementation plan.',
@@ -181,8 +213,8 @@ function buildTaskRunPrompt(input: {
     '',
     `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} first.`,
     `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
-    '- Work through pending subtasks and update their statuses as work completes.',
-    '- Add concise completion summaries to completed subtasks when practical.',
+    '- Work through pending subtasks and mark completed items [x] as work completes.',
+    '- Add concise _Completion: ..._ notes to completed subtasks when practical.',
     '- Run the most relevant validation command for the project.',
     `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or update the plan with completion details.`,
   ].join('\n')}`;
@@ -212,7 +244,7 @@ const taskTitle = ${JSON.stringify(input.taskTitle)};
 const taskDescription = ${JSON.stringify(input.taskDescription)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
 const prompt = readFileSync(promptFilePath, 'utf8');
-const logPhase = phase === 'coding' ? 'coding' : 'planning';
+const logPhase = phase === 'coding' || phase === 'direct' ? 'coding' : 'planning';
 
 updateTaskLogs(logPhase, 'active', \`Starting Autocode \${phase} phase with \${command}.\`);
 const child = spawn(command, args, {
@@ -277,28 +309,48 @@ function validateExpectedArtifacts() {
 }
 
 function planHasSubtasks() {
-  const plan = readJson(join(specDir, artifacts.implementationPlan));
-  return plan?.phases?.some((phase) => {
-    const subtasks = Array.isArray(phase.subtasks) ? phase.subtasks : Array.isArray(phase.chunks) ? phase.chunks : [];
-    return subtasks.length > 0;
-  }) === true;
+  try {
+    const content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
+    return /^\\s*-\\s+\\[[ xX/!-]\\]\\s+[A-Za-z0-9]+[.-][A-Za-z0-9]+/m.test(content) ||
+      /^\\s*-\\s+\\[[ xX/!-]\\]\\s+[A-Za-z0-9]+\\.?\\s+.+/m.test(content);
+  } catch {
+    return false;
+  }
 }
 
 function updatePlanStatus(failed, message, now) {
   const planPath = join(specDir, artifacts.implementationPlan);
-  const plan = readJson(planPath) || {
-    feature: taskTitle,
-    description: taskDescription,
-    created_at: now,
-    phases: [],
-  };
+  let content = '';
+  try {
+    content = readFileSync(planPath, 'utf8');
+  } catch {
+    content = [
+      '# Implementation Plan',
+      '',
+      \`Feature: \${taskTitle}\`,
+      \`Description: \${taskDescription}\`,
+      \`Created: \${now}\`,
+      '',
+    ].join('\\n');
+  }
+  content = upsertPlanMetadata(content, 'Status', failed ? 'error' : 'human_review');
+  content = upsertPlanMetadata(content, 'Review Reason', failed ? 'errors' : phase === 'coding' || phase === 'direct' ? 'completed' : 'plan_review');
+  content = upsertPlanMetadata(content, 'Execution Phase', failed ? 'failed' : phase === 'coding' || phase === 'direct' ? 'complete' : 'planning');
+  content = upsertPlanMetadata(content, 'Updated', now);
+  writeFileSync(planPath, content.endsWith('\\n') ? content : \`\${content}\\n\`, 'utf8');
+}
 
-  plan.status = failed ? 'error' : 'human_review';
-  plan.reviewReason = failed ? 'errors' : phase === 'coding' ? 'completed' : 'plan_review';
-  plan.executionPhase = failed ? 'failed' : phase === 'coding' ? 'complete' : 'planning';
-  plan.updated_at = now;
-  if (!plan.created_at) plan.created_at = now;
-  writeJson(planPath, plan);
+function upsertPlanMetadata(content, key, value) {
+  const line = \`\${key}: \${value}\`;
+  const pattern = new RegExp(\`^\${key}:.*$\`, 'm');
+  if (pattern.test(content)) {
+    return content.replace(pattern, line);
+  }
+  const lines = content.split(/\\r?\\n/);
+  const insertAt = Math.min(lines.findIndex((item, index) => index > 0 && item.trim() === ''), lines.length);
+  const safeInsertAt = insertAt < 0 ? lines.length : insertAt;
+  lines.splice(safeInsertAt, 0, line);
+  return lines.join('\\n');
 }
 
 function updateTaskLogs(logPhase, status, message) {
@@ -350,6 +402,10 @@ function quoteShellArg(value: string): string {
     return value;
   }
   return `"${value.replace(/"/g, '\\"')}"`;
+}
+
+function isCodingRunPhase(phase: AutocodeTaskRunPhase): boolean {
+  return phase === 'coding' || phase === 'direct';
 }
 
 function readJson<T>(filePath: string): T | null {

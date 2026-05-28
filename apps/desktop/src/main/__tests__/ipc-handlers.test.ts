@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unit tests for IPC handlers
  * Tests all IPC communication patterns between main and renderer processes
  */
@@ -144,6 +144,45 @@ vi.mock("electron", () => {
 function setupTestProject(): void {
   mkdirSync(TEST_PROJECT_PATH, { recursive: true });
   mkdirSync(path.join(TEST_PROJECT_PATH, "autocode", "specs"), { recursive: true });
+}
+
+function createImplementationPlanMarkdown(input: {
+  feature: string;
+  status?: string;
+  executionPhase?: string;
+  includeSubtask?: boolean;
+}): string {
+  const lines = [
+    "# Implementation Plan",
+    "",
+    `Feature: ${input.feature}`,
+    "Workflow: feature",
+    `Status: ${input.status ?? "backlog"}`,
+  ];
+
+  if (input.executionPhase) {
+    lines.push(`Execution Phase: ${input.executionPhase}`);
+  }
+
+  lines.push(
+    `Created: ${new Date().toISOString()}`,
+    `Updated: ${new Date().toISOString()}`,
+    ""
+  );
+
+  if (input.includeSubtask !== false) {
+    lines.push(
+      "- [ ] 1. Implementation",
+      "",
+      "  - [ ] 1.1 Build feature",
+      "    - Implement core behavior",
+      "    - _Files: src/index.ts_",
+      "    - _Requirements: 1.1_",
+      ""
+    );
+  }
+
+  return `${lines.join("\n")}\n`;
 }
 
 // Cleanup test directories
@@ -430,24 +469,8 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       const specDir = path.join(TEST_PROJECT_PATH, ".autocode", "specs", "001-test-feature");
       mkdirSync(specDir, { recursive: true });
       writeFileSync(
-        path.join(specDir, "implementation_plan.json"),
-        JSON.stringify({
-          feature: "Test Feature",
-          workflow_type: "feature",
-          services_involved: [],
-          phases: [
-            {
-              phase: 1,
-              name: "Test Phase",
-              type: "implementation",
-              subtasks: [{ id: "subtask-1", description: "Test subtask", status: "pending" }],
-            },
-          ],
-          final_acceptance: [],
-          created_at: new Date().toISOString(),
-          updated_at: new Date().toISOString(),
-          spec_file: "",
-        })
+        path.join(specDir, "implementation_plan.md"),
+        createImplementationPlanMarkdown({ feature: "Test Feature" })
       );
 
       const result = await ipcMain.invokeHandler("task:list", {}, projectId);
@@ -526,8 +549,8 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
         "task:create",
         {},
         projectId,
-        "中文任务",
-        "测试描述"
+        "涓枃浠诲姟",
+        "娴嬭瘯鎻忚堪"
       );
 
       expect(result).toHaveProperty("success", true);
@@ -566,7 +589,7 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       const result = await ipcMain.invokeHandler(
         "settings:save",
         {},
-        { theme: "dark", defaultModel: "opus" }
+        { theme: "dark", selectedAgentProfile: "complex", defaultModel: "opus" }
       );
 
       expect(result).toEqual({ success: true });
@@ -655,12 +678,16 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       // Add project first
       await ipcMain.invokeHandler("project:add", {}, TEST_PROJECT_PATH);
 
-      // Create a spec/task directory with implementation_plan.json
+      // Create a spec/task directory with implementation_plan.md
       const specDir = path.join(TEST_PROJECT_PATH, ".autocode", "specs", "task-1");
       mkdirSync(specDir, { recursive: true });
       writeFileSync(
-        path.join(specDir, "implementation_plan.json"),
-        JSON.stringify({ feature: "Test Task", status: "in_progress" })
+        path.join(specDir, "implementation_plan.md"),
+        createImplementationPlanMarkdown({
+          feature: "Test Task",
+          status: "in_progress",
+          executionPhase: "coding",
+        })
       );
 
       mockAgentManager.emit("exit", "task-1", 1, "task-execution");
@@ -702,36 +729,12 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
       const specDir = path.join(TEST_PROJECT_PATH, ".autocode", "specs", createdTask.specId);
       writeFileSync(path.join(specDir, "spec.md"), "# Spec\n");
       writeFileSync(
-        path.join(specDir, "implementation_plan.json"),
-        JSON.stringify(
-          {
-            feature: "Require review task",
-            workflow_type: "feature",
-            services_involved: [],
-            phases: [
-              {
-                phase: 1,
-                name: "Implementation",
-                type: "implementation",
-                subtasks: [
-                  {
-                    id: "1.1",
-                    title: "Build feature",
-                    description: "Implement core behavior",
-                    status: "pending",
-                    files: [],
-                  },
-                ],
-              },
-            ],
-            final_acceptance: [],
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            spec_file: "spec.md",
-          },
-          null,
-          2
-        ),
+        path.join(specDir, "implementation_plan.md"),
+        createImplementationPlanMarkdown({
+          feature: "Require review task",
+          status: "in_progress",
+          executionPhase: "planning",
+        }),
         "utf-8"
       );
 
@@ -781,21 +784,13 @@ describe("IPC Handlers", { timeout: 30000 }, () => {
 
       const specDir = path.join(TEST_PROJECT_PATH, ".autocode", "specs", createdTask.specId);
       writeFileSync(
-        path.join(specDir, "implementation_plan.json"),
-        JSON.stringify(
-          {
-            feature: "Incomplete review task",
-            workflow_type: "feature",
-            services_involved: [],
-            phases: [],
-            final_acceptance: [],
-            created_at: new Date().toISOString(),
-            updated_at: new Date().toISOString(),
-            spec_file: "spec.md",
-          },
-          null,
-          2
-        ),
+        path.join(specDir, "implementation_plan.md"),
+        createImplementationPlanMarkdown({
+          feature: "Incomplete review task",
+          status: "in_progress",
+          executionPhase: "planning",
+          includeSubtask: false,
+        }),
         "utf-8"
       );
 

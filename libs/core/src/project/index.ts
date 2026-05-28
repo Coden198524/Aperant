@@ -27,6 +27,25 @@ export {
   buildProjectIndex,
   runProjectIndexer,
 } from './project-indexer.js';
+export {
+  AUTOCODE_PROJECT_DOC_DEFINITIONS,
+  AUTOCODE_PROJECT_DOC_TYPES,
+  buildAutocodeProjectDocsReferencePrompt,
+  buildAutocodeProjectDocumentationTaskPlan,
+  collectAutocodeProjectDocsReferences,
+  createAutocodeProjectDocumentationTask,
+  formatAutocodeProjectDocTypeList,
+  getAutocodeProjectDocDefinition,
+  isAutocodeProjectDocType,
+  type AutocodeProjectDocDefinition,
+  type AutocodeProjectDocType,
+  type AutocodeProjectDocsReference,
+  type AutocodeProjectDocumentOutput,
+  type AutocodeProjectDocumentationTaskPlan,
+  type AutocodeProjectDocumentationTaskResult,
+  type BuildAutocodeProjectDocsReferencePromptInput,
+  type CreateAutocodeProjectDocumentationTaskInput,
+} from './project-docs.js';
 export type {
   ConventionsInfo,
   CustomScripts,

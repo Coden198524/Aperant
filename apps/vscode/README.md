@@ -11,11 +11,14 @@ VS Code extension host and imports shared headless code from
 - Shows workspace summary data from `@autocode/core`.
 - Lists Autocode tasks from the project data directory.
 - Creates tasks in the same `.autocode/specs/<task-id>/` file protocol used by the desktop app.
+- Creates project documentation tasks that write shared context under
+  `.autocode/project-docs/` for later spec and coding phases.
 - Resolves the shared agent runtime start plan from `@autocode/core` before
   launching a task, so VS Code sees the same `direct` / `spec` / `planning` /
   `coding` decision as the desktop runtime adapter.
-- Starts a task by using `@autocode/core` to write a shared run prompt,
-  then launches the configured CLI in a VS Code terminal.
+- Starts a task through the shared core runtime adapter protocol: core prepares
+  the plan, task state, prompt, runner, and messages, while VS Code supplies
+  the terminal and notification adapters.
 - Opens the latest task plan file and reveals task folders from VS Code.
 
 The VS Code frontend intentionally stays thin: rich desktop orchestration,
@@ -44,6 +47,7 @@ Useful commands in the Extension Development Host:
 
 - `Autocode: Open Panel`
 - `Autocode: Create Task`
+- `Autocode: Generate Project Documentation`
 - `Autocode: Start Latest Task`
 - `Autocode: Refresh Workspace`
 - `Autocode: Open Latest Plan File`
@@ -54,9 +58,7 @@ directory by default. Change `autocode.projectDataDir` only when the project
 uses a different project-relative data directory.
 
 Task start uses `autocode.preferredCLI` and defaults to `claude-code`. The
-extension first derives the shared agent runtime plan, then creates a prompt
-file in the task directory and passes that file to the selected CLI from the
-VS Code terminal. The generated runner writes `autocode-run-result.json` and
-updates `implementation_plan.json` when the CLI exits, so task status remains
-visible to other clients. A future VS Code host adapter can execute the same
-runtime plan directly without changing task selection semantics.
+extension asks `@autocode/core` for a complete runtime start request, then
+launches the generated runner in a VS Code terminal. The generated runner
+writes `autocode-run-result.json` and updates `implementation_plan.md` when
+the CLI exits, so task status remains visible to other clients.

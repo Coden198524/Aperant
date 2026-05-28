@@ -20,7 +20,7 @@ import { createOpenAI } from '@ai-sdk/openai';
 import { createGoogleGenerativeAI } from '@ai-sdk/google';
 import { createAzure } from '@ai-sdk/azure';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
-import type { Memory } from './types';
+import type { Memory } from '@autocode/core';
 import type { MemoryEmbeddingProvider } from '../../../shared/types/project';
 
 // ============================================================

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Subtask Prompt Generator
  * ========================
  *
@@ -13,6 +13,7 @@
 import { readFileSync, existsSync, readdirSync } from 'node:fs';
 import { readFile } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
+import { detectAutocodeWorktreeIsolation } from '@autocode/core/tasks/worktree-paths';
 import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-rules';
 
 import { loadPrompt } from './prompt-loader';
@@ -22,36 +23,6 @@ import type {
   SubtaskContext,
   SubtaskPromptInfo,
 } from './types';
-
-// =============================================================================
-// Worktree Detection
-// =============================================================================
-
-/** Patterns to detect worktree isolation */
-const WORKTREE_PATH_PATTERNS = [
-  /[/\\]\.autocode[/\\]worktrees[/\\]tasks[/\\]/,
-  /[/\\]\.autocode[/\\]github[/\\]pr[/\\]worktrees[/\\]/,
-  /[/\\]\.worktrees[/\\]/,
-];
-
-/**
- * Detect if the project dir is inside an isolated git worktree.
- *
- * @returns Tuple [isWorktree, parentProjectPath]
- */
-function detectWorktreeIsolation(projectDir: string): [boolean, string | null] {
-  const resolved = resolve(projectDir);
-
-  for (const pattern of WORKTREE_PATH_PATTERNS) {
-    const match = pattern.exec(resolved);
-    if (match) {
-      const parentPath = resolved.slice(0, match.index);
-      return [true, parentPath || '/'];
-    }
-  }
-
-  return [false, null];
-}
 
 /**
  * Generate the worktree isolation warning section for prompts.
@@ -116,7 +87,7 @@ function getRelativeSpecPath(specDir: string, projectDir: string): string {
  */
 function generateEnvironmentContext(projectDir: string, specDir: string): string {
   const relativeSpec = getRelativeSpecPath(specDir, projectDir);
-  const [isWorktree, parentProjectPath] = detectWorktreeIsolation(projectDir);
+  const [isWorktree, parentProjectPath] = detectAutocodeWorktreeIsolation(projectDir);
 
   const sections: string[] = [];
 
@@ -137,7 +108,7 @@ function generateEnvironmentContext(projectDir: string, specDir: string): string
     `NEW location, not the working directory.\n\n` +
     `**Important Files:**\n` +
     `- Spec: \`${relativeSpec}/spec.md\`\n` +
-    `- Plan: \`${relativeSpec}/implementation_plan.json\`\n` +
+    `- Plan: \`${relativeSpec}/implementation_plan.md\`\n` +
     `- Progress: \`${relativeSpec}/build-progress.txt\`\n` +
     `- Context: \`${relativeSpec}/context.json\`\n\n` +
     `---\n\n`
@@ -174,7 +145,7 @@ export async function generatePlannerPrompt(config: PlannerPromptConfig): Promis
     `## SPEC LOCATION\n\n` +
     `Your spec file is located at: \`${relativeSpec}/spec.md\`\n\n` +
     `Store all build artifacts in this spec directory:\n` +
-    `- \`${relativeSpec}/implementation_plan.json\` - Subtask-based implementation plan\n` +
+    `- \`${relativeSpec}/implementation_plan.md\` - Subtask-based implementation plan\n` +
     `- \`${relativeSpec}/build-progress.txt\` - Progress notes\n` +
     `- \`${relativeSpec}/init.sh\` - Environment setup script\n\n` +
     `The project root is your current working directory. Implement code in the project root,\n` +
@@ -334,7 +305,7 @@ export async function generateSubtaskPrompt(config: SubtaskPromptConfig): Promis
     `   git add .\n` +
     `   git commit -m "autocode: ${subtask.id} - ${subtask.description.slice(0, 50)}"\n` +
     `   \`\`\`\n` +
-    `6. **Update the plan** - set this subtask's status to "completed" in implementation_plan.json and add a structured completion_summary for human review. Use this compact Markdown review matrix exactly:\n` +
+    `6. **Update the plan** - set this subtask's status to "completed" in implementation_plan.md and add a structured completion_summary for human review. Use this compact Markdown review matrix exactly:\n` +
     `   \`| Item | Details |\n| --- | --- |\n| What changed | ... |\n| Verification | ... |\n| Review notes | ... |\`\n` +
     `   Keep each cell concise, concrete, and suitable for quick manual audit.\n\n` +
     `## Quality Checklist\n\n` +

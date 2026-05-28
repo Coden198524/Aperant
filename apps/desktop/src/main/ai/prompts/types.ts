@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Prompt System Types
  * ===================
  *
@@ -132,7 +132,7 @@ export interface SubtaskPromptConfig {
   projectDir: string;
   /** The subtask to implement */
   subtask: SubtaskPromptInfo;
-  /** Phase data from implementation_plan.json */
+  /** Phase data from implementation_plan.md */
   phase?: { id?: string; name?: string };
   /** Attempt count for retry context */
   attemptCount?: number;

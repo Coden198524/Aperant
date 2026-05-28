@@ -1,4 +1,5 @@
 const assert = require('node:assert/strict');
+const { spawnSync } = require('node:child_process');
 const { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
@@ -61,6 +62,16 @@ async function main() {
     assert.equal(core.getAutocodeProjectIndexRelativePath('.custom'), '.custom/project_index.json');
     assert.equal(core.getAutocodeProjectPromptsRelativeDir(), '.autocode/prompts');
     assert.equal(core.getAutocodeProjectPromptProfileRelativePath(), '.autocode/prompt_profile.json');
+    assert.equal(core.getAutocodeProjectDocsRelativeDir(), '.autocode/project-docs');
+    assert.equal(core.getAutocodeProjectDocsRelativePath(core.AUTOCODE_PROJECT_DOCS_PRODUCT_FILE_NAME), '.autocode/project-docs/product.md');
+    assert.equal(
+      normalizePath(core.getAutocodeProjectDocsDir(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'project-docs')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeProjectDocsPath(projectRoot, core.AUTOCODE_PROJECT_DOCS_ARCHITECTURE_FILE_NAME)),
+      normalizePath(join(projectRoot, '.autocode', 'project-docs', 'architecture.md')),
+    );
     assert.equal(
       normalizePath(core.getAutocodeSpecNumberLockPath(projectRoot)),
       normalizePath(join(projectRoot, '.autocode', '.locks', 'spec-numbering.lock')),
@@ -101,6 +112,56 @@ async function main() {
       normalizePath(core.getAutocodeInsightsSessionPath(projectRoot, 'session-1')),
       normalizePath(join(projectRoot, '.autocode', 'insights', 'sessions', 'session-1.json')),
     );
+    assert.equal(
+      normalizePath(core.getAutocodeSessionMemoryDir(join(projectRoot, '.autocode', 'specs', 'sample-task'))),
+      normalizePath(join(projectRoot, '.autocode', 'specs', 'sample-task', 'memory')),
+    );
+    const codebaseMap = core.recordAutocodeSessionDiscovery(
+      core.createEmptyAutocodeSessionCodebaseMap(),
+      {
+        filePath: 'src/main.tsx',
+        description: 'Main React entry point',
+        category: 'ui',
+      },
+      new Date('2026-01-02T03:04:00.000Z'),
+    );
+    assert.equal(codebaseMap.last_updated, '2026-01-02T03:04:00.000Z');
+    assert.equal(
+      core.parseAutocodeSessionCodebaseMap(core.stringifyAutocodeSessionCodebaseMap(codebaseMap)).discovered_files['src/main.tsx'].category,
+      'ui',
+    );
+    assert.equal(
+      core.formatAutocodeGotchaMarkdownEntry({ gotcha: 'Use Edit for small corrections.', context: 'tooling' }, new Date('2026-01-02T03:04:00.000Z')),
+      '\n## [2026-01-02 03:04]\nUse Edit for small corrections.\n\n_Context: tooling_\n',
+    );
+    const sessionContext = core.buildAutocodeSessionContext({
+      codebaseMap,
+      gotchasMarkdown: '# Gotchas\n\nUse Edit for small corrections.',
+    });
+    assert.ok(sessionContext.includes('## Codebase Discoveries'));
+    assert.ok(sessionContext.includes('`src/main.tsx`: Main React entry point'));
+    assert.ok(sessionContext.includes('## Gotchas'));
+
+    const rendererMemory = core.toAutocodeRendererMemory({
+      id: 'mem-1',
+      type: 'gotcha',
+      content: 'Use Edit for small corrections.',
+      confidence: 0.9,
+      tags: ['tools'],
+      relatedFiles: ['src/main.tsx'],
+      relatedModules: ['main'],
+      createdAt: '2026-01-02T03:04:00.000Z',
+      lastAccessedAt: '2026-01-02T03:04:00.000Z',
+      accessCount: 2,
+      scope: 'global',
+      source: 'agent_explicit',
+      sessionId: 'session-1',
+      provenanceSessionIds: [],
+      projectId: 'project-1',
+      pinned: true,
+    });
+    assert.equal(rendererMemory.pinned, true);
+    assert.equal(core.toAutocodeContextSearchResult(rendererMemory).score, 0.9);
     const writtenProjectIndex = core.runProjectIndexer(projectRoot, projectIndexPath);
     assert.equal(writtenProjectIndex.services.main.framework, 'React + Vite');
     assert.ok(existsSync(projectIndexPath));
@@ -141,7 +202,7 @@ async function main() {
     });
     assert.match(task.specId, /^001-add-provider-settings/);
     assert.equal(task.status, 'backlog');
-    assert.ok(existsSync(join(task.specsPath, 'implementation_plan.json')));
+    assert.ok(existsSync(join(task.specsPath, 'implementation_plan.md')));
     assert.ok(existsSync(join(task.specsPath, 'requirements.json')));
     const requirements = JSON.parse(readFileSync(join(task.specsPath, 'requirements.json'), 'utf8'));
     assert.equal(requirements.task_description, 'Create provider account settings shared by desktop and VS Code.');
@@ -211,6 +272,97 @@ async function main() {
       });
     }, /already exists/);
 
+    const projectDocsResult = core.createAutocodeProjectDocumentationTask({
+      projectRoot,
+      dataDirName: '.autocode',
+      documentType: 'full',
+      now: '2026-01-01T00:00:00.000Z',
+    });
+    assert.match(projectDocsResult.task.specId, /^003-/);
+    assert.equal(projectDocsResult.task.metadata.sourceType, 'project_docs');
+    assert.equal(projectDocsResult.task.metadata.projectDocumentType, 'full');
+    assert.equal(projectDocsResult.plan.requirements.workflow_type, 'documentation');
+    assert.equal(projectDocsResult.plan.requirements.project_documentation.document_type, 'full');
+    assert.deepEqual(projectDocsResult.plan.requirements.project_documentation.future_usage, [
+      'spec-phase-context',
+      'coding-phase-context',
+    ]);
+    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.base, 'project');
+    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.final_markdown, '.autocode/project-docs/index.md');
+    assert.deepEqual(projectDocsResult.plan.outputs.map((output) => output.relativePath), [
+      '.autocode/project-docs/index.md',
+      '.autocode/project-docs/product.md',
+      '.autocode/project-docs/architecture.md',
+      '.autocode/project-docs/technical.md',
+    ]);
+    assert.ok(projectDocsResult.plan.implementationPlan.document_outputs.markdown_files.includes('.autocode/project-docs/product.md'));
+    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.outline, '.autocode/project-docs/doc_outline.json');
+    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.evidence_index, '.autocode/project-docs/evidence_index.json');
+    const projectDocsPlanText = readFileSync(join(projectDocsResult.task.specsPath, 'implementation_plan.md'), 'utf8');
+    assert.doesNotMatch(projectDocsPlanText, /spec-reference|coding-reference/i);
+    assert.doesNotMatch(JSON.stringify(projectDocsResult.plan), /spec-reference|coding-reference/i);
+
+    const projectDocsDir = core.getAutocodeProjectDocsDir(projectRoot, '.autocode');
+    mkdirSync(projectDocsDir, { recursive: true });
+    writeFileSync(
+      join(projectDocsDir, 'index.md'),
+      '# Project Docs\n\nUse product, architecture, and technical docs as project context.\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(projectDocsDir, 'architecture.md'),
+      '# Architecture\n\nSource evidence: src/main.tsx. Renderer owns UI; core owns shared protocols.\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(projectDocsDir, 'technical.md'),
+      '# Technical\n\nRun npm test for validation and keep TypeScript interfaces in core.\n',
+      'utf8',
+    );
+    writeFileSync(
+      join(projectDocsDir, 'product.md'),
+      '# Product\n\nAutocode helps users turn project context into specs and implementation work.\n',
+      'utf8',
+    );
+
+    const projectDocsReference = core.buildAutocodeProjectDocsReferencePrompt({ projectRoot, dataDirName: '.autocode' });
+    assert.match(projectDocsReference, /Project Documentation Reference/);
+    assert.match(projectDocsReference, /architecture\.md/);
+    assert.match(projectDocsReference, /technical\.md/);
+    assert.match(projectDocsReference, /product\.md/);
+    assert.doesNotMatch(projectDocsReference, /spec-reference|coding-reference/i);
+    const referencedDocs = core.collectAutocodeProjectDocsReferences({ projectRoot, dataDirName: '.autocode' });
+    assert.deepEqual(referencedDocs.map((reference) => reference.relativePath), [
+      '.autocode/project-docs/index.md',
+      '.autocode/project-docs/architecture.md',
+      '.autocode/project-docs/technical.md',
+      '.autocode/project-docs/product.md',
+    ]);
+
+    const specPromptWithDocs = core.createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: projectDocsResult.task.id,
+      cli: 'codex',
+      phase: 'spec',
+    }).prompt;
+    assert.match(specPromptWithDocs, /Project Documentation Reference/);
+    const codingMessagesWithDocs = core.buildAutocodeTaskExecutionMessages({
+      specDir: task.specsPath,
+      specId: task.specId,
+      projectRoot,
+      dataDirName: '.autocode',
+    });
+    assert.match(codingMessagesWithDocs[0].content, /Project Documentation Reference/);
+    assert.match(codingMessagesWithDocs[0].content, /```markdown/);
+    const directMessagesWithDocs = core.buildAutocodeDirectTaskExecutionMessages({
+      specDir: task.specsPath,
+      specId: task.specId,
+      projectRoot,
+      dataDirName: '.autocode',
+    });
+    assert.match(directMessagesWithDocs[0].content, /Project Documentation Reference/);
+
     const mutablePlan = core.createMinimalAutocodePlan(
       {
         title: 'Plan utilities',
@@ -267,8 +419,8 @@ async function main() {
     assert.equal(core.isAutocodeCli('deepseek'), true);
     assert.equal(core.isAutocodeCli('unknown-cli'), false);
     assert.equal(core.buildAutocodeCliCommand({ cli: 'codex', bypassPermissions: true }), 'codex --dangerously-bypass-approvals-and-sandbox');
-    assert.equal(core.buildAutocodeSpecId(7, '中文任务', 'yunxiao'), '007-yunxiao');
-    assert.equal(core.AUTOCODE_TASK_ARTIFACTS.implementationPlan, 'implementation_plan.json');
+    assert.equal(core.buildAutocodeSpecId(7, '涓枃浠诲姟', 'yunxiao'), '007-yunxiao');
+    assert.equal(core.AUTOCODE_TASK_ARTIFACTS.implementationPlan, 'implementation_plan.md');
     assert.equal(core.getAutocodeSpecsRelativeDir('.autocode'), '.autocode/specs');
     assert.equal(core.isAutocodeTaskArtifactFileName('qa_report.md'), true);
     assert.ok(core.AUTOCODE_TOOL_GENERATED_DIR_NAMES.includes('.codex'));
@@ -292,6 +444,7 @@ async function main() {
     assert.equal(core.getAutocodeTaskWorktreesRelativeDir('.autocode'), '.autocode/worktrees/tasks');
     assert.equal(core.getAutocodeTerminalWorktreesRelativeDir('.autocode'), '.autocode/worktrees/terminal');
     assert.equal(core.getAutocodePrWorktreesRelativeDir('.autocode'), '.autocode/worktrees/pr');
+    assert.equal(core.getAutocodeLegacyGithubPrWorktreesRelativeDir('.autocode'), '.autocode/github/pr/worktrees');
     assert.equal(core.getAutocodeTerminalMetadataRelativeDir('.autocode'), '.autocode/terminal/metadata');
     assert.equal(core.isValidAutocodePathId('001-task'), true);
     assert.equal(core.isValidAutocodePathId('../bad'), false);
@@ -300,6 +453,18 @@ async function main() {
     assert.equal(
       core.getAutocodeTaskWorktreeCandidatePaths(projectRoot, '001-task').length,
       4,
+    );
+    assert.deepEqual(
+      core.detectAutocodeWorktreeIsolation(join(projectRoot, '.autocode', 'worktrees', 'tasks', '001-task')),
+      [true, projectRoot],
+    );
+    assert.deepEqual(
+      core.detectAutocodeWorktreeIsolation(join(projectRoot, '.autocode', 'github', 'pr', 'worktrees', '42')),
+      [true, projectRoot],
+    );
+    assert.deepEqual(
+      core.detectAutocodeWorktreeIsolation(join(projectRoot, '.worktrees', '001-task')),
+      [true, projectRoot],
     );
     assert.equal(core.inferAutocodePinnedProviderFromModel('sonnet'), null);
     assert.equal(core.inferAutocodePinnedProviderFromModel('opus-4.7'), 'anthropic');
@@ -364,7 +529,8 @@ async function main() {
     assert.ok(core.buildAutocodeTaskRunnerShellCommand(specRunPlan).includes('autocode-runner.cjs'));
     const runnerScript = readFileSync(specRunPlan.runnerFilePath, 'utf8');
     assert.ok(runnerScript.includes('autocode-run-result.json'));
-    assert.ok(runnerScript.includes("plan.status = failed ? 'error' : 'human_review'"));
+    assert.ok(runnerScript.includes("upsertPlanMetadata(content, 'Status', failed ? 'error' : 'human_review')"));
+    assert.ok(runnerScript.includes("upsertPlanMetadata(content, 'Review Reason'"));
 
     writeFileSync(join(task.specsPath, 'spec.md'), '# Add provider settings\n\n## Overview\nImplement settings.\n');
     const planningRunPlan = core.createAutocodeTaskRunPlan({
@@ -384,7 +550,7 @@ async function main() {
       language: 'zh-CN',
     });
     assert.equal(codingMessages[0].role, 'user');
-    assert.ok(codingMessages[0].content.includes('implementation_plan.json'));
+    assert.ok(codingMessages[0].content.includes('implementation_plan.md'));
     assert.ok(codingMessages[0].content.includes('Simplified Chinese'));
     const planningRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
       projectRoot,
@@ -457,14 +623,11 @@ async function main() {
     assert.equal(taskView.logs.latestEntries.length, 1);
     assert.match(taskView.metaText, /subtasks/);
 
-    writeFileSync(
-      join(task.specsPath, 'implementation_plan.json'),
-      JSON.stringify({
-        feature: task.title,
-        status: 'pending',
-        phases: [{ subtasks: [{ id: '1.1', title: 'Build UI', description: 'Add UI', status: 'pending' }] }],
-      }, null, 2),
-    );
+    core.saveAutocodeImplementationPlanSync(task.specsPath, {
+      feature: task.title,
+      status: 'pending',
+      phases: [{ id: '1', name: 'Implementation', subtasks: [{ id: '1.1', title: 'Build UI', description: 'Add UI', status: 'pending' }] }],
+    });
     const codingRunPlan = core.createAutocodeTaskRunPlan({
       projectRoot,
       dataDirName: '.autocode',
@@ -482,19 +645,15 @@ async function main() {
     assert.equal(codingRuntimePlan.processType, 'task-execution');
     assert.equal(codingRuntimePlan.planStatus, 'coding');
     assert.equal(codingRuntimePlan.executionPhase, 'coding');
-
     const worktreeSpecDir = join(projectRoot, '.autocode', 'worktrees', 'tasks', 'wt-1', '.autocode', 'specs', task.specId);
     mkdirSync(worktreeSpecDir, { recursive: true });
-    writeFileSync(
-      join(worktreeSpecDir, 'implementation_plan.json'),
-      JSON.stringify({
-        feature: task.title,
-        description: 'Worktree fallback description',
-        status: 'human_review',
-        reviewReason: 'completed',
-        phases: [{ subtasks: [{ id: '1.1', title: 'Build UI', description: 'Add UI', status: 'completed' }] }],
-      }, null, 2),
-    );
+    core.saveAutocodeImplementationPlanSync(worktreeSpecDir, {
+      feature: task.title,
+      description: 'Worktree fallback description',
+      status: 'human_review',
+      reviewReason: 'completed',
+      phases: [{ id: '1', name: 'Implementation', subtasks: [{ id: '1.1', title: 'Build UI', description: 'Add UI', status: 'completed' }] }],
+    });
     const loadedProjectTasks = core.loadAutocodeProjectTasks({
       projectRoot,
       dataDirName: '.autocode',
@@ -506,10 +665,46 @@ async function main() {
     assert.equal(mergedProjectTask.subtasks[0].status, 'completed');
     assert.equal(mergedProjectTask.location, 'main');
 
+    const startedAgentRuntime = core.createStartedAutocodeAgentRuntime({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: task.id,
+      cli: 'codex',
+    });
+    assert.equal(startedAgentRuntime.runtimePlan.mode, 'coding');
+    assert.equal(startedAgentRuntime.taskRunPlan.phase, 'coding');
+    assert.equal(startedAgentRuntime.request.runner.phase, 'coding');
+    assert.equal(startedAgentRuntime.request.runner.process.command, 'node');
+    assert.equal(startedAgentRuntime.request.runner.terminal.name, `Autocode: ${task.specId}`);
+    assert.ok(startedAgentRuntime.request.messages.prepared.includes('task coding'));
+
+    let processStartOptions = null;
+    const processResult = await core.startAutocodeAgentRuntime(startedAgentRuntime.request, core.createProcessAgentRuntimeAdapter({
+      process: {
+        startProcess(options) {
+          processStartOptions = options;
+          return { status: 'completed', exitCode: 0 };
+        },
+      },
+    }));
+    assert.equal(processResult.status, 'completed');
+    assert.equal(processStartOptions.command, 'node');
+
+    let terminalStartOptions = null;
+    const terminalResult = await core.startAutocodeAgentRuntime(startedAgentRuntime.request, core.createTerminalAgentRuntimeAdapter({
+      terminal: {
+        async runCommand(options) {
+          terminalStartOptions = options;
+        },
+      },
+    }));
+    assert.equal(terminalResult.status, 'started');
+    assert.equal(terminalStartOptions.name, `Autocode: ${task.specId}`);
+
     const startedRuntimePlans = [];
     await core.startAutocodeAgentRuntime(codingRuntimePlan, {
-      startRuntime(plan) {
-        startedRuntimePlans.push(plan);
+      startRuntime(request) {
+        startedRuntimePlans.push(request.plan);
       },
     });
     assert.equal(startedRuntimePlans[0].taskId, task.id);
@@ -537,6 +732,80 @@ async function main() {
       }),
       { type: 'USER_RESUMED' },
     );
+
+    const fakeCliPath = writeFakeCustomCli(projectRoot);
+    const fakeCustomCliCommand = `node "${normalizePath(fakeCliPath)}"`;
+    const fakeFlowTask = core.createAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode',
+      title: 'Run fake custom CLI flow',
+      description: 'Exercise a complete custom CLI runner lifecycle.',
+      metadata: { category: 'testing', workflowMode: 'balanced' },
+    });
+    const fakeSpecRuntime = core.createStartedAutocodeAgentRuntime({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: fakeFlowTask.id,
+      cli: 'custom',
+      customCommand: fakeCustomCliCommand,
+    });
+    assert.equal(fakeSpecRuntime.runtimePlan.mode, 'spec');
+    assert.equal(fakeSpecRuntime.taskRunPlan.command, 'node');
+    assert.deepEqual(fakeSpecRuntime.taskRunPlan.args, [normalizePath(fakeCliPath)]);
+
+    const fakeSpecResult = await core.startAutocodeAgentRuntime(
+      fakeSpecRuntime.request,
+      core.createProcessAgentRuntimeAdapter({ process: createSmokeProcessAdapter() }),
+    );
+    assert.equal(fakeSpecResult.status, 'completed');
+    assert.equal(JSON.parse(readFileSync(join(fakeFlowTask.specsPath, 'autocode-run-result.json'), 'utf8')).phase, 'spec');
+    assert.ok(readFileSync(join(fakeFlowTask.specsPath, 'spec.md'), 'utf8').includes('Fake Custom CLI Spec'));
+    const fakePlannedTask = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' })
+      .find((candidate) => candidate.id === fakeFlowTask.id);
+    assert.equal(fakePlannedTask.status, 'human_review');
+    assert.equal(fakePlannedTask.reviewReason, 'plan_review');
+    assert.equal(fakePlannedTask.executionPhase, 'planning');
+    assert.equal(fakePlannedTask.subtasks.length, 1);
+    assert.equal(fakePlannedTask.subtasks[0].status, 'pending');
+
+    const fakeCodingRuntime = core.createStartedAutocodeAgentRuntime({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: fakeFlowTask.id,
+      cli: 'custom',
+      customCommand: fakeCustomCliCommand,
+    });
+    assert.equal(fakeCodingRuntime.runtimePlan.mode, 'coding');
+    assert.equal(fakeCodingRuntime.taskRunPlan.phase, 'coding');
+    const fakeCodingResult = await core.startAutocodeAgentRuntime(
+      fakeCodingRuntime.request,
+      core.createProcessAgentRuntimeAdapter({ process: createSmokeProcessAdapter() }),
+    );
+    assert.equal(fakeCodingResult.status, 'completed');
+    assert.ok(existsSync(join(fakeFlowTask.specsPath, 'direct_summary.md')));
+    assert.equal(JSON.parse(readFileSync(join(fakeFlowTask.specsPath, 'autocode-run-result.json'), 'utf8')).phase, 'coding');
+    const fakeImplementedTask = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' })
+      .find((candidate) => candidate.id === fakeFlowTask.id);
+    assert.equal(fakeImplementedTask.status, 'human_review');
+    assert.equal(fakeImplementedTask.reviewReason, 'completed');
+    assert.equal(fakeImplementedTask.executionPhase, 'complete');
+    assert.equal(fakeImplementedTask.subtasks[0].status, 'completed');
+    const fakeLogs = core.readAutocodeTaskLogs({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: fakeFlowTask.id,
+    });
+    assert.equal(fakeLogs.phases.planning.status, 'completed');
+    assert.equal(fakeLogs.phases.coding.status, 'completed');
+
+    const fakeDoneTask = core.markAutocodeTaskDone({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: fakeFlowTask.id,
+    });
+    assert.equal(fakeDoneTask.status, 'done');
+    assert.equal(fakeDoneTask.executionPhase, 'complete');
+
     const directTask = core.createAutocodeTask({
       projectRoot,
       dataDirName: '.autocode',
@@ -551,6 +820,14 @@ async function main() {
     });
     assert.equal(directRuntimePlan.mode, 'direct');
     assert.equal(directRuntimePlan.processType, 'task-execution');
+    const directStartedRuntime = core.createStartedAutocodeAgentRuntime({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: directTask.id,
+      cli: 'codex',
+    });
+    assert.equal(directStartedRuntime.taskRunPlan.phase, 'direct');
+    assert.ok(readFileSync(directStartedRuntime.taskRunPlan.promptFilePath, 'utf8').includes('directly'));
     assert.deepEqual(
       core.resolveAutocodeTaskStartEvent({
         task: directTask,
@@ -937,6 +1214,124 @@ async function main() {
   } finally {
     rmSync(projectRoot, { recursive: true, force: true });
   }
+}
+
+function createSmokeProcessAdapter() {
+  return {
+    startProcess(options) {
+      const result = spawnSync(options.command, options.args, {
+        cwd: options.cwd,
+        encoding: 'utf8',
+        shell: options.shell,
+      });
+      const exitCode = result.status ?? (result.error ? 1 : 0);
+      return {
+        status: exitCode === 0 ? 'completed' : 'failed',
+        exitCode,
+        signal: result.signal,
+        message: [
+          result.error?.message,
+          result.stdout,
+          result.stderr,
+        ].filter(Boolean).join('\n') || undefined,
+      };
+    },
+  };
+}
+
+function writeFakeCustomCli(projectRoot) {
+  const fakeCliPath = join(projectRoot, 'fake-autocode-cli.cjs');
+  writeFileSync(fakeCliPath, `const { readFileSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+
+const prompt = readFileSync(0, 'utf8');
+const specDir = readPromptField('Spec directory');
+const taskId = readPromptField('Task ID');
+const title = readPromptField('Task title') || taskId;
+
+if (!specDir) {
+  console.error('Missing Spec directory in prompt.');
+  process.exit(2);
+}
+
+if (prompt.includes('Create the initial task specification artifacts')) {
+  writeFileSync(
+    join(specDir, 'spec.md'),
+    [
+      '# Fake Custom CLI Spec',
+      '',
+      '## Overview',
+      'Generated by the smoke-test fake custom CLI.',
+      '',
+    ].join('\\n'),
+    'utf8',
+  );
+  writePlan('pending');
+  process.exit(0);
+}
+
+if (prompt.includes('Create or repair the implementation plan')) {
+  writePlan('pending');
+  process.exit(0);
+}
+
+if (prompt.includes('Implement the task according to the existing spec and implementation plan')) {
+  writePlan('completed');
+  writeFileSync(
+    join(specDir, 'direct_summary.md'),
+    'Fake custom CLI completed the implementation.\\n',
+    'utf8',
+  );
+  process.exit(0);
+}
+
+if (prompt.includes('Implement the requested task directly')) {
+  writeFileSync(
+    join(specDir, 'direct_summary.md'),
+    'Fake custom CLI completed the direct task.\\n',
+    'utf8',
+  );
+  process.exit(0);
+}
+
+console.error('Unrecognized fake custom CLI prompt.');
+process.exit(3);
+
+function readPromptField(label) {
+  const prefix = label + ':';
+  const line = prompt.split(/\\r?\\n/).find((item) => item.startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : '';
+}
+
+function writePlan(status) {
+  const completed = status === 'completed';
+  const marker = completed ? 'x' : ' ';
+  const completion = completed ? '\\n    - _Completion: Fake custom CLI marked this subtask complete._' : '';
+  writeFileSync(
+    join(specDir, 'implementation_plan.md'),
+    [
+      '# Implementation Plan',
+      '',
+      'Feature: ' + title,
+      'Description: Fake custom CLI lifecycle task.',
+      'Workflow: feature',
+      'Status: ' + (completed ? 'coding' : 'planning'),
+      'Created: 2026-01-01T00:00:00.000Z',
+      'Updated: 2026-01-01T00:00:00.000Z',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [' + marker + '] 1.1 Complete fake lifecycle',
+      '    - Prove the runner can pass a prompt to a custom CLI and validate returned artifacts.',
+      '    - _Files: src/fake-flow.ts_',
+      '    - _Requirements: 1.1_' + completion,
+      '',
+    ].join('\\n'),
+    'utf8',
+  );
+}
+`, 'utf8');
+  return fakeCliPath;
 }
 
 main().catch((error) => {

@@ -192,6 +192,7 @@ export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
+export type ProjectDocumentType = 'full' | 'product' | 'architecture' | 'technical';
 // Re-export ThinkingLevel (defined in settings.ts) for convenience
 export type { ThinkingLevel };
 /** Model identifier — Claude shorthands or concrete model IDs from any provider */
@@ -209,7 +210,7 @@ export type TaskCategory =
 
 export interface TaskMetadata {
   // Origin tracking
-  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab';
+  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
   ideationType?: string;  // e.g., 'code_improvements', 'security_hardening'
   ideaId?: string;  // Reference to original idea if converted
   featureId?: string;  // Reference to roadmap feature if from roadmap
@@ -252,6 +253,9 @@ export interface TaskMetadata {
   performanceCategory?: string;
   uiuxCategory?: string;
   codeQualitySeverity?: 'suggestion' | 'minor' | 'major' | 'critical';
+  projectDocumentType?: ProjectDocumentType;
+  projectDocumentOutputDir?: string;
+  projectDocumentOutputs?: string[];
 
   // Image attachments (screenshots, mockups, diagrams)
   attachedImages?: ImageAttachment[];

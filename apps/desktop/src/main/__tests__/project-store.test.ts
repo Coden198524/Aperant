@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Unit tests for Project Store
  * Tests project CRUD operations and task reading from filesystem
  */
@@ -6,6 +6,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import {
+  saveAutocodeImplementationPlanSync,
+  type MutableAutocodePlan,
+} from '@autocode/core';
 
 // Test directories - will be set in beforeEach with unique temp dir
 let TEST_DIR: string;
@@ -50,6 +54,10 @@ function cleanupTestDirs(): void {
   if (existsSync(TEST_DIR)) {
     rmSync(TEST_DIR, { recursive: true, force: true });
   }
+}
+
+function writeImplementationPlan(planPath: string, plan: Record<string, unknown>): void {
+  saveAutocodeImplementationPlanSync(path.dirname(planPath), plan as MutableAutocodePlan);
 }
 
 describe('ProjectStore', () => {
@@ -335,10 +343,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const specContent = `# Test Feature\n\n## Overview\n\nThis is a test feature description.\n`;
       writeFileSync(path.join(specsDir, 'spec.md'), specContent);
@@ -382,10 +387,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -429,10 +431,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -475,10 +474,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -516,10 +512,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -556,10 +549,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -596,10 +586,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -636,10 +623,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -677,10 +661,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -711,10 +692,7 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(
-        path.join(specsDir, 'implementation_plan.json'),
-        JSON.stringify(plan)
-      );
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const requirements = {
         task_description: userDescription,
@@ -804,7 +782,7 @@ describe('ProjectStore', () => {
         updated_at: '2024-01-01T00:00:00Z',
         spec_file: 'spec.md'
       };
-      writeFileSync(path.join(specsDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -852,8 +830,8 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(plan));
-      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(mainSpecsDir, 'implementation_plan.md'), plan);
+      writeImplementationPlan(path.join(worktreeDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -902,7 +880,7 @@ describe('ProjectStore', () => {
         updated_at: '2024-01-01T00:00:00Z',
         spec_file: 'spec.md'
       };
-      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(worktreeDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -941,7 +919,7 @@ describe('ProjectStore', () => {
       mkdirSync(specsDir, { recursive: true });
 
       const plan = { feature: 'Test', phases: [] };
-      writeFileSync(path.join(specsDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -1007,9 +985,9 @@ describe('ProjectStore', () => {
       };
 
       // Create plan and archived metadata in both locations
-      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(mainSpecsDir, 'implementation_plan.md'), plan);
       writeFileSync(path.join(mainSpecsDir, 'task_metadata.json'), JSON.stringify(archivedMetadata));
-      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(worktreeDir, 'implementation_plan.md'), plan);
       writeFileSync(path.join(worktreeDir, 'task_metadata.json'), JSON.stringify(archivedMetadata));
 
       const { ProjectStore } = await import('../project-store');
@@ -1053,7 +1031,7 @@ describe('ProjectStore', () => {
         updated_at: '2024-01-01T00:00:00Z',
         spec_file: 'spec.md'
       };
-      writeFileSync(path.join(specsDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -1087,7 +1065,7 @@ describe('ProjectStore', () => {
         updated_at: '2024-01-01T00:00:00Z',
         spec_file: 'spec.md'
       };
-      writeFileSync(path.join(specsDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -1100,7 +1078,7 @@ describe('ProjectStore', () => {
 
       // Modify the file directly (simulating external change)
       const updatedPlan = { ...plan, feature: 'Updated Feature' };
-      writeFileSync(path.join(specsDir, 'implementation_plan.json'), JSON.stringify(updatedPlan));
+      writeImplementationPlan(path.join(specsDir, 'implementation_plan.md'), updatedPlan);
 
       // Without invalidation, should still return cached data
       const tasksCached = store.getTasks(project.id);
@@ -1151,8 +1129,8 @@ describe('ProjectStore', () => {
         spec_file: 'spec.md'
       };
 
-      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(plan));
-      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(plan));
+      writeImplementationPlan(path.join(mainSpecsDir, 'implementation_plan.md'), plan);
+      writeImplementationPlan(path.join(worktreeDir, 'implementation_plan.md'), plan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -1199,8 +1177,8 @@ describe('ProjectStore', () => {
         description: '# Imported from Yunxiao\n\nOriginal description from external source.'
       };
 
-      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(staleMainPlan));
-      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(richerWorktreePlan));
+      writeImplementationPlan(path.join(mainSpecsDir, 'implementation_plan.md'), staleMainPlan);
+      writeImplementationPlan(path.join(worktreeDir, 'implementation_plan.md'), richerWorktreePlan);
 
       writeFileSync(
         path.join(mainSpecsDir, 'task_metadata.json'),
@@ -1264,8 +1242,8 @@ describe('ProjectStore', () => {
         }
       };
 
-      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(mainPlan));
-      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(worktreePlan));
+      writeImplementationPlan(path.join(mainSpecsDir, 'implementation_plan.md'), mainPlan);
+      writeImplementationPlan(path.join(worktreeDir, 'implementation_plan.md'), worktreePlan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();
@@ -1327,8 +1305,8 @@ describe('ProjectStore', () => {
         ]
       };
 
-      writeFileSync(path.join(mainSpecsDir, 'implementation_plan.json'), JSON.stringify(staleMainPlan));
-      writeFileSync(path.join(worktreeDir, 'implementation_plan.json'), JSON.stringify(richerWorktreePlan));
+      writeImplementationPlan(path.join(mainSpecsDir, 'implementation_plan.md'), staleMainPlan);
+      writeImplementationPlan(path.join(worktreeDir, 'implementation_plan.md'), richerWorktreePlan);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();

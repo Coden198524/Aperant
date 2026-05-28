@@ -2,7 +2,7 @@
  * Implementation Plan Schema
  * ==========================
  *
- * Zod schema for validating and coercing implementation_plan.json.
+ * Zod schema for validating and coercing implementation_plan.md.
  *
  * LLMs produce field name variations (title vs description, subtask_id vs id, etc.).
  * This schema handles coercion of known aliases via `z.preprocess()` so validation
@@ -138,12 +138,9 @@ function coercePhase(input: unknown): unknown {
 
   const phaseId = raw.id ?? raw.phase_id ?? (raw.phase !== undefined ? String(raw.phase) : undefined);
 
-  // Resolve subtasks from known aliases. Split plans keep subtask details in
-  // phase files and intentionally leave this array empty in the index plan.
+  // Resolve subtasks from known aliases. The canonical plan is a single
+  // OpenSpec-style Markdown file; phase shard references are not accepted.
   let subtasks = raw.subtasks ?? raw.chunks ?? raw.tasks ?? undefined;
-  if (!subtasks && typeof raw.subtasks_file === 'string') {
-    subtasks = [];
-  }
 
   // Coerce string/number subtask items to objects.
   // Many LLMs write tasks as simple string arrays instead of subtask objects:
@@ -154,7 +151,7 @@ function coercePhase(input: unknown): unknown {
     subtasks = subtasks.map((item: unknown, idx: number) => {
       if (typeof item === 'string') {
         return {
-          id: `${phaseId ?? idx + 1}-${idx + 1}`,
+          id: `${phaseId ?? idx + 1}.${idx + 1}`,
           title: item,
           status: 'pending',
           files_to_modify: [],
@@ -164,7 +161,7 @@ function coercePhase(input: unknown): unknown {
       // Some models write subtasks as bare numbers (step indices)
       if (typeof item === 'number') {
         return {
-          id: `${phaseId ?? idx + 1}-${idx + 1}`,
+          id: `${phaseId ?? idx + 1}.${idx + 1}`,
           title: `Step ${item}`,
           status: 'pending',
         };
@@ -188,7 +185,6 @@ export const PlanPhaseSchema = z.preprocess(coercePhase, z.object({
   phase: z.number().optional(),
   name: z.string({ message: 'Phase must have a "name" (or "title") field' }),
   subtasks: z.array(PlanSubtaskSchema, { message: 'Phase must have a "subtasks" array' }),
-  subtasks_file: z.string().optional(),
   subtask_count: z.number().optional(),
   depends_on: z.array(z.union([z.string(), z.number()])).optional(),
 }).passthrough())
@@ -198,8 +194,8 @@ export const PlanPhaseSchema = z.preprocess(coercePhase, z.object({
     { message: 'Phase must have either "id" or "phase" field' }
   )
   .refine(
-    (phase) => phase.subtasks.length > 0 || typeof phase.subtasks_file === 'string',
-    { message: 'Phase must have at least one subtask or a subtasks_file reference' }
+    (phase) => phase.subtasks.length > 0,
+    { message: 'Phase must have at least one subtask' }
   );
 
 // =============================================================================
@@ -240,7 +236,7 @@ function coercePlan(input: unknown): unknown {
         const colonIdx = desc.indexOf(':');
         const filePath = colonIdx > 0 ? desc.slice(0, colonIdx).trim() : undefined;
         subtasks.push({
-          id: `1-${i + 1}`,
+          id: `1.${i + 1}`,
           title: desc,
           status: 'pending',
           files_to_modify: filePath ? [filePath] : [],
@@ -260,7 +256,7 @@ function coercePlan(input: unknown): unknown {
               ? (change as Record<string, unknown>).description ?? JSON.stringify(change)
               : String(change);
             subtasks.push({
-              id: `1-${subtaskIndex}`,
+              id: `1.${subtaskIndex}`,
               title: changeDesc as string,
               status: 'pending',
               files_to_modify: filePath ? [filePath] : [],

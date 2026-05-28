@@ -3,12 +3,13 @@
  */
 
 import path from 'path';
-import { writeFileSync, readFileSync } from 'fs';
 import {
   AUTOCODE_PROJECT_DATA_DIR_NAME,
   AUTOCODE_TASK_ARTIFACTS,
   createImportedAutocodeTask,
   buildAutocodeSpecId,
+  loadAutocodeImplementationPlanSync,
+  saveAutocodeImplementationPlanSync,
 } from '@autocode/core';
 import type { Project, TaskMetadata } from '../../../shared/types';
 import { withSpecNumberLock } from '../../utils/spec-number-lock';
@@ -193,14 +194,16 @@ export function updateImplementationPlanStatus(specDir: string, status: string):
   const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 
   try {
-    const content = readFileSync(planPath, 'utf-8');
-    const plan = JSON.parse(content);
+    const plan = loadAutocodeImplementationPlanSync(planPath) as Record<string, unknown> | null;
+    if (!plan) {
+      return;
+    }
     plan.status = status;
     plan.updated_at = new Date().toISOString();
-    writeFileSync(planPath, JSON.stringify(plan, null, 2), 'utf-8');
+    saveAutocodeImplementationPlanSync(planPath, plan as never);
   } catch (error) {
     // File doesn't exist or couldn't be read - this is expected for new specs
-    // Log legitimate errors (malformed JSON, disk write failures, permission errors)
+    // Log legitimate errors (malformed Markdown, disk write failures, permission errors)
     if (error instanceof Error && error.message && !error.message.includes('ENOENT')) {
       debugLog('spec-utils', `Failed to update implementation plan status: ${error.message}`);
     }

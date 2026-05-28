@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tests for Path Containment
  *
  * Tests filesystem boundary checking to prevent escape from project directory.
@@ -24,7 +24,7 @@ beforeEach(() => {
   fs.mkdirSync(path.join(projectDir, 'src'), { recursive: true });
   fs.writeFileSync(path.join(projectDir, 'src', 'index.ts'), '');
   fs.mkdirSync(path.join(secondaryDir, 'specs'), { recursive: true });
-  fs.writeFileSync(path.join(secondaryDir, 'specs', 'implementation_plan.json'), '{}');
+  fs.writeFileSync(path.join(secondaryDir, 'specs', 'implementation_plan.md'), '# Implementation Plan\n');
 });
 
 afterEach(() => {
@@ -97,7 +97,7 @@ describe('assertPathContained', () => {
 
   it('allows file inside a secondary allowed root', () => {
     const result = assertPathContained(
-      path.join(secondaryDir, 'specs', 'implementation_plan.json'),
+      path.join(secondaryDir, 'specs', 'implementation_plan.md'),
       [projectDir, secondaryDir],
     );
     expect(result.contained).toBe(true);
@@ -156,7 +156,7 @@ describe('isPathContained', () => {
 
   it('returns contained=true for path inside secondary allowed root', () => {
     const result = isPathContained(
-      path.join(secondaryDir, 'specs', 'implementation_plan.json'),
+      path.join(secondaryDir, 'specs', 'implementation_plan.md'),
       [projectDir, secondaryDir],
     );
     expect(result.contained).toBe(true);

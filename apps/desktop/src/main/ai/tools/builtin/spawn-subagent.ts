@@ -1,4 +1,4 @@
-/**
+﻿/**
  * SpawnSubagent Tool
  * ==================
  *
@@ -101,7 +101,7 @@ export interface SubagentResult {
 // ---------------------------------------------------------------------------
 
 /**
- * SpawnSubagent tool — allows orchestrator agents to spawn nested specialist agent sessions.
+ * SpawnSubagent tool 鈥?allows orchestrator agents to spawn nested specialist agent sessions.
  *
  * Only available to orchestrator agent types (spec_orchestrator, build_orchestrator).
  * Subagents CANNOT access this tool (no recursion).
@@ -122,7 +122,7 @@ Available subagent types:
 - spec_researcher: Research implementation approaches, external APIs, libraries. Writes research.json.
 - spec_writer: Write the specification (spec.md) and implementation plan. Writes files.
 - spec_critic: Review spec for completeness, technical feasibility, gaps.
-- spec_validation: Final validation of spec.md and implementation_plan.json.
+- spec_validation: Final validation of spec.md and implementation_plan.md.
 - planner: Create implementation plan with subtasks.
 - coder: Implement code changes.
 - qa_reviewer: Review implementation against specification.
@@ -148,12 +148,12 @@ Available subagent types:
 
 Tips:
 - Pass accumulated context from prior subagents to avoid redundant work.
-- Keep context concise — summarize large outputs (>10KB).
+- Keep context concise 鈥?summarize large outputs (>10KB).
 - Use expect_structured_output=true for complexity_assessor (returns JSON).`,
     permission: ToolPermission.Auto,
     executionOptions: {
       ...DEFAULT_EXECUTION_OPTIONS,
-      timeoutMs: 600_000, // 10 minutes — subagents can take a while
+      timeoutMs: 600_000, // 10 minutes 鈥?subagents can take a while
     },
   },
   inputSchema: SpawnSubagentInputSchema,

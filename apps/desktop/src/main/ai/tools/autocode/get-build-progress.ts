@@ -2,7 +2,7 @@
  * get_build_progress Tool
  * =======================
  *
- * Reports current build progress from implementation_plan.json.
+ * Reports current build progress from implementation_plan.md.
  * See apps/desktop/src/main/ai/tools/autocode/get-build-progress.ts for the TypeScript implementation.
  *
  * Tool name: mcp__autocode__get_build_progress
@@ -11,6 +11,7 @@
 import * as fs from 'node:fs';
 import * as path from 'node:path';
 import { z } from 'zod/v3';
+import { AUTOCODE_TASK_ARTIFACTS } from '@autocode/core';
 
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
@@ -58,7 +59,7 @@ export const getBuildProgressTool = Tool.define({
   },
   inputSchema,
   execute: (_input, context) => {
-    const planFile = path.join(context.specDir, 'implementation_plan.json');
+    const planFile = path.join(context.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
 
     if (!fs.existsSync(planFile)) {
       return 'No implementation plan found. Run the planner first.';
@@ -66,7 +67,7 @@ export const getBuildProgressTool = Tool.define({
 
     const plan = loadImplementationPlanFromFilesSync(planFile) as ImplementationPlan | null;
     if (!plan) {
-      return 'Error reading build progress: Invalid JSON in implementation_plan.json';
+      return 'Error reading build progress: Could not parse implementation_plan.md';
     }
 
     const stats = { total: 0, completed: 0, in_progress: 0, pending: 0, failed: 0 };

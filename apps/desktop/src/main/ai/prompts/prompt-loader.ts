@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Prompt Loader
  * =============
  *
@@ -99,13 +99,13 @@ export function resolvePromptsDir(): string {
 
   // Dev: traverse from __dirname up to find apps/desktop/prompts/
   const candidateBases = [
-    // Worker thread: __dirname = out/main/ai/agent/ → traverse up to frontend root
+    // Worker thread: __dirname = out/main/ai/agent/ 鈫?traverse up to frontend root
     join(__dirname, '..', '..', '..', '..', 'prompts'),
     // Worker thread in dev: __dirname = src/main/ai/agent/
     join(__dirname, '..', '..', '..', 'prompts'),
     // Direct: 2 levels up from src/main/ai/prompts/
     join(__dirname, '..', '..', 'prompts'),
-    // From out/main/ → ../../prompts
+    // From out/main/ 鈫?../../prompts
     join(__dirname, '..', 'prompts'),
     // Local prompts dir
     join(__dirname, 'prompts'),
@@ -121,7 +121,7 @@ export function resolvePromptsDir(): string {
     }
   }
 
-  // Fallback to first candidate even if not found — errors will surface on use
+  // Fallback to first candidate even if not found 鈥?errors will surface on use
   const fallback = candidateBases[0];
   _resolvedPromptsDir = fallback;
   return fallback;
@@ -223,7 +223,7 @@ export interface ProjectInstructionsResult {
  *
  * AGENTS.md is the canonical provider-agnostic instruction file.
  * CLAUDE.md is supported for backward compatibility.
- * Only one file is loaded — AGENTS.md takes priority if it exists.
+ * Only one file is loaded 鈥?AGENTS.md takes priority if it exists.
  * Both upper and lower case variants are tried.
  *
  * @param projectDir - Project root directory
@@ -382,7 +382,7 @@ function buildSpecLocationHeader(context: PromptContext): string {
     `## SPEC LOCATION\n\n` +
     `Your spec and progress files are located at:\n` +
     `- Spec: \`${specDir}/spec.md\`\n` +
-    `- Implementation plan: \`${specDir}/implementation_plan.json\`\n` +
+    `- Implementation plan: \`${specDir}/implementation_plan.md\`\n` +
     `- Progress notes: \`${specDir}/build-progress.txt\`\n` +
     `- QA report output: \`${specDir}/qa_report.md\`\n` +
     `- Fix request output: \`${specDir}/QA_FIX_REQUEST.md\`\n\n` +

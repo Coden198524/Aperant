@@ -3,7 +3,7 @@ export const AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME = '.auto-claude';
 export const AUTOCODE_SPECS_DIR_NAME = 'specs';
 
 export const AUTOCODE_TASK_ARTIFACTS = {
-  implementationPlan: 'implementation_plan.json',
+  implementationPlan: 'implementation_plan.md',
   specFile: 'spec.md',
   requirements: 'requirements.json',
   taskMetadata: 'task_metadata.json',

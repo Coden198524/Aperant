@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tests for Structured Output Validation
  */
 
@@ -120,7 +120,7 @@ describe('validateAndNormalizeJsonFile', () => {
     const result = await validateAndNormalizeJsonFile(filePath, schema);
     expect(result.valid).toBe(true);
 
-    // Read back the file — should have the normalized field name
+    // Read back the file 鈥?should have the normalized field name
     const { readFileSync } = await import('node:fs');
     const written = JSON.parse(readFileSync(filePath, 'utf-8'));
     expect(written.name).toBe('Alice');
@@ -178,7 +178,7 @@ describe('buildValidationRetryPrompt', () => {
   });
 });
 
-describe('end-to-end: validation → retry → self-correction', () => {
+describe('end-to-end: validation 鈫?retry 鈫?self-correction', () => {
   let testDir: string;
 
   beforeEach(() => {
@@ -191,7 +191,7 @@ describe('end-to-end: validation → retry → self-correction', () => {
 
   it('validates and normalizes a string-tasks plan written to a file', async () => {
     // Simulate: LLM writes a plan with string tasks (common across providers)
-    const filePath = join(testDir, 'implementation_plan.json');
+    const filePath = join(testDir, 'implementation_plan.md');
     const llmOutput = {
       feature: 'modernize app',
       phases: [
@@ -207,7 +207,7 @@ describe('end-to-end: validation → retry → self-correction', () => {
     // Import the actual schema used in production
     // ImplementationPlanSchema imported at top level
 
-    // Step 1: Validate — should succeed because coercion handles string tasks
+    // Step 1: Validate 鈥?should succeed because coercion handles string tasks
     const result = await validateAndNormalizeJsonFile(filePath, ImplementationPlanSchema);
     expect(result.valid).toBe(true);
     if (result.data) {
@@ -216,23 +216,23 @@ describe('end-to-end: validation → retry → self-correction', () => {
       expect(result.data.phases[0].subtasks[0].status).toBe('pending');
     }
 
-    // Step 2: Read back the normalized file — should have canonical structure
+    // Step 2: Read back the normalized file 鈥?should have canonical structure
     const { readFileSync } = await import('node:fs');
     const normalized = JSON.parse(readFileSync(filePath, 'utf-8'));
-    expect(normalized.phases[0].subtasks[0].id).toBe('phase-1-1');
+    expect(normalized.phases[0].subtasks[0].id).toBe('phase-1.1');
     expect(normalized.phases[0].subtasks[0].title).toBe('Add build system');
   });
 
   it('generates actionable retry prompt when validation fails', async () => {
     // Simulate: LLM writes a plan with no subtasks at all (just phase-level data)
-    const filePath = join(testDir, 'implementation_plan.json');
+    const filePath = join(testDir, 'implementation_plan.md');
     const badOutput = {
       phases: [
         {
           phase: 1,
           title: 'Refactor game code',
           description: 'Split monolith into modules',
-          // No subtasks, no tasks — this should fail
+          // No subtasks, no tasks 鈥?this should fail
         },
       ],
     };
@@ -246,16 +246,16 @@ describe('end-to-end: validation → retry → self-correction', () => {
     expect(result.valid).toBe(false);
     expect(result.errors.length).toBeGreaterThan(0);
 
-    // Step 2: Build retry prompt — should be actionable for any LLM
+    // Step 2: Build retry prompt 鈥?should be actionable for any LLM
     const retryPrompt = buildValidationRetryPrompt(
-      'implementation_plan.json',
+      'implementation_plan.md',
       result.errors,
       IMPLEMENTATION_PLAN_SCHEMA_HINT,
     );
 
     // The retry prompt should tell the model exactly what's wrong
     expect(retryPrompt).toContain('INVALID');
-    expect(retryPrompt).toContain('implementation_plan.json');
+    expect(retryPrompt).toContain('implementation_plan.md');
     expect(retryPrompt).toContain('subtasks');
     expect(retryPrompt).toContain('Required schema');
     // Should include the fix instructions
@@ -264,11 +264,11 @@ describe('end-to-end: validation → retry → self-correction', () => {
     expect(retryPrompt).toContain('Rewrite the file');
   });
 
-  it('full cycle: invalid → retry prompt → corrected output validates', async () => {
+  it('full cycle: invalid 鈫?retry prompt 鈫?corrected output validates', async () => {
     // ImplementationPlanSchema imported at top level
     // IMPLEMENTATION_PLAN_SCHEMA_HINT imported at top level
 
-    // Step 1: First LLM attempt — broken structure (no subtask objects)
+    // Step 1: First LLM attempt 鈥?broken structure (no subtask objects)
     const firstAttempt = {
       phases: [{
         id: '1',
@@ -282,7 +282,7 @@ describe('end-to-end: validation → retry → self-correction', () => {
 
     // Step 2: Generate retry prompt
     const retryPrompt = buildValidationRetryPrompt(
-      'implementation_plan.json',
+      'implementation_plan.md',
       firstResult.errors,
       IMPLEMENTATION_PLAN_SCHEMA_HINT,
     );

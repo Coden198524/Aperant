@@ -48,8 +48,7 @@ for (const envPath of possibleEnvPaths) {
   }
 }
 
-import electron from 'electron';
-const { app, BrowserWindow, shell, nativeImage, session, screen, Menu, MenuItem } = electron;
+import { app, BrowserWindow, shell, nativeImage, session, screen, Menu, MenuItem } from 'electron';
 import { join } from 'path';
 import { accessSync, readFileSync, writeFileSync, rmSync, cpSync, mkdirSync, readdirSync } from 'fs';
 import { electronApp, optimizer, is } from '@electron-toolkit/utils';

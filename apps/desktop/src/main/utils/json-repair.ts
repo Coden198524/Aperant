@@ -1,7 +1,7 @@
-/**
+﻿/**
  * JSON Repair Utility
  *
- * Repairs common JSON mistakes made by LLMs when editing implementation_plan.json.
+ * Repairs common JSON mistakes made by LLMs when editing implementation_plan.md.
  * LLMs sometimes produce syntactically invalid JSON (missing commas, trailing commas, etc.)
  * which causes silent failures throughout the subtask status tracking pipeline.
  */
@@ -12,7 +12,7 @@
  * Throws the original SyntaxError if repair fails.
  */
 export function repairJson(raw: string): string {
-  // Fast path: valid JSON — no repair needed
+  // Fast path: valid JSON 鈥?no repair needed
   try {
     JSON.parse(raw);
     return raw;
@@ -83,7 +83,7 @@ function applyRepairs(raw: string, originalError: SyntaxError): string {
     console.warn('[json-repair] Successfully repaired malformed JSON (applied aggressive fixes)');
     return text;
   } catch {
-    // All repairs failed — throw original error
+    // All repairs failed 鈥?throw original error
     throw originalError;
   }
 }

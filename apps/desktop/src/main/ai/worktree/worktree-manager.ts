@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Worktree Manager
  * ================
  *
@@ -11,7 +11,7 @@
  * on branch:
  *   autocode/{specId}
  *
- * The function is idempotent — calling it repeatedly with the same specId
+ * The function is idempotent 鈥?calling it repeatedly with the same specId
  * returns the existing worktree without error.
  */
 
@@ -150,12 +150,12 @@ export async function createOrGetWorktree(
   const branchExists = branchListOutput.includes(branchName);
 
   // ------------------------------------------------------------------
-  // Step 5: Fetch latest from remote (non-fatal — remote may not exist)
+  // Step 5: Fetch latest from remote (non-fatal 鈥?remote may not exist)
   // ------------------------------------------------------------------
   console.warn(
     `[WorktreeManager] Fetching latest from origin/${baseBranch}...`,
   );
-  // git fetch stdout is empty on success — result is intentionally unused
+  // git fetch stdout is empty on success 鈥?result is intentionally unused
   await git(
     ['fetch', 'origin', baseBranch],
     projectPath,
@@ -166,7 +166,7 @@ export async function createOrGetWorktree(
   // Step 6: Create the worktree
   // ------------------------------------------------------------------
   if (branchExists) {
-    // Branch already exists — attach the worktree to it without -b
+    // Branch already exists 鈥?attach the worktree to it without -b
     console.warn(`[WorktreeManager] Reusing existing branch: ${branchName}`);
     await git(
       ['worktree', 'add', worktreePath, branchName],
@@ -246,7 +246,7 @@ export async function createOrGetWorktree(
   //
   // .autocode/specs/ is gitignored, so it is NOT present in the
   // newly-created worktree checkout. Copy it from the main project so
-  // that agents can read spec.md, implementation_plan.json, etc.
+  // that agents can read spec.md, implementation_plan.md, etc.
   // ------------------------------------------------------------------
   const specsRelDir = getSpecsDir(autoBuildPath); // e.g. ".autocode/specs"
   const sourceSpecDir = join(projectPath, specsRelDir, specId);

@@ -1,5 +1,4 @@
-import { existsSync, readFileSync } from 'node:fs';
-import { join } from 'node:path';
+import { AUTOCODE_TASK_ARTIFACTS, loadAutocodeImplementationPlanSync } from '@autocode/core';
 import { formatAutocodeIgnoredDirNamesForPrompt } from '@autocode/core/workspace/ignore-rules';
 
 export const DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS = {
@@ -34,7 +33,6 @@ export interface CoderKickoffSubtaskContext {
   title?: string;
   description?: string;
   phaseName?: string;
-  phaseFile?: string;
   filesToCreate: string[];
   filesToModify: string[];
   patternFiles: string[];
@@ -113,7 +111,7 @@ function formatVerification(verification: string | VerificationLike | undefined)
 
   return lines.length > 0
     ? lines.join('\n')
-    : '- Follow the verification instructions recorded in implementation_plan.json.';
+    : `- Follow the verification instructions recorded in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`;
 }
 
 function isDocumentationContext(context: CoderKickoffSubtaskContext | null): boolean {
@@ -167,7 +165,6 @@ export function findSubtaskKickoffContext(
     const phaseRecord = phase as {
       name?: unknown;
       subtasks?: unknown[];
-      subtasks_file?: unknown;
     };
     const phaseName = typeof phaseRecord.name === 'string' ? phaseRecord.name : undefined;
     const subtasks = Array.isArray(phaseRecord.subtasks) ? phaseRecord.subtasks : [];
@@ -216,7 +213,6 @@ export function findSubtaskKickoffContext(
         title: typeof subtaskRecord.title === 'string' ? subtaskRecord.title : undefined,
         description: typeof subtaskRecord.description === 'string' ? subtaskRecord.description : undefined,
         phaseName,
-        phaseFile: typeof phaseRecord.subtasks_file === 'string' ? phaseRecord.subtasks_file : undefined,
         filesToCreate: toStringArray(subtaskRecord.files_to_create),
         filesToModify: toStringArray(subtaskRecord.files_to_modify),
         patternFiles: toStringArray(subtaskRecord.pattern_files),
@@ -232,61 +228,16 @@ export function findSubtaskKickoffContext(
   return null;
 }
 
-function loadSplitPlanForSubtask(specDir: string, plan: unknown, subtaskId: string): CoderKickoffSubtaskContext | null {
-  if (!plan || typeof plan !== 'object') {
-    return null;
-  }
-
-  const phases = (plan as PlanLike).phases;
-  if (!Array.isArray(phases)) {
-    return null;
-  }
-
-  for (const phase of phases) {
-    if (!phase || typeof phase !== 'object') {
-      continue;
-    }
-
-    const phaseRecord = phase as { subtasks_file?: unknown; name?: unknown };
-    if (typeof phaseRecord.subtasks_file !== 'string' || phaseRecord.subtasks_file.trim().length === 0) {
-      continue;
-    }
-
-    const phasePath = join(specDir, phaseRecord.subtasks_file);
-    if (!existsSync(phasePath)) {
-      continue;
-    }
-
-    try {
-      const phasePlan = JSON.parse(readFileSync(phasePath, 'utf-8')) as unknown;
-      const context = findSubtaskKickoffContext(phasePlan, subtaskId);
-      if (context) {
-        return {
-          ...context,
-          phaseName: context.phaseName ?? (typeof phaseRecord.name === 'string' ? phaseRecord.name : undefined),
-          phaseFile: phaseRecord.subtasks_file,
-        };
-      }
-    } catch {
-    }
-  }
-
-  return null;
-}
-
 function readSubtaskKickoffContext(
   specDir: string,
   subtaskId: string,
 ): CoderKickoffSubtaskContext | null {
-  const planPath = join(specDir, 'implementation_plan.json');
-  if (!existsSync(planPath)) {
-    return null;
-  }
-
   try {
-    const raw = readFileSync(planPath, 'utf-8');
-    const plan = JSON.parse(raw) as unknown;
-    return findSubtaskKickoffContext(plan, subtaskId) ?? loadSplitPlanForSubtask(specDir, plan, subtaskId);
+    const plan = loadAutocodeImplementationPlanSync(specDir) as unknown;
+    if (!plan) {
+      return null;
+    }
+    return findSubtaskKickoffContext(plan, subtaskId);
   } catch {
     return null;
   }
@@ -306,7 +257,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
   const lines: string[] = [
     `Implement ONLY subtask "${subtaskId}".`,
     `Project root: ${promptProjectDir}.`,
-    `Plan file for final status update: ${promptSpecDir}/implementation_plan.json.`,
+    `Plan file for final status update: ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
   ];
   if (/^[A-Za-z]:\//.test(promptProjectDir)) {
     lines.push(`Windows command path: use \`cd /d ${promptProjectDir.replace(/\//g, '\\')}\` for Bash commands; do not convert it to Unix-style paths such as \`/e/...\`.`);
@@ -321,9 +272,6 @@ export function buildFocusedCoderKickoffMessageFromContext(
     if (context.phaseName) {
       lines.push(`- Phase: ${context.phaseName}`);
     }
-    if (context.phaseFile) {
-      lines.push(`- Phase plan: ${formatPathForPrompt(context.phaseFile)}`);
-    }
     if (context.title) {
       lines.push(`- Title: ${context.title}`);
     }
@@ -332,7 +280,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
     }
   } else {
     lines.push('');
-    lines.push(`Read ${promptSpecDir}/implementation_plan.json, locate subtask "${subtaskId}", and implement only that subtask.`);
+    lines.push(`Read ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}, locate subtask "${subtaskId}", and implement only that subtask.`);
   }
 
   if (context?.completedSummaries?.length) {
@@ -386,7 +334,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('');
   lines.push('## Execution Rules');
   if (context) {
-    lines.push('- The Current Subtask section above is already loaded from the plan. Do not read spec.md, implementation_plan.json, or phase plan files before implementation.');
+    lines.push(`- The Current Subtask section above is already loaded from the plan. Do not read spec.md or ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} before implementation.`);
   }
   if (documentationOnly) {
     lines.push('- Documentation-only workflow: do not edit product source files and do not run builds, tests, or AI QA.');

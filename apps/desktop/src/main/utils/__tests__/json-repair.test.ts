@@ -1,4 +1,4 @@
-import { describe, it, expect, vi, beforeEach } from 'vitest';
+﻿import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { repairJson, safeParseJson } from '../json-repair';
 
 // Suppress console.warn from repair logging during tests
@@ -52,7 +52,7 @@ describe('repairJson', () => {
     expect(parsed.key).toBe('value');
   });
 
-  it('handles the real-world implementation_plan.json missing comma bug', () => {
+  it('handles the real-world implementation_plan.md missing comma bug', () => {
     // This is the actual pattern that caused the production bug
     const broken = `{
   "phases": [

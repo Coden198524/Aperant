@@ -1,7 +1,11 @@
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { mkdtempSync, rmSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
+import {
+  loadAutocodeImplementationPlanSync,
+  saveAutocodeImplementationPlanSync,
+} from '@autocode/core';
 
 vi.mock('../../../project-store', () => ({
   projectStore: {
@@ -18,7 +22,7 @@ describe('plan-file-utils token usage persistence', () => {
 
   beforeEach(() => {
     tempDir = mkdtempSync(path.join(tmpdir(), 'autocode-plan-token-'));
-    planPath = path.join(tempDir, 'implementation_plan.json');
+    planPath = path.join(tempDir, 'implementation_plan.md');
   });
 
   afterEach(() => {
@@ -27,20 +31,16 @@ describe('plan-file-utils token usage persistence', () => {
   });
 
   it('does not double-count cumulative resumed-session request totals', () => {
-    writeFileSync(
-      planPath,
-      JSON.stringify({
-        phases: [],
-        tokenUsage: {
-          promptTokens: 100,
-          completionTokens: 50,
-          totalTokens: 150,
-          stepsExecuted: 10,
-          sessionId: 'old-session',
-        },
-      }),
-      'utf-8'
-    );
+    saveAutocodeImplementationPlanSync(planPath, {
+      phases: [],
+      tokenUsage: {
+        promptTokens: 100,
+        completionTokens: 50,
+        totalTokens: 150,
+        stepsExecuted: 10,
+        sessionId: 'old-session',
+      },
+    });
 
     const success = persistPlanTokenUsageSync(planPath, {
       promptTokens: 125,
@@ -50,7 +50,7 @@ describe('plan-file-utils token usage persistence', () => {
       sessionId: 'new-session',
     }, 'project-1');
 
-    const plan = JSON.parse(readFileSync(planPath, 'utf-8'));
+    const plan = loadAutocodeImplementationPlanSync(planPath)!;
 
     expect(success).toBe(true);
     expect(plan.tokenUsage).toEqual({
@@ -64,27 +64,23 @@ describe('plan-file-utils token usage persistence', () => {
   });
 
   it('does not overwrite an executable plan with stale empty watcher phases', () => {
-    writeFileSync(
-      planPath,
-      JSON.stringify({
-        phases: [
-          {
-            phase: 1,
-            name: 'Implementation',
-            subtasks: [
-              { id: '1.1', title: 'Implement', description: 'Do work', status: 'pending' },
-            ],
-          },
-        ],
-      }),
-      'utf-8'
-    );
+    saveAutocodeImplementationPlanSync(planPath, {
+      phases: [
+        {
+          phase: 1,
+          name: 'Implementation',
+          subtasks: [
+            { id: '1.1', title: 'Implement', description: 'Do work', status: 'pending' },
+          ],
+        },
+      ],
+    });
 
     const success = syncPlanPhasesToMainSync(planPath, [], 'project-1');
-    const plan = JSON.parse(readFileSync(planPath, 'utf-8'));
+    const plan = loadAutocodeImplementationPlanSync(planPath)!;
 
     expect(success).toBe(false);
-    expect(plan.phases[0].subtasks).toHaveLength(1);
+    expect(plan.phases?.[0].subtasks).toHaveLength(1);
     expect(projectStore.invalidateTasksCache).not.toHaveBeenCalled();
   });
 });

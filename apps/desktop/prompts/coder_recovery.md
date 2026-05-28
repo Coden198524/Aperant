@@ -1,4 +1,4 @@
-# RECOVERY AWARENESS ADDITIONS FOR CODER.MD
+﻿# RECOVERY AWARENESS ADDITIONS FOR CODER.MD
 
 ## Add to STEP 1 (Line 37):
 
@@ -12,7 +12,7 @@ if [ -f memory/attempt_history.json ]; then
   # Show stuck subtasks if any
   stuck_count=$(cat memory/attempt_history.json | jq '.stuck_subtasks | length' 2>/dev/null || echo 0)
   if [ "$stuck_count" -gt 0 ]; then
-    echo -e "\n⚠️  WARNING: Some subtasks are stuck and need different approaches!"
+    echo -e "\n鈿狅笍  WARNING: Some subtasks are stuck and need different approaches!"
     cat memory/attempt_history.json | jq '.stuck_subtasks'
   fi
 else
@@ -27,7 +27,7 @@ echo "=== END RECOVERY CONTEXT ==="
 
 ```bash
 # Check if this subtask was attempted before
-SUBTASK_ID="your-subtask-id"  # Replace with actual subtask ID from implementation_plan.json
+SUBTASK_ID="your-subtask-id"  # Replace with actual subtask ID from implementation_plan.md
 
 echo "=== CHECKING ATTEMPT HISTORY FOR $SUBTASK_ID ==="
 
@@ -36,7 +36,7 @@ if [ -f memory/attempt_history.json ]; then
   subtask_data=$(cat memory/attempt_history.json | jq ".subtasks[\"$SUBTASK_ID\"]" 2>/dev/null)
 
   if [ "$subtask_data" != "null" ]; then
-    echo "⚠️⚠️⚠️ THIS SUBTASK HAS BEEN ATTEMPTED BEFORE! ⚠️⚠️⚠️"
+    echo "鈿狅笍鈿狅笍鈿狅笍 THIS SUBTASK HAS BEEN ATTEMPTED BEFORE! 鈿狅笍鈿狅笍鈿狅笍"
     echo ""
     echo "Previous attempts:"
     cat memory/attempt_history.json | jq ".subtasks[\"$SUBTASK_ID\"].attempts[]"
@@ -51,16 +51,16 @@ if [ -f memory/attempt_history.json ]; then
 
     if [ "$attempt_count" -ge 2 ]; then
       echo ""
-      echo "⚠️  HIGH RISK: Multiple attempts already. Consider:"
+      echo "鈿狅笍  HIGH RISK: Multiple attempts already. Consider:"
       echo "  - Using a completely different library or pattern"
       echo "  - Simplifying the approach"
       echo "  - Checking if requirements are feasible"
     fi
   else
-    echo "✓ First attempt at this subtask - no recovery context needed"
+    echo "鉁?First attempt at this subtask - no recovery context needed"
   fi
 else
-  echo "✓ No attempt history file - this is a fresh start"
+  echo "鉁?No attempt history file - this is a fresh start"
 fi
 
 echo "=== END ATTEMPT HISTORY CHECK ==="
@@ -165,7 +165,7 @@ print(f"Failed attempt recorded for {subtask_id}")
 # Check if we should mark as stuck
 attempt_count = len(history["subtasks"][subtask_id]["attempts"])
 if attempt_count >= 3:
-    print(f"\n⚠️  WARNING: {attempt_count} attempts failed.")
+    print(f"\n鈿狅笍  WARNING: {attempt_count} attempts failed.")
     print("Consider marking as stuck if you can't find a different approach.")
 ```
 
@@ -235,7 +235,7 @@ commits["metadata"]["last_updated"] = datetime.now().isoformat()
 with open(commits_file, "w") as f:
     json.dump(commits, f, indent=2)
 
-print(f"✓ Success recorded for {subtask_id} at commit {commit_hash[:8]}")
+print(f"鉁?Success recorded for {subtask_id} at commit {commit_hash[:8]}")
 ```
 
 ## KEY RECOVERY PRINCIPLES TO ADD:
@@ -286,5 +286,5 @@ history["subtasks"][subtask_id]["status"] = "stuck"
 with open(history_file, "w") as f:
     json.dump(history, f, indent=2)
 
-# Also update implementation_plan.json status to "blocked"
+# Also update implementation_plan.md status to "blocked"
 ```

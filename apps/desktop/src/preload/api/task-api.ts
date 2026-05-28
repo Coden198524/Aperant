@@ -17,6 +17,7 @@ import type {
   WorktreeCreatePROptions,
   WorktreeCreatePRResult,
   ImageAttachment,
+  ProjectDocumentType,
   TokenUsage
 } from '../../shared/types';
 
@@ -28,6 +29,10 @@ export interface TaskAPI {
     title: string,
     description: string,
     metadata?: TaskMetadata
+  ) => Promise<IPCResult<Task>>;
+  createProjectDocumentationTask: (
+    projectId: string,
+    options?: { documentType?: ProjectDocumentType; outputDir?: string }
   ) => Promise<IPCResult<Task>>;
   deleteTask: (taskId: string) => Promise<IPCResult>;
   updateTask: (
@@ -128,6 +133,12 @@ export const createTaskAPI = (): TaskAPI => ({
     metadata?: TaskMetadata
   ): Promise<IPCResult<Task>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CREATE, projectId, title, description, metadata),
+
+  createProjectDocumentationTask: (
+    projectId: string,
+    options?: { documentType?: ProjectDocumentType; outputDir?: string }
+  ): Promise<IPCResult<Task>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_CREATE_PROJECT_DOCS, projectId, options),
 
   deleteTask: (taskId: string): Promise<IPCResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_DELETE, taskId),

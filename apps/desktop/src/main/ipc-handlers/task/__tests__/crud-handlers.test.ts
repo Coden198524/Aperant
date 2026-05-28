@@ -5,6 +5,9 @@ import { AUTO_BUILD_PATHS, IPC_CHANNELS } from '../../../../shared/constants';
 import type { Project, Task } from '../../../../shared/types';
 
 vi.mock('electron', () => ({
+  app: {
+    getPath: vi.fn(() => 'E:/tmp/autocode-test'),
+  },
   ipcMain: {
     handle: vi.fn(),
   },

@@ -44,6 +44,7 @@ import type {
   TaskRecoveryResult,
   TaskRecoveryOptions,
   TaskMetadata,
+  ProjectDocumentType,
   TaskLogs,
   TaskLogStreamChunk,
   ImageAttachment,
@@ -221,6 +222,10 @@ export interface ElectronAPI {
   // Task operations
   getTasks: (projectId: string, options?: { forceRefresh?: boolean }) => Promise<IPCResult<Task[]>>;
   createTask: (projectId: string, title: string, description: string, metadata?: TaskMetadata) => Promise<IPCResult<Task>>;
+  createProjectDocumentationTask: (
+    projectId: string,
+    options?: { documentType?: ProjectDocumentType; outputDir?: string }
+  ) => Promise<IPCResult<Task>>;
   deleteTask: (taskId: string) => Promise<IPCResult>;
   updateTask: (
     taskId: string,

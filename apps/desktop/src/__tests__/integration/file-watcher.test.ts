@@ -7,6 +7,7 @@ import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs';
 import path from 'path';
 import os from 'os';
 import { EventEmitter } from 'events';
+import { saveAutocodeImplementationPlanSync, type MutableAutocodePlan } from '@autocode/core';
 
 // Test directories - set during beforeEach using a secure random temp dir
 let TEST_DIR: string;
@@ -27,7 +28,7 @@ vi.mock('chokidar', () => ({
 }));
 
 // Sample implementation plan
-function createTestPlan(overrides: Record<string, unknown> = {}): object {
+function createTestPlan(overrides: Record<string, unknown> = {}): MutableAutocodePlan {
   return {
     feature: 'Test Feature',
     workflow_type: 'feature',
@@ -48,6 +49,12 @@ function createTestPlan(overrides: Record<string, unknown> = {}): object {
     spec_file: 'spec.md',
     ...overrides
   };
+}
+
+function writeTestPlan(specDir: string, plan: MutableAutocodePlan = createTestPlan()): string {
+  const planPath = path.join(specDir, 'implementation_plan.md');
+  saveAutocodeImplementationPlanSync(planPath, plan);
+  return planPath;
 }
 
 // Setup test directories
@@ -90,14 +97,14 @@ describe('File Watcher Integration', () => {
 
       expect(errorHandler).toHaveBeenCalledWith(
         'task-1',
-        expect.stringContaining('not found')
+        expect.stringContaining('not found'),
+        undefined
       );
     });
 
     it('should start watching existing plan file', async () => {
       // Create plan file first
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      const planPath = writeTestPlan(TEST_SPEC_DIR);
 
       const chokidar = await import('chokidar');
       const { FileWatcher } = await import('../../main/file-watcher');
@@ -106,7 +113,7 @@ describe('File Watcher Integration', () => {
       await watcher.watch('task-1', TEST_SPEC_DIR);
 
       expect(chokidar.default.watch).toHaveBeenCalledWith(
-        planPath,
+        [planPath],
         expect.objectContaining({
           persistent: true,
           ignoreInitial: true,
@@ -120,8 +127,7 @@ describe('File Watcher Integration', () => {
 
     it('should emit initial progress after starting watch', async () => {
       const plan = createTestPlan();
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(plan));
+      writeTestPlan(TEST_SPEC_DIR, plan);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -133,12 +139,11 @@ describe('File Watcher Integration', () => {
 
       expect(progressHandler).toHaveBeenCalledWith('task-1', expect.objectContaining({
         feature: 'Test Feature'
-      }));
+      }), undefined);
     });
 
     it('should emit progress on file change', async () => {
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      const planPath = writeTestPlan(TEST_SPEC_DIR);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -162,7 +167,7 @@ describe('File Watcher Integration', () => {
           }
         ]
       });
-      writeFileSync(planPath, JSON.stringify(updatedPlan));
+      saveAutocodeImplementationPlanSync(planPath, updatedPlan);
 
       // Simulate file change event
       mockWatcher.emit('change', planPath);
@@ -175,12 +180,11 @@ describe('File Watcher Integration', () => {
             ])
           })
         ])
-      }));
+      }), undefined);
     });
 
     it('should handle file parse errors gracefully', async () => {
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      const planPath = writeTestPlan(TEST_SPEC_DIR);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -193,19 +197,18 @@ describe('File Watcher Integration', () => {
       await watcher.watch('task-1', TEST_SPEC_DIR);
       progressHandler.mockClear();
 
-      // Write invalid JSON
+      // Write malformed Markdown
       writeFileSync(planPath, 'invalid json {{{');
 
       // Simulate file change
       mockWatcher.emit('change', planPath);
 
-      // Should not crash, just ignore the invalid JSON
+      // Should not crash on malformed plan content
       expect(errorHandler).not.toHaveBeenCalled();
     });
 
     it('should forward watcher errors', async () => {
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      writeTestPlan(TEST_SPEC_DIR);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -218,12 +221,11 @@ describe('File Watcher Integration', () => {
       // Simulate watcher error
       mockWatcher.emit('error', new Error('Watch failed'));
 
-      expect(errorHandler).toHaveBeenCalledWith('task-1', 'Watch failed');
+      expect(errorHandler).toHaveBeenCalledWith('task-1', 'Watch failed', undefined);
     });
 
     it('should stop watching task when unwatched', async () => {
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      writeTestPlan(TEST_SPEC_DIR);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -238,8 +240,7 @@ describe('File Watcher Integration', () => {
     });
 
     it('should stop watching when same task is watched again', async () => {
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      writeTestPlan(TEST_SPEC_DIR);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -252,13 +253,11 @@ describe('File Watcher Integration', () => {
     });
 
     it('should track multiple watched tasks', async () => {
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      writeTestPlan(TEST_SPEC_DIR);
 
       const spec2Dir = path.join(TEST_DIR, 'test-spec-2');
       mkdirSync(spec2Dir, { recursive: true });
-      const plan2Path = path.join(spec2Dir, 'implementation_plan.json');
-      writeFileSync(plan2Path, JSON.stringify(createTestPlan({ feature: 'Feature 2' })));
+      writeTestPlan(spec2Dir, createTestPlan({ feature: 'Feature 2' }));
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -271,8 +270,7 @@ describe('File Watcher Integration', () => {
     });
 
     it('should unwatchAll and clear all watchers', async () => {
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(createTestPlan()));
+      writeTestPlan(TEST_SPEC_DIR);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();
@@ -285,8 +283,7 @@ describe('File Watcher Integration', () => {
 
     it('should get current plan for watched task', async () => {
       const plan = createTestPlan();
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
-      writeFileSync(planPath, JSON.stringify(plan));
+      writeTestPlan(TEST_SPEC_DIR, plan);
 
       const { FileWatcher } = await import('../../main/file-watcher');
       const watcher = new FileWatcher();

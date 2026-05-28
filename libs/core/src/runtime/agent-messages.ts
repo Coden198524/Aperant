@@ -1,5 +1,6 @@
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 
 export type AutocodeAgentMessageRole = 'user' | 'assistant';
@@ -27,6 +28,7 @@ export interface BuildAutocodeRuntimeMessagesInput {
   specDir: string;
   specId: string;
   projectRoot: string;
+  dataDirName?: string;
   language?: AutocodeAgentLanguage;
 }
 
@@ -106,6 +108,7 @@ export function buildAutocodeDirectTaskExecutionMessages(
   parts.push('For simple documentation or question-answer tasks, do not probe candidate files like README*, package.json, *.html, or *.md; write the obvious target file directly.');
   parts.push('For simple single-file/documentation tasks, edit first and use at most one verification command or read-back.');
   parts.push('');
+  appendProjectDocsReference(parts, input.projectRoot, input.dataDirName);
 
   const plan = readJson<{
     feature?: string;
@@ -177,6 +180,7 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('Language: write all non-code prose, progress updates, summaries, task titles, and review notes in French.');
   }
   parts.push('');
+  appendProjectDocsReference(parts, input.projectRoot, input.dataDirName);
 
   const specPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
   const specContent = readText(specPath);
@@ -192,7 +196,7 @@ export function buildAutocodeTaskExecutionMessages(
   if (planContent !== null) {
     parts.push(`## Implementation Plan (${AUTOCODE_TASK_ARTIFACTS.implementationPlan})`);
     parts.push('');
-    parts.push('```json');
+    parts.push('```markdown');
     parts.push(planContent);
     parts.push('```');
     parts.push('');
@@ -227,7 +231,7 @@ export function buildAutocodeQAInitialMessages(
   if (planContent !== null) {
     parts.push(`## Implementation Plan (${AUTOCODE_TASK_ARTIFACTS.implementationPlan})`);
     parts.push('');
-    parts.push('```json');
+    parts.push('```markdown');
     parts.push(planContent);
     parts.push('```');
     parts.push('');
@@ -256,4 +260,13 @@ function readJson<T>(filePath: string): T | null {
   } catch {
     return null;
   }
+}
+
+function appendProjectDocsReference(parts: string[], projectRoot: string, dataDirName?: string): void {
+  const reference = buildAutocodeProjectDocsReferencePrompt({ projectRoot, dataDirName });
+  if (!reference) {
+    return;
+  }
+  parts.push(reference);
+  parts.push('');
 }

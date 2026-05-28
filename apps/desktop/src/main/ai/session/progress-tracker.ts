@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Progress Tracker
  * ================
  * Detects execution phase transitions from tool calls and text patterns.
@@ -6,7 +6,7 @@
  * Vercel AI SDK integration.
  *
  * Phase detection sources:
- * 1. Tool calls (e.g., Write to implementation_plan.json → planning phase)
+ * 1. Tool calls (e.g., Write to implementation_plan.md 鈫?planning phase)
  * 2. Text patterns in model output (fallback)
  *
  * Preserves regression prevention from phase-protocol.ts:
@@ -66,7 +66,7 @@ const TOOL_FILE_PHASE_PATTERNS: ReadonlyArray<{
   message: string;
 }> = [
   {
-    pattern: /implementation_plan\.json$/,
+    pattern: /implementation_plan\.md$/,
     phase: 'planning',
     message: 'Creating implementation plan...',
   },
@@ -106,7 +106,7 @@ function shouldDetectFilePatternPhase(
   currentPhase: ExecutionPhase,
   detectedPhase: ExecutionPhase,
 ): boolean {
-  // implementation_plan.json is touched throughout coding/QA to update subtask
+  // implementation_plan.md is touched throughout coding/QA to update subtask
   // and signoff state, so it only indicates planning while the session is still
   // idle or already in planning.
   if (detectedPhase === 'planning') {
@@ -130,7 +130,7 @@ const TEXT_PHASE_PATTERNS: ReadonlyArray<{
   phase: ExecutionPhase;
   message: string;
 }> = [
-  // QA fixing (check before QA review — more specific)
+  // QA fixing (check before QA review 鈥?more specific)
   { pattern: /qa\s*fix/i, phase: 'qa_fixing', message: 'Fixing QA issues...' },
   { pattern: /fixing\s+issues/i, phase: 'qa_fixing', message: 'Fixing QA issues...' },
 
@@ -158,8 +158,8 @@ const TEXT_PHASE_PATTERNS: ReadonlyArray<{
  * Tracks execution phase transitions from stream events.
  *
  * Consumes StreamEvent objects and detects phase changes from:
- * - Tool calls (highest priority — deterministic signals)
- * - Text patterns (fallback — heuristic matching)
+ * - Tool calls (highest priority 鈥?deterministic signals)
+ * - Text patterns (fallback 鈥?heuristic matching)
  *
  * Enforces phase ordering to prevent regression.
  */
@@ -205,7 +205,7 @@ export class ProgressTracker {
 
   /**
    * Force-set a phase (for structured protocol events).
-   * Bypasses regression checks — use only for authoritative sources.
+   * Bypasses regression checks 鈥?use only for authoritative sources.
    *
    * @param phase - Phase to set
    * @param message - Status message
@@ -361,7 +361,7 @@ export class ProgressTracker {
       return null;
     }
 
-    // Same phase with same message — no-op
+    // Same phase with same message 鈥?no-op
     if (this._currentPhase === phase && this._currentMessage === message) {
       return null;
     }

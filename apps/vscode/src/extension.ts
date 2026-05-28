@@ -2,13 +2,17 @@ import * as path from 'node:path';
 import * as vscode from 'vscode';
 import {
   CORE_PACKAGE_VERSION,
+  AUTOCODE_PROJECT_DOC_TYPES,
   DEFAULT_PHASE_MODELS,
   SupportedProvider,
   buildAutocodeTaskCardViewModel,
   buildAutocodeWorkspaceSummaryViewModel,
+  createTerminalAgentRuntimeAdapter,
   getAutocodeAgentRuntimeModeLabel,
   isAutocodeCli,
+  startAutocodeAgentRuntime,
   type AutocodeCli,
+  type AutocodeProjectDocType,
   type AutocodeTask,
   type AutocodeTaskLogs,
   type AutocodeTaskLogsViewModel,
@@ -22,8 +26,8 @@ import { bindTerminalLifecycle, createTerminalAdapter } from './adapters/termina
 import { createWorkspaceAdapter, getConfiguredDataDirName } from './adapters/workspace-adapter.js';
 import {
   createManualTask,
-  createAgentRuntimeStartPlan,
-  createStartedRunPlan,
+  createProjectDocumentationTask,
+  createStartedAgentRuntime,
   listState,
   markTaskDoneStatus,
   markTaskLogFailed,
@@ -36,6 +40,10 @@ const SIDEBAR_VIEW_ID = 'autocode.sidebar';
 const workspaceAdapter = createWorkspaceAdapter();
 const terminalAdapter = createTerminalAdapter();
 const notificationAdapter = createNotificationAdapter();
+const agentRuntimeAdapter = createTerminalAgentRuntimeAdapter({
+  terminal: terminalAdapter,
+  notification: notificationAdapter,
+});
 
 export function activate(context: vscode.ExtensionContext): void {
   const sidebarProvider = new AutocodeSidebarProvider(context.extensionUri);
@@ -55,6 +63,9 @@ export function activate(context: vscode.ExtensionContext): void {
     }),
     vscode.commands.registerCommand('autocode.createTask', async () => {
       await createTaskFromInput(sidebarProvider);
+    }),
+    vscode.commands.registerCommand('autocode.generateProjectDocs', async () => {
+      await createProjectDocsFromInput(sidebarProvider);
     }),
     vscode.commands.registerCommand('autocode.openTaskFolder', async (taskId?: unknown) => {
       await openTaskFolder(typeof taskId === 'string' ? taskId : undefined);
@@ -163,6 +174,9 @@ async function handleWebviewMessage(message: unknown, sidebarProvider?: Autocode
   switch (command) {
     case 'createTask':
       await createTaskFromInput(sidebarProvider);
+      break;
+    case 'createProjectDocs':
+      await createProjectDocsFromInput(sidebarProvider);
       break;
     case 'refreshWorkspace':
       sidebarProvider?.refresh('Workspace refreshed');
@@ -287,6 +301,52 @@ async function createTaskFromInput(sidebarProvider?: AutocodeSidebarProvider): P
   }
 }
 
+async function createProjectDocsFromInput(sidebarProvider?: AutocodeSidebarProvider): Promise<void> {
+  const projectRoot = getActiveProjectRootSync();
+  if (!projectRoot) {
+    await notificationAdapter.error('Open a workspace folder before generating project documentation.');
+    return;
+  }
+
+  const picked = await vscode.window.showQuickPick(
+    AUTOCODE_PROJECT_DOC_TYPES.map((type) => ({
+      label: getProjectDocTypeLabel(type),
+      description: type,
+      type,
+    })),
+    {
+      title: 'Generate Project Documentation',
+      placeHolder: 'Choose the project document set to generate',
+      ignoreFocusOut: true,
+    },
+  );
+  if (!picked) {
+    return;
+  }
+
+  try {
+    const result = createProjectDocumentationTask(projectRoot, { documentType: picked.type });
+    sidebarProvider?.refresh(`Created ${result.task.specId}`);
+    await notificationAdapter.info(`Project documentation task created: ${result.task.title}`);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'Failed to create project documentation task.';
+    await notificationAdapter.error(message);
+  }
+}
+
+function getProjectDocTypeLabel(type: AutocodeProjectDocType): string {
+  switch (type) {
+    case 'full':
+      return 'Full project docs';
+    case 'product':
+      return 'Product document';
+    case 'architecture':
+      return 'Architecture document';
+    case 'technical':
+      return 'Technical document';
+  }
+}
+
 async function openTaskFolder(taskId?: string): Promise<void> {
   const task = resolveTask(taskId);
   if (!task) {
@@ -336,21 +396,14 @@ async function startTaskInTerminal(taskId: string | undefined, sidebarProvider?:
   }
 
   try {
-    const runtimePlan = createAgentRuntimeStartPlan(projectRoot, task.id);
-    const runtimeLabel = getAutocodeAgentRuntimeModeLabel(runtimePlan.mode);
-    const started = createStartedRunPlan(projectRoot, task.id, {
+    const started = createStartedAgentRuntime(projectRoot, task.id, {
       cli: getConfiguredCli(),
       customCommand: getConfiguredCustomCliCommand(),
       bypassPermissions: getConfiguredBypassPermissions(),
     });
-    const { plan } = started;
-    await terminalAdapter.runCommand({
-      name: `Autocode: ${plan.task.specId}`,
-      cwd: plan.cwd,
-      command: started.command,
-    });
-    sidebarProvider?.refresh(`Started ${plan.task.specId} (${runtimeLabel})`);
-    await notificationAdapter.info(`Started Autocode task in terminal: ${plan.task.title} (${runtimeLabel})`);
+    const runtimeLabel = getAutocodeAgentRuntimeModeLabel(started.runtimePlan.mode);
+    await startAutocodeAgentRuntime(started.request, agentRuntimeAdapter);
+    sidebarProvider?.refresh(`Started ${started.task.specId} (${runtimeLabel})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to start Autocode task.';
     await notificationAdapter.error(message);
@@ -365,6 +418,7 @@ async function stopTask(taskId: string | undefined, sidebarProvider?: AutocodeSi
     return;
   }
 
+  await agentRuntimeAdapter.stopRuntime(task.id);
   await terminalAdapter.dispose?.(`Autocode: ${task.specId}`);
 
   try {
@@ -595,6 +649,7 @@ function renderAutocodeHtml(input: {
 
   <div class="actions">
     <button type="button" data-command="createTask">Create Task</button>
+    <button type="button" class="secondary" data-command="createProjectDocs">Project Docs</button>
     <button type="button" class="secondary" data-command="startTask">Start Latest</button>
     <button type="button" class="secondary" data-command="stopTask">Stop Latest</button>
     <button type="button" class="secondary" data-command="refreshWorkspace">Refresh</button>

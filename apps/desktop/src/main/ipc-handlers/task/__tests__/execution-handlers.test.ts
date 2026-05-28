@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
+﻿import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS } from '../../../../shared/constants';
@@ -324,7 +324,7 @@ describe('registerTaskExecutionHandlers', () => {
       planDeleted = true;
     });
     (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
-      if (filePath.includes('implementation_plan.json')) {
+      if (filePath.includes('implementation_plan.md')) {
         if (planDeleted) {
           const err = new Error('ENOENT') as NodeJS.ErrnoException;
           err.code = 'ENOENT';
@@ -347,7 +347,7 @@ describe('registerTaskExecutionHandlers', () => {
       'utf-8'
     );
     expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.json')
+      expect.stringContaining('implementation_plan.md')
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-plan-review',
@@ -387,7 +387,7 @@ describe('registerTaskExecutionHandlers', () => {
     (taskStateManager.getCurrentState as Mock).mockReturnValue('error');
     (fs.existsSync as Mock).mockReturnValue(true);
     (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
-      if (filePath.includes('implementation_plan.json')) {
+      if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({ phases: [{ subtasks: [] }] });
       }
       return '';
@@ -494,7 +494,7 @@ describe('registerTaskExecutionHandlers', () => {
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
     (findTaskWorktree as Mock).mockReturnValue('E:/Work/FastProject/.autocode/worktrees/tasks/001-worktree-plan');
     (fs.existsSync as Mock).mockImplementation((filePath: string) =>
-      filePath.includes('spec.md') || filePath.includes('implementation_plan.json')
+      filePath.includes('spec.md') || filePath.includes('implementation_plan.md')
     );
     (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
       const normalizedPath = filePath.replace(/\\/g, '/');
@@ -508,7 +508,7 @@ describe('registerTaskExecutionHandlers', () => {
           ],
         });
       }
-      if (filePath.includes('implementation_plan.json')) {
+      if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({ phases: [] });
       }
       return '';
@@ -657,7 +657,7 @@ describe('registerTaskExecutionHandlers', () => {
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
     (readFileSync as Mock).mockImplementation((filePath: string) => {
-      if (filePath.includes('implementation_plan.json')) {
+      if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({
           phases: [
             {
@@ -675,17 +675,17 @@ describe('registerTaskExecutionHandlers', () => {
     });
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
-    const result = await reviewHandler({}, '001-completed-review', false, '请把战斗数值再平衡一下');
+    const result = await reviewHandler({}, '001-completed-review', false, 'Please balance the combat values again.');
 
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('战斗数值'),
+      expect.stringContaining('combat values'),
       'utf-8'
     );
     expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.json'),
-      expect.stringContaining('处理评审反馈')
+      expect.stringContaining('implementation_plan.md'),
+      expect.stringContaining('Please balance the combat values again')
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-completed-review',
@@ -725,7 +725,7 @@ describe('registerTaskExecutionHandlers', () => {
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
     (readFileSync as Mock).mockImplementation((filePath: string) => {
-      if (filePath.includes('implementation_plan.json')) {
+      if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({
           phases: [
             {
@@ -752,8 +752,8 @@ describe('registerTaskExecutionHandlers', () => {
       'utf-8'
     );
     expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.json'),
-      expect.stringContaining('处理评审反馈')
+      expect.stringContaining('implementation_plan.md'),
+      expect.stringContaining('TypeScript error TS2322')
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-build-failure-review',
@@ -793,12 +793,12 @@ describe('registerTaskExecutionHandlers', () => {
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
-    const result = await reviewHandler({}, '001-missing-reason', false, '继续优化数值体验');
+    const result = await reviewHandler({}, '001-missing-reason', false, 'Continue optimizing the value tuning experience.');
 
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('继续优化数值体验'),
+      expect.stringContaining('value tuning'),
       'utf-8'
     );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
@@ -839,7 +839,7 @@ describe('registerTaskExecutionHandlers', () => {
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
     (readFileSync as Mock).mockImplementation((filePath: string) => {
-      if (filePath.includes('implementation_plan.json')) {
+      if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({
           phases: [
             {
@@ -858,39 +858,29 @@ describe('registerTaskExecutionHandlers', () => {
     });
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
-    const result = await reviewHandler({}, '001-pending-followup', false, '继续优化体验');
+    const result = await reviewHandler({}, '001-pending-followup', false, '缁х画浼樺寲浣撻獙');
 
     expect(result).toEqual({ success: true });
     expect(writeFileAtomicSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.json'),
+      expect.stringContaining('implementation_plan.md'),
       expect.stringContaining('"id": "1.3"')
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('saves follow-up subtasks through split-plan helpers on Request Changes', async () => {
+  it('saves follow-up subtasks through plan helpers on Request Changes', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const planShards = await import('../../../ai/schema/plan-shards');
 
-    const splitPlan = {
-      split_plan: true,
-      plan_files: [
-        {
-          phase_id: '1',
-          phase_name: 'Implementation',
-          file: 'implementation_plan.phase-1.json',
-          subtask_count: 1,
-        },
-      ],
+    const existingPlan = {
       phases: [
         {
           id: '1',
           phase: 1,
           name: 'Implementation',
           type: 'implementation',
-          subtasks_file: 'implementation_plan.phase-1.json',
           subtasks: [
             { id: '1.1', title: 'Done work', description: 'done', status: 'completed', files: [] },
           ],
@@ -919,25 +909,23 @@ describe('registerTaskExecutionHandlers', () => {
       },
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
-    (planShards.loadImplementationPlanFromFilesSync as Mock).mockReturnValue(splitPlan);
+    (planShards.loadImplementationPlanFromFilesSync as Mock).mockReturnValue(existingPlan);
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
-    const result = await reviewHandler({}, '001-split-followup', false, '继续优化 UI 细节');
+    const result = await reviewHandler({}, '001-split-followup', false, 'Continue polishing UI details');
 
     expect(result).toEqual({ success: true });
     expect(planShards.saveImplementationPlanToFilesSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.json'),
+      expect.stringContaining('implementation_plan.md'),
       expect.objectContaining({
-        split_plan: true,
         phases: [
           expect.objectContaining({
-            subtasks_file: 'implementation_plan.phase-1.json',
             subtasks: expect.arrayContaining([
               expect.objectContaining({ id: '1.1' }),
               expect.objectContaining({
                 id: '1.2',
                 status: 'pending',
-                description: expect.stringContaining('继续优化 UI 细节'),
+                description: expect.stringContaining('Continue polishing UI details'),
               }),
             ]),
           }),

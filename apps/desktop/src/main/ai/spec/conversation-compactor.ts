@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Conversation Compactor
  * ======================
  *
@@ -37,7 +37,7 @@ const PHASE_OUTPUT_FILES: Record<string, string[]> = {
   quick_spec: ['spec.md'],
   spec_writing: ['spec.md'],
   self_critique: ['spec.md', 'critique_notes.md'],
-  planning: ['implementation_plan.json'],
+  planning: ['implementation_plan.md'],
   validation: [],
 };
 
