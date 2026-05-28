@@ -7,6 +7,7 @@ import type { ChangelogFormat, ChangelogAudience, ChangelogEmojiLevel } from './
 import type { SupportedLanguage } from '../constants/i18n';
 import type { ProviderAccount, BuiltinProvider } from './provider-account';
 import type { ProviderModelSpec } from '../constants/models';
+import type { AutocodeCli } from '@autocode/core/tasks/cli-catalog';
 
 // Color theme types for multi-theme support
 export type ColorTheme = 'default' | 'dusk' | 'lime' | 'ocean' | 'retro' | 'neo' | 'forest';
@@ -146,14 +147,7 @@ export type SupportedTerminal =
   | 'custom';
 
 // CLI tools for AI-powered terminal sessions
-export type SupportedCLI =
-  | 'claude-code'   // Claude Code CLI
-  | 'gemini'        // Gemini CLI
-  | 'opencode'      // OpenCode
-  | 'kilocode'      // Kilo Code CLI
-  | 'codex'         // Codex CLI
-  | 'deepseek'      // Built-in DeepSeek CLI
-  | 'custom';
+export type SupportedCLI = AutocodeCli;
 
 export interface ThemePreviewColors {
   bg: string;

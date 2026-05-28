@@ -11,6 +11,31 @@
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
       "default": "./dist/index.js"
+    },
+    "./tasks/cli-catalog": {
+      "types": "./dist/tasks/cli-catalog.d.ts",
+      "import": "./dist/tasks/cli-catalog.js",
+      "default": "./dist/tasks/cli-catalog.js"
+    },
+    "./tasks/phase-protocol": {
+      "types": "./dist/tasks/phase-protocol.d.ts",
+      "import": "./dist/tasks/phase-protocol.js",
+      "default": "./dist/tasks/phase-protocol.js"
+    },
+    "./tasks/progress": {
+      "types": "./dist/tasks/progress.d.ts",
+      "import": "./dist/tasks/progress.js",
+      "default": "./dist/tasks/progress.js"
+    },
+    "./tasks/task-state-utils": {
+      "types": "./dist/tasks/task-state-utils.d.ts",
+      "import": "./dist/tasks/task-state-utils.js",
+      "default": "./dist/tasks/task-state-utils.js"
+    },
+    "./tasks/task-status": {
+      "types": "./dist/tasks/task-status.d.ts",
+      "import": "./dist/tasks/task-status.js",
+      "default": "./dist/tasks/task-status.js"
     }
   },
   "files": [

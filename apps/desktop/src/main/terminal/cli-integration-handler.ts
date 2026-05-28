@@ -23,6 +23,11 @@ import { getClaudeCliInvocation, getClaudeCliInvocationAsync } from '../cli-util
 import { isWindows } from '../platform';
 import { readSettingsFileAsync } from '../settings-utils';
 import type { SupportedCLI } from '../../shared/types/settings';
+import {
+  getAutocodeCliCommandName,
+  getAutocodeCliPermissionBypassFlag,
+  type AutocodeCli,
+} from '@autocode/core';
 import type {
   TerminalProcess,
   WindowGetter,
@@ -41,27 +46,13 @@ import type {
  * @param customPath - Optional absolute path for 'custom' CLI
  * @returns The command string to write to the PTY
  */
-const CLAUDE_YOLO_MODE_FLAG = ' --dangerously-skip-permissions';
-const CODEX_YOLO_MODE_FLAG = ' --dangerously-bypass-approvals-and-sandbox';
-
 export function getCLIPermissionBypassFlag(cli: SupportedCLI, dangerouslySkipPermissions?: boolean): string {
-  if (!dangerouslySkipPermissions) return '';
-  if (cli === 'claude-code') return CLAUDE_YOLO_MODE_FLAG;
-  if (cli === 'codex') return CODEX_YOLO_MODE_FLAG;
-  return '';
+  return getAutocodeCliPermissionBypassFlag(cli as AutocodeCli, dangerouslySkipPermissions === true);
 }
 
 export function getCLICommand(cli: SupportedCLI, customPath?: string, dangerouslySkipPermissions?: boolean): string {
   if (cli === 'custom' && customPath) return customPath;
-  const commands: Record<string, string> = {
-    'claude-code': 'claude',
-    'gemini': 'gemini',
-    'opencode': 'opencode',
-    'kilocode': 'kilocode',
-    'codex': 'codex',
-    'deepseek': 'deepseek',
-  };
-  const command = commands[cli] ?? cli;
+  const command = cli === 'custom' ? 'custom' : getAutocodeCliCommandName(cli as AutocodeCli);
   return `${command}${getCLIPermissionBypassFlag(cli, dangerouslySkipPermissions)}`;
 }
 

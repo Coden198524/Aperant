@@ -1,54 +1,28 @@
 import {
   buildAutocodeTaskRunnerShellCommand,
-  buildProjectIndex,
-  createAutocodeTask,
+  buildAutocodeWorkspaceState,
   createAutocodeTaskRunPlan,
-  listAutocodeTasks,
-  readAutocodeTaskLogs,
-  summarizeWorkspace,
-  updateAutocodeTaskLogPhase,
+  createManualAutocodeTask,
+  createStartedAutocodeTaskRun,
+  markAutocodeTaskDone,
+  markAutocodeTaskStopped,
+  requestAutocodeTaskChanges,
   updateAutocodeTaskPlanStatus,
   type AutocodeCli,
-  type AutocodeTaskMetadata,
 } from '@autocode/core';
 import { getConfiguredDataDirName } from '../adapters/workspace-adapter.js';
 
 export function listState(projectRoot: string) {
   const dataDirName = getConfiguredDataDirName();
-  const tasks = listAutocodeTasks({ projectRoot, dataDirName });
-
-  return {
-    projectRoot,
-    dataDirName,
-    summary: summarizeWorkspace(projectRoot),
-    projectIndex: buildProjectIndex(projectRoot),
-    tasks,
-    logsByTaskId: Object.fromEntries(
-      tasks.map((task) => [
-        task.id,
-        readAutocodeTaskLogs({
-          projectRoot,
-          dataDirName,
-          taskId: task.id,
-        }),
-      ]),
-    ),
-  };
+  return buildAutocodeWorkspaceState({ projectRoot, dataDirName });
 }
 
 export function createManualTask(projectRoot: string, title: string, description: string) {
-  const metadata: AutocodeTaskMetadata = {
-    sourceType: 'manual',
-    workflowMode: 'balanced',
-    enableBatchExecution: false,
-  };
-
-  return createAutocodeTask({
+  return createManualAutocodeTask({
     projectRoot,
     dataDirName: getConfiguredDataDirName(),
     title,
     description,
-    metadata,
   });
 }
 
@@ -58,6 +32,21 @@ export function createRunPlan(projectRoot: string, taskId: string, options: {
   bypassPermissions: boolean;
 }) {
   return createAutocodeTaskRunPlan({
+    projectRoot,
+    dataDirName: getConfiguredDataDirName(),
+    taskId,
+    cli: options.cli,
+    customCommand: options.customCommand,
+    bypassPermissions: options.bypassPermissions,
+  });
+}
+
+export function createStartedRunPlan(projectRoot: string, taskId: string, options: {
+  cli: AutocodeCli;
+  customCommand?: string;
+  bypassPermissions: boolean;
+}) {
+  return createStartedAutocodeTaskRun({
     projectRoot,
     dataDirName: getConfiguredDataDirName(),
     taskId,
@@ -87,12 +76,27 @@ export function markTaskStatus(projectRoot: string, taskId: string, input: {
 }
 
 export function markTaskLogFailed(projectRoot: string, taskId: string, phase: 'planning' | 'coding') {
-  return updateAutocodeTaskLogPhase({
+  return markAutocodeTaskStopped({
     projectRoot,
     dataDirName: getConfiguredDataDirName(),
     taskId,
     phase,
-    status: 'failed',
     message: 'Task stopped from VS Code.',
+  });
+}
+
+export function markTaskDoneStatus(projectRoot: string, taskId: string) {
+  return markAutocodeTaskDone({
+    projectRoot,
+    dataDirName: getConfiguredDataDirName(),
+    taskId,
+  });
+}
+
+export function requestTaskChangesStatus(projectRoot: string, taskId: string) {
+  return requestAutocodeTaskChanges({
+    projectRoot,
+    dataDirName: getConfiguredDataDirName(),
+    taskId,
   });
 }

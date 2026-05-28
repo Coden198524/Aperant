@@ -345,7 +345,21 @@ export {
 } from './tasks/spec-store.js';
 
 export {
+  AUTOCODE_CLI_COMMANDS,
+  DEFAULT_AUTOCODE_CLI,
+  SUPPORTED_AUTOCODE_CLIS,
+  buildAutocodeCliCommand,
+  getAutocodeCliCommandName,
+  getAutocodeCliPermissionArgs,
+  getAutocodeCliPermissionBypassFlag,
+  isAutocodeCli,
+  resolveAutocodeCli,
+  resolveAutocodeCliInvocation,
+  splitAutocodeCliCommandLine,
   type AutocodeCli,
+} from './tasks/cli-catalog.js';
+
+export {
   type AutocodeTaskRunPhase,
   type AutocodeTaskRunPlan,
   type CreateAutocodeTaskRunPlanInput,
@@ -370,6 +384,74 @@ export {
   readAutocodeTaskLogs,
   updateAutocodeTaskLogPhase,
 } from './tasks/logs.js';
+
+export {
+  type AutocodeCommandOptionValue,
+  type ParsedAutocodeCommandArgs,
+  getAutocodeBooleanOption,
+  getAutocodeStringOption,
+  hasAutocodeJsonOption,
+  parseAutocodeCommandArgs,
+  setAutocodeCommandOption,
+} from './frontend/command-line.js';
+
+export {
+  type AutocodeTaskActionInput,
+  type AutocodeWorkspaceState,
+  type BuildAutocodeWorkspaceStateInput,
+  type CreateManualAutocodeTaskInput,
+  type StartedAutocodeTaskRun,
+  buildAutocodeWorkspaceState,
+  buildManualAutocodeTaskMetadata,
+  createManualAutocodeTask,
+  createStartedAutocodeTaskRun,
+  markAutocodeTaskDone,
+  markAutocodeTaskStopped,
+  requestAutocodeTaskChanges,
+} from './tasks/workspace-state.js';
+
+export {
+  BACKEND_PHASES,
+  EXECUTION_PHASES,
+  PAUSE_PHASES,
+  PHASE_MARKER_PREFIX,
+  PHASE_ORDER_INDEX,
+  PHASE_PROTOCOL_VERSION,
+  TERMINAL_PHASES,
+  getExpectedPreviousPhase,
+  isAllowedPhaseRegression,
+  isPausePhase,
+  isTerminalPhase,
+  isValidBackendPhase,
+  isValidExecutionPhase,
+  isValidPhaseTransition,
+  wouldPhaseRegress,
+  type BackendPhase,
+  type CompletablePhase,
+  type ExecutionPhase,
+} from './tasks/phase-protocol.js';
+
+export {
+  calculateProgress,
+  countSubtasksByStatus,
+  determineOverallStatus,
+  estimateRemainingTime,
+  formatProgressString,
+} from './tasks/progress.js';
+
+export {
+  isCompletedAutocodeTask,
+  isCompletedTask,
+} from './tasks/task-status.js';
+
+export {
+  TASK_STATE_NAMES,
+  XSTATE_ACTIVE_STATES,
+  XSTATE_SETTLED_STATES,
+  XSTATE_TO_PHASE,
+  mapStateToLegacy,
+  type TaskStateName,
+} from './tasks/task-state-utils.js';
 
 export {
   ALL_PATTERNS,

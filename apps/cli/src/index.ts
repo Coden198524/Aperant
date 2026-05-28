@@ -3,37 +3,36 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   CORE_PACKAGE_VERSION,
+  DEFAULT_AUTOCODE_CLI,
   DEFAULT_PHASE_MODELS,
+  SUPPORTED_AUTOCODE_CLIS,
   SupportedProvider,
-  buildAutocodeTaskRunnerShellCommand,
+  buildAutocodeWorkspaceState,
   buildProjectIndex,
-  createAutocodeTask,
-  createAutocodeTaskRunPlan,
-  listAutocodeTasks,
+  createManualAutocodeTask,
+  createStartedAutocodeTaskRun,
+  getAutocodeBooleanOption,
+  getAutocodeStringOption,
+  hasAutocodeJsonOption,
+  isAutocodeCli,
+  markAutocodeTaskDone,
+  parseAutocodeCommandArgs,
   readAutocodeTaskLogs,
+  requestAutocodeTaskChanges,
   summarizeWorkspace,
-  updateAutocodeTaskPlanStatus,
   type AutocodeCli,
   type AutocodeTask,
   type AutocodeTaskLogEntry,
   type AutocodeTaskLogs,
-  type AutocodeTaskMetadata,
+  type ParsedAutocodeCommandArgs,
   type ProjectIndex,
 } from '@autocode/core';
 
-type OptionValue = string | boolean | string[];
-
-interface ParsedArgs {
-  command: string;
-  positionals: string[];
-  options: Record<string, OptionValue>;
-}
-
 const DEFAULT_DATA_DIR = '.autocode';
-const DEFAULT_CLI: AutocodeCli = 'claude-code';
+const DEFAULT_CLI: AutocodeCli = DEFAULT_AUTOCODE_CLI;
 
 async function main(): Promise<void> {
-  const parsed = parseArgs(process.argv.slice(2));
+  const parsed = parseAutocodeCommandArgs(process.argv.slice(2));
 
   switch (parsed.command) {
     case 'help':
@@ -70,10 +69,11 @@ async function main(): Promise<void> {
   }
 }
 
-function showInfo(parsed: ParsedArgs): void {
+function showInfo(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
-  const summary = summarizeWorkspace(context.projectRoot);
-  const projectIndex = buildProjectIndex(context.projectRoot);
+  const state = buildAutocodeWorkspaceState(context);
+  const summary = state.summary ?? summarizeWorkspace(context.projectRoot);
+  const projectIndex = state.projectIndex ?? buildProjectIndex(context.projectRoot);
   const providers = Object.values(SupportedProvider);
   const payload = {
     coreVersion: CORE_PACKAGE_VERSION,
@@ -104,9 +104,9 @@ function showInfo(parsed: ParsedArgs): void {
   console.log(`Providers: ${providers.join(', ')}`);
 }
 
-function listTasks(parsed: ParsedArgs): void {
+function listTasks(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
-  const tasks = listAutocodeTasks(context);
+  const tasks = buildAutocodeWorkspaceState({ ...context, includeLogs: false }).tasks;
 
   if (isJson(parsed)) {
     writeJson({ ...context, tasks });
@@ -130,7 +130,7 @@ function listTasks(parsed: ParsedArgs): void {
   }
 }
 
-function createTask(parsed: ParsedArgs): void {
+function createTask(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
   const titleFromOption = getStringOption(parsed, 'title');
   const title = titleFromOption ?? parsed.positionals[0] ?? '';
@@ -142,16 +142,10 @@ function createTask(parsed: ParsedArgs): void {
     throw new Error('Task description is required. Pass --description or a second positional argument.');
   }
 
-  const metadata: AutocodeTaskMetadata = {
-    sourceType: 'manual',
-    workflowMode: 'balanced',
-    enableBatchExecution: false,
-  };
-  const task = createAutocodeTask({
+  const task = createManualAutocodeTask({
     ...context,
     title,
     description,
-    metadata,
   });
 
   if (isJson(parsed)) {
@@ -163,25 +157,21 @@ function createTask(parsed: ParsedArgs): void {
   console.log(task.specsPath);
 }
 
-function runTask(parsed: ParsedArgs): void {
+function runTask(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
   const taskId = resolveTaskId(parsed);
   const cli = resolveCli(getStringOption(parsed, 'cli') ?? DEFAULT_CLI);
   const customCommand = getStringOption(parsed, 'custom-command') ?? getStringOption(parsed, 'custom');
-  const plan = createAutocodeTaskRunPlan({
+  const started = createStartedAutocodeTaskRun({
     ...context,
     taskId,
     cli,
     customCommand,
     bypassPermissions: getBooleanOption(parsed, 'bypass-permissions'),
   });
-  const updated = updateAutocodeTaskPlanStatus({
-    ...context,
-    taskId: plan.task.id,
-    planStatus: plan.planStatus,
-    executionPhase: plan.executionPhase,
-  });
-  const command = buildAutocodeTaskRunnerShellCommand(plan);
+  const plan = started.plan;
+  const updated = started.task;
+  const command = started.command;
   const payload = { ...context, task: updated, phase: plan.phase, command, plan };
 
   if (isJson(parsed)) {
@@ -202,30 +192,25 @@ function runTask(parsed: ParsedArgs): void {
   }
 }
 
-function markDone(parsed: ParsedArgs): void {
+function markDone(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
-  const task = updateAutocodeTaskPlanStatus({
+  const task = markAutocodeTaskDone({
     ...context,
     taskId: resolveTaskId(parsed),
-    planStatus: 'done',
-    executionPhase: 'complete',
   });
   printTaskUpdate(parsed, 'Marked done', task);
 }
 
-function requestChanges(parsed: ParsedArgs): void {
+function requestChanges(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
-  const task = updateAutocodeTaskPlanStatus({
+  const task = requestAutocodeTaskChanges({
     ...context,
     taskId: resolveTaskId(parsed),
-    planStatus: 'human_review',
-    reviewReason: 'qa_rejected',
-    executionPhase: 'review',
   });
   printTaskUpdate(parsed, 'Requested changes', task);
 }
 
-function showLogs(parsed: ParsedArgs): void {
+function showLogs(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
   const taskId = resolveTaskId(parsed);
   const logs = readAutocodeTaskLogs({ ...context, taskId });
@@ -243,7 +228,7 @@ function showLogs(parsed: ParsedArgs): void {
   printLogs(logs);
 }
 
-function printTaskUpdate(parsed: ParsedArgs, label: string, task: AutocodeTask): void {
+function printTaskUpdate(parsed: ParsedAutocodeCommandArgs, label: string, task: AutocodeTask): void {
   if (isJson(parsed)) {
     writeJson(task);
     return;
@@ -266,14 +251,14 @@ function printLogEntry(entry: AutocodeTaskLogEntry): void {
   console.log(`  ${formatDate(entry.timestamp)} ${entry.type}: ${truncate(entry.content, 160)}`);
 }
 
-function resolveContext(parsed: ParsedArgs): { projectRoot: string; dataDirName: string } {
+function resolveContext(parsed: ParsedAutocodeCommandArgs): { projectRoot: string; dataDirName: string } {
   return {
     projectRoot: path.resolve(getStringOption(parsed, 'cwd') ?? process.cwd()),
     dataDirName: getStringOption(parsed, 'data-dir') ?? getStringOption(parsed, 'dataDir') ?? DEFAULT_DATA_DIR,
   };
 }
 
-function resolveTaskId(parsed: ParsedArgs): string {
+function resolveTaskId(parsed: ParsedAutocodeCommandArgs): string {
   const taskId = getStringOption(parsed, 'task') ?? parsed.positionals[0];
   if (!taskId?.trim()) {
     throw new Error('Task id is required.');
@@ -285,101 +270,19 @@ function resolveCli(value: string): AutocodeCli {
   if (isAutocodeCli(value)) {
     return value;
   }
-  throw new Error(`Unsupported CLI "${value}". Supported values: ${SUPPORTED_CLIS.join(', ')}.`);
+  throw new Error(`Unsupported CLI "${value}". Supported values: ${SUPPORTED_AUTOCODE_CLIS.join(', ')}.`);
 }
 
-const SUPPORTED_CLIS: AutocodeCli[] = [
-  'claude-code',
-  'gemini',
-  'opencode',
-  'kilocode',
-  'codex',
-  'deepseek',
-  'custom',
-];
-
-function isAutocodeCli(value: string): value is AutocodeCli {
-  return SUPPORTED_CLIS.includes(value as AutocodeCli);
+function getStringOption(parsed: ParsedAutocodeCommandArgs, key: string): string | undefined {
+  return getAutocodeStringOption(parsed, key);
 }
 
-function parseArgs(rawArgs: string[]): ParsedArgs {
-  const first = rawArgs[0];
-  const command = !first || first === '--help' || first === '-h'
-    ? 'help'
-    : first.startsWith('-')
-      ? 'help'
-      : first;
-  const args = command === 'help' && first?.startsWith('-') ? rawArgs : rawArgs.slice(1);
-  const options: Record<string, OptionValue> = {};
-  const positionals: string[] = [];
-
-  for (let index = 0; index < args.length; index += 1) {
-    const token = args[index];
-    if (token === '--') {
-      positionals.push(...args.slice(index + 1));
-      break;
-    }
-
-    if (!token.startsWith('--')) {
-      positionals.push(token);
-      continue;
-    }
-
-    const option = token.slice(2);
-    const equalsIndex = option.indexOf('=');
-    if (equalsIndex >= 0) {
-      setOption(options, option.slice(0, equalsIndex), option.slice(equalsIndex + 1));
-      continue;
-    }
-
-    const next = args[index + 1];
-    if (next && !next.startsWith('-')) {
-      setOption(options, option, next);
-      index += 1;
-      continue;
-    }
-
-    setOption(options, option, true);
-  }
-
-  return { command, positionals, options };
+function getBooleanOption(parsed: ParsedAutocodeCommandArgs, key: string): boolean {
+  return getAutocodeBooleanOption(parsed, key);
 }
 
-function setOption(options: Record<string, OptionValue>, key: string, value: string | boolean): void {
-  const normalizedKey = key.trim();
-  const existing = options[normalizedKey];
-  if (Array.isArray(existing)) {
-    existing.push(String(value));
-    return;
-  }
-  if (existing !== undefined) {
-    options[normalizedKey] = [String(existing), String(value)];
-    return;
-  }
-  options[normalizedKey] = value;
-}
-
-function getStringOption(parsed: ParsedArgs, key: string): string | undefined {
-  const value = parsed.options[key];
-  if (Array.isArray(value)) {
-    return value[value.length - 1];
-  }
-  return typeof value === 'string' ? value : undefined;
-}
-
-function getBooleanOption(parsed: ParsedArgs, key: string): boolean {
-  const value = parsed.options[key];
-  if (typeof value === 'boolean') {
-    return value;
-  }
-  if (typeof value === 'string') {
-    return value === 'true' || value === '1' || value === 'yes';
-  }
-  return false;
-}
-
-function isJson(parsed: ParsedArgs): boolean {
-  return getBooleanOption(parsed, 'json');
+function isJson(parsed: ParsedAutocodeCommandArgs): boolean {
+  return hasAutocodeJsonOption(parsed);
 }
 
 function writeJson(value: unknown): void {

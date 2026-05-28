@@ -4,10 +4,12 @@ import {
   CORE_PACKAGE_VERSION,
   DEFAULT_PHASE_MODELS,
   SupportedProvider,
+  isAutocodeCli,
   type AutocodeCli,
   type AutocodeTask,
   type AutocodeTaskLogEntry,
   type AutocodeTaskLogs,
+  type AutocodeWorkspaceState,
   type ProjectIndex,
   type WorkspaceSummary,
 } from '@autocode/core';
@@ -15,12 +17,12 @@ import { createNotificationAdapter } from './adapters/notification-adapter.js';
 import { bindTerminalLifecycle, createTerminalAdapter } from './adapters/terminal-adapter.js';
 import { createWorkspaceAdapter, getConfiguredDataDirName } from './adapters/workspace-adapter.js';
 import {
-  buildRunCommand,
   createManualTask,
-  createRunPlan,
+  createStartedRunPlan,
   listState,
+  markTaskDoneStatus,
   markTaskLogFailed,
-  markTaskStatus,
+  requestTaskChangesStatus,
 } from './services/task-service.js';
 
 const VIEW_TYPE = 'autocode.panel';
@@ -195,14 +197,7 @@ function getCoreInfoMessage(): string {
   return `Autocode core ${CORE_PACKAGE_VERSION}; default coding model ${DEFAULT_PHASE_MODELS.coding}; providers: ${providers}`;
 }
 
-interface ActiveAutocodeState {
-  projectRoot: string | null;
-  dataDirName: string;
-  summary: WorkspaceSummary | null;
-  projectIndex: ProjectIndex | null;
-  tasks: AutocodeTask[];
-  logsByTaskId: Record<string, AutocodeTaskLogs | null>;
-}
+type ActiveAutocodeState = AutocodeWorkspaceState;
 
 function getActiveAutocodeState(): ActiveAutocodeState {
   const projectRoot = getActiveProjectRootSync();
@@ -336,19 +331,16 @@ async function startTaskInTerminal(taskId: string | undefined, sidebarProvider?:
   }
 
   try {
-    const plan = createRunPlan(projectRoot, task.id, {
+    const started = createStartedRunPlan(projectRoot, task.id, {
       cli: getConfiguredCli(),
       customCommand: getConfiguredCustomCliCommand(),
       bypassPermissions: getConfiguredBypassPermissions(),
     });
-    markTaskStatus(projectRoot, task.id, {
-      planStatus: plan.planStatus,
-      executionPhase: plan.executionPhase,
-    });
+    const { plan } = started;
     await terminalAdapter.runCommand({
       name: `Autocode: ${plan.task.specId}`,
       cwd: plan.cwd,
-      command: buildRunCommand(plan),
+      command: started.command,
     });
     sidebarProvider?.refresh(`Started ${plan.task.specId} (${plan.phase})`);
     await notificationAdapter.info(`Started Autocode task in terminal: ${plan.task.title}`);
@@ -369,11 +361,6 @@ async function stopTask(taskId: string | undefined, sidebarProvider?: AutocodeSi
   await terminalAdapter.dispose?.(`Autocode: ${task.specId}`);
 
   try {
-    markTaskStatus(projectRoot, task.id, {
-      planStatus: 'human_review',
-      reviewReason: 'stopped',
-      executionPhase: 'stopped',
-    });
     markTaskLogFailed(projectRoot, task.id, task.executionPhase === 'coding' ? 'coding' : 'planning');
     sidebarProvider?.refresh(`Stopped ${task.specId}`);
   } catch (error) {
@@ -391,10 +378,7 @@ async function markTaskDone(taskId: string | undefined, sidebarProvider?: Autoco
   }
 
   try {
-    const updated = markTaskStatus(projectRoot, task.id, {
-      planStatus: 'done',
-      executionPhase: 'complete',
-    });
+    const updated = markTaskDoneStatus(projectRoot, task.id);
     sidebarProvider?.refresh(`Marked done: ${updated.specId}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to mark task done.';
@@ -411,11 +395,7 @@ async function requestTaskChanges(taskId: string | undefined, sidebarProvider?: 
   }
 
   try {
-    const updated = markTaskStatus(projectRoot, task.id, {
-      planStatus: 'human_review',
-      reviewReason: 'qa_rejected',
-      executionPhase: 'review',
-    });
+    const updated = requestTaskChangesStatus(projectRoot, task.id);
     sidebarProvider?.refresh(`Requested changes: ${updated.specId}`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to request task changes.';
@@ -429,18 +409,6 @@ function resolveTask(taskId?: string): AutocodeTask | null {
     return null;
   }
   return taskId ? state.tasks.find((task) => task.id === taskId || task.specId === taskId) ?? null : state.tasks[0];
-}
-
-function isAutocodeCli(value: unknown): value is AutocodeCli {
-  return (
-    value === 'claude-code' ||
-    value === 'gemini' ||
-    value === 'opencode' ||
-    value === 'kilocode' ||
-    value === 'codex' ||
-    value === 'deepseek' ||
-    value === 'custom'
-  );
 }
 
 function renderAutocodeHtml(input: {

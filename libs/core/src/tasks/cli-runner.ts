@@ -6,8 +6,12 @@ import {
   type AutocodePlanStatus,
   type AutocodeTask,
 } from './spec-store.js';
+import {
+  getAutocodeCliPermissionArgs,
+  resolveAutocodeCliInvocation,
+  type AutocodeCli,
+} from './cli-catalog.js';
 
-export type AutocodeCli = 'claude-code' | 'gemini' | 'opencode' | 'kilocode' | 'codex' | 'deepseek' | 'custom';
 export type AutocodeTaskRunPhase = 'spec' | 'planning' | 'coding';
 
 export interface CreateAutocodeTaskRunPlanInput {
@@ -55,8 +59,8 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
   });
   const promptFilePath = join(specDir, PROMPT_FILE_NAME);
   const runnerFilePath = join(specDir, RUNNER_FILE_NAME);
-  const cliInvocation = resolveCliInvocation(input.cli, input.customCommand);
-  const permissionArgs = getCliPermissionArgs(input.cli, input.bypassPermissions === true);
+  const cliInvocation = resolveAutocodeCliInvocation(input.cli, input.customCommand);
+  const permissionArgs = getAutocodeCliPermissionArgs(input.cli, input.bypassPermissions === true);
   writeFileSync(promptFilePath, `${prompt}\n`, 'utf8');
   writeFileSync(
     runnerFilePath,
@@ -179,39 +183,6 @@ function buildTaskRunPrompt(input: {
     '- Run the most relevant validation command for the project.',
     `- Leave a short implementation summary in ${input.specDir}/direct_summary.md or update the plan with completion details.`,
   ].join('\n')}`;
-}
-
-function resolveCliInvocation(cli: AutocodeCli, customCommand: string | undefined): { command: string; args: string[] } {
-  if (cli === 'custom') {
-    const parts = splitCommandLine(customCommand?.trim() ?? '');
-    if (parts.length === 0) {
-      throw new Error('customCommand is required when cli is custom.');
-    }
-    return { command: parts[0], args: parts.slice(1) };
-  }
-
-  const commands: Record<Exclude<AutocodeCli, 'custom'>, string> = {
-    'claude-code': 'claude',
-    gemini: 'gemini',
-    opencode: 'opencode',
-    kilocode: 'kilocode',
-    codex: 'codex',
-    deepseek: 'deepseek',
-  };
-  return { command: commands[cli], args: [] };
-}
-
-function getCliPermissionArgs(cli: AutocodeCli, bypassPermissions: boolean): string[] {
-  if (!bypassPermissions) {
-    return [];
-  }
-  if (cli === 'claude-code') {
-    return ['--dangerously-skip-permissions'];
-  }
-  if (cli === 'codex') {
-    return ['--dangerously-bypass-approvals-and-sandbox'];
-  }
-  return [];
 }
 
 function buildNodeRunnerScript(input: {
@@ -375,61 +346,6 @@ function quoteShellArg(value: string): string {
     return value;
   }
   return `"${value.replace(/"/g, '\\"')}"`;
-}
-
-function splitCommandLine(value: string): string[] {
-  const parts: string[] = [];
-  let current = '';
-  let quote: '"' | "'" | null = null;
-  let escaping = false;
-
-  for (const char of value) {
-    if (escaping) {
-      current += char;
-      escaping = false;
-      continue;
-    }
-
-    if (char === '\\') {
-      escaping = true;
-      continue;
-    }
-
-    if (quote) {
-      if (char === quote) {
-        quote = null;
-      } else {
-        current += char;
-      }
-      continue;
-    }
-
-    if (char === '"' || char === "'") {
-      quote = char;
-      continue;
-    }
-
-    if (/\s/.test(char)) {
-      if (current) {
-        parts.push(current);
-        current = '';
-      }
-      continue;
-    }
-
-    current += char;
-  }
-
-  if (escaping) {
-    current += '\\';
-  }
-  if (quote) {
-    throw new Error('customCommand has an unterminated quote.');
-  }
-  if (current) {
-    parts.push(current);
-  }
-  return parts;
 }
 
 function readJson<T>(filePath: string): T | null {

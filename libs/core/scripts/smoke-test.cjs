@@ -92,10 +92,24 @@ async function main() {
     assert.ok(existsSync(join(task.specsPath, 'implementation_plan.json')));
     assert.ok(existsSync(join(task.specsPath, 'requirements.json')));
 
+    const workspaceState = core.buildAutocodeWorkspaceState({ projectRoot, dataDirName: '.autocode' });
+    assert.equal(workspaceState.projectRoot, projectRoot);
+    assert.equal(workspaceState.tasks.length, 1);
+    assert.equal(workspaceState.summary.name, 'sample-project');
+    assert.equal(workspaceState.projectIndex.project_type, 'single');
+
     const tasks = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' });
     assert.equal(tasks.length, 1);
     assert.equal(tasks[0].id, task.id);
     assert.equal(tasks[0].description, 'Create provider account settings shared by desktop and VS Code.');
+
+    const parsedCliArgs = core.parseAutocodeCommandArgs(['run', task.id, '--cli', 'codex', '--json']);
+    assert.equal(parsedCliArgs.command, 'run');
+    assert.equal(core.getAutocodeStringOption(parsedCliArgs, 'cli'), 'codex');
+    assert.equal(core.hasAutocodeJsonOption(parsedCliArgs), true);
+    assert.equal(core.isAutocodeCli('deepseek'), true);
+    assert.equal(core.isAutocodeCli('unknown-cli'), false);
+    assert.equal(core.buildAutocodeCliCommand({ cli: 'codex', bypassPermissions: true }), 'codex --dangerously-bypass-approvals-and-sandbox');
 
     const specRunPlan = core.createAutocodeTaskRunPlan({
       projectRoot,
@@ -172,6 +186,19 @@ async function main() {
     });
     assert.equal(codingRunPlan.phase, 'coding');
     assert.equal(codingRunPlan.command, 'gemini');
+    assert.equal(core.calculateProgress([{ status: 'completed' }, { status: 'pending' }]), 50);
+    assert.deepEqual(core.countSubtasksByStatus([{ status: 'completed' }, { status: 'failed' }]), {
+      pending: 0,
+      in_progress: 0,
+      completed: 1,
+      failed: 1,
+    });
+    assert.equal(core.isCompletedTask('human_review', 'completed'), true);
+    assert.equal(core.wouldPhaseRegress('qa_review', 'coding'), true);
+    assert.equal(core.isAllowedPhaseRegression('qa_review', 'coding'), true);
+    assert.equal(core.isValidPhaseTransition('coding', 'qa_review', ['coding']), true);
+    assert.equal(core.XSTATE_TO_PHASE.human_review, 'complete');
+    assert.deepEqual(core.mapStateToLegacy('plan_review'), { status: 'human_review', reviewReason: 'plan_review' });
 
     assert.deepEqual(core.extractCommands('git status && npm test'), ['git', 'npm']);
     assert.equal(core.isCommandBlocked('sudo')[0], false);
