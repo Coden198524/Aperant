@@ -8,6 +8,12 @@
  */
 
 import * as fs from 'node:fs';
+import {
+  buildEditPlan,
+  formatEditFileNotFound,
+  getEditInputValidationError,
+  normalizeFileMutationPathInput,
+} from '@autocode/core';
 import { z } from 'zod/v3';
 
 import { assertPathContained } from '../../security/path-containment';
@@ -47,17 +53,16 @@ export const editTool = Tool.define({
   execute: async (input, context) => {
     let { file_path, old_string, new_string, replace_all } = input;
 
-    // 兜底：标准化路径，将 Windows 反斜杠转换为正斜杠
-    file_path = file_path.replace(/\\/g, '/');
+    file_path = normalizeFileMutationPathInput(file_path);
 
     const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
     // Security: ensure path is within an allowed project boundary
     const { resolvedPath } = assertPathContained(file_path, allowedRoots);
 
-    // Validate inputs
-    if (old_string === new_string) {
-      return 'Error: old_string and new_string are identical. No changes needed.';
+    const inputError = getEditInputValidationError(old_string, new_string);
+    if (inputError) {
+      return inputError;
     }
 
     // Read the file
@@ -66,48 +71,28 @@ export const editTool = Tool.define({
       content = fs.readFileSync(resolvedPath, 'utf-8');
     } catch (err: unknown) {
       if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-        return `Error: File not found: ${file_path}`;
+        return formatEditFileNotFound(file_path);
       }
       throw err;
     }
 
-    // Check old_string exists
-    if (!content.includes(old_string)) {
-      return `Error: old_string not found in ${file_path}. Make sure the string matches exactly, including whitespace and indentation.`;
+    const editPlan = buildEditPlan(
+      content,
+      file_path,
+      old_string,
+      new_string,
+      replace_all,
+    );
+    if (!editPlan.ok) {
+      return editPlan.error;
     }
 
-    // Check uniqueness when not using replace_all
-    if (!replace_all) {
-      const occurrences = content.split(old_string).length - 1;
-      if (occurrences > 1) {
-        return `Error: old_string appears ${occurrences} times in ${file_path}. Provide more context to make it unique, or use replace_all: true to replace all occurrences.`;
-      }
-    }
-
-    // Perform replacement
-    let newContent: string;
-    if (replace_all) {
-      newContent = content.split(old_string).join(new_string);
-    } else {
-      // Replace first occurrence only
-      const index = content.indexOf(old_string);
-      newContent =
-        content.slice(0, index) +
-        new_string +
-        content.slice(index + old_string.length);
-    }
-
-    fs.writeFileSync(resolvedPath, newContent, 'utf-8');
+    fs.writeFileSync(resolvedPath, editPlan.content, 'utf-8');
 
     // Invalidate cache after edit
     const cache = context.fileCache as FileContentCache | undefined;
     cache?.invalidate(resolvedPath);
 
-    if (replace_all) {
-      const count = content.split(old_string).length - 1;
-      return `Successfully replaced ${count} occurrence(s) in ${file_path}`;
-    }
-
-    return `Successfully edited ${file_path}`;
+    return editPlan.message;
   },
 });

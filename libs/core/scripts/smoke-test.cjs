@@ -390,6 +390,55 @@ async function main() {
     );
     assert.match(core.formatImageReadResult('icon.jpg', 'abc'), /data:image\/jpeg;base64,abc/);
     assert.match(core.formatPdfReadResult('spec.pdf', 2048), /size: 2KB/);
+    assert.equal(core.normalizeFileMutationPathInput('src\\main.ts'), 'src/main.ts');
+    assert.equal(core.countContentLines('one\r\ntwo\nthree'), 3);
+    assert.equal(core.formatWriteSuccess('src/main.ts', 'one\ntwo'), 'Successfully wrote 2 lines to src/main.ts');
+    assert.doesNotThrow(() => core.validateJsonWriteContent('package.json', '{"ok":true}'));
+    assert.throws(
+      () => core.validateJsonWriteContent('package.json', '{bad json'),
+      /Invalid JSON content/,
+    );
+    assert.equal(
+      core.getEditInputValidationError('same', 'same'),
+      'Error: old_string and new_string are identical. No changes needed.',
+    );
+    assert.equal(core.countExactOccurrences('foo bar foo', 'foo'), 2);
+    assert.deepEqual(
+      core.buildEditPlan('hello world', 'src/main.ts', 'hello', 'goodbye', false),
+      {
+        ok: true,
+        content: 'goodbye world',
+        occurrenceCount: 1,
+        message: 'Successfully edited src/main.ts',
+      },
+    );
+    assert.match(
+      core.buildEditPlan('foo foo', 'src/main.ts', 'foo', 'bar', false).error,
+      /appears 2 times/,
+    );
+    assert.equal(core.clampBashTimeout(undefined), core.DEFAULT_BASH_TIMEOUT_MS);
+    assert.equal(core.clampBashTimeout(9_000_000), core.MAX_BASH_TIMEOUT_MS);
+    assert.match(core.truncateBashOutput('x'.repeat(core.BASH_MAX_OUTPUT_LENGTH + 1)), /Output truncated/);
+    assert.equal(core.isCompilerCommand('clang++ -o app main.cpp'), true);
+    assert.match(
+      core.truncateCompilerOutput(`note\n${'error: bad\n'.repeat(1000)}`, 200),
+      /Compiler output truncated/,
+    );
+    assert.match(
+      core.detectFastCommandFailure('findstr /s /n "needle" src\\*.ts', { isWindows: true }),
+      /Inefficient Windows search command/,
+    );
+    assert.equal(core.detectFastCommandFailure('grep needle src/index.ts', { isWindows: false }), null);
+    assert.match(core.formatBashCommandDenied('blocked'), /Command not allowed - blocked/);
+    assert.equal(core.formatBackgroundCommandStarted('sleep 1'), 'Command started in background: sleep 1');
+    assert.equal(
+      core.formatBashExecutionResult({ command: 'true', stdout: '', stderr: '', exitCode: 0 }),
+      '(no output)',
+    );
+    assert.match(
+      core.formatBashExecutionResult({ command: 'false', stdout: '', stderr: 'warn', exitCode: 1 }),
+      /STDERR:\nwarn\nExit code: 1/,
+    );
     assert.equal(core.shouldExcludeSearchPath('node_modules/pkg/index.ts'), true);
     assert.equal(core.shouldExcludeSearchPath('src/index.ts'), false);
     assert.match(

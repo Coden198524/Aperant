@@ -146,6 +146,39 @@ export {
 } from './tools/policy.js';
 
 export {
+  buildEditPlan,
+  countContentLines,
+  countExactOccurrences,
+  formatEditFileNotFound,
+  formatWriteSuccess,
+  getEditInputValidationError,
+  normalizeFileMutationPathInput,
+  validateJsonWriteContent,
+  type EditPlanFailure,
+  type EditPlanResult,
+  type EditPlanSuccess,
+} from './tools/file-mutations.js';
+
+export {
+  AGGRESSIVE_BASH_MAX_OUTPUT_LENGTH,
+  AGGRESSIVE_BASH_MAX_STDERR_LENGTH,
+  BASH_MAX_OUTPUT_LENGTH,
+  DEFAULT_BASH_TIMEOUT_MS,
+  MAX_BASH_TIMEOUT_MS,
+  clampBashTimeout,
+  detectFastCommandFailure,
+  formatBackgroundCommandStarted,
+  formatBashCommandDenied,
+  formatBashExecutionResult,
+  hasNonAscii,
+  isCompilerCommand,
+  truncateBashOutput,
+  truncateCompilerOutput,
+  type BashExecutionResult,
+  type FastCommandFailureOptions,
+} from './tools/bash.js';
+
+export {
   SAFETY_NET_MAX_BYTES,
   TOOL_OUTPUT_MAX_BYTES,
   TOOL_OUTPUT_MAX_LINES,

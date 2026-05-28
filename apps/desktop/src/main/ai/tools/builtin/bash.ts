@@ -8,22 +8,20 @@
  */
 
 import { execFile } from 'node:child_process';
+import {
+  DEFAULT_BASH_TIMEOUT_MS,
+  clampBashTimeout,
+  detectFastCommandFailure,
+  formatBackgroundCommandStarted,
+  formatBashCommandDenied,
+  formatBashExecutionResult,
+} from '@autocode/core';
 import { z } from 'zod/v3';
 
 import { findExecutable, isWindows, killProcessGracefully } from '../../../platform/index';
 import { bashSecurityHook } from '../../security/bash-validator';
 import { Tool } from '../define';
 import { ToolPermission } from '../types';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const DEFAULT_TIMEOUT_MS = 120_000;
-const MAX_TIMEOUT_MS = 600_000;
-const MAX_OUTPUT_LENGTH = 30_000;
-const AGGRESSIVE_MAX_OUTPUT_LENGTH = 8_000;
-const AGGRESSIVE_MAX_STDERR_LENGTH = 6_000;
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -44,85 +42,6 @@ const inputSchema = z.object({
     .optional()
     .describe('Clear, concise description of what this command does'),
 });
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-function truncateOutput(output: string): string {
-  if (output.length <= MAX_OUTPUT_LENGTH) {
-    return output;
-  }
-  return `${output.slice(0, MAX_OUTPUT_LENGTH)}\n\n[Output truncated — ${output.length} characters total]`;
-}
-
-function truncateOutputTo(output: string, maxLength: number): string {
-  if (output.length <= maxLength) {
-    return output;
-  }
-  return `${output.slice(0, maxLength)}\n\n[Output truncated - ${output.length} characters total]`;
-}
-
-function truncateCompilerError(output: string, maxLength: number): string {
-  if (output.length <= maxLength) {
-    return output;
-  }
-
-  const lines = output.split(/\r?\n/);
-  const diagnosticLines = lines.filter((line) => {
-    const lower = line.toLowerCase();
-    return (
-      lower.includes('error:') ||
-      lower.includes('fatal error:') ||
-      lower.includes('warning:') ||
-      lower.includes('undefined reference') ||
-      lower.includes('cannot find') ||
-      lower.includes('not recognized') ||
-      lower.includes('is not recognized')
-    );
-  });
-  const compact = diagnosticLines.length > 0
-    ? diagnosticLines.slice(0, 20).join('\n')
-    : lines.slice(0, 80).join('\n');
-
-  return `${compact.slice(0, maxLength)}\n\n[Compiler output truncated - ${output.length} characters total. Re-run with a narrower command if more detail is needed.]`;
-}
-
-function isCompilerCommand(command: string): boolean {
-  return /(^|[^\w.-])(g\+\+|gcc|clang\+\+|clang|cl)(\.exe)?([^\w.-]|$)/i.test(command);
-}
-
-function hasNonAscii(text: string): boolean {
-  return /[^\u0000-\u007F]/.test(text);
-}
-
-function detectFastCommandFailure(command: string): string | null {
-  if (!isWindows()) {
-    return null;
-  }
-
-  const normalized = command.replace(/\r?\n/g, ' ');
-  const hasShellSearch =
-    /(^|[&|;(]\s*|\s)(grep|egrep|fgrep|findstr)(\.exe)?\b/i.test(normalized) ||
-    /\bSelect-String\b/i.test(normalized) ||
-    /\bdir\s+\/s\b/i.test(normalized) ||
-    /(^|[&|;(]\s*|\s)(head|tail|sed|awk|lsof)(\.exe)?\b/i.test(normalized);
-  if (hasShellSearch) {
-    return 'Error: Inefficient Windows search command. Use the Grep tool for content search, Glob for filename search, or Read with a line range for known files. Do not retry the same search through grep/findstr/Select-String/dir/head/sed/awk.';
-  }
-
-  const hasPythonHereDoc = /\bpython(?:\d+(?:\.\d+)?)?\b[^\n\r]*(?:<<\s*['"]?\w+['"]?)/i.test(command);
-  if (hasPythonHereDoc) {
-    return 'Error: Unsupported Windows shell syntax. Bash here-documents such as `python - <<EOF` are not portable here. Use a simple file read or one short command instead of retrying with equivalent shell quoting.';
-  }
-
-  const hasComplexPythonOneLiner = /\bpython(?:\d+(?:\.\d+)?)?\b[^\n\r]*\s-c\s*["'][\s\S]*["']/i.test(command);
-  if (hasComplexPythonOneLiner && hasNonAscii(command)) {
-    return 'Error: Risky Windows verification command. Python -c with nested quotes and non-ASCII text often fails because of shell encoding/quoting. Use Read, Test-Path, Get-Content -Raw, or record the manual check instead of retrying equivalent commands.';
-  }
-
-  return null;
-}
 
 function resolveShell(): string {
   if (isWindows()) {
@@ -167,7 +86,7 @@ function executeCommand(
       },
     );
 
-    // Ensure the child process is killed on abort
+    // Ensure the child process is killed on abort.
     if (abortSignal) {
       abortSignal.addEventListener('abort', () => {
         killProcessGracefully(child);
@@ -187,7 +106,7 @@ export const bashTool = Tool.define({
       'Executes a given bash command with optional timeout. Use for git operations, command execution, and other terminal tasks.',
     permission: ToolPermission.RequiresApproval,
     executionOptions: {
-      timeoutMs: DEFAULT_TIMEOUT_MS,
+      timeoutMs: DEFAULT_BASH_TIMEOUT_MS,
       allowBackground: true,
     },
   },
@@ -195,7 +114,7 @@ export const bashTool = Tool.define({
   execute: async (input, context) => {
     const { command, timeout, run_in_background } = input;
 
-    // Security: validate command against security profile via bashSecurityHook
+    // Security: validate command against security profile via bashSecurityHook.
     const hookResult = bashSecurityHook(
       {
         toolName: 'Bash',
@@ -207,20 +126,19 @@ export const bashTool = Tool.define({
 
     if ('hookSpecificOutput' in hookResult) {
       const reason = hookResult.hookSpecificOutput.permissionDecisionReason;
-      return `Error: Command not allowed — ${reason}`;
+      return formatBashCommandDenied(reason);
     }
 
-    const fastFailure = detectFastCommandFailure(command);
+    const fastFailure = detectFastCommandFailure(command, { isWindows: isWindows() });
     if (fastFailure) {
       return fastFailure;
     }
 
-    const timeoutMs = Math.min(timeout ?? DEFAULT_TIMEOUT_MS, MAX_TIMEOUT_MS);
+    const timeoutMs = clampBashTimeout(timeout);
 
     if (run_in_background) {
-      // Fire-and-forget for background commands
       executeCommand(command, context.cwd, timeoutMs, context.abortSignal);
-      return `Command started in background: ${command}`;
+      return formatBackgroundCommandStarted(command);
     }
 
     const { stdout, stderr, exitCode } = await executeCommand(
@@ -230,29 +148,12 @@ export const bashTool = Tool.define({
       context.abortSignal,
     );
 
-    const parts: string[] = [];
-    const aggressiveMode = context.workflowMode === 'aggressive';
-    const compilerCommand = isCompilerCommand(command);
-    const maxOutputLength = aggressiveMode ? AGGRESSIVE_MAX_OUTPUT_LENGTH : MAX_OUTPUT_LENGTH;
-    const maxStderrLength = aggressiveMode ? AGGRESSIVE_MAX_STDERR_LENGTH : MAX_OUTPUT_LENGTH;
-
-    if (stdout) {
-      parts.push(aggressiveMode ? truncateOutputTo(stdout, maxOutputLength) : truncateOutput(stdout));
-    }
-
-    if (stderr) {
-      const stderrOutput = aggressiveMode && compilerCommand
-        ? truncateCompilerError(stderr, maxStderrLength)
-        : aggressiveMode
-          ? truncateOutputTo(stderr, maxStderrLength)
-          : truncateOutput(stderr);
-      parts.push(`STDERR:\n${stderrOutput}`);
-    }
-
-    if (exitCode !== 0) {
-      parts.push(`Exit code: ${exitCode}`);
-    }
-
-    return parts.length > 0 ? parts.join('\n') : '(no output)';
+    return formatBashExecutionResult({
+      command,
+      stdout,
+      stderr,
+      exitCode,
+      workflowMode: context.workflowMode,
+    });
   },
 });

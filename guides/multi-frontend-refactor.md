@@ -138,9 +138,36 @@ agent runtime without copying desktop-specific code.
      large files, legacy decoding, active task-log summaries, image/PDF files,
      and path security.
 
+13. Write/Edit tool policy:
+   - Shared file mutation path normalization, JSON write validation, write
+     success formatting, exact replacement planning, occurrence counting, edit
+     validation errors, and replace-all semantics now live in
+     `libs/core/src/tools/file-mutations.ts`.
+   - Desktop `Write` and `Edit` still own path containment, directory creation,
+     reading/writing files, and cache invalidation.
+   - Core smoke covers JSON validation, line counting, write success messages,
+     input validation, occurrence counting, single edit planning, and duplicate
+     match rejection.
+   - Desktop Write/Edit tests continue to cover filesystem calls, parent
+     directory creation, missing files, non-ENOENT propagation, cache-safe flow,
+     and path security.
+
+14. Bash tool policy:
+   - Shared timeout clamping, output truncation, compiler error compaction,
+     Windows fast-failure rules, denied/background messages, and execution
+     result formatting now live in `libs/core/src/tools/bash.ts`.
+   - Desktop `Bash` still owns shell selection, process execution,
+     `AbortSignal` process cleanup, and `bashSecurityHook` integration.
+   - Core smoke covers timeout caps, output truncation, compiler detection,
+     compiler output compaction, Windows fast-failure checks, denied/background
+     messages, and result formatting.
+   - Desktop Bash tests continue to cover exec invocation, shell resolution,
+     security hook rejection, Windows command preflight failures, background
+     starts, timeout caps, and aggressive compiler output behavior.
+
 ## Next slices
 
-13. Runtime package:
+15. Runtime package:
    - After security, schema, project, and auth boundaries are stable, move AI
      client creation, tools, session runner, and lightweight orchestration into
      a runtime layer.

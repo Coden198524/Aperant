@@ -9,6 +9,11 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  formatWriteSuccess,
+  normalizeFileMutationPathInput,
+  validateJsonWriteContent,
+} from '@autocode/core';
 import { z } from 'zod/v3';
 
 import { assertPathContained } from '../../security/path-containment';
@@ -41,9 +46,7 @@ export const writeTool = Tool.define({
   },
   inputSchema,
   execute: async (input, context) => {
-    // Normalize path: convert Windows backslashes to forward slashes
-    // This is a safety fallback in case the AI model generates paths with backslashes
-    const file_path = input.file_path.replace(/\\/g, '/');
+    const file_path = normalizeFileMutationPathInput(input.file_path);
     const { content } = input;
     const allowedRoots = context.allowedPathRoots?.length ? context.allowedPathRoots : context.projectDir;
 
@@ -56,15 +59,7 @@ export const writeTool = Tool.define({
       fs.mkdirSync(parentDir, { recursive: true });
     }
 
-    // Validate JSON files before writing
-    if (resolvedPath.endsWith('.json')) {
-      try {
-        JSON.parse(content);
-      } catch (jsonError) {
-        const errorMsg = jsonError instanceof Error ? jsonError.message : String(jsonError);
-        throw new Error(`Invalid JSON content: ${errorMsg}. Please ensure the JSON is properly formatted with escaped special characters.`);
-      }
-    }
+    validateJsonWriteContent(resolvedPath, content);
 
     // Write the file
     fs.writeFileSync(resolvedPath, content, 'utf-8');
@@ -73,7 +68,6 @@ export const writeTool = Tool.define({
     const cache = context.fileCache as FileContentCache | undefined;
     cache?.invalidate(resolvedPath);
 
-    const lineCount = content.split(/\r?\n/).length;
-    return `Successfully wrote ${lineCount} lines to ${file_path}`;
+    return formatWriteSuccess(file_path, content);
   },
 });

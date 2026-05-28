@@ -58,6 +58,15 @@ VS Code for shared types and the `.autocode/specs` task protocol.
   previews, line-number formatting, legacy text decoding, image/PDF response
   formatting, task log summaries, and portable path normalization. Host
   runtimes still own file handles, cache access, and security checks.
+- Shared Write/Edit tool policy: file mutation path normalization, JSON
+  content validation, write success formatting, exact replacement planning,
+  edit error messages, occurrence counting, and replace-all semantics. Host
+  runtimes still own directory creation, file reads/writes, cache invalidation,
+  and security checks.
+- Shared Bash tool policy: timeout clamping, output truncation, compiler error
+  compaction, Windows fast-failure rules, denied/background messages, and
+  execution result formatting. Host runtimes still own shell selection,
+  process execution, abort handling, and command security hooks.
 - Platform adapter interfaces for host-specific workspace, terminal,
   notification, task execution, secrets, and git integrations.
 
@@ -127,20 +136,26 @@ moved into core.
 17. **Read tool policy** - shared line limits, line-number formatting,
     large-file preview notes, legacy text decoding, image/PDF response
     formatting, task log summaries, and portable path normalization. Done.
-18. **Provider registry adapters** - AI SDK provider constructors stay in
+18. **Write/Edit tool policy** - shared file mutation path normalization,
+    JSON validation, write result formatting, exact edit planning, occurrence
+    counting, edit validation errors, and replace-all semantics. Done.
+19. **Bash tool policy** - shared timeout clamping, output truncation,
+    compiler error compaction, Windows fast-failure rules,
+    denied/background messages, and execution result formatting. Done.
+20. **Provider registry adapters** - AI SDK provider constructors stay in
     consuming runtimes and translate shared core plans into concrete SDK
     instances.
-19. **Auth resolver** - non-Electron resolver logic only. OS keychain reads
+21. **Auth resolver** - non-Electron resolver logic only. OS keychain reads
     stay in the consuming app and are injected.
-20. **Builtin tools** - write, edit, bash, and registry
+22. **Builtin tools** - registry construction and remaining host bindings
     construction.
-21. **AI client factory** - shared client creation once dependencies are
+23. **AI client factory** - shared client creation once dependencies are
     extracted.
-22. **Session runtime** - runner, error classification, continuation, and
+24. **Session runtime** - runner, error classification, continuation, and
     stream handling.
-23. **Utility runners** - commit messages, title generation, changelog,
+25. **Utility runners** - commit messages, title generation, changelog,
     merge resolver, and similar leaf runners.
-24. **Orchestration** - planner, coder, and QA pipeline where it is truly
+26. **Orchestration** - planner, coder, and QA pipeline where it is truly
     frontend-independent.
 
 The desktop app keeps its IPC handlers, renderer, Electron bootstrap, PTY
