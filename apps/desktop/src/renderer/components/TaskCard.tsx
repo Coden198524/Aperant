@@ -1,5 +1,6 @@
 import { useState, useEffect, useRef, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
+import { buildAutocodeTaskCardViewModel } from '@autocode/core/frontend/task-view-model';
 import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, GitPullRequest, MoreVertical, Trash2 } from 'lucide-react';
 import { Card, CardContent } from './ui/card';
 import { Badge } from './ui/badge';
@@ -23,7 +24,7 @@ import {
   DropdownMenuSeparator,
   DropdownMenuTrigger,
 } from './ui/dropdown-menu';
-import { buildTokenHoverTitle, cn, formatRelativeTime, formatTokenCount, sanitizeMarkdownForDisplay } from '../lib/utils';
+import { buildTokenHoverTitle, cn, formatTokenCount, sanitizeMarkdownForDisplay } from '../lib/utils';
 import { resolveActiveSubtaskIndex } from '../lib/subtask-progress';
 import { PhaseProgressIndicator } from './PhaseProgressIndicator';
 import {
@@ -165,13 +166,17 @@ export const TaskCard = memo(function TaskCard({
   const [worktreeChangesInfo, setWorktreeChangesInfo] = useState<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number } | null>(null);
   const [isCheckingChanges, setIsCheckingChanges] = useState(false);
   const stuckIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const taskView = useMemo(
+    () => buildAutocodeTaskCardViewModel(task, null, { descriptionMaxLength: 120 }),
+    [task]
+  );
 
   const isRunning = task.status === 'in_progress';
   const isExecutionActive = task.status === 'in_progress' || task.status === 'ai_review';
   const executionPhase = task.executionProgress?.phase;
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
-  const activeBatchCount = task.subtasks.filter((subtask) => subtask.status === 'in_progress').length;
-  const hasParallelSubtasks = isRunning && activeBatchCount > 1;
+  const activeBatchCount = taskView.activeSubtaskCount;
+  const hasParallelSubtasks = isRunning && taskView.hasParallelSubtasks;
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);
@@ -201,8 +206,8 @@ export const TaskCard = memo(function TaskCard({
 
   // Memoize relative time (recalculates only when updatedAt changes)
   const relativeTime = useMemo(
-    () => formatRelativeTime(task.updatedAt),
-    [task.updatedAt]
+    () => taskView.updatedAtRelativeLabel,
+    [taskView.updatedAtRelativeLabel]
   );
 
   const tokenBadges = useMemo(() => {

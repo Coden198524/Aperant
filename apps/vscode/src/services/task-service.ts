@@ -1,6 +1,7 @@
 import {
   buildAutocodeTaskRunnerShellCommand,
   buildAutocodeWorkspaceState,
+  createAutocodeAgentRuntimeStartPlan,
   createAutocodeTaskRunPlan,
   createManualAutocodeTask,
   createStartedAutocodeTaskRun,
@@ -53,6 +54,14 @@ export function createStartedRunPlan(projectRoot: string, taskId: string, option
     cli: options.cli,
     customCommand: options.customCommand,
     bypassPermissions: options.bypassPermissions,
+  });
+}
+
+export function createAgentRuntimeStartPlan(projectRoot: string, taskId: string) {
+  return createAutocodeAgentRuntimeStartPlan({
+    projectRoot,
+    dataDirName: getConfiguredDataDirName(),
+    taskId,
   });
 }
 

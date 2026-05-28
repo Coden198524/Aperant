@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { getAutocodeSpecDir, listAutocodeTasks } from './spec-store.js';
 
 export type AutocodeTaskLogPhase = 'planning' | 'coding' | 'validation';
@@ -69,12 +70,11 @@ export interface UpdateAutocodeTaskLogPhaseInput extends AutocodeTaskLogsInput {
   message?: string;
 }
 
-const TASK_LOGS_FILE = 'task_logs.json';
 const LOG_TEXT_MAX_CHARS = 4000;
 const LOG_DETAIL_MAX_CHARS = 12000;
 
 export function getAutocodeTaskLogsPath(input: AutocodeTaskLogsInput): string {
-  return join(resolveTaskSpecDir(input), TASK_LOGS_FILE);
+  return join(resolveTaskSpecDir(input), AUTOCODE_TASK_ARTIFACTS.taskLogs);
 }
 
 export function createEmptyAutocodeTaskLogs(specId: string, now = new Date().toISOString()): AutocodeTaskLogs {
@@ -258,7 +258,7 @@ function salvageTaskLogs(content: string, specId: string, error: unknown): Autoc
     timestamp: now,
     type: 'error',
     phase: 'planning',
-    content: `task_logs.json could not be parsed. ${error instanceof Error ? error.message : String(error)}`,
+    content: `${AUTOCODE_TASK_ARTIFACTS.taskLogs} could not be parsed. ${error instanceof Error ? error.message : String(error)}`,
     detail: sanitizeText(content, LOG_DETAIL_MAX_CHARS),
     collapsed: true,
   });

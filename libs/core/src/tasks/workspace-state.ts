@@ -1,3 +1,9 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
+import {
+  createAutocodeAgentRuntimePlan,
+  type AutocodeAgentRuntimePlan,
+} from '../runtime/agent-runtime.js';
 import { buildProjectIndex, type ProjectIndex } from '../project/index.js';
 import { summarizeWorkspace, type WorkspaceSummary } from '../workspace/summary.js';
 import {
@@ -6,14 +12,18 @@ import {
   type AutocodeTaskRunPlan,
   type CreateAutocodeTaskRunPlanInput,
 } from './cli-runner.js';
+import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { readAutocodeTaskLogs, updateAutocodeTaskLogPhase, type AutocodeTaskLogs } from './logs.js';
 import {
   createAutocodeTask,
+  getAutocodeSpecDir,
   listAutocodeTasks,
   updateAutocodeTaskPlanStatus,
   type AutocodeTask,
   type AutocodeTaskMetadata,
   type AutocodeTaskPathsInput,
+  type AutocodeTaskRequirements,
+  type CreateAutocodeTaskInput,
 } from './spec-store.js';
 
 export interface AutocodeWorkspaceState {
@@ -35,6 +45,15 @@ export interface CreateManualAutocodeTaskInput extends AutocodeTaskPathsInput {
   title: string;
   description: string;
   metadata?: AutocodeTaskMetadata;
+  requirements?: AutocodeTaskRequirements;
+  now?: string;
+  prepareSpecArtifacts?: CreateAutocodeTaskInput['prepareSpecArtifacts'];
+}
+
+export interface CreateAutocodeAgentRuntimeStartPlanInput extends AutocodeTaskPathsInput {
+  taskId: string;
+  projectId?: string;
+  baseBranch?: string;
 }
 
 export interface StartedAutocodeTaskRun {
@@ -101,6 +120,9 @@ export function createManualAutocodeTask(input: CreateManualAutocodeTaskInput): 
     title: input.title,
     description: input.description,
     metadata: buildManualAutocodeTaskMetadata(input.metadata),
+    requirements: input.requirements,
+    now: input.now,
+    prepareSpecArtifacts: input.prepareSpecArtifacts,
   });
 }
 
@@ -119,6 +141,37 @@ export function createStartedAutocodeTaskRun(input: CreateAutocodeTaskRunPlanInp
     task,
     command: buildAutocodeTaskRunnerShellCommand(plan),
   };
+}
+
+export function createAutocodeAgentRuntimeStartPlan(
+  input: CreateAutocodeAgentRuntimeStartPlanInput,
+): AutocodeAgentRuntimePlan {
+  const task = listAutocodeTasks({
+    projectRoot: input.projectRoot,
+    dataDirName: input.dataDirName,
+  }).find((candidate) => candidate.id === input.taskId || candidate.specId === input.taskId);
+
+  if (!task) {
+    throw new Error(`Task not found: ${input.taskId}`);
+  }
+
+  const specDir = getAutocodeSpecDir({
+    projectRoot: input.projectRoot,
+    dataDirName: input.dataDirName,
+    specId: task.specId,
+  });
+
+  return createAutocodeAgentRuntimePlan({
+    projectRoot: input.projectRoot,
+    dataDirName: input.dataDirName,
+    projectId: input.projectId,
+    taskId: input.taskId,
+    task,
+    specDir,
+    hasSpec: existsSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile)),
+    planHasSubtasks: hasAutocodePlanSubtasks(join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan)),
+    baseBranch: input.baseBranch,
+  });
 }
 
 export function markAutocodeTaskDone(input: AutocodeTaskActionInput): AutocodeTask {
@@ -161,4 +214,22 @@ export function markAutocodeTaskStopped(input: AutocodeTaskActionInput & {
   });
 
   return task;
+}
+
+function hasAutocodePlanSubtasks(planPath: string): boolean {
+  try {
+    const plan = JSON.parse(readFileSync(planPath, 'utf8')) as {
+      phases?: Array<{ subtasks?: unknown[]; chunks?: unknown[] }>;
+    };
+    return plan.phases?.some((phase) => {
+      const subtasks = Array.isArray(phase.subtasks)
+        ? phase.subtasks
+        : Array.isArray(phase.chunks)
+          ? phase.chunks
+          : [];
+      return subtasks.length > 0;
+    }) === true;
+  } catch {
+    return false;
+  }
 }

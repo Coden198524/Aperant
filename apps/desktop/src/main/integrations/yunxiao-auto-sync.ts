@@ -1,8 +1,7 @@
 import type { BrowserWindow } from 'electron';
-import path from 'path';
-import { existsSync, mkdirSync, readdirSync, writeFileSync } from 'fs';
-import type { Project, TaskMetadata, YunxiaoIssueSyncResult, YunxiaoWorkItem } from '../../shared/types';
-import { AUTO_BUILD_PATHS, getSpecsDir, IPC_CHANNELS } from '../../shared/constants';
+import { createImportedAutocodeTask } from '@autocode/core';
+import type { Project, YunxiaoIssueSyncResult, YunxiaoWorkItem } from '../../shared/types';
+import { IPC_CHANNELS } from '../../shared/constants';
 import { isClosedYunxiaoStatus } from '../../shared/utils/yunxiao-status';
 import { projectStore } from '../project-store';
 import { safeSendToRenderer } from '../ipc-handlers/utils';
@@ -19,7 +18,6 @@ import {
   toRecord,
   withYunxiaoClient
 } from '../ipc-handlers/yunxiao-handlers';
-import { buildSpecId } from '../ipc-handlers/shared/spec-id';
 import { buildYunxiaoTaskMetadata } from '../ipc-handlers/yunxiao/metadata';
 import { formatYunxiaoDescriptionContent } from '../ipc-handlers/yunxiao/description';
 import { sanitizeText, sanitizeUrl } from '../ipc-handlers/shared/sanitize';
@@ -143,53 +141,12 @@ function createBacklogTaskFromYunxiaoItem(project: Project, item: YunxiaoWorkIte
     throw new Error('Missing Yunxiao work item id');
   }
 
-  const specsBaseDir = getSpecsDir(project.autoBuildPath);
-  const specsDir = path.join(project.path, specsBaseDir);
-  if (!existsSync(specsDir)) {
-    mkdirSync(specsDir, { recursive: true });
-  }
-
-  const existingNumbers = readdirSync(specsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const match = entry.name.match(/^(\d+)/);
-      return match ? Number.parseInt(match[1], 10) : 0;
-    })
-    .filter((value) => value > 0);
-  const specNumber = existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
-
   const safeTitle = sanitizeText(item.subject || `Yunxiao ${item.id}`, 500);
   const safeIdentifier = sanitizeText(item.identifier || item.id, 120);
   const safeUrl = sanitizeUrl(item.url || '');
   const description = buildYunxiaoTaskDescription(item);
-  const specId = buildSpecId(specNumber, safeTitle, 'yunxiao');
-  const specDir = path.join(specsDir, specId);
-  mkdirSync(specDir, { recursive: true });
 
-  const now = new Date().toISOString();
-  writeFileSync(
-    path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
-    JSON.stringify({
-      feature: safeTitle,
-      description,
-      created_at: now,
-      updated_at: now,
-      status: 'pending',
-      phases: []
-    }, null, 2),
-    'utf-8'
-  );
-
-  writeFileSync(
-    path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS),
-    JSON.stringify({
-      task_description: description,
-      workflow_type: 'feature'
-    }, null, 2),
-    'utf-8'
-  );
-
-  const metadata: TaskMetadata = buildYunxiaoTaskMetadata({
+  const metadata = buildYunxiaoTaskMetadata({
     workItemId: sanitizeText(item.id, 120),
     identifier: safeIdentifier,
     url: safeUrl || undefined,
@@ -198,13 +155,19 @@ function createBacklogTaskFromYunxiaoItem(project: Project, item: YunxiaoWorkIte
     workitemCategoryName: item.workitemType?.name
   });
 
-  writeFileSync(
-    path.join(specDir, 'task_metadata.json'),
-    JSON.stringify(metadata, null, 2),
-    'utf-8'
-  );
+  const task = createImportedAutocodeTask({
+    projectRoot: project.path,
+    dataDirName: project.autoBuildPath || '.autocode',
+    title: safeTitle,
+    description,
+    fallbackSlug: 'yunxiao',
+    metadata,
+    requirements: {
+      workflow_type: 'feature',
+    },
+  });
 
-  return specId;
+  return task.specId;
 }
 
 export class YunxiaoAutoSyncService {

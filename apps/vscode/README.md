@@ -11,6 +11,9 @@ VS Code extension host and imports shared headless code from
 - Shows workspace summary data from `@autocode/core`.
 - Lists Autocode tasks from the project data directory.
 - Creates tasks in the same `.autocode/specs/<task-id>/` file protocol used by the desktop app.
+- Resolves the shared agent runtime start plan from `@autocode/core` before
+  launching a task, so VS Code sees the same `direct` / `spec` / `planning` /
+  `coding` decision as the desktop runtime adapter.
 - Starts a task by using `@autocode/core` to write a shared run prompt,
   then launches the configured CLI in a VS Code terminal.
 - Opens the latest task plan file and reveals task folders from VS Code.
@@ -51,7 +54,9 @@ directory by default. Change `autocode.projectDataDir` only when the project
 uses a different project-relative data directory.
 
 Task start uses `autocode.preferredCLI` and defaults to `claude-code`. The
-extension creates a prompt file in the task directory and passes that file to
-the selected CLI from the VS Code terminal. The generated runner writes
-`autocode-run-result.json` and updates `implementation_plan.json` when the CLI
-exits, so task status remains visible to other clients.
+extension first derives the shared agent runtime plan, then creates a prompt
+file in the task directory and passes that file to the selected CLI from the
+VS Code terminal. The generated runner writes `autocode-run-result.json` and
+updates `implementation_plan.json` when the CLI exits, so task status remains
+visible to other clients. A future VS Code host adapter can execute the same
+runtime plan directly without changing task selection semantics.

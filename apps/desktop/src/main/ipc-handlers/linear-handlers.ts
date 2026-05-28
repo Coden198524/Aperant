@@ -1,16 +1,15 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
-import { IPC_CHANNELS, getSpecsDir, AUTO_BUILD_PATHS } from '../../shared/constants';
+import { createImportedAutocodeTask } from '@autocode/core';
+import { IPC_CHANNELS } from '../../shared/constants';
 import type { IPCResult, LinearIssue, LinearTeam, LinearProject, LinearImportResult, LinearSyncStatus, Project, TaskMetadata } from '../../shared/types';
 import path from 'path';
-import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { projectStore } from '../project-store';
 import { parseEnvFile } from './utils';
 import { sanitizeText, sanitizeUrl } from './shared/sanitize';
-import { buildSpecId } from './shared/spec-id';
-
-
 import { AgentManager } from '../agent';
+import type { SpecCreationMetadata } from '../agent/types';
 
 /**
  * Register all linear-related IPC handlers
@@ -438,13 +437,6 @@ export function registerLinearHandlers(
         let failed = 0;
         const errors: string[] = [];
 
-        // Set up specs directory
-                const specsBaseDir = getSpecsDir(project.autoBuildPath);
-        const specsDir = path.join(project.path, specsBaseDir);
-        if (!existsSync(specsDir)) {
-          mkdirSync(specsDir, { recursive: true });
-        }
-
         // Create tasks for each imported issue
         for (const issue of data.issues.nodes) {
           try {
@@ -471,61 +463,34 @@ ${labelsStr ? `**Labels:** ${labelsStr}` : ''}
 ${safeDescription || 'No description provided.'}
 `;
 
-            // Find next available spec number
-            let specNumber = 1;
-            const existingDirs = readdirSync(specsDir, { withFileTypes: true })
-              .filter(d => d.isDirectory())
-              .map(d => d.name);
-            const existingNumbers = existingDirs
-              .map(name => {
-                const match = name.match(/^(\d+)/);
-                return match ? parseInt(match[1], 10) : 0;
-              })
-              .filter(n => n > 0);
-            if (existingNumbers.length > 0) {
-              specNumber = Math.max(...existingNumbers) + 1;
-            }
-
-            const specId = buildSpecId(specNumber, safeTitle);
-
-            // Create spec directory
-            const specDir = path.join(specsDir, specId);
-            mkdirSync(specDir, { recursive: true });
-
-            // Create initial implementation_plan.json
-            const now = new Date().toISOString();
-            const implementationPlan = {
-              feature: safeTitle,
-              description: description,
-              created_at: now,
-              updated_at: now,
-              status: 'pending',
-              phases: []
-            };
-            // lgtm[js/http-to-file-access] - specDir is controlled, Linear data sanitized
-            writeFileSync(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), JSON.stringify(implementationPlan, null, 2), 'utf-8');
-
-            // Create requirements.json
-            const requirements = {
-              task_description: description,
-              workflow_type: 'feature'
-            };
-            // lgtm[js/http-to-file-access] - specDir is controlled, Linear data sanitized
-            writeFileSync(path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS), JSON.stringify(requirements, null, 2), 'utf-8');
-
             // Build metadata
-            const metadata: TaskMetadata = {
+            const metadata = {
               sourceType: 'linear',
               linearIssueId: sanitizeText(issue.id, 100),
               linearIdentifier: safeIdentifier,
               linearUrl: safeUrl,
               category: 'feature'
-            };
-            // lgtm[js/http-to-file-access] - specDir is controlled, Linear data sanitized
-            writeFileSync(path.join(specDir, 'task_metadata.json'), JSON.stringify(metadata, null, 2), 'utf-8');
+            } satisfies TaskMetadata & { sourceType: 'linear' };
+
+            const task = createImportedAutocodeTask({
+              projectRoot: project.path,
+              dataDirName: project.autoBuildPath || '.autocode',
+              title: safeTitle,
+              description,
+              metadata,
+              requirements: {
+                workflow_type: 'feature',
+              },
+            });
 
             // Start spec creation with the existing spec directory
-            agentManager.startSpecCreation(specId, project.path, description, specDir, metadata);
+            agentManager.startSpecCreation(
+              task.specId,
+              project.path,
+              description,
+              task.specsPath,
+              metadata as unknown as SpecCreationMetadata,
+            );
 
             imported++;
           } catch (err) {

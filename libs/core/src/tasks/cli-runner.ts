@@ -6,6 +6,7 @@ import {
   type AutocodePlanStatus,
   type AutocodeTask,
 } from './spec-store.js';
+import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import {
   getAutocodeCliPermissionArgs,
   resolveAutocodeCliInvocation,
@@ -105,8 +106,10 @@ function resolveTask(projectRoot: string, dataDirName: string, taskId: string): 
 }
 
 function resolveRunPhase(specDir: string): AutocodeTaskRunPhase {
-  const hasSpec = existsSync(join(specDir, 'spec.md'));
-  const plan = readJson<{ phases?: Array<{ subtasks?: unknown[]; chunks?: unknown[] }> }>(join(specDir, 'implementation_plan.json'));
+  const hasSpec = existsSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
+  const plan = readJson<{ phases?: Array<{ subtasks?: unknown[]; chunks?: unknown[] }> }>(
+    join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
+  );
   const hasSubtasks = plan?.phases?.some((phase) => {
     const subtasks = Array.isArray(phase.subtasks) ? phase.subtasks : Array.isArray(phase.chunks) ? phase.chunks : [];
     return subtasks.length > 0;
@@ -146,9 +149,9 @@ function buildTaskRunPrompt(input: {
       '',
       '## Required Output',
       '',
-      `- Write ${input.specDir}/spec.md with overview, scope, implementation notes, and success criteria.`,
-      `- Update ${input.specDir}/requirements.json if the current task description needs structured requirements.`,
-      `- Write ${input.specDir}/implementation_plan.json with concrete phases and subtasks.`,
+      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} with overview, scope, implementation notes, and success criteria.`,
+      `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if the current task description needs structured requirements.`,
+      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete phases and subtasks.`,
       '- Keep the plan compatible with Autocode: phases[].subtasks[] should include id, title, description, and status.',
       '- Set new subtask statuses to "pending".',
     ].join('\n')}`;
@@ -162,8 +165,8 @@ function buildTaskRunPrompt(input: {
       '',
       '## Required Output',
       '',
-      `- Read ${input.specDir}/spec.md and ${input.specDir}/requirements.json if needed.`,
-      `- Write ${input.specDir}/implementation_plan.json with concrete phases and subtasks.`,
+      `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
+      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete phases and subtasks.`,
       '- Keep subtasks small enough to implement and verify independently.',
       '- Set new subtask statuses to "pending".',
     ].join('\n')}`;
@@ -176,12 +179,12 @@ function buildTaskRunPrompt(input: {
     '',
     '## Required Workflow',
     '',
-    `- Read ${input.specDir}/implementation_plan.json first.`,
-    `- Use ${input.specDir}/spec.md only for missing acceptance details.`,
+    `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} first.`,
+    `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
     '- Work through pending subtasks and update their statuses as work completes.',
     '- Add concise completion summaries to completed subtasks when practical.',
     '- Run the most relevant validation command for the project.',
-    `- Leave a short implementation summary in ${input.specDir}/direct_summary.md or update the plan with completion details.`,
+    `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or update the plan with completion details.`,
   ].join('\n')}`;
 }
 
@@ -207,6 +210,7 @@ const phase = ${JSON.stringify(input.phase)};
 const specDir = ${JSON.stringify(input.specDir)};
 const taskTitle = ${JSON.stringify(input.taskTitle)};
 const taskDescription = ${JSON.stringify(input.taskDescription)};
+const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
 const prompt = readFileSync(promptFilePath, 'utf8');
 const logPhase = phase === 'coding' ? 'coding' : 'planning';
 
@@ -251,7 +255,7 @@ function finalize(exitCode, signal, explicitError) {
     updatedAt: now,
   };
 
-  writeJson(join(specDir, 'autocode-run-result.json'), result);
+  writeJson(join(specDir, artifacts.runResult), result);
   updatePlanStatus(failed, result.message, now);
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
   process.exit(failed ? 1 : 0);
@@ -259,21 +263,21 @@ function finalize(exitCode, signal, explicitError) {
 
 function validateExpectedArtifacts() {
   if (phase === 'spec') {
-    if (!existsSync(join(specDir, 'spec.md'))) {
-      return 'CLI finished without creating spec.md.';
+    if (!existsSync(join(specDir, artifacts.specFile))) {
+      return \`CLI finished without creating \${artifacts.specFile}.\`;
     }
     if (!planHasSubtasks()) {
-      return 'CLI finished without creating implementation_plan.json subtasks.';
+      return \`CLI finished without creating \${artifacts.implementationPlan} subtasks.\`;
     }
   }
   if (phase === 'planning' && !planHasSubtasks()) {
-    return 'CLI finished without creating implementation_plan.json subtasks.';
+    return \`CLI finished without creating \${artifacts.implementationPlan} subtasks.\`;
   }
   return undefined;
 }
 
 function planHasSubtasks() {
-  const plan = readJson(join(specDir, 'implementation_plan.json'));
+  const plan = readJson(join(specDir, artifacts.implementationPlan));
   return plan?.phases?.some((phase) => {
     const subtasks = Array.isArray(phase.subtasks) ? phase.subtasks : Array.isArray(phase.chunks) ? phase.chunks : [];
     return subtasks.length > 0;
@@ -281,7 +285,7 @@ function planHasSubtasks() {
 }
 
 function updatePlanStatus(failed, message, now) {
-  const planPath = join(specDir, 'implementation_plan.json');
+  const planPath = join(specDir, artifacts.implementationPlan);
   const plan = readJson(planPath) || {
     feature: taskTitle,
     description: taskDescription,
@@ -299,7 +303,7 @@ function updatePlanStatus(failed, message, now) {
 
 function updateTaskLogs(logPhase, status, message) {
   const now = new Date().toISOString();
-  const logsPath = join(specDir, 'task_logs.json');
+  const logsPath = join(specDir, artifacts.taskLogs);
   const logs = readJson(logsPath) || {
     spec_id: specDir.split(/[\\\\/]/).pop() || taskTitle,
     created_at: now,

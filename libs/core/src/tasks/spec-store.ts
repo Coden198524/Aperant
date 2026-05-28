@@ -1,5 +1,10 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, writeFileSync } from 'node:fs';
-import { dirname, isAbsolute, join, normalize } from 'node:path';
+import { dirname, join } from 'node:path';
+import {
+  AUTOCODE_SPECS_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
+  normalizeAutocodeProjectDataDirName,
+} from './artifacts.js';
 
 export type AutocodeTaskStatus =
   | 'backlog'
@@ -61,6 +66,27 @@ export interface AutocodeTaskMetadata {
   [key: string]: unknown;
 }
 
+export interface AutocodeTaskRequirements extends Record<string, unknown> {
+  task_description?: string;
+  workflow_type?: string;
+}
+
+export interface AutocodeTaskCreationContext {
+  projectRoot: string;
+  dataDirName: string;
+  specId: string;
+  specDir: string;
+  title: string;
+  description: string;
+  metadata: AutocodeTaskMetadata;
+  now: string;
+}
+
+export interface AutocodeTaskCreationArtifacts {
+  metadata?: AutocodeTaskMetadata;
+  requirements?: AutocodeTaskRequirements;
+}
+
 export interface AutocodePlanSubtask {
   id: string;
   title: string;
@@ -91,7 +117,17 @@ export interface CreateAutocodeTaskInput {
   dataDirName: string;
   title: string;
   description: string;
+  specId?: string;
+  fallbackSlug?: string;
+  overwrite?: boolean;
   metadata?: AutocodeTaskMetadata;
+  requirements?: AutocodeTaskRequirements;
+  now?: string;
+  prepareSpecArtifacts?: (context: AutocodeTaskCreationContext) => AutocodeTaskCreationArtifacts | void;
+}
+
+export interface CreateImportedAutocodeTaskInput extends CreateAutocodeTaskInput {
+  metadata: AutocodeTaskMetadata & { sourceType: NonNullable<AutocodeTaskMetadata['sourceType']> };
 }
 
 export interface ListAutocodeTasksInput {
@@ -108,6 +144,7 @@ export interface AutocodeTaskPathsInput {
 export type AutocodePlanStatus =
   | 'pending'
   | 'planning'
+  | 'in_progress'
   | 'coding'
   | 'review'
   | 'completed'
@@ -158,19 +195,11 @@ interface RawPlanSubtask {
   pattern_files?: unknown;
 }
 
-const AUTOCODE_PATHS = {
-  specsDirName: 'specs',
-  implementationPlan: 'implementation_plan.json',
-  requirements: 'requirements.json',
-  specFile: 'spec.md',
-  taskMetadata: 'task_metadata.json',
-} as const;
-
 const MAX_SPEC_SLUG_LENGTH = 50;
 const DEFAULT_SPEC_SLUG = 'task';
 
 export function getAutocodeSpecsDir(input: AutocodeTaskPathsInput): string {
-  return join(input.projectRoot, normalizeProjectDataDirName(input.dataDirName), AUTOCODE_PATHS.specsDirName);
+  return join(input.projectRoot, normalizeAutocodeProjectDataDirName(input.dataDirName), AUTOCODE_SPECS_DIR_NAME);
 }
 
 export function getAutocodeSpecDir(input: AutocodeTaskPathsInput & { specId: string }): string {
@@ -192,22 +221,44 @@ export function listAutocodeTasks(input: ListAutocodeTasksInput): AutocodeTask[]
 
 export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask {
   const projectRoot = requireNonEmpty(input.projectRoot, 'projectRoot');
-  const dataDirName = normalizeProjectDataDirName(input.dataDirName);
+  const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
   const description = requireNonEmpty(input.description, 'description');
   const title = input.title.trim() || truncateToTitle(description);
   const specsDir = getAutocodeSpecsDir({ projectRoot, dataDirName });
   mkdirSync(specsDir, { recursive: true });
 
-  const specId = buildAutocodeSpecId(nextSpecNumber(specsDir), title);
+  const requestedSpecId = input.specId?.trim();
+  const specId = requestedSpecId || buildAutocodeSpecId(nextSpecNumber(specsDir), title, input.fallbackSlug);
   const specDir = join(specsDir, specId);
+  if (requestedSpecId && existsSync(specDir) && input.overwrite !== true) {
+    throw new Error(`Task spec already exists: ${specId}`);
+  }
   mkdirSync(specDir, { recursive: true });
 
-  const now = new Date().toISOString();
-  const metadata: AutocodeTaskMetadata = {
+  const now = input.now ?? new Date().toISOString();
+  let metadata: AutocodeTaskMetadata = {
     sourceType: 'manual',
     ...input.metadata,
     enableBatchExecution: input.metadata?.enableBatchExecution === true,
   };
+
+  const prepared = input.prepareSpecArtifacts?.({
+    projectRoot,
+    dataDirName,
+    specId,
+    specDir,
+    title,
+    description,
+    metadata,
+    now,
+  });
+  if (prepared?.metadata) {
+    const preparedMetadata = { ...metadata, ...prepared.metadata };
+    metadata = {
+      ...preparedMetadata,
+      enableBatchExecution: preparedMetadata.enableBatchExecution === true,
+    };
+  }
 
   const plan: ImplementationPlanFile = {
     feature: title,
@@ -218,12 +269,15 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
     phases: [],
   };
 
-  writeJson(join(specDir, AUTOCODE_PATHS.implementationPlan), plan);
-  writeJson(join(specDir, AUTOCODE_PATHS.taskMetadata), metadata);
-  writeJson(join(specDir, AUTOCODE_PATHS.requirements), {
-    task_description: description,
-    workflow_type: metadata.category ?? 'feature',
-  });
+  writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan), plan);
+  writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata), metadata);
+  writeJson(
+    join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements),
+    buildAutocodeTaskRequirements(description, metadata, {
+      ...input.requirements,
+      ...prepared?.requirements,
+    }),
+  );
 
   return {
     id: specId,
@@ -237,6 +291,33 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
     specsPath: specDir,
     createdAt: now,
     updatedAt: now,
+  };
+}
+
+export function createImportedAutocodeTask(input: CreateImportedAutocodeTaskInput): AutocodeTask {
+  return createAutocodeTask({
+    ...input,
+    metadata: {
+      ...input.metadata,
+      sourceType: input.metadata.sourceType,
+      enableBatchExecution: input.metadata.enableBatchExecution === true,
+    },
+  });
+}
+
+export function buildAutocodeTaskRequirements(
+  description: string,
+  metadata: AutocodeTaskMetadata = {},
+  requirements: AutocodeTaskRequirements = {},
+): AutocodeTaskRequirements {
+  const requestedWorkflowType = typeof requirements.workflow_type === 'string' && requirements.workflow_type.trim()
+    ? requirements.workflow_type.trim()
+    : undefined;
+  const workflowType = metadata.category ?? requestedWorkflowType ?? 'feature';
+  return {
+    ...requirements,
+    task_description: description,
+    workflow_type: workflowType,
   };
 }
 
@@ -255,7 +336,7 @@ export function updateAutocodeTaskPlanStatus(input: UpdateAutocodeTaskPlanStatus
     dataDirName: input.dataDirName,
     specId: task.specId,
   });
-  const planPath = join(specDir, AUTOCODE_PATHS.implementationPlan);
+  const planPath = join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
   const plan = readJson<ImplementationPlanFile>(planPath) ?? {
     feature: task.title,
     description: task.description,
@@ -312,10 +393,10 @@ export function slugifySpecTitle(title: string): string {
 
 function readAutocodeTask(input: AutocodeTaskPathsInput & { specId: string }): AutocodeTask | null {
   const specDir = getAutocodeSpecDir(input);
-  const plan = readJson<ImplementationPlanFile>(join(specDir, AUTOCODE_PATHS.implementationPlan));
-  const requirements = readJson<Record<string, unknown>>(join(specDir, AUTOCODE_PATHS.requirements));
-  const metadata = readJson<AutocodeTaskMetadata>(join(specDir, AUTOCODE_PATHS.taskMetadata)) ?? undefined;
-  const specTitle = readSpecTitle(join(specDir, AUTOCODE_PATHS.specFile));
+  const plan = readJson<ImplementationPlanFile>(join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
+  const requirements = readJson<Record<string, unknown>>(join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements));
+  const metadata = readJson<AutocodeTaskMetadata>(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata)) ?? undefined;
+  const specTitle = readSpecTitle(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
 
   if (!plan && !requirements && !metadata && !specTitle) {
     return null;
@@ -419,15 +500,6 @@ function nextSpecNumber(specsDir: string): number {
     })
     .filter((value) => value > 0);
   return existingNumbers.length > 0 ? Math.max(...existingNumbers) + 1 : 1;
-}
-
-function normalizeProjectDataDirName(value: string): string {
-  const dataDirName = requireNonEmpty(value, 'dataDirName').replace(/^[/\\]+/, '').replace(/[/\\]+$/, '');
-  const normalized = normalize(dataDirName);
-  if (isAbsolute(dataDirName) || normalized === '..' || normalized.startsWith(`..\\`) || normalized.startsWith('../')) {
-    throw new Error('dataDirName must be a project-relative directory.');
-  }
-  return dataDirName;
 }
 
 function requireNonEmpty(value: string, name: string): string {

@@ -17,6 +17,11 @@
       "import": "./dist/tasks/cli-catalog.js",
       "default": "./dist/tasks/cli-catalog.js"
     },
+    "./tasks/artifacts": {
+      "types": "./dist/tasks/artifacts.d.ts",
+      "import": "./dist/tasks/artifacts.js",
+      "default": "./dist/tasks/artifacts.js"
+    },
     "./tasks/phase-protocol": {
       "types": "./dist/tasks/phase-protocol.d.ts",
       "import": "./dist/tasks/phase-protocol.js",
@@ -36,6 +41,31 @@
       "types": "./dist/tasks/task-status.d.ts",
       "import": "./dist/tasks/task-status.js",
       "default": "./dist/tasks/task-status.js"
+    },
+    "./frontend/task-view-model": {
+      "types": "./dist/frontend/task-view-model.d.ts",
+      "import": "./dist/frontend/task-view-model.js",
+      "default": "./dist/frontend/task-view-model.js"
+    },
+    "./runtime/agent-runtime": {
+      "types": "./dist/runtime/agent-runtime.d.ts",
+      "import": "./dist/runtime/agent-runtime.js",
+      "default": "./dist/runtime/agent-runtime.js"
+    },
+    "./runtime/agent-messages": {
+      "types": "./dist/runtime/agent-messages.d.ts",
+      "import": "./dist/runtime/agent-messages.js",
+      "default": "./dist/runtime/agent-messages.js"
+    },
+    "./runtime/task-runtime-config": {
+      "types": "./dist/runtime/task-runtime-config.d.ts",
+      "import": "./dist/runtime/task-runtime-config.js",
+      "default": "./dist/runtime/task-runtime-config.js"
+    },
+    "./runtime/session-runtime-options": {
+      "types": "./dist/runtime/session-runtime-options.d.ts",
+      "import": "./dist/runtime/session-runtime-options.js",
+      "default": "./dist/runtime/session-runtime-options.js"
     }
   },
   "files": [

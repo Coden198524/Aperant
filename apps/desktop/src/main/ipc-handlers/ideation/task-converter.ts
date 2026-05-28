@@ -3,13 +3,18 @@
  */
 
 import path from 'path';
-import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import { existsSync, writeFileSync } from 'fs';
 import type { IpcMainInvokeEvent } from 'electron';
-import { AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
+import {
+  buildAutocodeSpecId,
+  createAutocodeTask,
+  type AutocodeTask,
+  type AutocodeTaskMetadata,
+} from '@autocode/core';
+import { AUTO_BUILD_PATHS } from '../../../shared/constants';
 import type {
   IPCResult,
   Task,
-  ImplementationPlan,
   TaskMetadata,
   TaskCategory,
   TaskImpact,
@@ -20,7 +25,23 @@ import { projectStore } from '../../project-store';
 import { readIdeationFile, writeIdeationFile, updateIdeationTimestamp } from './file-utils';
 import type { RawIdea } from './types';
 import { withSpecNumberLock } from '../../utils/spec-number-lock';
-import { buildSpecId } from '../shared/spec-id';
+
+function toDesktopTask(coreTask: AutocodeTask, projectId: string): Task {
+  return {
+    id: coreTask.id,
+    specId: coreTask.specId,
+    projectId,
+    title: coreTask.title,
+    description: coreTask.description,
+    status: coreTask.status as Task['status'],
+    subtasks: coreTask.subtasks,
+    logs: [],
+    metadata: coreTask.metadata as TaskMetadata | undefined,
+    specsPath: coreTask.specsPath,
+    createdAt: new Date(coreTask.createdAt),
+    updatedAt: new Date(coreTask.updatedAt),
+  };
+}
 
 /**
  * Build task description from idea data
@@ -118,39 +139,8 @@ function buildTaskMetadata(idea: RawIdea): TaskMetadata {
   return metadata;
 }
 
-/**
- * Create spec directory structure and files
- */
-function createSpecFiles(
-  specDir: string,
-  idea: RawIdea,
-  _taskDescription: string
-): void {
-  // Create the spec directory
-  mkdirSync(specDir, { recursive: true });
-
-  // Create initial implementation_plan.json
-  const initialPlan: ImplementationPlan = {
-    feature: idea.title,
-    description: idea.description,
-    created_at: new Date().toISOString(),
-    updated_at: new Date().toISOString(),
-    status: 'backlog',
-    planStatus: 'pending',
-    phases: [],
-    workflow_type: 'development',
-    services_involved: [],
-    final_acceptance: [],
-    spec_file: 'spec.md'
-  };
-  writeFileSync(
-    path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
-    JSON.stringify(initialPlan, null, 2),
-    'utf-8'
-  );
-
-  // Create initial spec.md
-  const specContent = `# ${idea.title}
+function buildSpecContent(idea: RawIdea): string {
+  return `# ${idea.title}
 
 ## Overview
 
@@ -163,7 +153,6 @@ ${idea.rationale}
 ---
 *This spec was created from ideation and is pending detailed specification.*
 `;
-  writeFileSync(path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE), specContent, 'utf-8');
 }
 
 /**
@@ -188,15 +177,6 @@ export async function convertIdeaToTask(
   // Quick check that ideation file exists (actual read happens inside lock)
   if (!existsSync(ideationPath)) {
     return { success: false, error: 'Ideation not found' };
-  }
-
-  // Get specs directory path
-  const specsBaseDir = getSpecsDir(project.autoBuildPath);
-  const specsDir = path.join(project.path, specsBaseDir);
-
-  // Ensure specs directory exists
-  if (!existsSync(specsDir)) {
-    mkdirSync(specsDir, { recursive: true });
   }
 
   try {
@@ -227,40 +207,30 @@ export async function convertIdeaToTask(
 
       // Get next spec number from global scan (main + all worktrees)
       const nextNum = lock.getNextSpecNumber(project.autoBuildPath);
-      const specId = buildSpecId(nextNum, idea.title);
-      const specDir = path.join(specsDir, specId);
+      const specId = buildAutocodeSpecId(nextNum, idea.title);
 
       // Build task description and metadata
       const taskDescription = buildTaskDescription(idea);
       const metadata = buildTaskMetadata(idea);
 
-      // Create spec files (inside lock to ensure atomicity)
-      createSpecFiles(specDir, idea, taskDescription);
-
-      // Save metadata
-      const metadataPath = path.join(specDir, 'task_metadata.json');
-      writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+      const coreTask = createAutocodeTask({
+        projectRoot: project.path,
+        dataDirName: project.autoBuildPath || '.autocode',
+        specId,
+        title: idea.title,
+        description: taskDescription,
+        metadata: metadata as unknown as AutocodeTaskMetadata,
+      });
+      writeFileSync(path.join(coreTask.specsPath, AUTO_BUILD_PATHS.SPEC_FILE), buildSpecContent(idea), 'utf-8');
 
       // Update idea status to archived (converted ideas are archived)
       idea.status = 'archived';
-      idea.linked_task_id = specId;
+      idea.linked_task_id = coreTask.specId;
       updateIdeationTimestamp(ideation);
       writeIdeationFile(ideationPath, ideation);
 
-      // Create task object to return
-      const task: Task = {
-        id: specId,
-        specId: specId,
-        projectId,
-        title: idea.title,
-        description: taskDescription,
-        status: 'backlog',
-        subtasks: [],
-        logs: [],
-        metadata,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
+      const task = toDesktopTask(coreTask, projectId);
+      projectStore.invalidateTasksCache(projectId);
 
       return { success: true, data: task };
     });

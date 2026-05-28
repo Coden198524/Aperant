@@ -19,6 +19,18 @@
 
 import path from 'path';
 import { readFileSync, mkdirSync } from 'fs';
+import {
+  applyAutocodePlanPhase,
+  applyAutocodePlanStatus,
+  applyAutocodePlanStatusAndReason,
+  applyAutocodePlanTokenUsage,
+  canSyncAutocodePlanPhases,
+  countAutocodePlanSubtasks,
+  createMinimalAutocodePlan,
+  mapAutocodeTaskStatusToPlanStatus,
+  resetAutocodeStuckSubtasksInPlan,
+  type MutableAutocodePlan,
+} from '@autocode/core';
 import { AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
 import type { TaskStatus, Project, Task, TokenUsage } from '../../../shared/types';
 import { projectStore } from '../../project-store';
@@ -69,60 +81,6 @@ function isFileNotFoundError(err: unknown): boolean {
   return (err as NodeJS.ErrnoException).code === 'ENOENT';
 }
 
-function mergeTokenUsage(previous: TokenUsage | undefined, incoming: TokenUsage): TokenUsage {
-  if (!previous) {
-    return incoming;
-  }
-
-  const prevSteps = previous.stepsExecuted ?? 0;
-  const incomingSteps = incoming.stepsExecuted ?? 0;
-
-  console.log('[plan-file-utils] mergeTokenUsage:', {
-    prevSteps,
-    incomingSteps,
-    previousSessionId: previous.sessionId,
-    incomingSessionId: incoming.sessionId,
-    result: Math.max(prevSteps, incomingSteps),
-  });
-
-  const preferIncomingTokens = !incoming.estimated || previous.estimated === true;
-
-  // WorkerBridge emits task-level cumulative usage, including any historical
-  // baseline loaded when a task is resumed. Persisting must be idempotent:
-  // adding again on sessionId changes double-counts requests after pause/resume.
-  return {
-    promptTokens: preferIncomingTokens
-      ? Math.max(previous.promptTokens ?? 0, incoming.promptTokens ?? 0)
-      : previous.promptTokens,
-    completionTokens: preferIncomingTokens
-      ? Math.max(previous.completionTokens ?? 0, incoming.completionTokens ?? 0)
-      : previous.completionTokens,
-    totalTokens: preferIncomingTokens
-      ? Math.max(previous.totalTokens ?? 0, incoming.totalTokens ?? 0)
-      : previous.totalTokens,
-    thinkingTokens: Math.max(previous.thinkingTokens ?? 0, incoming.thinkingTokens ?? 0) || undefined,
-    cacheReadTokens: Math.max(previous.cacheReadTokens ?? 0, incoming.cacheReadTokens ?? 0) || undefined,
-    cacheCreationTokens: Math.max(previous.cacheCreationTokens ?? 0, incoming.cacheCreationTokens ?? 0) || undefined,
-    stepsExecuted: Math.max(prevSteps, incomingSteps) || undefined,
-    estimated: previous.estimated === true && incoming.estimated === true ? true : undefined,
-    sessionId: incoming.sessionId, // Always use the latest sessionId
-  };
-}
-
-function countSubtasksInPhases(phases: unknown): number {
-  if (!Array.isArray(phases)) {
-    return 0;
-  }
-
-  return phases.reduce((total, phase) => {
-    if (!phase || typeof phase !== 'object') {
-      return total;
-    }
-    const subtasks = (phase as { subtasks?: unknown }).subtasks;
-    return total + (Array.isArray(subtasks) ? subtasks.length : 0);
-  }, 0);
-}
-
 /**
  * Get the plan file path for a task
  */
@@ -136,19 +94,7 @@ export function getPlanPath(project: Project, task: Task): string {
  * Map UI TaskStatus to Python-compatible planStatus
  */
 export function mapStatusToPlanStatus(status: TaskStatus): string {
-  switch (status) {
-    case 'queue':
-      return 'queued';
-    case 'in_progress':
-      return 'in_progress';
-    case 'ai_review':
-    case 'human_review':
-      return 'review';
-    case 'done':
-      return 'completed';
-    default:
-      return 'pending';
-  }
+  return mapAutocodeTaskStatusToPlanStatus(status);
 }
 
 /**
@@ -172,9 +118,7 @@ export async function persistPlanStatus(planPath: string, status: TaskStatus, pr
         return false;
       }
 
-      plan.status = status;
-      plan.planStatus = mapStatusToPlanStatus(status);
-      plan.updated_at = new Date().toISOString();
+      applyAutocodePlanStatus(plan as MutableAutocodePlan, status);
 
       writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
       console.warn(`[plan-file-utils] Successfully persisted status: ${status} to implementation_plan.json`);
@@ -232,9 +176,7 @@ export function persistPlanStatusSync(planPath: string, status: TaskStatus, proj
       return false;
     }
 
-    plan.status = status;
-    plan.planStatus = mapStatusToPlanStatus(status);
-    plan.updated_at = new Date().toISOString();
+    applyAutocodePlanStatus(plan as MutableAutocodePlan, status);
 
     writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
 
@@ -323,23 +265,18 @@ export function persistPlanStatusAndReasonSync(
       // The spec runner will populate the full plan later
       const planDir = path.dirname(planPath);
       mkdirSync(planDir, { recursive: true });
-      plan = {
-        created_at: new Date().toISOString(),
-        phases: []
-      };
+      plan = createMinimalAutocodePlan(
+        { title: '', description: '', createdAt: new Date().toISOString() },
+        status
+      ) as Record<string, unknown>;
       console.log(`[plan-file-utils] Creating minimal plan for XState persistence: ${planPath}`);
     }
 
-    plan.status = status;
-    plan.planStatus = mapStatusToPlanStatus(status);
-    plan.reviewReason = reviewReason;
-    if (xstateState) {
-      plan.xstateState = xstateState;
-    }
-    if (executionPhase) {
-      plan.executionPhase = executionPhase;
-    }
-    plan.updated_at = new Date().toISOString();
+    applyAutocodePlanStatusAndReason(plan as MutableAutocodePlan, status, {
+      reviewReason,
+      xstateState,
+      executionPhase,
+    });
 
     writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
 
@@ -382,32 +319,13 @@ export function persistPlanPhaseSync(
       // File doesn't exist - create minimal plan
       const planDir = path.dirname(planPath);
       mkdirSync(planDir, { recursive: true });
-      plan = {
-        created_at: new Date().toISOString(),
-        phases: []
-      };
+      plan = createMinimalAutocodePlan(
+        { title: '', description: '', createdAt: new Date().toISOString() },
+        'backlog'
+      ) as Record<string, unknown>;
     }
 
-    // Store the execution phase for restoration
-    plan.executionPhase = phase;
-
-    // Also update status to match the phase so the card stays in the correct column on refresh
-    // Map execution phase to TaskStatus for column placement
-    const phaseToStatus: Record<string, TaskStatus> = {
-      'planning': 'in_progress',
-      'coding': 'in_progress',
-      'qa_review': 'ai_review',
-      'qa_fixing': 'ai_review',
-      'complete': 'human_review',
-      'failed': 'error'
-    };
-    const mappedStatus = phaseToStatus[phase];
-    if (mappedStatus) {
-      plan.status = mappedStatus;
-      plan.planStatus = mapStatusToPlanStatus(mappedStatus);
-    }
-
-    plan.updated_at = new Date().toISOString();
+    applyAutocodePlanPhase(plan as MutableAutocodePlan, phase);
 
     writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
 
@@ -447,17 +365,13 @@ export function persistPlanTokenUsageSync(
       }
       const planDir = path.dirname(planPath);
       mkdirSync(planDir, { recursive: true });
-      plan = {
-        created_at: new Date().toISOString(),
-        phases: []
-      };
+      plan = createMinimalAutocodePlan(
+        { title: '', description: '', createdAt: new Date().toISOString() },
+        'backlog'
+      ) as Record<string, unknown>;
     }
 
-    const previousTokenUsage = (plan.tokenUsage && typeof plan.tokenUsage === 'object')
-      ? (plan.tokenUsage as TokenUsage)
-      : undefined;
-    plan.tokenUsage = mergeTokenUsage(previousTokenUsage, usage);
-    plan.updated_at = new Date().toISOString();
+    applyAutocodePlanTokenUsage(plan as MutableAutocodePlan, usage);
 
     writeFileAtomicSync(planPath, JSON.stringify(plan, null, 2));
 
@@ -538,20 +452,16 @@ export async function createPlanIfNotExists(
       // File doesn't exist, continue to create it
     }
 
-    const plan: Record<string, unknown> = {
-      feature: task.title,
-      description: task.description || '',
-      created_at: task.createdAt.toISOString(),
-      updated_at: new Date().toISOString(),
-      status: status,
-      planStatus: mapStatusToPlanStatus(status),
-      phases: []
-    };
-
-    // Include xstateState for accurate restoration on reload
-    if (xstateState) {
-      plan.xstateState = xstateState;
-    }
+    const plan = createMinimalAutocodePlan(
+      {
+        title: task.title,
+        description: task.description || '',
+        createdAt: task.createdAt.toISOString(),
+      },
+      status,
+      new Date().toISOString(),
+      xstateState,
+    );
 
     // Ensure directory exists - use try/catch pattern
     const planDir = path.dirname(planPath);
@@ -589,27 +499,7 @@ export async function resetStuckSubtasks(planPath: string, projectId?: string): 
         return { success: false, resetCount: 0 };
       }
 
-      let resetCount = 0;
-
-      // Iterate through all phases and subtasks
-      if (plan.phases && Array.isArray(plan.phases)) {
-        for (const phase of plan.phases) {
-          if (phase.subtasks && Array.isArray(phase.subtasks)) {
-            for (const subtask of phase.subtasks) {
-              // Only reset subtasks that are stuck (in_progress or failed)
-              // NEVER reset completed subtasks to avoid redoing work
-              if (subtask.status === 'in_progress' || subtask.status === 'failed') {
-                const originalStatus = subtask.status;
-                subtask.status = 'pending';
-                subtask.started_at = null;
-                subtask.completed_at = null;
-                resetCount++;
-                console.log(`[plan-file-utils] Reset subtask ${subtask.id} from ${originalStatus} to pending`);
-              }
-            }
-          }
-        }
-      }
+      const { resetCount } = resetAutocodeStuckSubtasksInPlan(plan as MutableAutocodePlan);
 
       // Only write if we actually reset something
       if (resetCount > 0) {
@@ -707,9 +597,8 @@ export function syncPlanPhasesToMainSync(
       return false;
     }
 
-    const existingSubtaskCount = countSubtasksInPhases(plan.phases);
-    const incomingSubtaskCount = countSubtasksInPhases(phases);
-    if (existingSubtaskCount > 0 && incomingSubtaskCount === 0) {
+    if (!canSyncAutocodePlanPhases(plan.phases, phases)) {
+      const existingSubtaskCount = countAutocodePlanSubtasks(plan.phases);
       console.warn(
         `[plan-file-utils] Skipping empty phase sync to ${mainPlanPath}: existing plan has ${existingSubtaskCount} subtask(s)`
       );
@@ -749,9 +638,7 @@ export function hasPlanWithSubtasks(project: Project, task: Task): boolean {
     const plan = loadImplementationPlanFromFilesSync(planPath);
     if (!plan) return false;
     // A plan exists if it has phases with subtasks (totalCount > 0)
-    const phases = plan.phases as Array<{ subtasks?: Array<unknown> }> | undefined;
-    const totalCount = phases?.flatMap(p => p.subtasks || []).length || 0;
-    return totalCount > 0;
+    return countAutocodePlanSubtasks(plan.phases) > 0;
   } catch {
     // File doesn't exist or is malformed
     return false;

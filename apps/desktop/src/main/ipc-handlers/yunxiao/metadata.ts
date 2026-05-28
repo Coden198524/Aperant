@@ -9,6 +9,16 @@ interface YunxiaoTaskMetadataInput {
   workitemCategoryName?: string;
 }
 
+export interface YunxiaoTaskMetadata {
+  [key: string]: unknown;
+  sourceType: 'yunxiao';
+  yunxiaoWorkItemId: string;
+  yunxiaoIdentifier: string;
+  yunxiaoUrl?: string;
+  category: NonNullable<TaskMetadata['category']>;
+  requireReviewBeforeCoding: true;
+}
+
 function looksLikeBugCategory(value?: string): boolean {
   const normalized = value?.trim().toLowerCase();
   if (!normalized) return false;
@@ -24,7 +34,7 @@ function looksLikeBugCategory(value?: string): boolean {
  * Build task metadata for Yunxiao imported tasks.
  * Imported tasks should default to requiring manual review before coding starts.
  */
-export function buildYunxiaoTaskMetadata(input: YunxiaoTaskMetadataInput): TaskMetadata {
+export function buildYunxiaoTaskMetadata(input: YunxiaoTaskMetadataInput): YunxiaoTaskMetadata {
   const isBugLike = looksLikeBugCategory(input.workitemTypeName)
     || looksLikeBugCategory(input.workitemCategoryId)
     || looksLikeBugCategory(input.workitemCategoryName);

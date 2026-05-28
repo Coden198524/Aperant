@@ -301,11 +301,80 @@ export {
 export type {
   GitAdapter,
   NotificationAdapter,
+  AgentRuntimeAdapter,
   SecretsAdapter,
   TaskExecutionAdapter,
   TerminalAdapter,
   WorkspaceAdapter,
 } from './platform/interfaces/index.js';
+
+export {
+  type AutocodeAgentLanguage,
+  type AutocodeAgentMessage,
+  type AutocodeAgentMessageRole,
+  type BuildAutocodeAgentPromptInput,
+  type BuildAutocodeRuntimeMessagesInput,
+  type BuildAutocodeSpecPromptInput,
+  buildAutocodeCompletionSummaryRequirement,
+  buildAutocodeDefaultDirectTaskPrompt,
+  buildAutocodeDefaultPlannerPrompt,
+  buildAutocodeDefaultQAPrompt,
+  buildAutocodeDefaultSpecPrompt,
+  buildAutocodeDirectTaskExecutionMessages,
+  buildAutocodeQAInitialMessages,
+  buildAutocodeTaskExecutionMessages,
+} from './runtime/agent-messages.js';
+
+export {
+  type AutocodeProviderModelEquivalent,
+  type AutocodeRuntimePhase,
+  type AutocodeTaskRuntimeMetadataConfig,
+  type ResolveAutocodeCrossProviderModelRequestOptions,
+  type ResolveAutocodeTaskPhaseModelInput,
+  type ResolveAutocodeTaskPhaseProviderOptions,
+  inferAutocodePinnedProviderFromModel,
+  inferAutocodeProviderFromModelValue,
+  loadAutocodeTaskRuntimeMetadataConfig,
+  resolveAutocodeCrossProviderModelRequest,
+  resolveAutocodeModelId,
+  resolveAutocodeTaskEnableBatchExecution,
+  resolveAutocodeTaskPhaseModelId,
+  resolveAutocodeTaskPhaseProvider,
+  resolveAutocodeTaskWorkflowMode,
+} from './runtime/task-runtime-config.js';
+
+export {
+  AUTOCODE_AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS,
+  AUTOCODE_DEFAULT_SESSION_MAX_STEPS,
+  AUTOCODE_DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS,
+  AUTOCODE_DIRECT_WORKFLOW_PHASE_STEP_BUDGETS,
+  type AutocodeCustomMcpServer,
+  type AutocodeRuntimePhaseStepBudgets,
+  type AutocodeSessionMcpOptions,
+  type AutocodeSessionRuntimeOptions,
+  type BuildAutocodeSessionRuntimeOptionsInput,
+  buildAutocodeSessionRuntimeOptions,
+  parseAutocodeBooleanEnv,
+  parseAutocodeCustomMcpServers,
+} from './runtime/session-runtime-options.js';
+
+export {
+  type AutocodeAgentRuntimeMode,
+  type AutocodeAgentRuntimeMetadata,
+  type AutocodeAgentRuntimeOptions,
+  type AutocodeAgentRuntimePlan,
+  type AutocodeAgentRuntimeProcessType,
+  type AutocodeAgentRuntimeStarter,
+  type AutocodeAgentRuntimeTaskInput,
+  type AutocodeTaskStartEvent,
+  type CreateAutocodeAgentRuntimePlanInput,
+  type ResolveAutocodeTaskStartEventInput,
+  createAutocodeAgentRuntimePlan,
+  getAutocodeAgentRuntimeModeLabel,
+  resolveAutocodeAgentRuntimeMode,
+  resolveAutocodeTaskStartEvent,
+  startAutocodeAgentRuntime,
+} from './runtime/agent-runtime.js';
 
 export {
   type CreateTaskDraftInput,
@@ -318,8 +387,23 @@ export {
 } from './tasks/drafts.js';
 
 export {
+  AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_SPECS_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACT_FILE_NAMES,
+  AUTOCODE_TASK_ARTIFACTS,
+  type AutocodeTaskArtifactFileName,
+  type AutocodeTaskArtifactName,
+  getAutocodeSpecsRelativeDir,
+  isAutocodeTaskArtifactFileName,
+  normalizeAutocodeProjectDataDirName,
+} from './tasks/artifacts.js';
+
+export {
   type AutocodePlanSubtask,
   type AutocodePlanStatus,
+  type AutocodeTaskCreationArtifacts,
+  type AutocodeTaskCreationContext,
   type AutocodeExecutionPhase,
   type AutocodeReviewReason,
   type AutocodeSubtaskStatus,
@@ -330,19 +414,62 @@ export {
   type AutocodeTaskMetadata,
   type AutocodeTaskPathsInput,
   type AutocodeTaskPriority,
+  type AutocodeTaskRequirements,
   type AutocodeTaskStatus,
   type AutocodeTaskWorkflowMode,
+  type CreateImportedAutocodeTaskInput,
   type CreateAutocodeTaskInput,
   type ListAutocodeTasksInput,
   type UpdateAutocodeTaskPlanStatusInput,
   buildAutocodeSpecId,
+  buildAutocodeTaskRequirements,
   createAutocodeTask,
+  createImportedAutocodeTask,
   getAutocodeSpecDir,
   getAutocodeSpecsDir,
   listAutocodeTasks,
   slugifySpecTitle,
   updateAutocodeTaskPlanStatus,
 } from './tasks/spec-store.js';
+
+export {
+  type AutocodeTaskPlanSeed,
+  type AutocodeTokenUsage,
+  type MutableAutocodePlan,
+  type MutableAutocodePlanPhase,
+  type MutableAutocodePlanSubtask,
+  applyAutocodePlanPhase,
+  applyAutocodePlanStatus,
+  applyAutocodePlanStatusAndReason,
+  applyAutocodePlanTokenUsage,
+  canSyncAutocodePlanPhases,
+  countAutocodePlanSubtasks,
+  createMinimalAutocodePlan,
+  inferAutocodeExecutionProgress,
+  inferAutocodeExecutionProgressFromXState,
+  mapAutocodeExecutionPhaseToTaskStatus,
+  mapAutocodeTaskStatusToPlanStatus,
+  mergeAutocodeTokenUsage,
+  resetAutocodeStuckSubtasksInPlan,
+} from './tasks/plan-file.js';
+
+export {
+  AUTOCODE_JSON_ERROR_PREFIX,
+  AUTOCODE_JSON_ERROR_TITLE_SUFFIX,
+  AUTOCODE_TASK_STATUS_PRIORITY,
+  type AutocodeProjectTask,
+  type AutocodeProjectTaskExecutionProgress,
+  type LoadAutocodeProjectTasksInput,
+  dedupeAutocodeProjectTasks,
+  determineAutocodeProjectTaskStatus,
+  loadAutocodeProjectTasks,
+  loadAutocodeTasksFromSpecsDir,
+} from './tasks/project-task-loader.js';
+
+export {
+  repairAutocodeJson,
+  safeParseAutocodeJson,
+} from './tasks/json-repair.js';
 
 export {
   AUTOCODE_CLI_COMMANDS,
@@ -396,13 +523,38 @@ export {
 } from './frontend/command-line.js';
 
 export {
+  type AutocodeDisplayRow,
+  type AutocodeTaskCardViewModel,
+  type AutocodeTaskDisplayInput,
+  type AutocodeTaskLogEntryViewModel,
+  type AutocodeTaskLogsViewModel,
+  type AutocodeWorkspaceDisplayInput,
+  type AutocodeWorkspaceSummaryViewModel,
+  type AutocodeWorkspaceTasksViewModel,
+  type BuildAutocodeTaskCardViewModelOptions,
+  buildAutocodeTaskCardViewModel,
+  buildAutocodeTaskLogEntryViewModel,
+  buildAutocodeTaskLogsViewModel,
+  buildAutocodeWorkspaceSummaryViewModel,
+  buildAutocodeWorkspaceTasksViewModel,
+  collectLatestAutocodeLogEntries,
+  formatAutocodeDate,
+  formatAutocodeList,
+  formatAutocodeRelativeTime,
+  formatAutocodeServiceList,
+  truncateAutocodeText,
+} from './frontend/task-view-model.js';
+
+export {
   type AutocodeTaskActionInput,
   type AutocodeWorkspaceState,
   type BuildAutocodeWorkspaceStateInput,
+  type CreateAutocodeAgentRuntimeStartPlanInput,
   type CreateManualAutocodeTaskInput,
   type StartedAutocodeTaskRun,
   buildAutocodeWorkspaceState,
   buildManualAutocodeTaskMetadata,
+  createAutocodeAgentRuntimeStartPlan,
   createManualAutocodeTask,
   createStartedAutocodeTaskRun,
   markAutocodeTaskDone,

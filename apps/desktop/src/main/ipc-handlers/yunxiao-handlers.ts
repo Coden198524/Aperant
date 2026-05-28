@@ -1,11 +1,11 @@
 import { ipcMain, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { generateText } from 'ai';
-import { IPC_CHANNELS, getSpecsDir, AUTO_BUILD_PATHS } from '../../shared/constants';
+import { createImportedAutocodeTask } from '@autocode/core';
+import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   IPCResult,
   Project,
-  TaskMetadata,
   YunxiaoIssue,
   YunxiaoIssueSyncResult,
   YunxiaoImportResult,
@@ -14,13 +14,12 @@ import type {
   YunxiaoWorkItem
 } from '../../shared/types';
 import path from 'path';
-import { existsSync, readFileSync, mkdirSync, writeFileSync, readdirSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import { Client } from '@modelcontextprotocol/sdk/client/index.js';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
 import { projectStore } from '../project-store';
 import { parseEnvFile } from './utils';
 import { sanitizeText, sanitizeUrl } from './shared/sanitize';
-import { buildSpecId } from './shared/spec-id';
 import { buildYunxiaoTaskMetadata } from './yunxiao/metadata';
 import { formatYunxiaoDescriptionContent, normalizeYunxiaoDescriptionValue } from './yunxiao/description';
 import { AgentManager } from '../agent';
@@ -1293,12 +1292,6 @@ export function registerYunxiaoHandlers(
         let failed = 0;
         const errors: string[] = [];
 
-        const specsBaseDir = getSpecsDir(project.autoBuildPath);
-        const specsDir = path.join(project.path, specsBaseDir);
-        if (!existsSync(specsDir)) {
-          mkdirSync(specsDir, { recursive: true });
-        }
-
         for (const item of details) {
           try {
             if (!item?.id) {
@@ -1324,50 +1317,7 @@ ${safeStatus ? `**Status:** ${safeStatus}` : ''}
 ${formattedDescription}
 `;
 
-            let specNumber = 1;
-            const existingDirs = readdirSync(specsDir, { withFileTypes: true })
-              .filter(dir => dir.isDirectory())
-              .map(dir => dir.name);
-            const existingNumbers = existingDirs
-              .map(name => {
-                const match = name.match(/^(\d+)/);
-                return match ? parseInt(match[1], 10) : 0;
-              })
-              .filter(num => num > 0);
-            if (existingNumbers.length > 0) {
-              specNumber = Math.max(...existingNumbers) + 1;
-            }
-
-            const specId = buildSpecId(specNumber, safeTitle, 'yunxiao');
-            const specDir = path.join(specsDir, specId);
-            mkdirSync(specDir, { recursive: true });
-
-            const now = new Date().toISOString();
-            const implementationPlan = {
-              feature: safeTitle,
-              description,
-              created_at: now,
-              updated_at: now,
-              status: 'pending',
-              phases: []
-            };
-            writeFileSync(
-              path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
-              JSON.stringify(implementationPlan, null, 2),
-              'utf-8'
-            );
-
-            const requirements = {
-              task_description: description,
-              workflow_type: 'feature'
-            };
-            writeFileSync(
-              path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS),
-              JSON.stringify(requirements, null, 2),
-              'utf-8'
-            );
-
-            const metadata: TaskMetadata = buildYunxiaoTaskMetadata({
+            const metadata = buildYunxiaoTaskMetadata({
               workItemId: sanitizeText(item.id, 120),
               identifier: safeIdentifier,
               url: safeUrl || undefined,
@@ -1375,13 +1325,20 @@ ${formattedDescription}
               workitemCategoryId: item.workitemType?.categoryId || item.categoryId,
               workitemCategoryName: item.workitemType?.name
             });
-            writeFileSync(
-              path.join(specDir, 'task_metadata.json'),
-              JSON.stringify(metadata, null, 2),
-              'utf-8'
-            );
 
-            agentManager.startSpecCreation(specId, project.path, description, specDir, metadata);
+            const task = createImportedAutocodeTask({
+              projectRoot: project.path,
+              dataDirName: project.autoBuildPath || '.autocode',
+              title: safeTitle,
+              description,
+              fallbackSlug: 'yunxiao',
+              metadata,
+              requirements: {
+                workflow_type: 'feature',
+              },
+            });
+
+            agentManager.startSpecCreation(task.specId, project.path, description, task.specsPath, metadata);
             imported++;
           } catch (error) {
             failed++;

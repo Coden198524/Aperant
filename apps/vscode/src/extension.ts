@@ -4,20 +4,25 @@ import {
   CORE_PACKAGE_VERSION,
   DEFAULT_PHASE_MODELS,
   SupportedProvider,
+  buildAutocodeTaskCardViewModel,
+  buildAutocodeWorkspaceSummaryViewModel,
+  getAutocodeAgentRuntimeModeLabel,
   isAutocodeCli,
   type AutocodeCli,
   type AutocodeTask,
-  type AutocodeTaskLogEntry,
   type AutocodeTaskLogs,
+  type AutocodeTaskLogsViewModel,
   type AutocodeWorkspaceState,
   type ProjectIndex,
   type WorkspaceSummary,
 } from '@autocode/core';
+import { AUTOCODE_TASK_ARTIFACTS } from '@autocode/core/tasks/artifacts';
 import { createNotificationAdapter } from './adapters/notification-adapter.js';
 import { bindTerminalLifecycle, createTerminalAdapter } from './adapters/terminal-adapter.js';
 import { createWorkspaceAdapter, getConfiguredDataDirName } from './adapters/workspace-adapter.js';
 import {
   createManualTask,
+  createAgentRuntimeStartPlan,
   createStartedRunPlan,
   listState,
   markTaskDoneStatus,
@@ -58,10 +63,10 @@ export function activate(context: vscode.ExtensionContext): void {
       await openPlanFile(typeof taskId === 'string' ? taskId : undefined);
     }),
     vscode.commands.registerCommand('autocode.openLogFile', async (taskId?: unknown) => {
-      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, 'task_logs.json', false);
+      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, AUTOCODE_TASK_ARTIFACTS.taskLogs, false);
     }),
     vscode.commands.registerCommand('autocode.openRunResult', async (taskId?: unknown) => {
-      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, 'autocode-run-result.json', true);
+      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, AUTOCODE_TASK_ARTIFACTS.runResult, true);
     }),
     vscode.commands.registerCommand('autocode.startTask', async (taskId?: unknown) => {
       await startTaskInTerminal(typeof taskId === 'string' ? taskId : undefined, sidebarProvider);
@@ -172,10 +177,10 @@ async function handleWebviewMessage(message: unknown, sidebarProvider?: Autocode
       await openPlanFile(typeof taskId === 'string' ? taskId : undefined);
       break;
     case 'openLogFile':
-      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, 'task_logs.json', false);
+      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, AUTOCODE_TASK_ARTIFACTS.taskLogs, false);
       break;
     case 'openRunResult':
-      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, 'autocode-run-result.json', true);
+      await openTaskArtifact(typeof taskId === 'string' ? taskId : undefined, AUTOCODE_TASK_ARTIFACTS.runResult, true);
       break;
     case 'startTask':
       await startTaskInTerminal(typeof taskId === 'string' ? taskId : undefined, sidebarProvider);
@@ -293,7 +298,7 @@ async function openTaskFolder(taskId?: string): Promise<void> {
 }
 
 async function openPlanFile(taskId?: string): Promise<void> {
-  await openTaskArtifact(taskId, 'implementation_plan.json', false);
+  await openTaskArtifact(taskId, AUTOCODE_TASK_ARTIFACTS.implementationPlan, false);
 }
 
 async function openTaskArtifact(taskId: string | undefined, fileName: string, optional: boolean): Promise<void> {
@@ -331,6 +336,8 @@ async function startTaskInTerminal(taskId: string | undefined, sidebarProvider?:
   }
 
   try {
+    const runtimePlan = createAgentRuntimeStartPlan(projectRoot, task.id);
+    const runtimeLabel = getAutocodeAgentRuntimeModeLabel(runtimePlan.mode);
     const started = createStartedRunPlan(projectRoot, task.id, {
       cli: getConfiguredCli(),
       customCommand: getConfiguredCustomCliCommand(),
@@ -342,8 +349,8 @@ async function startTaskInTerminal(taskId: string | undefined, sidebarProvider?:
       cwd: plan.cwd,
       command: started.command,
     });
-    sidebarProvider?.refresh(`Started ${plan.task.specId} (${plan.phase})`);
-    await notificationAdapter.info(`Started Autocode task in terminal: ${plan.task.title}`);
+    sidebarProvider?.refresh(`Started ${plan.task.specId} (${runtimeLabel})`);
+    await notificationAdapter.info(`Started Autocode task in terminal: ${plan.task.title} (${runtimeLabel})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to start Autocode task.';
     await notificationAdapter.error(message);
@@ -636,23 +643,21 @@ function renderAutocodeHtml(input: {
 }
 
 function renderWorkspaceSummary(summary: WorkspaceSummary, projectIndex: ProjectIndex | null): string {
-  const sourceFiles = projectIndex?.source_summary?.source_file_count;
-  const services = projectIndex ? Object.values(projectIndex.services) : [];
+  const view = buildAutocodeWorkspaceSummaryViewModel(summary, projectIndex);
+  const rows = view.rows.map((row) => {
+    const value = escapeHtml(row.value);
+    const valueHtml = row.tone === 'code'
+      ? `<code class="value">${value}</code>`
+      : row.tone === 'strong'
+        ? `<strong class="value">${value}</strong>`
+        : `<span class="value">${value}</span>`;
+    return `<span class="key">${escapeHtml(row.label)}</span>${valueHtml}`;
+  }).join('');
+
   return `<div class="section">
     <p class="label">Workspace</p>
     <div class="grid">
-      <span class="key">Name</span><strong class="value">${escapeHtml(summary.name)}</strong>
-      <span class="key">Path</span><code class="value">${escapeHtml(summary.rootPath)}</code>
-      <span class="key">Package</span><span class="value">${escapeHtml(summary.packageName ?? 'Not detected')}</span>
-      <span class="key">Manager</span><span class="value">${escapeHtml(summary.packageManager ?? 'Not detected')}</span>
-      <span class="key">Git</span><span class="value">${summary.hasGit ? 'Yes' : 'No'}</span>
-      <span class="key">Languages</span><span class="value">${escapeHtml(formatList(summary.detectedLanguages))}</span>
-      <span class="key">Frameworks</span><span class="value">${escapeHtml(formatList(summary.detectedFrameworks))}</span>
-      <span class="key">Scripts</span><span class="value">${escapeHtml(formatList(summary.scripts.slice(0, 8)))}</span>
-      <span class="key">Sampled</span><span class="value">${summary.totalFilesSampled} files</span>
-      <span class="key">Project</span><span class="value">${escapeHtml(projectIndex?.project_type ?? 'Not detected')}</span>
-      <span class="key">Services</span><span class="value">${escapeHtml(formatServiceList(services))}</span>
-      <span class="key">Source</span><span class="value">${sourceFiles ?? 'Not detected'} files</span>
+      ${rows}
     </div>
   </div>`;
 }
@@ -682,19 +687,17 @@ function renderTasks(state: ActiveAutocodeState): string {
 }
 
 function renderTask(task: AutocodeTask, logs: AutocodeTaskLogs | null): string {
-  const meta = [
-    task.specId,
-    task.status,
-    task.reviewReason,
-    `${task.subtasks.length} subtasks`,
-    formatDate(task.updatedAt),
-  ].filter(Boolean).join(' | ');
-  const description = task.description ? `<p class="task-desc">${escapeHtml(truncate(task.description, 180))}</p>` : '';
-  const logsHtml = renderTaskLogs(logs);
+  const view = buildAutocodeTaskCardViewModel(task, logs, {
+    descriptionMaxLength: 180,
+    latestLogEntries: 3,
+    logContentMaxLength: 140,
+  });
+  const description = view.descriptionPreview ? `<p class="task-desc">${escapeHtml(view.descriptionPreview)}</p>` : '';
+  const logsHtml = renderTaskLogs(view.logs);
 
   return `<div class="task">
-    <p class="task-title">${escapeHtml(task.title)}</p>
-    <div class="task-meta">${escapeHtml(meta)}</div>
+    <p class="task-title">${escapeHtml(view.title)}</p>
+    <div class="task-meta">${escapeHtml(view.metaText)}</div>
     ${description}
     ${logsHtml}
     <div class="task-actions">
@@ -710,53 +713,19 @@ function renderTask(task: AutocodeTask, logs: AutocodeTaskLogs | null): string {
   </div>`;
 }
 
-function renderTaskLogs(logs: AutocodeTaskLogs | null): string {
-  if (!logs) {
-    return '<div class="task-log-empty">No task logs yet.</div>';
+function renderTaskLogs(logs: AutocodeTaskLogsViewModel): string {
+  if (!logs.hasLogs) {
+    return `<div class="task-log-empty">${escapeHtml(logs.phaseStatusText)}</div>`;
   }
 
-  const phaseMeta = (['planning', 'coding', 'validation'] as const)
-    .map((phase) => `${phase}: ${logs.phases[phase].status}`)
-    .join(' | ');
-  const latestEntries = collectLatestLogEntries(logs, 3);
-  const entriesHtml = latestEntries.length > 0
-    ? latestEntries.map((entry) => `<li><span>${escapeHtml(formatDate(entry.timestamp))}</span> <strong>${escapeHtml(entry.phase)}</strong> ${escapeHtml(truncate(entry.content, 140))}</li>`).join('')
+  const entriesHtml = logs.latestEntries.length > 0
+    ? logs.latestEntries.map((entry) => `<li><span>${escapeHtml(entry.timestampLabel)}</span> <strong>${escapeHtml(entry.phase)}</strong> ${escapeHtml(entry.contentPreview)}</li>`).join('')
     : '<li>No entries yet.</li>';
 
   return `<div class="task-log">
-    <div class="task-meta">${escapeHtml(phaseMeta)}</div>
+    <div class="task-meta">${escapeHtml(logs.phaseStatusText)}</div>
     <ul>${entriesHtml}</ul>
   </div>`;
-}
-
-function collectLatestLogEntries(logs: AutocodeTaskLogs, maxEntries: number): AutocodeTaskLogEntry[] {
-  return Object.values(logs.phases)
-    .flatMap((phase) => phase.entries)
-    .sort((a, b) => b.timestamp.localeCompare(a.timestamp))
-    .slice(0, maxEntries);
-}
-
-function formatList(values: string[]): string {
-  return values.length > 0 ? values.join(', ') : 'Not detected';
-}
-
-function formatServiceList(services: ProjectIndex['services'][string][]): string {
-  if (services.length === 0) {
-    return 'Not detected';
-  }
-  return services
-    .slice(0, 5)
-    .map((service) => service.language ? `${service.name} (${service.language})` : service.name)
-    .join(', ');
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
-function truncate(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
 function escapeHtml(value: string): string {

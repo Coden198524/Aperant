@@ -8,9 +8,14 @@ import {
   SUPPORTED_AUTOCODE_CLIS,
   SupportedProvider,
   buildAutocodeWorkspaceState,
+  buildAutocodeTaskCardViewModel,
+  buildAutocodeTaskLogEntryViewModel,
+  buildAutocodeWorkspaceSummaryViewModel,
   buildProjectIndex,
+  createAutocodeAgentRuntimeStartPlan,
   createManualAutocodeTask,
   createStartedAutocodeTaskRun,
+  getAutocodeAgentRuntimeModeLabel,
   getAutocodeBooleanOption,
   getAutocodeStringOption,
   hasAutocodeJsonOption,
@@ -25,7 +30,6 @@ import {
   type AutocodeTaskLogEntry,
   type AutocodeTaskLogs,
   type ParsedAutocodeCommandArgs,
-  type ProjectIndex,
 } from '@autocode/core';
 
 const DEFAULT_DATA_DIR = '.autocode';
@@ -90,16 +94,17 @@ function showInfo(parsed: ParsedAutocodeCommandArgs): void {
     return;
   }
 
+  const workspaceView = buildAutocodeWorkspaceSummaryViewModel(summary, projectIndex);
   console.log(`Autocode core: ${CORE_PACKAGE_VERSION}`);
   console.log(`Project root: ${context.projectRoot}`);
   console.log(`Data dir: ${context.dataDirName}`);
-  console.log(`Workspace: ${summary.name}`);
-  console.log(`Package manager: ${summary.packageManager ?? 'not detected'}`);
-  console.log(`Languages: ${formatList(summary.detectedLanguages)}`);
-  console.log(`Frameworks: ${formatList(summary.detectedFrameworks)}`);
-  console.log(`Project type: ${projectIndex.project_type}`);
-  console.log(`Services: ${formatProjectServices(projectIndex)}`);
-  console.log(`Source files: ${projectIndex.source_summary?.source_file_count ?? 'not detected'}`);
+  console.log(`Workspace: ${workspaceView.name}`);
+  console.log(`Package manager: ${workspaceView.packageManagerLabel}`);
+  console.log(`Languages: ${workspaceView.languagesLabel}`);
+  console.log(`Frameworks: ${workspaceView.frameworksLabel}`);
+  console.log(`Project type: ${workspaceView.projectTypeLabel}`);
+  console.log(`Services: ${workspaceView.servicesLabel}`);
+  console.log(`Source files: ${workspaceView.sourceFilesLabel}`);
   console.log(`Default coding model: ${DEFAULT_PHASE_MODELS.coding}`);
   console.log(`Providers: ${providers.join(', ')}`);
 }
@@ -119,13 +124,14 @@ function listTasks(parsed: ParsedAutocodeCommandArgs): void {
   }
 
   for (const task of tasks) {
-    console.log(`[${task.status}] ${task.specId} - ${task.title}`);
-    if (task.reviewReason) {
-      console.log(`  review: ${task.reviewReason}`);
+    const taskView = buildAutocodeTaskCardViewModel(task, null, { descriptionMaxLength: 140 });
+    console.log(`[${taskView.status}] ${taskView.specId} - ${taskView.title}`);
+    if (taskView.reviewReason) {
+      console.log(`  review: ${taskView.reviewReason}`);
     }
-    console.log(`  subtasks: ${task.subtasks.length}; updated: ${formatDate(task.updatedAt)}`);
-    if (task.description) {
-      console.log(`  ${truncate(task.description, 140)}`);
+    console.log(`  subtasks: ${taskView.subtaskCount}; updated: ${taskView.updatedAtLabel}`);
+    if (taskView.descriptionPreview) {
+      console.log(`  ${taskView.descriptionPreview}`);
     }
   }
 }
@@ -160,6 +166,30 @@ function createTask(parsed: ParsedAutocodeCommandArgs): void {
 function runTask(parsed: ParsedAutocodeCommandArgs): void {
   const context = resolveContext(parsed);
   const taskId = resolveTaskId(parsed);
+  const runtime = getStringOption(parsed, 'runtime') ?? 'file';
+  if (runtime === 'agent') {
+    if (getBooleanOption(parsed, 'execute')) {
+      throw new Error('Agent runtime execution is not enabled in the CLI adapter yet. Use --runtime file --execute.');
+    }
+    const runtimePlan = createAutocodeAgentRuntimeStartPlan({
+      ...context,
+      taskId,
+    });
+    if (isJson(parsed)) {
+      writeJson({ ...context, runtime: 'agent', runtimePlan });
+    } else {
+      console.log(
+        `Prepared agent runtime plan for ${runtimePlan.specId}: ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} (${runtimePlan.mode}).`,
+      );
+      console.log(`Spec dir: ${runtimePlan.specDir}`);
+      console.log('Agent runtime execution is adapter-driven; this CLI build only prints the shared plan.');
+    }
+    return;
+  }
+  if (runtime !== 'file') {
+    throw new Error(`Unsupported runtime "${runtime}". Supported values: file, agent.`);
+  }
+
   const cli = resolveCli(getStringOption(parsed, 'cli') ?? DEFAULT_CLI);
   const customCommand = getStringOption(parsed, 'custom-command') ?? getStringOption(parsed, 'custom');
   const started = createStartedAutocodeTaskRun({
@@ -248,7 +278,8 @@ function printLogs(logs: AutocodeTaskLogs): void {
 }
 
 function printLogEntry(entry: AutocodeTaskLogEntry): void {
-  console.log(`  ${formatDate(entry.timestamp)} ${entry.type}: ${truncate(entry.content, 160)}`);
+  const entryView = buildAutocodeTaskLogEntryViewModel(entry, { logContentMaxLength: 160 });
+  console.log(`  ${entryView.timestampLabel} ${entryView.type}: ${entryView.contentPreview}`);
 }
 
 function resolveContext(parsed: ParsedAutocodeCommandArgs): { projectRoot: string; dataDirName: string } {
@@ -297,6 +328,7 @@ Usage:
   autocode tasks [--cwd <path>] [--data-dir .autocode] [--json]
   autocode create --title <title> --description <text>
   autocode run <task-id> [--cli claude-code|codex|gemini|opencode|kilocode|deepseek|custom]
+  autocode run <task-id> --runtime agent [--json]
   autocode run <task-id> --cli custom --custom-command "<command>"
   autocode run <task-id> --execute
   autocode logs <task-id> [--json]
@@ -312,30 +344,6 @@ Commands:
   done       Mark a task complete in the shared plan file.
   changes    Move a task back to human review.
 `);
-}
-
-function formatList(values: string[]): string {
-  return values.length > 0 ? values.join(', ') : 'not detected';
-}
-
-function formatProjectServices(index: ProjectIndex): string {
-  const services = Object.values(index.services);
-  if (services.length === 0) {
-    return 'not detected';
-  }
-  return services
-    .slice(0, 5)
-    .map((service) => `${service.name}${service.language ? ` (${service.language})` : ''}`)
-    .join(', ');
-}
-
-function formatDate(value: string): string {
-  const date = new Date(value);
-  return Number.isNaN(date.getTime()) ? value : date.toLocaleString();
-}
-
-function truncate(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength - 3)}...` : value;
 }
 
 main().catch((error) => {

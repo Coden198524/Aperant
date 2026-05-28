@@ -180,10 +180,31 @@ agent runtime without copying desktop-specific code.
      context, agent filtering, MCP server resolution, and provider-dependent
      WebSearch registration.
 
+16. Multi-frontend task display and creation:
+   - Shared task/workspace view models now live in
+     `libs/core/src/frontend/task-view-model.ts`.
+   - CLI, VS Code, and desktop task cards use the same relative-time,
+     truncation, subtask-count, and log-summary helpers.
+   - Manual task creation flows share the same `.autocode/specs` creation
+     protocol and requirements artifact preparation, while desktop keeps
+     attachment file copying in its host layer.
+
+17. Agent runtime start protocol:
+   - Shared runtime planning now lives in `libs/core/src/runtime/agent-runtime.ts`.
+   - Core resolves task start events and runtime modes (`direct`, `spec`,
+     `planning`, `coding`) from task metadata, spec files, and plan subtasks.
+   - Desktop task start/restart/recovery paths now start through a runtime
+     adapter that translates shared plans into `AgentManager` calls.
+   - CLI can print the adapter-ready agent runtime plan with
+     `autocode run <task-id> --runtime agent`.
+   - VS Code resolves the same runtime plan before launching its current
+     terminal file runner, preparing it for a direct agent adapter later.
+
 ## Next slices
 
-16. Runtime package:
-   - After security, schema, project, and auth boundaries are stable, move AI
+18. Runtime package:
+   - After security, schema, project, auth, and runtime-start boundaries are
+     stable, move AI
      client creation, tools, session runner, and lightweight orchestration into
      a runtime layer.
    - Keep `@autocode/core` light; use a runtime subpath/package for heavy

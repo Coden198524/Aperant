@@ -1,16 +1,21 @@
 import { ipcMain, nativeImage } from 'electron';
+import {
+  createManualAutocodeTask,
+  type AutocodeTask,
+  type AutocodeTaskMetadata,
+  type AutocodeTaskRequirements,
+} from '@autocode/core';
 import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir, VALID_THINKING_LEVELS, sanitizeThinkingLevel } from '../../../shared/constants';
 import type { IPCResult, Task, TaskMetadata, TaskOutcome } from '../../../shared/types';
 import path from 'path';
 import { execFileSync } from 'child_process';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, readdirSync, Dirent } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { updateRoadmapFeatureOutcome } from '../../utils/roadmap-utils';
 import { projectStore } from '../../project-store';
 import { titleGenerator } from '../../title-generator';
 import { descriptionImprover } from '../../description-improver';
 import { AgentManager } from '../../agent';
 import { findTaskAndProject } from './shared';
-import { buildSpecId } from '../shared/spec-id';
 import { findAllSpecPaths, isValidTaskId } from '../../utils/spec-path-helpers';
 import { isPathWithinBase, findTaskWorktree } from '../../worktree-paths';
 import { cleanupWorktree } from '../../utils/worktree-cleanup';
@@ -36,9 +41,100 @@ interface MutableImplementationPlan extends Record<string, unknown> {
   phases?: MutablePlanPhase[];
 }
 
+const ALLOWED_ATTACHMENT_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
+
+function persistTaskAttachments(specDir: string, metadata: TaskMetadata, logPrefix: string): TaskMetadata {
+  if (!metadata.attachedImages || metadata.attachedImages.length === 0) {
+    return metadata;
+  }
+
+  const attachmentsDir = path.join(specDir, 'attachments');
+  mkdirSync(attachmentsDir, { recursive: true });
+  const resolvedAttachmentsDir = path.resolve(attachmentsDir);
+  const savedImages: NonNullable<TaskMetadata['attachedImages']> = [];
+
+  for (const image of metadata.attachedImages) {
+    if (!image.data) {
+      if (image.path) {
+        savedImages.push(image);
+      }
+      continue;
+    }
+
+    if (!image.mimeType || !ALLOWED_ATTACHMENT_MIME_TYPES.includes(image.mimeType)) {
+      console.warn(`[${logPrefix}] Skipping image with missing or disallowed MIME type: ${image.mimeType}`);
+      continue;
+    }
+
+    const sanitizedFilename = path.basename(image.filename);
+    if (!sanitizedFilename || sanitizedFilename === '.' || sanitizedFilename === '..') {
+      console.warn(`[${logPrefix}] Skipping image with invalid filename: ${image.filename}`);
+      continue;
+    }
+
+    const imagePath = path.join(attachmentsDir, sanitizedFilename);
+    const resolvedPath = path.resolve(imagePath);
+    if (!resolvedPath.startsWith(resolvedAttachmentsDir + path.sep)) {
+      console.warn(`[${logPrefix}] Skipping image with path traversal attempt: ${image.filename}`);
+      continue;
+    }
+
+    try {
+      const buffer = Buffer.from(image.data, 'base64');
+      writeFileSync(imagePath, buffer);
+      savedImages.push({
+        id: image.id,
+        filename: sanitizedFilename,
+        mimeType: image.mimeType,
+        size: image.size,
+        path: `attachments/${sanitizedFilename}`,
+      });
+    } catch (err) {
+      console.error(`[${logPrefix}] Failed to save image ${sanitizedFilename}:`, err);
+    }
+  }
+
+  return {
+    ...metadata,
+    attachedImages: savedImages,
+  };
+}
+
+function buildTaskRequirementsExtras(metadata: TaskMetadata): AutocodeTaskRequirements {
+  const attachedImages = metadata.attachedImages
+    ?.filter((image) => image.path)
+    .map((image) => ({
+      filename: image.filename,
+      path: image.path,
+      description: '',
+    }));
+
+  return attachedImages && attachedImages.length > 0
+    ? { attached_images: attachedImages }
+    : {};
+}
+
+function toDesktopTask(coreTask: AutocodeTask, projectId: string): Task {
+  return {
+    id: coreTask.id,
+    specId: coreTask.specId,
+    projectId,
+    title: coreTask.title,
+    description: coreTask.description,
+    status: coreTask.status as Task['status'],
+    ...(coreTask.reviewReason ? { reviewReason: coreTask.reviewReason as Task['reviewReason'] } : {}),
+    subtasks: coreTask.subtasks,
+    logs: [],
+    metadata: coreTask.metadata as TaskMetadata | undefined,
+    specsPath: coreTask.specsPath,
+    createdAt: new Date(coreTask.createdAt),
+    updatedAt: new Date(coreTask.updatedAt),
+  };
+}
+
 /**
  * Sanitize thinking levels in task metadata in-place.
- * Maps legacy values (e.g. 'ultrathink' → 'high') and defaults unknown values to 'medium'.
+ * Maps legacy values (e.g. 'ultrathink' -> 'high') and defaults unknown values to 'medium'.
  */
 function sanitizeThinkingLevels(metadata: TaskMetadata): void {
   const isValid = (val: string): boolean => VALID_THINKING_LEVELS.includes(val as typeof VALID_THINKING_LEVELS[number]);
@@ -201,36 +297,6 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         finalTitle = await generateTitleWithFallback(description, 'TASK_CREATE');
       }
 
-      // Generate a unique spec ID based on existing specs
-      const specsBaseDir = getSpecsDir(project.autoBuildPath);
-      const specsDir = path.join(project.path, specsBaseDir);
-
-      // Find next available spec number
-      let specNumber = 1;
-      if (existsSync(specsDir)) {
-        const existingDirs = readdirSync(specsDir, { withFileTypes: true })
-          .filter((d: Dirent) => d.isDirectory())
-          .map((d: Dirent) => d.name);
-
-        // Extract numbers from spec directory names (e.g., "001-feature" -> 1)
-        const existingNumbers = existingDirs
-          .map((name: string) => {
-            const match = name.match(/^(\d+)/);
-            return match ? parseInt(match[1], 10) : 0;
-          })
-          .filter((n: number) => n > 0);
-
-        if (existingNumbers.length > 0) {
-          specNumber = Math.max(...existingNumbers) + 1;
-        }
-      }
-
-      const specId = buildSpecId(specNumber, finalTitle);
-
-      // Create spec directory
-      const specDir = path.join(specsDir, specId);
-      mkdirSync(specDir, { recursive: true });
-
       // Build metadata with source type
       const taskMetadata: TaskMetadata = {
         sourceType: 'manual',
@@ -238,120 +304,24 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         enableBatchExecution: metadata?.enableBatchExecution === true
       };
 
-      // Process and save attached images
-      if (taskMetadata.attachedImages && taskMetadata.attachedImages.length > 0) {
-        const attachmentsDir = path.join(specDir, 'attachments');
-        mkdirSync(attachmentsDir, { recursive: true });
-        const resolvedAttachmentsDir = path.resolve(attachmentsDir);
-
-        // MIME type allowlist (defense in depth - frontend also validates)
-        const ALLOWED_MIME_TYPES = ['image/png', 'image/jpeg', 'image/jpg', 'image/gif', 'image/webp', 'image/svg+xml'];
-
-        const savedImages: typeof taskMetadata.attachedImages = [];
-
-        for (const image of taskMetadata.attachedImages) {
-          if (image.data) {
-            // Validate MIME type
-            if (!image.mimeType || !ALLOWED_MIME_TYPES.includes(image.mimeType)) {
-              console.warn(`[TASK_CREATE] Skipping image with missing or disallowed MIME type: ${image.mimeType}`);
-              continue;
-            }
-
-            // Sanitize filename to prevent path traversal attacks
-            const sanitizedFilename = path.basename(image.filename);
-            if (!sanitizedFilename || sanitizedFilename === '.' || sanitizedFilename === '..') {
-              console.warn(`[TASK_CREATE] Skipping image with invalid filename: ${image.filename}`);
-              continue;
-            }
-
-            // Validate resolved path stays within attachments directory
-            const imagePath = path.join(attachmentsDir, sanitizedFilename);
-            const resolvedPath = path.resolve(imagePath);
-            if (!resolvedPath.startsWith(resolvedAttachmentsDir + path.sep)) {
-              console.warn(`[TASK_CREATE] Skipping image with path traversal attempt: ${image.filename}`);
-              continue;
-            }
-
-            try {
-              // Decode base64 and save to file
-              const buffer = Buffer.from(image.data, 'base64');
-              writeFileSync(imagePath, buffer);
-
-              // Store relative path instead of base64 data
-              savedImages.push({
-                id: image.id,
-                filename: sanitizedFilename,
-                mimeType: image.mimeType,
-                size: image.size,
-                path: `attachments/${sanitizedFilename}`
-                // Don't include data or thumbnail to save space
-              });
-            } catch (err) {
-              console.error(`Failed to save image ${sanitizedFilename}:`, err);
-            }
-          }
-        }
-
-        // Update metadata with saved image paths (without base64 data)
-        taskMetadata.attachedImages = savedImages;
-      }
-
-      // Create initial implementation_plan.json (task is created but not started)
-      const now = new Date().toISOString();
-      const implementationPlan = {
-        feature: finalTitle,
-        description: description,
-        created_at: now,
-        updated_at: now,
-        status: 'pending',
-        phases: []
-      };
-
-      const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
-      writeFileSync(planPath, JSON.stringify(implementationPlan, null, 2), 'utf-8');
-
-      // Save task metadata if provided (sanitize thinking levels before writing)
-      if (taskMetadata) {
-        sanitizeThinkingLevels(taskMetadata);
-        const metadataPath = path.join(specDir, 'task_metadata.json');
-        writeFileSync(metadataPath, JSON.stringify(taskMetadata, null, 2), 'utf-8');
-        console.warn(`[TASK_CREATE] [Workflow Mode] ${taskMetadata.workflowMode || 'balanced'} — written to task_metadata.json for spec ${specId}`);
-      }
-
-      // Create requirements.json with attached images
-      const requirements: Record<string, unknown> = {
-        task_description: description,
-        workflow_type: taskMetadata.category || 'feature'
-      };
-
-      // Add attached images to requirements if present
-      if (taskMetadata.attachedImages && taskMetadata.attachedImages.length > 0) {
-        requirements.attached_images = taskMetadata.attachedImages.map(img => ({
-          filename: img.filename,
-          path: img.path,
-          description: '' // User can add descriptions later
-        }));
-      }
-
-      const requirementsPath = path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS);
-      writeFileSync(requirementsPath, JSON.stringify(requirements, null, 2), 'utf-8');
-
-      // Create the task object
-      const task: Task = {
-        id: specId,
-        specId: specId,
-        projectId,
+      const coreTask = createManualAutocodeTask({
+        projectRoot: project.path,
+        dataDirName: project.autoBuildPath || '.autocode',
         title: finalTitle,
         description,
-        status: 'backlog',
-        subtasks: [],
-        logs: [],
-        metadata: taskMetadata,
-        specsPath: specDir,
-        createdAt: new Date(),
-        updatedAt: new Date()
-      };
-
+        metadata: taskMetadata as AutocodeTaskMetadata,
+        prepareSpecArtifacts: ({ specDir, metadata: coreMetadata, specId }) => {
+          const preparedMetadata = coreMetadata as TaskMetadata;
+          sanitizeThinkingLevels(preparedMetadata);
+          const metadataWithAttachments = persistTaskAttachments(specDir, preparedMetadata, 'TASK_CREATE');
+          console.warn(`[TASK_CREATE] [Workflow Mode] ${metadataWithAttachments.workflowMode || 'balanced'} written to task_metadata.json for spec ${specId}`);
+          return {
+            metadata: metadataWithAttachments as AutocodeTaskMetadata,
+            requirements: buildTaskRequirementsExtras(metadataWithAttachments),
+          };
+        },
+      });
+      const task = toDesktopTask(coreTask, projectId);
       // Invalidate cache since a new task was created
       projectStore.invalidateTasksCache(projectId);
 

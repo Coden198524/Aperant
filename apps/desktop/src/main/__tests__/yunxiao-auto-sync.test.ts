@@ -10,7 +10,6 @@ const {
   mockSafeSendToRenderer,
   mockUpsertYunxiaoIssuesFromWorkItems,
   mockGetYunxiaoEnvConfig,
-  mockBuildSpecId,
   mockBuildYunxiaoTaskMetadata
 } = vi.hoisted(() => ({
   mockProjectStore: {
@@ -22,7 +21,6 @@ const {
   mockSafeSendToRenderer: vi.fn(),
   mockUpsertYunxiaoIssuesFromWorkItems: vi.fn(),
   mockGetYunxiaoEnvConfig: vi.fn(),
-  mockBuildSpecId: vi.fn(),
   mockBuildYunxiaoTaskMetadata: vi.fn()
 }));
 
@@ -53,10 +51,6 @@ vi.mock('../ipc-handlers/yunxiao-handlers', () => ({
   resolveOrganization: vi.fn(),
   toRecord: vi.fn(),
   withYunxiaoClient: vi.fn()
-}));
-
-vi.mock('../ipc-handlers/shared/spec-id', () => ({
-  buildSpecId: mockBuildSpecId
 }));
 
 vi.mock('../ipc-handlers/yunxiao/metadata', () => ({
@@ -116,9 +110,6 @@ describe('YunxiaoAutoSyncService', () => {
       mcpCommand: 'npx.cmd',
       mcpArgs: ['-y', 'alibabacloud-devops-mcp-server']
     });
-
-    mockBuildSpecId.mockReset();
-    mockBuildSpecId.mockReturnValue('001-yunxiao-task');
 
     mockBuildYunxiaoTaskMetadata.mockReset();
     mockBuildYunxiaoTaskMetadata.mockImplementation(({ workItemId, identifier, url }) => ({
@@ -181,7 +172,7 @@ describe('YunxiaoAutoSyncService', () => {
     );
 
     const specsDir = path.join(project.path, getSpecsDir(project.autoBuildPath));
-    const specDir = path.join(specsDir, '001-yunxiao-task');
+    const specDir = path.join(specsDir, '001-sync-this-yunxiao-task');
     expect(existsSync(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN))).toBe(true);
     expect(existsSync(path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS))).toBe(true);
 

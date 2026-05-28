@@ -1,0 +1,553 @@
+import { existsSync, readdirSync, readFileSync, writeFileSync, type Dirent } from 'node:fs';
+import { join } from 'node:path';
+import { safeParseAutocodeJson } from './json-repair.js';
+import {
+  inferAutocodeExecutionProgress,
+  inferAutocodeExecutionProgressFromXState,
+  type AutocodeTokenUsage,
+} from './plan-file.js';
+import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import {
+  getAutocodeSpecsDir,
+  type AutocodeExecutionPhase,
+  type AutocodePlanSubtask,
+  type AutocodeReviewReason,
+  type AutocodeSubtaskStatus,
+  type AutocodeTaskMetadata,
+  type AutocodeTaskStatus,
+} from './spec-store.js';
+
+export const AUTOCODE_JSON_ERROR_PREFIX = '__JSON_ERROR__:';
+export const AUTOCODE_JSON_ERROR_TITLE_SUFFIX = '__JSON_ERROR_SUFFIX__';
+
+export const AUTOCODE_TASK_STATUS_PRIORITY: Record<AutocodeTaskStatus, number> = {
+  done: 100,
+  pr_created: 90,
+  human_review: 80,
+  ai_review: 70,
+  in_progress: 50,
+  queue: 30,
+  backlog: 20,
+  error: 10,
+} as const;
+
+export interface AutocodeProjectTaskExecutionProgress {
+  phase: AutocodeExecutionPhase;
+  phaseProgress: number;
+  overallProgress: number;
+}
+
+export interface AutocodeProjectTask {
+  id: string;
+  specId: string;
+  projectId?: string;
+  projectRoot: string;
+  title: string;
+  description: string;
+  status: AutocodeTaskStatus;
+  reviewReason?: AutocodeReviewReason;
+  subtasks: AutocodePlanSubtask[];
+  logs: string[];
+  metadata?: AutocodeTaskMetadata;
+  executionProgress?: AutocodeProjectTaskExecutionProgress;
+  tokenUsage?: AutocodeTokenUsage;
+  stagedInMainProject?: boolean;
+  stagedAt?: string;
+  location?: 'main' | 'worktree';
+  specsPath: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface LoadAutocodeProjectTasksInput {
+  projectRoot: string;
+  dataDirName: string;
+  projectId?: string;
+  worktreesDir?: string;
+  persistStaleStatusCorrections?: boolean;
+  staleStatusCorrectionAgeMs?: number;
+}
+
+interface ImplementationPlanFile {
+  feature?: string;
+  title?: string;
+  description?: string;
+  status?: string;
+  planStatus?: string;
+  reviewReason?: AutocodeReviewReason;
+  executionPhase?: string;
+  xstateState?: string;
+  stagedInMainProject?: boolean;
+  stagedAt?: string;
+  tokenUsage?: AutocodeTokenUsage;
+  phases?: Array<{
+    subtasks?: RawProjectPlanSubtask[];
+    chunks?: RawProjectPlanSubtask[];
+  }>;
+  created_at?: string;
+  updated_at?: string;
+}
+
+interface RawProjectPlanSubtask {
+  id?: unknown;
+  title?: unknown;
+  description?: unknown;
+  status?: unknown;
+  completion_summary?: unknown;
+  completionSummary?: unknown;
+  completed_summary?: unknown;
+  notes?: unknown;
+  actual_output?: unknown;
+}
+
+export function loadAutocodeProjectTasks(input: LoadAutocodeProjectTasksInput): AutocodeProjectTask[] {
+  const allTasks: AutocodeProjectTask[] = [];
+  const mainSpecsDir = getAutocodeSpecsDir({
+    projectRoot: input.projectRoot,
+    dataDirName: input.dataDirName,
+  });
+  const mainSpecIds = new Set<string>();
+
+  if (existsSync(mainSpecsDir)) {
+    const mainTasks = loadAutocodeTasksFromSpecsDir({
+      ...input,
+      specsDir: mainSpecsDir,
+      taskProjectRoot: input.projectRoot,
+      location: 'main',
+    });
+    allTasks.push(...mainTasks);
+    mainTasks.forEach((task) => mainSpecIds.add(task.specId));
+  }
+
+  if (input.worktreesDir && existsSync(input.worktreesDir)) {
+    try {
+      for (const worktree of readdirSync(input.worktreesDir, { withFileTypes: true })) {
+        if (!worktree.isDirectory()) {
+          continue;
+        }
+        const worktreeRoot = join(input.worktreesDir, worktree.name);
+        const worktreeSpecsDir = getAutocodeSpecsDir({
+          projectRoot: worktreeRoot,
+          dataDirName: input.dataDirName,
+        });
+        if (!existsSync(worktreeSpecsDir)) {
+          continue;
+        }
+        const worktreeTasks = loadAutocodeTasksFromSpecsDir({
+          ...input,
+          specsDir: worktreeSpecsDir,
+          taskProjectRoot: worktreeRoot,
+          location: 'worktree',
+        }).filter((task) => mainSpecIds.has(task.specId));
+        allTasks.push(...worktreeTasks);
+      }
+    } catch {
+      // Host applications may log worktree scan failures if they need more detail.
+    }
+  }
+
+  return dedupeAutocodeProjectTasks(allTasks);
+}
+
+export function loadAutocodeTasksFromSpecsDir(input: LoadAutocodeProjectTasksInput & {
+  specsDir: string;
+  taskProjectRoot: string;
+  location: 'main' | 'worktree';
+}): AutocodeProjectTask[] {
+  let specDirs: Dirent[];
+  try {
+    specDirs = readdirSync(input.specsDir, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+
+  return specDirs.flatMap((dir) => {
+    if (!dir.isDirectory() || dir.name === '.gitkeep') {
+      return [];
+    }
+    const task = readAutocodeProjectTaskFromSpecDir({
+      ...input,
+      specId: dir.name,
+      specDir: join(input.specsDir, dir.name),
+    });
+    return task ? [task] : [];
+  });
+}
+
+export function dedupeAutocodeProjectTasks(tasks: AutocodeProjectTask[]): AutocodeProjectTask[] {
+  const taskMap = new Map<string, AutocodeProjectTask>();
+  for (const task of tasks) {
+    const existing = taskMap.get(task.id);
+    if (!existing) {
+      taskMap.set(task.id, task);
+      continue;
+    }
+
+    const existingIsMain = existing.location === 'main';
+    const newIsMain = task.location === 'main';
+    if (existingIsMain && !newIsMain) {
+      taskMap.set(task.id, mergeMissingAutocodeProjectTaskFields(existing, task));
+    } else if (!existingIsMain && newIsMain) {
+      taskMap.set(task.id, mergeMissingAutocodeProjectTaskFields(task, existing));
+    } else {
+      const existingPriority = AUTOCODE_TASK_STATUS_PRIORITY[existing.status] || 0;
+      const newPriority = AUTOCODE_TASK_STATUS_PRIORITY[task.status] || 0;
+      taskMap.set(
+        task.id,
+        newPriority > existingPriority
+          ? mergeMissingAutocodeProjectTaskFields(task, existing)
+          : mergeMissingAutocodeProjectTaskFields(existing, task),
+      );
+    }
+  }
+  return Array.from(taskMap.values());
+}
+
+export function determineAutocodeProjectTaskStatus(
+  plan: Pick<ImplementationPlanFile, 'status' | 'reviewReason'> | null,
+): { status: AutocodeTaskStatus; reviewReason?: AutocodeReviewReason } {
+  if (!plan?.status) {
+    return { status: 'backlog' };
+  }
+
+  const statusMap: Record<string, AutocodeTaskStatus> = {
+    pending: 'backlog',
+    planning: 'in_progress',
+    in_progress: 'in_progress',
+    coding: 'in_progress',
+    review: 'ai_review',
+    completed: 'done',
+    done: 'done',
+    human_review: 'human_review',
+    ai_review: 'ai_review',
+    pr_created: 'pr_created',
+    backlog: 'backlog',
+    error: 'error',
+    queue: 'queue',
+    queued: 'queue',
+  };
+  const status = statusMap[plan.status] ?? 'backlog';
+  return {
+    status,
+    ...(status === 'human_review' && plan.reviewReason ? { reviewReason: plan.reviewReason } : {}),
+  };
+}
+
+function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput & {
+  specId: string;
+  specDir: string;
+  taskProjectRoot: string;
+  location: 'main' | 'worktree';
+}): AutocodeProjectTask | null {
+  const planPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+  const specFilePath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
+  const requirementsPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.requirements);
+  const metadataPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
+
+  let plan: ImplementationPlanFile | null = null;
+  let hasJsonError = false;
+  let jsonErrorMessage = '';
+  if (existsSync(planPath)) {
+    try {
+      const content = readFileSync(planPath, 'utf8');
+      plan = safeParseAutocodeJson<ImplementationPlanFile>(content);
+      if (!plan) {
+        hasJsonError = true;
+        jsonErrorMessage = `Malformed JSON in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}`;
+      }
+    } catch (error) {
+      hasJsonError = true;
+      jsonErrorMessage = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  const metadata = readJsonFile<AutocodeTaskMetadata>(metadataPath) ?? undefined;
+  const requirements = readJsonFile<Record<string, unknown>>(requirementsPath);
+  const specTitle = readSpecTitle(specFilePath);
+  const description = getProjectTaskDescription(requirements, plan, specFilePath);
+  const finalDescription = hasJsonError ? `${AUTOCODE_JSON_ERROR_PREFIX}${jsonErrorMessage}` : description;
+  const { status, reviewReason } = hasJsonError
+    ? { status: 'human_review' as const, reviewReason: 'errors' as const }
+    : determineAutocodeProjectTaskStatus(plan);
+  const subtasks = extractProjectPlanSubtasks(plan);
+  const corrected = correctStaleAutocodeTaskStatus({
+    subtasks,
+    hasJsonError,
+    status,
+    reviewReason,
+    plan,
+    planPath,
+    specId: input.specId,
+    persist: input.persistStaleStatusCorrections !== false,
+    minAgeMs: input.staleStatusCorrectionAgeMs ?? 30_000,
+  });
+
+  const rawTitle = hasJsonError
+    ? `${input.specId}${AUTOCODE_JSON_ERROR_TITLE_SUFFIX}`
+    : stringFrom(plan?.feature, plan?.title, specTitle, input.specId);
+  const title = /^\d{3}-/.test(rawTitle) && !hasJsonError
+    ? stringFrom(specTitle, rawTitle)
+    : rawTitle;
+
+  const persistedPhase = plan?.executionPhase;
+  const progress = persistedPhase
+    ? { phase: persistedPhase as AutocodeExecutionPhase, phaseProgress: 50, overallProgress: 50 }
+    : plan?.xstateState
+      ? inferAutocodeExecutionProgressFromXState(plan.xstateState)
+      : inferAutocodeExecutionProgress(plan?.status);
+
+  return {
+    id: input.specId,
+    specId: input.specId,
+    ...(input.projectId ? { projectId: input.projectId } : {}),
+    projectRoot: input.projectRoot,
+    title,
+    description: finalDescription,
+    status: corrected.status,
+    subtasks,
+    logs: [],
+    ...(metadata ? { metadata } : {}),
+    ...(corrected.reviewReason ? { reviewReason: corrected.reviewReason } : {}),
+    ...(progress ? { executionProgress: progress } : {}),
+    ...(plan?.tokenUsage ? { tokenUsage: plan.tokenUsage } : {}),
+    ...(plan?.stagedInMainProject !== undefined ? { stagedInMainProject: plan.stagedInMainProject } : {}),
+    ...(plan?.stagedAt ? { stagedAt: plan.stagedAt } : {}),
+    location: input.location,
+    specsPath: input.specDir,
+    createdAt: stringFrom(plan?.created_at, new Date(0).toISOString()),
+    updatedAt: stringFrom(plan?.updated_at, plan?.created_at, new Date(0).toISOString()),
+  };
+}
+
+function getProjectTaskDescription(
+  requirements: Record<string, unknown> | null,
+  plan: ImplementationPlanFile | null,
+  specFilePath: string,
+): string {
+  const requirementDescription = stringFrom(requirements?.task_description);
+  if (requirementDescription) {
+    return requirementDescription;
+  }
+  if (plan?.description) {
+    return plan.description;
+  }
+  if (!existsSync(specFilePath)) {
+    return '';
+  }
+  try {
+    const content = readFileSync(specFilePath, 'utf8');
+    const overviewMatch = content.match(/## Overview\s*\n+([\s\S]*?)(?=\n#{1,6}\s|$)/);
+    return overviewMatch?.[1]?.trim() || '';
+  } catch {
+    return '';
+  }
+}
+
+function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): AutocodePlanSubtask[] {
+  if (!Array.isArray(plan?.phases)) {
+    return [];
+  }
+  return plan.phases.flatMap((phase, phaseIndex) => {
+    const items = Array.isArray(phase.subtasks)
+      ? phase.subtasks
+      : Array.isArray(phase.chunks)
+        ? phase.chunks
+        : [];
+    return items.map((subtask, subtaskIndex) => {
+      const fallbackLabel = stringFrom(subtask.id, `${phaseIndex + 1}.${subtaskIndex + 1}`);
+      const title = stringFrom(subtask.title, subtask.description, `Subtask ${fallbackLabel}`);
+      const description = stringFrom(subtask.description, subtask.title, title);
+      const completionSummary = subtask.status === 'completed'
+        ? stringFrom(
+            subtask.completion_summary,
+            subtask.completionSummary,
+            subtask.completed_summary,
+            subtask.notes,
+            subtask.actual_output,
+          )
+        : '';
+      return {
+        id: stringFrom(subtask.id, `subtask-${phaseIndex + 1}-${subtaskIndex + 1}`),
+        title,
+        description,
+        ...(completionSummary ? { completionSummary } : {}),
+        status: normalizeSubtaskStatus(subtask.status),
+        files: [],
+      };
+    });
+  });
+}
+
+function correctStaleAutocodeTaskStatus(input: {
+  subtasks: Array<{ status: string }>;
+  hasJsonError: boolean;
+  status: AutocodeTaskStatus;
+  reviewReason?: AutocodeReviewReason;
+  plan: ImplementationPlanFile | null;
+  planPath: string;
+  specId: string;
+  persist: boolean;
+  minAgeMs: number;
+}): { status: AutocodeTaskStatus; reviewReason?: AutocodeReviewReason } {
+  if (input.subtasks.length === 0 || input.hasJsonError) {
+    return { status: input.status, ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}) };
+  }
+
+  const allCompleted = input.subtasks.every((subtask) => subtask.status === 'completed');
+  if (
+    !allCompleted ||
+    input.status === 'human_review' ||
+    input.status === 'done' ||
+    input.status === 'pr_created' ||
+    input.status === 'ai_review' ||
+    input.status === 'error'
+  ) {
+    return { status: input.status, ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}) };
+  }
+
+  if (input.plan?.updated_at) {
+    const ageMs = Date.now() - new Date(input.plan.updated_at).getTime();
+    if (Number.isFinite(ageMs) && ageMs < input.minAgeMs) {
+      return { status: input.status, ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}) };
+    }
+  }
+
+  if (input.persist && input.plan) {
+    const correctedPlan: ImplementationPlanFile = {
+      ...input.plan,
+      status: 'human_review',
+      planStatus: 'review',
+      reviewReason: 'completed',
+      updated_at: new Date().toISOString(),
+      xstateState: 'human_review',
+      executionPhase: 'complete',
+    };
+    try {
+      writeFileSync(input.planPath, JSON.stringify(correctedPlan, null, 2), 'utf8');
+      Object.assign(input.plan, correctedPlan);
+    } catch {
+      return { status: input.status, ...(input.reviewReason ? { reviewReason: input.reviewReason } : {}) };
+    }
+  }
+
+  return { status: 'human_review', reviewReason: 'completed' };
+}
+
+function mergeMissingAutocodeProjectTaskFields(
+  preferred: AutocodeProjectTask,
+  fallback: AutocodeProjectTask,
+): AutocodeProjectTask {
+  let merged = preferred;
+  if (!preferred.description.trim() && fallback.description.trim()) {
+    merged = { ...merged, description: fallback.description };
+  }
+
+  if (!preferred.metadata && fallback.metadata) {
+    merged = { ...merged, metadata: fallback.metadata };
+  } else if (preferred.metadata && fallback.metadata) {
+    const mergedMetadata: AutocodeTaskMetadata = {
+      ...fallback.metadata,
+      ...preferred.metadata,
+    };
+    const preferredSource = preferred.metadata.sourceType;
+    const fallbackSource = fallback.metadata.sourceType;
+    if ((!preferredSource && fallbackSource) || (preferredSource === 'manual' && fallbackSource && fallbackSource !== 'manual')) {
+      mergedMetadata.sourceType = fallbackSource;
+    }
+    merged = { ...merged, metadata: mergedMetadata };
+  }
+
+  const mergedTokenUsage = mergeProjectTokenUsage(preferred.tokenUsage, fallback.tokenUsage);
+  if (mergedTokenUsage) {
+    merged = { ...merged, tokenUsage: mergedTokenUsage };
+  }
+
+  if (shouldRestoreProjectSubtasks(preferred, fallback)) {
+    merged = { ...merged, subtasks: fallback.subtasks };
+  }
+
+  return merged;
+}
+
+function mergeProjectTokenUsage(
+  preferred: AutocodeTokenUsage | undefined,
+  fallback: AutocodeTokenUsage | undefined,
+): AutocodeTokenUsage | undefined {
+  if (!preferred) return fallback;
+  if (!fallback) return preferred;
+  return {
+    promptTokens: Math.max(preferred.promptTokens ?? 0, fallback.promptTokens ?? 0),
+    completionTokens: Math.max(preferred.completionTokens ?? 0, fallback.completionTokens ?? 0),
+    totalTokens: Math.max(preferred.totalTokens ?? 0, fallback.totalTokens ?? 0),
+    thinkingTokens: Math.max(preferred.thinkingTokens ?? 0, fallback.thinkingTokens ?? 0) || undefined,
+    cacheReadTokens: Math.max(preferred.cacheReadTokens ?? 0, fallback.cacheReadTokens ?? 0) || undefined,
+    cacheCreationTokens: Math.max(preferred.cacheCreationTokens ?? 0, fallback.cacheCreationTokens ?? 0) || undefined,
+    stepsExecuted: Math.max(preferred.stepsExecuted ?? 0, fallback.stepsExecuted ?? 0) || undefined,
+  };
+}
+
+function shouldRestoreProjectSubtasks(preferred: AutocodeProjectTask, fallback: AutocodeProjectTask): boolean {
+  if (fallback.subtasks.length === 0) {
+    return false;
+  }
+  if (preferred.subtasks.length === 0) {
+    return true;
+  }
+  if (fallback.subtasks.length !== preferred.subtasks.length) {
+    return fallback.subtasks.length > preferred.subtasks.length;
+  }
+  return getProjectSubtaskProgressScore(fallback.subtasks) > getProjectSubtaskProgressScore(preferred.subtasks);
+}
+
+function getProjectSubtaskProgressScore(subtasks: Array<{ status: string }>): number {
+  return subtasks.reduce((score, subtask) => {
+    switch (subtask.status) {
+      case 'completed':
+        return score + 3;
+      case 'in_progress':
+      case 'failed':
+        return score + 2;
+      default:
+        return score + 1;
+    }
+  }, 0);
+}
+
+function readSpecTitle(filePath: string): string | null {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+  try {
+    const match = /^#\s+(?:Quick Spec:|Specification:)?\s*(.+)$/m.exec(readFileSync(filePath, 'utf8'));
+    return match?.[1]?.trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function readJsonFile<T>(filePath: string): T | null {
+  if (!existsSync(filePath)) {
+    return null;
+  }
+  try {
+    return safeParseAutocodeJson<T>(readFileSync(filePath, 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function normalizeSubtaskStatus(value: unknown): AutocodeSubtaskStatus {
+  return value === 'in_progress' || value === 'completed' || value === 'failed' ? value : 'pending';
+}
+
+function stringFrom(...values: unknown[]): string {
+  for (const value of values) {
+    if (typeof value === 'string' && value.trim()) {
+      return value.trim();
+    }
+    if (typeof value === 'number' && Number.isFinite(value)) {
+      return String(value);
+    }
+  }
+  return '';
+}

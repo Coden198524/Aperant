@@ -86,11 +86,38 @@ async function main() {
       title: 'Add provider settings',
       description: 'Create provider account settings shared by desktop and VS Code.',
       metadata: { category: 'feature', workflowMode: 'balanced' },
+      requirements: {
+        attached_images: [{ filename: 'settings.png', path: 'attachments/settings.png', description: '' }],
+      },
     });
     assert.match(task.specId, /^001-add-provider-settings/);
     assert.equal(task.status, 'backlog');
     assert.ok(existsSync(join(task.specsPath, 'implementation_plan.json')));
     assert.ok(existsSync(join(task.specsPath, 'requirements.json')));
+    const requirements = JSON.parse(readFileSync(join(task.specsPath, 'requirements.json'), 'utf8'));
+    assert.equal(requirements.task_description, 'Create provider account settings shared by desktop and VS Code.');
+    assert.equal(requirements.workflow_type, 'feature');
+    assert.deepEqual(requirements.attached_images, [
+      { filename: 'settings.png', path: 'attachments/settings.png', description: '' },
+    ]);
+
+    const specRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: task.id,
+    });
+    assert.equal(specRuntimePlan.mode, 'spec');
+    assert.equal(specRuntimePlan.processType, 'spec-creation');
+    assert.equal(specRuntimePlan.planStatus, 'planning');
+    assert.equal(specRuntimePlan.executionPhase, 'planning');
+    assert.equal(specRuntimePlan.taskDescription, 'Create provider account settings shared by desktop and VS Code.');
+    assert.equal(core.getAutocodeAgentRuntimeModeLabel(specRuntimePlan.mode), 'spec creation');
+
+    const workspaceView = core.buildAutocodeWorkspaceSummaryViewModel(summary, projectIndex);
+    assert.equal(workspaceView.name, 'sample-project');
+    assert.equal(workspaceView.packageManagerLabel, 'npm');
+    assert.equal(workspaceView.frameworksLabel.includes('React'), true);
+    assert.ok(workspaceView.rows.some((row) => row.key === 'services' && row.value.includes('main')));
 
     const workspaceState = core.buildAutocodeWorkspaceState({ projectRoot, dataDirName: '.autocode' });
     assert.equal(workspaceState.projectRoot, projectRoot);
@@ -103,6 +130,87 @@ async function main() {
     assert.equal(tasks[0].id, task.id);
     assert.equal(tasks[0].description, 'Create provider account settings shared by desktop and VS Code.');
 
+    const importedTask = core.createImportedAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode',
+      title: 'Investigate imported GitHub issue',
+      description: 'Imported issue body from GitHub.',
+      metadata: {
+        sourceType: 'github',
+        githubIssueNumber: 42,
+        githubUrl: 'https://example.com/issues/42',
+        category: 'bug_fix',
+      },
+      requirements: {
+        workflow_type: 'bug_fix',
+      },
+    });
+    assert.match(importedTask.specId, /^002-investigate-imported-github-issue/);
+    assert.equal(importedTask.metadata.sourceType, 'github');
+    assert.equal(
+      JSON.parse(readFileSync(join(importedTask.specsPath, 'requirements.json'), 'utf8')).workflow_type,
+      'bug_fix',
+    );
+    assert.throws(() => {
+      core.createImportedAutocodeTask({
+        projectRoot,
+        dataDirName: '.autocode',
+        specId: importedTask.specId,
+        title: 'Duplicate import',
+        description: 'Should not overwrite an existing imported task.',
+        metadata: { sourceType: 'github' },
+      });
+    }, /already exists/);
+
+    const mutablePlan = core.createMinimalAutocodePlan(
+      {
+        title: 'Plan utilities',
+        description: 'Exercise shared plan-file helpers.',
+        createdAt: '2024-01-01T00:00:00.000Z',
+      },
+      'backlog',
+      '2024-01-01T00:00:00.000Z',
+    );
+    core.applyAutocodePlanStatusAndReason(mutablePlan, 'human_review', {
+      reviewReason: 'completed',
+      xstateState: 'human_review',
+      executionPhase: 'complete',
+      now: '2024-01-01T00:01:00.000Z',
+    });
+    assert.equal(mutablePlan.planStatus, 'review');
+    assert.equal(mutablePlan.reviewReason, 'completed');
+    core.applyAutocodePlanTokenUsage(mutablePlan, {
+      promptTokens: 10,
+      completionTokens: 5,
+      totalTokens: 15,
+      stepsExecuted: 2,
+      sessionId: 'a',
+    }, '2024-01-01T00:02:00.000Z');
+    core.applyAutocodePlanTokenUsage(mutablePlan, {
+      promptTokens: 8,
+      completionTokens: 7,
+      totalTokens: 15,
+      stepsExecuted: 3,
+      sessionId: 'b',
+    }, '2024-01-01T00:03:00.000Z');
+    assert.equal(mutablePlan.tokenUsage.stepsExecuted, 3);
+    assert.equal(mutablePlan.tokenUsage.completionTokens, 7);
+    assert.equal(mutablePlan.tokenUsage.sessionId, 'b');
+
+    const resetPlan = {
+      phases: [{
+        subtasks: [
+          { id: '1', status: 'in_progress', started_at: 'now' },
+          { id: '2', status: 'failed', completed_at: 'now' },
+          { id: '3', status: 'completed' },
+        ],
+      }],
+    };
+    const resetResult = core.resetAutocodeStuckSubtasksInPlan(resetPlan);
+    assert.equal(resetResult.resetCount, 2);
+    assert.equal(core.countAutocodePlanSubtasks(resetPlan.phases), 3);
+    assert.equal(core.canSyncAutocodePlanPhases(resetPlan.phases, []), false);
+
     const parsedCliArgs = core.parseAutocodeCommandArgs(['run', task.id, '--cli', 'codex', '--json']);
     assert.equal(parsedCliArgs.command, 'run');
     assert.equal(core.getAutocodeStringOption(parsedCliArgs, 'cli'), 'codex');
@@ -110,6 +218,59 @@ async function main() {
     assert.equal(core.isAutocodeCli('deepseek'), true);
     assert.equal(core.isAutocodeCli('unknown-cli'), false);
     assert.equal(core.buildAutocodeCliCommand({ cli: 'codex', bypassPermissions: true }), 'codex --dangerously-bypass-approvals-and-sandbox');
+    assert.equal(core.buildAutocodeSpecId(7, '中文任务', 'yunxiao'), '007-yunxiao');
+    assert.equal(core.AUTOCODE_TASK_ARTIFACTS.implementationPlan, 'implementation_plan.json');
+    assert.equal(core.getAutocodeSpecsRelativeDir('.autocode'), '.autocode/specs');
+    assert.equal(core.isAutocodeTaskArtifactFileName('qa_report.md'), true);
+    assert.equal(core.inferAutocodePinnedProviderFromModel('sonnet'), null);
+    assert.equal(core.inferAutocodePinnedProviderFromModel('opus-4.7'), 'anthropic');
+    assert.equal(core.inferAutocodePinnedProviderFromModel('gpt-5.5'), 'openai');
+    assert.equal(core.resolveAutocodeCrossProviderModelRequest('claude-sonnet-4-6'), 'sonnet');
+    assert.equal(core.resolveAutocodeTaskPhaseProvider({
+      phaseProviders: { coding: 'google' },
+      phaseModels: { coding: 'sonnet' },
+    }, 'coding'), 'google');
+    assert.equal(core.resolveAutocodeTaskWorkflowMode({ workflowMode: 'off' }), 'off');
+    assert.equal(core.resolveAutocodeTaskEnableBatchExecution({ enableBatchExecution: true }), true);
+    assert.equal(core.resolveAutocodeTaskPhaseModelId({
+      metadata: {
+        phaseModels: { coding: 'sonnet' },
+        phaseProviders: { coding: 'google' },
+      },
+      phase: 'coding',
+      resolveModelEquivalent: (model, provider) => provider === 'google' && model === 'sonnet'
+        ? { modelId: 'gemini-2.5-flash' }
+        : null,
+    }), 'gemini-2.5-flash');
+    const runtimeOptions = core.buildAutocodeSessionRuntimeOptions({
+      workflowMode: 'balanced',
+      agentType: 'build_orchestrator',
+      env: {
+        CONTEXT7_ENABLED: 'false',
+        LINEAR_API_KEY: 'linear-key',
+        GRAPHITI_MCP_URL: 'http://memory.local',
+        ELECTRON_MCP_ENABLED: 'true',
+        AGENT_MCP_build_orchestrator_ADD: 'playwright',
+        CUSTOM_MCP_SERVERS: JSON.stringify([
+          { id: 'docs', name: 'Docs', type: 'http', url: 'https://mcp.example.test' },
+          { id: 'bad', name: 'Bad', type: 'command' },
+        ]),
+      },
+    });
+    assert.equal(runtimeOptions.maxSteps, core.AUTOCODE_DEFAULT_SESSION_MAX_STEPS);
+    assert.equal(runtimeOptions.mcpOptions.context7Enabled, false);
+    assert.equal(runtimeOptions.mcpOptions.linearEnabled, true);
+    assert.equal(runtimeOptions.mcpOptions.memoryEnabled, true);
+    assert.equal(runtimeOptions.mcpOptions.electronMcpEnabled, true);
+    assert.equal(runtimeOptions.mcpOptions.agentMcpAdd, 'playwright');
+    assert.equal(runtimeOptions.mcpOptions.customMcpServers.length, 1);
+    const directRuntimeOptions = core.buildAutocodeSessionRuntimeOptions({
+      workflowMode: 'off',
+      agentType: 'direct_task',
+      env: { CUSTOM_MCP_SERVERS: runtimeOptions.mcpOptions.mcpEnv.CUSTOM_MCP_SERVERS },
+    });
+    assert.equal(directRuntimeOptions.maxSteps, core.AUTOCODE_DIRECT_WORKFLOW_PHASE_STEP_BUDGETS.coding);
+    assert.equal(directRuntimeOptions.mcpOptions.customMcpServers.length, 0);
 
     const specRunPlan = core.createAutocodeTaskRunPlan({
       projectRoot,
@@ -137,6 +298,23 @@ async function main() {
     assert.equal(planningRunPlan.phase, 'planning');
     assert.equal(planningRunPlan.command, 'codex');
     assert.ok(planningRunPlan.args.includes('--dangerously-bypass-approvals-and-sandbox'));
+    const codingMessages = core.buildAutocodeTaskExecutionMessages({
+      specDir: task.specsPath,
+      specId: task.specId,
+      projectRoot,
+      language: 'zh-CN',
+    });
+    assert.equal(codingMessages[0].role, 'user');
+    assert.ok(codingMessages[0].content.includes('implementation_plan.json'));
+    assert.ok(codingMessages[0].content.includes('Simplified Chinese'));
+    const planningRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: task.id,
+    });
+    assert.equal(planningRuntimePlan.mode, 'planning');
+    assert.equal(planningRuntimePlan.processType, 'task-execution');
+    assert.equal(planningRuntimePlan.planStatus, 'planning');
     const runningPlanningTask = core.updateAutocodeTaskPlanStatus({
       projectRoot,
       dataDirName: '.autocode',
@@ -169,6 +347,15 @@ async function main() {
     });
     assert.equal(taskLogs.phases.planning.status, 'active');
     assert.equal(taskLogs.phases.planning.entries.length, 2);
+    const taskView = core.buildAutocodeTaskCardViewModel(runningPlanningTask, taskLogs, {
+      latestLogEntries: 1,
+      logContentMaxLength: 80,
+    });
+    assert.equal(taskView.specId, task.specId);
+    assert.equal(taskView.status, 'in_progress');
+    assert.equal(taskView.logs.phaseStatusText, 'planning: active | coding: pending | validation: pending');
+    assert.equal(taskView.logs.latestEntries.length, 1);
+    assert.match(taskView.metaText, /subtasks/);
 
     writeFileSync(
       join(task.specsPath, 'implementation_plan.json'),
@@ -186,6 +373,96 @@ async function main() {
     });
     assert.equal(codingRunPlan.phase, 'coding');
     assert.equal(codingRunPlan.command, 'gemini');
+    const codingRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: task.id,
+    });
+    assert.equal(codingRuntimePlan.mode, 'coding');
+    assert.equal(codingRuntimePlan.processType, 'task-execution');
+    assert.equal(codingRuntimePlan.planStatus, 'coding');
+    assert.equal(codingRuntimePlan.executionPhase, 'coding');
+
+    const worktreeSpecDir = join(projectRoot, '.autocode', 'worktrees', 'tasks', 'wt-1', '.autocode', 'specs', task.specId);
+    mkdirSync(worktreeSpecDir, { recursive: true });
+    writeFileSync(
+      join(worktreeSpecDir, 'implementation_plan.json'),
+      JSON.stringify({
+        feature: task.title,
+        description: 'Worktree fallback description',
+        status: 'human_review',
+        reviewReason: 'completed',
+        phases: [{ subtasks: [{ id: '1.1', title: 'Build UI', description: 'Add UI', status: 'completed' }] }],
+      }, null, 2),
+    );
+    const loadedProjectTasks = core.loadAutocodeProjectTasks({
+      projectRoot,
+      dataDirName: '.autocode',
+      worktreesDir: join(projectRoot, '.autocode', 'worktrees', 'tasks'),
+      persistStaleStatusCorrections: false,
+    });
+    const mergedProjectTask = loadedProjectTasks.find((candidate) => candidate.id === task.id);
+    assert.equal(mergedProjectTask.status, 'backlog');
+    assert.equal(mergedProjectTask.subtasks[0].status, 'completed');
+    assert.equal(mergedProjectTask.location, 'main');
+
+    const startedRuntimePlans = [];
+    await core.startAutocodeAgentRuntime(codingRuntimePlan, {
+      startRuntime(plan) {
+        startedRuntimePlans.push(plan);
+      },
+    });
+    assert.equal(startedRuntimePlans[0].taskId, task.id);
+    assert.deepEqual(
+      core.resolveAutocodeTaskStartEvent({
+        task: { status: 'human_review', reviewReason: 'plan_review' },
+        currentState: 'plan_review',
+        planHasSubtasks: true,
+      }),
+      { type: 'PLAN_APPROVED' },
+    );
+    assert.deepEqual(
+      core.resolveAutocodeTaskStartEvent({
+        task: { status: 'human_review', reviewReason: 'stopped' },
+        currentState: 'human_review',
+        planHasSubtasks: false,
+      }),
+      { type: 'PLANNING_STARTED' },
+    );
+    assert.deepEqual(
+      core.resolveAutocodeTaskStartEvent({
+        task: { status: 'human_review', reviewReason: 'completed' },
+        currentState: 'human_review',
+        planHasSubtasks: true,
+      }),
+      { type: 'USER_RESUMED' },
+    );
+    const directTask = core.createAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode',
+      title: 'Run direct cleanup',
+      description: 'Apply a direct code cleanup without spec orchestration.',
+      metadata: { category: 'refactoring', workflowMode: 'off' },
+    });
+    const directRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: directTask.id,
+    });
+    assert.equal(directRuntimePlan.mode, 'direct');
+    assert.equal(directRuntimePlan.processType, 'task-execution');
+    assert.deepEqual(
+      core.resolveAutocodeTaskStartEvent({
+        task: directTask,
+        currentState: null,
+        planHasSubtasks: false,
+      }),
+      {
+        type: 'CODING_STARTED',
+        subtaskId: 'direct-implementation',
+        subtaskDescription: 'Direct model execution',
+      },
+    );
     assert.equal(core.calculateProgress([{ status: 'completed' }, { status: 'pending' }]), 50);
     assert.deepEqual(core.countSubtasksByStatus([{ status: 'completed' }, { status: 'failed' }]), {
       pending: 0,

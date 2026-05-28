@@ -1,12 +1,11 @@
-import { ipcMain, app } from "electron";
+import { ipcMain } from "electron";
 import type { BrowserWindow } from "electron";
-import path from "path";
-import { existsSync, readdirSync, mkdirSync, writeFileSync } from "fs";
 import {
-  IPC_CHANNELS,
-  getSpecsDir,
-  AUTO_BUILD_PATHS,
-} from "../../shared/constants";
+  createAutocodeTask,
+  type AutocodeTask,
+  type AutocodeTaskMetadata,
+} from "@autocode/core";
+import { IPC_CHANNELS } from "../../shared/constants";
 import type {
   IPCResult,
   InsightsSession,
@@ -20,8 +19,24 @@ import { projectStore } from "../project-store";
 import { insightsService } from "../insights-service";
 import { safeSendToRenderer } from "./utils";
 import { getActiveProviderFeatureSettings } from "./feature-settings-helper";
-import { buildSpecId } from "./shared/spec-id";
 import type { ThinkingLevel } from "../../shared/types/settings";
+
+function toDesktopTask(coreTask: AutocodeTask, projectId: string): Task {
+  return {
+    id: coreTask.id,
+    specId: coreTask.specId,
+    projectId,
+    title: coreTask.title,
+    description: coreTask.description,
+    status: coreTask.status as Task["status"],
+    subtasks: coreTask.subtasks,
+    logs: [],
+    metadata: coreTask.metadata as TaskMetadata | undefined,
+    specsPath: coreTask.specsPath,
+    createdAt: new Date(coreTask.createdAt),
+    updatedAt: new Date(coreTask.updatedAt),
+  };
+}
 
 /**
  * Read insights feature settings using per-provider resolution
@@ -138,74 +153,20 @@ export function registerInsightsHandlers(getMainWindow: () => BrowserWindow | nu
       }
 
       try {
-        // Generate a unique spec ID based on existing specs
-        // Get specs directory path
-        const specsBaseDir = getSpecsDir(project.autoBuildPath);
-        const specsDir = path.join(project.path, specsBaseDir);
-
-        // Find next available spec number
-        let specNumber = 1;
-        if (existsSync(specsDir)) {
-          const existingDirs = readdirSync(specsDir, { withFileTypes: true })
-            .filter((d) => d.isDirectory())
-            .map((d) => d.name);
-
-          const existingNumbers = existingDirs
-            .map((name) => {
-              const match = name.match(/^(\d+)/);
-              return match ? parseInt(match[1], 10) : 0;
-            })
-            .filter((n) => n > 0);
-
-          if (existingNumbers.length > 0) {
-            specNumber = Math.max(...existingNumbers) + 1;
-          }
-        }
-
-        const specId = buildSpecId(specNumber, title);
-
-        // Create spec directory
-        const specDir = path.join(specsDir, specId);
-        mkdirSync(specDir, { recursive: true });
-
-        // Build metadata with source type
         const taskMetadata: TaskMetadata = {
           sourceType: "insights",
           ...metadata,
         };
 
-        // Create initial implementation_plan.json
-        const now = new Date().toISOString();
-        const implementationPlan = {
-          feature: title,
-          description: description,
-          created_at: now,
-          updated_at: now,
-          status: "pending",
-          phases: [],
-        };
-
-        const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
-        writeFileSync(planPath, JSON.stringify(implementationPlan, null, 2), 'utf-8');
-
-        // Save task metadata
-        const metadataPath = path.join(specDir, "task_metadata.json");
-        writeFileSync(metadataPath, JSON.stringify(taskMetadata, null, 2), 'utf-8');
-
-        // Create the task object
-        const task: Task = {
-          id: specId,
-          specId: specId,
-          projectId,
+        const coreTask = createAutocodeTask({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath || ".autocode",
           title,
           description,
-          status: "backlog",
-          subtasks: [],
-          logs: [],
-          metadata: taskMetadata,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
+          metadata: taskMetadata as unknown as AutocodeTaskMetadata,
+        });
+        const task = toDesktopTask(coreTask, projectId);
+        projectStore.invalidateTasksCache(projectId);
 
         return { success: true, data: task };
       } catch (error) {

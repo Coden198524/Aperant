@@ -1,5 +1,6 @@
 import * as path from 'node:path';
 import { TextDecoder, TextEncoder } from 'node:util';
+import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 
 export const DEFAULT_READ_LINE_LIMIT = 500;
 export const BALANCED_READ_LINE_LIMIT = 400;
@@ -54,12 +55,12 @@ export function isPdfFile(filePath: string): boolean {
 }
 
 export function isTaskLogFile(filePath: string): boolean {
-  return path.basename(filePath).toLowerCase() === 'task_logs.json';
+  return path.basename(filePath).toLowerCase() === AUTOCODE_TASK_ARTIFACTS.taskLogs;
 }
 
 export function isActiveTaskLogFile(filePath: string, specDir: string): boolean {
   return normalizeComparableReadPath(filePath) ===
-    normalizeComparableReadPath(path.join(specDir, 'task_logs.json'));
+    normalizeComparableReadPath(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs));
 }
 
 export function getDefaultReadLineLimit(workflowMode: ReadWorkflowMode): number {

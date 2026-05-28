@@ -3,14 +3,14 @@
  */
 
 import path from 'path';
-import { existsSync, mkdirSync, writeFileSync, readFileSync } from 'fs';
-import { AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
+import { writeFileSync, readFileSync } from 'fs';
+import { createImportedAutocodeTask, buildAutocodeSpecId } from '@autocode/core';
+import { AUTO_BUILD_PATHS } from '../../../shared/constants';
 import type { Project, TaskMetadata } from '../../../shared/types';
 import { withSpecNumberLock } from '../../utils/spec-number-lock';
 import { debugLog } from './utils/logger';
 import { labelMatchesWholeWord } from '../shared/label-utils';
 import { sanitizeText, sanitizeStringArray, sanitizeUrl } from '../shared/sanitize';
-import { buildSpecId } from '../shared/spec-id';
 
 export interface SpecCreationData {
   specId: string;
@@ -91,13 +91,6 @@ export async function createSpecForIssue(
   labels: string[] = [],
   baseBranch?: string
 ): Promise<SpecCreationData> {
-  const specsBaseDir = getSpecsDir(project.autoBuildPath);
-  const specsDir = path.join(project.path, specsBaseDir);
-
-  if (!existsSync(specsDir)) {
-    mkdirSync(specsDir, { recursive: true });
-  }
-
   // Sanitize network-sourced data before writing to disk
   const safeTitle = sanitizeText(issueTitle, 500);
   const safeDescription = sanitizeText(taskDescription, 50000, true);
@@ -108,48 +101,12 @@ export async function createSpecForIssue(
   return await withSpecNumberLock(project.path, async (lock) => {
     // Get next spec number from global scan (main + all worktrees)
     const specNumber = lock.getNextSpecNumber(project.autoBuildPath);
-    const specId = buildSpecId(specNumber, safeTitle);
-
-    // Create spec directory (inside lock to ensure atomicity)
-    const specDir = path.join(specsDir, specId);
-    mkdirSync(specDir, { recursive: true });
-
-    // Create initial files
-    const now = new Date().toISOString();
-
-    // implementation_plan.json
-    const implementationPlan = {
-      feature: safeTitle,
-      description: safeDescription,
-      created_at: now,
-      updated_at: now,
-      status: 'pending',
-      phases: []
-    };
-    // lgtm[js/http-to-file-access] - specDir is controlled, slugifiedTitle sanitizes input
-    writeFileSync(
-      path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
-      JSON.stringify(implementationPlan, null, 2),
-      'utf-8'
-    );
-
-    // requirements.json
-    const requirements = {
-      task_description: safeDescription,
-      workflow_type: 'feature'
-    };
-    // lgtm[js/http-to-file-access] - specDir is controlled, slugifiedTitle sanitizes input
-    writeFileSync(
-      path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS),
-      JSON.stringify(requirements, null, 2),
-      'utf-8'
-    );
+    const specId = buildAutocodeSpecId(specNumber, safeTitle);
 
     // Determine category from GitHub issue labels
     const category = determineCategoryFromLabels(safeLabels);
 
-    // task_metadata.json
-    const metadata: TaskMetadata = {
+    const metadata = {
       sourceType: 'github',
       githubIssueNumber: issueNumber,
       githubUrl: safeGithubUrl,
@@ -157,17 +114,23 @@ export async function createSpecForIssue(
       // Store baseBranch for worktree creation and QA comparison
       // This comes from project.settings.mainBranch or task-level override
       ...(baseBranch && { baseBranch })
-    };
-    // lgtm[js/http-to-file-access] - specDir is controlled, slugifiedTitle sanitizes input
-    writeFileSync(
-      path.join(specDir, 'task_metadata.json'),
-      JSON.stringify(metadata, null, 2),
-      'utf-8'
-    );
+    } satisfies TaskMetadata & { sourceType: 'github' };
+
+    const task = createImportedAutocodeTask({
+      projectRoot: project.path,
+      dataDirName: project.autoBuildPath || '.autocode',
+      specId,
+      title: safeTitle,
+      description: safeDescription,
+      metadata,
+      requirements: {
+        workflow_type: 'feature',
+      },
+    });
 
     return {
-      specId,
-      specDir,
+      specId: task.specId,
+      specDir: task.specsPath,
       taskDescription: safeDescription,
       metadata
     };

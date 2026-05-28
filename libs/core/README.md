@@ -24,6 +24,9 @@ VS Code for shared types and the `.autocode/specs` task protocol.
 - Workspace summary detection for frontend status surfaces.
 - Shared `.autocode/specs/<task-id>/` task creation, listing, status,
   logs, and run prompt/runner generation.
+- Shared agent runtime start protocol: task start event resolution, runtime
+  mode selection (`direct`, `spec`, `planning`, `coding`), and host adapter
+  contract for starting/stopping concrete runtimes.
 - Shared command security primitives: command parsing, denylist checks,
   path containment, project security profiles, tool input validation, and
   secret scanning.
@@ -72,7 +75,7 @@ VS Code for shared types and the `.autocode/specs` task protocol.
   SpawnSubagent executor gating. Host runtimes still own concrete tool
   implementations and AI SDK binding.
 - Platform adapter interfaces for host-specific workspace, terminal,
-  notification, task execution, secrets, and git integrations.
+  notification, task execution, agent runtime, secrets, and git integrations.
 
 ## Architectural rules
 
@@ -158,11 +161,14 @@ moved into core.
     construction.
 24. **AI client factory** - shared client creation once dependencies are
     extracted.
-25. **Session runtime** - runner, error classification, continuation, and
+25. **Agent runtime protocol** - shared start-plan and adapter contract for
+    desktop, CLI, and VS Code. Initial protocol done; full host-independent
+    session execution remains in desktop until its dependencies are extracted.
+26. **Session runtime** - runner, error classification, continuation, and
     stream handling.
-26. **Utility runners** - commit messages, title generation, changelog,
+27. **Utility runners** - commit messages, title generation, changelog,
     merge resolver, and similar leaf runners.
-27. **Orchestration** - planner, coder, and QA pipeline where it is truly
+28. **Orchestration** - planner, coder, and QA pipeline where it is truly
     frontend-independent.
 
 The desktop app keeps its IPC handlers, renderer, Electron bootstrap, PTY

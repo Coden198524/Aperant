@@ -1,8 +1,12 @@
 import * as path from 'node:path';
 import * as vscode from 'vscode';
 import type { WorkspaceAdapter } from '@autocode/core';
+import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  isAutocodeTaskArtifactFileName,
+} from '@autocode/core/tasks/artifacts';
 
-const DEFAULT_PROJECT_DATA_DIR = '.autocode';
+const DEFAULT_PROJECT_DATA_DIR = AUTOCODE_PROJECT_DATA_DIR_NAME;
 
 export function createWorkspaceAdapter(): WorkspaceAdapter {
   return {
@@ -64,14 +68,5 @@ export function getConfiguredDataDirName(): string {
 }
 
 function isTaskArtifactPath(filePath: string): boolean {
-  const fileName = path.basename(filePath);
-  return (
-    fileName === 'implementation_plan.json' ||
-    fileName === 'spec.md' ||
-    fileName === 'requirements.json' ||
-    fileName === 'task_metadata.json' ||
-    fileName === 'direct_summary.md' ||
-    fileName === 'qa_report.md' ||
-    fileName === 'autocode-run-result.json'
-  );
+  return isAutocodeTaskArtifactFileName(path.basename(filePath));
 }

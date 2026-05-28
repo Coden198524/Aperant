@@ -1,9 +1,13 @@
 import { ipcMain } from "electron";
 import type { BrowserWindow } from "electron";
 import {
+  createAutocodeTask,
+  type AutocodeTask,
+  type AutocodeTaskMetadata,
+} from "@autocode/core";
+import {
   IPC_CHANNELS,
   AUTO_BUILD_PATHS,
-  getSpecsDir,
 } from "../../shared/constants";
 import type {
   IPCResult,
@@ -17,7 +21,7 @@ import type {
 } from "../../shared/types";
 import type { RoadmapConfig } from "../agent/types";
 import path from "path";
-import { existsSync, mkdirSync, readdirSync, unlinkSync } from "fs";
+import { existsSync, mkdirSync, unlinkSync } from "fs";
 import { projectStore } from "../project-store";
 import { AgentManager } from "../agent";
 import { debugLog, debugError } from "../../shared/utils/debug-logger";
@@ -25,7 +29,6 @@ import { safeSendToRenderer } from "./utils";
 import { writeFileWithRetry, readFileWithRetry } from "../utils/atomic-file";
 import { withFileLock } from "../utils/file-lock";
 import { getActiveProviderFeatureSettings } from "./feature-settings-helper";
-import { buildSpecId } from "./shared/spec-id";
 import { getAppLanguage } from "../app-language";
 
 /**
@@ -33,6 +36,23 @@ import { getAppLanguage } from "../app-language";
  */
 function getFeatureSettings(): { model?: string; thinkingLevel?: string } {
   return getActiveProviderFeatureSettings('roadmap');
+}
+
+function toDesktopTask(coreTask: AutocodeTask, projectId: string): Task {
+  return {
+    id: coreTask.id,
+    specId: coreTask.specId,
+    projectId,
+    title: coreTask.title,
+    description: coreTask.description,
+    status: coreTask.status as Task["status"],
+    subtasks: coreTask.subtasks,
+    logs: [],
+    metadata: coreTask.metadata as TaskMetadata | undefined,
+    specsPath: coreTask.specsPath,
+    createdAt: new Date(coreTask.createdAt),
+    updatedAt: new Date(coreTask.updatedAt),
+  };
 }
 
 /**
@@ -516,75 +536,28 @@ ${(feature.user_stories || []).map((s: string) => `- ${s}`).join("\n") || "N/A"}
 ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n") || "N/A"}
 `;
 
-        // Generate proper spec directory (like task creation)
-        const specsBaseDir = getSpecsDir(project.autoBuildPath);
-        const specsDir = path.join(project.path, specsBaseDir);
-
-        // Ensure specs directory exists
-        if (!existsSync(specsDir)) {
-          mkdirSync(specsDir, { recursive: true });
-        }
-
-        // Find next available spec number
-        let specNumber = 1;
-        const existingDirs = existsSync(specsDir)
-          ? readdirSync(specsDir, { withFileTypes: true })
-              .filter((d) => d.isDirectory())
-              .map((d) => d.name)
-          : [];
-        const existingNumbers = existingDirs
-          .map((name) => {
-            const match = name.match(/^(\d+)/);
-            return match ? parseInt(match[1], 10) : 0;
-          })
-          .filter((n) => n > 0);
-        if (existingNumbers.length > 0) {
-          specNumber = Math.max(...existingNumbers) + 1;
-        }
-
-        const specId = buildSpecId(specNumber, feature.title);
-
-        // Create spec directory
-        const specDir = path.join(specsDir, specId);
-        mkdirSync(specDir, { recursive: true });
-
-        // Create initial implementation_plan.json
-        const now = new Date().toISOString();
-        const implementationPlan = {
-          feature: feature.title,
-          description: taskDescription,
-          created_at: now,
-          updated_at: now,
-          status: "pending",
-          phases: [],
-        };
-        await writeFileWithRetry(
-          path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
-          JSON.stringify(implementationPlan, null, 2),
-          { encoding: 'utf-8' }
-        );
-
-        // Create requirements.json
-        const requirements = {
-          task_description: taskDescription,
-          workflow_type: "feature",
-        };
-        await writeFileWithRetry(
-          path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS),
-          JSON.stringify(requirements, null, 2),
-          { encoding: 'utf-8' }
-        );
-
-        // Create spec.md (required by backend spec creation process)
-        await writeFileWithRetry(path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE), taskDescription, { encoding: 'utf-8' });
-
         // Build metadata
         const metadata: TaskMetadata = {
           sourceType: "roadmap",
           featureId: feature.id,
           category: "feature",
         };
-        await writeFileWithRetry(path.join(specDir, "task_metadata.json"), JSON.stringify(metadata, null, 2), { encoding: 'utf-8' });
+
+        const coreTask = createAutocodeTask({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath || ".autocode",
+          title: feature.title,
+          description: taskDescription,
+          metadata: metadata as unknown as AutocodeTaskMetadata,
+          requirements: {
+            workflow_type: "feature",
+          },
+        });
+        const specId = coreTask.specId;
+        const specDir = coreTask.specsPath;
+
+        // Create spec.md (required by backend spec creation process)
+        await writeFileWithRetry(path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE), taskDescription, { encoding: 'utf-8' });
 
         // NOTE: We do NOT auto-start spec creation here - user should explicitly start the task
         // from the kanban board when they're ready
@@ -596,20 +569,8 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
         roadmap.metadata.updated_at = new Date().toISOString();
         await writeFileWithRetry(roadmapPath, JSON.stringify(roadmap, null, 2), { encoding: 'utf-8' });
 
-        // Create task object
-        const task: Task = {
-          id: specId,
-          specId: specId,
-          projectId,
-          title: feature.title,
-          description: taskDescription,
-          status: "backlog",
-          subtasks: [],
-          logs: [],
-          metadata,
-          createdAt: new Date(),
-          updatedAt: new Date(),
-        };
+        const task = toDesktopTask(coreTask, projectId);
+        projectStore.invalidateTasksCache(projectId);
 
         return { success: true, data: task };
         });

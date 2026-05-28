@@ -5,6 +5,7 @@
 
 import { mkdir, writeFile, readFile, stat } from 'fs/promises';
 import path from 'path';
+import { createImportedAutocodeTask } from '@autocode/core';
 import type { Project } from '../../../shared/types';
 import type { GitLabAPIIssue, GitLabAPINoteBasic, GitLabConfig } from './types';
 import { labelMatchesWholeWord } from '../shared/label-utils';
@@ -432,13 +433,33 @@ export async function createSpecForIssue(
       };
     }
 
-    // Create spec directory
-    await mkdir(specDir, { recursive: true });
-
     // Create TASK.md with issue context (including selected notes)
     // CodeQL: network data validated before write - safeIssue sanitized via sanitizeIssueForSpec()
     const taskContent = buildIssueContext(safeIssue, safeProject, safeInstanceUrl, notes);
-    await writeFile(path.join(specDir, 'TASK.md'), taskContent, 'utf-8');
+
+    // Create task_metadata.json (consistent with GitHub format for backend compatibility)
+    const taskMetadata = {
+      sourceType: 'gitlab' as const,
+      gitlabIssueIid: safeIssue.iid,
+      gitlabUrl: safeIssue.web_url,
+      category: determineCategoryFromLabels(safeIssue.labels || []),
+      // Store baseBranch for worktree creation and QA comparison
+      ...(baseBranch && { baseBranch })
+    };
+
+    const task = createImportedAutocodeTask({
+      projectRoot: project.path,
+      dataDirName: project.autoBuildPath || '.autocode',
+      specId: specDirName,
+      title: safeIssue.title,
+      description: taskContent,
+      metadata: taskMetadata,
+      requirements: {
+        workflow_type: 'feature',
+      },
+    });
+
+    await writeFile(path.join(task.specsPath, 'TASK.md'), taskContent, 'utf-8');
 
     // Create metadata.json (legacy format for GitLab-specific data)
     // CodeQL: network data validated before write - all values derived from sanitized safeIssue fields
@@ -458,21 +479,6 @@ export async function createSpecForIssue(
       status: 'pending'
     };
     await writeFile(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
-
-    // Create task_metadata.json (consistent with GitHub format for backend compatibility)
-    const taskMetadata = {
-      sourceType: 'gitlab' as const,
-      gitlabIssueIid: safeIssue.iid,
-      gitlabUrl: safeIssue.web_url,
-      category: determineCategoryFromLabels(safeIssue.labels || []),
-      // Store baseBranch for worktree creation and QA comparison
-      ...(baseBranch && { baseBranch })
-    };
-    await writeFile(
-      path.join(specDir, 'task_metadata.json'),
-      JSON.stringify(taskMetadata, null, 2),
-      'utf-8'
-    );
 
     debugLog('Created spec for issue:', { iid: safeIssue.iid, specDir });
 

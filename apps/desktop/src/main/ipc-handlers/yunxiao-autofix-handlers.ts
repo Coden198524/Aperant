@@ -2,10 +2,10 @@ import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { IPC_CHANNELS, getSpecsDir, AUTO_BUILD_PATHS } from '../../shared/constants';
+import { createImportedAutocodeTask } from '@autocode/core';
+import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   Project,
-  TaskMetadata,
   YunxiaoAutoFixConfig,
   YunxiaoAutoFixQueueItem,
   YunxiaoAnalyzePreviewProgress,
@@ -23,7 +23,6 @@ import { listYunxiaoIssues } from '../integrations/yunxiao-issues-store';
 import { isClosedYunxiaoStatus } from '../../shared/utils/yunxiao-status';
 import { getActiveProviderFeatureSettings } from './feature-settings-helper';
 import { sanitizeText, sanitizeUrl } from './shared/sanitize';
-import { buildSpecId } from './shared/spec-id';
 import { buildYunxiaoTaskMetadata } from './yunxiao/metadata';
 import { formatYunxiaoDescriptionContent } from './yunxiao/description';
 import {
@@ -383,50 +382,7 @@ async function createAndStartSpecForWorkItem(
   const safeUrl = sanitizeUrl(item.url || '');
   const description = buildTaskDescription(item);
 
-  const specsBaseDir = getSpecsDir(project.autoBuildPath);
-  const specsDir = path.join(project.path, specsBaseDir);
-  fs.mkdirSync(specsDir, { recursive: true });
-
-  let specNumber = 1;
-  const existingNumbers = fs.readdirSync(specsDir, { withFileTypes: true })
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => {
-      const match = entry.name.match(/^(\d+)/);
-      return match ? Number.parseInt(match[1], 10) : 0;
-    })
-    .filter((value) => value > 0);
-  if (existingNumbers.length > 0) {
-    specNumber = Math.max(...existingNumbers) + 1;
-  }
-
-  const specId = buildSpecId(specNumber, safeTitle, 'yunxiao');
-  const specDir = path.join(specsDir, specId);
-  fs.mkdirSync(specDir, { recursive: true });
-
-  const now = new Date().toISOString();
-  fs.writeFileSync(
-    path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN),
-    JSON.stringify({
-      feature: safeTitle,
-      description,
-      created_at: now,
-      updated_at: now,
-      status: 'pending',
-      phases: [],
-    }, null, 2),
-    'utf-8'
-  );
-
-  fs.writeFileSync(
-    path.join(specDir, AUTO_BUILD_PATHS.REQUIREMENTS),
-    JSON.stringify({
-      task_description: description,
-      workflow_type: 'feature',
-    }, null, 2),
-    'utf-8'
-  );
-
-  const metadata: TaskMetadata = buildYunxiaoTaskMetadata({
+  const metadata = buildYunxiaoTaskMetadata({
     workItemId: sanitizeText(item.id, 120),
     identifier: safeIdentifier,
     url: safeUrl || undefined,
@@ -435,20 +391,28 @@ async function createAndStartSpecForWorkItem(
     workitemCategoryName: item.workitemType?.name,
   });
 
-  fs.writeFileSync(
-    path.join(specDir, 'task_metadata.json'),
-    JSON.stringify(metadata, null, 2),
-    'utf-8'
-  );
+  const now = new Date().toISOString();
+  const task = createImportedAutocodeTask({
+    projectRoot: project.path,
+    dataDirName: project.autoBuildPath || '.autocode',
+    title: safeTitle,
+    description,
+    fallbackSlug: 'yunxiao',
+    metadata,
+    requirements: {
+      workflow_type: 'feature',
+    },
+    now,
+  });
 
-  agentManager.startSpecCreation(specId, project.path, description, specDir, metadata);
+  agentManager.startSpecCreation(task.specId, project.path, description, task.specsPath, metadata);
 
   return {
     workItemId: sanitizeText(item.id, 120),
     identifier: safeIdentifier || undefined,
     title: safeTitle,
     status: 'completed',
-    specId,
+    specId: task.specId,
     createdAt: now,
     updatedAt: now,
   };

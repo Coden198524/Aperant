@@ -1,7 +1,14 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
+import {
+  createAutocodeAgentRuntimePlan,
+  getAutocodeAgentRuntimeModeLabel,
+  resolveAutocodeTaskStartEvent,
+  startAutocodeAgentRuntime,
+} from '@autocode/core';
 import { IPC_CHANNELS, AUTO_BUILD_PATHS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
+import type { TaskEvent } from '../../../shared/state-machines/task-machine';
 import path from 'path';
 import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
 import { spawnSync, execFileSync } from 'child_process';
@@ -31,6 +38,7 @@ import { getIsolatedGitEnv, detectWorktreeBranch } from '../../utils/git-isolati
 import { cancelFallbackTimer } from '../agent-events-handlers';
 import { readSettingsFile } from '../../settings-utils';
 import type { ProviderAccount } from '../../../shared/types/provider-account';
+import { createDesktopAgentRuntimeAdapter } from '../../agent/core-runtime-adapter';
 
 const TASK_STOP_STARTUP_GRACE_MS = 5000;
 
@@ -155,6 +163,31 @@ function getPlanFilePathsForTask(project: Project, task: Task, specsBaseDir: str
 
 function isDirectWorkflowTask(task: Task): boolean {
   return task.metadata?.workflowMode === 'off';
+}
+
+function getTaskBaseBranch(task: Task, project: Project): string | undefined {
+  return task.metadata?.baseBranch || project.settings?.mainBranch;
+}
+
+function createRuntimePlanForTask(input: {
+  taskId: string;
+  task: Task;
+  project: Project;
+  specDir: string;
+  hasSpec: boolean;
+  planHasSubtasks: boolean;
+}) {
+  return createAutocodeAgentRuntimePlan({
+    projectRoot: input.project.path,
+    dataDirName: input.project.autoBuildPath || '.autocode',
+    projectId: input.project.id,
+    taskId: input.taskId,
+    task: input.task,
+    specDir: input.specDir,
+    hasSpec: input.hasSpec,
+    planHasSubtasks: input.planHasSubtasks,
+    baseBranch: getTaskBaseBranch(input.task, input.project),
+  });
 }
 
 function hasDirectReviewArtifact(specDir: string): boolean {
@@ -301,6 +334,12 @@ export function registerTaskExecutionHandlers(
   agentManager: AgentManager,
   getMainWindow: () => BrowserWindow | null
 ): void {
+  const runtimeAdapter = createDesktopAgentRuntimeAdapter(agentManager);
+  const isRuntimeRunning = (taskId: string, projectId?: string): boolean =>
+    runtimeAdapter.isRuntimeRunning?.(taskId, projectId) ?? false;
+  const stopRuntime = (taskId: string, projectId?: string): Promise<void> | void =>
+    runtimeAdapter.stopRuntime(taskId, projectId);
+
   const startTaskExecutionFromCurrentPlan = async (
     taskId: string,
     task: Task,
@@ -321,65 +360,29 @@ export function registerTaskExecutionHandlers(
       console.error(`${logPrefix} Failed to watch spec dir for ${taskId}:`, err);
     });
 
-    const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
-    if (isDirectWorkflowTask(task)) {
-      console.warn(`${logPrefix} Starting direct task execution for:`, task.specId);
-      agentManager.startDirectTaskExecution(
-        taskId,
-        project.path,
-        task.specId,
-        {
-          parallel: false,
-          workers: 1,
-          baseBranch,
-          useWorktree: task.metadata?.useWorktree,
-          useLocalBranch: task.metadata?.useLocalBranch,
-          pushNewBranches: task.metadata?.pushNewBranches
-        },
-        project.id
-      );
-      return;
-    }
-
     const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
     const hasSpec = existsSync(specFilePath);
     const planHasSubtasks = hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
-    const needsSpecCreation = !hasSpec;
-    const needsImplementation = hasSpec && !planHasSubtasks;
+    const runtimePlan = createRuntimePlanForTask({
+      taskId,
+      task,
+      project,
+      specDir,
+      hasSpec,
+      planHasSubtasks,
+    });
 
     console.warn(
       `${logPrefix} hasSpec:`,
       hasSpec,
       'planHasSubtasks:',
       planHasSubtasks,
-      'needsSpecCreation:',
-      needsSpecCreation,
-      'needsImplementation:',
-      needsImplementation
+      'runtimeMode:',
+      runtimePlan.mode,
     );
 
-    if (needsSpecCreation) {
-      const taskDescription = task.description || task.title;
-      console.warn(`${logPrefix} Starting spec creation for:`, task.specId);
-      agentManager.startSpecCreation(taskId, project.path, taskDescription, specDir, task.metadata, baseBranch, project.id);
-      return;
-    }
-
-    console.warn(`${logPrefix} Starting task execution for:`, task.specId);
-    agentManager.startTaskExecution(
-      taskId,
-      project.path,
-      task.specId,
-      {
-        parallel: false,
-        workers: 1,
-        baseBranch,
-        useWorktree: task.metadata?.useWorktree,
-        useLocalBranch: task.metadata?.useLocalBranch,
-        pushNewBranches: task.metadata?.pushNewBranches
-      },
-      project.id
-    );
+    console.warn(`${logPrefix} Starting ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} for:`, task.specId);
+    await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
   };
 
   /**
@@ -495,100 +498,13 @@ export function registerTaskExecutionHandlers(
       const currentXState = taskStateManager.getCurrentState(taskId);
       console.warn('[TASK_START] Current XState:', currentXState, '| Task status:', task.status, task.reviewReason);
 
-      if (isDirectWorkflowTask(task)) {
-        const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
-        const isResume = currentXState === 'human_review'
-          || currentXState === 'error'
-          || task.status === 'human_review'
-          || task.status === 'error';
-
-        taskStateManager.handleUiEvent(
-          taskId,
-          isResume
-            ? { type: 'USER_RESUMED' }
-            : {
-                type: 'CODING_STARTED',
-                subtaskId: 'direct-implementation',
-                subtaskDescription: 'Direct model execution'
-              },
-          task,
-          project
-        );
-
-        const planPath = getPlanPath(project, task);
-        const resetResult = await resetStuckSubtasks(planPath, project.id);
-        if (resetResult.success && resetResult.resetCount > 0) {
-          console.warn(`[TASK_START] Reset ${resetResult.resetCount} stuck subtask(s) before direct execution`);
-        }
-
-        const watchSpecDir = getSpecDirForWatcher(project.path, specsBaseDir, task.specId);
-        fileWatcher.watch(taskId, watchSpecDir, project.id).catch((err) => {
-          console.error(`[TASK_START] Failed to watch spec dir for direct task ${taskId}:`, err);
-        });
-
-        console.warn('[TASK_START] Starting direct task execution for:', task.specId);
-        agentManager.startDirectTaskExecution(
-          taskId,
-          project.path,
-          task.specId,
-          {
-            parallel: false,
-            workers: 1,
-            baseBranch,
-            useWorktree: task.metadata?.useWorktree,
-            useLocalBranch: task.metadata?.useLocalBranch,
-            pushNewBranches: task.metadata?.pushNewBranches
-          },
-          project.id
-        );
-        return;
-      }
-
-      if (currentXState === 'plan_review') {
-        // XState says plan_review - send PLAN_APPROVED
-        console.warn('[TASK_START] XState: plan_review -> coding via PLAN_APPROVED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLAN_APPROVED' }, task, project);
-      } else if (currentXState === 'human_review' && !planHasSubtasks) {
-        // Human-review task with no generated plan/subtasks should restart planning.
-        // This is common for stopped/interrupted tasks that entered review without a valid plan.
-        console.warn('[TASK_START] XState: human_review with no plan subtasks -> planning via PLANNING_STARTED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
-      } else if (currentXState === 'error' && !planHasSubtasks) {
-        // FIX (#1562): Task crashed during planning (no subtasks yet).
-        // Uses planHasSubtasks from implementation_plan.json (more reliable than task.subtasks.length).
-        console.warn('[TASK_START] XState: error with no plan subtasks -> planning via PLANNING_STARTED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
-      } else if (currentXState === 'human_review' || currentXState === 'error') {
-        // XState says human_review or error - send USER_RESUMED
-        console.warn('[TASK_START] XState:', currentXState, '-> coding via USER_RESUMED');
-        taskStateManager.handleUiEvent(taskId, { type: 'USER_RESUMED' }, task, project);
-      } else if (currentXState) {
-        // XState actor exists but in another state (coding, planning, etc.)
-        // This shouldn't happen normally, but handle gracefully
-        console.warn('[TASK_START] XState in unexpected state:', currentXState, '- sending PLANNING_STARTED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
-      } else if (task.status === 'human_review' && task.reviewReason === 'plan_review') {
-        // No XState actor - fallback to task data (e.g., after app restart)
-        console.warn('[TASK_START] No XState actor, task data: plan_review -> coding via PLAN_APPROVED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLAN_APPROVED' }, task, project);
-      } else if (task.status === 'human_review' && !planHasSubtasks) {
-        // No XState actor and no subtasks: restart planning instead of resuming coding.
-        console.warn('[TASK_START] No XState actor, human_review with no plan subtasks -> planning via PLANNING_STARTED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
-      } else if (task.status === 'error' && !planHasSubtasks) {
-        // FIX (#1562): No XState actor, task crashed during planning (no subtasks).
-        // Uses planHasSubtasks from implementation_plan.json (more reliable than task.subtasks.length).
-        console.warn('[TASK_START] No XState actor, error with no plan subtasks -> planning via PLANNING_STARTED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
-      } else if (task.status === 'human_review' || task.status === 'error') {
-        // No XState actor - fallback to task data for resuming
-        console.warn('[TASK_START] No XState actor, task data:', task.status, '-> coding via USER_RESUMED');
-        taskStateManager.handleUiEvent(taskId, { type: 'USER_RESUMED' }, task, project);
-      } else {
-        // Fresh start - PLANNING_STARTED transitions from backlog to planning
-        console.warn('[TASK_START] Fresh start via PLANNING_STARTED');
-        taskStateManager.handleUiEvent(taskId, { type: 'PLANNING_STARTED' }, task, project);
-      }
+      const startEvent = resolveAutocodeTaskStartEvent({
+        task,
+        currentState: currentXState,
+        planHasSubtasks,
+      });
+      console.warn('[TASK_START] Runtime start event:', startEvent.type);
+      taskStateManager.handleUiEvent(taskId, startEvent as TaskEvent, task, project);
 
       // Reset any stuck subtasks before starting execution
       // This handles recovery from previous rate limits or crashes
@@ -610,70 +526,16 @@ export function registerTaskExecutionHandlers(
       const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
       const hasSpec = existsSync(specFilePath);
 
-      // Check if this task needs spec creation first (no spec file = not yet created)
-      // OR if it has a spec but no implementation plan subtasks (spec created, needs planning/building)
-      const needsSpecCreation = !hasSpec;
-      // FIX (#1562): Check actual plan file for subtasks, not just task.subtasks.length.
-      // When a task crashes during planning, it may have spec.md but an empty/missing
-      // implementation_plan.json. Previously, this path would call startTaskExecution
-      // (run.py) which expects subtasks to exist. Now we check the actual plan file.
-      const needsImplementation = hasSpec && !planHasSubtasks;
-
-      console.warn('[TASK_START] hasSpec:', hasSpec, 'planHasSubtasks:', planHasSubtasks, 'needsSpecCreation:', needsSpecCreation, 'needsImplementation:', needsImplementation);
-
-      // Get base branch: task-level override takes precedence over project settings
-      const baseBranch = task.metadata?.baseBranch || project.settings?.mainBranch;
-
-      if (needsSpecCreation) {
-        // No spec file - need to run spec_runner.py to create the spec
-        const taskDescription = task.description || task.title;
-        console.warn('[TASK_START] Starting spec creation for:', task.specId, 'in:', specDir, 'baseBranch:', baseBranch);
-
-        // Start spec creation process - pass the existing spec directory
-        // so spec_runner uses it instead of creating a new one
-        // Also pass baseBranch so worktrees are created from the correct branch
-        agentManager.startSpecCreation(taskId, project.path, taskDescription, specDir, task.metadata, baseBranch, project.id);
-      } else if (needsImplementation) {
-        // Spec exists but no valid subtasks in implementation plan
-        // FIX (#1562): Use startTaskExecution (run.py) which will create the planner
-        // agent session to generate the implementation plan. run.py handles the case
-        // where implementation_plan.json is missing or has no subtasks - the planner
-        // agent will generate the plan before the coder starts.
-        console.warn('[TASK_START] Starting task execution (no valid subtasks in plan) for:', task.specId);
-        agentManager.startTaskExecution(
-          taskId,
-          project.path,
-          task.specId,
-          {
-            parallel: false,  // Sequential for planning phase
-            workers: 1,
-            baseBranch,
-            useWorktree: task.metadata?.useWorktree,
-            useLocalBranch: task.metadata?.useLocalBranch,
-            pushNewBranches: task.metadata?.pushNewBranches
-          },
-          project.id
-        );
-      } else {
-        // Task has subtasks, start normal execution
-        // Note: Parallel execution is handled internally by the agent, not via CLI flags
-        console.warn('[TASK_START] Starting task execution (has subtasks) for:', task.specId);
-
-        agentManager.startTaskExecution(
-          taskId,
-          project.path,
-          task.specId,
-          {
-            parallel: false,
-            workers: 1,
-            baseBranch,
-            useWorktree: task.metadata?.useWorktree,
-            useLocalBranch: task.metadata?.useLocalBranch,
-            pushNewBranches: task.metadata?.pushNewBranches
-          },
-          project.id
-        );
-      }
+      const runtimePlan = createRuntimePlanForTask({
+        taskId,
+        task,
+        project,
+        specDir,
+        hasSpec,
+        planHasSubtasks,
+      });
+      console.warn('[TASK_START] Runtime mode:', runtimePlan.mode, 'label:', getAutocodeAgentRuntimeModeLabel(runtimePlan.mode));
+      await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
     }
   );
 
@@ -700,7 +562,7 @@ export function registerTaskExecutionHandlers(
       runtimeMs,
     });
 
-    agentManager.killTask(taskId);
+    void stopRuntime(taskId, projectId);
 
     // Find task and project to emit USER_STOPPED with plan context
     const { task, project } = findTaskAndProject(taskId, projectId);
@@ -1261,13 +1123,13 @@ export function registerTaskExecutionHandlers(
 
         // Auto-stop task when status changes AWAY from 'in_progress' and process IS running
         // This handles the case where user drags a running task back to Planning/backlog
-        if (status !== 'in_progress' && agentManager.isRunning(taskId)) {
+        if (status !== 'in_progress' && isRuntimeRunning(taskId, project.id)) {
           console.warn('[TASK_UPDATE_STATUS] Stopping task due to status change away from in_progress:', taskId);
-          agentManager.killTask(taskId);
+          await stopRuntime(taskId, project.id);
         }
 
         // Auto-start task when status changes to 'in_progress' and no process is running
-        if (status === 'in_progress' && !agentManager.isRunning(taskId)) {
+        if (status === 'in_progress' && !isRuntimeRunning(taskId, project.id)) {
           // Clear stale tracking state before starting a new process
           taskStateManager.prepareForRestart(taskId);
           const mainWindow = getMainWindow();
@@ -1338,7 +1200,6 @@ export function registerTaskExecutionHandlers(
           // Check if spec.md exists
           const specFilePath = path.join(specDir, AUTO_BUILD_PATHS.SPEC_FILE);
           const hasSpec = existsSync(specFilePath);
-          const needsSpecCreation = !hasSpec;
           // FIX (#1562): Check actual plan file for subtasks, not just task.subtasks.length
           const updatePlanFilePath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
           let updatePlanHasSubtasks = false;
@@ -1351,70 +1212,17 @@ export function registerTaskExecutionHandlers(
               // Invalid/corrupt plan file - treat as no subtasks
             }
           }
-          const needsImplementation = hasSpec && !updatePlanHasSubtasks;
+          const runtimePlan = createRuntimePlanForTask({
+            taskId,
+            task,
+            project,
+            specDir,
+            hasSpec,
+            planHasSubtasks: updatePlanHasSubtasks,
+          });
 
-          console.warn('[TASK_UPDATE_STATUS] hasSpec:', hasSpec, 'needsSpecCreation:', needsSpecCreation, 'needsImplementation:', needsImplementation);
-
-          // Get base branch: task-level override takes precedence over project settings
-          const baseBranchForUpdate = task.metadata?.baseBranch || project.settings?.mainBranch;
-
-          if (isDirectWorkflowTask(task)) {
-            console.warn('[TASK_UPDATE_STATUS] Starting direct task execution for:', task.specId);
-            agentManager.startDirectTaskExecution(
-              taskId,
-              project.path,
-              task.specId,
-              {
-                parallel: false,
-                workers: 1,
-                baseBranch: baseBranchForUpdate,
-                useWorktree: task.metadata?.useWorktree,
-                useLocalBranch: task.metadata?.useLocalBranch,
-                pushNewBranches: task.metadata?.pushNewBranches
-              },
-              project.id
-            );
-          } else if (needsSpecCreation) {
-            // No spec file - need to run spec_runner.py to create the spec
-            const taskDescription = task.description || task.title;
-            console.warn('[TASK_UPDATE_STATUS] Starting spec creation for:', task.specId);
-            agentManager.startSpecCreation(taskId, project.path, taskDescription, specDir, task.metadata, baseBranchForUpdate, project.id);
-          } else if (needsImplementation) {
-            // Spec exists but no subtasks - run run.py to create implementation plan and execute
-            console.warn('[TASK_UPDATE_STATUS] Starting task execution (no subtasks) for:', task.specId);
-            agentManager.startTaskExecution(
-              taskId,
-              project.path,
-              task.specId,
-              {
-                parallel: false,
-                workers: 1,
-                baseBranch: baseBranchForUpdate,
-                useWorktree: task.metadata?.useWorktree,
-                useLocalBranch: task.metadata?.useLocalBranch,
-                pushNewBranches: task.metadata?.pushNewBranches
-              },
-              project.id
-            );
-          } else {
-            // Task has subtasks, start normal execution
-            // Note: Parallel execution is handled internally by the agent
-            console.warn('[TASK_UPDATE_STATUS] Starting task execution (has subtasks) for:', task.specId);
-            agentManager.startTaskExecution(
-              taskId,
-              project.path,
-              task.specId,
-              {
-                parallel: false,
-                workers: 1,
-                baseBranch: baseBranchForUpdate,
-                useWorktree: task.metadata?.useWorktree,
-                useLocalBranch: task.metadata?.useLocalBranch,
-                pushNewBranches: task.metadata?.pushNewBranches
-              },
-              project.id
-            );
-          }
+          console.warn('[TASK_UPDATE_STATUS] Runtime mode:', runtimePlan.mode, 'label:', getAutocodeAgentRuntimeModeLabel(runtimePlan.mode));
+          await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
 
           // Notify renderer about status change
           if (mainWindow) {
@@ -1444,7 +1252,7 @@ export function registerTaskExecutionHandlers(
   ipcMain.handle(
     IPC_CHANNELS.TASK_CHECK_RUNNING,
     async (_, taskId: string, _projectId?: string): Promise<IPCResult<boolean>> => {
-      const isRunning = agentManager.isRunning(taskId);
+      const isRunning = isRuntimeRunning(taskId, _projectId);
       return { success: true, data: isRunning };
     }
   );
@@ -1530,7 +1338,7 @@ export function registerTaskExecutionHandlers(
       const targetStatus = options?.targetStatus;
       const autoRestart = options?.autoRestart ?? false;
       // Check if task is actually running
-      const isActuallyRunning = agentManager.isRunning(taskId);
+      const isActuallyRunning = isRuntimeRunning(taskId, requestedProjectId);
 
       if (isActuallyRunning) {
         return {
@@ -1880,50 +1688,17 @@ export function registerTaskExecutionHandlers(
             // mainSpecDir is declared earlier in the handler scope
             const specFilePath = path.join(mainSpecDir, AUTO_BUILD_PATHS.SPEC_FILE);
             const hasSpec = existsSync(specFilePath);
-            const needsSpecCreation = !hasSpec;
+            const runtimePlan = createRuntimePlanForTask({
+              taskId,
+              task,
+              project,
+              specDir: mainSpecDir,
+              hasSpec,
+              planHasSubtasks: hasPlanSubtasksInAnyPath(planPathsToUpdate),
+            });
 
-            // Get base branch: task-level override takes precedence over project settings
-            const baseBranchForRecovery = task.metadata?.baseBranch || project.settings?.mainBranch;
-
-            if (isDirectWorkflowTask(task)) {
-              console.warn(`[Recovery] Starting direct task execution for: ${task.specId}`);
-              agentManager.startDirectTaskExecution(
-                taskId,
-                project.path,
-                task.specId,
-                {
-                  parallel: false,
-                  workers: 1,
-                  baseBranch: baseBranchForRecovery,
-                  useWorktree: task.metadata?.useWorktree,
-                  useLocalBranch: task.metadata?.useLocalBranch,
-                  pushNewBranches: task.metadata?.pushNewBranches
-                },
-                project.id
-              );
-            } else if (needsSpecCreation) {
-              // No spec file - need to run spec_runner.py to create the spec
-              const taskDescription = task.description || task.title;
-              console.warn(`[Recovery] Starting spec creation for: ${task.specId}`);
-              agentManager.startSpecCreation(taskId, project.path, taskDescription, mainSpecDir, task.metadata, baseBranchForRecovery, project.id);
-            } else {
-              // Spec exists - run task execution
-              console.warn(`[Recovery] Starting task execution for: ${task.specId}`);
-              agentManager.startTaskExecution(
-                taskId,
-                project.path,
-                task.specId,
-                {
-                  parallel: false,
-                  workers: 1,
-                  baseBranch: baseBranchForRecovery,
-                  useWorktree: task.metadata?.useWorktree,
-                  useLocalBranch: task.metadata?.useLocalBranch,
-                  pushNewBranches: task.metadata?.pushNewBranches
-                },
-                project.id
-              );
-            }
+            console.warn(`[Recovery] Starting ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} for: ${task.specId}`);
+            await startAutocodeAgentRuntime(runtimePlan, runtimeAdapter);
 
             autoRestarted = true;
             console.warn(`[Recovery] Auto-restarted task ${taskId}`);

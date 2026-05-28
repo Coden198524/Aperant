@@ -1,6 +1,10 @@
 import { clsx, type ClassValue } from 'clsx';
 import { twMerge } from 'tailwind-merge';
 import { calculateProgress as calculateAutocodeProgress } from '@autocode/core/tasks/progress';
+import {
+  formatAutocodeRelativeTime,
+  truncateAutocodeText,
+} from '@autocode/core/frontend/task-view-model';
 
 /**
  * Utility function to merge Tailwind CSS classes
@@ -24,17 +28,7 @@ export function calculateProgress(subtasks: { status: string }[]): number {
  * @returns Relative time string (e.g., "2 hours ago")
  */
 export function formatRelativeTime(date: Date): string {
-  const now = new Date();
-  const diffMs = now.getTime() - new Date(date).getTime();
-  const diffMins = Math.floor(diffMs / 60000);
-  const diffHours = Math.floor(diffMins / 60);
-  const diffDays = Math.floor(diffHours / 24);
-
-  if (diffMins < 1) return 'just now';
-  if (diffMins < 60) return `${diffMins}m ago`;
-  if (diffHours < 24) return `${diffHours}h ago`;
-  if (diffDays < 7) return `${diffDays}d ago`;
-  return new Date(date).toLocaleDateString();
+  return formatAutocodeRelativeTime(date);
 }
 
 /**
@@ -105,7 +99,7 @@ export function sanitizeMarkdownForDisplay(text: string, maxLength: number = 200
 
   // Truncate if needed (0 means no truncation)
   if (maxLength > 0 && sanitized.length > maxLength) {
-    sanitized = sanitized.substring(0, maxLength).trim() + '...';
+    sanitized = truncateAutocodeText(sanitized, maxLength);
   }
 
   return sanitized;

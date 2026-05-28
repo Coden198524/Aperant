@@ -3,6 +3,14 @@
  * Default settings, file paths, and project structure
  */
 
+import {
+  AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_TASK_ARTIFACTS,
+  getAutocodeSpecsRelativeDir,
+  normalizeAutocodeProjectDataDirName,
+} from '@autocode/core/tasks/artifacts';
+
 // ============================================
 // Terminal Timing Constants
 // ============================================
@@ -99,26 +107,30 @@ export const DEFAULT_PROJECT_SETTINGS = {
 // Auto Build File Paths
 // ============================================
 
-export const PROJECT_DATA_DIR_NAME = '.autocode';
-export const LEGACY_PROJECT_DATA_DIR_NAME = '.auto-claude';
+export const PROJECT_DATA_DIR_NAME = AUTOCODE_PROJECT_DATA_DIR_NAME;
+export const LEGACY_PROJECT_DATA_DIR_NAME = AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME;
 
 export function normalizeProjectDataDirName(autoBuildPath: string | undefined): string {
-  return autoBuildPath || PROJECT_DATA_DIR_NAME;
+  return normalizeAutocodeProjectDataDirName(autoBuildPath);
 }
 
 // File paths relative to project
 // IMPORTANT: All paths use .autocode/ (the installed instance), NOT autocode/ (source code)
 export const AUTO_BUILD_PATHS = {
-  SPECS_DIR: `${PROJECT_DATA_DIR_NAME}/specs`,
+  SPECS_DIR: getAutocodeSpecsRelativeDir(PROJECT_DATA_DIR_NAME),
   ROADMAP_DIR: `${PROJECT_DATA_DIR_NAME}/roadmap`,
   IDEATION_DIR: `${PROJECT_DATA_DIR_NAME}/ideation`,
-  IMPLEMENTATION_PLAN: 'implementation_plan.json',
-  SPEC_FILE: 'spec.md',
-  QA_REPORT: 'qa_report.md',
+  IMPLEMENTATION_PLAN: AUTOCODE_TASK_ARTIFACTS.implementationPlan,
+  SPEC_FILE: AUTOCODE_TASK_ARTIFACTS.specFile,
+  QA_REPORT: AUTOCODE_TASK_ARTIFACTS.qaReport,
   BUILD_PROGRESS: 'build-progress.txt',
   GENERATION_PROGRESS: 'generation_progress.json',
   CONTEXT: 'context.json',
-  REQUIREMENTS: 'requirements.json',
+  REQUIREMENTS: AUTOCODE_TASK_ARTIFACTS.requirements,
+  TASK_METADATA: AUTOCODE_TASK_ARTIFACTS.taskMetadata,
+  TASK_LOGS: AUTOCODE_TASK_ARTIFACTS.taskLogs,
+  DIRECT_SUMMARY: AUTOCODE_TASK_ARTIFACTS.directSummary,
+  RUN_RESULT: AUTOCODE_TASK_ARTIFACTS.runResult,
   ROADMAP_FILE: 'roadmap.json',
   ROADMAP_DISCOVERY: 'roadmap_discovery.json',
   COMPETITOR_ANALYSIS: 'competitor_analysis.json',
@@ -134,6 +146,5 @@ export const AUTO_BUILD_PATHS = {
  * All specs go to .autocode/specs/ (the project's data directory).
  */
 export function getSpecsDir(autoBuildPath: string | undefined): string {
-  const basePath = normalizeProjectDataDirName(autoBuildPath);
-  return `${basePath}/specs`;
+  return getAutocodeSpecsRelativeDir(autoBuildPath);
 }
