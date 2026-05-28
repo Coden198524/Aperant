@@ -19,11 +19,14 @@ import { runAgentSession } from '../session/runner';
 import { runContinuableSession } from '../session/continuation';
 import { createProvider } from '../providers/factory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
+import { createOpenAICompatibleEndpointFetch } from '../providers/openai-base-url';
 import {
-  createOpenAICompatibleEndpointFetch,
+  DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+  isOfficialOpenAIBaseUrl,
   normalizeOpenAICompatibleBaseUrl,
-} from '../providers/openai-base-url';
-import type { SupportedProvider } from '@autocode/core';
+  type Phase,
+  type SupportedProvider,
+} from '@autocode/core';
 import { getModelContextWindow } from '../../../shared/constants/models';
 import { refreshOAuthTokenReactive } from '../auth/resolver';
 import { buildToolRegistry } from '../tools/build-registry';
@@ -45,7 +48,6 @@ import { QALoop } from '../orchestration/qa-loop';
 import { SpecOrchestrator } from '../orchestration/spec-orchestrator';
 import type { SpecPhase } from '../orchestration/spec-orchestrator';
 import type { AgentType } from '../config/agent-configs';
-import type { Phase } from '@autocode/core';
 import type { ExecutionPhase } from '../../../shared/constants/phase-protocol';
 import { getPhaseThinking } from '../config/phase-config';
 import { TaskLogWriter } from '../logging/task-log-writer';
@@ -368,21 +370,6 @@ function normalizeBaseUrl(baseURL: string | undefined): string | null {
   }
 }
 
-function isOfficialOpenAIBaseUrl(baseURL: string | undefined): boolean {
-  if (!baseURL) return true;
-  try {
-    const { hostname } = new URL(baseURL);
-    return (
-      hostname === 'openai.com' ||
-      hostname.endsWith('.openai.com') ||
-      hostname === 'chatgpt.com' ||
-      hostname.endsWith('.chatgpt.com')
-    );
-  } catch {
-    return false;
-  }
-}
-
 function supportsChatFallbackTransport(session: SerializableSessionConfig): boolean {
   const provider = session.provider.toLowerCase();
   return (
@@ -414,7 +401,7 @@ function createForcedChatModel(session: SerializableSessionConfig, modelId: stri
   const provider = createOpenAICompatible({
     name: 'openai-compatible',
     apiKey: session.apiKey ?? 'custom-endpoint',
-    baseURL: normalizeOpenAICompatibleBaseUrl(session.baseURL) ?? 'https://api.openai.com/v1',
+    baseURL: normalizeOpenAICompatibleBaseUrl(session.baseURL) ?? DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
     fetch: createOpenAICompatibleEndpointFetch(),
   });
   return provider.chatModel(modelId);

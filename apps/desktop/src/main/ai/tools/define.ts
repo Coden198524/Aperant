@@ -20,28 +20,23 @@
 
 import { tool } from 'ai';
 import type { Tool as AITool } from 'ai';
+import {
+  getToolWritePathDenial,
+  guardReadOnlyToolUsage,
+  sanitizeFilePathArg,
+} from '@autocode/core';
 import { z } from 'zod/v3';
-
-import { relative, resolve } from 'node:path';
 
 import { bashSecurityHook } from '../security/bash-validator';
 import type {
   ToolContext,
   ToolDefinitionConfig,
   ToolMetadata,
-  ToolUsageLimits,
-  ToolUsageState,
 } from './types';
 import { ToolPermission } from './types';
 import { truncateToolOutput, SAFETY_NET_MAX_BYTES } from './truncation';
 
-const DEFAULT_READ_ONLY_TOOL_LIMITS: Record<string, number> = {
-  Read: 160,
-  Glob: 80,
-  Grep: 80,
-};
-
-const DEFAULT_MAX_DUPLICATE_READ_ONLY_CALLS = 3;
+export { sanitizeFilePathArg } from '@autocode/core';
 
 // ---------------------------------------------------------------------------
 // Defined Tool
@@ -92,141 +87,6 @@ function runSecurityHooks(
 }
 
 // ---------------------------------------------------------------------------
-// File Path Sanitization
-// ---------------------------------------------------------------------------
-
-/**
- * Pattern matching trailing JSON artifact characters that some models
- * (e.g., gpt-5.3-codex) leak into tool call string arguments.
- * Matches sequences like `'}},{`, `"}`, `'},` etc. at the end of a path.
- */
-const TRAILING_JSON_ARTIFACT_RE = /['"}\],{]+$/;
-
-/**
- * Sanitize file_path (and similar path-like) arguments in tool input.
- *
- * Performs two sanitization steps:
- * 1. Strips trailing JSON structural characters that models sometimes
- *    include when generating tool call arguments with malformed JSON.
- * 2. Normalizes Windows backslashes to forward slashes to prevent
- *    JSON parsing errors when models generate paths like "e:\work\...".
- *
- * Mutates the input object in place for efficiency.
- *
- * @internal Exported for unit testing only.
- */
-export function sanitizeFilePathArg(input: Record<string, unknown>): void {
-  const filePath = input.file_path;
-  if (typeof filePath !== 'string') return;
-
-  let cleaned = filePath;
-
-  // Step 1: Strip trailing JSON artifacts
-  cleaned = cleaned.replace(TRAILING_JSON_ARTIFACT_RE, '');
-
-  // Step 2: Normalize Windows backslashes to forward slashes
-  // This prevents JSON parsing errors when AI generates paths like "e:\work\..."
-  // Node.js accepts forward slashes on all platforms, including Windows
-  cleaned = cleaned.replace(/\\/g, '/');
-
-  if (cleaned !== filePath) {
-    input.file_path = cleaned;
-  }
-}
-
-function getToolUsageState(context: ToolContext): ToolUsageState {
-  if (!context.toolUsageState) {
-    context.toolUsageState = {
-      totalCalls: 0,
-      toolCalls: {},
-      readOnlySignatureCalls: {},
-    };
-  }
-  return context.toolUsageState;
-}
-
-function stableStringify(value: unknown): string {
-  if (Array.isArray(value)) {
-    return `[${value.map((item) => stableStringify(item)).join(',')}]`;
-  }
-  if (value && typeof value === 'object') {
-    const record = value as Record<string, unknown>;
-    return `{${Object.keys(record).sort().map((key) => `${JSON.stringify(key)}:${stableStringify(record[key])}`).join(',')}}`;
-  }
-  return JSON.stringify(value);
-}
-
-function normalizeSignatureValue(value: unknown, context: ToolContext): unknown {
-  if (typeof value !== 'string') {
-    return value;
-  }
-
-  const normalized = value.replace(/\\/g, '/');
-  const projectDir = context.projectDir.replace(/\\/g, '/');
-  if (!normalized.toLowerCase().startsWith(projectDir.toLowerCase())) {
-    return normalized;
-  }
-
-  const rel = relative(projectDir, normalized).replace(/\\/g, '/');
-  return rel && !rel.startsWith('..') ? rel : normalized;
-}
-
-function buildReadOnlySignature(
-  toolName: string,
-  input: Record<string, unknown>,
-  context: ToolContext,
-): string {
-  const normalizedInput: Record<string, unknown> = {};
-  for (const [key, value] of Object.entries(input)) {
-    normalizedInput[key] = normalizeSignatureValue(value, context);
-  }
-  return `${toolName}:${stableStringify(normalizedInput)}`;
-}
-
-function resolveToolUsageLimits(context: ToolContext): Required<ToolUsageLimits> {
-  return {
-    readOnlyToolCallLimits: {
-      ...DEFAULT_READ_ONLY_TOOL_LIMITS,
-      ...(context.toolUsageLimits?.readOnlyToolCallLimits ?? {}),
-    },
-    maxDuplicateReadOnlyCalls:
-      context.toolUsageLimits?.maxDuplicateReadOnlyCalls ?? DEFAULT_MAX_DUPLICATE_READ_ONLY_CALLS,
-  };
-}
-
-function guardReadOnlyToolUsage(
-  toolName: string,
-  input: Record<string, unknown>,
-  context: ToolContext,
-): string | null {
-  const limits = resolveToolUsageLimits(context);
-  const state = getToolUsageState(context);
-
-  state.totalCalls += 1;
-  state.toolCalls[toolName] = (state.toolCalls[toolName] ?? 0) + 1;
-
-  const toolLimit = limits.readOnlyToolCallLimits[toolName];
-  if (toolLimit !== undefined && state.toolCalls[toolName] > toolLimit) {
-    return [
-      `Tool budget exceeded for ${toolName}: ${state.toolCalls[toolName]} calls in this session, limit ${toolLimit}.`,
-      'Use the evidence already gathered, or run a narrower non-repeated query only after starting a new session.',
-    ].join('\n');
-  }
-
-  const signature = buildReadOnlySignature(toolName, input, context);
-  const repeated = (state.readOnlySignatureCalls[signature] ?? 0) + 1;
-  state.readOnlySignatureCalls[signature] = repeated;
-  if (repeated > limits.maxDuplicateReadOnlyCalls) {
-    return [
-      `Repeated ${toolName} call skipped: the same input has already been used ${repeated - 1} times in this session.`,
-      'Use the earlier result, change offset/limit for a targeted range, or narrow the query instead of repeating it.',
-    ].join('\n');
-  }
-
-  return null;
-}
-
-// ---------------------------------------------------------------------------
 // Tool.define()
 // ---------------------------------------------------------------------------
 
@@ -250,9 +110,6 @@ function define<TInput extends z.ZodType, TOutput>(
       // Concrete types resolve correctly when Tool.define() is called
       // with a specific Zod schema.
       const executeWithHooks = async (input: Input): Promise<TOutput> => {
-        // Sanitize file_path arguments: strip trailing JSON artifact characters
-        // that some models (e.g., gpt-5.3-codex) leak into string tool arguments.
-        // E.g., "spec.md'}},{" → "spec.md"
         sanitizeFilePathArg(input as Record<string, unknown>);
 
         if (metadata.permission !== ToolPermission.ReadOnly) {
@@ -272,29 +129,22 @@ function define<TInput extends z.ZodType, TOutput>(
           }
         }
 
-        // Write-path containment: reject writes outside allowed directories
-        // Only applies to tools that can modify files (Write, Edit) — not read-only tools
         if (context.allowedWritePaths?.length && metadata.permission !== ToolPermission.ReadOnly) {
-          const writePathInputKeys = metadata.writePathInputKeys ?? ['file_path'];
-          for (const key of writePathInputKeys) {
-            const writePath = (input as Record<string, unknown>)[key] as string | undefined;
-            if (!writePath) continue;
-
-            const resolved = resolve(writePath);
-            const allowed = context.allowedWritePaths.some(dir => resolved.startsWith(resolve(dir)));
-            if (!allowed) {
-              throw new Error(
-                `Write denied: ${metadata.name} cannot write to ${writePath}. ` +
-                `Allowed directories: ${context.allowedWritePaths.join(', ')}`,
-              );
-            }
+          const denial = getToolWritePathDenial(
+            metadata.name,
+            input as Record<string, unknown>,
+            context.allowedWritePaths,
+            metadata.writePathInputKeys,
+          );
+          if (denial) {
+            throw new Error(denial);
           }
         }
 
         const result = await (execute(input as z.infer<TInput>, context) as Promise<TOutput>);
 
-        // Safety-net: apply disk-spillover truncation to string outputs
-        // Uses a higher limit since individual tools should catch most cases first
+        // Safety-net: apply disk-spillover truncation to string outputs.
+        // Individual tools should catch most cases first.
         if (typeof result === 'string') {
           const truncated = truncateToolOutput(
             result,
@@ -318,17 +168,6 @@ function define<TInput extends z.ZodType, TOutput>(
 }
 
 /**
- * Tool namespace — entry point for defining tools.
- *
- * @example
- * ```ts
- * import { Tool } from './define';
- *
- * const myTool = Tool.define({
- *   metadata: { name: 'MyTool', ... },
- *   inputSchema: z.object({ ... }),
- *   execute: async (input, ctx) => { ... },
- * });
- * ```
+ * Tool namespace - entry point for defining tools.
  */
 export const Tool = { define } as const;

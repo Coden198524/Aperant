@@ -2,10 +2,8 @@
  * Tool Registry
  * =============
  *
- * See apps/desktop/src/main/ai/tools/registry.ts for the TypeScript implementation.
- *
- * Single source of truth for tool name constants, agent-to-tool mappings,
- * and the ToolRegistry class that resolves tools for a given agent type.
+ * Desktop adapter for the shared agent/tool/MCP policy in @autocode/core.
+ * Concrete tool implementations and AI SDK tool binding stay in desktop.
  */
 
 import type { Tool as AITool } from 'ai';
@@ -14,15 +12,28 @@ import {
   type AgentConfig,
   type AgentType,
   AGENT_CONFIGS,
+  BASE_READ_TOOLS,
+  BASE_WRITE_TOOLS,
   CONTEXT7_TOOLS,
+  DIRECT_TASK_TOOLS,
   ELECTRON_TOOLS,
-  MEMORY_MCP_TOOLS,
   GRAPHITI_MCP_TOOLS,
   LINEAR_TOOLS,
+  MEMORY_MCP_TOOLS,
   PUPPETEER_TOOLS,
+  SPEC_TOOLS,
+  TOOL_GET_BUILD_PROGRESS,
+  TOOL_GET_SESSION_CONTEXT,
+  TOOL_RECORD_DISCOVERY,
+  TOOL_RECORD_GOTCHA,
+  TOOL_UPDATE_QA_STATUS,
+  TOOL_UPDATE_SUBTASK_STATUS,
+  WEB_TOOLS,
   getAgentConfig,
   getDefaultThinkingLevel,
-  mapMcpServerName,
+  getRequiredMcpServersFromConfig,
+  type McpConfig,
+  type ProjectCapabilities,
 } from '../config/agent-configs';
 import type { DefinedTool } from './define';
 import type { ToolContext } from './types';
@@ -31,45 +42,28 @@ export {
   type AgentConfig,
   type AgentType,
   AGENT_CONFIGS,
+  BASE_READ_TOOLS,
+  BASE_WRITE_TOOLS,
   CONTEXT7_TOOLS,
+  DIRECT_TASK_TOOLS,
   ELECTRON_TOOLS,
-  MEMORY_MCP_TOOLS,
   GRAPHITI_MCP_TOOLS,
   LINEAR_TOOLS,
+  MEMORY_MCP_TOOLS,
   PUPPETEER_TOOLS,
+  SPEC_TOOLS,
+  TOOL_GET_BUILD_PROGRESS,
+  TOOL_GET_SESSION_CONTEXT,
+  TOOL_RECORD_DISCOVERY,
+  TOOL_RECORD_GOTCHA,
+  TOOL_UPDATE_QA_STATUS,
+  TOOL_UPDATE_SUBTASK_STATUS,
+  WEB_TOOLS,
   getAgentConfig,
   getDefaultThinkingLevel,
 };
 
-// Re-export tool name constants that were previously defined here
-export const BASE_READ_TOOLS = ['Read', 'Glob', 'Grep'] as const;
-export const BASE_WRITE_TOOLS = ['Write', 'Edit', 'Bash'] as const;
-export const WEB_TOOLS = ['WebFetch', 'WebSearch'] as const;
-export const TOOL_UPDATE_SUBTASK_STATUS = 'mcp__autocode__update_subtask_status';
-export const TOOL_GET_BUILD_PROGRESS = 'mcp__autocode__get_build_progress';
-export const TOOL_RECORD_DISCOVERY = 'mcp__autocode__record_discovery';
-export const TOOL_RECORD_GOTCHA = 'mcp__autocode__record_gotcha';
-export const TOOL_GET_SESSION_CONTEXT = 'mcp__autocode__get_session_context';
-export const TOOL_UPDATE_QA_STATUS = 'mcp__autocode__update_qa_status';
-
-// =============================================================================
-// MCP Config for dynamic server resolution
-// =============================================================================
-
-export interface McpConfig {
-  CONTEXT7_ENABLED?: string;
-  LINEAR_MCP_ENABLED?: string;
-  YUNXIAO_MCP_ENABLED?: string;
-  ELECTRON_MCP_ENABLED?: string;
-  PUPPETEER_MCP_ENABLED?: string;
-  CUSTOM_MCP_SERVERS?: Array<{ id: string }>;
-  [key: string]: unknown;
-}
-
-export interface ProjectCapabilities {
-  is_electron?: boolean;
-  is_web_frontend?: boolean;
-}
+export type { McpConfig, ProjectCapabilities };
 
 // =============================================================================
 // ToolRegistry
@@ -79,7 +73,7 @@ export interface ProjectCapabilities {
  * Registry for AI tools.
  *
  * Manages tool registration and provides agent-type-aware tool resolution
- * using the AGENT_CONFIGS mapping ported from Python.
+ * using the shared AGENT_CONFIGS mapping.
  */
 export class ToolRegistry {
   private readonly tools = new Map<string, DefinedTool>();
@@ -107,10 +101,6 @@ export class ToolRegistry {
 
   /**
    * Get the AI SDK tool map for a given agent type, bound to the provided context.
-   *
-   * Filters registered tools to only those allowed by AGENT_CONFIGS for the
-   * specified agent type. Returns a Record<string, AITool> suitable for passing
-   * to the Vercel AI SDK `generateText` / `streamText` calls.
    */
   getToolsForAgent(
     agentType: AgentType,
@@ -118,8 +108,9 @@ export class ToolRegistry {
   ): Record<string, AITool> {
     const config = getAgentConfig(agentType);
     const allowedNames = new Set([...config.tools, ...config.autoClaudeTools]);
-    const hasSubagentExecutor =
-      Boolean((context as ToolContext & { subagentExecutor?: unknown }).subagentExecutor);
+    const hasSubagentExecutor = Boolean(
+      (context as ToolContext & { subagentExecutor?: unknown }).subagentExecutor,
+    );
     const result: Record<string, AITool> = {};
 
     for (const [name, definedTool] of Array.from(this.tools.entries())) {
@@ -136,13 +127,7 @@ export class ToolRegistry {
 }
 
 /**
- * Get MCP servers required for an agent type.
- *
- * Handles dynamic server selection:
- * - "browser" → electron (if is_electron) or puppeteer (if is_web_frontend)
- * - "linear"/"yunxiao" → only if in mcpServersOptional AND corresponding flag is true
- * - "memory" → only if memoryEnabled is true
- * - Applies per-agent ADD/REMOVE overrides from mcpConfig
+ * Get MCP servers required for an agent type from desktop-style MCP settings.
  */
 export function getRequiredMcpServers(
   agentType: AgentType,
@@ -151,99 +136,10 @@ export function getRequiredMcpServers(
     linearEnabled?: boolean;
     yunxiaoEnabled?: boolean;
     memoryEnabled?: boolean;
-    /** @deprecated Use memoryEnabled instead */
+    /** @deprecated Use memoryEnabled instead. */
     graphitiEnabled?: boolean;
     mcpConfig?: McpConfig;
   } = {},
 ): string[] {
-  const {
-    projectCapabilities,
-    linearEnabled = false,
-    yunxiaoEnabled = false,
-    memoryEnabled = options.graphitiEnabled ?? false,
-    mcpConfig = {},
-  } = options;
-
-  const config = getAgentConfig(agentType);
-  let servers = [...config.mcpServers];
-
-  // Autocode tools are shipped locally and registered in ToolRegistry,
-  // so they no longer require a separate MCP stdio server process.
-  servers = servers.filter((s) => s !== 'autocode');
-
-  // Filter context7 if explicitly disabled
-  if (servers.includes('context7')) {
-    const enabled = mcpConfig.CONTEXT7_ENABLED ?? 'true';
-    if (String(enabled).toLowerCase() === 'false') {
-      servers = servers.filter((s) => s !== 'context7');
-    }
-  }
-
-  // Handle optional servers (e.g., Linear)
-  const optional = config.mcpServersOptional ?? [];
-  if (optional.includes('linear') && linearEnabled) {
-    const linearMcpEnabled = mcpConfig.LINEAR_MCP_ENABLED ?? 'true';
-    if (String(linearMcpEnabled).toLowerCase() !== 'false') {
-      servers.push('linear');
-    }
-  }
-  if (optional.includes('yunxiao') && yunxiaoEnabled) {
-    const yunxiaoMcpEnabled = mcpConfig.YUNXIAO_MCP_ENABLED ?? 'true';
-    if (String(yunxiaoMcpEnabled).toLowerCase() !== 'false') {
-      servers.push('yunxiao');
-    }
-  }
-
-  // Handle dynamic "browser" → electron/puppeteer
-  if (servers.includes('browser')) {
-    servers = servers.filter((s) => s !== 'browser');
-    if (projectCapabilities) {
-      const { is_electron, is_web_frontend } = projectCapabilities;
-      const electronEnabled = mcpConfig.ELECTRON_MCP_ENABLED ?? 'false';
-      const puppeteerEnabled = mcpConfig.PUPPETEER_MCP_ENABLED ?? 'false';
-
-      if (is_electron && String(electronEnabled).toLowerCase() === 'true') {
-        servers.push('electron');
-      } else if (is_web_frontend && !is_electron) {
-        if (String(puppeteerEnabled).toLowerCase() === 'true') {
-          servers.push('puppeteer');
-        }
-      }
-    }
-  }
-
-  // Filter memory if not enabled
-  if (servers.includes('memory') && !memoryEnabled) {
-    servers = servers.filter((s) => s !== 'memory');
-  }
-
-  // Per-agent MCP overrides: AGENT_MCP_<agent>_ADD / AGENT_MCP_<agent>_REMOVE
-  const customServerIds =
-    mcpConfig.CUSTOM_MCP_SERVERS?.map((s) => s.id).filter(Boolean) ?? [];
-
-  const addKey = `AGENT_MCP_${agentType}_ADD`;
-  const addValue = mcpConfig[addKey];
-  if (typeof addValue === 'string') {
-    const additions = addValue.split(',').map((s) => s.trim()).filter(Boolean);
-    for (const server of additions) {
-      const mapped = mapMcpServerName(server, customServerIds);
-      if (mapped && !servers.includes(mapped)) {
-        servers.push(mapped);
-      }
-    }
-  }
-
-  const removeKey = `AGENT_MCP_${agentType}_REMOVE`;
-  const removeValue = mcpConfig[removeKey];
-  if (typeof removeValue === 'string') {
-    const removals = removeValue.split(',').map((s) => s.trim()).filter(Boolean);
-    for (const server of removals) {
-      const mapped = mapMcpServerName(server, customServerIds);
-      if (mapped && mapped !== 'autocode') {
-        servers = servers.filter((s) => s !== mapped);
-      }
-    }
-  }
-
-  return servers;
+  return getRequiredMcpServersFromConfig(agentType, options);
 }

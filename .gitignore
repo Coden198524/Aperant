@@ -30,6 +30,12 @@ credentials/
 # ===========================
 .idea/
 .vscode/
+!.vscode/
+!.vscode/launch.json
+!.vscode/tasks.json
+!apps/vscode/.vscode/
+!apps/vscode/.vscode/launch.json
+!apps/vscode/.vscode/tasks.json
 *.swp
 *.swo
 *.sublime-workspace

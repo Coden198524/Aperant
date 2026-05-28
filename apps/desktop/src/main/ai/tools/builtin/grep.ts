@@ -10,6 +10,21 @@
 import { execFile } from 'node:child_process';
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  GREP_DEFAULT_OUTPUT_MODE,
+  GREP_MAX_FALLBACK_FILE_BYTES,
+  GREP_MAX_FALLBACK_FILES,
+  buildRipgrepArgs,
+  formatGrepFallbackResults,
+  isProbablyBinaryBuffer,
+  matchesSearchType,
+  shouldSkipSearchDir,
+  toPortableSearchPath,
+  truncateSearchOutput,
+  type GrepFallbackMatch,
+  type GrepOutputMode,
+  type GrepSearchInput,
+} from '@autocode/core';
 import { minimatch } from 'minimatch';
 import { z } from 'zod/v3';
 
@@ -17,44 +32,6 @@ import { findExecutable } from '../../../platform/index';
 import { assertPathContained } from '../../security/path-containment';
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const DEFAULT_OUTPUT_MODE = 'files_with_matches';
-const MAX_OUTPUT_LENGTH = 12_000;
-const MAX_FALLBACK_FILE_BYTES = 1024 * 1024;
-const MAX_FALLBACK_FILES = 10_000;
-const EXCLUDED_DIRS = new Set([
-  '.git',
-  '.autocode',
-  '.claude',
-  '.codex',
-  'node_modules',
-  'dist',
-  'build',
-  'out',
-  'coverage',
-  '.next',
-  '.nuxt',
-  '.svelte-kit',
-  '.turbo',
-  '.cache',
-  '.gradle',
-  '.idea',
-  '.vscode',
-  'bower_components',
-  'vendor',
-  'third_party',
-  'third-party',
-  'extern',
-  'external',
-  'target',
-  'bin',
-  'obj',
-  '__pycache__',
-]);
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -85,54 +62,14 @@ const inputSchema = z.object({
   glob: z
     .string()
     .optional()
-    .describe('Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") — maps to rg --glob'),
+    .describe('Glob pattern to filter files (e.g. "*.js", "*.{ts,tsx}") - maps to rg --glob'),
 });
+
+type GrepToolInput = z.infer<typeof inputSchema>;
 
 // ---------------------------------------------------------------------------
 // Helpers
 // ---------------------------------------------------------------------------
-
-function buildRgArgs(
-  input: z.infer<typeof inputSchema>,
-  searchPath: string,
-): string[] {
-  const args: string[] = [];
-
-  const mode = input.output_mode ?? DEFAULT_OUTPUT_MODE;
-
-  switch (mode) {
-    case 'files_with_matches':
-      args.push('--files-with-matches');
-      break;
-    case 'count':
-      args.push('--count');
-      break;
-    case 'content':
-      args.push('--line-number');
-      if (input.context !== undefined) {
-        args.push('-C', String(input.context));
-      }
-      break;
-  }
-
-  if (input.type) {
-    args.push('--type', input.type);
-  }
-
-  if (input.glob) {
-    args.push('--glob', input.glob);
-  }
-
-  // Always add these defaults
-  args.push('--no-heading', '--color', 'never');
-  for (const dir of EXCLUDED_DIRS) {
-    args.push('--glob', `!**/${dir}/**`);
-  }
-
-  args.push(input.pattern, searchPath);
-
-  return args;
-}
 
 function runRipgrep(
   args: string[],
@@ -174,44 +111,6 @@ function runRipgrep(
   });
 }
 
-function toPortablePath(filePath: string): string {
-  return filePath.split(path.sep).join('/');
-}
-
-function shouldSkipDir(dirName: string): boolean {
-  return EXCLUDED_DIRS.has(dirName);
-}
-
-function matchesType(filePath: string, type?: string): boolean {
-  if (!type) return true;
-  const ext = path.extname(filePath).slice(1).toLowerCase();
-  const normalized = type.toLowerCase();
-  const aliases: Record<string, string[]> = {
-    js: ['js', 'jsx', 'mjs', 'cjs'],
-    ts: ['ts', 'tsx', 'mts', 'cts'],
-    py: ['py'],
-    rust: ['rs'],
-    go: ['go'],
-    java: ['java'],
-    cpp: ['cpp', 'cc', 'cxx', 'hpp', 'hh', 'hxx', 'h'],
-    c: ['c', 'h'],
-    cs: ['cs'],
-    json: ['json'],
-    md: ['md', 'markdown'],
-    html: ['html', 'htm'],
-    css: ['css', 'scss', 'sass', 'less'],
-  };
-  return (aliases[normalized] ?? [normalized]).includes(ext);
-}
-
-function isProbablyBinary(buffer: Buffer): boolean {
-  const sampleLength = Math.min(buffer.length, 8192);
-  for (let i = 0; i < sampleLength; i += 1) {
-    if (buffer[i] === 0) return true;
-  }
-  return false;
-}
-
 function listFiles(root: string, abortSignal?: AbortSignal): string[] {
   const files: string[] = [];
   const stack = [root];
@@ -227,38 +126,18 @@ function listFiles(root: string, abortSignal?: AbortSignal): string[] {
     for (const entry of entries) {
       const fullPath = path.join(current, entry.name);
       if (entry.isDirectory()) {
-        if (!shouldSkipDir(entry.name)) stack.push(fullPath);
+        if (!shouldSkipSearchDir(entry.name)) stack.push(fullPath);
       } else if (entry.isFile()) {
         files.push(fullPath);
-        if (files.length >= MAX_FALLBACK_FILES) return files;
+        if (files.length >= GREP_MAX_FALLBACK_FILES) return files;
       }
     }
   }
   return files;
 }
 
-function formatFallbackResults(
-  matches: Array<{ file: string; line?: number; text?: string; count?: number }>,
-  mode: z.infer<typeof inputSchema>['output_mode'],
-): string {
-  if (matches.length === 0) return 'No matches found';
-  const outputMode = mode ?? DEFAULT_OUTPUT_MODE;
-  if (outputMode === 'files_with_matches') {
-    return Array.from(new Set(matches.map((m) => m.file))).join('\n');
-  }
-  if (outputMode === 'count') {
-    return matches
-      .filter((m) => (m.count ?? 0) > 0)
-      .map((m) => `${m.file}:${m.count}`)
-      .join('\n') || 'No matches found';
-  }
-  return matches
-    .map((m) => `${m.file}:${m.line}:${m.text ?? ''}`)
-    .join('\n');
-}
-
 async function runBuiltinSearch(
-  input: z.infer<typeof inputSchema>,
+  input: GrepToolInput,
   searchPath: string,
   abortSignal?: AbortSignal,
 ): Promise<string> {
@@ -272,14 +151,14 @@ async function runBuiltinSearch(
   const rootStat = fs.existsSync(searchPath) ? fs.statSync(searchPath) : null;
   if (!rootStat) return 'No matches found';
   const files = rootStat.isDirectory() ? listFiles(searchPath, abortSignal) : [searchPath];
-  const outputMode = input.output_mode ?? DEFAULT_OUTPUT_MODE;
-  const matches: Array<{ file: string; line?: number; text?: string; count?: number }> = [];
+  const outputMode = input.output_mode ?? GREP_DEFAULT_OUTPUT_MODE;
+  const matches: GrepFallbackMatch[] = [];
 
   for (const filePath of files) {
     if (abortSignal?.aborted) break;
-    if (!matchesType(filePath, input.type)) continue;
+    if (!matchesSearchType(filePath, input.type)) continue;
     if (input.glob) {
-      const portable = toPortablePath(path.relative(searchPath, filePath) || path.basename(filePath));
+      const portable = toPortableSearchPath(path.relative(searchPath, filePath) || path.basename(filePath));
       if (!minimatch(portable, input.glob, { dot: true, nocase: process.platform === 'win32' })) {
         continue;
       }
@@ -291,7 +170,7 @@ async function runBuiltinSearch(
     } catch {
       continue;
     }
-    if (stat.size > MAX_FALLBACK_FILE_BYTES) continue;
+    if (stat.size > GREP_MAX_FALLBACK_FILE_BYTES) continue;
 
     let buffer: Buffer;
     try {
@@ -299,10 +178,10 @@ async function runBuiltinSearch(
     } catch {
       continue;
     }
-    if (isProbablyBinary(buffer)) continue;
+    if (isProbablyBinaryBuffer(buffer)) continue;
 
     const content = buffer.toString('utf8');
-    const relativeFile = toPortablePath(path.relative(searchPath, filePath) || filePath);
+    const relativeFile = toPortableSearchPath(path.relative(searchPath, filePath) || filePath);
     if (outputMode === 'files_with_matches') {
       if (regex.test(content)) matches.push({ file: relativeFile });
       regex.lastIndex = 0;
@@ -324,7 +203,7 @@ async function runBuiltinSearch(
     }
   }
 
-  return formatFallbackResults(matches, outputMode);
+  return formatGrepFallbackResults(matches, outputMode as GrepOutputMode);
 }
 
 // ---------------------------------------------------------------------------
@@ -351,7 +230,7 @@ export const grepTool = Tool.define({
       ? searchPath
       : path.resolve(context.projectDir, searchPath);
 
-    const args = buildRgArgs(input, resolvedPath);
+    const args = buildRipgrepArgs(input as GrepSearchInput, resolvedPath);
     const { stdout, stderr, exitCode } = await runRipgrep(
       args,
       context.cwd,
@@ -360,10 +239,7 @@ export const grepTool = Tool.define({
 
     if (exitCode === 127) {
       const fallbackOutput = await runBuiltinSearch(input, resolvedPath, context.abortSignal);
-      if (fallbackOutput.length > MAX_OUTPUT_LENGTH) {
-        return `${fallbackOutput.slice(0, MAX_OUTPUT_LENGTH)}\n\n[Output truncated - ${fallbackOutput.length} characters total]`;
-      }
-      return fallbackOutput;
+      return truncateSearchOutput(fallbackOutput);
     }
 
     // Exit code 1 means no matches (not an error for rg)
@@ -379,10 +255,6 @@ export const grepTool = Tool.define({
       return 'No matches found';
     }
 
-    if (stdout.length > MAX_OUTPUT_LENGTH) {
-      return `${stdout.slice(0, MAX_OUTPUT_LENGTH)}\n\n[Output truncated - ${stdout.length} characters total]`;
-    }
-
-    return stdout.trimEnd();
+    return truncateSearchOutput(stdout).trimEnd();
   },
 });

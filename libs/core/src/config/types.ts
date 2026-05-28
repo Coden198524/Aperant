@@ -5,7 +5,7 @@
  * and reasoning-API shape for the Vercel AI SDK integration layer.
  */
 
-import type { SupportedProvider } from '../providers/types';
+import type { SupportedProvider } from '../providers/types.js';
 
 // ============================================
 // Reasoning API Shape

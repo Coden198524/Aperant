@@ -115,10 +115,14 @@ AI-assisted feature planning with competitor analysis and audience targeting.
 
 ```
 Autocode/
-├── apps/
-│   └── desktop/     # Electron desktop application (TypeScript AI agent layer + UI)
-├── guides/          # Additional documentation
-└── scripts/         # Build utilities
+|-- apps/
+|   |-- desktop/     # Electron desktop application
+|   |-- cli/         # Headless command-line frontend
+|   `-- vscode/      # VS Code extension frontend
+|-- libs/
+|   `-- core/        # Shared headless task protocol and types
+|-- guides/          # Additional documentation
+`-- scripts/         # Build utilities
 ```
 
 ---
@@ -153,6 +157,10 @@ All releases are:
 | `npm run install:all` | Install all dependencies |
 | `npm start` | Build and run the desktop app |
 | `npm run dev` | Run in development mode with hot reload |
+| `npm run build:all` | Build core, CLI, VS Code, and desktop |
+| `npm run build:cli` | Build the CLI frontend |
+| `npm run build:vscode` | Build the VS Code extension |
+| `npm run typecheck:all` | Typecheck CLI, VS Code, and desktop |
 | `npm run package` | Package for current platform |
 | `npm run package:mac` | Package for macOS |
 | `npm run package:win` | Package for Windows |

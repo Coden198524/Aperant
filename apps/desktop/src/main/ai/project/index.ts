@@ -1,32 +1,32 @@
-/**
- * Project Analyzer Module
- * =======================
- *
- * Analyzes project structure to detect technology stacks,
- * frameworks, and generate security profiles with dynamic
- * command allowlisting.
- *
- * See apps/desktop/src/main/ai/project/ for the TypeScript implementation.
- */
-
-export { analyzeProject, buildSecurityProfile, ProjectAnalyzer } from './analyzer';
 export {
   BASE_COMMANDS,
   CLOUD_COMMANDS,
   CODE_QUALITY_COMMANDS,
   DATABASE_COMMANDS,
   FRAMEWORK_COMMANDS,
+  FrameworkDetector,
   INFRASTRUCTURE_COMMANDS,
   LANGUAGE_COMMANDS,
   PACKAGE_MANAGER_COMMANDS,
+  ProjectAnalyzer,
+  StackDetector,
   VERSION_MANAGER_COMMANDS,
-} from './command-registry';
-export { FrameworkDetector } from './framework-detector';
-export { StackDetector } from './stack-detector';
+  analyzeProject,
+  buildProjectIndex,
+  buildSecurityProfile,
+  createCustomScripts,
+  createProjectSecurityProfile,
+  createTechnologyStack,
+  runProjectIndexer,
+} from '@autocode/core';
 export type {
+  ConventionsInfo,
   CustomScripts,
+  InfrastructureInfo,
+  ProjectIndex,
   ProjectSecurityProfile,
+  ProjectSourceSummary,
   SerializedSecurityProfile,
+  ServiceInfo,
   TechnologyStack,
-} from './types';
-export { createCustomScripts, createProjectSecurityProfile, createTechnologyStack } from './types';
+} from '@autocode/core';

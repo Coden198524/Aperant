@@ -20,9 +20,17 @@
   },
   "scripts": {
     "postinstall": "node scripts/postinstall.cjs",
+    "predev": "npm --workspace @autocode/core run ensure-built",
     "dev": "electron-vite dev",
+    "predev:debug": "npm --workspace @autocode/core run ensure-built",
     "dev:debug": "cross-env DEBUG=true electron-vite dev",
+    "predev:mcp": "npm --workspace @autocode/core run ensure-built",
     "dev:mcp": "electron-vite dev -- --remote-debugging-port=9222",
+    "dev:vscode": "cd ../.. && npm run dev:vscode",
+    "build:core": "cd ../.. && npm run build:core",
+    "build:vscode": "cd ../.. && npm run build:vscode",
+    "typecheck:vscode": "cd ../.. && npm run typecheck:vscode",
+    "prebuild": "npm --workspace @autocode/core run ensure-built",
     "build": "electron-vite build",
     "start": "electron .",
     "start:mcp": "electron . --remote-debugging-port=9222",
@@ -47,6 +55,7 @@
     "lint": "biome check .",
     "lint:fix": "biome check --write .",
     "format": "biome format --write .",
+    "pretypecheck": "npm --workspace @autocode/core run ensure-built",
     "typecheck": "tsc --noEmit --incremental"
   },
   "dependencies": {

@@ -193,6 +193,7 @@ describe('sanitizeThinkingLevel', () => {
     expect(sanitizeThinkingLevel('low')).toBe('low');
     expect(sanitizeThinkingLevel('medium')).toBe('medium');
     expect(sanitizeThinkingLevel('high')).toBe('high');
+    expect(sanitizeThinkingLevel('xhigh')).toBe('xhigh');
   });
 
   it('maps ultrathink to high', () => {

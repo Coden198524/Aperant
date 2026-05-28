@@ -18,26 +18,27 @@ import * as path from 'node:path';
 import { ensureValidToken, reactiveTokenRefresh } from '../../claude-profile/token-refresh';
 import type { SupportedProvider } from '@autocode/core';
 import { detectProviderFromModel } from '../providers/factory';
-import type { AuthResolverContext, QueueResolvedAuth, ResolvedAuth } from './types';
+import type {
+  AuthResolverContext,
+  AuthSettingsAccessor,
+  QueueResolvedAuth,
+  ResolvedAuth,
+} from './types';
 import {
+  BUILTIN_TO_SUPPORTED_PROVIDER,
   PROVIDER_BASE_URL_ENV,
-  PROVIDER_ENV_VARS,
-  PROVIDER_SETTINGS_KEY,
+  buildProviderAccountQueueConfig,
+  parseProviderAccounts,
+  resolveApiKeyProviderAccountAuth,
+  resolveDefaultProviderAuth,
+  resolveProviderEnvironmentAuth,
+  resolveProviderSettingsAuth,
 } from './types';
 import type { ProviderAccount } from '../../../shared/types/provider-account';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
 import { resolveModelEquivalent } from '../../../shared/constants/models';
 import { scoreProviderAccount } from '../../claude-profile/profile-scorer';
 import type { ClaudeAutoSwitchSettings } from '../../../shared/types/agent';
-
-// ============================================
-// Z.AI Endpoint Routing
-// ============================================
-
-/** Z.AI General API — for usage-based (pay-per-use) API keys */
-const ZAI_GENERAL_API = 'https://api.z.ai/api/paas/v4';
-/** Z.AI Coding API — for Coding Plan subscription keys */
-const ZAI_CODING_API = 'https://api.z.ai/api/coding/paas/v4';
 
 // ============================================
 // Settings Accessor
@@ -47,9 +48,7 @@ const ZAI_CODING_API = 'https://api.z.ai/api/coding/paas/v4';
  * Function type for retrieving a global API key from app settings.
  * Injected to avoid circular dependency on settings-store.
  */
-type SettingsAccessor = (key: string) => string | undefined;
-
-let _getSettingsValue: SettingsAccessor | null = null;
+let _getSettingsValue: AuthSettingsAccessor | null = null;
 
 /**
  * Register a settings accessor function.
@@ -57,7 +56,7 @@ let _getSettingsValue: SettingsAccessor | null = null;
  *
  * @param accessor - Function that retrieves a value from AppSettings by key
  */
-export function registerSettingsAccessor(accessor: SettingsAccessor): void {
+export function registerSettingsAccessor(accessor: AuthSettingsAccessor): void {
   _getSettingsValue = accessor;
 }
 
@@ -72,20 +71,7 @@ export function registerSettingsAccessor(accessor: SettingsAccessor): void {
 async function resolveFromProviderAccount(ctx: AuthResolverContext): Promise<ResolvedAuth | null> {
   if (!_getSettingsValue) return null;
 
-  // Read providerAccounts from settings
-  const accountsRaw = _getSettingsValue('providerAccounts');
-  if (!accountsRaw) return null;
-
-  let accounts: Array<{ provider: string; isActive: boolean; authType: string; apiKey?: string; baseUrl?: string; claudeProfileId?: string; billingModel?: string }>;
-  try {
-    accounts = typeof accountsRaw === 'string' ? JSON.parse(accountsRaw) : (accountsRaw as any);
-  } catch {
-    return null;
-  }
-
-  if (!Array.isArray(accounts)) return null;
-
-  // Find active account for this provider
+  const accounts = parseProviderAccounts(_getSettingsValue('providerAccounts'));
   const account = accounts.find(a => a.provider === ctx.provider && a.isActive);
   if (!account) return null;
 
@@ -112,21 +98,7 @@ async function resolveFromProviderAccount(ctx: AuthResolverContext): Promise<Res
     return null;
   }
 
-  // API key accounts
-  if (account.authType === 'api-key' && account.apiKey) {
-    // Z.AI: route to correct endpoint based on billing model
-    const baseURL = account.provider === 'zai'
-      ? (account.baseUrl || (account.billingModel === 'subscription' ? ZAI_CODING_API : ZAI_GENERAL_API))
-      : account.baseUrl;
-
-    return {
-      apiKey: account.apiKey,
-      source: 'profile-api-key',
-      baseURL,
-    };
-  }
-
-  return null;
+  return resolveApiKeyProviderAccountAuth(account, ctx.provider);
 }
 
 // ============================================
@@ -210,26 +182,7 @@ export async function refreshOAuthTokenReactive(configDir: string | undefined): 
  * @returns Resolved auth or null if not available
  */
 function resolveFromProfileApiKey(ctx: AuthResolverContext): ResolvedAuth | null {
-  if (!_getSettingsValue) return null;
-
-  const settingsKey = PROVIDER_SETTINGS_KEY[ctx.provider];
-  if (!settingsKey) return null;
-
-  const apiKey = _getSettingsValue(settingsKey);
-  if (!apiKey) return null;
-
-  const resolved: ResolvedAuth = {
-    apiKey,
-    source: 'profile-api-key',
-  };
-
-  const baseUrlEnv = PROVIDER_BASE_URL_ENV[ctx.provider];
-  if (baseUrlEnv) {
-    const baseURL = process.env[baseUrlEnv];
-    if (baseURL) resolved.baseURL = baseURL;
-  }
-
-  return resolved;
+  return resolveProviderSettingsAuth(ctx, _getSettingsValue, (key) => process.env[key]);
 }
 
 // ============================================
@@ -243,34 +196,12 @@ function resolveFromProfileApiKey(ctx: AuthResolverContext): ResolvedAuth | null
  * @returns Resolved auth or null if not available
  */
 function resolveFromEnvironment(ctx: AuthResolverContext): ResolvedAuth | null {
-  const envVar = PROVIDER_ENV_VARS[ctx.provider];
-  if (!envVar) return null;
-
-  const apiKey = process.env[envVar];
-  if (!apiKey) return null;
-
-  const resolved: ResolvedAuth = {
-    apiKey,
-    source: 'environment',
-  };
-
-  const baseUrlEnv = PROVIDER_BASE_URL_ENV[ctx.provider];
-  if (baseUrlEnv) {
-    const baseURL = process.env[baseUrlEnv];
-    if (baseURL) resolved.baseURL = baseURL;
-  }
-
-  return resolved;
+  return resolveProviderEnvironmentAuth(ctx, (key) => process.env[key]);
 }
 
 // ============================================
 // Stage 4: Default Provider Credentials
 // ============================================
-
-/** Providers that work without explicit authentication */
-const NO_AUTH_PROVIDERS = new Set<SupportedProvider>([
-  'ollama',
-]);
 
 /**
  * Attempt to resolve default credentials for providers that don't require auth.
@@ -279,12 +210,7 @@ const NO_AUTH_PROVIDERS = new Set<SupportedProvider>([
  * @returns Resolved auth or null if provider requires auth
  */
 function resolveDefaultCredentials(ctx: AuthResolverContext): ResolvedAuth | null {
-  if (!NO_AUTH_PROVIDERS.has(ctx.provider)) return null;
-
-  return {
-    apiKey: '',
-    source: 'default',
-  };
+  return resolveDefaultProviderAuth(ctx);
 }
 
 // ============================================
@@ -330,26 +256,6 @@ export async function hasCredentials(ctx: AuthResolverContext): Promise<boolean>
 // ============================================
 
 /**
- * Provider name to SupportedProvider mapping.
- * Maps BuiltinProvider (from provider-account.ts) to SupportedProvider (from providers/types.ts).
- */
-const BUILTIN_TO_SUPPORTED: Record<string, SupportedProvider> = {
-  anthropic: 'anthropic',
-  openai: 'openai',
-  'openai-compatible': 'openai-compatible',
-  google: 'google',
-  'amazon-bedrock': 'bedrock',
-  azure: 'azure',
-  mistral: 'mistral',
-  groq: 'groq',
-  xai: 'xai',
-  openrouter: 'openrouter',
-  zai: 'zai',
-  deepseek: 'deepseek',
-  ollama: 'ollama',
-};
-
-/**
  * Resolve auth from the global priority queue.
  *
  * Algorithm:
@@ -392,7 +298,7 @@ export async function resolveAuthFromQueue(
     if (!available) continue;
 
     // Map BuiltinProvider to SupportedProvider
-    const supportedProvider = BUILTIN_TO_SUPPORTED[account.provider];
+    const supportedProvider = BUILTIN_TO_SUPPORTED_PROVIDER[account.provider];
     if (!supportedProvider) continue;
 
     // Use modelEquivalenceProvider if specified, otherwise use the account's provider
@@ -478,42 +384,13 @@ export async function resolveAuthFromQueue(
 export function buildDefaultQueueConfig(
   requestedModel: string,
 ): { queue: ProviderAccount[]; requestedModel: string } | undefined {
-  if (!_getSettingsValue) return undefined;
+  const queueConfig = buildProviderAccountQueueConfig(requestedModel, _getSettingsValue);
+  if (!queueConfig) return undefined;
 
-  // Read providerAccounts
-  const accountsRaw = _getSettingsValue('providerAccounts');
-  if (!accountsRaw) return undefined;
-
-  let accounts: ProviderAccount[];
-  try {
-    accounts = typeof accountsRaw === 'string' ? JSON.parse(accountsRaw) : (accountsRaw as ProviderAccount[]);
-  } catch {
-    return undefined;
-  }
-
-  if (!Array.isArray(accounts) || accounts.length === 0) return undefined;
-
-  // Read priority order
-  const priorityRaw = _getSettingsValue('globalPriorityOrder');
-  let priorityOrder: string[] = [];
-  if (priorityRaw) {
-    try {
-      priorityOrder = typeof priorityRaw === 'string' ? JSON.parse(priorityRaw) : (priorityRaw as string[]);
-    } catch {
-      // Use accounts in their natural order
-    }
-  }
-
-  // Sort accounts by priority order (accounts not in the list go to the end)
-  const sorted = [...accounts].sort((a, b) => {
-    const idxA = priorityOrder.indexOf(a.id);
-    const idxB = priorityOrder.indexOf(b.id);
-    const effectiveA = idxA === -1 ? Infinity : idxA;
-    const effectiveB = idxB === -1 ? Infinity : idxB;
-    return effectiveA - effectiveB;
-  });
-
-  return { queue: sorted, requestedModel };
+  return {
+    queue: queueConfig.queue as ProviderAccount[],
+    requestedModel: queueConfig.requestedModel,
+  };
 }
 
 /**
@@ -523,11 +400,6 @@ export function buildDefaultQueueConfig(
  *
  * If the account has an explicit baseUrl set, it takes precedence.
  */
-function resolveZaiBaseUrl(account: ProviderAccount): string {
-  if (account.baseUrl) return account.baseUrl;
-  return account.billingModel === 'subscription' ? ZAI_CODING_API : ZAI_GENERAL_API;
-}
-
 function isCodexModelId(modelId: string): boolean {
   return modelId.toLowerCase().includes('codex');
 }
@@ -540,15 +412,6 @@ async function resolveCredentialsForAccount(
   account: ProviderAccount,
   provider: SupportedProvider,
 ): Promise<ResolvedAuth | null> {
-  // No-auth providers (e.g., Ollama) — no API key required
-  if (NO_AUTH_PROVIDERS.has(provider)) {
-    return {
-      apiKey: '',
-      source: 'default',
-      baseURL: account.baseUrl,
-    };
-  }
-
   // File-based OAuth (e.g., OpenAI Codex subscription)
   if (account.authType === 'oauth' && account.provider === 'openai') {
     try {
@@ -577,19 +440,5 @@ async function resolveCredentialsForAccount(
     return null;
   }
 
-  // API key accounts
-  if (account.authType === 'api-key' && account.apiKey) {
-    // Z.AI: route to correct endpoint based on billing model
-    const baseURL = account.provider === 'zai'
-      ? resolveZaiBaseUrl(account)
-      : account.baseUrl;
-
-    return {
-      apiKey: account.apiKey,
-      source: 'profile-api-key',
-      baseURL,
-    };
-  }
-
-  return null;
+  return resolveApiKeyProviderAccountAuth(account, provider);
 }

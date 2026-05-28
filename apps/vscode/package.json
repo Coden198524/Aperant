@@ -1,0 +1,156 @@
+{
+  "name": "autocode-vscode",
+  "displayName": "Autocode",
+  "description": "Run Autocode inside VS Code using the shared @autocode/core package.",
+  "version": "0.0.1",
+  "publisher": "autocode",
+  "private": true,
+  "type": "module",
+  "license": "AGPL-3.0",
+  "engines": {
+    "vscode": "^1.96.0",
+    "node": ">=20.0.0"
+  },
+  "categories": [
+    "Other"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "autocode.openPanel",
+        "title": "Autocode: Open Panel"
+      },
+      {
+        "command": "autocode.showCoreInfo",
+        "title": "Autocode: Show Core Info"
+      },
+      {
+        "command": "autocode.refreshWorkspace",
+        "title": "Autocode: Refresh Workspace"
+      },
+      {
+        "command": "autocode.createTask",
+        "title": "Autocode: Create Task"
+      },
+      {
+        "command": "autocode.openPlanFile",
+        "title": "Autocode: Open Latest Plan File"
+      },
+      {
+        "command": "autocode.openLogFile",
+        "title": "Autocode: Open Latest Log File"
+      },
+      {
+        "command": "autocode.openRunResult",
+        "title": "Autocode: Open Latest Run Result"
+      },
+      {
+        "command": "autocode.openTaskFolder",
+        "title": "Autocode: Reveal Latest Task Folder"
+      },
+      {
+        "command": "autocode.startTask",
+        "title": "Autocode: Start Latest Task"
+      },
+      {
+        "command": "autocode.stopTask",
+        "title": "Autocode: Stop Latest Task"
+      },
+      {
+        "command": "autocode.markTaskDone",
+        "title": "Autocode: Mark Latest Task Done"
+      },
+      {
+        "command": "autocode.requestTaskChanges",
+        "title": "Autocode: Request Changes on Latest Task"
+      }
+    ],
+    "menus": {
+      "commandPalette": [
+        {
+          "command": "autocode.openPanel"
+        },
+        {
+          "command": "autocode.createTask"
+        },
+        {
+          "command": "autocode.startTask"
+        },
+        {
+          "command": "autocode.stopTask"
+        },
+        {
+          "command": "autocode.refreshWorkspace"
+        }
+      ]
+    },
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "autocode",
+          "title": "Autocode",
+          "icon": "resources/autocode.svg"
+        }
+      ]
+    },
+    "views": {
+      "autocode": [
+        {
+          "id": "autocode.sidebar",
+          "name": "Autocode"
+        }
+      ]
+    },
+    "configuration": {
+      "title": "Autocode",
+      "properties": {
+        "autocode.projectPath": {
+          "type": "string",
+          "default": "",
+          "description": "Optional project path for future headless Autocode sessions. Empty uses the active VS Code workspace."
+        },
+        "autocode.projectDataDir": {
+          "type": "string",
+          "default": ".autocode",
+          "description": "Project-relative data directory used by the VS Code frontend."
+        },
+        "autocode.preferredCLI": {
+          "type": "string",
+          "enum": [
+            "claude-code",
+            "gemini",
+            "opencode",
+            "kilocode",
+            "codex",
+            "deepseek",
+            "custom"
+          ],
+          "default": "claude-code",
+          "description": "CLI used by the VS Code frontend when starting an Autocode task in a terminal."
+        },
+        "autocode.customCLICommand": {
+          "type": "string",
+          "default": "",
+          "description": "Command to run when autocode.preferredCLI is custom."
+        },
+        "autocode.bypassPermissions": {
+          "type": "boolean",
+          "default": false,
+          "description": "Pass the supported permission bypass flag to compatible CLIs when starting a task."
+        }
+      }
+    }
+  },
+  "scripts": {
+    "precompile": "npm --workspace @autocode/core run ensure-built",
+    "compile": "node scripts/clean-out.cjs && tsc -p .",
+    "pretypecheck": "npm --workspace @autocode/core run ensure-built",
+    "typecheck": "tsc -p . --noEmit",
+    "watch": "tsc -watch -p .",
+    "vscode:prepublish": "npm run compile"
+  },
+  "dependencies": {
+    "@autocode/core": "*"
+  }
+}

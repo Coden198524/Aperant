@@ -2,30 +2,19 @@
  * Disk-Spillover Tool Output Truncation
  * ======================================
  *
- * When tool output exceeds size limits, writes full output to disk and returns
- * a truncated version with a routing hint so the agent knows how to access
- * the full data. Inspired by opencode's production patterns.
+ * Desktop adapter for the shared truncation policy. Core decides if and how
+ * output should be truncated; desktop writes full spillover output to disk.
  */
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  TOOL_OUTPUT_MAX_BYTES,
+  buildToolOutputTruncationContent,
+  planToolOutputTruncation,
+} from '@autocode/core';
 
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Maximum lines before truncation */
-const MAX_LINES = 2000;
-
-/** Maximum bytes before truncation (50KB) */
-const MAX_BYTES = 50_000;
-
-/** Higher limit for the safety-net wrapper in Tool.define() */
-export const SAFETY_NET_MAX_BYTES = 100_000;
-
-// ---------------------------------------------------------------------------
-// Types
-// ---------------------------------------------------------------------------
+export { SAFETY_NET_MAX_BYTES } from '@autocode/core';
 
 export interface TruncationResult {
   content: string;
@@ -34,80 +23,52 @@ export interface TruncationResult {
   spilloverPath?: string;
 }
 
-// ---------------------------------------------------------------------------
-// Public API
-// ---------------------------------------------------------------------------
-
 /**
  * Truncate tool output if it exceeds size limits.
  * Full output is preserved on disk with a routing hint for the agent.
- *
- * @param output - The raw tool output string
- * @param toolName - Name of the tool (for spillover filename)
- * @param projectDir - Project directory (spillover written to .autocode/tool-output/)
- * @param maxBytes - Override max bytes limit (default: MAX_BYTES)
- * @returns TruncationResult with potentially truncated content
  */
 export function truncateToolOutput(
   output: string,
   toolName: string,
   projectDir: string,
-  maxBytes: number = MAX_BYTES,
+  maxBytes: number = TOOL_OUTPUT_MAX_BYTES,
 ): TruncationResult {
-  const bytes = Buffer.byteLength(output, 'utf-8');
-  const lines = output.split('\n');
+  const plan = planToolOutputTruncation(output, toolName, maxBytes);
 
-  // Within limits — return as-is
-  if (bytes <= maxBytes && lines.length <= MAX_LINES) {
+  if (!plan.wasTruncated) {
     return {
       content: output,
       wasTruncated: false,
-      originalSize: bytes,
+      originalSize: plan.originalSize,
     };
   }
 
-  // Exceeds limits — spill to disk
   const spilloverDir = path.join(projectDir, '.autocode', 'tool-output');
   try {
     fs.mkdirSync(spilloverDir, { recursive: true });
   } catch {
-    // Directory may already exist
+    // Directory may already exist.
   }
 
-  const timestamp = Date.now();
-  const sanitizedToolName = toolName.replace(/[^a-zA-Z0-9_-]/g, '_');
-  const spilloverPath = path.join(spilloverDir, `${sanitizedToolName}-${timestamp}.txt`);
+  const spilloverPath = path.join(
+    spilloverDir,
+    `${plan.sanitizedToolName}-${Date.now()}.txt`,
+  );
 
   try {
     fs.writeFileSync(spilloverPath, output, 'utf-8');
   } catch {
-    // If we can't write spillover, just truncate without disk backup
-    const truncated = lines.slice(0, MAX_LINES).join('\n').slice(0, maxBytes);
     return {
-      content: `${truncated}\n\n[Output truncated: ${lines.length} lines / ${bytes} bytes — spillover write failed]`,
+      content: buildToolOutputTruncationContent(plan, { spilloverWriteFailed: true }),
       wasTruncated: true,
-      originalSize: bytes,
+      originalSize: plan.originalSize,
     };
   }
 
-  // Truncate to limits
-  const truncatedLines = lines.slice(0, MAX_LINES);
-  let truncatedContent = truncatedLines.join('\n');
-  if (Buffer.byteLength(truncatedContent, 'utf-8') > maxBytes) {
-    truncatedContent = truncatedContent.slice(0, maxBytes);
-  }
-
-  const hint = [
-    '',
-    `[Output truncated: ${lines.length} lines / ${bytes} bytes → showing first ${Math.min(lines.length, MAX_LINES)} lines]`,
-    `[Full output saved to: ${spilloverPath}]`,
-    `[Hint: Use the Read tool to view the full output, or narrow your search pattern for more specific results]`,
-  ].join('\n');
-
   return {
-    content: truncatedContent + hint,
+    content: buildToolOutputTruncationContent(plan, { spilloverPath }),
     wasTruncated: true,
-    originalSize: bytes,
+    originalSize: plan.originalSize,
     spilloverPath,
   };
 }

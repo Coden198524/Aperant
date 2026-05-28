@@ -1,0 +1,25 @@
+{
+  "name": "autocode-cli",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Headless command-line frontend for Autocode using @autocode/core.",
+  "license": "AGPL-3.0",
+  "bin": {
+    "autocode": "./out/index.js",
+    "autocode-cli": "./out/index.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "prebuild": "npm --workspace @autocode/core run ensure-built",
+    "build": "node scripts/clean-out.cjs && tsc -p .",
+    "pretypecheck": "npm --workspace @autocode/core run ensure-built",
+    "typecheck": "tsc -p . --noEmit",
+    "dev": "npm run build && node out/index.js"
+  },
+  "dependencies": {
+    "@autocode/core": "*"
+  }
+}

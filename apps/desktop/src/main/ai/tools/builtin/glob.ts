@@ -9,6 +9,12 @@
 
 import * as fs from 'node:fs';
 import * as path from 'node:path';
+import {
+  GLOB_MAX_RESULTS,
+  GLOB_SUMMARY_THRESHOLD,
+  shouldExcludeSearchPath,
+  summarizePathsByDirectory,
+} from '@autocode/core';
 import { z } from 'zod/v3';
 
 import { assertPathContained } from '../../security/path-containment';
@@ -29,76 +35,6 @@ const inputSchema = z.object({
       'The directory to search in. If not specified, the current working directory will be used.',
     ),
 });
-
-/** Maximum number of file results to return before truncation */
-const MAX_RESULTS = 300;
-const SUMMARY_THRESHOLD = 120;
-const SUMMARY_SAMPLE_SIZE = 50;
-const EXCLUDED_DIRS = new Set([
-  '.git',
-  '.autocode',
-  '.claude',
-  '.codex',
-  '.next',
-  '.nuxt',
-  '.svelte-kit',
-  '.turbo',
-  '.cache',
-  '.gradle',
-  '.idea',
-  '.vscode',
-  'node_modules',
-  'bower_components',
-  'vendor',
-  'third_party',
-  'third-party',
-  'extern',
-  'external',
-  'dist',
-  'build',
-  'out',
-  'coverage',
-  'target',
-  'bin',
-  'obj',
-  '__pycache__',
-]);
-
-function normalizePathSegments(fileName: string): string[] {
-  return fileName.replace(/\\/g, '/').split('/').filter(Boolean);
-}
-
-function shouldExcludeGlobPath(fileName: string): boolean {
-  return normalizePathSegments(fileName).some((segment) => EXCLUDED_DIRS.has(segment.toLowerCase()));
-}
-
-function summarizePathsByDirectory(paths: string[], rootDir: string, totalMatches: number): string {
-  const directoryCounts = new Map<string, number>();
-  for (const filePath of paths) {
-    const rel = path.relative(rootDir, filePath).replace(/\\/g, '/');
-    const dir = path.dirname(rel);
-    const key = dir === '.' ? '<root>' : dir.split('/').slice(0, 3).join('/');
-    directoryCounts.set(key, (directoryCounts.get(key) ?? 0) + 1);
-  }
-
-  const topDirectories = Array.from(directoryCounts.entries())
-    .sort((a, b) => b[1] - a[1])
-    .slice(0, 20)
-    .map(([dir, count]) => `- ${dir}: ${count}`);
-
-  const sample = paths.slice(0, SUMMARY_SAMPLE_SIZE);
-  return [
-    `Glob matched ${totalMatches} files. Returning a compact summary to avoid flooding the model context.`,
-    '',
-    'Top directories:',
-    ...topDirectories,
-    '',
-    `First ${sample.length} recently modified files:`,
-    ...sample,
-    '',
-    'Narrow the pattern or path before reading files.',
-  ].join('\n');
-}
 
 // ---------------------------------------------------------------------------
 // Tool Definition
@@ -133,7 +69,7 @@ export const globTool = Tool.define({
     const matches = fs.globSync(input.pattern, {
       cwd: resolvedDir,
       exclude: (fileName: string) => {
-        return shouldExcludeGlobPath(fileName);
+        return shouldExcludeSearchPath(fileName);
       },
     });
 
@@ -172,9 +108,9 @@ export const globTool = Tool.define({
     // Cap results to prevent massive context window consumption
     const totalMatches = withMtime.length;
     const sortedPaths = withMtime.map((entry) => entry.filePath);
-    const output = totalMatches > SUMMARY_THRESHOLD
+    const output = totalMatches > GLOB_SUMMARY_THRESHOLD
       ? summarizePathsByDirectory(sortedPaths, resolvedDir, totalMatches)
-      : sortedPaths.slice(0, MAX_RESULTS).join('\n');
+      : sortedPaths.slice(0, GLOB_MAX_RESULTS).join('\n');
 
     // Apply disk-spillover truncation for very large outputs
     const result = truncateToolOutput(output, 'Glob', context.projectDir);

@@ -3,21 +3,33 @@
   "version": "0.0.0",
   "private": true,
   "type": "module",
-  "description": "Headless agent core for Autocode — shared across desktop, VS Code, and future UIs",
-  "main": "src/index.ts",
-  "types": "src/index.ts",
+  "description": "Headless agent core for Autocode, shared across desktop, VS Code, and future UIs",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
   "exports": {
     ".": {
-      "types": "./src/index.ts",
-      "import": "./src/index.ts",
-      "default": "./src/index.ts"
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
     }
   },
+  "files": [
+    "dist",
+    "README.md"
+  ],
   "scripts": {
+    "check:boundaries": "node scripts/check-boundaries.cjs",
+    "clean": "node scripts/clean-dist.cjs",
+    "build": "npm run check:boundaries && tsc -p tsconfig.build.json",
+    "ensure-built": "node scripts/ensure-built.cjs",
+    "smoke": "npm run build && node scripts/smoke-test.cjs",
     "typecheck": "tsc --noEmit"
   },
   "engines": {
     "node": ">=24.0.0"
   },
-  "license": "AGPL-3.0"
+  "license": "AGPL-3.0",
+  "dependencies": {
+    "zod": "^4.3.6"
+  }
 }

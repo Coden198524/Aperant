@@ -1,31 +1,5 @@
 import type { ProviderAccount } from '../../shared/types/provider-account';
-
-function isResponsesStyleOpenAIModelId(modelId: string): boolean {
-  return (
-    modelId.startsWith('gpt-5') ||
-    modelId.includes('codex') ||
-    modelId === 'o3' ||
-    modelId.startsWith('o3-') ||
-    modelId === 'o4-mini' ||
-    modelId.startsWith('o4-')
-  );
-}
-
-function isOfficialOpenAIBaseUrl(baseUrl: string | undefined): boolean {
-  if (!baseUrl) return true;
-
-  try {
-    const { hostname } = new URL(baseUrl);
-    return (
-      hostname === 'openai.com' ||
-      hostname.endsWith('.openai.com') ||
-      hostname === 'chatgpt.com' ||
-      hostname.endsWith('.chatgpt.com')
-    );
-  } catch {
-    return false;
-  }
-}
+import { isOfficialOpenAIBaseUrl, isResponsesApiModel } from '@autocode/core';
 
 export function buildProviderQueueResolutionErrorMessage(
   requestedModel: string,
@@ -41,7 +15,7 @@ export function buildProviderQueueResolutionErrorMessage(
 
   if (
     requestedProvider === 'openai' &&
-    isResponsesStyleOpenAIModelId(requestedModel) &&
+    isResponsesApiModel(requestedModel) &&
     hasCustomOpenAIAccount
   ) {
     return (
