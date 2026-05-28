@@ -3,6 +3,7 @@ import { spawnSync } from 'node:child_process';
 import path from 'node:path';
 import {
   CORE_PACKAGE_VERSION,
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
   DEFAULT_AUTOCODE_CLI,
   DEFAULT_PHASE_MODELS,
   SUPPORTED_AUTOCODE_CLIS,
@@ -32,7 +33,7 @@ import {
   type ParsedAutocodeCommandArgs,
 } from '@autocode/core';
 
-const DEFAULT_DATA_DIR = '.autocode';
+const DEFAULT_DATA_DIR = AUTOCODE_PROJECT_DATA_DIR_NAME;
 const DEFAULT_CLI: AutocodeCli = DEFAULT_AUTOCODE_CLI;
 
 async function main(): Promise<void> {

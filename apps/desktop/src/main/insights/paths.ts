@@ -1,26 +1,30 @@
-import path from 'path';
-
-const INSIGHTS_DIR = '.autocode/insights';
-const SESSIONS_DIR = 'sessions';
-const CURRENT_SESSION_FILE = 'current_session.json';
+import {
+  getAutocodeInsightsCurrentSessionPath,
+  getAutocodeInsightsDir,
+  getAutocodeInsightsLegacySessionPath,
+  getAutocodeInsightsSessionPath,
+  getAutocodeInsightsSessionsDir,
+} from '@autocode/core';
 
 /**
  * Path utilities for insights service
  * Provides consistent path resolution for sessions and insights data
  */
 export class InsightsPaths {
+  constructor(private readonly dataDirName?: string) {}
+
   /**
    * Get insights directory path for a project
    */
   getInsightsDir(projectPath: string): string {
-    return path.join(projectPath, INSIGHTS_DIR);
+    return getAutocodeInsightsDir(projectPath, this.dataDirName);
   }
 
   /**
    * Get sessions directory path for a project
    */
   getSessionsDir(projectPath: string): string {
-    return path.join(this.getInsightsDir(projectPath), SESSIONS_DIR);
+    return getAutocodeInsightsSessionsDir(projectPath, this.dataDirName);
   }
 
   /**
@@ -38,20 +42,20 @@ export class InsightsPaths {
    */
   getSessionPath(projectPath: string, sessionId: string): string {
     this.validateSessionId(sessionId);
-    return path.join(this.getSessionsDir(projectPath), `${sessionId}.json`);
+    return getAutocodeInsightsSessionPath(projectPath, sessionId, this.dataDirName);
   }
 
   /**
    * Get current session pointer file path
    */
   getCurrentSessionPath(projectPath: string): string {
-    return path.join(this.getInsightsDir(projectPath), CURRENT_SESSION_FILE);
+    return getAutocodeInsightsCurrentSessionPath(projectPath, this.dataDirName);
   }
 
   /**
    * Get old session path for migration
    */
   getOldSessionPath(projectPath: string): string {
-    return path.join(this.getInsightsDir(projectPath), 'session.json');
+    return getAutocodeInsightsLegacySessionPath(projectPath, this.dataDirName);
   }
 }

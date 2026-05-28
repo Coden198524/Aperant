@@ -7,19 +7,35 @@
 
 import path from 'path';
 import { existsSync } from 'fs';
-import { LEGACY_PROJECT_DATA_DIR_NAME, PROJECT_DATA_DIR_NAME } from '../shared/constants';
+import {
+  AUTOCODE_LEGACY_WORKTREE_DIR_NAME,
+  getAutocodeLegacyTaskWorktreesRelativeDir,
+  getAutocodeLegacyTerminalWorktreesRelativeDir,
+  getAutocodeTaskWorktreeCandidatePaths,
+  getAutocodeTaskWorktreeDir,
+  getAutocodeTaskWorktreePath,
+  getAutocodeTaskWorktreesRelativeDir,
+  getAutocodeTerminalMetadataDir,
+  getAutocodeTerminalMetadataPath,
+  getAutocodeTerminalMetadataRelativeDir,
+  getAutocodeTerminalWorktreeCandidatePaths,
+  getAutocodeTerminalWorktreeDir,
+  getAutocodeTerminalWorktreePath,
+  getAutocodeTerminalWorktreesRelativeDir,
+  isAutocodePathWithinBase,
+} from '@autocode/core';
 
 // Path constants for worktree directories
-export const TASK_WORKTREE_DIR = `${PROJECT_DATA_DIR_NAME}/worktrees/tasks`;
-export const LEGACY_TASK_WORKTREE_DIR = `${LEGACY_PROJECT_DATA_DIR_NAME}/worktrees/tasks`;
-export const TERMINAL_WORKTREE_DIR = `${PROJECT_DATA_DIR_NAME}/worktrees/terminal`;
-export const LEGACY_TERMINAL_WORKTREE_DIR = `${LEGACY_PROJECT_DATA_DIR_NAME}/worktrees/terminal`;
+export const TASK_WORKTREE_DIR = getAutocodeTaskWorktreesRelativeDir();
+export const LEGACY_TASK_WORKTREE_DIR = getAutocodeLegacyTaskWorktreesRelativeDir();
+export const TERMINAL_WORKTREE_DIR = getAutocodeTerminalWorktreesRelativeDir();
+export const LEGACY_TERMINAL_WORKTREE_DIR = getAutocodeLegacyTerminalWorktreesRelativeDir();
 
 // Metadata directories (separate from git worktrees to avoid uncommitted files)
-export const TERMINAL_WORKTREE_METADATA_DIR = `${PROJECT_DATA_DIR_NAME}/terminal/metadata`;
+export const TERMINAL_WORKTREE_METADATA_DIR = getAutocodeTerminalMetadataRelativeDir();
 
 // Legacy path for backwards compatibility
-export const LEGACY_WORKTREE_DIR = '.worktrees';
+export const LEGACY_WORKTREE_DIR = AUTOCODE_LEGACY_WORKTREE_DIR_NAME;
 
 /**
  * Get the task worktrees directory path
@@ -29,7 +45,7 @@ export function getTaskWorktreeDir(projectPath: string): string {
     console.error('[worktree-paths] getTaskWorktreeDir: projectPath is undefined or not a string');
     return '';
   }
-  return path.join(projectPath, TASK_WORKTREE_DIR);
+  return getAutocodeTaskWorktreeDir(projectPath);
 }
 
 /**
@@ -44,7 +60,7 @@ export function getTaskWorktreePath(projectPath: string, specId: string): string
     console.error('[worktree-paths] getTaskWorktreePath: specId is undefined or not a string');
     return '';
   }
-  return path.join(projectPath, TASK_WORKTREE_DIR, specId);
+  return getAutocodeTaskWorktreePath(projectPath, specId);
 }
 
 /**
@@ -52,9 +68,7 @@ export function getTaskWorktreePath(projectPath: string, specId: string): string
  * Protects against path traversal attacks (e.g., specId containing "..")
  */
 export function isPathWithinBase(resolvedPath: string, basePath: string): boolean {
-  const normalizedPath = path.resolve(resolvedPath);
-  const normalizedBase = path.resolve(basePath);
-  return normalizedPath.startsWith(normalizedBase + path.sep) || normalizedPath === normalizedBase;
+  return isAutocodePathWithinBase(resolvedPath, basePath);
 }
 
 /**
@@ -75,45 +89,18 @@ export function findTaskWorktree(projectPath: string, specId: string): string | 
 
   const normalizedProject = path.resolve(projectPath);
 
-  // Check Autocode app path first (.autocode/worktrees/tasks/{specId})
-  const autoClaudePath = path.join(projectPath, TASK_WORKTREE_DIR, specId);
-  const resolvedAutocodePath = path.resolve(autoClaudePath);
+  for (const candidatePath of getAutocodeTaskWorktreeCandidatePaths(projectPath, specId)) {
+    const resolvedCandidate = path.resolve(candidatePath);
 
-  if (!isPathWithinBase(resolvedAutocodePath, normalizedProject)) {
-    console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project`);
-    return null;
-  }
+    if (!isPathWithinBase(resolvedCandidate, normalizedProject)) {
+      console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project`);
+      return null;
+    }
 
-  if (existsSync(resolvedAutocodePath)) {
-    console.log('[worktree-paths] Found worktree at:', resolvedAutocodePath);
-    return resolvedAutocodePath;
-  }
-
-  const legacyDataPath = path.join(projectPath, LEGACY_TASK_WORKTREE_DIR, specId);
-  const resolvedLegacyDataPath = path.resolve(legacyDataPath);
-
-  if (!isPathWithinBase(resolvedLegacyDataPath, normalizedProject)) {
-    console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project (legacy data dir)`);
-    return null;
-  }
-
-  if (existsSync(resolvedLegacyDataPath)) {
-    console.log('[worktree-paths] Found legacy data-dir worktree at:', resolvedLegacyDataPath);
-    return resolvedLegacyDataPath;
-  }
-
-  // Legacy fallback (.worktrees/{specId})
-  const legacyPath = path.join(projectPath, LEGACY_WORKTREE_DIR, specId);
-  const resolvedLegacyPath = path.resolve(legacyPath);
-
-  if (!isPathWithinBase(resolvedLegacyPath, normalizedProject)) {
-    console.error(`[worktree-paths] Path traversal detected: specId "${specId}" resolves outside project (legacy)`);
-    return null;
-  }
-
-  if (existsSync(resolvedLegacyPath)) {
-    console.log('[worktree-paths] Found worktree at:', resolvedLegacyPath);
-    return resolvedLegacyPath;
+    if (existsSync(resolvedCandidate)) {
+      console.log('[worktree-paths] Found worktree at:', resolvedCandidate);
+      return resolvedCandidate;
+    }
   }
 
   console.log('[worktree-paths] No dedicated worktree found for task:', specId);
@@ -128,7 +115,7 @@ export function getTerminalWorktreeDir(projectPath: string): string {
     console.error('[worktree-paths] getTerminalWorktreeDir: projectPath is undefined or not a string');
     return '';
   }
-  return path.join(projectPath, TERMINAL_WORKTREE_DIR);
+  return getAutocodeTerminalWorktreeDir(projectPath);
 }
 
 /**
@@ -143,7 +130,7 @@ export function getTerminalWorktreePath(projectPath: string, name: string): stri
     console.error('[worktree-paths] getTerminalWorktreePath: name is undefined or not a string');
     return '';
   }
-  return path.join(projectPath, TERMINAL_WORKTREE_DIR, name);
+  return getAutocodeTerminalWorktreePath(projectPath, name);
 }
 
 /**
@@ -163,39 +150,16 @@ export function findTerminalWorktree(projectPath: string, name: string): string 
 
   const normalizedProject = path.resolve(projectPath);
 
-  // Check new path first
-  const newPath = path.join(projectPath, TERMINAL_WORKTREE_DIR, name);
-  const resolvedNewPath = path.resolve(newPath);
+  for (const candidatePath of getAutocodeTerminalWorktreeCandidatePaths(projectPath, name)) {
+    const resolvedCandidate = path.resolve(candidatePath);
 
-  // Validate path stays within project (defense against path traversal)
-  if (!isPathWithinBase(resolvedNewPath, normalizedProject)) {
-    console.error(`[worktree-paths] Path traversal detected: name "${name}" resolves outside project`);
-    return null;
+    if (!isPathWithinBase(resolvedCandidate, normalizedProject)) {
+      console.error(`[worktree-paths] Path traversal detected: name "${name}" resolves outside project`);
+      return null;
+    }
+
+    if (existsSync(resolvedCandidate)) return resolvedCandidate;
   }
-
-  if (existsSync(resolvedNewPath)) return resolvedNewPath;
-
-  const legacyDataPath = path.join(projectPath, LEGACY_TERMINAL_WORKTREE_DIR, name);
-  const resolvedLegacyDataPath = path.resolve(legacyDataPath);
-
-  if (!isPathWithinBase(resolvedLegacyDataPath, normalizedProject)) {
-    console.error(`[worktree-paths] Path traversal detected: name "${name}" resolves outside project (legacy data dir)`);
-    return null;
-  }
-
-  if (existsSync(resolvedLegacyDataPath)) return resolvedLegacyDataPath;
-
-  // Legacy fallback (terminal worktrees used terminal-{name} prefix)
-  const legacyPath = path.join(projectPath, LEGACY_WORKTREE_DIR, `terminal-${name}`);
-  const resolvedLegacyPath = path.resolve(legacyPath);
-
-  // Validate legacy path as well
-  if (!isPathWithinBase(resolvedLegacyPath, normalizedProject)) {
-    console.error(`[worktree-paths] Path traversal detected: name "${name}" resolves outside project (legacy)`);
-    return null;
-  }
-
-  if (existsSync(resolvedLegacyPath)) return resolvedLegacyPath;
 
   return null;
 }
@@ -209,7 +173,7 @@ export function getTerminalWorktreeMetadataDir(projectPath: string): string {
     console.error('[worktree-paths] getTerminalWorktreeMetadataDir: projectPath is undefined or not a string');
     return '';
   }
-  return path.join(projectPath, TERMINAL_WORKTREE_METADATA_DIR);
+  return getAutocodeTerminalMetadataDir(projectPath);
 }
 
 /**
@@ -224,5 +188,5 @@ export function getTerminalWorktreeMetadataPath(projectPath: string, name: strin
     console.error('[worktree-paths] getTerminalWorktreeMetadataPath: name is undefined or not a string');
     return '';
   }
-  return path.join(projectPath, TERMINAL_WORKTREE_METADATA_DIR, `${name}.json`);
+  return getAutocodeTerminalMetadataPath(projectPath, name);
 }

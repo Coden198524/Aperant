@@ -1,7 +1,8 @@
 import { app } from 'electron';
 import path from 'path';
 import { existsSync, readFileSync } from 'fs';
-import { homedir } from 'os';
+import { getAutocodeProjectEnvPath } from '@autocode/core';
+import { getMemoriesDir } from '../../config-paths';
 
 export interface EnvironmentVars {
   [key: string]: string;
@@ -69,7 +70,7 @@ export function loadProjectEnvVars(projectPath: string, autoBuildPath?: string):
     return {};
   }
 
-  const projectEnvPath = path.join(projectPath, autoBuildPath, '.env');
+  const projectEnvPath = getAutocodeProjectEnvPath(projectPath, autoBuildPath);
   if (!existsSync(projectEnvPath)) {
     return {};
   }
@@ -219,7 +220,7 @@ export interface MemoryDatabaseDetails {
 export function getMemoryDatabaseDetails(projectEnvVars: EnvironmentVars): MemoryDatabaseDetails {
   const dbPath = projectEnvVars['GRAPHITI_DB_PATH'] ||
                  process.env.GRAPHITI_DB_PATH ||
-                 path.join(homedir(), '.autocode', 'memories');
+                 getMemoriesDir();
 
   const database = projectEnvVars['GRAPHITI_DATABASE'] ||
                    process.env.GRAPHITI_DATABASE ||

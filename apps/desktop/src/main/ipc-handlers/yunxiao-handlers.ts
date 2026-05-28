@@ -1,7 +1,7 @@
 import { ipcMain, app } from 'electron';
 import type { BrowserWindow } from 'electron';
 import { generateText } from 'ai';
-import { createImportedAutocodeTask } from '@autocode/core';
+import { createImportedAutocodeTask, getAutocodeProjectEnvPath } from '@autocode/core';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   IPCResult,
@@ -538,7 +538,7 @@ export function formatYunxiaoError(
 
 export function getYunxiaoEnvConfig(project: Project): YunxiaoEnvConfig | null {
   if (!project.autoBuildPath) return null;
-  const envPath = path.join(project.path, project.autoBuildPath, '.env');
+  const envPath = getAutocodeProjectEnvPath(project.path, project.autoBuildPath);
   if (!existsSync(envPath)) return null;
 
   try {

@@ -2,9 +2,8 @@
  * Ideation session CRUD operations
  */
 
-import path from 'path';
 import type { IpcMainInvokeEvent } from 'electron';
-import { AUTO_BUILD_PATHS } from '../../../shared/constants';
+import { getAutocodeIdeationFilePath } from '@autocode/core';
 import type { IPCResult, IdeationSession } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import { transformIdeaFromSnakeCase } from './transformers';
@@ -22,11 +21,7 @@ export async function getIdeationSession(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   const rawIdeation = readIdeationFile(ideationPath);
   if (!rawIdeation) {

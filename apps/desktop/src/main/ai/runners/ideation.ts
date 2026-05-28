@@ -17,7 +17,7 @@ import { join } from 'node:path';
 import { createSimpleClient } from '../client/factory';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
-import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import { getAutocodeSpecsDir, type ModelShorthand, type ThinkingLevel } from '@autocode/core';
 import type { SecurityProfile } from '../security/bash-validator';
 
 // =============================================================================
@@ -66,6 +66,8 @@ export interface IdeationConfig {
   projectDir: string;
   /** Output directory for results */
   outputDir: string;
+  /** Project data directory name (defaults to .autocode) */
+  dataDirName?: string;
   /** Prompts directory containing ideation prompt files */
   promptsDir: string;
   /** Type of ideation to run */
@@ -132,6 +134,7 @@ export async function runIdeation(
   const {
     projectDir,
     outputDir,
+    dataDirName,
     promptsDir,
     ideationType,
     modelShorthand = 'sonnet',
@@ -172,7 +175,7 @@ export async function runIdeation(
   const toolContext: ToolContext = {
     cwd: projectDir,
     projectDir,
-    specDir: join(projectDir, '.autocode', 'specs'),
+    specDir: getAutocodeSpecsDir({ projectRoot: projectDir, dataDirName }),
     securityProfile: null as unknown as SecurityProfile,
     abortSignal,
   };

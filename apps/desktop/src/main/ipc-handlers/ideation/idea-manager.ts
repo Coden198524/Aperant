@@ -2,9 +2,8 @@
  * Individual idea operations (update, dismiss, etc.)
  */
 
-import path from 'path';
 import type { IpcMainInvokeEvent } from 'electron';
-import { AUTO_BUILD_PATHS } from '../../../shared/constants';
+import { getAutocodeIdeationFilePath } from '@autocode/core';
 import type { IPCResult, IdeationStatus } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import { readIdeationFile, writeIdeationFile, updateIdeationTimestamp } from './file-utils';
@@ -23,11 +22,7 @@ export async function updateIdeaStatus(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   const ideation = readIdeationFile(ideationPath);
   if (!ideation) {
@@ -67,11 +62,7 @@ export async function dismissIdea(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   const ideation = readIdeationFile(ideationPath);
   if (!ideation) {
@@ -110,11 +101,7 @@ export async function dismissAllIdeas(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   const ideation = readIdeationFile(ideationPath);
   if (!ideation) {
@@ -156,11 +143,7 @@ export async function archiveIdea(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   const ideation = readIdeationFile(ideationPath);
   if (!ideation) {
@@ -199,11 +182,7 @@ export async function deleteIdea(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   const ideation = readIdeationFile(ideationPath);
   if (!ideation) {
@@ -242,11 +221,7 @@ export async function deleteMultipleIdeas(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   const ideation = readIdeationFile(ideationPath);
   if (!ideation) {

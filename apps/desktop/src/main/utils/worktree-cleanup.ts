@@ -18,6 +18,7 @@
 import { execFileSync } from 'child_process';
 import { rm } from 'fs/promises';
 import { existsSync } from 'fs';
+import { buildAutocodeTaskBranchName } from '@autocode/core';
 import { getToolPath } from '../cli-tool-manager';
 import { getIsolatedGitEnv } from './git-isolation';
 import { getTaskWorktreeDir, getTerminalWorktreeDir, isPathWithinBase } from '../worktree-paths';
@@ -86,7 +87,7 @@ function getWorktreeBranch(worktreePath: string, specId: string, timeout: number
   }
 
   // Fall back to the naming convention: autocode/{spec-id}
-  return `autocode/${specId}`;
+  return buildAutocodeTaskBranchName(specId);
 }
 
 /**

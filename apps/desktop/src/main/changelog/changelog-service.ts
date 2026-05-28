@@ -3,6 +3,7 @@ import * as path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync, writeFileSync } from 'fs';
 import { app } from 'electron';
+import { AUTOCODE_PROJECT_ENV_FILE_NAME } from '@autocode/core';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -122,7 +123,7 @@ export class ChangelogService extends EventEmitter {
     const autoBuildSource = this.getAutoBuildSourcePath();
     if (!autoBuildSource) return {};
 
-    const envPath = path.join(autoBuildSource, '.env');
+    const envPath = path.join(autoBuildSource, AUTOCODE_PROJECT_ENV_FILE_NAME);
     if (!existsSync(envPath)) return {};
 
     try {

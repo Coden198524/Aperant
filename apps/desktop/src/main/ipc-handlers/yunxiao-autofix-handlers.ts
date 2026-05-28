@@ -15,6 +15,7 @@ import type {
   YunxiaoWorkItem,
 } from '../../shared/types';
 import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import { getAutocodeYunxiaoDir } from '@autocode/core/project/data-paths';
 import type { GitHubIssue } from '../ai/runners/github/duplicate-detector';
 import { BatchProcessor } from '../ai/runners/github/batch-processor';
 import { AgentManager } from '../agent';
@@ -65,7 +66,7 @@ interface PersistedYunxiaoBatch {
 const projectAutoFixChains = new Map<string, Promise<void>>();
 
 function getYunxiaoDir(project: Project): string {
-  return path.join(project.path, '.autocode', 'yunxiao');
+  return getAutocodeYunxiaoDir(project.path, project.autoBuildPath);
 }
 
 function getQueueDir(project: Project): string {

@@ -1,6 +1,11 @@
 import { ipcMain } from "electron";
 import type { BrowserWindow } from "electron";
 import {
+  getAutocodeCompetitorAnalysisPath,
+  getAutocodeManualCompetitorsPath,
+  getAutocodeRoadmapDir,
+  getAutocodeRoadmapFilePath,
+  getAutocodeRoadmapProgressPath,
   createAutocodeTask,
   type AutocodeTask,
   type AutocodeTaskMetadata,
@@ -74,11 +79,7 @@ export function registerRoadmapHandlers(
         return { success: false, error: "Project not found" };
       }
 
-      const roadmapPath = path.join(
-        project.path,
-        AUTO_BUILD_PATHS.ROADMAP_DIR,
-        AUTO_BUILD_PATHS.ROADMAP_FILE
-      );
+      const roadmapPath = getAutocodeRoadmapFilePath(project.path, project.autoBuildPath);
 
       if (!existsSync(roadmapPath)) {
         return { success: true, data: null };
@@ -89,11 +90,7 @@ export function registerRoadmapHandlers(
         const rawRoadmap = JSON.parse(content);
 
         // Load competitor analysis if available (competitor_analysis.json)
-        const competitorAnalysisPath = path.join(
-          project.path,
-          AUTO_BUILD_PATHS.ROADMAP_DIR,
-          AUTO_BUILD_PATHS.COMPETITOR_ANALYSIS
-        );
+        const competitorAnalysisPath = getAutocodeCompetitorAnalysisPath(project.path, project.autoBuildPath);
         let competitorAnalysis: CompetitorAnalysis | undefined;
         if (existsSync(competitorAnalysisPath)) {
           try {
@@ -373,11 +370,7 @@ export function registerRoadmapHandlers(
         return { success: false, error: "Project not found" };
       }
 
-      const roadmapPath = path.join(
-        project.path,
-        AUTO_BUILD_PATHS.ROADMAP_DIR,
-        AUTO_BUILD_PATHS.ROADMAP_FILE
-      );
+      const roadmapPath = getAutocodeRoadmapFilePath(project.path, project.autoBuildPath);
 
       try {
         return await withFileLock(roadmapPath, async () => {
@@ -442,11 +435,7 @@ export function registerRoadmapHandlers(
         return { success: false, error: "Project not found" };
       }
 
-      const roadmapPath = path.join(
-        project.path,
-        AUTO_BUILD_PATHS.ROADMAP_DIR,
-        AUTO_BUILD_PATHS.ROADMAP_FILE
-      );
+      const roadmapPath = getAutocodeRoadmapFilePath(project.path, project.autoBuildPath);
 
       try {
         return await withFileLock(roadmapPath, async () => {
@@ -496,11 +485,7 @@ export function registerRoadmapHandlers(
         return { success: false, error: "Project not found" };
       }
 
-      const roadmapPath = path.join(
-        project.path,
-        AUTO_BUILD_PATHS.ROADMAP_DIR,
-        AUTO_BUILD_PATHS.ROADMAP_FILE
-      );
+      const roadmapPath = getAutocodeRoadmapFilePath(project.path, project.autoBuildPath);
 
       try {
         return await withFileLock(roadmapPath, async () => {
@@ -603,8 +588,8 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
         return { success: false, error: "Project not found" };
       }
 
-      const roadmapDir = path.join(project.path, AUTO_BUILD_PATHS.ROADMAP_DIR);
-      const progressPath = path.join(roadmapDir, AUTO_BUILD_PATHS.GENERATION_PROGRESS);
+      const roadmapDir = getAutocodeRoadmapDir(project.path, project.autoBuildPath);
+      const progressPath = getAutocodeRoadmapProgressPath(project.path, project.autoBuildPath);
 
       try {
         // Ensure roadmap directory exists
@@ -650,11 +635,7 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
         return { success: false, error: "Project not found" };
       }
 
-      const progressPath = path.join(
-        project.path,
-        AUTO_BUILD_PATHS.ROADMAP_DIR,
-        AUTO_BUILD_PATHS.GENERATION_PROGRESS
-      );
+      const progressPath = getAutocodeRoadmapProgressPath(project.path, project.autoBuildPath);
 
       if (!existsSync(progressPath)) {
         return { success: true, data: null };
@@ -703,11 +684,7 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
         return { success: false, error: "Project not found" };
       }
 
-      const progressPath = path.join(
-        project.path,
-        AUTO_BUILD_PATHS.ROADMAP_DIR,
-        AUTO_BUILD_PATHS.GENERATION_PROGRESS
-      );
+      const progressPath = getAutocodeRoadmapProgressPath(project.path, project.autoBuildPath);
 
       try {
         if (existsSync(progressPath)) {
@@ -741,11 +718,8 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
         return { success: false, error: "Project not found" };
       }
 
-      const roadmapDir = path.join(project.path, AUTO_BUILD_PATHS.ROADMAP_DIR);
-      const competitorAnalysisPath = path.join(
-        roadmapDir,
-        AUTO_BUILD_PATHS.COMPETITOR_ANALYSIS
-      );
+      const roadmapDir = getAutocodeRoadmapDir(project.path, project.autoBuildPath);
+      const competitorAnalysisPath = getAutocodeCompetitorAnalysisPath(project.path, project.autoBuildPath);
 
       try {
         // Ensure roadmap directory exists
@@ -820,10 +794,7 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join("\n"
           (c) => c.source === "manual"
         );
         if (manualCompetitors.length > 0) {
-          const manualCompetitorsPath = path.join(
-            roadmapDir,
-            AUTO_BUILD_PATHS.MANUAL_COMPETITORS
-          );
+          const manualCompetitorsPath = getAutocodeManualCompetitorsPath(project.path, project.autoBuildPath);
           const manualSerialized = {
             competitors: manualCompetitors.map((c) => ({
               id: c.id,

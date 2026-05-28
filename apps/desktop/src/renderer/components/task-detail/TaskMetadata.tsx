@@ -1,5 +1,6 @@
 import { useCallback, useState, useRef, useId, useMemo, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
+import { AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER } from '@autocode/core/tasks/branch-protocol';
 import {
   Target,
   Bug,
@@ -68,7 +69,7 @@ interface TaskMetadataProps {
 }
 
 const COLLAPSED_HEIGHT = 200;
-const PROJECT_DEFAULT_BRANCH = '__project_default__';
+const PROJECT_DEFAULT_BRANCH = AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER;
 const yunxiaoImageCache = new Map<string, string>();
 
 function isYunxiaoProtectedImageUrl(url: string): boolean {

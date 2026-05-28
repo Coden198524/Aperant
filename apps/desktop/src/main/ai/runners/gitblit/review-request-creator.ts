@@ -1,6 +1,11 @@
 import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  getAutocodeSpecDir,
+  normalizeAutocodeBaseBranch,
+} from '@autocode/core';
 
 export interface CreateGitBlitReviewRequestConfig {
   projectDir: string;
@@ -38,7 +43,14 @@ function runGit(
 }
 
 function extractSpecSummary(projectDir: string, specId: string): string {
-  const specFile = join(projectDir, '.autocode', 'specs', specId, 'spec.md');
+  const specFile = join(
+    getAutocodeSpecDir({
+      projectRoot: projectDir,
+      dataDirName: undefined,
+      specId,
+    }),
+    AUTOCODE_TASK_ARTIFACTS.specFile,
+  );
   if (!existsSync(specFile)) {
     return '';
   }
@@ -53,9 +65,7 @@ function extractSpecSummary(projectDir: string, specId: string): string {
 }
 
 export function normalizeGitBlitBaseBranch(baseBranch: string): string {
-  return baseBranch.startsWith('origin/')
-    ? baseBranch.slice('origin/'.length)
-    : baseBranch;
+  return normalizeAutocodeBaseBranch(baseBranch) ?? '';
 }
 
 export function parseGitBlitTicketId(value?: string | null): number | undefined {

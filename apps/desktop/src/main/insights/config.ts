@@ -1,5 +1,6 @@
 import path from 'path';
 import { existsSync, readFileSync } from 'fs';
+import { AUTOCODE_PROJECT_ENV_FILE_NAME } from '@autocode/core';
 import { getBestAvailableProfileEnv } from '../rate-limit-detector';
 import { getAPIProfileEnv } from '../services/profile';
 import { getOAuthModeClearVars } from '../agent/env-utils';
@@ -49,7 +50,7 @@ export class InsightsConfig {
     const autoBuildSource = this.getAutoBuildSourcePath();
     if (!autoBuildSource) return {};
 
-    const envPath = path.join(autoBuildSource, '.env');
+    const envPath = path.join(autoBuildSource, AUTOCODE_PROJECT_ENV_FILE_NAME);
     if (!existsSync(envPath)) return {};
 
     try {

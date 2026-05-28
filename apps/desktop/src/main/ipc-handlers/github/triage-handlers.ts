@@ -29,6 +29,7 @@ import {
   type TriageResult as EngineTriageResult,
 } from '../../ai/runners/github/triage-engine';
 import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import { getAutocodeGithubDir } from '@autocode/core/project/data-paths';
 
 // Debug logging
 const { debug: debugLog } = createContextLogger('GitHub Triage');
@@ -92,7 +93,7 @@ export interface TriageProgress {
  * Get the GitHub directory for a project
  */
 function getGitHubDir(project: Project): string {
-  return path.join(project.path, '.autocode', 'github');
+  return getAutocodeGithubDir(project.path, project.autoBuildPath);
 }
 
 /**

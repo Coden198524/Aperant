@@ -17,6 +17,12 @@ import {
   readFileSync
 } from 'fs';
 import path from 'path';
+import { AUTOCODE_PROJECT_DATA_DIR_NAME, getAutocodeSpecsRelativeDir } from '@autocode/core/tasks/artifacts';
+import {
+  getAutocodeProjectLocksDir,
+  getAutocodeSpecNumberLockPath,
+} from '@autocode/core/project/data-paths';
+import { getAutocodeTaskWorktreeDir } from '@autocode/core/tasks/worktree-paths';
 
 export class SpecNumberLockError extends Error {
   constructor(message: string) {
@@ -34,8 +40,8 @@ export class SpecNumberLock {
 
   constructor(projectDir: string) {
     this.projectDir = projectDir;
-    this.lockDir = path.join(projectDir, '.autocode', '.locks');
-    this.lockFile = path.join(this.lockDir, 'spec-numbering.lock');
+    this.lockDir = getAutocodeProjectLocksDir(projectDir);
+    this.lockFile = getAutocodeSpecNumberLockPath(projectDir);
   }
 
   /**
@@ -147,14 +153,14 @@ export class SpecNumberLock {
     let maxNumber = 0;
 
     // Determine specs directory base path
-    const specsBase = autoBuildPath || '.autocode';
+    const specsBase = autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME;
 
     // 1. Scan main project specs
-    const mainSpecsDir = path.join(this.projectDir, specsBase, 'specs');
+    const mainSpecsDir = path.join(this.projectDir, getAutocodeSpecsRelativeDir(specsBase));
     maxNumber = Math.max(maxNumber, this.scanSpecsDir(mainSpecsDir));
 
     // 2. Scan all worktree specs
-    const worktreesDir = path.join(this.projectDir, '.autocode', 'worktrees', 'tasks');
+    const worktreesDir = getAutocodeTaskWorktreeDir(this.projectDir);
     if (existsSync(worktreesDir)) {
       try {
         const worktrees = readdirSync(worktreesDir, { withFileTypes: true });
@@ -163,8 +169,7 @@ export class SpecNumberLock {
             const worktreeSpecsDir = path.join(
               worktreesDir,
               worktree.name,
-              specsBase,
-              'specs'
+              getAutocodeSpecsRelativeDir(specsBase)
             );
             maxNumber = Math.max(maxNumber, this.scanSpecsDir(worktreeSpecsDir));
           }

@@ -27,12 +27,19 @@ import {
   sep,
 } from 'node:path';
 
+import {
+  getAutocodeProjectDataDir,
+  getAutocodeProjectPromptProfilePath,
+  getAutocodeProjectPromptProfileRelativePath,
+  getAutocodeProjectPromptsDir,
+  getAutocodeProjectPromptsRelativeDir,
+} from '@autocode/core/project/data-paths';
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
 export const PROJECT_PROMPT_PROFILE_VERSION = 10;
-export const PROJECT_PROMPT_PROFILE_PATH = join('.autocode', 'prompt_profile.json');
-export const PROJECT_PROMPTS_PATH = join('.autocode', 'prompts');
+export const PROJECT_PROMPT_PROFILE_PATH = getAutocodeProjectPromptProfileRelativePath();
+export const PROJECT_PROMPTS_PATH = getAutocodeProjectPromptsRelativeDir();
 
 type ProjectSize = 'small' | 'medium' | 'large';
 type PromptIntensity = 'lightweight' | 'standard' | 'thorough';
@@ -800,7 +807,7 @@ export function generateProjectPromptOverrides(profile: ProjectPromptProfile): R
 }
 
 export function loadProjectPromptProfile(projectPath: string): ProjectPromptProfile | null {
-  const profilePath = join(projectPath, PROJECT_PROMPT_PROFILE_PATH);
+  const profilePath = getAutocodeProjectPromptProfilePath(projectPath);
   const raw = safeReadJson(profilePath);
   if (!raw || raw.version !== PROJECT_PROMPT_PROFILE_VERSION || !raw.project || !raw.workflow) {
     return null;
@@ -812,12 +819,12 @@ export function initializeProjectPromptProfile(
   projectPath: string,
   options: { overwrite?: boolean } = {},
 ): ProjectPromptProfile {
-  const autoClaudeDir = join(projectPath, '.autocode');
+  const autoClaudeDir = getAutocodeProjectDataDir(projectPath);
   mkdirSync(autoClaudeDir, { recursive: true });
 
   const existingProfile = options.overwrite ? null : loadProjectPromptProfile(projectPath);
   const profile = existingProfile ?? generateProjectPromptProfile(projectPath);
-  const profilePath = join(projectPath, PROJECT_PROMPT_PROFILE_PATH);
+  const profilePath = getAutocodeProjectPromptProfilePath(projectPath);
   const shouldRefreshGeneratedPrompts = options.overwrite || existingProfile === null;
 
   if (options.overwrite || !existingProfile || !existsSync(profilePath)) {
@@ -825,7 +832,7 @@ export function initializeProjectPromptProfile(
   }
 
   const promptOverrides = generateProjectPromptOverrides(profile);
-  const promptsDir = join(projectPath, PROJECT_PROMPTS_PATH);
+  const promptsDir = getAutocodeProjectPromptsDir(projectPath);
   mkdirSync(promptsDir, { recursive: true });
 
   if (options.overwrite) {
@@ -869,7 +876,7 @@ export function loadProjectPromptOverride(
     return null;
   }
 
-  const promptPath = join(projectPath, PROJECT_PROMPTS_PATH, `${promptName}.md`);
+  const promptPath = join(getAutocodeProjectPromptsDir(projectPath), `${promptName}.md`);
   try {
     if (!existsSync(promptPath)) return null;
     const content = readFileSync(promptPath, 'utf-8').trim();

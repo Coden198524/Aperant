@@ -1,5 +1,6 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
+import { getAutocodeProjectEnvPath } from '@autocode/core';
 import { IPC_CHANNELS, DEFAULT_APP_SETTINGS } from '../../shared/constants';
 import type { IPCResult, ProjectEnvConfig, AppSettings } from '../../shared/types';
 import path from 'path';
@@ -394,7 +395,7 @@ ${existingVars['GRAPHITI_DB_PATH'] ? `GRAPHITI_DB_PATH=${existingVars['GRAPHITI_
         return { success: false, error: 'Project not initialized' };
       }
 
-      const envPath = path.join(project.path, project.autoBuildPath, '.env');
+      const envPath = getAutocodeProjectEnvPath(project.path, project.autoBuildPath);
 
       // Load global settings for fallbacks
       let globalSettings: AppSettings = { ...DEFAULT_APP_SETTINGS };
@@ -631,7 +632,7 @@ ${existingVars['GRAPHITI_DB_PATH'] ? `GRAPHITI_DB_PATH=${existingVars['GRAPHITI_
         return { success: false, error: 'Project not initialized' };
       }
 
-      const envPath = path.join(project.path, project.autoBuildPath, '.env');
+      const envPath = getAutocodeProjectEnvPath(project.path, project.autoBuildPath);
 
       try {
         // Read existing content if file exists (atomic read, no TOCTOU)

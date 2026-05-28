@@ -4,7 +4,7 @@
 
 import { readFile, access } from 'fs/promises';
 import { execFileSync } from 'child_process';
-import path from 'path';
+import { getAutocodeProjectEnvPath } from '@autocode/core';
 import type { Project } from '../../../shared/types';
 import { parseEnvFile } from '../utils';
 import type { GitLabConfig } from './types';
@@ -144,7 +144,7 @@ async function fileExists(filePath: string): Promise<boolean> {
  */
 export async function getGitLabConfig(project: Project): Promise<GitLabConfig | null> {
   if (!project.autoBuildPath) return null;
-  const envPath = path.join(project.path, project.autoBuildPath, '.env');
+  const envPath = getAutocodeProjectEnvPath(project.path, project.autoBuildPath);
   if (!(await fileExists(envPath))) return null;
 
   try {

@@ -21,6 +21,7 @@ import type {
   GitLabTriageCategory,
 } from './types';
 import { sanitizeStringArray } from '../shared/sanitize';
+import { getAutocodeGitlabDir } from '@autocode/core/project/data-paths';
 
 // Debug logging
 function debugLog(message: string, ...args: unknown[]): void {
@@ -95,7 +96,7 @@ function sanitizeTriageResult(result: GitLabTriageResult): {
  * Get the GitLab directory for a project
  */
 function getGitLabDir(project: Project): string {
-  return path.join(project.path, '.autocode', 'gitlab');
+  return getAutocodeGitlabDir(project.path, project.autoBuildPath);
 }
 
 /**

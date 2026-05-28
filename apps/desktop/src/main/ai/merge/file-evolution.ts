@@ -15,6 +15,8 @@
 import fs from 'fs';
 import path from 'path';
 import { execSync, spawnSync } from 'child_process';
+import { AUTOCODE_COMMON_BASE_BRANCHES, AUTOCODE_DEFAULT_BASE_BRANCH } from '@autocode/core';
+import { getAutocodeProjectDataDir } from '@autocode/core/project/data-paths';
 
 import { SemanticAnalyzer } from './semantic-analyzer';
 import {
@@ -168,11 +170,11 @@ function discoverTrackableFiles(projectDir: string, extensions: Set<string>): st
 }
 
 function detectTargetBranch(worktreePath: string): string {
-  for (const branch of ['main', 'master', 'develop']) {
+  for (const branch of AUTOCODE_COMMON_BASE_BRANCHES) {
     const result = tryRunGit(['merge-base', branch, 'HEAD'], worktreePath);
     if (result !== null) return branch;
   }
-  return 'main';
+  return AUTOCODE_DEFAULT_BASE_BRANCH;
 }
 
 // =============================================================================
@@ -198,7 +200,7 @@ export class FileEvolutionTracker {
     storageDir?: string,
     semanticAnalyzer?: SemanticAnalyzer,
   ) {
-    const resolvedStorageDir = storageDir ?? path.join(projectDir, '.autocode');
+    const resolvedStorageDir = storageDir ?? getAutocodeProjectDataDir(projectDir);
     this.storage = new EvolutionStorage(projectDir, resolvedStorageDir);
     this.analyzer = semanticAnalyzer ?? new SemanticAnalyzer();
     this.evolutions = this.storage.loadEvolutions();

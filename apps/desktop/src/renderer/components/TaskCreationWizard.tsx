@@ -13,6 +13,7 @@
 import { useState, useEffect, useCallback, useRef, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Loader2, ChevronDown, ChevronUp, RotateCcw, FolderTree, GitBranch, Info } from 'lucide-react';
+import { AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER } from '@autocode/core/tasks/branch-protocol';
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Combobox } from './ui/combobox';
@@ -44,7 +45,7 @@ interface TaskCreationWizardProps {
 }
 
 // Special value for "use project default" branch
-const PROJECT_DEFAULT_BRANCH = '__project_default__';
+const PROJECT_DEFAULT_BRANCH = AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER;
 
 export function TaskCreationWizard({
   projectId,

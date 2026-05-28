@@ -1,5 +1,5 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { basename, dirname, join } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { getAutocodeSpecDir, listAutocodeTasks } from './spec-store.js';
 
@@ -52,7 +52,7 @@ export interface AutocodeTaskLogs {
 
 export interface AutocodeTaskLogsInput {
   projectRoot: string;
-  dataDirName: string;
+  dataDirName?: string;
   taskId: string;
 }
 
@@ -77,6 +77,10 @@ export function getAutocodeTaskLogsPath(input: AutocodeTaskLogsInput): string {
   return join(resolveTaskSpecDir(input), AUTOCODE_TASK_ARTIFACTS.taskLogs);
 }
 
+export function getAutocodeTaskLogsPathFromSpecDir(specDir: string): string {
+  return join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
+}
+
 export function createEmptyAutocodeTaskLogs(specId: string, now = new Date().toISOString()): AutocodeTaskLogs {
   return {
     spec_id: sanitizeText(specId, 200),
@@ -91,16 +95,92 @@ export function createEmptyAutocodeTaskLogs(specId: string, now = new Date().toI
 }
 
 export function readAutocodeTaskLogs(input: AutocodeTaskLogsInput): AutocodeTaskLogs | null {
-  const logPath = getAutocodeTaskLogsPath(input);
+  return readAutocodeTaskLogsFromFile(getAutocodeTaskLogsPath(input), input.taskId);
+}
+
+export function readAutocodeTaskLogsFromSpecDir(
+  specDir: string,
+  fallbackSpecId = basename(specDir),
+): AutocodeTaskLogs | null {
+  return readAutocodeTaskLogsFromFile(getAutocodeTaskLogsPathFromSpecDir(specDir), fallbackSpecId);
+}
+
+export function parseAutocodeTaskLogs(content: string, fallbackSpecId: string): AutocodeTaskLogs {
+  try {
+    return sanitizeLogs(JSON.parse(content) as AutocodeTaskLogs, fallbackSpecId);
+  } catch (error) {
+    return salvageAutocodeTaskLogs(content, fallbackSpecId, error);
+  }
+}
+
+export function mergeAutocodeTaskLogs(
+  mainLogs: AutocodeTaskLogs | null,
+  worktreeLogs: AutocodeTaskLogs | null,
+): AutocodeTaskLogs | null {
+  if (!worktreeLogs) {
+    return mainLogs;
+  }
+
+  if (!mainLogs) {
+    return worktreeLogs;
+  }
+
+  return {
+    spec_id: mainLogs.spec_id,
+    created_at: mainLogs.created_at,
+    updated_at: worktreeLogs.updated_at > mainLogs.updated_at ? worktreeLogs.updated_at : mainLogs.updated_at,
+    phases: {
+      planning: combineAutocodeTaskPhaseLogs(mainLogs.phases.planning, worktreeLogs.phases.planning, 'planning'),
+      coding: hasAutocodeTaskPhaseContent(worktreeLogs.phases.coding) ? worktreeLogs.phases.coding : mainLogs.phases.coding,
+      validation: hasAutocodeTaskPhaseContent(worktreeLogs.phases.validation)
+        ? worktreeLogs.phases.validation
+        : mainLogs.phases.validation,
+    },
+  };
+}
+
+export function combineAutocodeTaskPhaseLogs(
+  main: AutocodeTaskPhaseLog | undefined,
+  worktree: AutocodeTaskPhaseLog | undefined,
+  phase: AutocodeTaskLogPhase,
+): AutocodeTaskPhaseLog {
+  if (!main?.entries?.length && !worktree?.entries?.length) {
+    return main || worktree || createEmptyPhaseLog(phase);
+  }
+  if (!main?.entries?.length) {
+    return worktree!;
+  }
+  if (!worktree?.entries?.length) {
+    return main;
+  }
+
+  const seen = new Set<string>();
+  const entries = [...main.entries, ...worktree.entries]
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    .filter((entry) => {
+      const key = `${entry.timestamp}|${entry.type}|${entry.content}`;
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+
+  return {
+    phase,
+    status: worktree.status !== 'pending' ? worktree.status : main.status,
+    started_at: main.started_at || worktree.started_at,
+    completed_at: worktree.completed_at || main.completed_at,
+    entries,
+  };
+}
+
+function readAutocodeTaskLogsFromFile(logPath: string, fallbackSpecId: string): AutocodeTaskLogs | null {
   if (!existsSync(logPath)) {
     return null;
   }
 
-  try {
-    return sanitizeLogs(JSON.parse(readFileSync(logPath, 'utf8')) as AutocodeTaskLogs, input.taskId);
-  } catch (error) {
-    return salvageTaskLogs(readTextIfPresent(logPath), input.taskId, error);
-  }
+  return parseAutocodeTaskLogs(readTextIfPresent(logPath), fallbackSpecId);
 }
 
 export function appendAutocodeTaskLogEntry(input: AppendAutocodeTaskLogEntryInput): AutocodeTaskLogs {
@@ -248,21 +328,57 @@ function sanitizeEntry(value: AutocodeTaskLogEntry, fallbackPhase: AutocodeTaskL
   };
 }
 
-function salvageTaskLogs(content: string, specId: string, error: unknown): AutocodeTaskLogs {
+export function salvageAutocodeTaskLogs(content: string, fallbackSpecId: string, error: unknown): AutocodeTaskLogs {
   const now = new Date().toISOString();
+  const specId = extractJsonStringField(content, 'spec_id') ?? fallbackSpecId;
   const logs = createEmptyAutocodeTaskLogs(specId, now);
-  logs.phases.planning.status = 'failed';
-  logs.phases.planning.started_at = now;
-  logs.phases.planning.completed_at = now;
+  logs.created_at = extractJsonStringField(content, 'created_at') ?? now;
+  logs.updated_at = extractJsonStringField(content, 'updated_at') ?? now;
+
+  const entryPattern = /"timestamp"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"type"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"content"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[\s\S]{0,1200}?"phase"\s*:\s*"(planning|coding|validation)"/g;
+  for (const match of content.matchAll(entryPattern)) {
+    const phase = match[4] as AutocodeTaskLogPhase;
+    let entryContent = match[3] ?? '';
+    try {
+      entryContent = JSON.parse(`"${entryContent}"`) as string;
+    } catch {
+      // Keep the recovered fragment when an individual entry is also damaged.
+    }
+
+    logs.phases[phase].entries.push({
+      timestamp: match[1] ?? now,
+      type: isEntryType(match[2]) ? match[2] : 'info',
+      phase,
+      content: sanitizeText(entryContent, LOG_TEXT_MAX_CHARS),
+    });
+  }
+
+  for (const phase of Object.keys(logs.phases) as AutocodeTaskLogPhase[]) {
+    const phaseContentMatch = content.match(new RegExp(`"${phase}"\\s*:\\s*\\{[\\s\\S]*?\\}`));
+    const phaseContent = phaseContentMatch?.[0] ?? '';
+    const startedAt = extractJsonStringField(phaseContent, 'started_at');
+    const completedAt = extractJsonStringField(phaseContent, 'completed_at');
+    logs.phases[phase].started_at = startedAt;
+    logs.phases[phase].completed_at = completedAt;
+    if (completedAt) {
+      logs.phases[phase].status = 'completed';
+    } else if (startedAt || logs.phases[phase].entries.length > 0) {
+      logs.phases[phase].status = 'active';
+    }
+  }
+
+  logs.phases.planning.status = logs.phases.planning.status === 'pending' ? 'failed' : logs.phases.planning.status;
+  logs.phases.planning.started_at = logs.phases.planning.started_at ?? now;
+  logs.phases.planning.completed_at = logs.phases.planning.completed_at ?? now;
   logs.phases.planning.entries.push({
     timestamp: now,
     type: 'error',
     phase: 'planning',
-    content: `${AUTOCODE_TASK_ARTIFACTS.taskLogs} could not be parsed. ${error instanceof Error ? error.message : String(error)}`,
+    content: `${AUTOCODE_TASK_ARTIFACTS.taskLogs} could not be parsed; showing recovered log entries only. ${error instanceof Error ? error.message : String(error)}`,
     detail: sanitizeText(content, LOG_DETAIL_MAX_CHARS),
     collapsed: true,
   });
-  return logs;
+  return sanitizeLogs(logs, fallbackSpecId);
 }
 
 function readTextIfPresent(filePath: string): string {
@@ -283,6 +399,23 @@ function sanitizeText(value: unknown, maxLength: number): string {
     .replace(/\r\n/g, '\n')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function hasAutocodeTaskPhaseContent(phase: AutocodeTaskPhaseLog | undefined): boolean {
+  return Boolean(phase) && ((phase?.entries?.length ?? 0) > 0 || phase?.status !== 'pending');
+}
+
+function extractJsonStringField(content: string, field: string): string | null {
+  const match = content.match(new RegExp(`"${field}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`));
+  if (!match?.[1]) {
+    return null;
+  }
+
+  try {
+    return JSON.parse(`"${match[1]}"`) as string;
+  } catch {
+    return match[1];
+  }
 }
 
 function isPhase(value: unknown): value is AutocodeTaskLogPhase {

@@ -3,6 +3,8 @@ import path from 'path';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync, execSync } from 'child_process';
 import {
+  AUTOCODE_COMMON_BASE_BRANCHES,
+  AUTOCODE_DEFAULT_BASE_BRANCH,
   buildAutocodeDefaultDirectTaskPrompt,
   buildAutocodeDefaultPlannerPrompt,
   buildAutocodeDefaultQAPrompt,
@@ -11,8 +13,13 @@ import {
   buildAutocodeQAInitialMessages,
   buildAutocodeSessionRuntimeOptions,
   buildAutocodeTaskExecutionMessages,
+  getAutocodeSpecDir,
+  getAutocodeSpecsDir,
   inferAutocodePinnedProviderFromModel,
+  isAutocodeCommonBaseBranch,
   loadAutocodeTaskRuntimeMetadataConfig,
+  normalizeAutocodeBaseBranch,
+  parseAutocodeOriginHeadBranch,
   resolveAutocodeCrossProviderModelRequest,
   resolveAutocodeTaskEnableBatchExecution,
   resolveAutocodeTaskPhaseModelId,
@@ -33,7 +40,7 @@ import {
 } from './types';
 import type { IdeationConfig, TaskWorkflowMode } from '../../shared/types';
 import { resetStuckSubtasks } from '../ipc-handlers/task/plan-file-utils';
-import { AUTO_BUILD_PATHS, getSpecsDir } from '../../shared/constants';
+import { AUTO_BUILD_PATHS } from '../../shared/constants';
 import { projectStore } from '../project-store';
 import { resolveAuth, resolveAuthFromQueue } from '../ai/auth/resolver';
 import { resolveModelId } from '../ai/config/phase-config';
@@ -51,15 +58,12 @@ import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
 import { buildProviderQueueResolutionErrorMessage } from './provider-queue-errors';
 import { resolveProjectAgentProfile } from '../ai/config/project-agent-profile';
 
-const PROJECT_DEFAULT_BRANCH_MARKER = '__project_default__';
-const COMMON_BASE_BRANCHES = ['main', 'master', 'develop', 'dev', 'trunk'];
-
 export function inferPinnedProviderFromModel(model: string | undefined): BuiltinProvider | null {
   return inferAutocodePinnedProviderFromModel(model) as BuiltinProvider | null;
 }
 
 export const __agentManagerTestUtils = {
-  normalizeBaseBranch,
+  normalizeBaseBranch: normalizeAutocodeBaseBranch,
   resolveTaskBaseBranch,
 };
 /**
@@ -73,21 +77,12 @@ function isMainBranch(projectPath: string): boolean {
       encoding: 'utf-8',
     }).trim();
 
-    const mainBranches = ['main', 'master', 'develop', 'dev', 'trunk'];
-    return mainBranches.includes(currentBranch.toLowerCase());
+    return isAutocodeCommonBaseBranch(currentBranch);
   } catch (error) {
     console.warn('[AgentManager] Failed to detect Git branch:', error);
     // Default to safe behavior (no push) if detection fails
     return true;
   }
-}
-
-function normalizeBaseBranch(branch: string | null | undefined): string | null {
-  const trimmed = branch?.trim();
-  if (!trimmed || trimmed === PROJECT_DEFAULT_BRANCH_MARKER) {
-    return null;
-  }
-  return trimmed.replace(/^origin\//, '');
 }
 
 function gitRefExists(projectPath: string, ref: string): boolean {
@@ -123,15 +118,15 @@ function detectRepositoryBaseBranch(projectPath: string): string | null {
       encoding: 'utf-8',
       stdio: ['pipe', 'pipe', 'pipe'],
     }).trim();
-    const match = ref.match(/refs\/remotes\/origin\/(.+)$/);
-    if (match?.[1]) {
-      return match[1];
+    const branch = parseAutocodeOriginHeadBranch(ref);
+    if (branch) {
+      return branch;
     }
   } catch {
     // origin/HEAD is optional for local-only repositories.
   }
 
-  for (const branch of COMMON_BASE_BRANCHES) {
+  for (const branch of AUTOCODE_COMMON_BASE_BRANCHES) {
     if (gitRefExists(projectPath, branch) || gitRefExists(projectPath, `origin/${branch}`)) {
       return branch;
     }
@@ -146,7 +141,7 @@ function resolveTaskBaseBranch(
   projectMainBranch?: string,
 ): string {
   for (const candidate of [requestedBaseBranch, projectMainBranch]) {
-    const normalized = normalizeBaseBranch(candidate);
+    const normalized = normalizeAutocodeBaseBranch(candidate);
     if (!normalized) {
       continue;
     }
@@ -158,7 +153,7 @@ function resolveTaskBaseBranch(
     console.warn(`[AgentManager] Configured base branch "${normalized}" was not found in ${projectPath}; trying repository detection.`);
   }
 
-  return detectRepositoryBaseBranch(projectPath) ?? 'main';
+  return detectRepositoryBaseBranch(projectPath) ?? AUTOCODE_DEFAULT_BASE_BRANCH;
 }
 
 function getGitHeadCommit(projectPath: string): string | null {
@@ -451,7 +446,10 @@ export class AgentManager extends EventEmitter {
           continue; // Skip projects that haven't been initialized yet
         }
 
-        const specsDir = path.join(project.path, getSpecsDir(project.autoBuildPath));
+        const specsDir = getAutocodeSpecsDir({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath,
+        });
 
         // Check if specs directory exists
         if (!existsSync(specsDir)) {
@@ -630,7 +628,11 @@ export class AgentManager extends EventEmitter {
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, specAgentType);
 
     // Build the serializable session config for the worker
-    const resolvedSpecDir = specDir ?? path.join(projectPath, '.autocode', 'specs', taskId);
+    const resolvedSpecDir = specDir ?? getAutocodeSpecDir({
+      projectRoot: projectPath,
+      dataDirName: project?.autoBuildPath,
+      specId: taskId,
+    });
     const sessionConfig: SerializableSessionConfig = {
       agentType: specAgentType,
       systemPrompt,
@@ -712,8 +714,11 @@ export class AgentManager extends EventEmitter {
 
     // Resolve the spec directory from specId
     const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
-    const specsBaseDir = getSpecsDir(project?.autoBuildPath);
-    const specDir = path.join(projectPath, specsBaseDir, specId);
+    const specDir = getAutocodeSpecDir({
+      projectRoot: projectPath,
+      dataDirName: project?.autoBuildPath,
+      specId,
+    });
     const workflowMode = this.resolveTaskWorkflowMode(specDir);
     if (workflowMode === 'off') {
       await this.startDirectTaskExecution(taskId, projectPath, specId, options, projectId);
@@ -768,7 +773,11 @@ export class AgentManager extends EventEmitter {
         );
         worktreePath = result.worktreePath;
         // Spec dir in the worktree (spec files were copied by createOrGetWorktree)
-        worktreeSpecDir = path.join(worktreePath, specsBaseDir, specId);
+        worktreeSpecDir = getAutocodeSpecDir({
+          projectRoot: worktreePath,
+          dataDirName: project?.autoBuildPath,
+          specId,
+        });
         console.warn(`[AgentManager] Task ${taskId} will run in worktree: ${worktreePath}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -887,8 +896,11 @@ export class AgentManager extends EventEmitter {
     }
 
     const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
-    const specsBaseDir = getSpecsDir(project?.autoBuildPath);
-    const specDir = path.join(projectPath, specsBaseDir, specId);
+    const specDir = getAutocodeSpecDir({
+      projectRoot: projectPath,
+      dataDirName: project?.autoBuildPath,
+      specId,
+    });
     const workflowMode = this.resolveTaskWorkflowMode(specDir);
 
     const modelId = await this.resolveTaskModelId(specDir, 'coding');
@@ -928,7 +940,11 @@ export class AgentManager extends EventEmitter {
           project?.autoBuildPath,
         );
         worktreePath = result.worktreePath;
-        worktreeSpecDir = path.join(worktreePath, specsBaseDir, specId);
+        worktreeSpecDir = getAutocodeSpecDir({
+          projectRoot: worktreePath,
+          dataDirName: project?.autoBuildPath,
+          specId,
+        });
         console.warn(`[AgentManager] Direct task ${taskId} will run in worktree: ${worktreePath}`);
       } catch (err) {
         const message = err instanceof Error ? err.message : String(err);
@@ -1036,8 +1052,11 @@ export class AgentManager extends EventEmitter {
 
     // Resolve the spec directory from specId
     const project = projectStore.getProjects().find((p) => p.id === projectId || p.path === projectPath);
-    const specsBaseDir = getSpecsDir(project?.autoBuildPath);
-    const specDir = path.join(projectPath, specsBaseDir, specId);
+    const specDir = getAutocodeSpecDir({
+      projectRoot: projectPath,
+      dataDirName: project?.autoBuildPath,
+      specId,
+    });
 
     // Load model configuration from task_metadata.json if available
     const modelId = await this.resolveTaskModelId(specDir, 'qa');
@@ -1073,7 +1092,11 @@ export class AgentManager extends EventEmitter {
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
     const effectiveSpecDir = worktreePath
-      ? path.join(worktreePath, specsBaseDir, specId)
+      ? getAutocodeSpecDir({
+        projectRoot: worktreePath,
+        dataDirName: project?.autoBuildPath,
+        specId,
+      })
       : specDir;
 
     if (worktreePath) {

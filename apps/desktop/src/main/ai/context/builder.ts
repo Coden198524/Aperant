@@ -10,6 +10,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
+import { getAutocodeProjectIndexPath } from '@autocode/core';
 
 import { categorizeMatches } from './categorizer.js';
 import { fetchGraphHints, isMemoryEnabled } from './graphiti-integration.js';
@@ -32,8 +33,8 @@ import type {
 // Internal helpers
 // ---------------------------------------------------------------------------
 
-function loadProjectIndex(projectDir: string): ProjectIndex {
-  const indexFile = path.join(projectDir, '.autocode', 'project_index.json');
+function loadProjectIndex(projectDir: string, dataDirName?: string): ProjectIndex {
+  const indexFile = getAutocodeProjectIndexPath(projectDir, dataDirName);
   if (fs.existsSync(indexFile)) {
     try {
       return JSON.parse(fs.readFileSync(indexFile, 'utf8')) as ProjectIndex;
@@ -121,6 +122,8 @@ export interface BuildContextConfig {
   taskDescription: string;
   /** Absolute path to the project root. */
   projectDir: string;
+  /** Project data directory name, relative to the project root. */
+  dataDirName?: string;
   /** Absolute path to the spec directory (unused currently, reserved for future use). */
   specDir?: string;
   /** Optional subtask identifier for targeted searches. */
@@ -150,12 +153,13 @@ export async function buildContext(config: BuildContextConfig): Promise<SubtaskC
   const {
     taskDescription,
     projectDir,
+    dataDirName,
     services: providedServices,
     keywords: providedKeywords,
     includeGraphHints = true,
   } = config;
 
-  const projectIndex = loadProjectIndex(projectDir);
+  const projectIndex = loadProjectIndex(projectDir, dataDirName);
 
   // Step 1: Determine which services to search
   const services = providedServices ?? suggestServices(taskDescription, projectIndex);
@@ -220,12 +224,13 @@ export async function buildTaskContext(config: BuildContextConfig): Promise<Task
   const {
     taskDescription,
     projectDir,
+    dataDirName,
     services: providedServices,
     keywords: providedKeywords,
     includeGraphHints = true,
   } = config;
 
-  const projectIndex = loadProjectIndex(projectDir);
+  const projectIndex = loadProjectIndex(projectDir, dataDirName);
   const services = providedServices ?? suggestServices(taskDescription, projectIndex);
   const keywords = providedKeywords ?? extractKeywords(taskDescription);
 

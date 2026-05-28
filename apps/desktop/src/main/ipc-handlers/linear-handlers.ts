@@ -1,9 +1,8 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
-import { createImportedAutocodeTask } from '@autocode/core';
+import { createImportedAutocodeTask, getAutocodeProjectEnvPath } from '@autocode/core';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type { IPCResult, LinearIssue, LinearTeam, LinearProject, LinearImportResult, LinearSyncStatus, Project, TaskMetadata } from '../../shared/types';
-import path from 'path';
 import { existsSync, readFileSync } from 'fs';
 import { projectStore } from '../project-store';
 import { parseEnvFile } from './utils';
@@ -27,7 +26,7 @@ export function registerLinearHandlers(
    */
   const getLinearApiKey = (project: Project): string | null => {
     if (!project.autoBuildPath) return null;
-    const envPath = path.join(project.path, project.autoBuildPath, '.env');
+    const envPath = getAutocodeProjectEnvPath(project.path, project.autoBuildPath);
     if (!existsSync(envPath)) return null;
 
     try {

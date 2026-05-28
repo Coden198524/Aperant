@@ -32,6 +32,7 @@ import { safeSendToRenderer } from '../ipc-handlers/utils';
 import { debugError, debugLog } from '../../shared/utils/debug-logger';
 import * as SessionHandler from './session-handler';
 import type { TerminalProcess, WindowGetter } from './types';
+import { getAutocodeDeepSeekSmartTerminalDir } from '@autocode/core/project/data-paths';
 
 const PROMPT = '> ';
 const CONTINUATION_PROMPT = '... ';
@@ -110,7 +111,7 @@ export function startDeepSeekCli(
   getWindow: WindowGetter,
 ): void {
   const projectDir = resolveExistingDirectory(cwd || terminal.projectPath || terminal.cwd);
-  const specDir = path.join(projectDir, '.autocode', 'smart-terminal', 'deepseek');
+  const specDir = getAutocodeDeepSeekSmartTerminalDir(projectDir);
 
   terminal.isCLIMode = true;
   terminal.activeCLI = 'deepseek';

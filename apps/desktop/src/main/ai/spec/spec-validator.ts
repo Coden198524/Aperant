@@ -15,6 +15,7 @@ import { generateText } from 'ai';
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { AUTOCODE_PROJECT_INDEX_FILE_NAME } from '@autocode/core/project/data-paths';
 import { createSimpleClient } from '../client/factory';
 import { safeParseJson } from '../../utils/json-repair';
 
@@ -319,7 +320,7 @@ export function validatePrereqs(specDir: string): ValidationResult {
     return { valid: false, checkpoint: 'prereqs', errors, warnings, fixes };
   }
 
-  const projectIndex = join(specDir, 'project_index.json');
+  const projectIndex = join(specDir, AUTOCODE_PROJECT_INDEX_FILE_NAME);
   if (!existsSync(projectIndex)) {
     errors.push('project_index.json not found');
     fixes.push('Run project analysis to generate project_index.json');

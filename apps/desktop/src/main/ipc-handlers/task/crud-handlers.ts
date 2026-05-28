@@ -1,6 +1,9 @@
 import { ipcMain, nativeImage } from 'electron';
 import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
   createManualAutocodeTask,
+  getAutocodeRoadmapFilePath,
+  getAutocodeSpecDir,
   type AutocodeTask,
   type AutocodeTaskMetadata,
   type AutocodeTaskRequirements,
@@ -236,10 +239,11 @@ function truncateToTitle(description: string): string {
  */
 async function updateLinkedRoadmapFeature(
   projectPath: string,
+  dataDirName: string | undefined,
   specId: string,
   taskOutcome: TaskOutcome
 ): Promise<void> {
-  const roadmapFile = path.join(projectPath, AUTO_BUILD_PATHS.ROADMAP_DIR, AUTO_BUILD_PATHS.ROADMAP_FILE);
+  const roadmapFile = getAutocodeRoadmapFilePath(projectPath, dataDirName);
   await updateRoadmapFeatureOutcome(roadmapFile, [specId], taskOutcome, '[TASK_CRUD]');
 }
 
@@ -445,7 +449,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
 
       // Update any linked roadmap feature (only after successful deletion)
       try {
-        await updateLinkedRoadmapFeature(project.path, task.specId, 'deleted');
+        await updateLinkedRoadmapFeature(project.path, project.autoBuildPath, task.specId, 'deleted');
       } catch (err) {
         console.warn('[TASK_DELETE] Failed to update linked roadmap feature:', err);
       }
@@ -472,8 +476,12 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
           return { success: false, error: 'Task not found' };
         }
 
-        const autoBuildDir = project.autoBuildPath || '.autocode';
-        const specDir = path.join(project.path, autoBuildDir, 'specs', task.specId);
+        const autoBuildDir = project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME;
+        const specDir = getAutocodeSpecDir({
+          projectRoot: project.path,
+          dataDirName: autoBuildDir,
+          specId: task.specId,
+        });
 
         if (!existsSync(specDir)) {
           return { success: false, error: 'Spec directory not found' };

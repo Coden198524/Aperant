@@ -8,6 +8,7 @@ import type { IpcMainInvokeEvent } from 'electron';
 import {
   buildAutocodeSpecId,
   createAutocodeTask,
+  getAutocodeIdeationFilePath,
   type AutocodeTask,
   type AutocodeTaskMetadata,
 } from '@autocode/core';
@@ -168,11 +169,7 @@ export async function convertIdeaToTask(
     return { success: false, error: 'Project not found' };
   }
 
-  const ideationPath = path.join(
-    project.path,
-    AUTO_BUILD_PATHS.IDEATION_DIR,
-    AUTO_BUILD_PATHS.IDEATION_FILE
-  );
+  const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
   // Quick check that ideation file exists (actual read happens inside lock)
   if (!existsSync(ideationPath)) {

@@ -14,6 +14,7 @@
  */
 
 import { execFileSync } from 'child_process';
+import { buildAutocodeTaskBranchName } from '@autocode/core';
 import { getToolPath } from '../cli-tool-manager';
 
 /**
@@ -151,7 +152,7 @@ export function detectWorktreeBranch(
   options: { timeout?: number; logPrefix?: string } = {}
 ): WorktreeBranchDetectionResult {
   const { timeout = 30000, logPrefix = '[WORKTREE_BRANCH_DETECTION]' } = options;
-  const expectedBranch = `autocode/${specId}`;
+  const expectedBranch = buildAutocodeTaskBranchName(specId);
   let branch = expectedBranch;
   let usingFallback = false;
 

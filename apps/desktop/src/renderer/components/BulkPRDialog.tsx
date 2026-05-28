@@ -25,6 +25,7 @@ import { Progress } from './ui/progress';
 import { ScrollArea } from './ui/scroll-area';
 import type { Task, WorktreeCreatePRResult } from '../../shared/types';
 import { useTaskStore } from '../stores/task-store';
+import { isAutocodeGitBranchName } from '@autocode/core/tasks/branch-protocol';
 
 /**
  * Check if an error message indicates a worktree-related issue (missing worktree, no branch, etc.)
@@ -105,7 +106,7 @@ export function BulkPRDialog({
   // Validation
   const validateBranchName = useCallback((branch: string): string | null => {
     if (!branch.trim()) return null; // Empty is OK, will use default
-    if (!/^[a-zA-Z0-9/_-]+$/.test(branch)) {
+    if (!isAutocodeGitBranchName(branch)) {
       return t('taskReview:pr.errors.invalidBranchName');
     }
     return null;

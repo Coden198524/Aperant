@@ -10,9 +10,14 @@ if (isProjectStoreRuntime) {
 import { readFileSync, existsSync, mkdirSync } from 'fs';
 import path from 'path';
 import { v4 as uuidv4 } from 'uuid';
-import { loadAutocodeProjectTasks, type AutocodeProjectTask } from '@autocode/core';
+import {
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  getAutocodeRoadmapFilePath,
+  loadAutocodeProjectTasks,
+  type AutocodeProjectTask,
+} from '@autocode/core';
 import type { Project, ProjectSettings, Task, TaskMetadata, KanbanPreferences } from '../shared/types';
-import { DEFAULT_PROJECT_SETTINGS, AUTO_BUILD_PATHS, getSpecsDir } from '../shared/constants';
+import { DEFAULT_PROJECT_SETTINGS, getSpecsDir } from '../shared/constants';
 import { getAutoBuildPath, isInitialized } from './project-initializer';
 import { getTaskWorktreeDir } from './worktree-paths';
 import { findAllSpecPaths } from './utils/spec-path-helpers';
@@ -333,7 +338,7 @@ export class ProjectStore {
 
     const tasks = loadAutocodeProjectTasks({
       projectRoot: project.path,
-      dataDirName: project.autoBuildPath || '.autocode',
+      dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
       projectId,
       worktreesDir: getTaskWorktreeDir(project.path),
     }).map((task) => toDesktopTask(task, projectId));
@@ -430,7 +435,7 @@ export class ProjectStore {
    * Update roadmap features linked to archived tasks
    */
   private updateRoadmapForArchivedTasks(project: Project, taskIds: string[]): void {
-    const roadmapFile = path.join(project.path, AUTO_BUILD_PATHS.ROADMAP_DIR, AUTO_BUILD_PATHS.ROADMAP_FILE);
+    const roadmapFile = getAutocodeRoadmapFilePath(project.path, project.autoBuildPath);
     updateRoadmapFeatureOutcome(roadmapFile, taskIds, 'archived', '[ProjectStore]').catch((err) => {
       console.warn('[ProjectStore] Failed to update roadmap for archived tasks:', err);
     });
@@ -489,7 +494,7 @@ export class ProjectStore {
     }
 
     // Revert linked roadmap features from 'archived' back to 'in_progress'
-    const roadmapFile = path.join(project.path, AUTO_BUILD_PATHS.ROADMAP_DIR, AUTO_BUILD_PATHS.ROADMAP_FILE);
+    const roadmapFile = getAutocodeRoadmapFilePath(project.path, project.autoBuildPath);
     revertRoadmapFeatureOutcome(roadmapFile, taskIds, '[ProjectStore]').catch((err) => {
       console.warn('[ProjectStore] Failed to revert roadmap for unarchived tasks:', err);
     });

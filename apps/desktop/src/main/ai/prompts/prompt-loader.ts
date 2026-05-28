@@ -13,6 +13,14 @@
 import { readFileSync, existsSync, readFile as readFileAsync } from 'node:fs';
 import { join } from 'node:path';
 import { execSync } from 'node:child_process';
+import {
+  AUTOCODE_COMMON_BASE_BRANCHES,
+  AUTOCODE_DEFAULT_BASE_BRANCH,
+  AUTOCODE_TASK_ARTIFACTS,
+  getAutocodeProjectIndexPath,
+  isAutocodeGitBranchName,
+  normalizeAutocodeBaseBranch,
+} from '@autocode/core';
 
 import type { ProjectCapabilities, PromptContext, PromptValidationResult } from './types';
 
@@ -456,20 +464,20 @@ function getMcpToolFilesForCapabilities(capabilities: ProjectCapabilities): stri
  */
 export function detectBaseBranch(specDir: string, projectDir: string): string {
   // 1. Check task_metadata.json
-  const metadataPath = join(specDir, 'task_metadata.json');
+  const metadataPath = join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
   if (existsSync(metadataPath)) {
     try {
       const metadata = JSON.parse(readFileSync(metadataPath, 'utf-8')) as { baseBranch?: string };
-      const branch = validateBranchName(metadata.baseBranch);
-      if (branch) return branch;
+      const branch = normalizeAutocodeBaseBranch(metadata.baseBranch);
+      if (isAutocodeGitBranchName(branch)) return branch;
     } catch {
       // Continue
     }
   }
 
   // 2. Check DEFAULT_BRANCH env var
-  const envBranch = validateBranchName(process.env.DEFAULT_BRANCH);
-  if (envBranch) {
+  const envBranch = normalizeAutocodeBaseBranch(process.env.DEFAULT_BRANCH);
+  if (isAutocodeGitBranchName(envBranch)) {
     try {
       execSync(`git rev-parse --verify ${envBranch}`, {
         cwd: projectDir,
@@ -483,7 +491,7 @@ export function detectBaseBranch(specDir: string, projectDir: string): string {
   }
 
   // 3. Auto-detect
-  for (const branch of ['main', 'master', 'develop']) {
+  for (const branch of AUTOCODE_COMMON_BASE_BRANCHES) {
     try {
       execSync(`git rev-parse --verify ${branch}`, {
         cwd: projectDir,
@@ -497,19 +505,7 @@ export function detectBaseBranch(specDir: string, projectDir: string): string {
   }
 
   // 4. Fallback
-  return 'main';
-}
-
-/**
- * Validate a git branch name for safety (mirrors Python _validate_branch_name).
- */
-function validateBranchName(branch: string | null | undefined): string | null {
-  if (!branch || typeof branch !== 'string') return null;
-  const trimmed = branch.trim();
-  if (!trimmed || trimmed.length > 255) return null;
-  if (!/[a-zA-Z0-9]/.test(trimmed)) return null;
-  if (!/^[A-Za-z0-9._/-]+$/.test(trimmed)) return null;
-  return trimmed;
+  return AUTOCODE_DEFAULT_BASE_BRANCH;
 }
 
 // =============================================================================
@@ -517,10 +513,10 @@ function validateBranchName(branch: string | null | undefined): string | null {
 // =============================================================================
 
 /**
- * Load project_index.json from the project's .autocode directory.
+ * Load project_index.json from the project's data directory.
  */
-export function loadProjectIndex(projectDir: string): Record<string, unknown> {
-  const indexPath = join(projectDir, '.autocode', 'project_index.json');
+export function loadProjectIndex(projectDir: string, dataDirName?: string): Record<string, unknown> {
+  const indexPath = getAutocodeProjectIndexPath(projectDir, dataDirName);
   if (!existsSync(indexPath)) return {};
   try {
     return JSON.parse(readFileSync(indexPath, 'utf-8')) as Record<string, unknown>;

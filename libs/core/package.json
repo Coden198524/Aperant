@@ -17,10 +17,20 @@
       "import": "./dist/tasks/cli-catalog.js",
       "default": "./dist/tasks/cli-catalog.js"
     },
+    "./tasks/logs": {
+      "types": "./dist/tasks/logs.d.ts",
+      "import": "./dist/tasks/logs.js",
+      "default": "./dist/tasks/logs.js"
+    },
     "./tasks/artifacts": {
       "types": "./dist/tasks/artifacts.d.ts",
       "import": "./dist/tasks/artifacts.js",
       "default": "./dist/tasks/artifacts.js"
+    },
+    "./tasks/branch-protocol": {
+      "types": "./dist/tasks/branch-protocol.d.ts",
+      "import": "./dist/tasks/branch-protocol.js",
+      "default": "./dist/tasks/branch-protocol.js"
     },
     "./tasks/phase-protocol": {
       "types": "./dist/tasks/phase-protocol.d.ts",
@@ -41,6 +51,16 @@
       "types": "./dist/tasks/task-status.d.ts",
       "import": "./dist/tasks/task-status.js",
       "default": "./dist/tasks/task-status.js"
+    },
+    "./tasks/worktree-paths": {
+      "types": "./dist/tasks/worktree-paths.d.ts",
+      "import": "./dist/tasks/worktree-paths.js",
+      "default": "./dist/tasks/worktree-paths.js"
+    },
+    "./project/data-paths": {
+      "types": "./dist/project/data-paths.d.ts",
+      "import": "./dist/project/data-paths.js",
+      "default": "./dist/project/data-paths.js"
     },
     "./frontend/task-view-model": {
       "types": "./dist/frontend/task-view-model.d.ts",

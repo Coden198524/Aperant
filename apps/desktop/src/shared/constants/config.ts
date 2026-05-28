@@ -10,6 +10,19 @@ import {
   getAutocodeSpecsRelativeDir,
   normalizeAutocodeProjectDataDirName,
 } from '@autocode/core/tasks/artifacts';
+import {
+  AUTOCODE_COMPETITOR_ANALYSIS_FILE_NAME,
+  AUTOCODE_GENERATION_PROGRESS_FILE_NAME,
+  AUTOCODE_IDEATION_CONTEXT_FILE_NAME,
+  AUTOCODE_IDEATION_FILE_NAME,
+  AUTOCODE_MANUAL_COMPETITORS_FILE_NAME,
+  AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME,
+  AUTOCODE_ROADMAP_FILE_NAME,
+  getAutocodeIdeationRelativeDir,
+  getAutocodeProjectEnvRelativePath,
+  getAutocodeProjectIndexRelativePath,
+  getAutocodeRoadmapRelativeDir,
+} from '@autocode/core/project/data-paths';
 
 // ============================================
 // Terminal Timing Constants
@@ -118,26 +131,27 @@ export function normalizeProjectDataDirName(autoBuildPath: string | undefined): 
 // IMPORTANT: All paths use .autocode/ (the installed instance), NOT autocode/ (source code)
 export const AUTO_BUILD_PATHS = {
   SPECS_DIR: getAutocodeSpecsRelativeDir(PROJECT_DATA_DIR_NAME),
-  ROADMAP_DIR: `${PROJECT_DATA_DIR_NAME}/roadmap`,
-  IDEATION_DIR: `${PROJECT_DATA_DIR_NAME}/ideation`,
+  ROADMAP_DIR: getAutocodeRoadmapRelativeDir(PROJECT_DATA_DIR_NAME),
+  IDEATION_DIR: getAutocodeIdeationRelativeDir(PROJECT_DATA_DIR_NAME),
   IMPLEMENTATION_PLAN: AUTOCODE_TASK_ARTIFACTS.implementationPlan,
   SPEC_FILE: AUTOCODE_TASK_ARTIFACTS.specFile,
   QA_REPORT: AUTOCODE_TASK_ARTIFACTS.qaReport,
   BUILD_PROGRESS: 'build-progress.txt',
-  GENERATION_PROGRESS: 'generation_progress.json',
+  GENERATION_PROGRESS: AUTOCODE_GENERATION_PROGRESS_FILE_NAME,
   CONTEXT: 'context.json',
   REQUIREMENTS: AUTOCODE_TASK_ARTIFACTS.requirements,
   TASK_METADATA: AUTOCODE_TASK_ARTIFACTS.taskMetadata,
   TASK_LOGS: AUTOCODE_TASK_ARTIFACTS.taskLogs,
   DIRECT_SUMMARY: AUTOCODE_TASK_ARTIFACTS.directSummary,
   RUN_RESULT: AUTOCODE_TASK_ARTIFACTS.runResult,
-  ROADMAP_FILE: 'roadmap.json',
-  ROADMAP_DISCOVERY: 'roadmap_discovery.json',
-  COMPETITOR_ANALYSIS: 'competitor_analysis.json',
-  MANUAL_COMPETITORS: 'manual_competitors.json',
-  IDEATION_FILE: 'ideation.json',
-  IDEATION_CONTEXT: 'ideation_context.json',
-  PROJECT_INDEX: `${PROJECT_DATA_DIR_NAME}/project_index.json`,
+  ROADMAP_FILE: AUTOCODE_ROADMAP_FILE_NAME,
+  ROADMAP_DISCOVERY: AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME,
+  COMPETITOR_ANALYSIS: AUTOCODE_COMPETITOR_ANALYSIS_FILE_NAME,
+  MANUAL_COMPETITORS: AUTOCODE_MANUAL_COMPETITORS_FILE_NAME,
+  IDEATION_FILE: AUTOCODE_IDEATION_FILE_NAME,
+  IDEATION_CONTEXT: AUTOCODE_IDEATION_CONTEXT_FILE_NAME,
+  PROJECT_INDEX: getAutocodeProjectIndexRelativePath(PROJECT_DATA_DIR_NAME),
+  PROJECT_ENV: getAutocodeProjectEnvRelativePath(PROJECT_DATA_DIR_NAME),
   MEMORY_STATE: '.memory_state.json'
 } as const;
 

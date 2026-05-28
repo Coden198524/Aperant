@@ -5,7 +5,7 @@
 import { existsSync, readFileSync } from 'fs';
 import { execFileSync, execFile } from 'child_process';
 import { promisify } from 'util';
-import path from 'path';
+import { getAutocodeProjectEnvPath } from '@autocode/core';
 import type { Project } from '../../../shared/types';
 import { parseEnvFile } from '../utils';
 import type { GitHubConfig } from './types';
@@ -198,7 +198,7 @@ export async function getGitHubTokenForSubprocess(): Promise<string | null> {
  */
 export function getGitHubConfig(project: Project): GitHubConfig | null {
   if (!project.autoBuildPath) return null;
-  const envPath = path.join(project.path, project.autoBuildPath, '.env');
+  const envPath = getAutocodeProjectEnvPath(project.path, project.autoBuildPath);
   if (!existsSync(envPath)) return null;
 
   try {

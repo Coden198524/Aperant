@@ -20,6 +20,11 @@ import { existsSync, mkdirSync } from 'fs';
 import { cp, rm } from 'fs/promises';
 import { join, resolve } from 'path';
 import { promisify } from 'util';
+import {
+  AUTOCODE_DEFAULT_BASE_BRANCH,
+  buildAutocodeTaskBranchName,
+  getAutocodeTaskWorktreePath,
+} from '@autocode/core';
 
 import { getSpecsDir } from '../../../shared/constants';
 
@@ -84,13 +89,13 @@ export interface WorktreeResult {
 export async function createOrGetWorktree(
   projectPath: string,
   specId: string,
-  baseBranch = 'main',
+  baseBranch = AUTOCODE_DEFAULT_BASE_BRANCH,
   useLocalBranch = false,
   pushNewBranches = false,
   autoBuildPath?: string,
 ): Promise<WorktreeResult> {
-  const worktreePath = join(projectPath, '.autocode/worktrees/tasks', specId);
-  const branchName = `autocode/${specId}`;
+  const worktreePath = getAutocodeTaskWorktreePath(projectPath, specId);
+  const branchName = buildAutocodeTaskBranchName(specId);
 
   // ------------------------------------------------------------------
   // Step 1: Prune stale worktree references from git's internal records

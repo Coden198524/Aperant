@@ -3,7 +3,18 @@ import path from 'path';
 import { execFileSync } from 'child_process';
 import { getToolPath } from './cli-tool-manager';
 import { initializeProjectPromptProfile } from './ai/prompts/project-prompt-profile';
-import { LEGACY_PROJECT_DATA_DIR_NAME, PROJECT_DATA_DIR_NAME } from '../shared/constants';
+import {
+  AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_PROJECT_DATA_DIR_NAME,
+  AUTOCODE_SPECS_DIR_NAME,
+} from '@autocode/core/tasks/artifacts';
+import {
+  AUTOCODE_IDEATION_DIR_NAME,
+  AUTOCODE_INSIGHTS_DIR_NAME,
+  AUTOCODE_PROJECT_PROMPTS_DIR_NAME,
+  AUTOCODE_ROADMAP_DIR_NAME,
+  getAutocodeProjectDataDir,
+} from '@autocode/core/project/data-paths';
 
 /**
  * Debug logging - only logs when DEBUG=true or in development mode
@@ -157,7 +168,10 @@ export function initializeGit(projectPath: string): InitializationResult {
 /**
  * Entries to add to .gitignore when initializing a project
  */
-const GITIGNORE_ENTRIES = [`${PROJECT_DATA_DIR_NAME}/`, `${LEGACY_PROJECT_DATA_DIR_NAME}/`];
+const GITIGNORE_ENTRIES = [
+  `${AUTOCODE_PROJECT_DATA_DIR_NAME}/`,
+  `${AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME}/`,
+];
 
 /**
  * Ensure entries exist in the project's .gitignore file.
@@ -224,19 +238,19 @@ function ensureGitignoreEntries(projectPath: string, entries: string[]): void {
  * Data directories created in .autocode for each project
  */
 const DATA_DIRECTORIES = [
-  'specs',
-  'ideation',
-  'insights',
-  'roadmap',
-  'prompts'
+  AUTOCODE_SPECS_DIR_NAME,
+  AUTOCODE_IDEATION_DIR_NAME,
+  AUTOCODE_INSIGHTS_DIR_NAME,
+  AUTOCODE_ROADMAP_DIR_NAME,
+  AUTOCODE_PROJECT_PROMPTS_DIR_NAME
 ];
 
 function getProjectDataPath(projectPath: string): string {
-  return path.join(projectPath, PROJECT_DATA_DIR_NAME);
+  return getAutocodeProjectDataDir(projectPath, AUTOCODE_PROJECT_DATA_DIR_NAME);
 }
 
 function getLegacyProjectDataPath(projectPath: string): string {
-  return path.join(projectPath, LEGACY_PROJECT_DATA_DIR_NAME);
+  return getAutocodeProjectDataDir(projectPath, AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME);
 }
 
 function migrateLegacyProjectDataDirectory(projectPath: string): boolean {
@@ -353,7 +367,7 @@ export function initializeProject(projectPath: string): InitializationResult {
   if (existsSync(legacyAutoBuildPath) && !migrateLegacyProjectDataDirectory(projectPath)) {
     return {
       success: false,
-      error: `Project has legacy data directory (${LEGACY_PROJECT_DATA_DIR_NAME}) but it could not be migrated to ${PROJECT_DATA_DIR_NAME}`
+      error: `Project has legacy data directory (${AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME}) but it could not be migrated to ${AUTOCODE_PROJECT_DATA_DIR_NAME}`
     };
   }
 
@@ -450,16 +464,16 @@ export function getAutoBuildPath(projectPath: string): string | null {
 
   if (existsSync(dotAutoBuildPath)) {
     debug('Returning .autocode (installed version)');
-    return PROJECT_DATA_DIR_NAME;
+    return AUTOCODE_PROJECT_DATA_DIR_NAME;
   }
 
   if (existsSync(legacyAutoBuildPath)) {
     if (migrateLegacyProjectDataDirectory(projectPath)) {
       debug('Returning .autocode after legacy migration');
-      return PROJECT_DATA_DIR_NAME;
+      return AUTOCODE_PROJECT_DATA_DIR_NAME;
     }
     debug('Returning legacy .auto-claude path because migration failed');
-    return LEGACY_PROJECT_DATA_DIR_NAME;
+    return AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME;
   }
 
   debug('No .autocode folder found - project not initialized');

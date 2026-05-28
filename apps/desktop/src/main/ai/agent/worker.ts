@@ -21,6 +21,7 @@ import { createProvider } from '../providers/factory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenAICompatibleEndpointFetch } from '../providers/openai-base-url';
 import {
+  AUTOCODE_PROJECT_INDEX_FILE_NAME,
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
   isOfficialOpenAIBaseUrl,
   normalizeOpenAICompatibleBaseUrl,
@@ -1629,7 +1630,7 @@ async function runSpecOrchestrator(
     postLog('Fast workflow enabled: skipping project index generation');
   } else {
     try {
-      const indexOutputPath = join(session.specDir, 'project_index.json');
+      const indexOutputPath = join(session.specDir, AUTOCODE_PROJECT_INDEX_FILE_NAME);
       postLog('Generating project index...');
       runProjectIndexer(session.projectDir, indexOutputPath);
       projectIndexContent = readFileSync(indexOutputPath, 'utf-8');
@@ -1795,7 +1796,7 @@ async function runAgenticSpecOrchestrator(
   // Generate project index
   let projectIndexContent: string | undefined;
   try {
-    const indexOutputPath = join(session.specDir, 'project_index.json');
+    const indexOutputPath = join(session.specDir, AUTOCODE_PROJECT_INDEX_FILE_NAME);
     postLog('Generating project index...');
     runProjectIndexer(session.projectDir, indexOutputPath);
     projectIndexContent = readFileSync(indexOutputPath, 'utf-8');

@@ -114,7 +114,7 @@ export interface AutocodeTask {
 
 export interface CreateAutocodeTaskInput {
   projectRoot: string;
-  dataDirName: string;
+  dataDirName?: string;
   title: string;
   description: string;
   specId?: string;
@@ -132,12 +132,12 @@ export interface CreateImportedAutocodeTaskInput extends CreateAutocodeTaskInput
 
 export interface ListAutocodeTasksInput {
   projectRoot: string;
-  dataDirName: string;
+  dataDirName?: string;
 }
 
 export interface AutocodeTaskPathsInput {
   projectRoot: string;
-  dataDirName: string;
+  dataDirName?: string;
   specId?: string;
 }
 
@@ -159,7 +159,7 @@ export type AutocodePlanStatus =
 
 export interface UpdateAutocodeTaskPlanStatusInput {
   projectRoot: string;
-  dataDirName: string;
+  dataDirName?: string;
   taskId: string;
   planStatus: AutocodePlanStatus;
   reviewReason?: AutocodeReviewReason;

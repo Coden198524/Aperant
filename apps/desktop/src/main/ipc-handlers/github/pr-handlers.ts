@@ -42,6 +42,10 @@ import {
   type ParallelOrchestratorConfig,
 } from "../../ai/runners/github/parallel-orchestrator";
 import type { ModelShorthand, ThinkingLevel } from "@autocode/core";
+import {
+  getAutocodeGithubDir,
+  getAutocodeGithubTmpCommentBodyPath,
+} from "@autocode/core/project/data-paths";
 import { getPRStatusPoller } from "../../services/pr-status-poller";
 import { safeBreadcrumb, safeCaptureException } from "../../sentry";
 import { sanitizeForSentry } from "../../../shared/utils/sentry-privacy";
@@ -822,7 +826,7 @@ async function performCIWaitCheck(
  * Get the GitHub directory for a project
  */
 function getGitHubDir(project: Project): string {
-  return path.join(project.path, ".autocode", "github");
+  return getAutocodeGithubDir(project.path, project.autoBuildPath);
 }
 
 /**
@@ -2500,7 +2504,6 @@ export function registerPRHandlers(getMainWindow: () => BrowserWindow | null): v
         try {
           const { execFileSync } = await import("child_process");
           const { writeFileSync, unlinkSync } = await import("fs");
-          const { join } = await import("path");
 
           debugLog("Posting comment to PR", { prNumber });
 
@@ -2510,7 +2513,7 @@ export function registerPRHandlers(getMainWindow: () => BrowserWindow | null): v
           }
 
           // Use temp file to avoid shell escaping issues
-          const tmpFile = join(project.path, ".autocode", "tmp_comment_body.txt");
+          const tmpFile = getAutocodeGithubTmpCommentBodyPath(project.path, project.autoBuildPath);
           try {
             writeFileSync(tmpFile, body, "utf-8");
             // Use execFileSync with arguments array to prevent command injection
@@ -2735,7 +2738,7 @@ export function registerPRHandlers(getMainWindow: () => BrowserWindow | null): v
 
       const result = await withProjectOrNull(projectId, async (project) => {
         // Check if review exists and has reviewed_commit_sha
-        const githubDir = path.join(project.path, ".autocode", "github");
+        const githubDir = getGitHubDir(project);
         const reviewPath = path.join(githubDir, "pr", `review_${prNumber}.json`);
 
         let review: PRReviewResult;

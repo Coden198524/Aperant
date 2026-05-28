@@ -33,6 +33,7 @@ import {
   type MRReviewEngineConfig,
 } from '../../ai/runners/gitlab/mr-review-engine';
 import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import { getAutocodeGitlabDir } from '@autocode/core/project/data-paths';
 
 // Debug logging
 const { debug: debugLog } = createContextLogger('GitLab MR');
@@ -58,7 +59,7 @@ function getReviewKey(projectId: string, mrIid: number): string {
  * Get the GitLab directory for a project
  */
 function getGitLabDir(project: Project): string {
-  return path.join(project.path, '.autocode', 'gitlab');
+  return getAutocodeGitlabDir(project.path, project.autoBuildPath);
 }
 
 async function waitForRebaseCompletion(
@@ -774,7 +775,7 @@ export function registerMRReviewHandlers(
       debugLog('checkNewCommits handler called', { projectId, mrIid });
 
       const result = await withProjectOrNull(projectId, async (project) => {
-        const gitlabDir = path.join(project.path, '.autocode', 'gitlab');
+        const gitlabDir = getGitLabDir(project);
         const reviewPath = path.join(gitlabDir, 'mr', `review_${mrIid}.json`);
 
         if (!fs.existsSync(reviewPath)) {

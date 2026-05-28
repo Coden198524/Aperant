@@ -1,6 +1,7 @@
 import { ipcMain } from 'electron';
 import { existsSync } from 'fs';
 import { execFileSync } from 'child_process';
+import { AUTOCODE_PROJECT_DATA_DIR_NAME } from '@autocode/core/tasks/artifacts';
 import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   Project,
@@ -388,7 +389,7 @@ export function registerProjectHandlers(
 
         if (result.success) {
           // Update project's autoBuildPath
-          projectStore.updateAutoBuildPath(projectId, '.autocode');
+          projectStore.updateAutoBuildPath(projectId, AUTOCODE_PROJECT_DATA_DIR_NAME);
         }
 
         return { success: result.success, data: result, error: result.error };

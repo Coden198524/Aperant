@@ -3,6 +3,10 @@ const { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync 
 const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 
+function normalizePath(value) {
+  return value.replace(/\\/g, '/');
+}
+
 async function main() {
   const core = await import('../dist/index.js');
   const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-core-smoke-'));
@@ -51,7 +55,52 @@ async function main() {
     assert.ok(projectIndex.source_summary.languages.includes('TypeScript'));
     assert.ok(projectIndex.source_summary.config_files.includes('tsconfig.json'));
 
-    const projectIndexPath = join(projectRoot, '.autocode', 'project_index.json');
+    const projectIndexPath = core.getAutocodeProjectIndexPath(projectRoot);
+    assert.equal(normalizePath(projectIndexPath), normalizePath(join(projectRoot, '.autocode', 'project_index.json')));
+    assert.equal(core.getAutocodeProjectEnvRelativePath(), '.autocode/.env');
+    assert.equal(core.getAutocodeProjectIndexRelativePath('.custom'), '.custom/project_index.json');
+    assert.equal(core.getAutocodeProjectPromptsRelativeDir(), '.autocode/prompts');
+    assert.equal(core.getAutocodeProjectPromptProfileRelativePath(), '.autocode/prompt_profile.json');
+    assert.equal(
+      normalizePath(core.getAutocodeSpecNumberLockPath(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', '.locks', 'spec-numbering.lock')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeToolOutputDir(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'tool-output')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeDeepSeekSmartTerminalDir(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'smart-terminal', 'deepseek')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeGithubDir(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'github')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeGitlabDir(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'gitlab')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeYunxiaoDir(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'yunxiao')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeGithubTmpCommentBodyPath(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'tmp_comment_body.txt')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeRoadmapFilePath(projectRoot)),
+      normalizePath(join(projectRoot, '.autocode', 'roadmap', 'roadmap.json')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeIdeationFilePath(projectRoot, '.custom')),
+      normalizePath(join(projectRoot, '.custom', 'ideation', 'ideation.json')),
+    );
+    assert.equal(
+      normalizePath(core.getAutocodeInsightsSessionPath(projectRoot, 'session-1')),
+      normalizePath(join(projectRoot, '.autocode', 'insights', 'sessions', 'session-1.json')),
+    );
     const writtenProjectIndex = core.runProjectIndexer(projectRoot, projectIndexPath);
     assert.equal(writtenProjectIndex.services.main.framework, 'React + Vite');
     assert.ok(existsSync(projectIndexPath));
@@ -222,6 +271,31 @@ async function main() {
     assert.equal(core.AUTOCODE_TASK_ARTIFACTS.implementationPlan, 'implementation_plan.json');
     assert.equal(core.getAutocodeSpecsRelativeDir('.autocode'), '.autocode/specs');
     assert.equal(core.isAutocodeTaskArtifactFileName('qa_report.md'), true);
+    assert.equal(core.AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER, '__project_default__');
+    assert.equal(core.normalizeAutocodeBaseBranch('origin/develop'), 'develop');
+    assert.equal(core.normalizeAutocodeBaseBranch('__project_default__'), null);
+    assert.equal(core.isAutocodeGitBranchName('feature/add-settings'), true);
+    assert.equal(core.isAutocodeGitBranchName('-bad'), false);
+    assert.equal(core.isAutocodeCommonBaseBranch('origin/trunk'), true);
+    assert.equal(core.parseAutocodeOriginHeadBranch('refs/remotes/origin/main'), 'main');
+    assert.equal(core.parseAutocodeOriginHeadBranch('origin/develop'), 'develop');
+    assert.equal(core.buildAutocodeTaskBranchName('001-task'), 'autocode/001-task');
+    assert.deepEqual(
+      core.validateAutocodeWorktreeBranch('feature/main-project', 'autocode/001-task'),
+      { branchToDelete: 'autocode/001-task', usedFallback: true, reason: 'invalid_pattern' },
+    );
+    assert.equal(core.getAutocodeTaskWorktreesRelativeDir('.autocode'), '.autocode/worktrees/tasks');
+    assert.equal(core.getAutocodeTerminalWorktreesRelativeDir('.autocode'), '.autocode/worktrees/terminal');
+    assert.equal(core.getAutocodePrWorktreesRelativeDir('.autocode'), '.autocode/worktrees/pr');
+    assert.equal(core.getAutocodeTerminalMetadataRelativeDir('.autocode'), '.autocode/terminal/metadata');
+    assert.equal(core.isValidAutocodePathId('001-task'), true);
+    assert.equal(core.isValidAutocodePathId('../bad'), false);
+    assert.equal(core.isAutocodePathWithinBase(join(projectRoot, '.autocode', 'specs'), projectRoot), true);
+    assert.equal(core.isAutocodePathWithinBase(join(projectRoot, '..', 'outside'), projectRoot), false);
+    assert.equal(
+      core.getAutocodeTaskWorktreeCandidatePaths(projectRoot, '001-task').length,
+      4,
+    );
     assert.equal(core.inferAutocodePinnedProviderFromModel('sonnet'), null);
     assert.equal(core.inferAutocodePinnedProviderFromModel('opus-4.7'), 'anthropic');
     assert.equal(core.inferAutocodePinnedProviderFromModel('gpt-5.5'), 'openai');
@@ -347,6 +421,27 @@ async function main() {
     });
     assert.equal(taskLogs.phases.planning.status, 'active');
     assert.equal(taskLogs.phases.planning.entries.length, 2);
+    const taskLogsFromSpecDir = core.readAutocodeTaskLogsFromSpecDir(task.specsPath);
+    assert.equal(taskLogsFromSpecDir.spec_id, task.id);
+    const salvagedTaskLogs = core.parseAutocodeTaskLogs(
+      '{"spec_id":"broken-task","phases":{"coding":{"started_at":"2026-01-01T00:00:00.000Z","entries":[{"timestamp":"2026-01-01T00:00:01.000Z","type":"info","content":"Recovered","phase":"coding"}]}}',
+      'fallback-task',
+    );
+    assert.equal(salvagedTaskLogs.spec_id, 'broken-task');
+    assert.equal(salvagedTaskLogs.phases.coding.status, 'active');
+    assert.equal(salvagedTaskLogs.phases.coding.entries[0].content, 'Recovered');
+    const worktreeTaskLogs = core.createEmptyAutocodeTaskLogs(task.id, '2026-01-01T00:00:00.000Z');
+    worktreeTaskLogs.updated_at = '2026-01-01T00:01:00.000Z';
+    worktreeTaskLogs.phases.coding.status = 'active';
+    worktreeTaskLogs.phases.coding.entries.push({
+      timestamp: '2026-01-01T00:01:00.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Coding from worktree.',
+    });
+    const mergedTaskLogs = core.mergeAutocodeTaskLogs(taskLogs, worktreeTaskLogs);
+    assert.equal(mergedTaskLogs.phases.planning.entries.length, 2);
+    assert.equal(mergedTaskLogs.phases.coding.entries[0].content, 'Coding from worktree.');
     const taskView = core.buildAutocodeTaskCardViewModel(runningPlanningTask, taskLogs, {
       latestLogEntries: 1,
       logContentMaxLength: 80,

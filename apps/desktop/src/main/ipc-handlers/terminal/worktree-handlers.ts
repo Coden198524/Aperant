@@ -25,6 +25,18 @@ import {
 import { getIsolatedGitEnv } from '../../utils/git-isolation';
 import { getToolPath } from '../../cli-tool-manager';
 import { cleanupWorktree } from '../../utils/worktree-cleanup';
+import {
+  AUTOCODE_COMMON_BASE_BRANCHES,
+  AUTOCODE_DEFAULT_BASE_BRANCH,
+  getAutocodeProjectEnvPath,
+  getAutocodeProjectIndexPath,
+  isAutocodeGitBranchName,
+  normalizeAutocodeBaseBranch,
+} from '@autocode/core';
+import {
+  getAutocodePrWorktreeDir,
+  getAutocodeTaskWorktreeDir,
+} from '@autocode/core/tasks/worktree-paths';
 
 // Promisify execFile for async operations
 const execFileAsync = promisify(execFile);
@@ -32,9 +44,6 @@ const execFileAsync = promisify(execFile);
 // Shared validation regex for worktree names - lowercase alphanumeric with dashes/underscores
 // Must start and end with alphanumeric character
 const WORKTREE_NAME_REGEX = /^[a-z0-9][a-z0-9_-]*[a-z0-9]$|^[a-z0-9]$/;
-
-// Validation regex for git branch names - allows alphanumeric, dots, slashes, dashes, underscores
-const GIT_BRANCH_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
 
 // Git worktree list porcelain output parsing constants
 const GIT_PORCELAIN = {
@@ -190,26 +199,28 @@ function isValidProjectPath(projectPath: string): boolean {
  */
 function getDefaultBranch(projectPath: string): string {
   const project = projectStore.getProjects().find(p => p.path === projectPath);
-  if (project?.settings?.mainBranch) {
-    debugLog('[TerminalWorktree] Using mainBranch from project settings:', project.settings.mainBranch);
-    return project.settings.mainBranch;
+  const projectMainBranch = normalizeAutocodeBaseBranch(project?.settings?.mainBranch);
+  if (isAutocodeGitBranchName(projectMainBranch)) {
+    debugLog('[TerminalWorktree] Using mainBranch from project settings:', projectMainBranch);
+    return projectMainBranch;
   }
 
-  const envPath = path.join(projectPath, '.autocode', '.env');
+  const envPath = getAutocodeProjectEnvPath(projectPath, project?.autoBuildPath);
   if (existsSync(envPath)) {
     try {
       const content = readFileSync(envPath, 'utf-8');
       const vars = parseEnvFile(content);
-      if (vars['DEFAULT_BRANCH']) {
-        debugLog('[TerminalWorktree] Using DEFAULT_BRANCH from env config:', vars['DEFAULT_BRANCH']);
-        return vars['DEFAULT_BRANCH'];
+      const envBranch = normalizeAutocodeBaseBranch(vars['DEFAULT_BRANCH']);
+      if (isAutocodeGitBranchName(envBranch)) {
+        debugLog('[TerminalWorktree] Using DEFAULT_BRANCH from env config:', envBranch);
+        return envBranch;
       }
     } catch (error) {
       debugError('[TerminalWorktree] Error reading env file:', error);
     }
   }
 
-  for (const branch of ['main', 'master']) {
+  for (const branch of AUTOCODE_COMMON_BASE_BRANCHES) {
     try {
       execFileSync(getToolPath('git'), ['rev-parse', '--verify', branch], {
         cwd: projectPath,
@@ -233,10 +244,10 @@ function getDefaultBranch(projectPath: string): string {
       env: getIsolatedGitEnv(),
     }).trim();
     debugLog('[TerminalWorktree] Falling back to current branch:', currentBranch);
-    return currentBranch;
+    return normalizeAutocodeBaseBranch(currentBranch) ?? AUTOCODE_DEFAULT_BASE_BRANCH;
   } catch (error) {
     debugError('[TerminalWorktree] Error detecting current branch:', error);
-    return 'main'; // Safe default
+    return AUTOCODE_DEFAULT_BASE_BRANCH; // Safe default
   }
 }
 
@@ -291,7 +302,8 @@ const DEFAULT_STRATEGY_MAP: Record<string, 'symlink' | 'recreate' | 'copy' | 'sk
  * node_modules-only behavior for backward compatibility.
  */
 function loadDependencyConfigs(projectPath: string): DependencyConfig[] {
-  const indexPath = path.join(projectPath, '.autocode', 'project_index.json');
+  const project = projectStore.getProjects().find(p => p.path === projectPath);
+  const indexPath = getAutocodeProjectIndexPath(projectPath, project?.autoBuildPath);
 
   if (existsSync(indexPath)) {
     try {
@@ -765,7 +777,7 @@ async function createTerminalWorktree(
   }
 
   // CRITICAL: Validate customBaseBranch to prevent command injection
-  if (customBaseBranch && !GIT_BRANCH_REGEX.test(customBaseBranch)) {
+  if (customBaseBranch && !isAutocodeGitBranchName(customBaseBranch)) {
     return {
       success: false,
       error: 'Invalid base branch name',
@@ -1061,9 +1073,9 @@ async function listOtherWorktrees(projectPath: string): Promise<OtherWorktreeInf
   // Paths to exclude (normalize for comparison)
   const normalizedProjectPath = path.resolve(projectPath);
   const excludePrefixes = [
-    path.join(normalizedProjectPath, '.autocode', 'worktrees', 'terminal'),
-    path.join(normalizedProjectPath, '.autocode', 'worktrees', 'tasks'),
-    path.join(normalizedProjectPath, '.autocode', 'worktrees', 'pr'),
+    getTerminalWorktreeDir(normalizedProjectPath),
+    getAutocodeTaskWorktreeDir(normalizedProjectPath),
+    getAutocodePrWorktreeDir(normalizedProjectPath),
   ];
 
   try {

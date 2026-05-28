@@ -17,6 +17,8 @@
 import fs from 'fs';
 import path from 'path';
 import { spawnSync } from 'child_process';
+import { getAutocodeProjectDataDir } from '@autocode/core/project/data-paths';
+import { getAutocodeTaskWorktreeCandidatePaths } from '@autocode/core/tasks/worktree-paths';
 
 import { AutoMerger, type MergeContext } from './auto-merger';
 import { ConflictDetector } from './conflict-detector';
@@ -109,11 +111,7 @@ function getFileFromBranch(
 
 function findWorktree(projectDir: string, taskId: string): string | undefined {
   // Common worktree locations
-  const candidates = [
-    path.join(projectDir, '.autocode', 'worktrees', taskId),
-    path.join(projectDir, '.autocode', 'worktrees', 'tasks', taskId),
-  ];
-  for (const c of candidates) {
+  for (const c of getAutocodeTaskWorktreeCandidatePaths(projectDir, taskId)) {
     if (fs.existsSync(c)) return c;
   }
   return undefined;
@@ -254,7 +252,7 @@ export class MergeOrchestrator {
     dryRun?: boolean;
   }) {
     this.projectDir = path.resolve(options.projectDir);
-    this.storageDir = options.storageDir ?? path.join(this.projectDir, '.autocode');
+    this.storageDir = options.storageDir ?? getAutocodeProjectDataDir(this.projectDir);
     this.enableAi = options.enableAi ?? true;
     this.dryRun = options.dryRun ?? false;
     this.aiResolver = options.aiResolver;

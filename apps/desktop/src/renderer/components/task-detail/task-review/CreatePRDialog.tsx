@@ -14,6 +14,7 @@ import { Input } from '../../ui/input';
 import { Label } from '../../ui/label';
 import { Checkbox } from '../../ui/checkbox';
 import type { Task, WorktreeStatus, WorktreeCreatePRResult } from '../../../../shared/types';
+import { isAutocodeGitBranchName } from '@autocode/core/tasks/branch-protocol';
 
 interface CreatePRDialogProps {
   open: boolean;
@@ -57,8 +58,7 @@ export function CreatePRDialog({
   // Frontend validation functions
   const validateBranchName = (branch: string): string | null => {
     if (!branch.trim()) return null; // Empty is OK, will use default
-    // Basic git branch name rules: no spaces, .., @{, \, etc.
-    if (!/^[a-zA-Z0-9/_-]+$/.test(branch)) {
+    if (!isAutocodeGitBranchName(branch)) {
       return t('taskReview:pr.errors.invalidBranchName');
     }
     return null;

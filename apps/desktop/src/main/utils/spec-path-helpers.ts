@@ -6,6 +6,7 @@
  */
 import path from 'path';
 import { existsSync, readdirSync } from 'fs';
+import { isValidAutocodePathId } from '@autocode/core';
 import { getTaskWorktreeDir } from '../worktree-paths';
 
 /**
@@ -16,12 +17,7 @@ import { getTaskWorktreeDir } from '../worktree-paths';
  * @returns true if the taskId is safe to use in path operations
  */
 export function isValidTaskId(taskId: string): boolean {
-  // Reject empty, null/undefined, or strings with path traversal characters
-  if (!taskId || typeof taskId !== 'string') return false;
-  if (taskId.includes('/') || taskId.includes('\\')) return false;
-  if (taskId === '.' || taskId === '..') return false;
-  if (taskId.includes('\0')) return false; // Null byte injection
-  return true;
+  return isValidAutocodePathId(taskId);
 }
 
 /**

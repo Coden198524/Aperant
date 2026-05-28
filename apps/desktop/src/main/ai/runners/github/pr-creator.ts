@@ -21,7 +21,14 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createSimpleClient } from '../../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import {
+  AUTOCODE_DEFAULT_BASE_BRANCH,
+  AUTOCODE_TASK_ARTIFACTS,
+  getAutocodeSpecDir,
+  normalizeAutocodeBaseBranch,
+  type ModelShorthand,
+  type ThinkingLevel,
+} from '@autocode/core';
 import { generateCommitMessage } from '../commit-message';
 
 // =============================================================================
@@ -143,7 +150,14 @@ function gatherPRContext(
  * Extract a brief summary from the spec file for fallback PR body.
  */
 function extractSpecSummary(projectDir: string, specId: string): string {
-  const specFile = join(projectDir, '.autocode', 'specs', specId, 'spec.md');
+  const specFile = join(
+    getAutocodeSpecDir({
+      projectRoot: projectDir,
+      dataDirName: undefined,
+      specId,
+    }),
+    AUTOCODE_TASK_ARTIFACTS.specFile,
+  );
   if (!existsSync(specFile)) {
     return `Implements ${specId}`;
   }
@@ -236,12 +250,6 @@ function pushBranch(
       : String(err);
     return stderr || 'Push failed';
   }
-}
-
-function normalizeBaseBranch(baseBranch: string): string {
-  return baseBranch.startsWith('origin/')
-    ? baseBranch.slice('origin/'.length)
-    : baseBranch;
 }
 
 function getAheadCount(
@@ -395,7 +403,7 @@ export async function createPR(config: CreatePRConfig): Promise<CreatePRResult> 
     modelShorthand = 'haiku',
     thinkingLevel = 'low',
   } = config;
-  const effectiveBase = normalizeBaseBranch(baseBranch);
+  const effectiveBase = normalizeAutocodeBaseBranch(baseBranch) ?? AUTOCODE_DEFAULT_BASE_BRANCH;
 
   let aheadCount = getAheadCount(worktreePath, gitPath, effectiveBase);
   if (aheadCount === 0) {
@@ -428,13 +436,13 @@ export async function createPR(config: CreatePRConfig): Promise<CreatePRResult> 
   }
 
   // Step 2: Gather context for AI description
-  const { diffSummary, commitLog } = gatherPRContext(worktreePath, gitPath, baseBranch);
+  const { diffSummary, commitLog } = gatherPRContext(worktreePath, gitPath, effectiveBase);
 
   // Step 3: Generate AI PR body (falls back to spec summary on failure)
   const aiBody = await generatePRBody(
     specId,
     title,
-    baseBranch,
+    effectiveBase,
     branchName,
     diffSummary,
     commitLog,

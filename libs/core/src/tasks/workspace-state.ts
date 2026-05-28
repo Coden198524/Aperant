@@ -12,7 +12,7 @@ import {
   type AutocodeTaskRunPlan,
   type CreateAutocodeTaskRunPlanInput,
 } from './cli-runner.js';
-import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import { AUTOCODE_TASK_ARTIFACTS, normalizeAutocodeProjectDataDirName } from './artifacts.js';
 import { readAutocodeTaskLogs, updateAutocodeTaskLogPhase, type AutocodeTaskLogs } from './logs.js';
 import {
   createAutocodeTask,
@@ -37,7 +37,7 @@ export interface AutocodeWorkspaceState {
 
 export interface BuildAutocodeWorkspaceStateInput {
   projectRoot?: string | null;
-  dataDirName: string;
+  dataDirName?: string;
   includeLogs?: boolean;
 }
 
@@ -67,7 +67,7 @@ export interface AutocodeTaskActionInput extends AutocodeTaskPathsInput {
 }
 
 export function buildAutocodeWorkspaceState(input: BuildAutocodeWorkspaceStateInput): AutocodeWorkspaceState {
-  const dataDirName = input.dataDirName;
+  const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
   if (!input.projectRoot) {
     return {
       projectRoot: null,
@@ -146,9 +146,10 @@ export function createStartedAutocodeTaskRun(input: CreateAutocodeTaskRunPlanInp
 export function createAutocodeAgentRuntimeStartPlan(
   input: CreateAutocodeAgentRuntimeStartPlanInput,
 ): AutocodeAgentRuntimePlan {
+  const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
   const task = listAutocodeTasks({
     projectRoot: input.projectRoot,
-    dataDirName: input.dataDirName,
+    dataDirName,
   }).find((candidate) => candidate.id === input.taskId || candidate.specId === input.taskId);
 
   if (!task) {
@@ -157,13 +158,13 @@ export function createAutocodeAgentRuntimeStartPlan(
 
   const specDir = getAutocodeSpecDir({
     projectRoot: input.projectRoot,
-    dataDirName: input.dataDirName,
+    dataDirName,
     specId: task.specId,
   });
 
   return createAutocodeAgentRuntimePlan({
     projectRoot: input.projectRoot,
-    dataDirName: input.dataDirName,
+    dataDirName,
     projectId: input.projectId,
     taskId: input.taskId,
     task,
@@ -195,9 +196,10 @@ export function markAutocodeTaskStopped(input: AutocodeTaskActionInput & {
   phase?: 'planning' | 'coding';
   message?: string;
 }): AutocodeTask {
+  const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
   const task = updateAutocodeTaskPlanStatus({
     projectRoot: input.projectRoot,
-    dataDirName: input.dataDirName,
+    dataDirName,
     taskId: input.taskId,
     planStatus: 'human_review',
     reviewReason: 'stopped',
@@ -206,7 +208,7 @@ export function markAutocodeTaskStopped(input: AutocodeTaskActionInput & {
 
   updateAutocodeTaskLogPhase({
     projectRoot: input.projectRoot,
-    dataDirName: input.dataDirName,
+    dataDirName,
     taskId: input.taskId,
     phase: input.phase ?? (task.executionPhase === 'coding' ? 'coding' : 'planning'),
     status: 'failed',

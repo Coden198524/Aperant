@@ -17,7 +17,16 @@ import { createSimpleClient } from '../client/factory';
 import type { SimpleClientResult } from '../client/types';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
-import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import {
+  AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME,
+  AUTOCODE_ROADMAP_FILE_NAME,
+  getAutocodeProjectIndexPath,
+  getAutocodeRoadmapDir,
+  getAutocodeRoadmapFilePath,
+  getAutocodeSpecsDir,
+  type ModelShorthand,
+  type ThinkingLevel,
+} from '@autocode/core';
 import type { SecurityProfile } from '../security/bash-validator';
 import { runProjectIndexer } from '../project/project-indexer';
 import { safeParseJson } from '../../utils/json-repair';
@@ -164,6 +173,8 @@ export interface RoadmapConfig {
   projectDir: string;
   /** Output directory for roadmap files (defaults to .autocode/roadmap/) */
   outputDir?: string;
+  /** Project data directory name (defaults to .autocode) */
+  dataDirName?: string;
   /** Model shorthand or full model ID (defaults to 'sonnet') */
   modelShorthand?: ModelShorthand | string;
   /** Thinking level (defaults to 'medium') */
@@ -231,7 +242,7 @@ async function runDiscoveryPhase(
   abortSignal?: AbortSignal,
   onStream?: RoadmapStreamCallback,
 ): Promise<RoadmapPhaseResult> {
-  const discoveryFile = join(outputDir, 'roadmap_discovery.json');
+  const discoveryFile = join(outputDir, AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME);
 
   if (existsSync(discoveryFile) && !refresh) {
     return { phase: 'discovery', success: true, outputs: [discoveryFile], errors: [] };
@@ -396,8 +407,8 @@ async function runFeaturesPhase(
   abortSignal?: AbortSignal,
   onStream?: RoadmapStreamCallback,
 ): Promise<RoadmapPhaseResult> {
-  const roadmapFile = join(outputDir, 'roadmap.json');
-  const discoveryFile = join(outputDir, 'roadmap_discovery.json');
+  const roadmapFile = join(outputDir, AUTOCODE_ROADMAP_FILE_NAME);
+  const discoveryFile = join(outputDir, AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME);
 
   if (!existsSync(discoveryFile)) {
     return { phase: 'features', success: false, outputs: [], errors: ['Discovery file not found'] };
@@ -623,10 +634,11 @@ export async function runRoadmapGeneration(
     refresh = false,
     abortSignal,
     language = 'en',
+    dataDirName,
   } = config;
 
-  const outputDir = config.outputDir ?? join(projectDir, '.autocode', 'roadmap');
-  const projectIndexFile = join(projectDir, '.autocode', 'project_index.json');
+  const outputDir = config.outputDir ?? getAutocodeRoadmapDir(projectDir, dataDirName);
+  const projectIndexFile = getAutocodeProjectIndexPath(projectDir, dataDirName);
 
   // Ensure output directory exists
   if (!existsSync(outputDir)) {
@@ -647,7 +659,7 @@ export async function runRoadmapGeneration(
   const toolContext: ToolContext = {
     cwd: projectDir,
     projectDir,
-    specDir: join(projectDir, '.autocode', 'specs'),
+    specDir: getAutocodeSpecsDir({ projectRoot: projectDir, dataDirName }),
     securityProfile: null as unknown as SecurityProfile,
     abortSignal,
   };
@@ -697,7 +709,9 @@ export async function runRoadmapGeneration(
     };
   }
 
-  const roadmapPath = join(outputDir, 'roadmap.json');
+  const roadmapPath = config.outputDir
+    ? join(outputDir, AUTOCODE_ROADMAP_FILE_NAME)
+    : getAutocodeRoadmapFilePath(projectDir, dataDirName);
   return {
     success: true,
     phases,

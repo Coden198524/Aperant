@@ -3,6 +3,7 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { existsSync, readFileSync } from 'fs';
 import { app } from 'electron';
+import { AUTOCODE_PROJECT_ENV_FILE_NAME, getAutocodeProjectEnvPath } from '@autocode/core';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -518,7 +519,7 @@ export class AgentProcessManager {
       return {};
     }
 
-    const envPath = path.join(projectPath, project.autoBuildPath, '.env');
+    const envPath = getAutocodeProjectEnvPath(projectPath, project.autoBuildPath);
     return this.parseEnvFile(envPath);
   }
 
@@ -530,7 +531,7 @@ export class AgentProcessManager {
       return {};
     }
 
-    const envPath = path.join(this.autoBuildSourcePath, '.env');
+    const envPath = path.join(this.autoBuildSourcePath, AUTOCODE_PROJECT_ENV_FILE_NAME);
     return this.parseEnvFile(envPath);
   }
 

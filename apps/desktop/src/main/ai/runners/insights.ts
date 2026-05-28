@@ -13,12 +13,17 @@
 
 import { streamText, stepCountIs } from 'ai';
 import { existsSync, readFileSync, readdirSync } from 'node:fs';
-import { join } from 'node:path';
 
 import { createSimpleClient } from '../client/factory';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
-import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import {
+  getAutocodeProjectIndexPath,
+  getAutocodeRoadmapFilePath,
+  getAutocodeSpecsDir,
+  type ModelShorthand,
+  type ThinkingLevel,
+} from '@autocode/core';
 import type { SecurityProfile } from '../security/bash-validator';
 import { safeParseJson } from '../../utils/json-repair';
 import { parseLLMJson } from '../schema/structured-output';
@@ -48,6 +53,8 @@ export interface InsightsConfig {
   thinkingLevel?: ThinkingLevel;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
+  /** Project data directory name (defaults to .autocode) */
+  dataDirName?: string;
 }
 
 /** Result of an insights query */
@@ -107,11 +114,11 @@ function isResponsesApiModel(modelId: string | undefined): boolean {
  * Load project context for the AI.
  * Mirrors Python's `load_project_context()`.
  */
-function loadProjectContext(projectDir: string): string {
+function loadProjectContext(projectDir: string, dataDirName?: string): string {
   const contextParts: string[] = [];
 
   // Load project index if available
-  const indexPath = join(projectDir, '.autocode', 'project_index.json');
+  const indexPath = getAutocodeProjectIndexPath(projectDir, dataDirName);
   if (existsSync(indexPath)) {
     const index = safeParseJson<Record<string, unknown>>(readFileSync(indexPath, 'utf-8'));
     if (index) {
@@ -128,7 +135,7 @@ function loadProjectContext(projectDir: string): string {
   }
 
   // Load roadmap if available
-  const roadmapPath = join(projectDir, '.autocode', 'roadmap', 'roadmap.json');
+  const roadmapPath = getAutocodeRoadmapFilePath(projectDir, dataDirName);
   if (existsSync(roadmapPath)) {
     const roadmap = safeParseJson<Record<string, unknown>>(readFileSync(roadmapPath, 'utf-8'));
     if (roadmap) {
@@ -144,7 +151,7 @@ function loadProjectContext(projectDir: string): string {
   }
 
   // Load existing tasks
-  const tasksPath = join(projectDir, '.autocode', 'specs');
+  const tasksPath = getAutocodeSpecsDir({ projectRoot: projectDir, dataDirName });
   if (existsSync(tasksPath)) {
     try {
       const taskDirs = readdirSync(tasksPath, { withFileTypes: true })
@@ -168,8 +175,8 @@ function loadProjectContext(projectDir: string): string {
  * Build the system prompt for the insights agent.
  * Mirrors Python's `build_system_prompt()`.
  */
-function buildSystemPrompt(projectDir: string): string {
-  const context = loadProjectContext(projectDir);
+function buildSystemPrompt(projectDir: string, dataDirName?: string): string {
+  const context = loadProjectContext(projectDir, dataDirName);
 
   return `You are an AI assistant helping developers understand and work with their codebase.
 You have access to the following project context:
@@ -241,9 +248,10 @@ export async function runInsightsQuery(
     modelShorthand = 'sonnet',
     thinkingLevel = 'medium',
     abortSignal,
+    dataDirName,
   } = config;
 
-  const systemPrompt = buildSystemPrompt(projectDir);
+  const systemPrompt = buildSystemPrompt(projectDir, dataDirName);
 
   // Build conversation context from history
   let fullPrompt = message;
@@ -258,7 +266,7 @@ export async function runInsightsQuery(
   const toolContext: ToolContext = {
     cwd: projectDir,
     projectDir,
-    specDir: join(projectDir, '.autocode', 'specs'),
+    specDir: getAutocodeSpecsDir({ projectRoot: projectDir, dataDirName }),
     securityProfile: null as unknown as SecurityProfile,
     abortSignal,
   };

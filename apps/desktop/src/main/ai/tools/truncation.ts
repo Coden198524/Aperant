@@ -13,6 +13,7 @@ import {
   buildToolOutputTruncationContent,
   planToolOutputTruncation,
 } from '@autocode/core';
+import { getAutocodeToolOutputDir } from '@autocode/core/project/data-paths';
 
 export { SAFETY_NET_MAX_BYTES } from '@autocode/core';
 
@@ -43,7 +44,7 @@ export function truncateToolOutput(
     };
   }
 
-  const spilloverDir = path.join(projectDir, '.autocode', 'tool-output');
+  const spilloverDir = getAutocodeToolOutputDir(projectDir);
   try {
     fs.mkdirSync(spilloverDir, { recursive: true });
   } catch {

@@ -23,6 +23,7 @@ import { AgentManager } from '../../agent/agent-manager';
 import { BatchProcessor } from '../../ai/runners/github/batch-processor';
 import type { GitHubIssue } from '../../ai/runners/github/duplicate-detector';
 import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import { getAutocodeGithubDir } from '@autocode/core/project/data-paths';
 
 // Debug logging
 const { debug: debugLog } = createContextLogger('GitHub AutoFix');
@@ -99,7 +100,7 @@ export interface BatchProgress {
  * Get the GitHub directory for a project
  */
 function getGitHubDir(project: Project): string {
-  return path.join(project.path, '.autocode', 'github');
+  return getAutocodeGithubDir(project.path, project.autoBuildPath);
 }
 
 /**

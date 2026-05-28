@@ -17,6 +17,7 @@
 import * as path from 'path';
 import * as os from 'os';
 import { existsSync } from 'fs';
+import { AUTOCODE_PROJECT_DATA_DIR_NAME } from '@autocode/core/tasks/artifacts';
 import { isLinux } from './platform';
 
 const APP_NAME = 'autocode';
@@ -75,7 +76,7 @@ export function getAppCacheDir(): string {
  * This is where graph databases are stored.
  */
 export function getMemoriesDir(): string {
-  const defaultPath = path.join(os.homedir(), '.autocode', 'memories');
+  const defaultPath = path.join(os.homedir(), AUTOCODE_PROJECT_DATA_DIR_NAME, 'memories');
   const legacyPath = LEGACY_HOME_APP_NAMES
     .map((name) => path.join(os.homedir(), name, 'memories'))
     .find((candidate) => existsSync(candidate));

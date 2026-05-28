@@ -13,6 +13,9 @@ import fs from 'fs';
 import path from 'path';
 
 import { spawnSync } from 'child_process';
+import { AUTOCODE_COMMON_BASE_BRANCHES, AUTOCODE_DEFAULT_BASE_BRANCH } from '@autocode/core';
+import { getAutocodeProjectDataDir } from '@autocode/core/project/data-paths';
+import { getAutocodeTaskWorktreeCandidatePaths } from '@autocode/core/tasks/worktree-paths';
 
 // =============================================================================
 // Timeline Models
@@ -313,8 +316,11 @@ function getCommitInfo(commitHash: string, cwd: string): Record<string, string> 
 
 function getWorktreeFileContent(taskId: string, filePath: string, projectDir: string): string {
   // Try common worktree locations
-  const worktreePath = path.join(projectDir, '.autocode', 'worktrees', taskId, filePath);
-  if (fs.existsSync(worktreePath)) {
+  for (const candidatePath of getAutocodeTaskWorktreeCandidatePaths(projectDir, taskId)) {
+    const worktreePath = path.join(candidatePath, filePath);
+    if (!fs.existsSync(worktreePath)) {
+      continue;
+    }
     try {
       return fs.readFileSync(worktreePath, 'utf8');
     } catch {
@@ -345,11 +351,11 @@ function countCommitsBetween(fromCommit: string, toRef: string, cwd: string): nu
 }
 
 function detectTargetBranch(worktreePath: string): string {
-  for (const branch of ['main', 'master', 'develop']) {
+  for (const branch of AUTOCODE_COMMON_BASE_BRANCHES) {
     const result = tryRunGit(['merge-base', branch, 'HEAD'], worktreePath);
     if (result !== null) return branch;
   }
-  return 'main';
+  return AUTOCODE_DEFAULT_BASE_BRANCH;
 }
 
 // =============================================================================
@@ -369,7 +375,7 @@ export class FileTimelineTracker {
 
   constructor(projectPath: string, storagePath?: string) {
     this.projectPath = path.resolve(projectPath);
-    const resolvedStoragePath = storagePath ?? path.join(this.projectPath, '.autocode');
+    const resolvedStoragePath = storagePath ?? getAutocodeProjectDataDir(this.projectPath);
     this.persistence = new TimelinePersistence(resolvedStoragePath);
     this.timelines = this.persistence.loadAllTimelines();
   }

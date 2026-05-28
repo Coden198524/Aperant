@@ -8,6 +8,11 @@ import type {
 } from '../../shared/types';
 import { parseGitLogOutput } from './parser';
 import { getToolPath } from '../cli-tool-manager';
+import {
+  AUTOCODE_COMMON_BASE_BRANCHES,
+  AUTOCODE_DEFAULT_BASE_BRANCH,
+  parseAutocodeOriginHeadBranch,
+} from '@autocode/core';
 
 /**
  * Debug logging helper
@@ -132,7 +137,7 @@ export function getCurrentBranch(projectPath: string): string {
       encoding: 'utf-8'
     }).trim();
   } catch {
-    return 'main';
+    return AUTOCODE_DEFAULT_BASE_BRANCH;
   }
 }
 
@@ -146,26 +151,21 @@ export function getDefaultBranch(projectPath: string): string {
       cwd: projectPath,
       encoding: 'utf-8'
     }).trim();
-    return result.replace('origin/', '');
+    return parseAutocodeOriginHeadBranch(result) ?? result.replace('origin/', '');
   } catch {
-    // Fallback: check if main or master exists
-    try {
-      execFileSync(getToolPath('git'), ['rev-parse', '--verify', 'main'], {
-        cwd: projectPath,
-        encoding: 'utf-8'
-      });
-      return 'main';
-    } catch {
+    for (const branch of AUTOCODE_COMMON_BASE_BRANCHES) {
       try {
-        execFileSync(getToolPath('git'), ['rev-parse', '--verify', 'master'], {
+        execFileSync(getToolPath('git'), ['rev-parse', '--verify', branch], {
           cwd: projectPath,
           encoding: 'utf-8'
         });
-        return 'master';
+        return branch;
       } catch {
-        return 'main';
+        // Branch doesn't exist, try next
       }
     }
+
+    return AUTOCODE_DEFAULT_BASE_BRANCH;
   }
 }
 

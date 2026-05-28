@@ -1,8 +1,8 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
-import path from 'path';
 import { existsSync, readFileSync } from 'fs';
-import { IPC_CHANNELS, AUTO_BUILD_PATHS } from '../../../shared/constants';
+import { getAutocodeProjectIndexPath } from '@autocode/core';
+import { IPC_CHANNELS } from '../../../shared/constants';
 import type {
   IPCResult,
   ProjectContextData,
@@ -46,8 +46,8 @@ function toRendererMemory(m: Memory): RendererMemory {
 /**
  * Load project index from file
  */
-function loadProjectIndex(projectPath: string): ProjectIndex | null {
-  const indexPath = path.join(projectPath, AUTO_BUILD_PATHS.PROJECT_INDEX);
+function loadProjectIndex(projectPath: string, dataDirName?: string): ProjectIndex | null {
+  const indexPath = getAutocodeProjectIndexPath(projectPath, dataDirName);
   if (!existsSync(indexPath)) {
     return null;
   }
@@ -100,7 +100,7 @@ export function registerProjectContextHandlers(
 
       try {
         // Load project index
-        const projectIndex = loadProjectIndex(project.path);
+        const projectIndex = loadProjectIndex(project.path, project.autoBuildPath);
 
         // Build memory status (libSQL-based)
         const memoryStatus = await buildMemoryStatus();
@@ -137,7 +137,7 @@ export function registerProjectContextHandlers(
       }
 
       try {
-        const indexOutputPath = path.join(project.path, AUTO_BUILD_PATHS.PROJECT_INDEX);
+        const indexOutputPath = getAutocodeProjectIndexPath(project.path, project.autoBuildPath);
 
         // Run the TypeScript project indexer (replaces Python subprocess)
         const projectIndex = runProjectIndexer(project.path, indexOutputPath);

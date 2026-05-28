@@ -16,6 +16,7 @@ import type {
 import { DEFAULT_CHANGELOG_PATH } from '../shared/constants';
 import { getToolPath } from './cli-tool-manager';
 import { refreshGitIndex } from './utils/git-isolation';
+import { getAutocodeTaskWorktreeDir } from '@autocode/core/tasks/worktree-paths';
 
 /**
  * Service for creating GitHub releases with worktree-aware pre-flight checks.
@@ -344,7 +345,7 @@ export class ReleaseService extends EventEmitter {
     tasks: Task[]
   ): Promise<UnmergedWorktreeInfo[]> {
     const unmerged: UnmergedWorktreeInfo[] = [];
-    const worktreesDir = path.join(projectPath, '.autocode', 'worktrees', 'tasks');
+    const worktreesDir = getAutocodeTaskWorktreeDir(projectPath);
 
     if (!existsSync(worktreesDir)) {
       return [];

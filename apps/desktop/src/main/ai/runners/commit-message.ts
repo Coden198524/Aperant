@@ -18,7 +18,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { createSimpleClient } from '../client/factory';
-import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
+import { getAutocodeSpecDir, type ModelShorthand, type ThinkingLevel } from '@autocode/core';
 import { safeParseJson } from '../../utils/json-repair';
 
 // =============================================================================
@@ -236,9 +236,9 @@ export async function generateCommitMessage(
   } = config;
 
   // Find spec directory
-  let specDir = join(projectDir, '.autocode', 'specs', specName);
+  let specDir = getAutocodeSpecDir({ projectRoot: projectDir, specId: specName });
   if (!existsSync(specDir)) {
-    specDir = join(projectDir, 'autocode', 'specs', specName);
+    specDir = getAutocodeSpecDir({ projectRoot: projectDir, dataDirName: 'autocode', specId: specName });
   }
 
   // Get context from spec files

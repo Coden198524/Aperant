@@ -1,12 +1,20 @@
-import path from 'path';
 import { existsSync, mkdirSync, unlinkSync, promises as fsPromises } from 'fs';
 import { EventEmitter } from 'events';
+import {
+  getAutocodeIdeationDir,
+  getAutocodeIdeationFilePath,
+  getAutocodeIdeationTypeIdeasPath,
+  getAutocodeRoadmapDir,
+  getAutocodeRoadmapFilePath,
+  getAutocodeRoadmapProgressPath,
+  type ModelShorthand,
+  type ThinkingLevel,
+} from '@autocode/core';
 import { AgentState } from './agent-state';
 import type { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
 import { RoadmapConfig } from './types';
 import type { IdeationConfig, Idea } from '../../shared/types';
-import { AUTO_BUILD_PATHS } from '../../shared/constants';
 import { detectRateLimit, createSDKRateLimitInfo } from '../rate-limit-detector';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 import { transformIdeaFromSnakeCase, transformSessionFromSnakeCase } from '../ipc-handlers/ideation/transformers';
@@ -18,9 +26,9 @@ import { runIdeation, IDEATION_TYPES } from '../ai/runners/ideation';
 import type { IdeationType, IdeationStreamEvent } from '../ai/runners/ideation';
 import { runRoadmapGeneration } from '../ai/runners/roadmap';
 import type { RoadmapStreamEvent } from '../ai/runners/roadmap';
-import type { ModelShorthand, ThinkingLevel } from '@autocode/core';
 import { resolvePromptsDir } from '../ai/prompts/prompt-loader';
 import { getActiveProviderFeatureSettings } from '../ipc-handlers/feature-settings-helper';
+import { projectStore } from '../project-store';
 
 /**
  * Queue management for ideation and roadmap generation
@@ -31,6 +39,7 @@ export class AgentQueueManager {
   private emitter: EventEmitter;
   private debouncedPersistRoadmapProgress: (
     projectPath: string,
+    dataDirName: string | undefined,
     phase: string,
     progress: number,
     message: string,
@@ -77,6 +86,7 @@ export class AgentQueueManager {
    */
   private async persistRoadmapProgress(
     projectPath: string,
+    dataDirName: string | undefined,
     phase: string,
     progress: number,
     message: string,
@@ -84,8 +94,8 @@ export class AgentQueueManager {
     isRunning: boolean
   ): Promise<void> {
     try {
-      const roadmapDir = path.join(projectPath, AUTO_BUILD_PATHS.ROADMAP_DIR);
-      const progressPath = path.join(roadmapDir, AUTO_BUILD_PATHS.GENERATION_PROGRESS);
+      const roadmapDir = getAutocodeRoadmapDir(projectPath, dataDirName);
+      const progressPath = getAutocodeRoadmapProgressPath(projectPath, dataDirName);
 
       // Ensure roadmap directory exists
       if (!existsSync(roadmapDir)) {
@@ -114,16 +124,12 @@ export class AgentQueueManager {
    *
    * @param projectPath - The project directory path
    */
-  private clearRoadmapProgress(projectPath: string): void {
+  private clearRoadmapProgress(projectPath: string, dataDirName?: string): void {
     // Cancel any pending debounced write to prevent re-creating the file after deletion
     this.cancelPersistRoadmapProgress();
 
     try {
-      const progressPath = path.join(
-        projectPath,
-        AUTO_BUILD_PATHS.ROADMAP_DIR,
-        AUTO_BUILD_PATHS.GENERATION_PROGRESS
-      );
+      const progressPath = getAutocodeRoadmapProgressPath(projectPath, dataDirName);
 
       if (existsSync(progressPath)) {
         unlinkSync(progressPath);
@@ -226,7 +232,8 @@ export class AgentQueueManager {
     // which handles both dev (apps/desktop/prompts/) and production (resourcesPath/prompts/)
     const promptsDir = resolvePromptsDir();
 
-    const outputDir = path.join(projectPath, '.autocode', 'ideation');
+    const dataDirName = this.getProjectDataDirName(projectId, projectPath);
+    const outputDir = getAutocodeIdeationDir(projectPath, dataDirName);
 
     // Emit initial progress
     this.emitter.emit('ideation-progress', projectId, {
@@ -257,6 +264,7 @@ export class AgentQueueManager {
           {
             projectDir: projectPath,
             outputDir,
+            dataDirName,
             promptsDir,
             ideationType: ideationType as IdeationType,
             modelShorthand: (config.model || 'sonnet') as ModelShorthand,
@@ -276,7 +284,7 @@ export class AgentQueueManager {
           debugLog('[Agent Queue] Ideation type completed:', { projectId, ideationType });
 
           // Load and emit type-specific ideas
-          const typeFilePath = path.join(outputDir, `${ideationType}_ideas.json`);
+          const typeFilePath = getAutocodeIdeationTypeIdeasPath(projectPath, ideationType, dataDirName);
           try {
             const content = await fsPromises.readFile(typeFilePath, 'utf-8');
             const data: Record<string, RawIdea[]> = JSON.parse(content);
@@ -329,7 +337,7 @@ export class AgentQueueManager {
 
     // Load and emit the complete ideation session
     try {
-      const ideationFilePath = path.join(outputDir, 'ideation.json');
+      const ideationFilePath = getAutocodeIdeationFilePath(projectPath, dataDirName);
       if (existsSync(ideationFilePath)) {
         const content = await fsPromises.readFile(ideationFilePath, 'utf-8');
         const rawSession = JSON.parse(content);
@@ -388,10 +396,12 @@ export class AgentQueueManager {
     let progressPhase = 'analyzing';
     let progressPercent = 10;
     const roadmapStartedAt = new Date().toISOString();
+    const dataDirName = this.getProjectDataDirName(projectId, projectPath);
 
     // Persist initial progress
     this.debouncedPersistRoadmapProgress(
       projectPath,
+      dataDirName,
       progressPhase,
       progressPercent,
       'Starting roadmap generation...',
@@ -424,6 +434,7 @@ export class AgentQueueManager {
           thinkingLevel: resolvedRoadmapThinking,
           refresh,
           enableCompetitorAnalysis,
+          dataDirName,
           abortSignal: abortController.signal,
           language: config?.language,
         },
@@ -440,7 +451,7 @@ export class AgentQueueManager {
                 message: msg
               });
               this.debouncedPersistRoadmapProgress(
-                projectPath, progressPhase, progressPercent, msg, roadmapStartedAt, true
+                projectPath, dataDirName, progressPhase, progressPercent, msg, roadmapStartedAt, true
               );
               break;
             }
@@ -466,7 +477,7 @@ export class AgentQueueManager {
       this.state.deleteProcess(projectId);
 
       if (abortController.signal.aborted) {
-        this.clearRoadmapProgress(projectPath);
+        this.clearRoadmapProgress(projectPath, dataDirName);
         this.emitter.emit('roadmap-stopped', projectId);
         return;
       }
@@ -478,10 +489,10 @@ export class AgentQueueManager {
           progress: 100,
           message: 'Roadmap generation complete'
         });
-        this.clearRoadmapProgress(projectPath);
+        this.clearRoadmapProgress(projectPath, dataDirName);
 
         // Load and emit the complete roadmap
-        const roadmapFilePath = path.join(projectPath, '.autocode', 'roadmap', 'roadmap.json');
+        const roadmapFilePath = getAutocodeRoadmapFilePath(projectPath, dataDirName);
         if (existsSync(roadmapFilePath)) {
           try {
             const content = await fsPromises.readFile(roadmapFilePath, 'utf-8');
@@ -503,7 +514,7 @@ export class AgentQueueManager {
         }
       } else {
         debugError('[Agent Queue] Roadmap generation failed:', { projectId, error: result.error });
-        this.clearRoadmapProgress(projectPath);
+        this.clearRoadmapProgress(projectPath, dataDirName);
 
         // Check for rate limit
         if (result.error) {
@@ -520,7 +531,7 @@ export class AgentQueueManager {
     } catch (err) {
       this.abortControllers.delete(`roadmap:${projectId}`);
       this.state.deleteProcess(projectId);
-      this.clearRoadmapProgress(projectPath);
+      this.clearRoadmapProgress(projectPath, dataDirName);
 
       if (abortController.signal.aborted) {
         this.emitter.emit('roadmap-stopped', projectId);
@@ -609,5 +620,10 @@ export class AgentQueueManager {
     if (this.abortControllers.has(`roadmap:${projectId}`)) return true;
     const processInfo = this.state.getProcess(projectId);
     return processInfo?.queueProcessType === 'roadmap';
+  }
+
+  private getProjectDataDirName(projectId: string, projectPath: string): string | undefined {
+    return projectStore.getProject(projectId)?.autoBuildPath
+      ?? projectStore.getProjects().find((project) => project.path === projectPath)?.autoBuildPath;
   }
 }

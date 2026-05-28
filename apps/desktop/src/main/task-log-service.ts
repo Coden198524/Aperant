@@ -1,83 +1,14 @@
 import path from 'path';
-import { existsSync, readFileSync, } from 'fs';
+import { existsSync, readFileSync } from 'fs';
 import { EventEmitter } from 'events';
-import type { TaskLogs, TaskLogEntryType, TaskLogPhase, TaskLogStreamChunk, TaskPhaseLog } from '../shared/types';
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  mergeAutocodeTaskLogs,
+  readAutocodeTaskLogsFromSpecDir,
+} from '@autocode/core';
+import type { TaskLogs, TaskLogPhase, TaskLogStreamChunk, TaskPhaseLog } from '../shared/types';
 import { findTaskWorktree } from './worktree-paths';
-import { debugLog, debugWarn, debugError } from '../shared/utils/debug-logger';
-
-function emptyPhaseLog(phase: TaskLogPhase): TaskPhaseLog {
-  return {
-    phase,
-    status: 'pending',
-    started_at: null,
-    completed_at: null,
-    entries: [],
-  };
-}
-
-function extractJsonStringField(content: string, field: string): string | null {
-  const match = content.match(new RegExp(`"${field}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`));
-  if (!match?.[1]) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(`"${match[1]}"`) as string;
-  } catch {
-    return match[1];
-  }
-}
-
-function salvageTaskLogs(content: string, specDir: string, error: unknown): TaskLogs {
-  const now = new Date().toISOString();
-  const specId = extractJsonStringField(content, 'spec_id') ?? path.basename(specDir);
-  const createdAt = extractJsonStringField(content, 'created_at') ?? now;
-  const updatedAt = extractJsonStringField(content, 'updated_at') ?? now;
-  const phases: TaskLogs['phases'] = {
-    planning: emptyPhaseLog('planning'),
-    coding: emptyPhaseLog('coding'),
-    validation: emptyPhaseLog('validation'),
-  };
-
-  const entryPattern = /"timestamp"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"type"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"content"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[\s\S]{0,1200}?"phase"\s*:\s*"(planning|coding|validation)"/g;
-  for (const match of content.matchAll(entryPattern)) {
-    const phase = match[4] as TaskLogPhase;
-    let entryContent = match[3] ?? '';
-    try {
-      entryContent = JSON.parse(`"${entryContent}"`) as string;
-    } catch {
-      // Keep the raw escaped fragment if the individual entry is also damaged.
-    }
-
-    phases[phase].entries.push({
-      timestamp: match[1] ?? now,
-      type: match[2] as TaskLogEntryType,
-      content: entryContent,
-      phase,
-    });
-  }
-
-  for (const phase of Object.keys(phases) as TaskLogPhase[]) {
-    const startedAt = content.match(new RegExp(`"${phase}"\\s*:\\s*\\{[\\s\\S]*?"started_at"\\s*:\\s*("[^"]+"|null)`))?.[1];
-    const completedAt = content.match(new RegExp(`"${phase}"\\s*:\\s*\\{[\\s\\S]*?"completed_at"\\s*:\\s*("[^"]+"|null)`))?.[1];
-    if (startedAt && startedAt !== 'null') phases[phase].started_at = startedAt.slice(1, -1);
-    if (completedAt && completedAt !== 'null') phases[phase].completed_at = completedAt.slice(1, -1);
-    if (phases[phase].completed_at) {
-      phases[phase].status = 'completed';
-    } else if (phases[phase].started_at || phases[phase].entries.length > 0) {
-      phases[phase].status = 'active';
-    }
-  }
-
-  phases.planning.entries.unshift({
-    timestamp: now,
-    type: 'error',
-    content: `task_logs.json could not be parsed; showing recovered log entries only. ${error instanceof Error ? error.message : String(error)}`,
-    phase: 'planning',
-  });
-
-  return { spec_id: specId, created_at: createdAt, updated_at: updatedAt, phases };
-}
+import { debugLog, debugWarn } from '../shared/utils/debug-logger';
 
 function findWorktreeSpecDir(projectPath: string, specId: string, specsRelPath: string): string | null {
   const worktreePath = findTaskWorktree(projectPath, specId);
@@ -114,7 +45,7 @@ export class TaskLogService extends EventEmitter {
    * Returns cached logs if the file is corrupted (e.g., mid-write by Python backend)
    */
   loadLogsFromPath(specDir: string): TaskLogs | null {
-    const logFile = path.join(specDir, 'task_logs.json');
+    const logFile = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
 
     debugLog('[TaskLogService.loadLogsFromPath] Attempting to load logs:', {
       specDir,
@@ -127,43 +58,25 @@ export class TaskLogService extends EventEmitter {
       return null;
     }
 
-    try {
-      const content = readFileSync(logFile, 'utf-8');
-      const logs = JSON.parse(content) as TaskLogs;
-
-      debugLog('[TaskLogService.loadLogsFromPath] Successfully loaded logs:', {
-        specDir,
-        specId: logs.spec_id,
-        phases: Object.keys(logs.phases),
-        entryCounts: {
-          planning: logs.phases.planning?.entries?.length || 0,
-          coding: logs.phases.coding?.entries?.length || 0,
-          validation: logs.phases.validation?.entries?.length || 0
-        }
-      });
-
-      this.logCache.set(specDir, logs);
-      return logs;
-    } catch (error) {
-      // JSON parse error - file may be mid-write, return cached version if available
-      const cached = this.logCache.get(specDir);
-      if (cached) {
-        debugWarn('[TaskLogService.loadLogsFromPath] Parse error, returning cached logs:', {
-          specDir,
-          error: error instanceof Error ? error.message : String(error)
-        });
-        return cached;
-      }
-      // Only log if we have no cached fallback
-      debugError('[TaskLogService.loadLogsFromPath] Failed to load logs (no cache):', {
-        logFile,
-        error: error instanceof Error ? error.message : String(error)
-      });
-      const content = readFileSync(logFile, 'utf-8');
-      const salvaged = salvageTaskLogs(content, specDir, error);
-      this.logCache.set(specDir, salvaged);
-      return salvaged;
+    const logs = readAutocodeTaskLogsFromSpecDir(specDir) as TaskLogs | null;
+    if (!logs) {
+      debugWarn('[TaskLogService.loadLogsFromPath] Core log reader returned no logs:', { specDir, logFile });
+      return this.logCache.get(specDir) ?? null;
     }
+
+    debugLog('[TaskLogService.loadLogsFromPath] Successfully loaded logs:', {
+      specDir,
+      specId: logs.spec_id,
+      phases: Object.keys(logs.phases),
+      entryCounts: {
+        planning: logs.phases.planning?.entries?.length || 0,
+        coding: logs.phases.coding?.entries?.length || 0,
+        validation: logs.phases.validation?.entries?.length || 0
+      }
+    });
+
+    this.logCache.set(specDir, logs);
+    return logs;
   }
 
   /**
@@ -186,52 +99,21 @@ export class TaskLogService extends EventEmitter {
       } : null
     });
 
-    if (!worktreeLogs) {
-      debugLog('[TaskLogService.mergeLogs] No worktree logs, using main logs only');
-      if (mainLogs) {
-        this.logCache.set(specDir, mainLogs);
-      }
-      return mainLogs;
-    }
-
-    if (!mainLogs) {
-      debugLog('[TaskLogService.mergeLogs] No main logs, using worktree logs only');
-      this.logCache.set(specDir, worktreeLogs);
-      return worktreeLogs;
-    }
-
-    // Merge logs: planning from main, coding/validation from worktree (if available)
-    const mergedLogs: TaskLogs = {
-      spec_id: mainLogs.spec_id,
-      created_at: mainLogs.created_at,
-      updated_at: worktreeLogs.updated_at > mainLogs.updated_at ? worktreeLogs.updated_at : mainLogs.updated_at,
-      phases: {
-        planning: this.combinePhaseLogs(mainLogs.phases.planning, worktreeLogs.phases.planning),
-        // Use worktree logs for coding/validation if they have entries, otherwise fall back to main
-        coding: (worktreeLogs.phases.coding?.entries?.length > 0 || worktreeLogs.phases.coding?.status !== 'pending')
-          ? worktreeLogs.phases.coding
-          : mainLogs.phases.coding,
-        validation: (worktreeLogs.phases.validation?.entries?.length > 0 || worktreeLogs.phases.validation?.status !== 'pending')
-          ? worktreeLogs.phases.validation
-          : mainLogs.phases.validation
-      }
-    };
+    const mergedLogs = mergeAutocodeTaskLogs(mainLogs, worktreeLogs) as TaskLogs | null;
 
     debugLog('[TaskLogService.mergeLogs] Merged logs created:', {
       specDir,
-      mergedEntries: {
+      mergedEntries: mergedLogs ? {
         planning: mergedLogs.phases.planning?.entries?.length || 0,
         coding: mergedLogs.phases.coding?.entries?.length || 0,
         validation: mergedLogs.phases.validation?.entries?.length || 0
-      },
-      source: {
-        planning: 'combined',
-        coding: (worktreeLogs.phases.coding?.entries?.length > 0 || worktreeLogs.phases.coding?.status !== 'pending') ? 'worktree' : 'main',
-        validation: (worktreeLogs.phases.validation?.entries?.length > 0 || worktreeLogs.phases.validation?.status !== 'pending') ? 'worktree' : 'main'
-      }
+      } : null,
+      source: worktreeLogs ? 'main+worktree' : 'main'
     });
 
-    this.logCache.set(specDir, mergedLogs);
+    if (mergedLogs) {
+      this.logCache.set(specDir, mergedLogs);
+    }
     return mergedLogs;
   }
 
@@ -344,7 +226,7 @@ export class TaskLogService extends EventEmitter {
     // Stop any existing watch (different spec dir or first time)
     this.stopWatching(specId);
 
-    const mainLogFile = path.join(specDir, 'task_logs.json');
+    const mainLogFile = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
 
     // Calculate worktree spec directory path if we have project info
     let worktreeSpecDir: string | null = null;
@@ -373,7 +255,7 @@ export class TaskLogService extends EventEmitter {
 
     // Initial load from worktree spec dir
     if (worktreeSpecDir) {
-      const worktreeLogFile = path.join(worktreeSpecDir, 'task_logs.json');
+      const worktreeLogFile = path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
       if (existsSync(worktreeLogFile)) {
         try {
           lastWorktreeContent = readFileSync(worktreeLogFile, 'utf-8');
@@ -444,7 +326,7 @@ export class TaskLogService extends EventEmitter {
 
       // Check worktree spec dir
       if (currentWorktreeSpecDir) {
-        const worktreeLogFile = path.join(currentWorktreeSpecDir, 'task_logs.json');
+        const worktreeLogFile = path.join(currentWorktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
         if (existsSync(worktreeLogFile)) {
           try {
             const currentContent = readFileSync(worktreeLogFile, 'utf-8');
@@ -519,46 +401,6 @@ export class TaskLogService extends EventEmitter {
     for (const specId of this.pollIntervals.keys()) {
       this.stopWatching(specId);
     }
-  }
-
-  /**
-   * Combine entries from two phase log sources.
-   * Used for the planning phase where spec creation logs (main) and
-   * planner agent logs (worktree) should both appear.
-   */
-  private combinePhaseLogs(main: TaskPhaseLog | undefined, worktree: TaskPhaseLog | undefined): TaskPhaseLog {
-    // If only one has entries, use it
-    if (!main?.entries?.length && !worktree?.entries?.length) {
-      return main || worktree || { phase: 'planning' as TaskLogPhase, status: 'pending', started_at: null, completed_at: null, entries: [] };
-    }
-    if (!main?.entries?.length) return worktree!;
-    if (!worktree?.entries?.length) return main;
-
-    // Combine entries from both, sorted by timestamp
-    const allEntries = [...main.entries, ...worktree.entries].sort(
-      (a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime()
-    );
-
-    // Deduplicate: entries with identical timestamp + type + content are considered duplicates.
-    // This happens when task_logs.json is copied from main to worktree (worktree-manager Step 7),
-    // causing both dirs to contain the same planning phase entries.
-    const seen = new Set<string>();
-    const deduped = allEntries.filter(entry => {
-      const key = `${entry.timestamp}|${entry.type}|${entry.content}`;
-      if (seen.has(key)) return false;
-      seen.add(key);
-      return true;
-    });
-
-    const combined: TaskPhaseLog = {
-      phase: main.phase,
-      // Use the most advanced status (worktree typically has the later state)
-      status: worktree.status !== 'pending' ? worktree.status : main.status,
-      started_at: main.started_at || worktree.started_at,
-      completed_at: worktree.completed_at || main.completed_at,
-      entries: deduped,
-    };
-    return combined;
   }
 
   /**
@@ -643,7 +485,7 @@ export class TaskLogService extends EventEmitter {
    * Check if logs exist for a spec
    */
   hasLogs(specDir: string): boolean {
-    const logFile = path.join(specDir, 'task_logs.json');
+    const logFile = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
     return existsSync(logFile);
   }
 }

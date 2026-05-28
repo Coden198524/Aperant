@@ -23,6 +23,7 @@ import type {
   GitLabIssueBatch,
   GitLabAnalyzePreviewResult,
 } from './types';
+import { getAutocodeGitlabDir } from '@autocode/core/project/data-paths';
 
 // Debug logging
 function debugLog(message: string, ...args: unknown[]): void {
@@ -68,7 +69,7 @@ function validatePathWithinProject(projectPath: string, resolvedPath: string): v
  * Get the GitLab directory for a project
  */
 function getGitLabDir(project: Project): string {
-  const gitlabDir = path.join(project.path, '.autocode', 'gitlab');
+  const gitlabDir = getAutocodeGitlabDir(project.path, project.autoBuildPath);
   validatePathWithinProject(project.path, gitlabDir);
   return gitlabDir;
 }

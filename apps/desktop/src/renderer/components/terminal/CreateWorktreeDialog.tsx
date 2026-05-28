@@ -1,6 +1,7 @@
 import { useState, useCallback, useEffect, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { GitBranch, Loader2, FolderGit, ListTodo } from 'lucide-react';
+import { AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER } from '@autocode/core/tasks/branch-protocol';
 import {
   Dialog,
   DialogContent,
@@ -27,7 +28,7 @@ import type { Task, TerminalWorktreeConfig, GitBranchDetail } from '../../../sha
 import { useProjectStore } from '../../stores/project-store';
 
 // Special value to represent "use project default" since Radix UI Select doesn't allow empty string values
-const PROJECT_DEFAULT_BRANCH = '__project_default__';
+const PROJECT_DEFAULT_BRANCH = AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER;
 
 /**
  * Sanitizes a string into a valid worktree/branch name.

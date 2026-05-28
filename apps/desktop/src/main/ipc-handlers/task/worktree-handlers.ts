@@ -1,6 +1,6 @@
 import { ipcMain, shell, app } from 'electron';
 import type { BrowserWindow } from 'electron';
-import { IPC_CHANNELS, AUTO_BUILD_PATHS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP, getSpecsDir } from '../../../shared/constants';
+import { IPC_CHANNELS, AUTO_BUILD_PATHS, DEFAULT_APP_SETTINGS, DEFAULT_FEATURE_MODELS, DEFAULT_FEATURE_THINKING, MODEL_ID_MAP, THINKING_BUDGET_MAP } from '../../../shared/constants';
 import type { IPCResult, WorktreeStatus, WorktreeDiff, WorktreeDiffFile, WorktreeMergeResult, WorktreeDiscardResult, WorktreeListResult, WorktreeListItem, WorktreeCreatePROptions, WorktreeCreatePRResult, SupportedIDE, SupportedTerminal, SupportedCLI, AppSettings } from '../../../shared/types';
 import path from 'path';
 import { minimatch } from 'minimatch';
@@ -13,7 +13,21 @@ import { MergeOrchestrator } from '../../ai/merge/orchestrator';
 import { createMergeResolverFn } from '../../ai/runners/merge-resolver';
 import { createPR } from '../../ai/runners/github/pr-creator';
 import { createGitBlitReviewRequest, parseGitBlitTicketId } from '../../ai/runners/gitblit/review-request-creator';
-import type { ModelShorthand } from '@autocode/core';
+import {
+  AUTOCODE_COMMON_BASE_BRANCHES,
+  AUTOCODE_DEFAULT_BASE_BRANCH,
+  AUTOCODE_GIT_BRANCH_REGEX,
+  buildAutocodeTaskBranchName,
+  getAutocodeProjectDataDir,
+  getAutocodeProjectEnvPath,
+  getAutocodeRoadmapFilePath,
+  getAutocodeSpecDir,
+  getAutocodeSpecsDir,
+  isAutocodeGitBranchName,
+  normalizeAutocodeBaseBranch,
+  validateAutocodeWorktreeBranch,
+  type ModelShorthand,
+} from '@autocode/core';
 import { findTaskAndProject } from './shared';
 import { updateRoadmapFeatureOutcome } from '../../utils/roadmap-utils';
 import { getToolPath } from '../../cli-tool-manager';
@@ -30,63 +44,8 @@ import { stripAnsiCodes } from '../../../shared/utils/ansi-sanitizer';
 import { taskStateManager } from '../../task-state-manager';
 import { parseEnvFile } from '../utils';
 
-// Regex pattern for validating git branch names
-export const GIT_BRANCH_REGEX = /^[a-zA-Z0-9][a-zA-Z0-9._/-]*[a-zA-Z0-9]$|^[a-zA-Z0-9]$/;
-
-/**
- * Validates a detected branch name and returns the safe branch to delete.
- *
- * Why `autocode/` prefix is considered safe:
- * - All task worktrees use branches named `autocode/{specId}`
- * - This pattern is controlled by Autocode, not user input
- * - If detected branch matches this pattern, it's a valid task branch
- * - If it doesn't match (e.g., `main`, `develop`, `feature/xxx`), it's likely
- *   the main project's branch being incorrectly detected from a corrupted worktree
- *
- * Issue #1479: When cleaning up a corrupted worktree, git rev-parse walks up
- * to the main project and returns its current branch instead of the worktree's branch.
- * This could cause deletion of the wrong branch.
- */
-export function validateWorktreeBranch(
-  detectedBranch: string | null,
-  expectedBranch: string
-): { branchToDelete: string; usedFallback: boolean; reason: string } {
-  // If detection failed, use expected pattern
-  if (detectedBranch === null) {
-    return {
-      branchToDelete: expectedBranch,
-      usedFallback: true,
-      reason: 'detection_failed',
-    };
-  }
-
-  // Exact match - ideal case
-  if (detectedBranch === expectedBranch) {
-    return {
-      branchToDelete: detectedBranch,
-      usedFallback: false,
-      reason: 'exact_match',
-    };
-  }
-
-  // Matches autocode pattern with valid specId (not just "autocode/")
-  // The specId must be non-empty for this to be a valid task branch
-  if (detectedBranch.startsWith('autocode/') && detectedBranch.length > 'autocode/'.length) {
-    return {
-      branchToDelete: detectedBranch,
-      usedFallback: false,
-      reason: 'pattern_match',
-    };
-  }
-
-  // Detected branch doesn't match expected pattern - use fallback
-  // This is the critical security fix for issue #1479
-  return {
-    branchToDelete: expectedBranch,
-    usedFallback: true,
-    reason: 'invalid_pattern',
-  };
-}
+export const GIT_BRANCH_REGEX = AUTOCODE_GIT_BRANCH_REGEX;
+export const validateWorktreeBranch = validateAutocodeWorktreeBranch;
 
 // Maximum PR title length (GitHub's limit is 256 characters)
 const MAX_PR_TITLE_LENGTH = 256;
@@ -1689,13 +1648,8 @@ function getTaskBaseBranch(specDir: string): string | undefined {
     const metadataPath = path.join(specDir, 'task_metadata.json');
     if (existsSync(metadataPath)) {
       const metadata = JSON.parse(readFileSync(metadataPath, 'utf-8'));
-      // Return baseBranch if explicitly set (not the __project_default__ marker)
-      // Also validate it's a valid branch name to prevent malformed git commands
-      if (metadata.baseBranch &&
-          metadata.baseBranch !== '__project_default__' &&
-          GIT_BRANCH_REGEX.test(metadata.baseBranch)) {
-        // Strip remote prefix if present (e.g., "origin/feat/x" → "feat/x")
-        const branch = metadata.baseBranch.replace(/^origin\//, '');
+      const branch = normalizeAutocodeBaseBranch(metadata.baseBranch);
+      if (isAutocodeGitBranchName(branch)) {
         return branch;
       }
     }
@@ -1729,7 +1683,11 @@ function getTaskDirectWorkspaceBaselineCommit(specDir: string): string | undefin
 }
 
 function getTaskSpecDir(projectPath: string, specId: string, autoBuildPath?: string): string {
-  return path.join(projectPath, getSpecsDir(autoBuildPath), specId);
+  return getAutocodeSpecDir({
+    projectRoot: projectPath,
+    dataDirName: autoBuildPath,
+    specId,
+  });
 }
 
 function getTaskDiffWorkspace(projectPath: string, specId: string, autoBuildPath?: string): {
@@ -1776,27 +1734,32 @@ function getEffectiveBaseBranch(projectPath: string, specId: string, projectMain
   // Defensive check for undefined inputs
   if (!projectPath || typeof projectPath !== 'string') {
     console.error('[getEffectiveBaseBranch] projectPath is undefined or not a string');
-    return 'main';
+    return AUTOCODE_DEFAULT_BASE_BRANCH;
   }
   if (!specId || typeof specId !== 'string') {
     console.error('[getEffectiveBaseBranch] specId is undefined or not a string');
-    return 'main';
+    return AUTOCODE_DEFAULT_BASE_BRANCH;
   }
 
   // 1. Try task metadata baseBranch
-  const specDir = path.join(projectPath, '.autocode', 'specs', specId);
+  const specDir = getAutocodeSpecDir({
+    projectRoot: projectPath,
+    dataDirName: undefined,
+    specId,
+  });
   const taskBaseBranch = getTaskBaseBranch(specDir);
   if (taskBaseBranch) {
     return taskBaseBranch;
   }
 
   // 2. Try project settings mainBranch
-  if (projectMainBranch && GIT_BRANCH_REGEX.test(projectMainBranch)) {
-    return projectMainBranch;
+  const normalizedProjectMainBranch = normalizeAutocodeBaseBranch(projectMainBranch);
+  if (isAutocodeGitBranchName(normalizedProjectMainBranch)) {
+    return normalizedProjectMainBranch;
   }
 
-  // 3. Try to detect main/master branch
-  for (const branch of ['main', 'master']) {
+  // 3. Try to detect common base branches
+  for (const branch of AUTOCODE_COMMON_BASE_BRANCHES) {
     try {
       execFileSync(getToolPath('git'), ['rev-parse', '--verify', branch], {
         cwd: projectPath,
@@ -1812,7 +1775,7 @@ function getEffectiveBaseBranch(projectPath: string, specId: string, projectMain
   }
 
   // 4. Fallback to 'main'
-  return 'main';
+  return AUTOCODE_DEFAULT_BASE_BRANCH;
 }
 
 interface GitBlitProjectConfig {
@@ -1822,7 +1785,7 @@ interface GitBlitProjectConfig {
 }
 
 function getGitBlitProjectConfig(projectPath: string, autoBuildPath?: string): GitBlitProjectConfig {
-  const envPath = path.join(projectPath, autoBuildPath || '.autocode', '.env');
+  const envPath = getAutocodeProjectEnvPath(projectPath, autoBuildPath);
   if (!existsSync(envPath)) {
     return { enabled: false };
   }
@@ -1966,9 +1929,13 @@ async function updateTaskStatusAfterPRCreation(
   // Also persist to WORKTREE location (worktree takes priority when loading tasks)
   // This ensures the status persists after refresh since getTasks() prefers worktree version
   if (worktreePath) {
-    const specsBaseDir = getSpecsDir(autoBuildPath);
-    const worktreePlanPath = path.join(worktreePath, specsBaseDir, specId, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
-    const worktreeMetadataPath = path.join(worktreePath, specsBaseDir, specId, 'task_metadata.json');
+    const worktreeSpecDir = getAutocodeSpecDir({
+      projectRoot: worktreePath,
+      dataDirName: autoBuildPath,
+      specId,
+    });
+    const worktreePlanPath = path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+    const worktreeMetadataPath = path.join(worktreeSpecDir, 'task_metadata.json');
 
     try {
       const persisted = await persistPlanStatus(worktreePlanPath, 'done');
@@ -2007,7 +1974,7 @@ function buildCreatePRArgs(
   // Add optional arguments with validation
   if (options?.targetBranch) {
     // Validate branch name to prevent malformed git commands
-    if (!GIT_BRANCH_REGEX.test(options.targetBranch)) {
+    if (!isAutocodeGitBranchName(options.targetBranch)) {
       return { args: [], validationError: 'Invalid target branch name' };
     }
     args.push('--pr-target', options.targetBranch);
@@ -2362,7 +2329,11 @@ export function registerWorktreeHandlers(
 
         debug('Found task:', task.specId, 'project:', project.path);
 
-        const specDir = path.join(project.path, project.autoBuildPath || '.autocode', 'specs', task.specId);
+        const specDir = getAutocodeSpecDir({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath,
+          specId: task.specId,
+        });
         const worktreePath = findTaskWorktree(project.path, task.specId);
 
         // Auto-fix any misconfigured bare repo before merge operation
@@ -2406,7 +2377,7 @@ export function registerWorktreeHandlers(
         const aiResolverFn = createMergeResolverFn(modelShorthand, 'low');
 
         // Create the merge orchestrator
-        const storageDir = path.join(project.path, project.autoBuildPath || '.autocode');
+        const storageDir = getAutocodeProjectDataDir(project.path, project.autoBuildPath);
         const orchestrator = new MergeOrchestrator({
           projectDir: project.path,
           storageDir,
@@ -2501,7 +2472,7 @@ export function registerWorktreeHandlers(
 
                     if (!hasActualStagedChanges) {
                       // Check if worktree branch was already merged (merge commit exists)
-                      const specBranch = `autocode/${task.specId}`;
+                      const specBranch = buildAutocodeTaskBranchName(task.specId);
                       try {
                         // Check if current branch contains all commits from spec branch
                         // git merge-base --is-ancestor returns exit code 0 if true, 1 if false
@@ -2644,7 +2615,11 @@ export function registerWorktreeHandlers(
               ];
               // Add worktree plan path if worktree exists
               if (worktreePath) {
-                const worktreeSpecDir = path.join(worktreePath, project.autoBuildPath || '.autocode', 'specs', task.specId);
+                const worktreeSpecDir = getAutocodeSpecDir({
+                  projectRoot: worktreePath,
+                  dataDirName: project.autoBuildPath,
+                  specId: task.specId,
+                });
                 planPaths.push({ path: path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), isMain: false });
               }
 
@@ -2810,7 +2785,11 @@ export function registerWorktreeHandlers(
         // 1. Task metadata baseBranch (explicit task-level override)
         // 2. Project settings mainBranch (project-level default)
         // 3. Default to 'main'
-        const specDir = path.join(project.path, project.autoBuildPath || '.autocode', 'specs', task.specId);
+        const specDir = getAutocodeSpecDir({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath,
+          specId: task.specId,
+        });
         const taskBaseBranch = getTaskBaseBranch(specDir);
         const projectMainBranch = project.settings?.mainBranch;
         const effectiveBaseBranch = taskBaseBranch || projectMainBranch || 'main';
@@ -2819,7 +2798,7 @@ export function registerWorktreeHandlers(
 
         // Run preview using the TypeScript MergeOrchestrator in dry-run mode
         // (no AI resolver needed for preview — only conflict detection and analysis)
-        const storageDir = path.join(project.path, project.autoBuildPath || '.autocode');
+        const storageDir = getAutocodeProjectDataDir(project.path, project.autoBuildPath);
         const orchestrator = new MergeOrchestrator({
           projectDir: project.path,
           storageDir,
@@ -3076,7 +3055,10 @@ export function registerWorktreeHandlers(
         // Used for orphan detection - worktrees without a matching task are orphaned
         const tasks = projectStore.getTasks(projectId);
         // Track if task lookup was successful (empty array with existing specs dir = lookup failed)
-        const mainSpecsDir = path.join(project.path, '.autocode', 'specs');
+        const mainSpecsDir = getAutocodeSpecsDir({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath,
+        });
         const taskLookupSuccessful = tasks.length > 0 || !existsSync(mainSpecsDir);
 
         // Helper to process a single worktree entry (async)
@@ -3286,8 +3268,11 @@ export function registerWorktreeHandlers(
           return { success: false, error: 'Task not found' };
         }
 
-        const specsBaseDir = getSpecsDir(project.autoBuildPath);
-        const specDir = path.join(project.path, specsBaseDir, task.specId);
+        const specDir = getAutocodeSpecDir({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath,
+          specId: task.specId,
+        });
         const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
 
         // Use EAFP pattern (try/catch) instead of LBYL (existsSync check) to avoid TOCTOU race conditions
@@ -3317,7 +3302,12 @@ export function registerWorktreeHandlers(
         // Also update worktree plan if it exists
         const worktreePath = findTaskWorktree(project.path, task.specId);
         if (worktreePath) {
-          const worktreePlanPath = path.join(worktreePath, specsBaseDir, task.specId, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
+          const worktreeSpecDir = getAutocodeSpecDir({
+            projectRoot: worktreePath,
+            dataDirName: project.autoBuildPath,
+            specId: task.specId,
+          });
+          const worktreePlanPath = path.join(worktreeSpecDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
           try {
             const worktreePlanContent = await fsPromises.readFile(worktreePlanPath, 'utf-8');
             const worktreePlan = JSON.parse(worktreePlanContent);
@@ -3769,7 +3759,11 @@ export function registerWorktreeHandlers(
 
         debug('Found task:', task.specId, 'project:', project.path);
 
-        const specDir = path.join(project.path, project.autoBuildPath || '.autocode', 'specs', task.specId);
+        const specDir = getAutocodeSpecDir({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath,
+          specId: task.specId,
+        });
 
         // Use EAFP pattern - try to read specDir and catch ENOENT
         try {
@@ -3791,7 +3785,7 @@ export function registerWorktreeHandlers(
         debug('Worktree path:', worktreePath);
 
         // Validate options
-        if (options?.targetBranch && !GIT_BRANCH_REGEX.test(options.targetBranch)) {
+        if (options?.targetBranch && !isAutocodeGitBranchName(options.targetBranch)) {
           return { success: false, error: 'Invalid target branch name' };
         }
         if (options?.title) {
@@ -3809,7 +3803,7 @@ export function registerWorktreeHandlers(
           task.specId,
           project.settings?.mainBranch,
         );
-        const branchName = `autocode/${task.specId}`;
+        const branchName = buildAutocodeTaskBranchName(task.specId);
         const prTitle = options?.title || `autocode: ${task.specId}`;
         debug('Using base branch for PR creation:', baseBranch);
 
@@ -3866,7 +3860,7 @@ export function registerWorktreeHandlers(
 
           // Update linked roadmap feature
           if (project.path && task.specId) {
-            const roadmapFile = path.join(project.path, AUTO_BUILD_PATHS.ROADMAP_DIR, AUTO_BUILD_PATHS.ROADMAP_FILE);
+            const roadmapFile = getAutocodeRoadmapFilePath(project.path, project.autoBuildPath);
             updateRoadmapFeatureOutcome(roadmapFile, [task.specId], 'completed', '[PR_CREATE]').catch((err) => {
               debug('Failed to update roadmap feature after review request creation:', err);
             });
