@@ -179,6 +179,8 @@ export interface BuildOrchestratorConfig {
   maxConcurrentSubtasks?: number;
   /** Workflow optimization configuration */
   workflowConfig?: WorkflowConfig;
+  /** Rerun planning from human feedback and return to plan review without coding */
+  forcePlanning?: boolean;
   /** Project-specific agent routing profile */
   agentProfile?: ProjectAgentProfile;
   /** Callback to generate the system prompt for a given agent type and phase */
@@ -375,6 +377,11 @@ export class BuildOrchestrator extends EventEmitter {
         // Only after replanning: resumed builds with an existing executable plan
         // must preserve genuine progress.
         await this.resetSubtaskStatuses();
+
+        if (this.config.forcePlanning === true) {
+          this.emitTyped('log', 'Plan regenerated from human review feedback; waiting for plan approval');
+          return this.buildOutcome(true, Date.now() - startTime);
+        }
       }
 
       // Validate and normalize the plan before coding.
@@ -1031,6 +1038,11 @@ export class BuildOrchestrator extends EventEmitter {
 
   private async shouldRunPlanningPhase(): Promise<boolean> {
     try {
+      if (this.config.forcePlanning === true) {
+        this.emitTyped('log', 'Force planning requested; regenerating implementation plan before coding');
+        return true;
+      }
+
       if (this.config.workflowConfig?.optimizationLevel === 'aggressive') {
         const plan = await loadImplementationPlanFromFiles(this.config.specDir) as ImplementationPlan | null;
         const validation = plan ? ImplementationPlanSchema.safeParse(plan) : null;

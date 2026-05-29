@@ -56,7 +56,7 @@ SpawnSubagent({
 |------|---------|-------------------|
 | `complexity_assessor` | Assess task complexity (simple/standard/complex) | Yes (JSON) |
 | `spec_discovery` | Analyze project structure, tech stack, conventions | No (writes context.json) |
-| `spec_gatherer` | Gather and validate requirements from task description | No (writes requirements.json) |
+| `spec_gatherer` | Gather and validate requirements from task description | No (writes requirements.md) |
 | `spec_researcher` | Research implementation approaches, external APIs, libraries | No (writes research.json) |
 | `spec_writer` | Write the specification (spec.md) and implementation plan | No (writes files) |
 | `spec_critic` | Review spec for completeness, technical feasibility, gaps | No (writes critique) |
@@ -98,14 +98,14 @@ Based on the assessment, choose your workflow:
 
 #### STANDARD Tasks
 1. Spawn `spec_discovery` 鈫?receives context.json
-2. Spawn `spec_gatherer` 鈫?receives requirements.json
+2. Spawn `spec_gatherer` 鈫?receives requirements.md
 3. Spawn `spec_writer` with accumulated context 鈫?receives spec.md + implementation_plan.md
 4. Spawn `spec_validation` 鈫?verifies completeness
 5. Done
 
 #### COMPLEX Tasks
 1. Spawn `spec_discovery` 鈫?receives context.json
-2. Spawn `spec_gatherer` 鈫?receives requirements.json
+2. Spawn `spec_gatherer` 鈫?receives requirements.md
 3. If `needs_research`: Spawn `spec_researcher` 鈫?receives research.json
 4. Spawn `spec_writer` with all accumulated context
 5. Spawn `spec_critic` 鈫?reviews for gaps
@@ -138,7 +138,7 @@ Example of good context passing:
 SpawnSubagent({
   agent_type: "spec_writer",
   task: "Write spec.md and implementation_plan.md for: [task]",
-  context: "Project: [dir]\nSpec dir: [specDir]\n\nRequirements (from discovery):\n[requirements.json content]\n\nProject context:\n[context.json content]\n\nResearch findings:\n[research.json content]",
+  context: "Project: [dir]\nSpec dir: [specDir]\n\nRequirements (from discovery):\n[requirements.md content]\n\nProject context:\n[context.json content]\n\nResearch findings:\n[research.json content]",
   expect_structured_output: false
 })
 ```

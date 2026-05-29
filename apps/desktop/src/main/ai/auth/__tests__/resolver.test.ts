@@ -487,7 +487,7 @@ describe('resolveAuthFromQueue', () => {
     expect(result?.reasoningConfig).toEqual({ type: 'reasoning_effort', level: 'high' });
   });
 
-  it('skips OpenAI OAuth accounts for non-Codex agentic models', async () => {
+  it('allows OpenAI OAuth accounts for gpt-5.5 agentic models', async () => {
     const openAIOAuthAccount = {
       ...baseAccount,
       id: 'acc-openai-oauth',
@@ -495,32 +495,26 @@ describe('resolveAuthFromQueue', () => {
       authType: 'oauth' as const,
       apiKey: undefined,
     };
-    const openAIApiKeyAccount = {
-      ...baseAccount,
-      id: 'acc-openai-key',
-      provider: 'openai' as const,
-      authType: 'api-key' as const,
-      apiKey: 'sk-openai-api',
-    };
 
     _mockDetectProviderFromModel.mockReturnValue('openai');
     mockResolveModelEquivalent.mockImplementation((modelValue, targetProvider) => {
-      if (modelValue === 'gpt-5.4' && targetProvider === 'openai') {
+      if (modelValue === 'gpt-5.5' && targetProvider === 'openai') {
         return {
-          modelId: 'gpt-5.4',
+          modelId: 'gpt-5.5',
           reasoning: { type: 'reasoning_effort', level: 'high' },
         };
       }
       return null;
     });
 
-    const result = await resolveAuthFromQueue('gpt-5.4', [openAIOAuthAccount, openAIApiKeyAccount], {
+    const result = await resolveAuthFromQueue('gpt-5.5', [openAIOAuthAccount], {
       executionMode: 'agentic',
     });
 
-    expect(result?.accountId).toBe('acc-openai-key');
-    expect(result?.resolvedModelId).toBe('gpt-5.4');
-    expect(mockEnsureValidOAuthToken).not.toHaveBeenCalled();
+    expect(result?.accountId).toBe('acc-openai-oauth');
+    expect(result?.resolvedModelId).toBe('gpt-5.5');
+    expect(result?.source).toBe('codex-oauth');
+    expect(mockEnsureValidOAuthToken).toHaveBeenCalled();
   });
 
   it('keeps OpenAI API-key accounts with custom baseUrl available for agentic gpt-5 models', async () => {

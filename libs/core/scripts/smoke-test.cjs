@@ -1,8 +1,8 @@
 const assert = require('node:assert/strict');
 const { spawnSync } = require('node:child_process');
-const { existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } = require('node:fs');
+const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
-const { join } = require('node:path');
+const { delimiter, join } = require('node:path');
 
 function normalizePath(value) {
   return value.replace(/\\/g, '/');
@@ -203,8 +203,8 @@ async function main() {
     assert.match(task.specId, /^001-add-provider-settings/);
     assert.equal(task.status, 'backlog');
     assert.ok(existsSync(join(task.specsPath, 'implementation_plan.md')));
-    assert.ok(existsSync(join(task.specsPath, 'requirements.json')));
-    const requirements = JSON.parse(readFileSync(join(task.specsPath, 'requirements.json'), 'utf8'));
+    assert.ok(existsSync(join(task.specsPath, 'requirements.md')));
+    const requirements = core.loadAutocodeTaskRequirementsSync(task.specsPath);
     assert.equal(requirements.task_description, 'Create provider account settings shared by desktop and VS Code.');
     assert.equal(requirements.workflow_type, 'feature');
     assert.deepEqual(requirements.attached_images, [
@@ -258,7 +258,7 @@ async function main() {
     assert.match(importedTask.specId, /^002-investigate-imported-github-issue/);
     assert.equal(importedTask.metadata.sourceType, 'github');
     assert.equal(
-      JSON.parse(readFileSync(join(importedTask.specsPath, 'requirements.json'), 'utf8')).workflow_type,
+      core.loadAutocodeTaskRequirementsSync(importedTask.specsPath).workflow_type,
       'bug_fix',
     );
     assert.throws(() => {
@@ -529,8 +529,12 @@ async function main() {
     assert.ok(core.buildAutocodeTaskRunnerShellCommand(specRunPlan).includes('autocode-runner.cjs'));
     const runnerScript = readFileSync(specRunPlan.runnerFilePath, 'utf8');
     assert.ok(runnerScript.includes('autocode-run-result.json'));
-    assert.ok(runnerScript.includes("upsertPlanMetadata(content, 'Status', failed ? 'error' : 'human_review')"));
-    assert.ok(runnerScript.includes("upsertPlanMetadata(content, 'Review Reason'"));
+    assert.ok(runnerScript.includes("stdio: ['pipe', 'pipe', 'pipe']"));
+    assert.ok(runnerScript.includes("appendTaskLogEntry(logPhase, 'text'"));
+    assert.ok(runnerScript.includes('emitPhase(executionPhase, startMessage, 0)'));
+    assert.ok(runnerScript.includes("upsertPlanMetadata(content, 'Execution Phase'"));
+    assert.ok(runnerScript.includes('upsertPlanMachineMetadata(content'));
+    assert.ok(runnerScript.includes("xstateState: phaseValue"));
 
     writeFileSync(join(task.specsPath, 'spec.md'), '# Add provider settings\n\n## Overview\nImplement settings.\n');
     const planningRunPlan = core.createAutocodeTaskRunPlan({
@@ -539,10 +543,18 @@ async function main() {
       taskId: task.id,
       cli: 'codex',
       bypassPermissions: true,
+      language: 'zh-CN',
     });
     assert.equal(planningRunPlan.phase, 'planning');
     assert.equal(planningRunPlan.command, 'codex');
+    assert.ok(planningRunPlan.args.includes('--json'));
     assert.ok(planningRunPlan.args.includes('--dangerously-bypass-approvals-and-sandbox'));
+    assert.match(planningRunPlan.prompt, /Simplified Chinese/);
+    assert.match(planningRunPlan.prompt, /implementation_plan\.md/);
+    const codexRunnerScript = readFileSync(planningRunPlan.runnerFilePath, 'utf8');
+    assert.ok(codexRunnerScript.includes('processCodexJsonLine'));
+    assert.ok(codexRunnerScript.includes('normalizeCodexTokenUsage'));
+    assert.ok(codexRunnerScript.includes('__TASK_TOKEN_USAGE__'));
     const codingMessages = core.buildAutocodeTaskExecutionMessages({
       specDir: task.specsPath,
       specId: task.specId,
@@ -594,6 +606,27 @@ async function main() {
     assert.equal(taskLogs.phases.planning.entries.length, 2);
     const taskLogsFromSpecDir = core.readAutocodeTaskLogsFromSpecDir(task.specsPath);
     assert.equal(taskLogsFromSpecDir.spec_id, task.id);
+    core.saveAutocodeImplementationPlanSync(task.specsPath, {
+      feature: task.title,
+      status: 'in_progress',
+      executionPhase: 'planning',
+      xstateState: 'planning',
+      phases: [{ id: '1', name: 'Implementation', subtasks: [{ id: '1.1', title: 'Build UI', description: 'Add UI', status: 'in_progress' }] }],
+    });
+    core.updateAutocodeTaskLogPhase({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: task.id,
+      phase: 'coding',
+      status: 'active',
+      message: 'Coding started.',
+    });
+    const stalePhaseLoadedTask = core.loadAutocodeProjectTasks({
+      projectRoot,
+      dataDirName: '.autocode',
+      persistStaleStatusCorrections: false,
+    }).find((candidate) => candidate.id === task.id);
+    assert.equal(stalePhaseLoadedTask.executionProgress.phase, 'coding');
     const salvagedTaskLogs = core.parseAutocodeTaskLogs(
       '{"spec_id":"broken-task","phases":{"coding":{"started_at":"2026-01-01T00:00:00.000Z","entries":[{"timestamp":"2026-01-01T00:00:01.000Z","type":"info","content":"Recovered","phase":"coding"}]}}',
       'fallback-task',
@@ -732,6 +765,30 @@ async function main() {
       }),
       { type: 'USER_RESUMED' },
     );
+    assert.deepEqual(
+      core.resolveAutocodeTaskStartEvent({
+        task: { status: 'in_progress' },
+        currentState: 'planning',
+        planHasSubtasks: true,
+      }),
+      {
+        type: 'CODING_STARTED',
+        subtaskId: 'implementation-plan',
+        subtaskDescription: 'Implementation plan execution',
+      },
+    );
+    assert.deepEqual(
+      core.resolveAutocodeTaskStartEvent({
+        task: { status: 'backlog' },
+        currentState: null,
+        planHasSubtasks: true,
+      }),
+      {
+        type: 'CODING_STARTED',
+        subtaskId: 'implementation-plan',
+        subtaskDescription: 'Implementation plan execution',
+      },
+    );
 
     const fakeCliPath = writeFakeCustomCli(projectRoot);
     const fakeCustomCliCommand = `node "${normalizePath(fakeCliPath)}"`;
@@ -797,6 +854,12 @@ async function main() {
     });
     assert.equal(fakeLogs.phases.planning.status, 'completed');
     assert.equal(fakeLogs.phases.coding.status, 'completed');
+    assert.ok(
+      [
+        ...fakeLogs.phases.planning.entries,
+        ...fakeLogs.phases.coding.entries,
+      ].some((entry) => entry.type === 'text' && entry.content.includes('Fake custom CLI')),
+    );
 
     const fakeDoneTask = core.markAutocodeTaskDone({
       projectRoot,
@@ -805,6 +868,108 @@ async function main() {
     });
     assert.equal(fakeDoneTask.status, 'done');
     assert.equal(fakeDoneTask.executionPhase, 'complete');
+
+    const retryCliPath = writeRetryingPlanCli(projectRoot);
+    const retryCliCommand = `node "${normalizePath(retryCliPath)}"`;
+    const retryTask = core.createAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode',
+      title: 'Retry missing subtasks',
+      description: 'Exercise CLI planning retry when no executable subtasks are written.',
+      metadata: { category: 'testing', workflowMode: 'balanced' },
+    });
+    writeFileSync(
+      join(retryTask.specsPath, 'spec.md'),
+      '# Retry Missing Subtasks Spec\n\nThe implementation plan must be repaired by the CLI runner.\n',
+      'utf8',
+    );
+    const retryRuntime = core.createStartedAutocodeAgentRuntime({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: retryTask.id,
+      cli: 'custom',
+      customCommand: retryCliCommand,
+    });
+    assert.equal(retryRuntime.runtimePlan.mode, 'planning');
+    const retryResult = await core.startAutocodeAgentRuntime(
+      retryRuntime.request,
+      core.createProcessAgentRuntimeAdapter({ process: createSmokeProcessAdapter() }),
+    );
+    assert.equal(retryResult.status, 'completed');
+    const retryPlannedTask = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' })
+      .find((candidate) => candidate.id === retryTask.id);
+    assert.equal(retryPlannedTask.status, 'human_review');
+    assert.equal(retryPlannedTask.reviewReason, 'plan_review');
+    assert.equal(retryPlannedTask.subtasks.length, 1);
+    assert.equal(retryPlannedTask.subtasks[0].title, 'Repair plan on retry');
+    const retryLogs = core.readAutocodeTaskLogs({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: retryTask.id,
+    });
+    assert.ok(
+      retryLogs.phases.planning.entries.some((entry) =>
+        entry.content.includes('CLI finished without creating implementation_plan.md subtasks') &&
+        entry.content.includes('Retrying 1/2'),
+      ),
+    );
+
+    const fakeCodexBinDir = writeFakeCodexCli(projectRoot);
+    const codexUsageTask = core.createAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode',
+      title: 'Track Codex CLI usage',
+      description: 'Exercise Codex JSON usage accounting without a token_count event.',
+      metadata: { category: 'testing', workflowMode: 'balanced' },
+    });
+    writeFileSync(
+      join(codexUsageTask.specsPath, 'spec.md'),
+      '# Track Codex CLI Usage Spec\n\nThe fake Codex CLI should generate a plan and usage data.\n',
+      'utf8',
+    );
+    const codexUsageRuntime = core.createStartedAutocodeAgentRuntime({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: codexUsageTask.id,
+      cli: 'codex',
+      language: 'zh-CN',
+    });
+    assert.equal(codexUsageRuntime.runtimePlan.mode, 'planning');
+    assert.ok(codexUsageRuntime.taskRunPlan.args.includes('--json'));
+    const codexUsageResult = await core.startAutocodeAgentRuntime(
+      codexUsageRuntime.request,
+      core.createProcessAgentRuntimeAdapter({
+        process: createSmokeProcessAdapter({
+          env: {
+            PATH: `${fakeCodexBinDir}${delimiter}${process.env.PATH || ''}`,
+          },
+        }),
+      }),
+    );
+    assert.equal(codexUsageResult.status, 'completed');
+    assert.ok(codexUsageResult.process.message.includes('__TASK_TOKEN_USAGE__'));
+    const codexPlanContent = readFileSync(join(codexUsageTask.specsPath, 'implementation_plan.md'), 'utf8');
+    const codexPlanMetadata = readPlanMachineMetadata(codexPlanContent);
+    assert.deepEqual(codexPlanMetadata.tokenUsage, {
+      promptTokens: 123,
+      completionTokens: 45,
+      totalTokens: 168,
+      thinkingTokens: 12,
+      cacheReadTokens: 7,
+      stepsExecuted: 2,
+      sessionId: 'codex-session-1',
+    });
+    const codexUsageLogs = core.readAutocodeTaskLogs({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: codexUsageTask.id,
+    });
+    assert.ok(
+      codexUsageLogs.phases.planning.entries.some((entry) =>
+        entry.content.includes('模型用量更新：请求 2 次') &&
+        entry.content.includes('总计 168 tokens'),
+      ),
+    );
 
     const directTask = core.createAutocodeTask({
       projectRoot,
@@ -825,8 +990,10 @@ async function main() {
       dataDirName: '.autocode',
       taskId: directTask.id,
       cli: 'codex',
+      model: 'gpt-5.5',
     });
     assert.equal(directStartedRuntime.taskRunPlan.phase, 'direct');
+    assert.deepEqual(directStartedRuntime.taskRunPlan.args, ['exec', '--json', '-m', 'gpt-5.5', '-']);
     assert.ok(readFileSync(directStartedRuntime.taskRunPlan.promptFilePath, 'utf8').includes('directly'));
     assert.deepEqual(
       core.resolveAutocodeTaskStartEvent({
@@ -1216,13 +1383,14 @@ async function main() {
   }
 }
 
-function createSmokeProcessAdapter() {
+function createSmokeProcessAdapter(input = {}) {
   return {
     startProcess(options) {
       const result = spawnSync(options.command, options.args, {
         cwd: options.cwd,
         encoding: 'utf8',
         shell: options.shell,
+        env: input.env ? { ...process.env, ...input.env } : process.env,
       });
       const exitCode = result.status ?? (result.error ? 1 : 0);
       return {
@@ -1237,6 +1405,109 @@ function createSmokeProcessAdapter() {
       };
     },
   };
+}
+
+function readPlanMachineMetadata(content) {
+  const match = /^<!--\s*autocode-plan-meta:\s*(\{.*\})\s*-->\s*$/m.exec(content);
+  assert.ok(match, 'Expected implementation_plan.md to include autocode-plan-meta.');
+  return JSON.parse(match[1]);
+}
+
+function writeFakeCodexCli(projectRoot) {
+  const fakeBinDir = join(projectRoot, 'fake-codex-bin');
+  mkdirSync(fakeBinDir, { recursive: true });
+  const fakeCliPath = join(fakeBinDir, 'fake-codex-cli.cjs');
+  writeFileSync(fakeCliPath, `const { readFileSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+
+const prompt = readFileSync(0, 'utf8');
+const specDir = readPromptField('Spec directory');
+
+if (!specDir) {
+  console.error('Missing Spec directory in prompt.');
+  process.exit(2);
+}
+
+if (!process.argv.includes('--json')) {
+  console.error('Expected Codex CLI to run with --json.');
+  process.exit(3);
+}
+
+writeFileSync(
+  join(specDir, 'implementation_plan.md'),
+  [
+    '# Implementation Plan',
+    '',
+    'Feature: Track Codex CLI usage',
+    'Workflow: feature',
+    'Status: planning',
+    '',
+    '- [ ] 1. Implementation',
+    '',
+    '  - [ ] 1.1 Persist Codex usage',
+    '    - Verify usage events update plan metadata and task logs.',
+    '    - _Files: libs/core/src/tasks/cli-runner.ts_',
+    '    - _Verification: npm --workspace @autocode/core run smoke_',
+    '',
+  ].join('\\n'),
+  'utf8',
+);
+
+emit({ type: 'agent_message', message: 'Fake Codex generated implementation plan.' });
+emit({
+  msg: {
+    type: 'usage',
+    usage: {
+      inputTokens: 10,
+      outputTokens: 4,
+      totalTokens: 14,
+    },
+  },
+  sessionId: 'codex-session-1',
+});
+emit({
+  type: 'response_completed',
+  session_id: 'codex-session-1',
+  response: {
+    usage: {
+      input_tokens: 123,
+      output_tokens: 45,
+      total_tokens: 168,
+      reasoning_output_tokens: 12,
+      cached_input_tokens: 7,
+    },
+  },
+});
+
+function emit(event) {
+  process.stdout.write(JSON.stringify(event) + '\\n');
+}
+
+function readPromptField(label) {
+  const prefix = label + ':';
+  const line = prompt.split(/\\r?\\n/).find((item) => item.startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : '';
+}
+`, 'utf8');
+
+  const posixShimPath = join(fakeBinDir, 'codex');
+  writeFileSync(posixShimPath, `#!/usr/bin/env sh
+SCRIPT_DIR="$(CDPATH= cd -- "$(dirname -- "$0")" && pwd)"
+exec node "$SCRIPT_DIR/fake-codex-cli.cjs" "$@"
+`, 'utf8');
+  try {
+    chmodSync(posixShimPath, 0o755);
+  } catch {
+    // Windows does not need executable bits for the .cmd shim below.
+  }
+
+  writeFileSync(
+    join(fakeBinDir, 'codex.cmd'),
+    '@echo off\r\nnode "%~dp0fake-codex-cli.cjs" %*\r\n',
+    'utf8',
+  );
+
+  return fakeBinDir;
 }
 
 function writeFakeCustomCli(projectRoot) {
@@ -1255,6 +1526,7 @@ if (!specDir) {
 }
 
 if (prompt.includes('Create the initial task specification artifacts')) {
+  console.log('Fake custom CLI: generating spec artifacts.');
   writeFileSync(
     join(specDir, 'spec.md'),
     [
@@ -1271,11 +1543,13 @@ if (prompt.includes('Create the initial task specification artifacts')) {
 }
 
 if (prompt.includes('Create or repair the implementation plan')) {
+  console.log('Fake custom CLI: generating implementation plan.');
   writePlan('pending');
   process.exit(0);
 }
 
 if (prompt.includes('Implement the task according to the existing spec and implementation plan')) {
+  console.log('Fake custom CLI: completing implementation plan.');
   writePlan('completed');
   writeFileSync(
     join(specDir, 'direct_summary.md'),
@@ -1286,6 +1560,7 @@ if (prompt.includes('Implement the task according to the existing spec and imple
 }
 
 if (prompt.includes('Implement the requested task directly')) {
+  console.log('Fake custom CLI: running direct implementation.');
   writeFileSync(
     join(specDir, 'direct_summary.md'),
     'Fake custom CLI completed the direct task.\\n',
@@ -1329,6 +1604,74 @@ function writePlan(status) {
     ].join('\\n'),
     'utf8',
   );
+}
+`, 'utf8');
+  return fakeCliPath;
+}
+
+function writeRetryingPlanCli(projectRoot) {
+  const fakeCliPath = join(projectRoot, 'fake-retrying-plan-cli.cjs');
+  writeFileSync(fakeCliPath, `const { readFileSync, writeFileSync } = require('node:fs');
+const { join } = require('node:path');
+
+const prompt = readFileSync(0, 'utf8');
+const specDir = readPromptField('Spec directory');
+
+if (!specDir) {
+  console.error('Missing Spec directory in prompt.');
+  process.exit(2);
+}
+
+if (!prompt.includes('Create or repair the implementation plan')) {
+  console.error('Unexpected retry smoke prompt.');
+  process.exit(3);
+}
+
+if (!prompt.includes('Retry Required')) {
+  console.log('Retry smoke CLI: writing invalid top-level-only plan.');
+  writeFileSync(
+    join(specDir, 'implementation_plan.md'),
+    [
+      '# Implementation Plan',
+      '',
+      'Feature: Retry missing subtasks',
+      'Workflow: feature',
+      'Status: pending',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+    ].join('\\n'),
+    'utf8',
+  );
+  process.exit(0);
+}
+
+console.log('Retry smoke CLI: repairing plan with executable subtask.');
+writeFileSync(
+  join(specDir, 'implementation_plan.md'),
+  [
+    '# Implementation Plan',
+    '',
+    'Feature: Retry missing subtasks',
+    'Workflow: feature',
+    'Status: pending',
+    '',
+    '- [ ] 1. Implementation',
+    '',
+    '  - [ ] 1.1 Repair plan on retry',
+    '    - Replace the invalid top-level-only plan with an executable subtask.',
+    '    - _Files to modify: implementation_plan.md_',
+    '    - _Verification: npm --workspace @autocode/core run smoke_',
+    '',
+  ].join('\\n'),
+  'utf8',
+);
+process.exit(0);
+
+function readPromptField(label) {
+  const prefix = label + ':';
+  const line = prompt.split(/\\r?\\n/).find((item) => item.startsWith(prefix));
+  return line ? line.slice(prefix.length).trim() : '';
 }
 `, 'utf8');
   return fakeCliPath;

@@ -28,12 +28,38 @@ let ipcMain: Electron.IpcMain | undefined;
 const requireFromModule = createRequire(import.meta.url);
 const isTestEnvironment = process.env.VITEST === 'true' || process.env.NODE_ENV === 'test';
 
-if (isMainThread && !isTestEnvironment) {
-  // Dynamic imports to avoid executing Electron code in worker threads
-  Sentry = requireFromModule('@sentry/electron/main') as typeof import('@sentry/electron/main');
-  const electronModule = requireFromModule('electron') as typeof import('electron');
-  app = electronModule.app;
-  ipcMain = electronModule.ipcMain;
+function loadElectronMainApis(): boolean {
+  if (!isMainThread || isTestEnvironment) {
+    return false;
+  }
+  if (app && ipcMain) {
+    return true;
+  }
+  try {
+    const electronModule = requireFromModule('electron') as typeof import('electron');
+    app = electronModule.app;
+    ipcMain = electronModule.ipcMain;
+    return Boolean(app && ipcMain);
+  } catch (error) {
+    console.warn('[Sentry] Electron main APIs unavailable - error reporting disabled', error);
+    return false;
+  }
+}
+
+function loadSentryMainSdk(): boolean {
+  if (!isMainThread || isTestEnvironment) {
+    return false;
+  }
+  if (Sentry) {
+    return true;
+  }
+  try {
+    Sentry = requireFromModule('@sentry/electron/main') as typeof import('@sentry/electron/main');
+    return true;
+  } catch (error) {
+    console.warn('[Sentry] Main process SDK unavailable - error reporting disabled', error);
+    return false;
+  }
 }
 import { readSettingsFile } from './settings-utils';
 import { DEFAULT_APP_SETTINGS } from '../shared/constants';
@@ -127,7 +153,7 @@ let cachedProfilesSampleRate: number = 0;
  */
 export function initSentryMain(): void {
   // Skip initialization in worker threads - Sentry and Electron APIs are unavailable
-  if (!Sentry || !app || !ipcMain) {
+  if (!loadElectronMainApis() || !app || !ipcMain) {
     return;
   }
 
@@ -150,26 +176,28 @@ export function initSentryMain(): void {
     console.log('[Sentry] To enable: set SENTRY_DSN environment variable');
   }
 
-  Sentry.init({
-    dsn: cachedDsn,
-    environment: app.isPackaged ? 'production' : 'development',
-    release: `autocode@${app.getVersion()}`,
+  if (hasDsn && loadSentryMainSdk() && Sentry) {
+    Sentry.init({
+      dsn: cachedDsn,
+      environment: app.isPackaged ? 'production' : 'development',
+      release: `autocode@${app.getVersion()}`,
 
-    beforeSend(event: ErrorEvent) {
-      if (!sentryEnabledState) {
-        return null;
-      }
-      // Process event with shared privacy utility
-      return processEvent(event as SentryErrorEvent) as ErrorEvent;
-    },
+      beforeSend(event: ErrorEvent) {
+        if (!sentryEnabledState) {
+          return null;
+        }
+        // Process event with shared privacy utility
+        return processEvent(event as SentryErrorEvent) as ErrorEvent;
+      },
 
-    // Sample rates from environment variables (default: 10% in production, 0 in dev)
-    tracesSampleRate: cachedTracesSampleRate,
-    profilesSampleRate: cachedProfilesSampleRate,
+      // Sample rates from environment variables (default: 10% in production, 0 in dev)
+      tracesSampleRate: cachedTracesSampleRate,
+      profilesSampleRate: cachedProfilesSampleRate,
 
-    // Only enable if we have a DSN and are in production (or SENTRY_DEV is set)
-    enabled: shouldEnable,
-  });
+      // Only enable if we have a DSN and are in production (or SENTRY_DEV is set)
+      enabled: shouldEnable,
+    });
+  }
 
   // Listen for settings changes from renderer process
   ipcMain.on(IPC_CHANNELS.SENTRY_STATE_CHANGED, (_event, enabled: boolean) => {
@@ -190,7 +218,7 @@ export function initSentryMain(): void {
     };
   });
 
-  if (hasDsn) {
+  if (hasDsn && Sentry) {
     console.log(`[Sentry] Main process initialized (enabled: ${sentryEnabledState}, traces: ${cachedTracesSampleRate}, profiles: ${cachedProfilesSampleRate})`);
   }
 }

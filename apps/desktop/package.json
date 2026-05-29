@@ -170,7 +170,8 @@
   "build": {
     "appId": "com.autocode.app",
     "productName": "Autocode",
-    "npmRebuild": false,
+    "npmRebuild": true,
+    "beforeBuild": "scripts/before-build.cjs",
     "artifactName": "${productName}-${version}-${platform}-${arch}.${ext}",
     "publish": [
       {
@@ -214,6 +215,14 @@
       {
         "from": "../../node_modules/detect-libc",
         "to": "node_modules/detect-libc"
+      },
+      {
+        "from": "../../node_modules/@lydell/node-pty",
+        "to": "node_modules/@lydell/node-pty"
+      },
+      {
+        "from": "../../node_modules/@lydell/node-pty-win32-x64",
+        "to": "node_modules/@lydell/node-pty-win32-x64"
       }
     ],
     "mac": {

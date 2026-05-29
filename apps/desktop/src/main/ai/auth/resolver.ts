@@ -343,19 +343,6 @@ export async function resolveAuthFromQueue(
     const resolvedModelId = modelSpec?.modelId ?? requestedModel;
     const reasoningConfig = modelSpec?.reasoning ?? { type: 'none' as const };
 
-    // OpenAI OAuth accounts authenticate through the ChatGPT Codex subscription flow.
-    // Agentic sessions depend on stable multi-step tool calling, which is currently
-    // only reliable for Codex-class models on that transport. Skip non-Codex model
-    // IDs here so the queue can fall through to API-key or openai-compatible accounts.
-    if (
-      options?.executionMode === 'agentic' &&
-      account.authType === 'oauth' &&
-      account.provider === 'openai' &&
-      !isCodexModelId(resolvedModelId)
-    ) {
-      continue;
-    }
-
     // Resolve credentials for this account
     const auth = await resolveCredentialsForAccount(account, supportedProvider);
     if (!auth) continue;
@@ -391,17 +378,6 @@ export function buildDefaultQueueConfig(
     queue: queueConfig.queue as ProviderAccount[],
     requestedModel: queueConfig.requestedModel,
   };
-}
-
-/**
- * Resolve the correct Z.AI base URL based on billing model.
- * Coding Plan (subscription) → /api/coding/paas/v4
- * Usage-Based (pay-per-use)  → /api/paas/v4
- *
- * If the account has an explicit baseUrl set, it takes precedence.
- */
-function isCodexModelId(modelId: string): boolean {
-  return modelId.toLowerCase().includes('codex');
 }
 
 /**

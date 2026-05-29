@@ -58,6 +58,7 @@ export interface CreateAutocodeAgentRuntimeStartPlanInput extends AutocodeTaskPa
   taskId: string;
   projectId?: string;
   baseBranch?: string;
+  forcePlanning?: boolean;
 }
 
 export interface StartedAutocodeTaskRun {
@@ -69,7 +70,10 @@ export interface StartedAutocodeTaskRun {
 export interface CreateStartedAutocodeAgentRuntimeInput extends CreateAutocodeAgentRuntimeStartPlanInput {
   cli: CreateAutocodeTaskRunPlanInput['cli'];
   customCommand?: string;
+  model?: string;
   bypassPermissions?: boolean;
+  language?: CreateAutocodeTaskRunPlanInput['language'];
+  forcePlanning?: boolean;
 }
 
 export interface StartedAutocodeAgentRuntime {
@@ -172,8 +176,10 @@ export function createStartedAutocodeAgentRuntime(
     taskId: input.taskId,
     cli: input.cli,
     customCommand: input.customCommand,
+    model: input.model,
     bypassPermissions: input.bypassPermissions,
     phase: mapAutocodeAgentRuntimeModeToTaskRunPhase(runtimePlan.mode),
+    language: input.language,
   });
 
   return {
@@ -231,6 +237,7 @@ export function createAutocodeAgentRuntimeStartPlan(
     hasSpec: existsSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile)),
     planHasSubtasks: hasAutocodePlanSubtasks(join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan)),
     baseBranch: input.baseBranch,
+    forcePlanning: input.forcePlanning,
   });
 }
 

@@ -9,7 +9,13 @@ import {
   loadAutocodeImplementationPlanSync,
   saveAutocodeImplementationPlanSync,
 } from './plan-store.js';
+import {
+  loadAutocodeTaskRequirementsSync,
+  saveAutocodeTaskRequirementsSync,
+  type AutocodeTaskRequirements,
+} from './requirements-store.js';
 import type { MutableAutocodePlan } from './plan-file.js';
+export type { AutocodeTaskRequirements } from './requirements-store.js';
 
 export type AutocodeTaskStatus =
   | 'backlog'
@@ -69,11 +75,6 @@ export interface AutocodeTaskMetadata {
   useWorktree?: boolean;
   pushNewBranches?: boolean;
   [key: string]: unknown;
-}
-
-export interface AutocodeTaskRequirements extends Record<string, unknown> {
-  task_description?: string;
-  workflow_type?: string;
 }
 
 export interface AutocodeTaskCreationContext {
@@ -276,8 +277,8 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
 
   saveAutocodeImplementationPlanSync(specDir, plan as MutableAutocodePlan);
   writeJson(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata), metadata);
-  writeJson(
-    join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements),
+  saveAutocodeTaskRequirementsSync(
+    specDir,
     buildAutocodeTaskRequirements(description, metadata, {
       ...input.requirements,
       ...prepared?.requirements,
@@ -398,7 +399,7 @@ export function slugifySpecTitle(title: string): string {
 function readAutocodeTask(input: AutocodeTaskPathsInput & { specId: string }): AutocodeTask | null {
   const specDir = getAutocodeSpecDir(input);
   const plan = loadAutocodeImplementationPlanSync(specDir) as ImplementationPlanFile | null;
-  const requirements = readJson<Record<string, unknown>>(join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements));
+  const requirements = loadAutocodeTaskRequirementsSync(specDir);
   const metadata = readJson<AutocodeTaskMetadata>(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata)) ?? undefined;
   const specTitle = readSpecTitle(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
 

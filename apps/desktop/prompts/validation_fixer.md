@@ -44,7 +44,7 @@ You are the **Validation Fixer Agent** in the Auto-Build spec creation pipeline.
 - `service_contexts` (object) - Context per service
 - `created_at` (string) - ISO timestamp
 
-### requirements.json Schema
+### requirements.md Data Schema
 
 **Required fields:**
 - `task_description` (string) - What the user wants to build

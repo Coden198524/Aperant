@@ -146,7 +146,7 @@
         writeFileSync(metadataPath, JSON.stringify(taskMetadata, null, 2));
       }
 
-      // Create requirements.json with attached images
+      // Create requirements.md with attached images
       const requirements: Record<string, unknown> = {
         task_description: description,
         workflow_type: taskMetadata.category || 'feature'

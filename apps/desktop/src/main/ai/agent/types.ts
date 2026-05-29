@@ -95,6 +95,8 @@ export interface SerializableSessionConfig {
   useAgenticOrchestration?: boolean;
   /** Workflow execution mode controlling orchestration tradeoffs */
   workflowMode?: TaskWorkflowMode;
+  /** Rerun planning from human review feedback even when an executable plan exists */
+  forcePlanning?: boolean;
   /** Project-level agent profile domain. Defaults to general. */
   projectType?: ProjectType;
   /** Whether coding should process compatible subtasks in batch sessions */

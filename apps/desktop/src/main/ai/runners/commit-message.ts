@@ -21,10 +21,10 @@ import { createSimpleClient } from '../client/factory';
 import {
   getAutocodeSpecDir,
   loadAutocodeImplementationPlanSync,
+  loadAutocodeTaskRequirementsSync,
   type ModelShorthand,
   type ThinkingLevel,
 } from '@autocode/core';
-import { safeParseJson } from '../../utils/json-repair';
 
 // =============================================================================
 // Constants
@@ -134,20 +134,17 @@ function getSpecContext(specDir: string): SpecContext {
     }
   }
 
-  // Try to read requirements.json for metadata
-  const reqFile = join(specDir, 'requirements.json');
-  if (existsSync(reqFile)) {
-    const reqData = safeParseJson<Record<string, unknown>>(readFileSync(reqFile, 'utf-8'));
-    if (reqData) {
-      if (!context.title && reqData.feature) {
-        context.title = String(reqData.feature);
-      }
-      if (reqData.workflow_type) {
-        context.category = String(reqData.workflow_type);
-      }
-      if (reqData.task_description && !context.description) {
-        context.description = String(reqData.task_description).slice(0, 200);
-      }
+  // Try to read requirements.md for metadata
+  const reqData = loadAutocodeTaskRequirementsSync(specDir);
+  if (reqData) {
+    if (!context.title && reqData.feature) {
+      context.title = String(reqData.feature);
+    }
+    if (reqData.workflow_type) {
+      context.category = String(reqData.workflow_type);
+    }
+    if (reqData.task_description && !context.description) {
+      context.description = String(reqData.task_description).slice(0, 200);
     }
   }
 

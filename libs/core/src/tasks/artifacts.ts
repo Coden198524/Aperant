@@ -5,7 +5,7 @@ export const AUTOCODE_SPECS_DIR_NAME = 'specs';
 export const AUTOCODE_TASK_ARTIFACTS = {
   implementationPlan: 'implementation_plan.md',
   specFile: 'spec.md',
-  requirements: 'requirements.json',
+  requirements: 'requirements.md',
   taskMetadata: 'task_metadata.json',
   taskLogs: 'task_logs.json',
   directSummary: 'direct_summary.md',

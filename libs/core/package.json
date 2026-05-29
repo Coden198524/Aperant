@@ -57,6 +57,11 @@
       "import": "./dist/tasks/plan-store.js",
       "default": "./dist/tasks/plan-store.js"
     },
+    "./tasks/requirements-store": {
+      "types": "./dist/tasks/requirements-store.d.ts",
+      "import": "./dist/tasks/requirements-store.js",
+      "default": "./dist/tasks/requirements-store.js"
+    },
     "./tasks/worktree-paths": {
       "types": "./dist/tasks/worktree-paths.d.ts",
       "import": "./dist/tasks/worktree-paths.js",

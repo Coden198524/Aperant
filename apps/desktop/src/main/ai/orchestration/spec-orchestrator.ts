@@ -20,7 +20,12 @@ import { EventEmitter } from 'events';
 
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import { AUTOCODE_TASK_ARTIFACTS, isAutocodeProjectDataPath, type Phase } from '@autocode/core';
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  isAutocodeProjectDataPath,
+  saveAutocodeTaskRequirementsSync,
+  type Phase,
+} from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   validateJsonFile,
@@ -129,7 +134,7 @@ const GAME_MMO_DOCUMENTATION_FOCUS = [
 /** Maps each phase to the output files it typically produces */
 const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
   discovery: ['context.json'],
-  requirements: ['requirements.json'],
+  requirements: [AUTOCODE_TASK_ARTIFACTS.requirements],
   complexity_assessment: ['complexity_assessment.json'],
   research: ['research.json'],
   context: ['context.json'],
@@ -141,7 +146,7 @@ const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
 
 const STRUCTURED_JSON_PHASE_OUTPUTS: Partial<Record<SpecPhase, string>> = {
   discovery: 'context.json',
-  requirements: 'requirements.json',
+  requirements: AUTOCODE_TASK_ARTIFACTS.requirements,
   research: 'research.json',
   context: 'context.json',
 };
@@ -489,7 +494,7 @@ function buildConstraintReminder(task: string, language?: SupportedLanguage): st
 const COMMON_LOW_VALUE_ROOT_FILES = new Set([
   'task_logs.json',
   'task_metadata.json',
-  'requirements.json',
+  AUTOCODE_TASK_ARTIFACTS.requirements,
   AUTOCODE_TASK_ARTIFACTS.implementationPlan,
   'spec.md',
 ]);
@@ -1261,14 +1266,21 @@ function buildStructuredJsonOutputRetryPrompt(
     ],
   };
 
+  const finalJsonTarget = fileName === AUTOCODE_TASK_ARTIFACTS.requirements
+    ? `${fileName} data`
+    : fileName;
+  const diskFormat = fileName === AUTOCODE_TASK_ARTIFACTS.requirements
+    ? 'Markdown'
+    : 'JSON';
+
   return [
-    `CRITICAL - RETURN ${fileName} AS FINAL JSON`,
+    `CRITICAL - RETURN ${finalJsonTarget} AS FINAL JSON`,
     '',
     'Your previous structured output could not be parsed or validated.',
-    'Do NOT call the Write tool for this JSON file.',
+    `Do NOT call the Write tool for this ${diskFormat} file.`,
     '',
-    `Return the complete ${fileName} content as the final response JSON object.`,
-    'The orchestrator will validate that final JSON and write it to disk.',
+    `Return the complete ${finalJsonTarget} as the final response JSON object.`,
+    `The orchestrator will validate that final JSON and write ${fileName} to disk as ${diskFormat}.`,
     '',
     'Rules for the retry:',
     `- Do NOT call Write for ${normalizedSpecDir}/${fileName}.`,
@@ -1300,6 +1312,10 @@ async function writeStructuredJsonOutput(
   fileName: string,
   data: unknown,
 ): Promise<void> {
+  if (fileName === AUTOCODE_TASK_ARTIFACTS.requirements) {
+    saveAutocodeTaskRequirementsSync(specDir, data as never);
+    return;
+  }
   await writeFile(join(specDir, fileName), `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
 }
 
@@ -2608,23 +2624,23 @@ export class SpecOrchestrator extends EventEmitter {
           errors.push(detail);
           this.emitTyped('log', `Phase ${phase} output validation failed (attempt ${attempt + 1}): ${detail}`);
 
-          if (phase === 'requirements' && missingFiles.includes('requirements.json') && attempt >= maxPhaseRetries) {
+          if (phase === 'requirements' && missingFiles.includes(AUTOCODE_TASK_ARTIFACTS.requirements) && attempt >= maxPhaseRetries) {
             try {
               await writeStructuredJsonOutput(
                 this.config.specDir,
-                'requirements.json',
+                AUTOCODE_TASK_ARTIFACTS.requirements,
                 buildFallbackRequirementsOutput(this.config.taskDescription, this.assessment?.complexity),
               );
               const remainingMissing = await this.validatePhaseOutputs(phase);
               if (remainingMissing.length === 0) {
-                this.emitTyped('log', 'Wrote fallback requirements.json from task description');
+                this.emitTyped('log', `Wrote fallback ${AUTOCODE_TASK_ARTIFACTS.requirements} from task description`);
                 errors.pop();
                 const phaseResult: SpecPhaseResult = { phase, success: true, errors: [], retries: attempt };
                 this.emitTyped('phase-complete', phase, phaseResult);
                 return phaseResult;
               }
             } catch (fallbackErr) {
-              this.emitTyped('log', `Failed to write fallback requirements.json: ${fallbackErr}`);
+              this.emitTyped('log', `Failed to write fallback ${AUTOCODE_TASK_ARTIFACTS.requirements}: ${fallbackErr}`);
             }
           }
 

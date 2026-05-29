@@ -31,7 +31,7 @@ const DEFAULT_TARGET_WORDS = 300;
 /** Maps phases to the output files they produce */
 const PHASE_OUTPUT_FILES: Record<string, string[]> = {
   discovery: ['context.json'],
-  requirements: ['requirements.json'],
+  requirements: ['requirements.md'],
   research: ['research.json'],
   context: ['context.json'],
   quick_spec: ['spec.md'],

@@ -809,4 +809,32 @@ describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
       expect(envArg.CLAUDE_CODE_OAUTH_TOKEN).toBeFalsy();
     });
   });
+
+  describe('Execution phase initialization', () => {
+    it('should start task-execution child processes in coding phase', async () => {
+      vi.mocked(profileService.getAPIProfileEnv).mockResolvedValue({});
+      const progressEvents: Array<{ phase?: string; completedPhases?: string[] }> = [];
+      emitter.on('execution-progress', (_taskId, progress) => {
+        progressEvents.push(progress as { phase?: string; completedPhases?: string[] });
+      });
+
+      await processManager.spawnProcess('task-1', '/fake/cwd', ['run.py'], {}, 'task-execution');
+
+      expect(progressEvents[0]?.phase).toBe('coding');
+      expect(progressEvents[0]?.completedPhases).toEqual(['planning']);
+    });
+
+    it('should start qa-process child processes in qa_review phase', async () => {
+      vi.mocked(profileService.getAPIProfileEnv).mockResolvedValue({});
+      const progressEvents: Array<{ phase?: string; completedPhases?: string[] }> = [];
+      emitter.on('execution-progress', (_taskId, progress) => {
+        progressEvents.push(progress as { phase?: string; completedPhases?: string[] });
+      });
+
+      await processManager.spawnProcess('task-1', '/fake/cwd', ['run.py'], {}, 'qa-process');
+
+      expect(progressEvents[0]?.phase).toBe('qa_review');
+      expect(progressEvents[0]?.completedPhases).toEqual(['planning', 'coding']);
+    });
+  });
 });

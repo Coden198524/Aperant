@@ -27,7 +27,7 @@ In procedural spec phases, work directly with the tools available in the current
 
 ## WORKFLOW
 
-1. Read the kickoff message and available context files: `requirements.json`, `context.json`, `project_index.json`, and prior phase outputs if present.
+1. Read the kickoff message and available context files: `requirements.md`, `context.json`, `project_index.json`, and prior phase outputs if present.
 2. Classify the task as simple, standard, or complex and decide which MMO domains need explicit coverage.
 3. Cover only the domains that matter in the spec and plan. Typical areas:
    - system design for gameplay loops, progression, economy, quests, rewards, and content constraints

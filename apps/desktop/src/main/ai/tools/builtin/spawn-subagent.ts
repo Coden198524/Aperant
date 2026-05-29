@@ -118,7 +118,7 @@ export const spawnSubagentTool = Tool.define({
 Available subagent types:
 - complexity_assessor: Assess task complexity (simple/standard/complex). Returns structured JSON.
 - spec_discovery: Analyze project structure, tech stack, conventions. Writes context.json.
-- spec_gatherer: Gather and validate requirements from task description. Writes requirements.json.
+- spec_gatherer: Gather and validate requirements from task description. Writes requirements.md.
 - spec_researcher: Research implementation approaches, external APIs, libraries. Writes research.json.
 - spec_writer: Write the specification (spec.md) and implementation plan. Writes files.
 - spec_critic: Review spec for completeness, technical feasibility, gaps.

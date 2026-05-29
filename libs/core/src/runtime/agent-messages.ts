@@ -2,6 +2,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
+import { loadAutocodeTaskRequirementsSync } from '../tasks/requirements-store.js';
 
 export type AutocodeAgentMessageRole = 'user' | 'assistant';
 
@@ -30,6 +31,7 @@ export interface BuildAutocodeRuntimeMessagesInput {
   projectRoot: string;
   dataDirName?: string;
   language?: AutocodeAgentLanguage;
+  forcePlanning?: boolean;
 }
 
 const DIRECT_TASK_TEXT_LIMIT = 6000;
@@ -83,7 +85,6 @@ export function buildAutocodeDirectTaskExecutionMessages(
 ): AutocodeAgentMessage[] {
   const parts: string[] = [];
   const planPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
-  const requirementsPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.requirements);
   const metadataPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
   let planDescription = '';
   let requestDescriptionFound = false;
@@ -122,10 +123,7 @@ export function buildAutocodeDirectTaskExecutionMessages(
     planDescription = plan.description;
   }
 
-  const requirements = readJson<{
-    task_description?: string;
-    attached_images?: Array<{ filename?: string; path?: string }>;
-  }>(requirementsPath);
+  const requirements = loadAutocodeTaskRequirementsSync(input.specDir);
   if (requirements?.task_description) {
     requestDescriptionFound = true;
     appendLimited('Request', requirements.task_description);
@@ -182,6 +180,17 @@ export function buildAutocodeTaskExecutionMessages(
   parts.push('');
   appendProjectDocsReference(parts, input.projectRoot, input.dataDirName);
 
+  const humanInputPath = join(input.specDir, 'HUMAN_INPUT.md');
+  const humanInputContent = readText(humanInputPath);
+  if (humanInputContent !== null) {
+    parts.push('## Human Review Input (HUMAN_INPUT.md)');
+    parts.push('');
+    parts.push('```markdown');
+    parts.push(humanInputContent);
+    parts.push('```');
+    parts.push('');
+  }
+
   const specPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
   const specContent = readText(specPath);
   if (specContent !== null) {
@@ -194,15 +203,23 @@ export function buildAutocodeTaskExecutionMessages(
   const planPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
   const planContent = readText(planPath);
   if (planContent !== null) {
-    parts.push(`## Implementation Plan (${AUTOCODE_TASK_ARTIFACTS.implementationPlan})`);
+    parts.push(input.forcePlanning
+      ? `## Previous Implementation Plan (${AUTOCODE_TASK_ARTIFACTS.implementationPlan})`
+      : `## Implementation Plan (${AUTOCODE_TASK_ARTIFACTS.implementationPlan})`);
     parts.push('');
     parts.push('```markdown');
     parts.push(planContent);
     parts.push('```');
     parts.push('');
-    parts.push(`Resume implementing the pending/in-progress subtasks. Do NOT redo completed subtasks. Update each subtask status to "completed" in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} after finishing it.`);
+    if (input.forcePlanning) {
+      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} now. Treat the existing plan as the previous draft, address the Human Review Input, and overwrite the plan with an updated OpenSpec-style Markdown checklist. Do not begin coding in this planning pass.`);
+    } else {
+      parts.push(`Resume implementing the pending/in-progress subtasks. Do NOT redo completed subtasks. Update each subtask status to "completed" in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} after finishing it.`);
+    }
   } else {
-    parts.push(`No implementation plan exists yet. Start by creating ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, then implement each subtask.`);
+    parts.push(input.forcePlanning
+      ? `No implementation plan exists yet. Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, addressing the Human Review Input if present. Do not begin coding in this planning pass.`
+      : `No implementation plan exists yet. Start by creating ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, then implement each subtask.`);
   }
 
   return [{ role: 'user', content: parts.join('\n') }];

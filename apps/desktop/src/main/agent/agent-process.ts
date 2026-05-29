@@ -48,6 +48,53 @@ function getInitialPhaseForProcess(processType: ProcessType): ExecutionProgressD
   }
 }
 
+function parseTaskTokenUsage(line: string): TokenUsage | null {
+  const marker = '__TASK_TOKEN_USAGE__:';
+  const markerIndex = line.indexOf(marker);
+  if (markerIndex < 0) {
+    return null;
+  }
+
+  const jsonText = line.slice(markerIndex + marker.length).trim();
+  if (!jsonText) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(jsonText) as Partial<TokenUsage>;
+    const promptTokens = readPositiveNumber(parsed.promptTokens);
+    const completionTokens = readPositiveNumber(parsed.completionTokens);
+    const totalTokens = readPositiveNumber(parsed.totalTokens);
+    if (!promptTokens && !completionTokens && !totalTokens) {
+      return null;
+    }
+
+    return {
+      promptTokens,
+      completionTokens,
+      totalTokens,
+      ...(readOptionalPositiveNumber(parsed.thinkingTokens) ? { thinkingTokens: readOptionalPositiveNumber(parsed.thinkingTokens) } : {}),
+      ...(readOptionalPositiveNumber(parsed.cacheReadTokens) ? { cacheReadTokens: readOptionalPositiveNumber(parsed.cacheReadTokens) } : {}),
+      ...(readOptionalPositiveNumber(parsed.cacheCreationTokens) ? { cacheCreationTokens: readOptionalPositiveNumber(parsed.cacheCreationTokens) } : {}),
+      ...(readOptionalPositiveNumber(parsed.stepsExecuted) ? { stepsExecuted: readOptionalPositiveNumber(parsed.stepsExecuted) } : {}),
+      ...(parsed.estimated === true ? { estimated: true } : {}),
+      ...(typeof parsed.sessionId === 'string' && parsed.sessionId.trim() ? { sessionId: parsed.sessionId.trim() } : {}),
+    };
+  } catch {
+    return null;
+  }
+}
+
+function readPositiveNumber(value: unknown): number {
+  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : 0;
+  return Number.isFinite(number) && number > 0 ? number : 0;
+}
+
+function readOptionalPositiveNumber(value: unknown): number | undefined {
+  const number = readPositiveNumber(value);
+  return number > 0 ? number : undefined;
+}
+
 /**
  * Mapping of CLI tools to their environment variable names
  * This ensures type safety - tools cannot be mismatched with env vars.
@@ -642,7 +689,7 @@ export class AgentProcessManager {
       return; // Do not proceed with this spawn
     }
 
-    let currentPhase: ExecutionProgressData['phase'] = isSpecRunner ? 'planning' : 'planning';
+    let currentPhase: ExecutionProgressData['phase'] = getInitialPhaseForProcess(processType);
     let phaseProgress = 0;
     let currentSubtask: string | undefined;
     let lastMessage: string | undefined;
@@ -652,7 +699,11 @@ export class AgentProcessManager {
     let sequenceNumber = 0;
     // FIX (ACS-203): Track completed phases to prevent phase overlaps
     // When a phase completes, it's added to this array before transitioning to the next phase
-    const completedPhases: CompletablePhase[] = [];
+    const completedPhases: CompletablePhase[] = currentPhase === 'qa_review'
+      ? ['planning', 'coding']
+      : currentPhase === 'coding'
+        ? ['planning']
+        : [];
 
     this.emitter.emit('execution-progress', taskId, {
       phase: currentPhase,
@@ -682,6 +733,11 @@ export class AgentProcessManager {
       if (taskEvent) {
         console.log(`[AgentProcess:${taskId}] Parsed task event:`, taskEvent.type, taskEvent);
         this.emitter.emit('task-event', taskId, taskEvent, projectId);
+      }
+
+      const tokenUsage = parseTaskTokenUsage(line);
+      if (tokenUsage) {
+        this.emitter.emit('task-token-usage', taskId, tokenUsage, projectId);
       }
 
       const phaseUpdate = this.events.parseExecutionPhase(line, currentPhase, isSpecRunner);
@@ -761,7 +817,9 @@ export class AgentProcessManager {
 
       for (const line of lines) {
         if (line.trim()) {
-          this.emitter.emit('log', taskId, line + '\n', projectId);
+          if (!line.includes('__TASK_TOKEN_USAGE__')) {
+            this.emitter.emit('log', taskId, line + '\n', projectId);
+          }
           processLog(line);
           if (isDebug) {
             console.log(`[Agent:${taskId}] ${line}`);
@@ -782,7 +840,9 @@ export class AgentProcessManager {
 
     childProcess.on('exit', (code: number | null) => {
       if (stdoutBuffer.trim()) {
-        this.emitter.emit('log', taskId, stdoutBuffer + '\n', projectId);
+        if (!stdoutBuffer.includes('__TASK_TOKEN_USAGE__')) {
+          this.emitter.emit('log', taskId, stdoutBuffer + '\n', projectId);
+        }
         processLog(stdoutBuffer);
       }
       if (stderrBuffer.trim()) {

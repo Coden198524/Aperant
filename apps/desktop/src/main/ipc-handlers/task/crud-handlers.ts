@@ -7,6 +7,8 @@ import {
   getAutocodeRoadmapFilePath,
   getAutocodeSpecDir,
   isAutocodeProjectDocType,
+  loadAutocodeTaskRequirementsSync,
+  saveAutocodeTaskRequirementsSync,
   type AutocodeTask,
   type AutocodeProjectDocType,
   type AutocodeTaskMetadata,
@@ -662,23 +664,22 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
             console.error('Failed to update task_metadata.json:', err);
           }
 
-          // Update requirements.json if it exists
-          const requirementsPath = path.join(specDir, 'requirements.json');
+          // Update requirements.md if it exists
           try {
-            const requirementsContent = readFileSync(requirementsPath, 'utf-8');
-            const requirements = JSON.parse(requirementsContent);
+            const requirements = loadAutocodeTaskRequirementsSync(specDir);
 
-            if (updates.description !== undefined) {
-              requirements.task_description = updates.description;
+            if (requirements) {
+              if (updates.description !== undefined) {
+                requirements.task_description = updates.description;
+              }
+              if (updates.metadata.category) {
+                requirements.workflow_type = updates.metadata.category;
+              }
+              saveAutocodeTaskRequirementsSync(specDir, requirements);
             }
-            if (updates.metadata.category) {
-              requirements.workflow_type = updates.metadata.category;
-            }
-
-            writeFileSync(requirementsPath, JSON.stringify(requirements, null, 2), 'utf-8');
           } catch (err) {
             if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
-              console.error('Failed to update requirements.json:', err);
+              console.error('Failed to update requirements.md:', err);
             }
           }
         }

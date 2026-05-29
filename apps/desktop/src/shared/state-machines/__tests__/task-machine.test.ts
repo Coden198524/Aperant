@@ -94,6 +94,18 @@ describe('taskMachine', () => {
       expect(snapshot.context.reviewReason).toBeUndefined();
     });
 
+    it('should restart planning from plan_review on Request Changes', () => {
+      const events: TaskEvent[] = [
+        { type: 'PLANNING_STARTED' },
+        { type: 'PLANNING_COMPLETE', hasSubtasks: true, subtaskCount: 3, requireReviewBeforeCoding: true },
+        { type: 'PLANNING_STARTED' },
+      ];
+
+      const snapshot = runEvents(events);
+      expect(snapshot.value).toBe('planning');
+      expect(snapshot.context.reviewReason).toBeUndefined();
+    });
+
     it('should complete full flow with plan_review', () => {
       const events: TaskEvent[] = [
         { type: 'PLANNING_STARTED' },

@@ -12,6 +12,11 @@ import type { Plugin } from 'vite';
  *   // becomes:
  *   import electron from 'electron';
  *   const { app, BrowserWindow } = electron;
+ *
+ *   import { app as electronApp } from 'electron';
+ *   // becomes:
+ *   import electron from 'electron';
+ *   const { app: electronApp } = electron;
  */
 export function electronImportTransformPlugin(): Plugin {
   return {
@@ -36,7 +41,7 @@ export function electronImportTransformPlugin(): Plugin {
 
       transformed = transformed.replace(namedImportRegex, (match, imports) => {
         hasTransform = true;
-        const cleanImports = imports.trim();
+        const cleanImports = formatElectronDestructureImports(imports);
         console.log(`[electron-import-transform] Transforming ${id}`);
         return `import electron from 'electron';\nconst { ${cleanImports} } = electron;`;
       });
@@ -44,4 +49,13 @@ export function electronImportTransformPlugin(): Plugin {
       return hasTransform ? { code: transformed, map: null } : null;
     }
   };
+}
+
+function formatElectronDestructureImports(imports: string): string {
+  return imports
+    .split(',')
+    .map((part) => part.trim())
+    .filter(Boolean)
+    .map((part) => part.replace(/\s+as\s+/u, ': '))
+    .join(', ');
 }

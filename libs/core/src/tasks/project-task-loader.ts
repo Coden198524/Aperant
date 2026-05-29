@@ -12,6 +12,7 @@ import {
   loadAutocodeImplementationPlanSync,
   saveAutocodeImplementationPlanSync,
 } from './plan-store.js';
+import { loadAutocodeTaskRequirementsSync } from './requirements-store.js';
 import {
   getAutocodeSpecsDir,
   type AutocodeExecutionPhase,
@@ -21,6 +22,10 @@ import {
   type AutocodeTaskMetadata,
   type AutocodeTaskStatus,
 } from './spec-store.js';
+import {
+  readAutocodeTaskLogsFromSpecDir,
+  type AutocodeTaskLogs,
+} from './logs.js';
 
 export const AUTOCODE_JSON_ERROR_PREFIX = '__JSON_ERROR__:';
 export const AUTOCODE_JSON_ERROR_TITLE_SUFFIX = '__JSON_ERROR_SUFFIX__';
@@ -246,7 +251,6 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
 }): AutocodeProjectTask | null {
   const planPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
   const specFilePath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
-  const requirementsPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.requirements);
   const metadataPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
 
   let plan: ImplementationPlanFile | null = null;
@@ -261,7 +265,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
   }
 
   const metadata = readJsonFile<AutocodeTaskMetadata>(metadataPath) ?? undefined;
-  const requirements = readJsonFile<Record<string, unknown>>(requirementsPath);
+  const requirements = loadAutocodeTaskRequirementsSync(input.specDir);
   const specTitle = readSpecTitle(specFilePath);
   const description = getProjectTaskDescription(requirements, plan, specFilePath);
   const finalDescription = hasJsonError ? `${AUTOCODE_JSON_ERROR_PREFIX}${jsonErrorMessage}` : description;
@@ -269,6 +273,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
     ? { status: 'human_review' as const, reviewReason: 'errors' as const }
     : determineAutocodeProjectTaskStatus(plan);
   const subtasks = extractProjectPlanSubtasks(plan);
+  const taskLogs = readAutocodeTaskLogsFromSpecDir(input.specDir, input.specId);
   const corrected = correctStaleAutocodeTaskStatus({
     subtasks,
     hasJsonError,
@@ -288,12 +293,13 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
     ? stringFrom(specTitle, rawTitle)
     : rawTitle;
 
-  const persistedPhase = plan?.executionPhase;
-  const progress = persistedPhase
-    ? { phase: persistedPhase as AutocodeExecutionPhase, phaseProgress: 50, overallProgress: 50 }
-    : plan?.xstateState
-      ? inferAutocodeExecutionProgressFromXState(plan.xstateState)
-      : inferAutocodeExecutionProgress(plan?.status);
+  const progress = inferAutocodeProjectTaskProgress({
+    plan,
+    subtasks,
+    logs: taskLogs,
+    status: corrected.status,
+    reviewReason: corrected.reviewReason,
+  });
 
   return {
     id: input.specId,
@@ -316,6 +322,167 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
     createdAt: stringFrom(plan?.created_at, new Date(0).toISOString()),
     updatedAt: stringFrom(plan?.updated_at, plan?.created_at, new Date(0).toISOString()),
   };
+}
+
+function inferAutocodeProjectTaskProgress(input: {
+  plan: ImplementationPlanFile | null;
+  subtasks: Array<{ status: string }>;
+  logs: AutocodeTaskLogs | null;
+  status: AutocodeTaskStatus;
+  reviewReason?: AutocodeReviewReason;
+}): AutocodeProjectTaskExecutionProgress | undefined {
+  const persistedProgress = progressFromPhase(input.plan?.executionPhase);
+  const xstateProgress = input.plan?.xstateState
+    ? inferAutocodeExecutionProgressFromXState(input.plan.xstateState)
+    : undefined;
+  const statusProgress = inferAuthoritativeProgressFromTaskStatus(input.status, input.reviewReason);
+  const planStatusProgress = input.plan?.status && !persistedProgress && !xstateProgress
+    ? inferAutocodeExecutionProgress(input.plan.status)
+    : undefined;
+  const activityProgress = strongestProgress([
+    inferProgressFromTaskLogs(input.logs),
+    inferProgressFromSubtasks(input.subtasks),
+  ]);
+
+  let progress = strongestProgress([persistedProgress, xstateProgress]) ?? statusProgress ?? planStatusProgress;
+
+  if (statusProgress && phaseRank(statusProgress.phase) > phaseRank(progress?.phase)) {
+    progress = statusProgress;
+  }
+  if (activityProgress && phaseRank(activityProgress.phase) > phaseRank(progress?.phase)) {
+    progress = activityProgress;
+  }
+
+  return progress ?? activityProgress;
+}
+
+function inferAuthoritativeProgressFromTaskStatus(
+  status: AutocodeTaskStatus,
+  reviewReason?: AutocodeReviewReason,
+): AutocodeProjectTaskExecutionProgress | undefined {
+  switch (status) {
+    case 'done':
+    case 'pr_created':
+      return progressFromPhase('complete');
+    case 'human_review':
+      return progressFromPhase(reviewReason === 'plan_review' ? 'planning' : 'complete');
+    case 'ai_review':
+      return progressFromPhase('qa_review');
+    case 'error':
+      return progressFromPhase('failed');
+    default:
+      return undefined;
+  }
+}
+
+function inferProgressFromTaskLogs(logs: AutocodeTaskLogs | null): AutocodeProjectTaskExecutionProgress | undefined {
+  if (!logs) {
+    return undefined;
+  }
+
+  const validation = logs.phases.validation;
+  if (validation?.status === 'active' || validation?.entries?.length > 0) {
+    return progressFromPhase(validation.status === 'failed' ? 'failed' : 'qa_review');
+  }
+  if (validation?.status === 'failed') {
+    return progressFromPhase('failed');
+  }
+
+  const coding = logs.phases.coding;
+  if (coding?.status === 'active' || coding?.entries?.length > 0) {
+    return progressFromPhase(coding.status === 'failed' ? 'failed' : 'coding');
+  }
+  if (coding?.status === 'failed') {
+    return progressFromPhase('failed');
+  }
+
+  const planning = logs.phases.planning;
+  if (planning?.status === 'failed') {
+    return progressFromPhase('failed');
+  }
+  if (planning?.status === 'active' || planning?.status === 'completed' || planning?.entries?.length > 0) {
+    return progressFromPhase('planning');
+  }
+
+  return undefined;
+}
+
+function inferProgressFromSubtasks(
+  subtasks: Array<{ status: string }>,
+): AutocodeProjectTaskExecutionProgress | undefined {
+  if (subtasks.some((subtask) => subtask.status === 'in_progress' || subtask.status === 'completed' || subtask.status === 'failed')) {
+    return progressFromPhase('coding');
+  }
+  return undefined;
+}
+
+function strongestProgress(
+  candidates: Array<AutocodeProjectTaskExecutionProgress | undefined>,
+): AutocodeProjectTaskExecutionProgress | undefined {
+  return candidates.reduce<AutocodeProjectTaskExecutionProgress | undefined>((strongest, candidate) => {
+    if (!candidate) {
+      return strongest;
+    }
+    return phaseRank(candidate.phase) > phaseRank(strongest?.phase) ? candidate : strongest;
+  }, undefined);
+}
+
+function progressFromPhase(phase: string | undefined): AutocodeProjectTaskExecutionProgress | undefined {
+  const normalized = normalizeAutocodeProjectTaskPhase(phase);
+  if (!normalized) {
+    return undefined;
+  }
+  const complete = normalized === 'complete';
+  const failed = normalized === 'failed';
+  return {
+    phase: normalized,
+    phaseProgress: complete ? 100 : failed || normalized === 'idle' ? 0 : 50,
+    overallProgress: complete ? 100 : failed || normalized === 'idle' ? 0 : 50,
+  };
+}
+
+function normalizeAutocodeProjectTaskPhase(phase: string | undefined): AutocodeExecutionPhase | undefined {
+  switch (phase) {
+    case 'spec':
+      return 'planning';
+    case 'review':
+      return 'qa_review';
+    case 'idle':
+    case 'planning':
+    case 'coding':
+    case 'qa_review':
+    case 'qa_fixing':
+    case 'complete':
+    case 'failed':
+    case 'stopped':
+      return phase;
+    default:
+      return undefined;
+  }
+}
+
+function phaseRank(phase: string | undefined): number {
+  switch (phase) {
+    case 'idle':
+      return 0;
+    case 'spec':
+    case 'planning':
+      return 1;
+    case 'coding':
+      return 2;
+    case 'review':
+    case 'qa_review':
+      return 3;
+    case 'qa_fixing':
+      return 4;
+    case 'complete':
+    case 'stopped':
+      return 5;
+    case 'failed':
+      return 6;
+    default:
+      return -1;
+  }
 }
 
 function getProjectTaskDescription(

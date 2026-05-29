@@ -588,6 +588,14 @@ export {
 } from './tasks/spec-store.js';
 
 export {
+  getAutocodeTaskRequirementsPath,
+  loadAutocodeTaskRequirementsSync,
+  parseAutocodeTaskRequirementsMarkdown,
+  saveAutocodeTaskRequirementsSync,
+  stringifyAutocodeTaskRequirementsMarkdown,
+} from './tasks/requirements-store.js';
+
+export {
   type AutocodeTaskPlanSeed,
   type AutocodeTokenUsage,
   type MutableAutocodePlan,

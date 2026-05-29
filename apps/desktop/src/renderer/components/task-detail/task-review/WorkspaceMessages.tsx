@@ -44,28 +44,23 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
   const [isProceeding, setIsProceeding] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [notice, setNotice] = useState<string | null>(null);
-  const isDirectModeTask =
-    !!task &&
-    (
-      task.metadata?.useWorktree === false ||
-      task.metadata?.workflowMode === 'aggressive'
-    );
+  const isDirectModeTask = task?.metadata?.workflowMode === 'off';
 
   const isPlanReview =
     task?.status === 'human_review' &&
     task.reviewReason === 'plan_review';
-  const canResumeExecution =
-    !!task &&
-    (
-      task.status === 'error' ||
-      task.status === 'human_review'
-    );
   const isErrorRecovery =
     !!task &&
     (
       task.status === 'error' ||
       task.reviewReason === 'errors' ||
       task.reviewReason === 'stopped'
+    );
+  const canResumeExecution =
+    !!task &&
+    (
+      isPlanReview ||
+      isErrorRecovery
     );
 
   const handleMarkDone = async () => {

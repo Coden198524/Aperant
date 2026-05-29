@@ -130,6 +130,16 @@ function makeAggressiveOrchestrator(runSession = vi.fn().mockResolvedValue(makeS
   });
 }
 
+function makeForcePlanningOrchestrator(runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'))): BuildOrchestrator {
+  return new BuildOrchestrator({
+    specDir: '/spec',
+    projectDir: '/project',
+    generatePrompt: vi.fn().mockResolvedValue('prompt'),
+    runSession,
+    forcePlanning: true,
+  });
+}
+
 describe('BuildOrchestrator QA recovery', () => {
   beforeEach(() => {
     mockReadFile.mockReset();
@@ -320,6 +330,31 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(runSession.mock.calls.some(([config]) => config.agentType === 'planner')).toBe(false);
     expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
     expect(logs.some(log => log.includes('skipping planner session'))).toBe(true);
+  });
+
+  it('force-runs planning against an existing executable plan and stops before coding', async () => {
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.md')) {
+        return Promise.resolve(makePlan(['pending']));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeForcePlanningOrchestrator(runSession);
+    const phases: ExecutionPhase[] = [];
+    const logs: string[] = [];
+    orchestrator.on('phase-change', (phase) => phases.push(phase));
+    orchestrator.on('log', (message) => logs.push(message));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(1);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+    expect(phases).toEqual(['planning']);
+    expect(logs.some((log) => log.includes('Force planning requested'))).toBe(true);
   });
 
   it('continues planning when the main implementation plan becomes executable', async () => {

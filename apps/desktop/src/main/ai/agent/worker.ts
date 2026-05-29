@@ -573,6 +573,69 @@ function appendSearchDiscipline(content: string): string {
   ].join('\n');
 }
 
+function readPlanReviewFeedback(session: SerializableSessionConfig): string | null {
+  if (session.forcePlanning !== true) {
+    return null;
+  }
+
+  const humanInputPath = join(session.specDir, 'HUMAN_INPUT.md');
+  if (!existsSync(humanInputPath)) {
+    return null;
+  }
+
+  try {
+    return readFileSync(humanInputPath, 'utf-8').trim() || null;
+  } catch {
+    return null;
+  }
+}
+
+function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig): string {
+  const promptSpecDir = formatPathForPrompt(session.specDir);
+  const feedback = readPlanReviewFeedback(session);
+  const lines = [
+    '## PLAN REVIEW REGENERATION',
+    'This run was started from Request Changes in plan review.',
+    `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
+    `Rewrite ${promptSpecDir}/implementation_plan.md to address that feedback.`,
+    'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
+    'Preserve useful parts of the previous plan only when they still match the reviewer feedback; otherwise replace them.',
+  ];
+
+  if (feedback) {
+    lines.push('', 'Reviewer feedback:', feedback);
+  }
+
+  return lines.join('\n');
+}
+
+function countPlanSubtasks(plan: ShardableImplementationPlan | null): number {
+  return (plan?.phases ?? []).reduce((total, phase) => {
+    const subtasks = Array.isArray(phase.subtasks)
+      ? phase.subtasks
+      : Array.isArray(phase.chunks)
+        ? phase.chunks
+        : [];
+    return total + subtasks.length;
+  }, 0);
+}
+
+function syncRegeneratedPlanToSource(session: SerializableSessionConfig): void {
+  if (!session.sourceSpecDir || session.sourceSpecDir === session.specDir) {
+    return;
+  }
+
+  try {
+    const plan = loadImplementationPlanFromFilesSync(session.specDir);
+    if (!plan) {
+      return;
+    }
+    saveImplementationPlanToFilesSync(session.sourceSpecDir, plan);
+  } catch (error) {
+    postLog(`Failed to sync regenerated plan to source spec directory: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 function getPromptProfileProjectDir(session: SerializableSessionConfig): string {
   return session.sourceProjectDir ?? session.projectDir;
 }
@@ -686,6 +749,9 @@ async function assemblePrompt(
     const planRequirement = getImplementationPlanLanguageRequirement(session.language);
     if (planRequirement) {
       promptWithLanguage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planRequirement}`;
+    }
+    if (session.forcePlanning === true) {
+      promptWithLanguage += `\n\n${buildPlanReviewRegenerationDirective(session)}`;
     }
   }
   if (promptName === 'spec_quick' && isFastWorkflow(session)) {
@@ -1305,6 +1371,7 @@ async function runBuildOrchestrator(
     sourceSpecDir: session.sourceSpecDir,
     maxIterations: isFastWorkflow(session) ? 1 : undefined,
     language: session.language,
+    forcePlanning: session.forcePlanning === true,
     abortSignal: abortController.signal,
 
     // Per-task toggle: batch execution is opt-in until the parallel path is fully stable.
@@ -1339,6 +1406,7 @@ async function runBuildOrchestrator(
         runConfig.projectDir,
         runConfig.subtaskId,
         session.language,
+        session.forcePlanning === true && runConfig.phase === 'planning',
       );
       return runSingleSession(
         runConfig.agentType,
@@ -1475,7 +1543,16 @@ async function runBuildOrchestrator(
 
   // Emit task events based on orchestration outcome so XState machine
   // can transition to the correct state (e.g., human_review on success).
-  if (outcome.success) {
+  if (outcome.success && session.forcePlanning === true && outcome.finalPhase === 'planning') {
+    syncRegeneratedPlanToSource(session);
+    const plan = loadImplementationPlanFromFilesSync(session.specDir);
+    const subtaskCount = countPlanSubtasks(plan);
+    postTaskEvent('PLANNING_COMPLETE', {
+      hasSubtasks: subtaskCount > 0,
+      subtaskCount,
+      requireReviewBeforeCoding: true,
+    });
+  } else if (outcome.success) {
     postTaskEvent('QA_PASSED');
     postTaskEvent('BUILD_COMPLETE');
   } else if (outcome.codingCompleted) {
@@ -1960,13 +2037,13 @@ function buildSpecKickoffMessage(
       baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Return ONLY the compact context.json object; the orchestrator will write ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Use the pre-generated project index first. Run at most two narrow discovery tools, and for empty projects do not run recursive globs. Keep arrays concise and do not include read-operation transcripts, copied source, long analysis, or optional large sections.`;
       break;
     case 'spec_gatherer':
-      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return ONLY the compact requirements.json object; the orchestrator will write ${promptSpecDir}/requirements.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Prefer the task description and provided context. Keep user_requirements, acceptance_criteria, and constraints short; do not include analysis, source excerpts, or discovery transcripts.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
+      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return ONLY the compact requirements data as a JSON object; the orchestrator will write ${promptSpecDir}/requirements.md as Markdown.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Prefer the task description and provided context. Keep user_requirements, acceptance_criteria, and constraints short; do not include analysis, source excerpts, or discovery transcripts.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
       break;
     case 'spec_researcher':
-      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. This phase may run before spec.md exists, so do not read spec.md unless it is explicitly provided or confirmed to exist. Use the task, prior context.json/requirements.json summaries, and project index first. If no external research is needed, return a compact research.json object with integrations_researched: [], unverified_claims: [], and concise recommendations explaining that existing project patterns are sufficient. Review relevant code in ${promptProjectDir} only when needed and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
+      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. This phase may run before spec.md exists, so do not read spec.md unless it is explicitly provided or confirmed to exist. Use the task, prior context.json/requirements.md summaries, and project index first. If no external research is needed, return a compact research.json object with integrations_researched: [], unverified_claims: [], and concise recommendations explaining that existing project patterns are sufficient. Review relevant code in ${promptProjectDir} only when needed and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
       break;
     case 'spec_writer':
-      baseMessage = `Write a compact implementation specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}. Use prior phase context as the source of truth; do not re-read context.json or requirements.json unless missing. Keep spec.md focused, normally 40-80 lines for balanced workflow, with overview, files, core behavior, and acceptance checks only.`;
+      baseMessage = `Write a compact implementation specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}. Use prior phase context as the source of truth; do not re-read context.json or requirements.md unless missing. Keep spec.md focused, normally 40-80 lines for balanced workflow, with overview, files, core behavior, and acceptance checks only.`;
       break;
     case 'planner':
       baseMessage = `Create a concise implementation plan for: ${taskDescription}. Use the prior phase context already provided in this kickoff before reading files. If you need spec.md, read only the relevant section with a line limit. Create ${promptSpecDir}/implementation_plan.md with concrete checklist subtasks. Project root: ${promptProjectDir}.`;
@@ -2102,6 +2179,7 @@ function buildKickoffMessage(
   projectDir: string,
   subtaskId?: string,
   language?: SerializableSessionConfig['language'],
+  forcePlanning?: boolean,
 ): string {
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
@@ -2165,6 +2243,14 @@ function buildKickoffMessage(
     const planLanguageRequirement = getImplementationPlanLanguageRequirement(language);
     if (planLanguageRequirement) {
       kickoffMessage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planLanguageRequirement}`;
+    }
+    if (forcePlanning === true) {
+      kickoffMessage += [
+        '',
+        '## PLAN REVIEW REGENERATION',
+        `Read ${promptSpecDir}/HUMAN_INPUT.md and rewrite ${promptSpecDir}/implementation_plan.md to address the reviewer feedback.`,
+        'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
+      ].join('\n');
     }
   }
 

@@ -18,7 +18,7 @@ Create or update `implementation_plan.md` in the spec directory. Do not implemen
 
 ## PLANNING PROCESS
 
-1. Read `requirements.json` first if it exists. Preserve its `task_description` in the plan `Feature:` line.
+1. Read `requirements.md` first if it exists. Preserve its `task_description` in the plan `Feature:` line.
 2. Read `spec.md`, `context.json`, `project_index.json`, and existing `implementation_plan.md` if present.
 3. Inspect only the project files needed to understand existing architecture and local patterns.
 4. Create a plan with executable phases and subtasks.

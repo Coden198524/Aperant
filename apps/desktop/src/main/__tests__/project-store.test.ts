@@ -8,6 +8,7 @@ import { tmpdir } from 'os';
 import path from 'path';
 import {
   saveAutocodeImplementationPlanSync,
+  saveAutocodeTaskRequirementsSync,
   type MutableAutocodePlan,
 } from '@autocode/core';
 
@@ -672,7 +673,7 @@ describe('ProjectStore', () => {
       expect(tasks[0].status).toBe('done');
     });
 
-    it('should prefer original task description from requirements.json over plan description', async () => {
+    it('should prefer original task description from requirements.md over plan description', async () => {
       const specsDir = path.join(TEST_PROJECT_PATH, '.autocode', 'specs', '007-description-priority');
       mkdirSync(specsDir, { recursive: true });
 
@@ -698,10 +699,7 @@ describe('ProjectStore', () => {
         task_description: userDescription,
         workflow_type: 'feature'
       };
-      writeFileSync(
-        path.join(specsDir, 'requirements.json'),
-        JSON.stringify(requirements)
-      );
+      saveAutocodeTaskRequirementsSync(specsDir, requirements);
 
       const { ProjectStore } = await import('../project-store');
       const store = new ProjectStore();

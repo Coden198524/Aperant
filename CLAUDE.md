@@ -313,7 +313,7 @@ const readTool = tool({
 
 ### Spec Directory Structure
 
-Each spec in `.autocode/specs/XXX-name/` contains: `spec.md`, `requirements.json`, `context.json`, `implementation_plan.json`, `qa_report.md`, `QA_FIX_REQUEST.md`
+Each spec in `.autocode/specs/XXX-name/` contains: `spec.md`, `requirements.md`, `context.json`, `implementation_plan.md`, `qa_report.md`, `QA_FIX_REQUEST.md`
 
 ### Memory System (Graphiti)
 
@@ -561,7 +561,7 @@ Specs are the record of work. Each spec in `.autocode/specs/XXX-task-name/` is i
 ```
 .autocode/specs/001-build-calculator/
 ├── spec.md                  ← User requirements (input)
-├── requirements.json        ← Parsed requirements
+├── requirements.md          ← Parsed requirements
 ├── context.json            ← Project context snapshot
 ├── implementation_plan.json ← Planner output (subtasks)
 ├── qa_report.md            ← QA validation results

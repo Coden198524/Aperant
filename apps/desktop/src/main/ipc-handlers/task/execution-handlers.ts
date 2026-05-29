@@ -12,7 +12,7 @@ import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
 import type { TaskEvent } from '../../../shared/state-machines/task-machine';
 import path from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync, unlinkSync } from 'fs';
+import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { spawnSync, execFileSync } from 'child_process';
 import {
   loadImplementationPlanFromFilesSync,
@@ -169,6 +169,7 @@ function createRuntimePlanForTask(input: {
   specDir: string;
   hasSpec: boolean;
   planHasSubtasks: boolean;
+  forcePlanning?: boolean;
 }) {
   return createAutocodeAgentRuntimePlan({
     projectRoot: input.project.path,
@@ -180,6 +181,7 @@ function createRuntimePlanForTask(input: {
     hasSpec: input.hasSpec,
     planHasSubtasks: input.planHasSubtasks,
     baseBranch: getTaskBaseBranch(input.task, input.project),
+    forcePlanning: input.forcePlanning,
   });
 }
 
@@ -328,7 +330,8 @@ export function registerTaskExecutionHandlers(
     taskId: string,
     task: Task,
     project: Project,
-    logPrefix: string
+    logPrefix: string,
+    options: { forcePlanning?: boolean } = {}
   ): Promise<void> => {
     const specsBaseDir = getSpecsDir(project.autoBuildPath);
     const specDir = path.join(project.path, specsBaseDir, task.specId);
@@ -346,7 +349,9 @@ export function registerTaskExecutionHandlers(
 
     const specFilePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
     const hasSpec = existsSync(specFilePath);
-    const planHasSubtasks = hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
+    const planHasSubtasks = options.forcePlanning
+      ? false
+      : hasPlanSubtasksInAnyPath(getPlanFilePathsForTask(project, task, specsBaseDir));
     const runtimePlan = createRuntimePlanForTask({
       taskId,
       task,
@@ -354,6 +359,7 @@ export function registerTaskExecutionHandlers(
       specDir,
       hasSpec,
       planHasSubtasks,
+      forcePlanning: options.forcePlanning,
     });
 
     console.warn(
@@ -363,6 +369,8 @@ export function registerTaskExecutionHandlers(
       planHasSubtasks,
       'runtimeMode:',
       runtimePlan.mode,
+      'forcePlanning:',
+      options.forcePlanning === true,
     );
 
     console.warn(`${logPrefix} Starting ${getAutocodeAgentRuntimeModeLabel(runtimePlan.mode)} for:`, task.specId);
@@ -820,23 +828,6 @@ export function registerTaskExecutionHandlers(
             }
           }
 
-          const planPaths = new Set<string>([
-            path.join(targetSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
-            path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
-          ]);
-
-          for (const planPath of planPaths) {
-            try {
-              if (existsSync(planPath)) {
-                unlinkSync(planPath);
-                console.warn('[TASK_REVIEW] Removed implementation plan to force replanning:', planPath);
-              }
-            } catch (error) {
-              console.error('[TASK_REVIEW] Failed to remove implementation plan for replanning:', error);
-              return { success: false, error: 'Failed to reset implementation plan for replanning' };
-            }
-          }
-
           taskStateManager.prepareForRestart(taskId);
           taskStateManager.handleUiEvent(
             taskId,
@@ -847,7 +838,9 @@ export function registerTaskExecutionHandlers(
           projectStore.invalidateTasksCache(project.id);
 
           try {
-            await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]');
+            await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]', {
+              forcePlanning: true,
+            });
           } catch (error) {
             console.error('[TASK_REVIEW] Failed to restart planning after plan review rejection:', error);
             return {

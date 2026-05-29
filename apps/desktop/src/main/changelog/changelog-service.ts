@@ -8,6 +8,7 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   getAutocodeSpecsRelativeDir,
   loadAutocodeImplementationPlanSync,
+  loadAutocodeTaskRequirementsSync,
 } from '@autocode/core';
 
 // ESM-compatible __dirname
@@ -298,11 +299,8 @@ export class ChangelogService extends EventEmitter {
           this.debug('Loaded spec.md', { specId: task.specId, length: content.spec.length });
         }
 
-        // Load requirements.json
-        const requirementsPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements);
-        if (existsSync(requirementsPath)) {
-          content.requirements = JSON.parse(readFileSync(requirementsPath, 'utf-8'));
-        }
+        // Load requirements.md
+        content.requirements = loadAutocodeTaskRequirementsSync(specDir) ?? undefined;
 
         // Load qa_report.md
         const qaReportPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.qaReport);

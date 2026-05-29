@@ -5,6 +5,7 @@ import { join } from 'node:path';
 import { describe, expect, it, vi } from 'vitest';
 import {
   loadAutocodeImplementationPlan,
+  loadAutocodeTaskRequirementsSync,
   saveAutocodeImplementationPlan,
 } from '@autocode/core';
 
@@ -63,8 +64,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
   it('tells requirements retries to return final JSON instead of using Write', () => {
     const prompt = buildWriteToolJsonRetryPrompt('requirements', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('RETURN requirements.json AS FINAL JSON');
-    expect(prompt).toContain('Do NOT call Write for E:/Work/Project/.autocode/specs/001-task/requirements.json');
+    expect(prompt).toContain('RETURN requirements.md data AS FINAL JSON');
+    expect(prompt).toContain('Do NOT call the Write tool for this Markdown file');
+    expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/requirements.md');
     expect(prompt).toContain('task_description');
     expect(prompt).not.toContain('Required Write tool input shape');
     expect(prompt).not.toContain('\\');
@@ -96,7 +98,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }).runPhase.bind(orchestrator);
 
       const result = await runPhase('requirements', 1, 1);
-      const requirements = JSON.parse(await readFile(join(specDir, 'requirements.json'), 'utf-8'));
+      const requirements = loadAutocodeTaskRequirementsSync(specDir);
+      expect(requirements).not.toBeNull();
+      if (!requirements) throw new Error('requirements.md was not written');
 
       expect(result).toEqual({ phase: 'requirements', success: true, errors: [], retries: 2 });
       expect(requirements).toMatchObject({
@@ -309,7 +313,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }).runPhase.bind(orchestrator);
 
       const result = await runPhase('requirements', 1, 1);
-      const written = JSON.parse(await readFile(join(specDir, 'requirements.json'), 'utf-8'));
+      const written = loadAutocodeTaskRequirementsSync(specDir);
+      expect(written).not.toBeNull();
+      if (!written) throw new Error('requirements.md was not written');
 
       expect(result).toEqual({ phase: 'requirements', success: true, errors: [], retries: 0 });
       expect(written).toMatchObject({
@@ -1585,9 +1591,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }).runPhase.bind(orchestrator);
 
       const result = await runPhase('requirements', 1, 1);
-      const requirements = JSON.parse(await readFile(join(specDir, 'requirements.json'), 'utf-8')) as {
-        workflow_type?: string;
-      };
+      const requirements = loadAutocodeTaskRequirementsSync(specDir);
+      expect(requirements).not.toBeNull();
+      if (!requirements) throw new Error('requirements.md was not written');
 
       expect(result.success).toBe(true);
       expect(requirements.workflow_type).toBe('investigation');

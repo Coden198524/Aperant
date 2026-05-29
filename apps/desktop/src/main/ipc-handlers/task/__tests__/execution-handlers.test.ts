@@ -292,12 +292,10 @@ describe('registerTaskExecutionHandlers', () => {
     expect(result).toEqual({ success: true });
   });
 
-  it('restarts planning and regenerates plan for plan_review Request Changes', async () => {
+  it('restarts planning and regenerates plan for plan_review Request Changes without hiding the current plan', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const fs = await import('fs');
-    let planDeleted = false;
-
     (findTaskAndProject as Mock).mockReturnValue({
       task: {
         id: '001-plan-review',
@@ -320,16 +318,8 @@ describe('registerTaskExecutionHandlers', () => {
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('plan_review');
     (fs.existsSync as Mock).mockReturnValue(true);
-    (fs.unlinkSync as Mock).mockImplementation(() => {
-      planDeleted = true;
-    });
     (fs.readFileSync as Mock).mockImplementation((filePath: string) => {
       if (filePath.includes('implementation_plan.md')) {
-        if (planDeleted) {
-          const err = new Error('ENOENT') as NodeJS.ErrnoException;
-          err.code = 'ENOENT';
-          throw err;
-        }
         return JSON.stringify({
           phases: [{ subtasks: [{ status: 'pending' }] }]
         });
@@ -346,16 +336,20 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('need changes'),
       'utf-8'
     );
-    expect(fs.unlinkSync).toHaveBeenCalledWith(
-      expect.stringContaining('implementation_plan.md')
-    );
+    expect(fs.unlinkSync).not.toHaveBeenCalled();
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-plan-review',
       { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object)
     );
-    expect(mockAgentManager.startTaskExecution).toHaveBeenCalled();
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
+      '001-plan-review',
+      'E:/Work/FastProject',
+      '001-plan-review',
+      expect.objectContaining({ forcePlanning: true }),
+      'project-fast',
+    );
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 

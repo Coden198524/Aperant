@@ -600,8 +600,8 @@ ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
-1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.json\`, and \`context.json\` summaries.
-2. Read \`spec.md\`, \`requirements.json\`, or \`context.json\` only if the kickoff context is missing the detail needed for the plan; use Read \`limit\` for large files.
+1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.json\` summaries.
+2. Read \`spec.md\`, \`requirements.md\`, or \`context.json\` only if the kickoff context is missing the detail needed for the plan; use Read \`limit\` for large files.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
 4. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
 

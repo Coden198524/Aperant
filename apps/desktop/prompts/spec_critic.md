@@ -23,7 +23,7 @@ Do not rewrite the whole `spec.md` with Write unless the file is missing or the 
 **Inputs**:
 - `spec.md` - The specification to critique
 - `research.json` - Validated research findings
-- `requirements.json` - Original user requirements
+- `requirements.md` - Original user requirements
 - `context.json` - Codebase context
 
 **Output**:
@@ -40,7 +40,7 @@ Do not rewrite the whole `spec.md` with Write unless the file is missing or the 
 
 ## PHASE 0: REVIEW PROVIDED CONTEXT
 
-Prior phase outputs (spec.md, research.json, requirements.json, context.json) have been provided in your kickoff message. Review them to understand:
+Prior phase outputs (spec.md, research.json, requirements.md, context.json) have been provided in your kickoff message. Review them to understand:
 - What the spec claims
 - What research validated
 - What the user originally requested
@@ -91,7 +91,7 @@ Flag any mismatches.
 
 ### 1.2: Completeness
 
-Check against requirements.json:
+Check against requirements.md:
 
 - **All requirements covered?** - Each requirement should have implementation details
 - **All acceptance criteria testable?** - Each criterion should be verifiable

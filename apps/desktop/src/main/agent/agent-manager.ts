@@ -15,6 +15,7 @@ import {
   buildAutocodeQAInitialMessages,
   buildAutocodeSessionRuntimeOptions,
   buildAutocodeTaskExecutionMessages,
+  createStartedAutocodeAgentRuntime,
   getAutocodeSpecDir,
   getAutocodeSpecsDir,
   getAutocodeSpecsRelativeDir,
@@ -313,7 +314,7 @@ export class AgentManager extends EventEmitter {
     requestedModel: string,
     preferredProvider?: string | null,
   ): Promise<{
-    auth: { apiKey?: string; baseURL?: string; oauthTokenFilePath?: string } | null;
+    auth: { apiKey?: string; baseURL?: string; oauthTokenFilePath?: string; source?: string } | null;
     provider: string;
     modelId: string;
     configDir?: string;
@@ -627,7 +628,6 @@ export class AgentManager extends EventEmitter {
       return;
     }
     const workflowMode = metadata?.workflowMode ?? 'conservative';
-    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, specAgentType);
 
     // Build the serializable session config for the worker
     const resolvedSpecDir = specDir ?? getAutocodeSpecDir({
@@ -635,6 +635,28 @@ export class AgentManager extends EventEmitter {
       dataDirName: project?.autoBuildPath,
       specId: taskId,
     });
+
+    if (this.shouldUseCodexCliRuntime(resolved)) {
+      await this.startCodexCliRuntime({
+        taskId,
+        projectPath,
+        runtimeProjectRoot: projectPath,
+        dataDirName: project?.autoBuildPath,
+        specId: taskId,
+        modelId: resolved.modelId,
+        options: baseBranch ? { baseBranch } : {},
+        processType: 'spec-creation',
+        projectId,
+        isSpecCreation: true,
+        taskDescription,
+        specDir: resolvedSpecDir,
+        metadata,
+        baseBranch,
+      });
+      return;
+    }
+
+    const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, specAgentType);
     const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
       projectRoot: projectPath,
       dataDirName: project?.autoBuildPath,
@@ -820,6 +842,21 @@ export class AgentManager extends EventEmitter {
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
 
+    if (this.shouldUseCodexCliRuntime(resolved)) {
+      await this.startCodexCliRuntime({
+        taskId,
+        projectPath,
+        runtimeProjectRoot: effectiveProjectDir,
+        dataDirName: project?.autoBuildPath,
+        specId,
+        modelId: resolved.modelId,
+        options,
+        processType: 'task-execution',
+        projectId,
+      });
+      return;
+    }
+
     // Load initial context from spec directory
     const language = this.resolveAppLanguage();
     const initialMessages = buildAutocodeTaskExecutionMessages({
@@ -828,6 +865,7 @@ export class AgentManager extends EventEmitter {
       projectRoot: effectiveProjectDir,
       dataDirName: project?.autoBuildPath,
       language,
+      forcePlanning: options.forcePlanning === true,
     });
 
     // Build the serializable session config for the worker
@@ -851,6 +889,7 @@ export class AgentManager extends EventEmitter {
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode,
+      forcePlanning: options.forcePlanning === true,
       projectType: agentProfile.id,
       enableBatchExecution,
       language,
@@ -987,6 +1026,23 @@ export class AgentManager extends EventEmitter {
 
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
+
+    if (this.shouldUseCodexCliRuntime(resolved)) {
+      await this.startCodexCliRuntime({
+        taskId,
+        projectPath,
+        runtimeProjectRoot: effectiveProjectDir,
+        dataDirName: project?.autoBuildPath,
+        specId,
+        modelId: resolved.modelId,
+        options,
+        processType: 'task-execution',
+        projectId,
+        direct: true,
+      });
+      return;
+    }
+
     const language = this.resolveAppLanguage();
     const initialMessages = buildAutocodeDirectTaskExecutionMessages({
       specDir: worktreeSpecDir,
@@ -1532,6 +1588,89 @@ export class AgentManager extends EventEmitter {
 
   private providerRequiresCredentials(provider: string): boolean {
     return provider !== 'ollama';
+  }
+
+  private shouldUseCodexCliRuntime(resolved: {
+    provider: string;
+    modelId: string;
+    auth: { source?: string; oauthTokenFilePath?: string } | null;
+  }): boolean {
+    return (
+      resolved.provider === 'openai' &&
+      resolved.auth?.source === 'codex-oauth'
+    );
+  }
+
+  private async startCodexCliRuntime(input: {
+    taskId: string;
+    projectPath: string;
+    runtimeProjectRoot: string;
+    dataDirName?: string;
+    specId: string;
+    modelId: string;
+    options: TaskExecutionOptions;
+    processType: 'spec-creation' | 'task-execution';
+    projectId?: string;
+    isSpecCreation?: boolean;
+    taskDescription?: string;
+    specDir?: string;
+    metadata?: SpecCreationMetadata;
+    baseBranch?: string;
+    direct?: boolean;
+  }): Promise<void> {
+    const settings = readSettingsFile();
+    const started = createStartedAutocodeAgentRuntime({
+      projectRoot: input.runtimeProjectRoot,
+      dataDirName: input.dataDirName,
+      taskId: input.specId || input.taskId,
+      cli: 'codex',
+      model: input.modelId,
+      bypassPermissions: settings?.dangerouslySkipPermissions === true,
+      language: this.resolveAppLanguage(),
+      forcePlanning: input.options.forcePlanning === true,
+    });
+    const processCommand = started.request.runner?.process;
+    if (!processCommand) {
+      throw new Error('Codex CLI runtime request did not include a process command.');
+    }
+
+    this.storeTaskContext(
+      input.taskId,
+      input.projectPath,
+      input.isSpecCreation ? '' : input.specId,
+      input.options,
+      input.isSpecCreation === true,
+      input.taskDescription,
+      input.specDir,
+      input.metadata,
+      input.baseBranch,
+      input.projectId,
+      input.direct === true,
+    );
+
+    this.registerTaskWithOperationRegistry(
+      input.taskId,
+      input.processType,
+      input.isSpecCreation
+        ? { projectPath: input.projectPath, taskDescription: input.taskDescription, specDir: input.specDir }
+        : { projectPath: input.projectPath, specId: input.specId, options: input.options, ...(input.direct ? { direct: true } : {}) },
+    );
+
+    console.warn('[AgentManager] Routing OpenAI Codex subscription task through Codex CLI runtime:', {
+      taskId: input.taskId,
+      specId: input.specId,
+      cwd: processCommand.cwd,
+      command: processCommand.shellCommand,
+    });
+
+    await this.processManager.spawnProcess(
+      input.taskId,
+      processCommand.cwd,
+      [processCommand.command, ...processCommand.args],
+      this.processManager.getCombinedEnv(input.projectPath),
+      input.processType,
+      input.projectId,
+    );
   }
 
   private buildSessionRuntimeOptions(

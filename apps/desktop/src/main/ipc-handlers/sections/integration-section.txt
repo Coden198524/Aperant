@@ -886,7 +886,7 @@ ${issue.description || 'No description provided.'}
             };
             writeFileSync(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), JSON.stringify(implementationPlan, null, 2));
 
-            // Create requirements.json
+            // Create requirements.md
             const requirements = {
               task_description: description,
               workflow_type: 'feature'
@@ -1378,7 +1378,7 @@ Please analyze this issue and provide:
         };
         writeFileSync(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), JSON.stringify(implementationPlan, null, 2));
 
-        // Create requirements.json
+        // Create requirements.md
         const requirements = {
           task_description: taskDescription,
           workflow_type: 'feature'
@@ -1542,7 +1542,7 @@ ${issue.body || 'No description provided.'}
           };
           writeFileSync(path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN), JSON.stringify(implementationPlan, null, 2));
 
-          // Create requirements.json
+          // Create requirements.md
           const requirements = {
             task_description: description,
             workflow_type: 'feature'

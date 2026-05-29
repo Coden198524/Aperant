@@ -59,6 +59,7 @@ export interface TaskExecutionOptions {
   useWorktree?: boolean; // If true, use worktree isolation; omitted defaults to direct mode
   useLocalBranch?: boolean; // If true, use local branch directly instead of preferring origin/branch
   pushNewBranches?: boolean; // If false, keep task worktree branches local-only
+  forcePlanning?: boolean; // Internal: rerun planning even when an old implementation plan has subtasks
 }
 
 export interface SpecCreationMetadata {

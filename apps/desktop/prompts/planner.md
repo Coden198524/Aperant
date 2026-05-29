@@ -96,9 +96,9 @@ Before creating the implementation plan, explicitly document:
 
 ### 1.1: Read the Original Task Description
 
-**CRITICAL: ALWAYS read `requirements.json` FIRST to get the user's original task description.**
+**CRITICAL: ALWAYS read `requirements.md` FIRST to get the user's original task description.**
 
-Use the **Read tool** to read `requirements.json` in the spec directory. This file contains:
+Use the **Read tool** to read `requirements.md` in the spec directory. This file contains:
 - `task_description`: The user's original task description (MUST be preserved in the `feature` field)
 - `workflow_type`: The workflow type for this task
 - `attached_images`: Any images the user provided
@@ -266,7 +266,7 @@ The Write tool input is JSON because that is the tool protocol, but the file con
 ```json
 {
   "file_path": "[specDir]/implementation_plan.md",
-  "content": "# Implementation Plan\n\nFeature: Use the exact task_description from requirements.json when available\nWorkflow: feature\nStatus: pending\n\n- [ ] 1. Backend API\n\n- [ ] 1.1 Create data model\n  - Add the model following the existing repository pattern.\n  - _Files to modify: src/models/example.ts_\n  - _Depends on: none_\n  - _Requirements: 1.1_\n  - _Verification: npm test -- example_\n"
+  "content": "# Implementation Plan\n\nFeature: Use the exact task_description from requirements.md when available\nWorkflow: feature\nStatus: pending\n\n- [ ] 1. Backend API\n\n- [ ] 1.1 Create data model\n  - Add the model following the existing repository pattern.\n  - _Files to modify: src/models/example.ts_\n  - _Depends on: none_\n  - _Requirements: 1.1_\n  - _Verification: npm test -- example_\n"
 }
 ```
 
@@ -274,12 +274,12 @@ The Write tool input is JSON because that is the tool protocol, but the file con
 
 **CRITICAL: The `Feature:` metadata MUST preserve the original user task description.**
 
-If `requirements.json` exists in the spec directory and contains a `task_description` field, you MUST use that exact text for the `Feature:` line. Do NOT replace it with generic text like "鎵嬪姩鍒涘缓" or "Manual creation". The user's original task description is the source of truth.
+If `requirements.md` exists in the spec directory and contains a `task_description` field, you MUST use that exact text for the `Feature:` line. Do NOT replace it with generic text like "鎵嬪姩鍒涘缓" or "Manual creation". The user's original task description is the source of truth.
 
 ```md
 # Implementation Plan
 
-Feature: Use the exact task_description from requirements.json when available
+Feature: Use the exact task_description from requirements.md when available
 Workflow: feature|refactor|investigation|migration|simple
 Status: pending
 

@@ -78,6 +78,9 @@ export default defineConfig({
         '@modelcontextprotocol/sdk',
         '@openrouter/ai-sdk-provider',
         '@tavily/core',
+        // Bundle the shared workspace core into Desktop so packaged builds do
+        // not depend on electron-builder collecting workspace node_modules.
+        '@autocode/core',
       ]
     }),
     electronEsmFixPlugin()
@@ -121,7 +124,9 @@ export default defineConfig({
     }
   },
   preload: {
-    plugins: [externalizeDepsPlugin()],
+    plugins: [externalizeDepsPlugin({
+      exclude: ['@autocode/core'],
+    })],
     build: {
       rollupOptions: {
         input: {

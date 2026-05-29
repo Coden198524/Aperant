@@ -139,7 +139,7 @@ investigation-handlers.ts
      鈹?
      鈹溾攢鈹€鈻?spec-utils.createSpecForIssue() 鈹€鈹攢鈻?Create spec directory
      鈹?                                     鈹溾攢鈻?Write implementation_plan.md
-     鈹?                                     鈹溾攢鈻?Write requirements.json
+     鈹?                                     鈹溾攢鈻?Write requirements.md
      鈹?                                     鈹斺攢鈻?Write task_metadata.json
      鈹?
      鈹溾攢鈹€鈻?AgentManager.startSpecCreation() 鈻?Start AI agent

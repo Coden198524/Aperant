@@ -2,7 +2,8 @@ import {
   AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME,
   AUTOCODE_PROJECT_DATA_DIR_NAME,
 } from '../tasks/artifacts.js';
-import { AUTOCODE_LEGACY_WORKTREE_DIR_NAME } from '../tasks/worktree-paths.js';
+
+const AUTOCODE_LEGACY_WORKTREE_DIR_NAME = '.worktrees';
 
 export const AUTOCODE_TOOL_GENERATED_DIR_NAMES = [
   '.claude',

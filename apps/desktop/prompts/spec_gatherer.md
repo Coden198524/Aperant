@@ -12,7 +12,7 @@ Do not modify project source code, configuration files, or git state. You may re
 
 ## REQUIRED OUTPUT
 
-Return the complete `requirements.json` content as your final response JSON object. Do NOT call the Write tool for `requirements.json`; the orchestrator will validate your final JSON and write that file.
+Return the complete requirements data as your final response JSON object. Do NOT call the Write tool for `requirements.md`; the orchestrator will validate your final JSON and write that file as Markdown.
 
 Do not wrap the JSON in a markdown fence. Do not add prose before or after it.
 

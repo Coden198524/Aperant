@@ -21,6 +21,7 @@ export interface AutocodeAgentRuntimeOptions {
   useWorktree?: boolean;
   useLocalBranch?: boolean;
   pushNewBranches?: boolean;
+  forcePlanning?: boolean;
 }
 
 export interface AutocodeAgentRuntimeMetadata {
@@ -126,6 +127,7 @@ export interface CreateAutocodeAgentRuntimePlanInput {
   hasSpec: boolean;
   planHasSubtasks: boolean;
   baseBranch?: string;
+  forcePlanning?: boolean;
 }
 
 export interface ResolveAutocodeTaskStartEventInput {
@@ -158,14 +160,14 @@ export function createAutocodeAgentRuntimePlan(
     taskTitle: input.task.title,
     taskDescription: input.task.description || input.task.title,
     ...(input.task.metadata ? { metadata: input.task.metadata } : {}),
-    options: buildAutocodeAgentRuntimeOptions(input.task.metadata, input.baseBranch),
+    options: buildAutocodeAgentRuntimeOptions(input.task.metadata, input.baseBranch, input.forcePlanning),
     planStatus: isPlanningRuntime ? 'planning' : 'coding',
     executionPhase: isPlanningRuntime ? 'planning' : 'coding',
   };
 }
 
 export function resolveAutocodeAgentRuntimeMode(
-  input: Pick<CreateAutocodeAgentRuntimePlanInput, 'task' | 'hasSpec' | 'planHasSubtasks'>,
+  input: Pick<CreateAutocodeAgentRuntimePlanInput, 'task' | 'hasSpec' | 'planHasSubtasks' | 'forcePlanning'>,
 ): AutocodeAgentRuntimeMode {
   if (isDirectAutocodeWorkflow(input.task.metadata)) {
     return 'direct';
@@ -173,12 +175,21 @@ export function resolveAutocodeAgentRuntimeMode(
   if (!input.hasSpec) {
     return 'spec';
   }
+  if (input.forcePlanning) {
+    return 'planning';
+  }
   return input.planHasSubtasks ? 'coding' : 'planning';
 }
 
 export function resolveAutocodeTaskStartEvent(
   input: ResolveAutocodeTaskStartEventInput,
 ): AutocodeTaskStartEvent {
+  const codingStartedEvent = (): AutocodeTaskStartEvent => ({
+    type: 'CODING_STARTED',
+    subtaskId: 'implementation-plan',
+    subtaskDescription: 'Implementation plan execution',
+  });
+
   if (isDirectAutocodeWorkflow(input.task.metadata)) {
     return input.currentState === 'human_review' ||
       input.currentState === 'error' ||
@@ -194,6 +205,17 @@ export function resolveAutocodeTaskStartEvent(
 
   if (input.currentState === 'plan_review') {
     return { type: 'PLAN_APPROVED' };
+  }
+  if (
+    input.planHasSubtasks &&
+    (input.currentState === 'planning' ||
+      input.currentState === 'coding' ||
+      input.currentState === 'backlog' ||
+      input.task.status === 'in_progress' ||
+      input.task.status === 'backlog' ||
+      input.task.status === 'queue')
+  ) {
+    return codingStartedEvent();
   }
   if (input.currentState === 'human_review' && !input.planHasSubtasks) {
     return { type: 'PLANNING_STARTED' };
@@ -218,6 +240,9 @@ export function resolveAutocodeTaskStartEvent(
   }
   if (input.task.status === 'human_review' || input.task.status === 'error') {
     return { type: 'USER_RESUMED' };
+  }
+  if (input.planHasSubtasks) {
+    return codingStartedEvent();
   }
   return { type: 'PLANNING_STARTED' };
 }
@@ -274,11 +299,13 @@ export function getAutocodeAgentRuntimeModeLabel(mode: AutocodeAgentRuntimeMode)
 function buildAutocodeAgentRuntimeOptions(
   metadata: AutocodeAgentRuntimeMetadata | undefined,
   baseBranch: string | undefined,
+  forcePlanning: boolean | undefined,
 ): AutocodeAgentRuntimeOptions {
   return {
     parallel: false,
     workers: 1,
     ...(baseBranch ? { baseBranch } : {}),
+    ...(forcePlanning ? { forcePlanning: true } : {}),
     ...(metadata?.useWorktree !== undefined ? { useWorktree: metadata.useWorktree } : {}),
     ...(typeof metadata?.useLocalBranch === 'boolean' ? { useLocalBranch: metadata.useLocalBranch } : {}),
     ...(metadata?.pushNewBranches !== undefined ? { pushNewBranches: metadata.pushNewBranches } : {}),

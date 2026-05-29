@@ -11,6 +11,10 @@ import { test, expect } from '@playwright/test';
 import { mkdirSync, mkdtempSync, rmSync, existsSync, writeFileSync, readFileSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import {
+  parseAutocodeTaskRequirementsMarkdown,
+  stringifyAutocodeTaskRequirementsMarkdown,
+} from '@autocode/core';
 
 // Test data directory - created securely with mkdtempSync to prevent TOCTOU attacks
 let TEST_DATA_DIR: string;
@@ -48,19 +52,15 @@ function createTaskWithSubtasks(
     `# ${specId}\n\n## Overview\n\nTest task for workflow validation.\n\n## Acceptance Criteria\n\n- [ ] All subtasks completed\n- [ ] Tests pass\n`
   );
 
-  // Create requirements.json
+  // Create requirements.md
   writeFileSync(
-    path.join(specDir, 'requirements.json'),
-    JSON.stringify(
-      {
-        task_description: `Test task ${specId}`,
-        user_requirements: ['Requirement 1', 'Requirement 2'],
-        acceptance_criteria: ['All subtasks completed', 'Tests pass'],
-        context: []
-      },
-      null,
-      2
-    )
+    path.join(specDir, 'requirements.md'),
+    stringifyAutocodeTaskRequirementsMarkdown({
+      task_description: `Test task ${specId}`,
+      user_requirements: ['Requirement 1', 'Requirement 2'],
+      acceptance_criteria: ['All subtasks completed', 'Tests pass'],
+      context: []
+    })
   );
 
   // Create implementation_plan.json with subtasks
@@ -310,12 +310,12 @@ test.describe('Full Task Workflow Integration', () => {
 
     // Verify all required files exist
     expect(existsSync(path.join(specDir, 'spec.md'))).toBe(true);
-    expect(existsSync(path.join(specDir, 'requirements.json'))).toBe(true);
+    expect(existsSync(path.join(specDir, 'requirements.md'))).toBe(true);
     expect(existsSync(path.join(specDir, 'implementation_plan.json'))).toBe(true);
     expect(existsSync(path.join(specDir, 'build-progress.txt'))).toBe(true);
 
     // Verify data structure integrity
-    const requirements = JSON.parse(readFileSync(path.join(specDir, 'requirements.json'), 'utf-8'));
+    const requirements = parseAutocodeTaskRequirementsMarkdown(readFileSync(path.join(specDir, 'requirements.md'), 'utf-8'));
     expect(requirements.task_description).toBeDefined();
     expect(requirements.acceptance_criteria).toBeDefined();
 
