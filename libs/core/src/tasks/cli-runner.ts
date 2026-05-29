@@ -191,7 +191,7 @@ function buildTaskRunPrompt(input: {
     return `${header}${contextReference}${humanInputReference}${[
       '## Goal',
       '',
-      'Implement the requested task directly without creating or waiting for a separate Autocode spec workflow.',
+      'Implement the task directly; no separate spec workflow.',
       '',
       '## Task Description',
       '',
@@ -200,8 +200,8 @@ function buildTaskRunPrompt(input: {
       '## Required Workflow',
       '',
       '- Inspect the relevant project files before editing.',
-      '- Apply the smallest useful code changes that satisfy the task.',
-      '- Run the most relevant validation command for the project.',
+      '- Make the smallest useful change.',
+      '- Run the most relevant validation.',
       `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary}.`,
     ].join('\n')}`;
   }
@@ -210,7 +210,7 @@ function buildTaskRunPrompt(input: {
     return `${header}${contextReference}${humanInputReference}${[
       '## Goal',
       '',
-      'Create the initial task specification artifacts for this task.',
+      'Create initial spec artifacts.',
       '',
       '## Task Description',
       '',
@@ -221,7 +221,7 @@ function buildTaskRunPrompt(input: {
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} with overview, scope, implementation notes, and success criteria.`,
       `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if the current task description needs structured requirements.`,
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as an OpenSpec-style Markdown checklist with concrete phases and subtasks.`,
-      '- Use [ ] for pending subtasks and concise metadata bullets for files, dependencies, requirements, and verification.',
+      '- Use [ ] for pending subtasks and concise metadata bullets.',
     ].join('\n')}`;
   }
 
@@ -229,14 +229,14 @@ function buildTaskRunPrompt(input: {
     return `${header}${contextReference}${humanInputReference}${[
       '## Goal',
       '',
-      'Create or repair the implementation plan for the existing spec.',
+      'Create or repair the implementation plan.',
       '',
       '## Required Output',
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
-      `- If ${input.specDir}/HUMAN_INPUT.md exists, treat it as required plan-review feedback and regenerate the plan to address it.`,
+      `- If ${input.specDir}/HUMAN_INPUT.md exists, address it as plan-review feedback.`,
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as an OpenSpec-style Markdown checklist with concrete phases and subtasks.`,
-      '- Keep subtasks small enough to implement and verify independently.',
+      '- Keep subtasks independently implementable and verifiable.',
       '- Set new subtask checkboxes to [ ].',
     ].join('\n')}`;
   }
@@ -244,13 +244,13 @@ function buildTaskRunPrompt(input: {
   return `${header}${contextReference}${humanInputReference}${[
     '## Goal',
     '',
-    'Implement the task according to the existing spec and implementation plan.',
+    'Implement the task from the existing spec and plan.',
     '',
     '## Required Workflow',
     '',
     `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} first.`,
     `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
-    '- Work through pending subtasks and mark completed items [x] as work completes.',
+    '- Work through pending subtasks and mark completed items [x].',
     '- Add concise _Completion: ..._ notes to completed subtasks when practical.',
     '- Run the most relevant validation command for the project.',
     `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or update the plan with completion details.`,
@@ -285,19 +285,17 @@ function buildTaskHumanInputReference(specDir: string): string {
 function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): string {
   if (language === 'zh-CN') {
     return [
-      'Write all non-code prose, progress updates, task titles, plan descriptions, spec content, completion notes, review notes, and final summary in Simplified Chinese.',
-      'Keep code identifiers, commands, file paths, API names, package names, and existing source text unchanged unless the task explicitly asks to translate them.',
-      'When writing spec.md, requirements text, implementation_plan.md tasks, direct summaries, and review notes, prefer natural Simplified Chinese.',
-      'Final answer must be a concise markdown table in Simplified Chinese with localized rows for changes, verification, and review notes.',
+      'Write all non-code prose in Simplified Chinese, including plans, specs, summaries, and review notes.',
+      'Keep code identifiers, commands, paths, API names, package names, and source text unchanged unless translation is requested.',
+      'Final answer: concise Chinese markdown table with rows for changes, verification, and review notes.',
     ].join(' ');
   }
 
   if (language === 'fr') {
     return [
-      'Write all non-code prose, progress updates, task titles, plan descriptions, spec content, completion notes, review notes, and final summary in French.',
-      'Keep code identifiers, commands, file paths, API names, package names, and existing source text unchanged unless the task explicitly asks to translate them.',
-      'When writing spec.md, requirements text, implementation_plan.md tasks, direct summaries, and review notes, prefer natural French.',
-      'Final answer must be a concise markdown table in French with localized rows for changes, verification, and review notes.',
+      'Write all non-code prose in French, including plans, specs, summaries, and review notes.',
+      'Keep code identifiers, commands, paths, API names, package names, and source text unchanged unless translation is requested.',
+      'Final answer: concise French markdown table with rows for changes, verification, and review notes.',
     ].join(' ');
   }
 
@@ -881,16 +879,16 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '',
     \`The previous CLI attempt exited successfully, but artifact validation failed: \${validationError}\`,
     '',
-    'Repair the missing or invalid Autocode artifact now. Do not only describe the plan; actually write the file.',
+    'Repair the missing or invalid artifact now. Write the file, not just an explanation.',
   ];
 
   const planRules = [
     '## implementation_plan.md Requirements',
     '',
-    '- It must be a single OpenSpec-style Markdown checklist.',
-    '- It must include at least one executable subtask numbered like 1.1, 1.2, or 2.1.',
-    '- A top-level phase such as "- [ ] 1. Implementation" is not enough by itself.',
-    '- Each subtask should be small enough to implement and verify independently.',
+    '- Single OpenSpec-style Markdown checklist.',
+    '- Include at least one executable subtask numbered like 1.1, 1.2, or 2.1.',
+    '- A top-level phase alone is not enough.',
+    '- Each subtask should be independently implementable and verifiable.',
   ];
 
   return [

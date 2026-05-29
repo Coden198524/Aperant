@@ -40,33 +40,32 @@ const DIRECT_TASK_ATTACHMENT_LIMIT = 10;
 
 export function buildAutocodeDefaultSpecPrompt(input: BuildAutocodeSpecPromptInput): string {
   if (input.projectType === 'game-mmo') {
-    return `You are an MMO game specification orchestrator for a large online game project. Create a production-ready spec for this task with explicit coverage of engine architecture, server authority, networking, content pipeline, tools, performance budgets, live operations, security, QA, and rollout risks:\n\n${input.taskDescription}${input.specDir ? `\n\nSpec directory: ${input.specDir}` : ''}\n\nCreate ${AUTOCODE_TASK_ARTIFACTS.specFile} and ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete phases and subtasks.`;
+    return `Create an MMO-ready spec for this task, covering only affected domains: engine, authority, networking, content/tools, performance, liveops, security, QA, and rollout.\n\nTask:\n${input.taskDescription}${input.specDir ? `\n\nSpec directory: ${input.specDir}` : ''}\n\nWrite ${AUTOCODE_TASK_ARTIFACTS.specFile} and a single Markdown ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`;
   }
-  return `You are a spec creation agent. Your job is to create a detailed specification and implementation plan for the following task:\n\n${input.taskDescription}${input.specDir ? `\n\nSpec directory: ${input.specDir}` : ''}\n\nCreate a ${AUTOCODE_TASK_ARTIFACTS.specFile} with requirements and an ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks.`;
+  return `Create a focused specification and implementation plan.\n\nTask:\n${input.taskDescription}${input.specDir ? `\n\nSpec directory: ${input.specDir}` : ''}\n\nWrite ${AUTOCODE_TASK_ARTIFACTS.specFile} and a single Markdown ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks.`;
 }
 
 export function buildAutocodeDefaultPlannerPrompt(input: BuildAutocodeAgentPromptInput): string {
   if (input.projectType === 'game-mmo') {
-    return `You are an MMO systems and engine planning agent. Review spec ${input.specId} in project ${input.projectRoot} and create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with subtasks that account for engine architecture, rendering, animation, asset pipeline, world streaming, authoritative server logic, networking, tooling, build/release, performance budgets, and QA gates.`;
+    return `Plan MMO spec ${input.specId} in ${input.projectRoot}. Write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete subtasks for only affected domains: engine, rendering, animation, assets, streaming, server authority, networking, tools, release, performance, and QA.`;
   }
-  return `You are a planning agent. Your job is to review the spec and create an implementation plan for spec ${input.specId} in project ${input.projectRoot}. Read the ${AUTOCODE_TASK_ARTIFACTS.specFile} and create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks.`;
+  return `Plan spec ${input.specId} in ${input.projectRoot}. Read ${AUTOCODE_TASK_ARTIFACTS.specFile} and write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as a Markdown checklist with phases and subtasks.`;
 }
 
 export function buildAutocodeDefaultQAPrompt(input: BuildAutocodeAgentPromptInput): string {
   if (input.projectType === 'game-mmo') {
-    return `You are an MMO QA reviewer. Review spec ${input.specId} in project ${input.projectRoot}. Validate implementation correctness, deterministic server authority, client/server sync, performance budgets, streaming and asset pipeline behavior, tool workflows, data migration safety, security/anti-cheat boundaries, and build/release impact. Write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with Status: PASSED or Status: FAILED.`;
+    return `Review MMO spec ${input.specId} in ${input.projectRoot}. Validate implementation plus affected authority/sync/performance/content/tools/data/security/release risks. Write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with Status: PASSED or Status: FAILED.`;
   }
-  return `You are a QA reviewer agent. Your job is to review the implementation of spec ${input.specId} in project ${input.projectRoot}. Check that all requirements in ${AUTOCODE_TASK_ARTIFACTS.specFile} are implemented correctly and write a ${AUTOCODE_TASK_ARTIFACTS.qaReport} with Status: PASSED or Status: FAILED.`;
+  return `Review implementation of spec ${input.specId} in ${input.projectRoot}. Check requirements in ${AUTOCODE_TASK_ARTIFACTS.specFile} and write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with Status: PASSED or Status: FAILED.`;
 }
 
 export function buildAutocodeDefaultDirectTaskPrompt(input: Omit<BuildAutocodeAgentPromptInput, 'projectType'>): string {
   return [
     `Complete task ${input.specId} in ${input.projectRoot}.`,
-    'Use one concise coding session. Do not create spec, planning, QA, or subagents.',
-    'If the task is pure question-answer, explanation, translation, summarization, or does not require changing files, do not call tools. Answer directly in the final markdown table.',
-    'Use the first user message as the task source. Do not read task metadata, requirements, implementation plans, previous specs, or broad directory listings unless the request is ambiguous.',
-    'For simple documentation or question-answer tasks, do not probe candidate files like README*, package.json, *.html, or *.md. If creating an obvious file such as README.md, write it directly.',
-    'Inspect only necessary files, edit directly, run one focused validation for simple tasks, and end with a short markdown table: What changed, Verification, Review notes.',
+    'Use one concise coding session. No spec, plan, QA, or subagents.',
+    'For pure Q&A or no-file-change tasks, answer directly without tools.',
+    'Use the first user message as the task source. Read metadata or prior specs only if the request is ambiguous.',
+    'Inspect only relevant files, make focused edits, run one useful validation, and end with a short markdown table: What changed, Verification, Review notes.',
   ].join('\n');
 }
 
@@ -104,10 +103,9 @@ export function buildAutocodeDirectTaskExecutionMessages(
   parts.push(`Implement task ${input.specId} directly in project: ${input.projectRoot}`);
   parts.push(`Task data: ${input.specDir}`);
   parts.push('Workflow off: one coding session only. No staged spec, plan, QA, or subagents.');
-  parts.push('If this is pure question-answer, explanation, translation, summarization, or does not require changing files, do not call tools; answer directly in the final markdown table.');
-  parts.push('Do not read task metadata, requirements, implementation plans, previous specs, or broad directory listings unless this request is missing or ambiguous.');
-  parts.push('For simple documentation or question-answer tasks, do not probe candidate files like README*, package.json, *.html, or *.md; write the obvious target file directly.');
-  parts.push('For simple single-file/documentation tasks, edit first and use at most one verification command or read-back.');
+  parts.push('For Q&A or no-file-change tasks, answer directly without tools.');
+  parts.push('Read metadata, plans, previous specs, or broad listings only if the request is ambiguous.');
+  parts.push('For obvious single-file/documentation tasks, edit directly and run at most one useful check.');
   parts.push('');
   appendProjectDocsReference(parts, input.projectRoot, input.dataDirName);
 
@@ -170,7 +168,7 @@ export function buildAutocodeTaskExecutionMessages(
 ): AutocodeAgentMessage[] {
   const parts: string[] = [];
 
-  parts.push(`You are implementing spec ${input.specId} in project: ${input.projectRoot}`);
+  parts.push(`Implement spec ${input.specId} in project: ${input.projectRoot}`);
   parts.push(`Spec directory: ${input.specDir}`);
   if (input.language === 'zh-CN') {
     parts.push('Language: write all non-code prose, progress updates, summaries, task titles, and review notes in Simplified Chinese.');
@@ -212,13 +210,13 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('```');
     parts.push('');
     if (input.forcePlanning) {
-      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} now. Treat the existing plan as the previous draft, address the Human Review Input, and overwrite the plan with an updated OpenSpec-style Markdown checklist. Do not begin coding in this planning pass.`);
+      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated OpenSpec-style Markdown checklist. Do not code in this planning pass.`);
     } else {
-      parts.push(`Resume implementing the pending/in-progress subtasks. Do NOT redo completed subtasks. Update each subtask status to "completed" in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} after finishing it.`);
+      parts.push(`Resume pending or in-progress subtasks. Leave completed subtasks alone. Mark each finished subtask completed in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
     }
   } else {
     parts.push(input.forcePlanning
-      ? `No implementation plan exists yet. Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, addressing the Human Review Input if present. Do not begin coding in this planning pass.`
+      ? `Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, addressing Human Review Input if present. Do not code in this planning pass.`
       : `No implementation plan exists yet. Start by creating ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, then implement each subtask.`);
   }
 
@@ -230,7 +228,7 @@ export function buildAutocodeQAInitialMessages(
 ): AutocodeAgentMessage[] {
   const parts: string[] = [];
 
-  parts.push(`You are reviewing the implementation of spec ${input.specId} in project: ${input.projectRoot}`);
+  parts.push(`Review implementation of spec ${input.specId} in project: ${input.projectRoot}`);
   parts.push(`Spec directory: ${input.specDir}`);
   parts.push('');
 
@@ -254,7 +252,7 @@ export function buildAutocodeQAInitialMessages(
     parts.push('');
   }
 
-  parts.push(`Review the implementation against the specification. Check that all requirements are met, the code is correct, and tests pass. Write your findings to ${AUTOCODE_TASK_ARTIFACTS.qaReport} with "Status: PASSED" or "Status: FAILED" and a list of any issues found.`);
+  parts.push(`Review against the spec, run relevant checks, and write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with "Status: PASSED" or "Status: FAILED" plus any findings.`);
 
   return [{ role: 'user', content: parts.join('\n') }];
 }

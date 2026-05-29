@@ -161,20 +161,20 @@ describe('buildValidationRetryPrompt', () => {
     ]);
     expect(prompt).toContain('plan.json');
     expect(prompt).toContain('expected string');
-    expect(prompt).toContain('INVALID');
+    expect(prompt).toContain('failed validation');
   });
 
   it('includes schema hint when provided', () => {
     const prompt = buildValidationRetryPrompt('plan.json', ['error'], '{ "phases": [...] }');
     expect(prompt).toContain('{ "phases": [...] }');
-    expect(prompt).toContain('Required schema');
+    expect(prompt).toContain('Schema');
   });
 
   it('includes common field name guidance', () => {
     const prompt = buildValidationRetryPrompt('plan.json', ['error']);
     expect(prompt).toContain('"title"');
     expect(prompt).toContain('"id"');
-    expect(prompt).toContain('do NOT use plain strings');
+    expect(prompt).toContain('not a plain string');
   });
 });
 
@@ -254,14 +254,14 @@ describe('end-to-end: validation 鈫?retry 鈫?self-correction', () => {
     );
 
     // The retry prompt should tell the model exactly what's wrong
-    expect(retryPrompt).toContain('INVALID');
+    expect(retryPrompt).toContain('failed validation');
     expect(retryPrompt).toContain('implementation_plan.md');
     expect(retryPrompt).toContain('subtasks');
-    expect(retryPrompt).toContain('Required schema');
+    expect(retryPrompt).toContain('Schema');
     // Should include the fix instructions
     expect(retryPrompt).toContain('Read the current');
-    expect(retryPrompt).toContain('Fix each error');
-    expect(retryPrompt).toContain('Rewrite the file');
+    expect(retryPrompt).toContain('Fix the listed errors');
+    expect(retryPrompt).toContain('Rewrite corrected JSON');
   });
 
   it('full cycle: invalid 鈫?retry prompt 鈫?corrected output validates', async () => {

@@ -15,7 +15,7 @@ function debug(...args: unknown[]): void {
 }
 
 const SYSTEM_PROMPT =
-  'You generate very short, concise terminal names (2-3 words MAX). Output ONLY the name, nothing else. No quotes, no explanation, no preamble. Keep it as short as possible while being descriptive.';
+  'Generate terminal names in 2-3 words. Output only the name: no quotes, preamble, or explanation.';
 
 /**
  * Service for generating terminal names from commands using the Vercel AI SDK.
@@ -96,7 +96,7 @@ export class TerminalNameGenerator extends EventEmitter {
    * Create the prompt for terminal name generation
    */
   private createNamePrompt(command: string, cwd?: string): string {
-    let prompt = `Generate a very short, descriptive name (2-3 words MAX) for a terminal window based on what it's doing. The name should be concise and help identify the terminal at a glance.
+    let prompt = `Generate a 2-3 word terminal name for this activity.
 
 Command or activity:
 ${command}`;
@@ -108,7 +108,7 @@ Working directory:
 ${cwd}`;
     }
 
-    prompt += '\n\nOutput ONLY the name (2-3 words), nothing else. Examples: "npm build", "git logs", "python tests", "claude dev"';
+    prompt += '\n\nOutput only the name. Examples: "npm build", "git logs", "python tests", "claude dev"';
 
     return prompt;
   }

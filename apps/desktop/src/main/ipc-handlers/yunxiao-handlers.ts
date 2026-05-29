@@ -64,13 +64,8 @@ const YUNXIAO_VALID_TOOLSETS = new Set([
   'test-management',
 ]);
 const YUNXIAO_ANALYSIS_SYSTEM_PROMPT = [
-  '你是资深游戏研发缺陷分析助手。',
-  '请基于给定缺陷信息输出可执行、可验证的分析结果。',
-  '规则：',
-  '1. 使用简体中文。',
-  '2. 使用 Markdown 格式。',
-  '3. 保持结论可落地，不要泛泛而谈。',
-  '4. 缺少信息时必须明确写“待确认”，不要编造。'
+  '分析游戏研发缺陷，输出可执行、可验证的 Markdown。',
+  '使用简体中文；缺少证据写“待确认”，不要编造。'
 ].join('\n');
 
 function isResponsesApiModel(modelId: string | undefined): boolean {
@@ -153,9 +148,9 @@ function buildYunxiaoIssueAnalysisPrompt(issue: YunxiaoIssue): string {
   ) || '（无）';
 
   return [
-    '请输出该缺陷的分析初稿，用于研发排查与修复讨论。',
+    '输出该缺陷的分析初稿，用于研发排查与修复讨论。',
     '',
-    '输出结构（必须包含以下标题）：',
+    '包含以下标题：',
     '## 问题概述',
     '## 复现路径',
     '## 根因假设（按可能性排序）',
@@ -178,9 +173,9 @@ function buildYunxiaoIssueAnalysisPrompt(issue: YunxiaoIssue): string {
     '已有人工分析（如有）：',
     existingAnalysis,
     '',
-    '注意：',
+    '约束：',
     '- 没有证据的内容写“待确认”。',
-    '- 尽量给出适用于游戏研发场景的建议（客户端/服务器/数值/资源/网络等）。',
+    '- 建议需贴合游戏研发场景，如客户端、服务器、数值、资源、网络。',
   ].join('\n');
 }
 

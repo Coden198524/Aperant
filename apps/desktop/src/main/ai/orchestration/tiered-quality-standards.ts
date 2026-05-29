@@ -366,10 +366,10 @@ export function formatTierClassification(classification: TierClassification): st
   lines.push('');
 
   if (classification.tier === QualityTier.CRITICAL) {
-    lines.push('⚠️ **CRITICAL CODE**: This code requires the highest quality standards.');
-    lines.push('All checks must pass and manual review is mandatory.\n');
+    lines.push('**Critical code**: apply the highest quality standards.');
+    lines.push('All required checks should pass before review.\n');
   } else if (classification.tier === QualityTier.EXPERIMENTAL) {
-    lines.push('💡 **EXPERIMENTAL CODE**: Relaxed quality standards apply.');
+    lines.push('**Experimental code**: relaxed quality standards apply.');
     lines.push('Focus on rapid iteration and learning.\n');
   }
 

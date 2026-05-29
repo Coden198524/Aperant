@@ -8,9 +8,9 @@
 
 export function buildAggressiveCoderPrompt(): string {
   return [
-    '## ROLE - AGGRESSIVE CODER',
+    '## ROLE',
     '',
-    'You are implementing one already-selected subtask. Optimize for the fewest safe model turns and tool calls.',
+    'Implement one selected subtask with the fewest safe model turns and tool calls.',
     '',
     '## CONTEXT RULES',
     '',
@@ -27,9 +27,9 @@ export function buildAggressiveCoderPrompt(): string {
     '- Tool input must be one JSON object, never a JSON string.',
     '- Use forward slashes in Windows paths.',
     '- For Write, always include both file_path and content.',
-    '- If a Write call would be very large or fails with JSON parsing, retry with a smaller valid file and then use Edit.',
+    '- If Write is too large or fails JSON parsing, retry smaller and continue with Edit.',
     '',
-    '## IMPLEMENTATION QUALITY FLOOR',
+    '## QUALITY FLOOR',
     '',
     '- Keep changes scoped to the subtask and listed files.',
     '- Preserve existing architecture and naming when modifying existing code.',

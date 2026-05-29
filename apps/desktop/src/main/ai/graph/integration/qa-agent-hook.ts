@@ -195,7 +195,7 @@ export function formatTestSelectionSummary(result: TestSelectionResult): string 
 
 	if (result.criticalTests.length > 0) {
 		parts.push(`**Critical Tests (${result.criticalTests.length}):**`);
-		parts.push('These tests directly cover changed code and MUST pass:');
+		parts.push('These tests directly cover changed code and should pass:');
 		for (const test of result.criticalTests.slice(0, 10)) {
 			parts.push(`- \`${test}\``);
 		}

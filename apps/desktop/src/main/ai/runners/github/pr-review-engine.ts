@@ -226,17 +226,17 @@ export interface MultiPassReviewResult {
 // =============================================================================
 
 const REVIEW_PASS_PROMPTS: Record<ReviewPass, string> = {
-  [ReviewPass.QUICK_SCAN]: `You are a senior code reviewer performing a quick scan of a pull request.
+  [ReviewPass.QUICK_SCAN]: `Quick-scan this pull request.
 
-Analyze the PR and provide a JSON response with:
+Return JSON with:
 - "complexity": "low" | "medium" | "high"
 - "risk_areas": string[] (list of risky areas)
 - "verdict": "approve" | "request_changes" | "needs_review"
 - "summary": brief summary of what this PR does
 
-Respond with ONLY valid JSON, no markdown fencing.`,
+Return valid JSON only; no markdown fence.`,
 
-  [ReviewPass.SECURITY]: `You are a security-focused code reviewer. Analyze the PR for:
+  [ReviewPass.SECURITY]: `Review this PR for security issues:
 - SQL injection, XSS, CSRF vulnerabilities
 - Hardcoded secrets or credentials
 - Unsafe deserialization
@@ -247,9 +247,9 @@ Respond with ONLY valid JSON, no markdown fencing.`,
 For each finding, output a JSON array of objects with:
 { "id": "SEC-N", "severity": "critical|high|medium|low", "category": "security", "title": "...", "description": "...", "file": "...", "line": N, "suggested_fix": "...", "fixable": boolean, "evidence": "actual code snippet" }
 
-Respond with ONLY a JSON array, no markdown fencing.`,
+Return only a JSON array; no markdown fence.`,
 
-  [ReviewPass.QUALITY]: `You are a code quality reviewer. Analyze the PR for:
+  [ReviewPass.QUALITY]: `Review this PR for code quality issues:
 - Code duplication
 - Poor error handling
 - Missing edge cases
@@ -260,9 +260,9 @@ Respond with ONLY a JSON array, no markdown fencing.`,
 For each finding, output a JSON array of objects with:
 { "id": "QLT-N", "severity": "critical|high|medium|low", "category": "quality", "title": "...", "description": "...", "file": "...", "line": N, "suggested_fix": "...", "fixable": boolean, "evidence": "actual code snippet" }
 
-Respond with ONLY a JSON array, no markdown fencing.`,
+Return only a JSON array; no markdown fence.`,
 
-  [ReviewPass.DEEP_ANALYSIS]: `You are performing deep business logic analysis. Review for:
+  [ReviewPass.DEEP_ANALYSIS]: `Review this PR for business logic risks:
 - Logic errors
 - Race conditions
 - State management issues
@@ -272,9 +272,9 @@ Respond with ONLY a JSON array, no markdown fencing.`,
 For each finding, output a JSON array of objects with:
 { "id": "DEEP-N", "severity": "critical|high|medium|low", "category": "quality", "title": "...", "description": "...", "file": "...", "line": N, "suggested_fix": "...", "fixable": boolean, "evidence": "actual code snippet" }
 
-Respond with ONLY a JSON array, no markdown fencing.`,
+Return only a JSON array; no markdown fence.`,
 
-  [ReviewPass.STRUCTURAL]: `You are reviewing the PR for structural issues:
+  [ReviewPass.STRUCTURAL]: `Review this PR for structural issues:
 - Feature creep (changes beyond stated scope)
 - Scope creep
 - Architecture violations
@@ -283,9 +283,9 @@ Respond with ONLY a JSON array, no markdown fencing.`,
 For each issue, output a JSON array of objects with:
 { "id": "STR-N", "issue_type": "feature_creep|scope_creep|architecture_violation|poor_structure", "severity": "critical|high|medium|low", "title": "...", "description": "...", "impact": "why this matters", "suggestion": "how to fix" }
 
-Respond with ONLY a JSON array, no markdown fencing.`,
+Return only a JSON array; no markdown fence.`,
 
-  [ReviewPass.AI_COMMENT_TRIAGE]: `You are triaging comments from other AI code review tools (CodeRabbit, Cursor, Greptile, etc.).
+  [ReviewPass.AI_COMMENT_TRIAGE]: `Triage comments from other AI code review tools.
 
 For each AI comment, determine if it is:
 - "critical": Must be addressed before merge
@@ -295,12 +295,12 @@ For each AI comment, determine if it is:
 - "false_positive": AI was wrong
 - "addressed": Valid issue that was fixed in a subsequent commit
 
-IMPORTANT: Check the commit timeline! If a later commit fixed what the AI flagged, verdict = "addressed".
+Check the commit timeline: if a later commit fixed what the AI flagged, verdict = "addressed".
 
 Output a JSON array of objects with:
 { "comment_id": N, "tool_name": "...", "original_comment": "...", "verdict": "...", "reasoning": "...", "response_comment": "optional reply" }
 
-Respond with ONLY a JSON array, no markdown fencing.`,
+Return only a JSON array; no markdown fence.`,
 };
 
 // =============================================================================
@@ -421,8 +421,7 @@ function buildAICommentsContext(context: PRContext): string {
     '',
     `Found ${context.aiBotComments.length} comments from AI code review tools:`,
     '',
-    '**IMPORTANT: Check the timeline! AI comments were made at specific times.',
-    'If a later commit fixed the issue the AI flagged, use ADDRESSED (not FALSE_POSITIVE).**',
+    '**Check the timeline.** If a later commit fixed the AI-flagged issue, use ADDRESSED instead of FALSE_POSITIVE.',
     '',
   ];
 
@@ -531,7 +530,7 @@ ${diff}
   const thinkingLevel = config.thinkingLevel ?? 'medium';
 
   const client = await createSimpleClient({
-    systemPrompt: 'You are an expert code reviewer. Respond with structured JSON only.',
+    systemPrompt: 'Review code changes. Return structured JSON only.',
     modelShorthand,
     thinkingLevel,
   });
@@ -573,7 +572,7 @@ async function runStructuralPass(
   const fullPrompt = `${passPrompt}\n\n---\n\n${prContext}`;
 
   const client = await createSimpleClient({
-    systemPrompt: 'You are an expert code reviewer. Respond with structured JSON only.',
+    systemPrompt: 'Review code changes. Return structured JSON only.',
     modelShorthand: config.model ?? 'sonnet',
     thinkingLevel: config.thinkingLevel ?? 'medium',
   });
@@ -609,7 +608,7 @@ async function runAITriagePass(
   const fullPrompt = `${passPrompt}\n\n---\n\n${aiContext}\n\n---\n\n${prContext}`;
 
   const client = await createSimpleClient({
-    systemPrompt: 'You are an expert code reviewer. Respond with structured JSON only.',
+    systemPrompt: 'Review code changes. Return structured JSON only.',
     modelShorthand: config.model ?? 'sonnet',
     thinkingLevel: config.thinkingLevel ?? 'medium',
   });

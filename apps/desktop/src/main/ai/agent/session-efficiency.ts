@@ -255,7 +255,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
   const gameMmoDocumentation = isGameMmoDocumentationContext(context);
   const gameMmoImplementation = isGameMmoImplementationContext(context);
   const lines: string[] = [
-    `Implement ONLY subtask "${subtaskId}".`,
+    `Implement subtask "${subtaskId}" only.`,
     `Project root: ${promptProjectDir}.`,
     `Plan file for final status update: ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
   ];

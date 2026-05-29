@@ -222,10 +222,7 @@ function buildResolutionVerifierPrompt(context: FollowupReviewContext): string {
       ? `${context.diffSinceReview.slice(0, MAX_DIFF)}\n\n... (diff truncated)`
       : context.diffSinceReview;
 
-  return `You are a resolution verification specialist for PR follow-up review.
-
-## Task
-Verify whether each previous finding has been addressed in the new changes.
+  return `Verify whether each previous PR finding was addressed.
 
 ## Previous Findings
 ${previousFindings}
@@ -236,7 +233,7 @@ ${diff}
 \`\`\`
 
 ## Output Format
-Return ONLY valid JSON (no markdown fencing):
+Return valid JSON only; no markdown fence:
 {
   "verifications": [
     {
@@ -255,7 +252,7 @@ function buildNewCodeReviewerPrompt(context: FollowupReviewContext): string {
       ? `${context.diffSinceReview.slice(0, MAX_DIFF)}\n\n... (diff truncated)`
       : context.diffSinceReview;
 
-  return `You are a code review specialist analyzing new changes in a follow-up review.
+  return `Review new changes since the previous PR review.
 
 ## Files Changed
 ${context.filesChangedSinceReview.map((f) => `- ${f}`).join('\n')}
@@ -266,7 +263,7 @@ ${diff}
 \`\`\`
 
 ## Output Format
-Return ONLY valid JSON (no markdown fencing):
+Return valid JSON only; no markdown fence:
 {
   "findings": [
     {
@@ -294,7 +291,7 @@ function buildCommentAnalyzerPrompt(context: FollowupReviewContext): string {
     })
     .join('\n\n---\n\n');
 
-  return `You are a comment analysis specialist for PR follow-up review.
+  return `Analyze PR follow-up comments for actionable findings.
 
 ## Contributor Comments
 ${comments}
@@ -303,7 +300,7 @@ ${comments}
 ${aiContent || 'No AI tool feedback since last review.'}
 
 ## Output Format
-Return ONLY valid JSON (no markdown fencing):
+Return valid JSON only; no markdown fence:
 {
   "findings": [
     {
@@ -609,7 +606,7 @@ export class ParallelFollowupReviewer {
     abortSignal?: AbortSignal,
   ): Promise<{ type: string; result: string }> {
     const client = await createSimpleClient({
-      systemPrompt: `You are a ${type} specialist for PR follow-up review.`,
+      systemPrompt: `Run ${type} PR follow-up review. Return structured JSON.`,
       modelShorthand,
       thinkingLevel,
     });

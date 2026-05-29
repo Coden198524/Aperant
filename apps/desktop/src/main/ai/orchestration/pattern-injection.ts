@@ -325,9 +325,8 @@ function buildInjectionBlock(
 ): string {
   const lines: string[] = [];
 
-  lines.push('## 🎯 MANDATORY PATTERNS (You MUST follow these exactly)\n');
-  lines.push('**CRITICAL**: The patterns below are extracted from the actual codebase.');
-  lines.push('Your implementation MUST match these patterns exactly. Deviations will fail QA.\n');
+  lines.push('## Codebase Patterns\n');
+  lines.push('Use these extracted patterns as the implementation contract for this task.\n');
 
   // Add extracted patterns
   if (patterns.length > 0) {
@@ -338,7 +337,7 @@ function buildInjectionBlock(
       lines.push(pattern.code);
       lines.push('```\n');
       lines.push(`**Why this matters**: ${pattern.rationale}\n`);
-      lines.push('**Your code MUST use this exact structure.**\n');
+      lines.push('Match this structure when editing the same kind of code.\n');
     }
   } else {
     lines.push('*No pattern files provided - follow general best practices*\n');
@@ -346,8 +345,8 @@ function buildInjectionBlock(
 
   // Add success cases
   if (successCases.length > 0) {
-    lines.push('## ✅ SUCCESS CASES (Learn from these)\n');
-    lines.push('These similar subtasks passed QA on the first try. Study their approach:\n');
+    lines.push('## Success Cases\n');
+    lines.push('Similar subtasks that passed QA:\n');
 
     for (let i = 0; i < successCases.length; i++) {
       const successCase = successCases[i];

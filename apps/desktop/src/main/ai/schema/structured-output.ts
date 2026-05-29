@@ -223,32 +223,32 @@ export function buildValidationRetryPrompt(
   schemaHint?: string,
 ): string {
   const lines = [
-    `## STRUCTURED OUTPUT VALIDATION ERRORS`,
+    `## STRUCTURED OUTPUT VALIDATION`,
     ``,
-    `The \`${fileName}\` you wrote is INVALID. You MUST rewrite it.`,
+    `Rewrite \`${fileName}\`; it failed validation.`,
     ``,
-    `### Errors found:`,
+    `### Errors`,
     ...errors.map((e) => `- ${e}`),
     ``,
   ];
 
   if (schemaHint) {
-    lines.push(`### Required schema:`, schemaHint, ``);
+    lines.push(`### Schema`, schemaHint, ``);
   }
 
   lines.push(
-    `### How to fix:`,
-    `1. Read the current \`${fileName}\` to see what you wrote`,
-    `2. Fix each error listed above`,
-    `3. Rewrite the file with the corrected JSON using the Write tool`,
+    `### Fix`,
+    `1. Read the current \`${fileName}\``,
+    `2. Fix the listed errors`,
+    `3. Rewrite corrected JSON with the Write tool`,
     ``,
-    `Common field name issues:`,
-    `- Use "title" (REQUIRED) for short 3-10 word subtask summary`,
-    `- Use "description" (REQUIRED) for detailed implementation instructions`,
+    `Common field names:`,
+    `- Use "title" for a short 3-10 word subtask summary`,
+    `- Use "description" for detailed implementation instructions`,
     `- Use "id" (not "subtask_id" or "task_id") for subtask identifiers`,
     `- Use "status" with value "pending" for new subtasks`,
     `- Use "name" for phase names, "subtasks" for the subtask array`,
-    `- Each subtask MUST be an object — do NOT use plain strings`,
+    `- Each subtask must be an object, not a plain string`,
   );
 
   return lines.join('\n');
@@ -301,18 +301,18 @@ export async function repairJsonWithLLM<T>(
   for (let attempt = 0; attempt < MAX_REPAIR_ATTEMPTS; attempt++) {
     try {
       const repairPrompt = [
-        'You are a JSON repair tool. Fix the following JSON so it matches the required schema.',
+        'Repair this JSON so it matches the required schema.',
         '',
-        '## Current (invalid) JSON:',
+        '## Current JSON',
         '```json',
         rawContent,
         '```',
         '',
-        '## Validation errors:',
+        '## Validation Errors',
         ...errors.map((e) => `- ${e}`),
         '',
-        ...(schemaHint ? ['## Required schema:', schemaHint, ''] : []),
-        'Return ONLY the corrected JSON object. Preserve all existing data — only fix the structure.',
+        ...(schemaHint ? ['## Schema', schemaHint, ''] : []),
+        'Return only the corrected JSON object. Preserve existing data; fix structure only.',
       ].join('\n');
 
       const result = await generateText({
@@ -370,6 +370,6 @@ export const IMPLEMENTATION_PLAN_SCHEMA_HINT = `\`\`\`
 }
 \`\`\`
 
-IMPORTANT: Each subtask MUST be an object with at least "id", "title", and "status" fields.
-Do NOT write subtasks as plain strings — they must be objects.
+Each subtask must be an object with at least "id", "title", and "status" fields.
+Subtasks cannot be plain strings.
 When the app language is Simplified Chinese (\`zh-CN\`), write \`feature\`, phase \`name\`, subtask \`title\`, and subtask \`description\` in Simplified Chinese. Keep file paths, commands, APIs, and code identifiers in their original language when needed.`;

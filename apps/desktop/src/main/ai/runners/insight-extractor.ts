@@ -109,8 +109,7 @@ export interface ApproachOutcome {
 // =============================================================================
 
 const SYSTEM_PROMPT =
-  'You are an expert code analyst. You extract structured insights from coding sessions. ' +
-  'Always respond with valid JSON only, no markdown formatting or explanations.';
+  'Extract structured insights from coding sessions. Return valid JSON only.';
 
 /**
  * Build the extraction prompt from session inputs.
@@ -130,9 +129,7 @@ function buildExtractionPrompt(config: InsightExtractionConfig): string {
   }
 
   return `Extract structured insights from this coding session.
-Output ONLY valid JSON with these keys: file_insights (array of {file, insight, category}), patterns_discovered (array of strings), gotchas_discovered (array of strings), approach_outcome ({success, approach_used, why_it_worked, why_it_failed, alternatives_tried}), recommendations (array of strings).
-
----
+Return JSON with: file_insights, patterns_discovered, gotchas_discovered, approach_outcome, recommendations.
 
 ## SESSION DATA
 
@@ -156,9 +153,7 @@ ${diff}
 ### Previous Attempts
 ${attemptHistory}
 
----
-
-Now analyze this session and output ONLY the JSON object.`;
+Return only the JSON object.`;
 }
 
 /**

@@ -105,20 +105,20 @@ export class VersionSuggester {
       .map((c, i) => `${i + 1}. ${c.hash} - ${c.subject}`)
       .join('\n');
 
-    return `You are a semantic versioning expert analyzing git commits to suggest the appropriate version bump.
+    return `Suggest a semantic version bump from these commits.
 
 Current version: ${currentVersion}
 
-Analyze these ${commits.length} commits and determine the appropriate semantic version bump:
+Commits (${commits.length}):
 
 ${commitSummary}
 
-Consider:
+Rules:
 - MAJOR (X.0.0): Breaking changes, API changes, removed features, architectural changes
 - MINOR (0.X.0): New features, enhancements, additions that maintain backward compatibility
 - PATCH (0.0.X): Bug fixes, small tweaks, documentation updates, refactoring without new features
 
-Respond with ONLY a JSON object in this exact format (no markdown, no extra text):
+Return only this JSON object:
 {
   "bumpType": "major|minor|patch",
   "reason": "Brief explanation of the decision"

@@ -82,7 +82,7 @@ export type TriageProgressCallback = (update: TriageProgressUpdate) => void;
 // =============================================================================
 
 const TRIAGE_SYSTEM_PROMPT =
-  'You are an expert issue triager for open source projects. Respond with structured JSON only.';
+  'Triage open source issues. Return structured JSON only.';
 
 const TRIAGE_PROMPT = `Analyze the following GitHub issue and triage it.
 
@@ -109,7 +109,7 @@ Respond with a JSON object:
   "comment": "optional comment to post on the issue"
 }
 
-Respond with ONLY valid JSON, no markdown fencing.`;
+Return valid JSON only; no markdown fence.`;
 
 // =============================================================================
 // Context Building

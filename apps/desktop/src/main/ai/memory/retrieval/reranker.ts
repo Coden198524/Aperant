@@ -230,7 +230,7 @@ export class Reranker {
 function buildQwen3RerankerPrompt(query: string, document: string): string {
   return [
     '<|im_start|>system',
-    'Judge the relevance of the following document to the query. Answer "yes" if relevant, "no" if not.',
+    'Judge document relevance to the query. Answer "yes" or "no".',
     '<|im_end|>',
     '<|im_start|>user',
     `Query: ${query}`,

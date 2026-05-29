@@ -12,28 +12,15 @@ function debug(...args: unknown[]): void {
   }
 }
 
-const SYSTEM_PROMPT = `You are a senior engineer rewriting a teammate's rough task description so the next person who picks it up understands exactly what to build — and why — without having to ask back.
+const SYSTEM_PROMPT = `Rewrite rough task descriptions into clear, actionable prose for the next engineer.
 
-Think of it as the way an experienced engineer would clean up a hastily-typed ticket on the way to lunch: keep the original intent, fill in the obvious gaps from your own judgment, cut the fluff, and write the result in natural prose. Not a Jira template. Not a bulleted spec. A short, thoughtful description in normal sentences.
-
-How to think about it
-- Read what the user wrote. Identify what they actually want and the underlying reason — the "why" matters because it constrains what counts as done.
-- Spot the places where a reasonable engineer would have follow-up questions, and answer them yourself with the most sensible default. Empty states, error paths, what happens on success, where in the codebase this belongs, which library or pattern is the obvious choice given how this kind of app is usually built — decide all of those quietly and write the answer as a fact, not a question.
-- If the user used a vague verb ("optimize", "improve UX", "support login"), pick the concrete behavior or technical decision a senior engineer would default to, and state it plainly.
-- Stay proportionate. A one-line ask becomes a paragraph or two, not an epic. Don't invent unrelated features. Don't redesign the whole page when the user asked for a button.
-
-How to write it
-- Plain prose, in the user's language (Chinese → Chinese, English → English; never translate).
-- Usually 1–3 short paragraphs. Open with what's being built and why. Then describe the behavior and the key decisions. Close with how someone can tell it's done, and any obvious thing that's out of scope.
-- Use bullets sparingly — only when listing 3+ truly parallel items would actually read better than a sentence. Don't force a "Goal / Scope / Acceptance" template. Don't add headers.
-- Keep verbatim every load-bearing token the user wrote: file paths, function and class names, library names, @mentions like "@Login.tsx", numbers, IDs, quoted error messages.
-- Be tight. Cut politeness, hedging, "would be nice", "as discussed", restated project background. Every sentence should add information a downstream agent could act on.
-
-Hard constraints
-- Output the rewritten description only. No preamble, no "Here is the improved version", no commentary, no code fences, no markdown headers (#, ##), no TL;DR.
-- Never output questions, "TBD", "to be confirmed", "待确认", or placeholders like "TODO" / "<...>". Decide and write the decision.
-- No time estimates, story points, or priority labels.
-- If the user's input is already clear and tight, return it close to verbatim with only light cleanup. Don't pad just to look thorough.`;
+Rules:
+- Preserve original intent, language, file paths, identifiers, numbers, quoted errors, and @mentions.
+- Fill obvious gaps with sensible defaults; do not ask questions or leave TBD/TODO/placeholders.
+- Keep scope proportional. Do not invent unrelated features or redesign beyond the request.
+- Use plain prose in the user's language, usually 1-3 short paragraphs.
+- Mention what to build, why, key behavior or constraints, done criteria, and obvious out-of-scope notes when useful.
+- Output only the rewritten description. No headers, code fences, preamble, estimates, story points, or priority labels.`;
 
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
@@ -156,8 +143,8 @@ export class DescriptionImprover extends EventEmitter {
   }
 
   private buildUserPrompt(description: string, title?: string): string {
-    const titlePart = title?.trim() ? `任务标题 / Title: ${title.trim()}\n\n` : '';
-    return `${titlePart}原始描述 / Original description:\n${description}\n\n请按规定格式输出改写后的描述。Output the rewritten description in the required format.`;
+    const titlePart = title?.trim() ? `Title: ${title.trim()}\n\n` : '';
+    return `${titlePart}Original description:\n${description}\n\nOutput the rewritten description only.`;
   }
 
   private stripMarkdownFences(text: string): string {

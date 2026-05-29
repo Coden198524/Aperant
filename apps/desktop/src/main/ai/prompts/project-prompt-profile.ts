@@ -512,7 +512,7 @@ function buildSpecQuickPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the Spec Agent for this project. Create only the spec and plan needed for the current task.
+Create only the spec and plan needed for the current task.
 
 ## OUTPUTS
 
@@ -590,7 +590,7 @@ function buildPlannerPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the Planner Agent for this project. Convert the existing spec into a concrete implementation plan.
+Convert the existing spec into a concrete implementation plan.
 
 ## REQUIRED OUTPUT
 
@@ -644,7 +644,7 @@ function buildCoderPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the Coding Agent. Implement the next pending subtask in \`implementation_plan.md\`.
+Implement the next pending subtask in \`implementation_plan.md\`.
 
 ${buildToolCallJsonGuidance()}
 
@@ -686,7 +686,7 @@ function buildQaReviewerPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the QA Reviewer. Validate the implementation against \`spec.md\` and \`implementation_plan.md\`.
+Validate the implementation against \`spec.md\` and \`implementation_plan.md\`.
 
 ## REQUIRED OUTPUT
 
@@ -732,7 +732,7 @@ function buildQaFixerPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-You are the QA Fixer. Fix the concrete issues in \`qa_report.md\` and prepare the task for re-review.
+Fix the concrete issues in \`qa_report.md\` and prepare the task for re-review.
 
 ${buildToolCallJsonGuidance()}
 

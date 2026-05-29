@@ -29,9 +29,9 @@ export async function hydeSearch(
   try {
     const { text } = await generateText({
       model,
-      prompt: `Write a 2-sentence memory entry that would perfectly answer this query: "${query}"
+      prompt: `Write a 2-sentence factual memory entry that would answer this query: "${query}"
 
-The memory should be written as a factual observation about code, architecture, or development patterns.`,
+Focus on code, architecture, or development patterns.`,
       maxOutputTokens: 100,
     });
 

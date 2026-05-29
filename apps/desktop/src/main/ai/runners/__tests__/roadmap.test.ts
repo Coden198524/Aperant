@@ -280,7 +280,7 @@ describe('runRoadmapGeneration', () => {
     expect(result.success).toBe(false);
     expect(mockStreamText).toHaveBeenCalledTimes(3);
     const secondAttemptArgs = mockStreamText.mock.calls[1][0];
-    expect(secondAttemptArgs.system).toContain('CRITICAL - TOOL USE REQUIRED');
+    expect(secondAttemptArgs.system).toContain('WRITE TOOL REQUIRED');
   });
 
   it('falls back to streamed JSON text and writes discovery file when missing', async () => {

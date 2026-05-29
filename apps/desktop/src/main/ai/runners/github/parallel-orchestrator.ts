@@ -202,22 +202,22 @@ ${diffContent}
 
 ---
 
-## MANDATORY: Tool-Based Verification
+## Tool-Based Verification
 
-**You have Read, Grep, and Glob tools available. You MUST use them.**
+Use Read, Grep, and Glob before returning final JSON.
 
-Before producing your final JSON output, you MUST complete these steps:
+Complete these steps:
 
-1. **Read each changed file** — Use the Read tool to examine the full context of every changed file listed above (not just the diff). Read at least 50 lines around each changed section to understand the broader context.
+1. Read each changed file with enough surrounding context to understand the change.
 
-2. **Grep for patterns** — Use Grep to search for related patterns across the codebase:
+2. Grep related patterns:
    - Search for callers/consumers of changed functions
    - Search for similar patterns that might be affected
    - Verify claims about "missing" protections by searching for them
 
-3. **Verify before concluding** — If you find zero issues, you must still demonstrate that you examined the code thoroughly. Your summary should reference specific files and lines you examined.
+3. If you find zero issues, cite the files and lines inspected in your summary.
 
-**If your response contains zero tool calls, your review will be considered invalid.** A thorough review requires reading actual source code, not just reviewing diffs.`;
+A review with zero tool calls is invalid; review source, not only diffs.`;
 }
 
 // =============================================================================
@@ -282,7 +282,7 @@ function buildSynthesisPrompt(
     })
     .join('\n\n');
 
-  return `You are a senior code review orchestrator synthesizing findings from specialist reviewers.
+  return `Synthesize specialist code review findings.
 
 ## PR Summary
 **PR #${context.prNumber}**: ${context.title}
@@ -292,11 +292,9 @@ Changes: +${context.totalAdditions}/-${context.totalDeletions} across ${context.
 ## Specialist Findings
 ${findingsSummary}
 
-## Your Task
+Remove duplicates and false positives, then produce the final verdict.
 
-Synthesize all specialist findings into a final verdict. Remove duplicates and false positives.
-
-Return ONLY valid JSON (no markdown fencing):
+Return valid JSON only; no markdown fence:
 
 {
   "verdict": "ready_to_merge|merge_with_changes|needs_revision|blocked",
@@ -969,7 +967,7 @@ Validate each finding by reading the actual code at the specified file and line.
     const prompt = buildSynthesisPrompt(context, specialistResults);
 
     const client = await createSimpleClient({
-      systemPrompt: 'You are a senior code review orchestrator.',
+      systemPrompt: 'Synthesize code review findings.',
       modelShorthand,
       thinkingLevel,
     });

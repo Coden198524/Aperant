@@ -34,7 +34,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
   it('builds compact retry guidance with normalized paths', () => {
     const prompt = buildWriteToolJsonRetryPrompt('quick_spec', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('CRITICAL - RETRY QUICK SPEC FILE WRITES');
+    expect(prompt).toContain('RETRY QUICK SPEC WRITES');
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/spec.md');
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/implementation_plan.md');
     expect(prompt).toContain('Use the Write tool to create');
@@ -45,19 +45,19 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
   it('tells planner retries to write one Markdown implementation plan', () => {
     const prompt = buildWriteToolJsonRetryPrompt('planning', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('RETRY IMPLEMENTATION PLAN WITH WRITE TOOL');
+    expect(prompt).toContain('RETRY IMPLEMENTATION PLAN WRITE');
     expect(prompt).toContain('implementation_plan.md');
     expect(prompt).toContain('Write checklist Markdown, not JSON');
-    expect(prompt).toContain('Required Write tool input shape');
+    expect(prompt).toContain('Write input shape');
   });
 
   it('tells context retries to return final JSON instead of using Write', () => {
     const prompt = buildWriteToolJsonRetryPrompt('discovery', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
     expect(prompt).toContain('RETURN context.json AS FINAL JSON');
-    expect(prompt).toContain('Do NOT call Write for E:/Work/Project/.autocode/specs/001-task/context.json');
+    expect(prompt).toContain('Target file: E:/Work/Project/.autocode/specs/001-task/context.json');
     expect(prompt).toContain('files_to_modify');
-    expect(prompt).not.toContain('Required Write tool input shape');
+    expect(prompt).not.toContain('Write input shape');
     expect(prompt).not.toContain('\\');
   });
 
@@ -65,10 +65,10 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     const prompt = buildWriteToolJsonRetryPrompt('requirements', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
     expect(prompt).toContain('RETURN requirements.md data AS FINAL JSON');
-    expect(prompt).toContain('Do NOT call the Write tool for this Markdown file');
+    expect(prompt).toContain('Return final JSON instead of calling Write for this Markdown file');
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/requirements.md');
     expect(prompt).toContain('task_description');
-    expect(prompt).not.toContain('Required Write tool input shape');
+    expect(prompt).not.toContain('Write input shape');
     expect(prompt).not.toContain('\\');
   });
 

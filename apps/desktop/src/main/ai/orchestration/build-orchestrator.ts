@@ -91,40 +91,37 @@ function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
 
 function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string {
   return [
-    'CRITICAL - RETRY IMPLEMENTATION PLAN WITH WRITE TOOL',
+    'RETRY IMPLEMENTATION PLAN WRITE',
     '',
-    `Previous planning attempt failed because a Write tool call was malformed or too large: ${errorMessage}`,
+    `Previous Write call failed before execution: ${errorMessage}`,
     '',
     `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with the Write tool.`,
-    'Use checklist Markdown, not JSON.',
-    'Use forward slashes in file_path, including Windows paths.',
-    'Each Write input must be one object with file_path and content.',
-    'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" items with _Files_, _Depends on_, _Requirements_, and _Verification_ metadata.',
-    'Keep descriptions concise so the single Markdown file stays readable.',
+    'Write checklist Markdown, not JSON. Each Write input is one object with file_path and content.',
+    'Use forward slashes in file_path.',
+    'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" with _Files_, _Depends on_, _Requirements_, and _Verification_.',
     'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    'For genuinely complex tasks, preserve necessary subtasks with concise bullets instead of splitting files.',
-    'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
+    'For complex tasks, keep necessary subtasks concise in the single Markdown file.',
+    'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   ].join('\n');
 }
 
 function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): string {
   return [
-    'CRITICAL - REWRITE IMPLEMENTATION PLAN FILES',
+    'REWRITE IMPLEMENTATION PLAN',
     '',
-    'The previous implementation plan file was missing or invalid.',
+    'The previous implementation plan was missing or invalid.',
     '',
     'Errors:',
     ...errors.map((error) => `- ${error}`),
     '',
     IMPLEMENTATION_PLAN_SCHEMA_HINT,
     '',
-    'Retry by using the Write tool to rewrite the implementation plan files.',
-    'Do not paste the full plan into the final response.',
-    'Use forward slashes in file_path, including Windows paths.',
+    'Retry with the Write tool; do not paste the full plan into the final response.',
+    'Use forward slashes in file_path.',
     `Rewrite ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
     'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    'For genuinely complex tasks, keep descriptions concise instead of splitting files.',
-    'Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
+    'For complex tasks, keep descriptions concise instead of splitting files.',
+    'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   ].join('\n');
 }
 

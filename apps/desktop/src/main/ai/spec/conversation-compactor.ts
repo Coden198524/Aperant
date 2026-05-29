@@ -42,9 +42,7 @@ const PHASE_OUTPUT_FILES: Record<string, string[]> = {
 };
 
 const COMPACTOR_SYSTEM_PROMPT =
-  'You are a concise technical summarizer. Extract only the most ' +
-  'critical information from phase outputs. Use bullet points. ' +
-  'Focus on decisions, discoveries, and actionable insights.';
+  'Summarize phase outputs into concise bullets. Focus on decisions, discoveries, constraints, and actionable insights.';
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -120,15 +118,15 @@ export async function summarizePhaseOutput(
     truncatedOutput = `${phaseOutput.slice(0, MAX_INPUT_CHARS)}\n\n[... output truncated for summarization ...]`;
   }
 
-  const prompt = `Summarize the key findings from the "${phaseName}" phase in ${targetWords} words or less.
+  const prompt = `Summarize the "${phaseName}" phase in ${targetWords} words or less.
 
-Focus on extracting ONLY the most critical information that subsequent phases need:
+Include only information subsequent phases need:
 - Key decisions made and their rationale
 - Critical files, components, or patterns identified
 - Important constraints or requirements discovered
 - Actionable insights for implementation
 
-Be concise and use bullet points. Skip boilerplate and meta-commentary.
+Use concise bullets. Skip boilerplate and meta-commentary.
 
 ## Phase Output:
 ${truncatedOutput}

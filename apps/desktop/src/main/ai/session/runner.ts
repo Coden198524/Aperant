@@ -212,22 +212,21 @@ function getWriteToolInputFailure(part: FullStreamPart): WriteToolInputFailure |
 function buildWriteToolInputCorrectionPrompt(failure: WriteToolInputFailure): string {
   const target = failure.filePath ?? 'the required output file';
   return [
-    'CRITICAL TOOL CALL CORRECTION - WRITE TOOL',
+    'WRITE TOOL INPUT CORRECTION',
     '',
-    `Your previous Write tool call failed before execution: ${failure.message}`,
+    `The previous Write call failed before execution: ${failure.message}`,
     '',
-    'For the next action, call the Write tool with an OBJECT, not a string.',
-    'Do not wrap the JSON object in quotes. Do not output the object as markdown text.',
+    'Next action: call Write with one JSON object, not a quoted string or markdown text.',
     '',
-    'Required Write arguments shape:',
+    'Required shape:',
     `{"file_path":"${target}","content":"# ...\\n..."}`,
     '',
     'Rules:',
-    '- Include both keys in the same object: file_path and content.',
+    '- Include both file_path and content.',
     '- Use forward slashes in file_path.',
-    '- Keep content compact so the tool-call JSON closes correctly.',
-    '- If the target file already exists and you are making a small correction, use the Edit tool instead of rewriting it with Write.',
-    '- For spec.md, use Edit for targeted fixes. Only use Write to create a missing short spec; avoid long code blocks, copied source files, or large tables.',
+    '- Keep content compact enough for valid tool JSON.',
+    '- Use Edit for small changes to existing files.',
+    '- For spec.md, use Edit for targeted fixes; use Write only to create a missing short spec.',
   ].join('\n');
 }
 
@@ -849,8 +848,8 @@ async function executeStream(
         contextWindowWarningInjected = true;
         const usagePct = Math.round((lastPromptTokens / contextWindowLimit) * 100);
         systemParts.push(
-          `WARNING: You are approaching the context window limit (${usagePct}% used, ${lastPromptTokens.toLocaleString()} of ${contextWindowLimit.toLocaleString()} tokens). ` +
-          `Complete your current task and commit progress immediately. Do not start new subtasks.`,
+          `Context window is near limit (${usagePct}% used, ${lastPromptTokens.toLocaleString()} of ${contextWindowLimit.toLocaleString()} tokens). ` +
+          `Finish the current task and commit progress; do not start new subtasks.`,
         );
       }
 
@@ -866,9 +865,8 @@ async function executeStream(
         convergenceNudgeInjected = true;
         const remaining = maxSteps - stepNumber;
         systemParts.push(
-          `IMPORTANT: You have used ${stepNumber} of ${maxSteps} steps (${remaining} remaining). ` +
-          `You must finalize your output now. Write your verdict/result to the appropriate file immediately. ` +
-          `Do not start new investigations - wrap up with the evidence you have.`,
+          `Step budget is almost used (${stepNumber}/${maxSteps}, ${remaining} remaining). ` +
+          `Write the required verdict/result now and wrap up with current evidence.`,
         );
       }
 

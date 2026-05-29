@@ -60,9 +60,9 @@ const FORMAT_TEMPLATES = {
  * Audience-specific writing instructions
  */
 const AUDIENCE_INSTRUCTIONS = {
-  'technical': 'You are a technical documentation specialist creating a changelog for developers. Use precise technical language.',
-  'user-facing': 'You are a product manager writing release notes for end users. Use clear, non-technical language focusing on user benefits.',
-  'marketing': 'You are a marketing specialist writing release notes. Focus on outcomes and user impact with compelling language.'
+  'technical': 'Write a developer changelog with precise technical language.',
+  'user-facing': 'Write user-facing release notes focused on benefits.',
+  'marketing': 'Write release notes focused on outcomes and user impact.'
 };
 
 /**
@@ -76,23 +76,23 @@ function getEmojiInstructions(emojiLevel?: string, format?: string): string {
   // GitHub Release format uses specific emoji style matching Gemini CLI pattern
   if (format === 'github-release') {
     const githubInstructions: Record<string, string> = {
-      'little': `Add emojis ONLY to section headings. Use these specific emoji-heading pairs:
+      'little': `Add emojis to section headings only. Use these emoji-heading pairs:
 - "### ✨ New Features"
 - "### 🛠️ Improvements"
 - "### 🐛 Bug Fixes"
 - "### 📚 Documentation"
 - "### 🔧 Other Changes"
-Do NOT add emojis to individual line items.`,
-      'medium': `Add emojis to section headings AND to notable/important items only.
-Section headings MUST use these specific emoji-heading pairs:
+Do not add emojis to individual line items.`,
+      'medium': `Add emojis to section headings and notable items only.
+Use these emoji-heading pairs:
 - "### ✨ New Features"
 - "### 🛠️ Improvements"
 - "### 🐛 Bug Fixes"
 - "### 📚 Documentation"
 - "### 🔧 Other Changes"
 Add emojis to 2-3 highlighted items per section that are particularly significant.`,
-      'high': `Add emojis to section headings AND every line item.
-Section headings MUST use these specific emoji-heading pairs:
+      'high': `Add emojis to section headings and every line item.
+Use these emoji-heading pairs:
 - "### ✨ New Features"
 - "### 🛠️ Improvements"
 - "### 🐛 Bug Fixes"
@@ -105,14 +105,14 @@ Every line item should start with a contextual emoji.`
 
   // Default instructions for other formats
   const instructions: Record<string, string> = {
-    'little': `Add emojis ONLY to section headings. Each heading should have one contextual emoji at the start.
+    'little': `Add emojis to section headings only. Each heading should have one contextual emoji at the start.
 Examples:
 - "### ✨ New Features" or "### 🚀 New Features"
 - "### 🐛 Bug Fixes"
 - "### 🔧 Improvements" or "### ⚡ Improvements"
 - "### 📚 Documentation"
-Do NOT add emojis to individual line items.`,
-    'medium': `Add emojis to section headings AND to notable/important items only.
+Do not add emojis to individual line items.`,
+    'medium': `Add emojis to section headings and notable items only.
 Section headings should have one emoji (e.g., "### ✨ New Features", "### 🐛 Bug Fixes").
 Add emojis to 2-3 highlighted items per section that are particularly significant.
 Examples of highlighted items:
@@ -170,17 +170,10 @@ export function buildChangelogPrompt(
     formatSpecificInstructions = `
 For GitHub Release format:
 
-RELEASE TITLE (CRITICAL):
-- First, analyze all completed tasks to identify the main theme or focus of this release
-- Create a concise, descriptive title (2-5 words) that captures what this release is about
-- Examples of good titles:
-  * "Improved Terminal Experience" (for terminal-related improvements)
-  * "Enhanced Security Features" (for security updates)
-  * "UI/UX Refinements" (for interface changes)
-  * "Agent Performance Boost" (for performance improvements)
-- The version header MUST be: "## ${request.version} - [Your Thematic Title]"
-- Focus on the USER BENEFIT or FUNCTIONAL AREA, not technical implementation details
-- The title should be what the release is "about" in layman's terms
+Release title:
+- Create a concise 2-5 word theme from the completed tasks.
+- Version header: "## ${request.version} - [Your Thematic Title]"
+- Focus on user benefit or functional area, not implementation details.
 `;
   }
 
@@ -196,9 +189,7 @@ ${taskSummaries}
 
 ${request.customInstructions ? `Note: ${request.customInstructions}` : ''}
 
-CRITICAL: Output ONLY the raw changelog content. Do NOT include ANY introductory text, analysis, or explanation. Start directly with the changelog heading (## or #). No "Here's the changelog" or similar phrases.
-
-DO NOT ask questions or request clarifications. Work with the information provided and make reasonable assumptions if needed. Generate the changelog immediately based on the completed tasks listed above.`;
+Output only raw changelog content. Start with the changelog heading; no preamble, analysis, questions, or clarifications.`;
 }
 
 /**
@@ -250,28 +241,19 @@ export function buildGitPrompt(
   let formatSpecificInstructions = '';
   if (request.format === 'github-release') {
     formatSpecificInstructions = `
-For GitHub Release format, you MUST follow this structure:
+For GitHub Release format:
 
-RELEASE TITLE (CRITICAL):
-- First, analyze all commits to identify the main theme or focus of this release
-- Create a concise, descriptive title (2-5 words) that captures what this release is about
-- Examples of good titles:
-  * "Improved Terminal Experience" (for terminal-related improvements)
-  * "Enhanced Security Features" (for security updates)
-  * "Performance Optimizations" (for speed improvements)
-  * "UI/UX Refinements" (for interface changes)
-  * "Agent System Overhaul" (for major architectural changes)
-  * "Build Pipeline Enhancements" (for CI/CD improvements)
-- The version header MUST be: "## ${request.version} - [Your Thematic Title]"
-- Focus on the USER BENEFIT or FUNCTIONAL AREA, not technical implementation details
-- The title should be what the release is "about" in layman's terms
+Release title:
+- Create a concise 2-5 word theme from the commits.
+- Version header: "## ${request.version} - [Your Thematic Title]"
+- Focus on user benefit or functional area, not implementation details.
 
 PART 1 - Categorized changes (summarized):
 - Use category sections: New Features, Improvements, Bug Fixes, Documentation, Other Changes
-- ONLY include sections that have actual changes - skip empty sections entirely
+- Include only sections with actual changes.
 - Add a blank line between each bullet point for cleaner formatting
 - Summarize and group related commits into clear, readable descriptions
-- Do NOT include commit hashes in this section
+- Do not include commit hashes in this section.
 
 PART 2 - "What's Changed" (raw commit list):
 - Add a horizontal rule (---) before this section
@@ -315,9 +297,7 @@ ${commitLines}
 
 ${request.customInstructions ? `Note: ${request.customInstructions}` : ''}
 
-CRITICAL: Output ONLY the raw changelog content. Do NOT include ANY introductory text, analysis, or explanation. Start directly with the changelog heading (## or #). No "Here's the changelog" or similar phrases. Intelligently group and summarize related commits - don't just list each commit individually. Only include sections that have actual changes.
-
-DO NOT ask questions or request clarifications. Work with the information provided and make reasonable assumptions if needed. Generate the changelog immediately based on the git commits listed above.`;
+Output only raw changelog content. Start with the changelog heading; no preamble, analysis, questions, or clarifications. Group related commits and include only sections with actual changes.`;
 }
 
 /**

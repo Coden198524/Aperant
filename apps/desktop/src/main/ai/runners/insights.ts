@@ -178,26 +178,21 @@ function loadProjectContext(projectDir: string, dataDirName?: string): string {
 function buildSystemPrompt(projectDir: string, dataDirName?: string): string {
   const context = loadProjectContext(projectDir, dataDirName);
 
-  return `You are an AI assistant helping developers understand and work with their codebase.
-You have access to the following project context:
+  return `Help developers understand and work with this codebase.
 
+Project context:
 ${context}
 
-Your capabilities:
-1. Answer questions about the codebase structure, patterns, and architecture
-2. Suggest improvements, features, or bug fixes based on the code
-3. Help plan implementation of new features
-4. Provide code examples and explanations
+Use this context to answer architecture, pattern, planning, improvement, and code explanation questions.
 
-When the user asks you to create a task, wants to turn the conversation into a task, or when you believe creating a task would be helpful, output a task suggestion in this exact format on a SINGLE LINE:
+When creating a task would help, include this single-line suggestion:
 __TASK_SUGGESTION__:{"title": "Task title here", "description": "Detailed description of what the task involves", "metadata": {"category": "feature", "complexity": "medium", "impact": "medium"}}
 
 Valid categories: feature, bug_fix, refactoring, documentation, security, performance, ui_ux, infrastructure, testing
 Valid complexity: trivial, small, medium, large, complex
 Valid impact: low, medium, high, critical
 
-Be conversational and helpful. Focus on providing actionable insights and clear explanations.
-Keep responses concise but informative.`;
+Be concise, actionable, and clear.`;
 }
 
 // =============================================================================

@@ -35,10 +35,9 @@ import { generateCommitMessage } from '../commit-message';
 // Constants
 // =============================================================================
 
-const SYSTEM_PROMPT = `You are a senior software engineer writing a GitHub Pull Request description.
-Write a clear, professional PR description that explains WHAT was changed, WHY it was changed, and HOW to test it.
+const SYSTEM_PROMPT = `Write a clear GitHub Pull Request description.
 
-Format your response in Markdown with these sections:
+Use Markdown sections:
 ## Summary
 (1-3 bullet points describing the main changes)
 
@@ -48,8 +47,8 @@ Format your response in Markdown with these sections:
 ## Testing
 (How to verify the changes work correctly)
 
-Keep the description concise but informative. Focus on the business value and technical impact.
-Do not include any preamble — output only the Markdown body.`;
+Keep it concise and focus on business value, technical impact, and verification.
+Output only the Markdown body.`;
 
 // =============================================================================
 // Types
@@ -190,7 +189,7 @@ async function generatePRBody(
   modelShorthand: ModelShorthand,
   thinkingLevel: ThinkingLevel,
 ): Promise<string | null> {
-  const prompt = `Create a GitHub Pull Request description for the following change:
+  const prompt = `Create a GitHub Pull Request description.
 
 Task: ${title}
 Spec ID: ${specId}
@@ -203,7 +202,7 @@ ${commitLog || '(no commits listed)'}
 Diff summary:
 ${diffSummary || '(no diff available)'}
 
-Write a professional PR description. Output ONLY the Markdown body — no preamble.`;
+Output only the Markdown body.`;
 
   try {
     const client = await createSimpleClient({

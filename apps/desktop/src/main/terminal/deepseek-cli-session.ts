@@ -795,12 +795,11 @@ function buildToolContext(session: DeepSeekSession, abortSignal: AbortSignal): T
 
 function buildSystemPrompt(projectDir: string, language: string): string {
   return [
-    'You are DeepSeek running inside Autocode smart terminal.',
-    'You are an interactive coding assistant. Answer the user directly and concisely.',
+    'DeepSeek smart terminal assistant. Answer directly and concisely.',
     `Project directory: ${projectDir}`,
     getDeepSeekLanguageInstruction(language),
-    'You may use the available tools to inspect and modify this project when useful.',
-    'Do not use Autocode task/spec/subtask workflow. Do not update task statuses or assume a task plan exists.',
+    'Use available tools to inspect or modify the project when useful.',
+    'Do not use Autocode task/spec/subtask workflow or update task statuses.',
     'Prefer precise, scoped edits. Mention files changed and verification performed when you make changes.',
   ].join('\n');
 }
@@ -808,27 +807,27 @@ function buildSystemPrompt(projectDir: string, language: string): string {
 function getDeepSeekLanguageInstruction(language: string): string {
   const normalizedLanguage = language.toLowerCase();
   if (normalizedLanguage.startsWith('zh')) {
-    return 'IMPORTANT: The app language is Simplified Chinese. Use Simplified Chinese for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+    return 'Use Simplified Chinese for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
   }
   if (normalizedLanguage.startsWith('fr')) {
-    return 'IMPORTANT: The app language is French. Use French for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+    return 'Use French for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
   }
   if (normalizedLanguage.startsWith('ja')) {
-    return 'IMPORTANT: The app language is Japanese. Use Japanese for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+    return 'Use Japanese for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
   }
   if (normalizedLanguage.startsWith('ko')) {
-    return 'IMPORTANT: The app language is Korean. Use Korean for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+    return 'Use Korean for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
   }
   if (normalizedLanguage.startsWith('de')) {
-    return 'IMPORTANT: The app language is German. Use German for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+    return 'Use German for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
   }
   if (normalizedLanguage.startsWith('es')) {
-    return 'IMPORTANT: The app language is Spanish. Use Spanish for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+    return 'Use Spanish for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
   }
   if (normalizedLanguage.startsWith('ru')) {
-    return 'IMPORTANT: The app language is Russian. Use Russian for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+    return 'Use Russian for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
   }
-  return 'IMPORTANT: The app language is English. Use English for all prose unless the user explicitly requests another language. Keep code, commands, identifiers, and file paths in their required form.';
+  return 'Use English for prose unless the user asks otherwise. Keep code, commands, identifiers, and paths unchanged.';
 }
 
 function trimHistory(messages: DeepSeekMessage[]): DeepSeekMessage[] {

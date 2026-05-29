@@ -459,7 +459,7 @@ function calculateRiskLevel(items: ChecklistItem[]): 'low' | 'medium' | 'high' |
 export function formatChecklistForPrompt(checklist: PreImplementationChecklist): string {
   const lines: string[] = [];
 
-  lines.push('## 🛡️ PRE-IMPLEMENTATION CHECKLIST\n');
+  lines.push('## Pre-Implementation Checklist\n');
   lines.push(`**Subtask**: ${checklist.subtaskId}`);
   lines.push(`**Risk Level**: ${checklist.riskLevel.toUpperCase()}`);
   lines.push(`**Generated**: ${new Date(checklist.generatedAt).toLocaleString()}\n`);
@@ -469,7 +469,7 @@ export function formatChecklistForPrompt(checklist: PreImplementationChecklist):
     return lines.join('\n');
   }
 
-  lines.push('**CRITICAL**: Review these predicted issues BEFORE implementing:\n');
+  lines.push('Review these predicted issues before implementing:\n');
 
   // Group by priority
   const critical = checklist.items.filter((i) => i.priority === 'critical');
@@ -477,7 +477,7 @@ export function formatChecklistForPrompt(checklist: PreImplementationChecklist):
   const medium = checklist.items.filter((i) => i.priority === 'medium');
 
   if (critical.length > 0) {
-    lines.push('### 🚨 Critical Issues (MUST prevent):\n');
+    lines.push('### Critical Issues\n');
     for (const item of critical) {
       lines.push(`**${item.issue}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
       lines.push(`- Prevention: ${item.prevention}`);
@@ -489,7 +489,7 @@ export function formatChecklistForPrompt(checklist: PreImplementationChecklist):
   }
 
   if (high.length > 0) {
-    lines.push('### ⚠️ High Priority Issues:\n');
+    lines.push('### High Priority Issues\n');
     for (const item of high) {
       lines.push(`**${item.issue}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
       lines.push(`- Prevention: ${item.prevention}`);

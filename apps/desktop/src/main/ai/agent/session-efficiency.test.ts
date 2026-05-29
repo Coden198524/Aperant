@@ -65,7 +65,7 @@ describe('session-efficiency', () => {
       },
     );
 
-    expect(message).toContain('Implement ONLY subtask "ui-2"');
+    expect(message).toContain('Implement subtask "ui-2" only');
     expect(message).toContain('## Current Subtask');
     expect(message).toContain('src/renderer/components/TaskBadge.tsx');
     expect(message).toContain('src/renderer/TaskBoard.tsx');

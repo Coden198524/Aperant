@@ -16,7 +16,7 @@ function debug(...args: unknown[]): void {
 }
 
 const SYSTEM_PROMPT =
-  'You generate short, concise task titles (3-7 words). Output ONLY the title, nothing else. No quotes, no explanation, no preamble.';
+  'Generate task titles in 3-7 words. Output only the title: no quotes, preamble, or explanation.';
 
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
@@ -168,7 +168,7 @@ export class TitleGenerator extends EventEmitter {
    * Create the prompt for title generation
    */
   private createTitlePrompt(description: string): string {
-    return `Generate a short, concise task title (3-7 words) for the following task description. The title should be action-oriented and describe what will be done. Output ONLY the title, nothing else.
+    return `Generate an action-oriented task title in 3-7 words.
 
 Description:
 ${description}

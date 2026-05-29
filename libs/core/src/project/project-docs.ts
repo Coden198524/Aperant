@@ -381,17 +381,17 @@ function buildProjectDocsTaskDescription(
   outputDir: string,
 ): string {
   return [
-    `Generate ${documentType === 'full' ? 'a complete project documentation pack' : `the ${documentType} project document`} so future Autocode spec and coding phases can reference project context.`,
+    `Generate ${documentType === 'full' ? 'a project documentation pack' : `the ${documentType} project document`} for future spec and coding context.`,
     '',
-    'This is a documentation-only source analysis task. Do not modify product source code.',
-    `Write the generated documents under \`${outputDir}\` so future spec and coding agents can reuse them.`,
+    'Documentation-only task. Do not modify product source code.',
+    `Write outputs under \`${outputDir}\`.`,
     '',
     'Required outputs:',
     ...outputs.map((output) => `- \`${output.relativePath}\`: ${output.purpose}`),
     `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME)}\`: JSON outline with document_type, audience, sections, and source references.`,
     `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME)}\`: JSON evidence index with files_read, evidence_backed_claims, inferred_claims, risks, and open_questions.`,
     '',
-    'Ground every important claim in source files or mark it as an inference. Include product intent, architecture boundaries, technical conventions, verification commands, risks, and open questions where relevant.',
+    'Ground major claims in source files or mark them as inference. Include product intent, architecture, conventions, verification commands, risks, and open questions.',
   ].join('\n');
 }
 
@@ -464,15 +464,15 @@ function buildProjectDocsImplementationPlan(input: {
             id: '1.1',
             title: 'Generate project documentation reference pack',
             description: [
-              'Analyze the repository and write the requested project documentation pack.',
+              'Analyze the repository and write the requested project documentation.',
               '',
-              'Use the smallest sufficient source set first: root README/package/build manifests, source entry points, public interfaces, configuration, tests, and existing docs. Expand through imports and ownership boundaries until product intent, architecture, technical conventions, and verification paths are clear.',
+              'Start with README/package/build manifests, entry points, public interfaces, configuration, tests, and existing docs. Expand only as needed.',
               '',
               'Required document coverage:',
               ...sectionRequirements,
               '',
-              'The index must link all generated documents and explain how future Autocode spec-generation and coding sessions should use them.',
-              'Do not edit product source files. Only create or update the listed documentation outputs.',
+              'The index must link generated documents and explain how future spec/coding sessions should use them.',
+              'Only create or update listed documentation outputs.',
             ].join('\n'),
             status: 'pending',
             files_to_create: outputPaths,

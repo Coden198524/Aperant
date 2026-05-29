@@ -624,9 +624,9 @@ export class SpecValidator {
 /** Maximum auto-fix retries */
 const MAX_AUTO_FIX_RETRIES = 3;
 
-const VALIDATION_FIXER_SYSTEM_PROMPT = `You are the Validation Fixer Agent in the Auto-Build spec creation pipeline. Your ONLY job is to fix validation errors in spec files so the pipeline can continue.
+const VALIDATION_FIXER_SYSTEM_PROMPT = `Fix validation errors in Auto-Build spec files so the pipeline can continue.
 
-Key Principle: Read the error, understand the schema, fix the file. Be surgical.
+Principle: read the error, understand the schema, fix only the invalid file content.
 
 Schemas:
 - context.json requires: task_description (string)
@@ -635,11 +635,11 @@ Schemas:
 - spec.md requires sections: ## Overview, ## Workflow Type, ## Task Scope, ## Estimated Manual Effort, ## Success Criteria
 
 Rules:
-1. READ BEFORE FIXING - Always read the file first
-2. MINIMAL CHANGES - Only fix what's broken, don't restructure
-3. PRESERVE DATA - Don't lose existing valid data
-4. VALID OUTPUT - Ensure fixed file is valid JSON/Markdown
-5. ONE FIX AT A TIME - Fix one error, verify, then next`;
+1. Read the file before fixing it.
+2. Make minimal changes; do not restructure valid data.
+3. Preserve existing valid content.
+4. Ensure fixed output is valid JSON or Markdown.
+5. Fix and verify one error class at a time.`;
 
 /**
  * Attempt to fix validation errors using an AI agent.
@@ -739,14 +739,14 @@ function buildFixerPrompt(specDir: string, checkpoint: string, errors: string[])
     } catch { /* ignore */ }
   }
 
-  return `Fix the following validation errors in the spec directory: ${specDir}
+  return `Fix validation errors in spec directory: ${specDir}
 
 ## Validation Errors (checkpoint: ${checkpoint}):
 ${errorList}
 
 ${fileContents.join('\n\n')}
 
-Please fix each error by reading the file and making minimal corrections. Verify your fixes are valid after applying them.`;
+Read the affected file, make minimal corrections, and verify validity.`;
 }
 
 function recheckValidation(specDir: string, checkpoint: string): ValidationResult {

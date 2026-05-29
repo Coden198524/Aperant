@@ -356,13 +356,13 @@ function buildGitPushPolicyHeader(autoPushToRemote: boolean): string {
   if (autoPushToRemote) {
     return (
       `## GIT PUSH POLICY\n\n` +
-      `**IMPORTANT**: After committing changes, run \`git push\` to push your commits to the remote repository.\n\n` +
+      `After committing changes, run \`git push\` to push your commits to the remote repository.\n\n` +
       `---\n\n`
     );
   } else {
     return (
       `## GIT PUSH POLICY\n\n` +
-      `**IMPORTANT**: Do NOT run \`git push\`. All work stays local until the user reviews and approves.\n` +
+      `Keep work local; do not run \`git push\` until the user reviews and approves.\n` +
       `The user will push to remote after reviewing your changes.\n\n` +
       `---\n\n`
     );

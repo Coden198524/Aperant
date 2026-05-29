@@ -33,29 +33,24 @@ export function generateWorktreeIsolationWarning(
   parentProjectPath: string,
 ): string {
   return (
-    `## ISOLATED WORKTREE - CRITICAL\n\n` +
-    `You are in an **ISOLATED GIT WORKTREE** - a complete copy of the project for safe development.\n\n` +
-    `**YOUR LOCATION:** \`${projectDir}\`\n` +
-    `**FORBIDDEN PATH:** \`${parentProjectPath}\`\n\n` +
-    `### Rules:\n` +
-    `1. **NEVER** use \`cd ${parentProjectPath}\` or any path starting with \`${parentProjectPath}\`\n` +
-    `2. **NEVER** use absolute paths that reference the parent project\n` +
-    `3. **ALL** project files exist HERE via relative paths\n\n` +
-    `### Why This Matters:\n` +
-    `- Git commits made in the parent project go to the WRONG branch\n` +
-    `- File changes in the parent project escape isolation\n` +
-    `- This defeats the entire purpose of safe, isolated development\n\n` +
-    `### Correct Usage:\n` +
+    `## Isolated Worktree\n\n` +
+    `Work only in this isolated copy of the project.\n\n` +
+    `**Worktree:** \`${projectDir}\`\n` +
+    `**Parent project to avoid:** \`${parentProjectPath}\`\n\n` +
+    `Rules:\n` +
+    `1. Do not \`cd ${parentProjectPath}\` or use paths under it.\n` +
+    `2. Use relative paths from the worktree.\n` +
+    `3. Commit and edit only inside the worktree.\n\n` +
+    `Correct usage:\n` +
     `\`\`\`bash\n` +
-    `# CORRECT - Use relative paths from your worktree\n` +
+    `# Correct\n` +
     `./prod/src/file.ts\n` +
     `./apps/desktop/src/component.tsx\n\n` +
-    `# WRONG - These escape isolation!\n` +
+    `# Wrong\n` +
     `cd ${parentProjectPath}\n` +
     `${parentProjectPath}/prod/src/file.ts\n` +
     `\`\`\`\n\n` +
-    `If you see absolute paths in spec.md or context.json that reference \`${parentProjectPath}\`,\n` +
-    `convert them to relative paths from YOUR current location.\n\n` +
+    `Convert parent-project absolute paths in spec/context files to worktree-relative paths.\n\n` +
     `---\n\n`
   );
 }
@@ -96,16 +91,12 @@ function generateEnvironmentContext(projectDir: string, specDir: string): string
   }
 
   sections.push(
-    `## YOUR ENVIRONMENT\n\n` +
+    `## Environment\n\n` +
     `**Working Directory:** \`${projectDir}\`\n` +
     `**Spec Location:** \`${relativeSpec}/\`\n` +
     `${isWorktree ? '**Isolation Mode:** WORKTREE (changes are isolated from main project)\n' : ''}` +
     `\n` +
-    `Your filesystem is restricted to your working directory. All file paths should be\n` +
-    `relative to this location. Do NOT use absolute paths.\n\n` +
-    `**CRITICAL:** Before ANY git command or file operation, run \`pwd\` to verify your current\n` +
-    `directory. If you've used \`cd\` to change directories, you MUST use paths relative to your\n` +
-    `NEW location, not the working directory.\n\n` +
+    `Use paths relative to the current working directory. Run \`pwd\` if you changed directories before git or file operations.\n\n` +
     `**Important Files:**\n` +
     `- Spec: \`${relativeSpec}/spec.md\`\n` +
     `- Plan: \`${relativeSpec}/implementation_plan.md\`\n` +
@@ -215,7 +206,7 @@ export async function generateSubtaskPrompt(config: SubtaskPromptConfig): Promis
     sections.push(
       `\n## RETRY ATTEMPT (${attemptCount + 1})\n\n` +
       `This subtask has been attempted ${attemptCount} time(s) before without success.\n` +
-      `You MUST use a DIFFERENT approach than previous attempts.\n`
+      `Use a different approach than previous attempts.\n`
     );
     if (recoveryHints && recoveryHints.length > 0) {
       sections.push('**Previous attempt insights:**');
@@ -298,7 +289,7 @@ export async function generateSubtaskPrompt(config: SubtaskPromptConfig): Promis
     `## Instructions\n\n` +
     `1. **Read the pattern files** to understand code style and conventions\n` +
     `2. **Read the files to modify** (if any) to understand current implementation\n` +
-    `3. **Implement the subtask** following the patterns exactly\n` +
+    `3. **Implement the subtask** following local patterns\n` +
     `4. **Run verification** and fix any issues\n` +
     `5. **Commit your changes:**\n` +
     `   \`\`\`bash\n` +
@@ -315,9 +306,9 @@ export async function generateSubtaskPrompt(config: SubtaskPromptConfig): Promis
     `- [ ] Error handling in place\n` +
     `- [ ] Verification passes\n` +
     `- [ ] Clean commit with descriptive message\n\n` +
-    `## Important\n\n` +
-    `- Focus ONLY on this subtask - don't modify unrelated code\n` +
-    `- If verification fails, FIX IT before committing\n` +
+    `## Boundaries\n\n` +
+    `- Focus on this subtask; do not modify unrelated code\n` +
+    `- If verification fails because of your changes, fix it before committing\n` +
     `- If you encounter a blocker, document it in build-progress.txt\n`
   );
 

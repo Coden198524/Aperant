@@ -50,19 +50,18 @@ const CATEGORY_TO_COMMIT_TYPE: Record<string, string> = {
   build: 'build',
 };
 
-const SYSTEM_PROMPT = `You are a Git expert who writes clear, concise commit messages following conventional commits format.
+const SYSTEM_PROMPT = `Write concise Conventional Commit messages.
 
 Rules:
-1. First line: type(scope): description (max 72 chars total)
-2. Leave blank line after first line
-3. Body: 1-3 sentences explaining WHAT changed and WHY
-4. If GitHub issue number provided, end with "Fixes #N" on its own line
-5. Be specific about the changes, not generic
-6. Use imperative mood ("Add feature" not "Added feature")
+1. First line: type(scope): description, max 72 chars.
+2. Blank line after the first line.
+3. Body: 1-3 sentences explaining what changed and why.
+4. If a GitHub issue is provided, end with "Fixes #N" on its own line.
+5. Be specific and use imperative mood.
 
 Types: feat, fix, refactor, docs, test, perf, chore, style, ci, build
 
-Example output:
+Example:
 feat(auth): add OAuth2 login flow
 
 Implement OAuth2 authentication with Google and GitHub providers.
@@ -188,7 +187,7 @@ function buildPrompt(
     filesDisplay = filesChanged.length > 0 ? filesChanged.join('\n') : '(no files listed)';
   }
 
-  return `Generate a commit message for this change.
+  return `Generate one commit message.
 
 Task: ${specContext.title || 'Unknown task'}
 Type: ${commitType}
@@ -203,7 +202,7 @@ ${filesDisplay}
 Diff summary:
 ${diffSummary ? diffSummary.slice(0, 2000) : '(no diff available)'}
 
-Generate ONLY the commit message, nothing else. Follow the format exactly:
+Output only:
 type(scope): short description
 
 Body explaining changes.

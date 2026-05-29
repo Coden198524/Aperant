@@ -472,9 +472,9 @@ const loggedProjectPromptOverrides = new Set<string>();
 function getLanguageRequirement(language: SerializableSessionConfig['language']): string | null {
   switch (language) {
     case 'zh-CN':
-      return 'IMPORTANT: The app language is Simplified Chinese. You MUST communicate in Simplified Chinese (简体中文) at all times. This includes:\n- All your responses and explanations to the user\n- Your thinking process and reasoning\n- Task descriptions and progress updates\n- QA reports, summaries, and markdown documents\n- Error messages and debugging information\n\nThe ONLY exceptions are:\n- Code (variable names, function names, comments in English if that\'s the project convention)\n- File paths and command-line commands\n- Technical identifiers that must remain in English\n\nUnless the user explicitly requests another language, communicate entirely in Simplified Chinese.';
+      return 'Use Simplified Chinese for all user-facing prose. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
     case 'fr':
-      return 'IMPORTANT: The app language is French. You MUST communicate in French at all times. This includes all your responses, explanations, thinking process, task descriptions, QA reports, summaries, and markdown documents. The only exceptions are code, file paths, commands, and technical identifiers. Unless the user explicitly requests another language, communicate entirely in French.';
+      return 'Use French for all user-facing prose. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
     default:
       return null;
   }
@@ -485,9 +485,9 @@ function getImplementationPlanLanguageRequirement(
 ): string | null {
   switch (language) {
     case 'zh-CN':
-      return 'When writing implementation_plan.md, all user-facing planning text must be in Simplified Chinese. This includes the Feature metadata, phase names, subtask titles, subtask descriptions, acceptance criteria, and progress notes. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed, but do not leave the planning text itself in English.';
+      return 'Write all user-facing planning text in Simplified Chinese. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
     case 'fr':
-      return 'When writing implementation_plan.md, all user-facing planning text must be in French. Keep file paths, commands, class names, API names, and code identifiers in their original language when needed.';
+      return 'Write all user-facing planning text in French. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
     default:
       return null;
   }
@@ -497,30 +497,15 @@ function getStrictLanguageRequirement(language: SerializableSessionConfig['langu
   switch (language) {
     case 'zh-CN':
       return [
-        'IMPORTANT: The app language is Simplified Chinese (zh-CN).',
-        'You MUST write every user-facing sentence in Simplified Chinese.',
-        '',
-        'This applies to:',
-        '- progress updates before and after tool calls',
-        '- explanations, summaries, QA reports, markdown documents, and review notes',
-        '- task titles, task descriptions, subtask summaries, and completion reports',
-        '- error explanations and debugging notes',
-        '',
-        'Do NOT write English conversational sentences such as "Now let me build", "I have completed", "Next I will", or "All tests passed". Translate those into Simplified Chinese before output.',
-        '',
-        'Allowed exceptions:',
-        '- source code, file paths, commands, compiler output, API names, class names, function names, and technical identifiers',
-        '- short required status tokens in structured formats when the schema requires them, such as PASSED, FAILED, completed, or pending',
-        '',
-        'If the user explicitly requests another language, follow the user. Otherwise, all non-code prose must be Simplified Chinese.',
+        'Use Simplified Chinese for all user-facing prose: progress updates, summaries, plans, QA reports, markdown, and errors.',
+        'Keep source code, paths, commands, compiler output, schema keys, API names, class/function names, and required status tokens unchanged.',
+        'If the user explicitly requests another language, follow the user.',
       ].join('\n');
     case 'fr':
       return [
-        'IMPORTANT: The app language is French.',
-        'You MUST write every user-facing sentence in French.',
-        'This includes progress updates, explanations, summaries, task descriptions, QA reports, markdown documents, error explanations, and debugging notes.',
-        'Allowed exceptions are source code, file paths, commands, compiler output, API names, class names, function names, and technical identifiers.',
-        'If the user explicitly requests another language, follow the user. Otherwise, all non-code prose must be French.',
+        'Use French for all user-facing prose: progress updates, summaries, plans, QA reports, markdown, and errors.',
+        'Keep source code, paths, commands, compiler output, schema keys, API names, class/function names, and required status tokens unchanged.',
+        'If the user explicitly requests another language, follow the user.',
       ].join('\n');
     default:
       return null;
@@ -2031,28 +2016,28 @@ function buildSpecKickoffMessage(
   // Spec phase takes priority over agentType for kickoff routing
   // (e.g., complexity_assessment uses spec_gatherer agentType but needs a different kickoff)
   if (specPhase === 'complexity_assessment') {
-    baseMessage = `Assess the complexity of the following task and write your assessment to ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Determine if this is a SIMPLE, STANDARD, or COMPLEX task based on the scope of changes required.\n\nIMPORTANT: This is the FIRST phase of the spec pipeline. No spec.md or other spec files exist yet — do NOT attempt to read them. Assess complexity based on the task description and the project structure at ${promptProjectDir} only.`;
+    baseMessage = `Assess task complexity and return the complete complexity_assessment.json object for ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Classify as SIMPLE, STANDARD, or COMPLEX from task scope and project structure only. This is the first spec phase; spec.md and later spec files do not exist yet.`;
   } else switch (agentType) {
     case 'spec_discovery':
-      baseMessage = `Analyze the project structure at ${promptProjectDir} to understand the codebase architecture, tech stack, and conventions. Return ONLY the compact context.json object; the orchestrator will write ${promptSpecDir}/context.json. Task context: ${taskDescription}\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Use the pre-generated project index first. Run at most two narrow discovery tools, and for empty projects do not run recursive globs. Keep arrays concise and do not include read-operation transcripts, copied source, long analysis, or optional large sections.`;
+      baseMessage = `Analyze ${promptProjectDir} for architecture, stack, and conventions relevant to: ${taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use the project index first, run at most two narrow discovery tools, and omit transcripts, copied source, long analysis, and large optional sections.`;
       break;
     case 'spec_gatherer':
-      baseMessage = `Gather and validate requirements for the following task: ${taskDescription}. Project root: ${promptProjectDir}. Return ONLY the compact requirements data as a JSON object; the orchestrator will write ${promptSpecDir}/requirements.md as Markdown.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Prefer the task description and provided context. Keep user_requirements, acceptance_criteria, and constraints short; do not include analysis, source excerpts, or discovery transcripts.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
+      baseMessage = `Gather requirements for: ${taskDescription}. Project root: ${promptProjectDir}. Return one compact JSON object for requirements.md; the orchestrator writes ${promptSpecDir}/requirements.md. spec.md does not exist yet. Prefer the task and provided context; keep requirements, acceptance criteria, and constraints short. No prose or markdown fence outside the JSON.`;
       break;
     case 'spec_researcher':
-      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. This phase may run before spec.md exists, so do not read spec.md unless it is explicitly provided or confirmed to exist. Use the task, prior context.json/requirements.md summaries, and project index first. If no external research is needed, return a compact research.json object with integrations_researched: [], unverified_claims: [], and concise recommendations explaining that existing project patterns are sufficient. Review relevant code in ${promptProjectDir} only when needed and return the complete research.json content as your final JSON object; the orchestrator will write ${promptSpecDir}/research.json.\n\nFinal response must be a single valid JSON object only. Do not wrap it in markdown. Do not add prose before or after the JSON.`;
+      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. Use task context, prior outputs, and project index first; read code in ${promptProjectDir} only when needed. If no research is needed, return research.json with empty integrations_researched and unverified_claims plus concise recommendations. The orchestrator writes ${promptSpecDir}/research.json. Final response: one valid JSON object only.`;
       break;
     case 'spec_writer':
-      baseMessage = `Write a compact implementation specification for: ${taskDescription}. Write spec.md to ${promptSpecDir}. Project root: ${promptProjectDir}. Use prior phase context as the source of truth; do not re-read context.json or requirements.md unless missing. Keep spec.md focused, normally 40-80 lines for balanced workflow, with overview, files, core behavior, and acceptance checks only.`;
+      baseMessage = `Write a compact spec.md for: ${taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep overview, touched files, behavior, and acceptance checks.`;
       break;
     case 'planner':
-      baseMessage = `Create a concise implementation plan for: ${taskDescription}. Use the prior phase context already provided in this kickoff before reading files. If you need spec.md, read only the relevant section with a line limit. Create ${promptSpecDir}/implementation_plan.md with concrete checklist subtasks. Project root: ${promptProjectDir}.`;
+      baseMessage = `Create ${promptSpecDir}/implementation_plan.md for: ${taskDescription}. Use provided phase context first; read only relevant spec.md sections if needed. Output concrete OpenSpec-style checklist subtasks. Project root: ${promptProjectDir}.`;
       break;
     case 'spec_critic':
       baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
       break;
     case 'spec_context':
-      baseMessage = `Gather project context relevant to: ${taskDescription}. Analyze the codebase at ${promptProjectDir} and return ONLY the compact context.json object; the orchestrator will write ${promptSpecDir}/context.json.\n\nIMPORTANT: This is an early phase of the spec pipeline. No spec.md exists yet — do NOT attempt to read it. Use narrow reads only, and do not include transcripts, copied source, or long analysis.`;
+      baseMessage = `Gather project context for: ${taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use narrow reads and omit transcripts, copied source, and long analysis.`;
       break;
     case 'spec_validation':
       baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.md are complete, consistent, and ready for implementation. Use targeted reads with limits; do not read entire large files unless required. Fix only blocking issues. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
@@ -2296,17 +2281,17 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
   }
   switch (agentType) {
     case 'planner':
-      return `You are a planning agent. Read spec.md in ${promptSpecDir} and create implementation_plan.md as an OpenSpec-style checklist with phases and subtasks. Use [ ] for pending, [/] for in progress, [x] for completed, [-] for blocked, and [!] for failed. If the system prompt specifies an app language, localize all user-facing planning text to that language.`;
+      return `Read ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.md as an OpenSpec-style checklist. Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.`;
     case 'coder':
-      return `You are a coding agent. Implement the current pending subtask from implementation_plan.md in ${promptSpecDir}. Project root: ${promptProjectDir}. After completing the subtask, mark it [x] and add a _Completion_ note in implementation_plan.md.`;
+      return `Implement the current pending subtask from ${promptSpecDir}/implementation_plan.md in ${promptProjectDir}. Mark it [x] and add a _Completion_ note when done.`;
     case 'direct_task':
       return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. End with a markdown table: What changed, Verification, Review notes.`;
     case 'qa_reviewer':
-      return `You are a QA reviewer. Use minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Avoid broad searches and repeated full-file reads. Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
+      return `Review with minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
     case 'qa_fixer':
-      return `You are a QA fixer. Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix the issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/implementation_plan.md to show fixes have been applied.`;
+      return `Read ${promptSpecDir}/qa_report.md, fix reported issues in ${promptProjectDir}, and update ${promptSpecDir}/implementation_plan.md to show fixes were applied.`;
     default:
-      return `You are an AI agent. Complete the task described in ${promptSpecDir}/spec.md for the project at ${promptProjectDir}.`;
+      return `Complete the task in ${promptSpecDir}/spec.md for ${promptProjectDir}.`;
   }
 }
 

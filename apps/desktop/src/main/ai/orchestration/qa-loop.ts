@@ -347,7 +347,7 @@ export class QALoop extends EventEmitter {
           errorType: 'missing_implementation_plan_update',
           errorMessage: errorMsg,
           consecutiveErrors,
-          expectedAction: 'You MUST call mcp__autocode__update_qa_status with status: approved or status: rejected',
+          expectedAction: 'Call mcp__autocode__update_qa_status with status: approved or rejected',
         };
 
         if (consecutiveErrors >= MAX_CONSECUTIVE_ERRORS) {

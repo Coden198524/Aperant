@@ -66,7 +66,7 @@ export interface ChangelogResult {
 // Prompt Building
 // =============================================================================
 
-const SYSTEM_PROMPT = `You are a technical writer who creates clear, professional changelogs.
+const SYSTEM_PROMPT = `Write clear, professional changelogs.
 
 Rules:
 1. Use Keep a Changelog format (https://keepachangelog.com/)
@@ -76,14 +76,14 @@ Rules:
 5. Reference issue numbers where available
 6. Keep entries actionable and meaningful to end users
 
-Output ONLY the changelog markdown, nothing else.`;
+Output only changelog markdown.`;
 
 /**
  * Build the user prompt for changelog generation based on source mode.
  */
 function buildChangelogPrompt(config: ChangelogConfig): string {
   const parts: string[] = [];
-  parts.push(`Generate a changelog entry for **${config.projectName}** version **${config.version}**.`);
+  parts.push(`Generate a changelog entry for **${config.projectName}** ${config.version}.`);
 
   if (config.sourceMode === 'tasks' && config.tasks && config.tasks.length > 0) {
     parts.push('\n## Completed Tasks\n');
@@ -106,7 +106,7 @@ function buildChangelogPrompt(config: ChangelogConfig): string {
     parts.push(config.previousChangelog.slice(0, 2000));
   }
 
-  parts.push('\nGenerate ONLY the changelog entry markdown for this version.');
+  parts.push('\nOutput only this version\'s changelog markdown.');
   return parts.join('\n');
 }
 

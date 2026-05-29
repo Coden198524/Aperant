@@ -39,10 +39,7 @@ const SUMMARY_TARGET_WORDS = 500;
 const RAW_TRUNCATION_CHARS = 2000;
 
 const SUMMARIZER_SYSTEM_PROMPT =
-  'You are a concise technical summarizer. Given a conversation between an AI agent ' +
-  'and its tools, extract the key information needed to continue the work. Focus on: ' +
-  'what has been accomplished, what files were modified, what remains to be done, ' +
-  'and any critical decisions or findings. Use bullet points. Be thorough but concise.';
+  'Summarize an agent/tool conversation for continuation. Include completed work, modified files, remaining tasks, and key decisions or findings. Use concise bullets.';
 
 // =============================================================================
 // Types
@@ -296,11 +293,9 @@ function rawTruncation(messages: SessionMessage[]): string {
 function buildContinuationPrompt(summary: string, continuationNumber: number): string {
   return (
     `## Session Continuation (${continuationNumber})\n\n` +
-    `You are continuing a previous session that ran out of context window space. ` +
-    `Here is a summary of your prior work:\n\n` +
+    `Continue the previous session from this summary:\n\n` +
     `${summary}\n\n` +
-    `Continue where you left off. Do NOT repeat completed work. ` +
-    `Focus on what remains to be done.`
+    `Continue with remaining work and avoid repeating completed work.`
   );
 }
 

@@ -181,7 +181,7 @@ Respond with JSON only:
   try {
     const client = await createSimpleClient({
       systemPrompt:
-        'You are an expert at analyzing GitHub issues and grouping related ones. Respond ONLY with valid JSON. Do NOT use any tools.',
+        'Group related GitHub issues. Return valid JSON only. Do not use tools.',
       modelShorthand: config.model,
       thinkingLevel: config.thinkingLevel,
     });

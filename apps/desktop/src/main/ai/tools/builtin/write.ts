@@ -40,7 +40,7 @@ export const writeTool = Tool.define({
   metadata: {
     name: 'Write',
     description:
-      'Writes a file to the local filesystem. This tool will overwrite the existing file if there is one at the provided path. ALWAYS prefer editing existing files with the Edit tool. NEVER write new files unless explicitly required.',
+      'Writes or overwrites a local file. Prefer Edit for existing files and create new files only when required.',
     permission: ToolPermission.RequiresApproval,
     executionOptions: DEFAULT_EXECUTION_OPTIONS,
   },

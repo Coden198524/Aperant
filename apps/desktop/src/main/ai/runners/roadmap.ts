@@ -261,28 +261,27 @@ async function runDiscoveryPhase(
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
     const languageInstruction = language === 'zh'
-      ? '\n\n**IMPORTANT - LANGUAGE REQUIREMENT**: You MUST generate ALL content in Chinese (Simplified Chinese). This includes project_name, target_audience descriptions, product_vision, feature descriptions, and all other text fields. Do NOT use English except for technical terms that have no Chinese equivalent.'
+      ? '\n\n## Language\nWrite all user-facing content in Simplified Chinese. Keep JSON keys and technical identifiers unchanged.'
       : '';
     const contextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Project Directory**: ${projectDir}\n**Project Index**: ${projectIndexFile}\n**Output Directory**: ${outputDir}\n**Output File**: ${discoveryFile}\n${languageInstruction}\n\nUse the paths above when reading input files and writing output.`;
 
     const basePrompt = loadedDiscoveryPrompt
       ? loadedDiscoveryPrompt + contextBlock
-      : `You are a project analyst. Analyze the project and create a discovery document.
+      : `Analyze the project and create a discovery document.
 
 **Project Index**: ${projectIndexFile}
 **Output Directory**: ${outputDir}
 **Output File**: ${discoveryFile}
 
-IMPORTANT: This runs NON-INTERACTIVELY. Do NOT ask questions or wait for user input.
+This runs non-interactively. Infer sensible defaults; do not ask questions.
 
 Your task:
 1. Analyze the project (read README, code structure, key files)
 2. Infer target audience, vision, and constraints from your analysis
-3. IMMEDIATELY create ${discoveryFile} with your findings as valid JSON
+3. Create ${discoveryFile} with valid JSON
 
 The JSON must contain at minimum: project_name, target_audience, product_vision, key_features, technical_stack, and constraints.
-
-Do NOT ask questions. Make educated inferences and create the file.`;
+`;
     const prompt = retryContext
       ? `${basePrompt}\n\n---\n\n## RETRY FEEDBACK (HIGHEST PRIORITY)\n\n${retryContext}`
       : basePrompt;
@@ -358,14 +357,13 @@ Do NOT ask questions. Make educated inferences and create the file.`;
         : 'Discovery file not created';
       errors.push(`Attempt ${attempt + 1}: ${streamError ? `${streamError}; ` : ''}${detail}`);
       retryContext = [
-        'CRITICAL - TOOL USE REQUIRED',
+        'WRITE TOOL REQUIRED',
         '',
         noToolCalls
-          ? 'Your previous attempt failed because you did not call any tools.'
-          : 'Your previous attempt failed because the required output file was not created.',
-        `You MUST use the Write tool to create this file: ${discoveryFile}`,
-        'Do NOT return analysis-only text.',
-        'Do NOT ask questions.',
+          ? 'The previous attempt made no tool calls.'
+          : 'The required output file was not created.',
+        `Use Write to create: ${discoveryFile}`,
+        'Return analysis only after the file exists.',
         'After writing the file, continue without additional tool calls unless strictly necessary.',
       ].join('\n');
     }
@@ -437,19 +435,19 @@ async function runFeaturesPhase(
       const preservedInfo = preservedFeatures
         .map((f) => `  - ${(f as Record<string, string>).id ?? 'unknown'}: ${(f as Record<string, string>).title ?? 'Untitled'}`)
         .join('\n');
-      preservedSection = `\n**EXISTING FEATURES TO PRESERVE** (DO NOT regenerate these):
+      preservedSection = `\n**EXISTING FEATURES TO PRESERVE**:
 The following ${preservedFeatures.length} features already exist and will be preserved.
-Generate NEW features that complement these, do not duplicate them:
+Generate new complementary features without duplicating these:
 ${preservedInfo}\n`;
     }
     const languageInstruction = language === 'zh'
-      ? '\n\n**CRITICAL - LANGUAGE REQUIREMENT**: You MUST generate ALL roadmap content in Chinese (Simplified Chinese). This includes:\n- Feature titles (title field)\n- Feature descriptions (description field)\n- Feature rationale (rationale field)\n- User stories (user_stories array)\n- Acceptance criteria (acceptance_criteria array)\n- Phase names and descriptions\n- Milestone titles and descriptions\n- Vision statement\n- ALL other text content\n\nDo NOT use English except for:\n- JSON field names (keep as specified in the schema)\n- Technical identifiers (IDs like "feature-1", "phase-1")\n- Technical terms with no Chinese equivalent\n\nThis is a MANDATORY requirement. Content in English will be rejected.'
+      ? '\n\n## Language\nWrite all roadmap user-facing text in Simplified Chinese. Keep JSON keys, IDs, paths, commands, APIs, and code identifiers unchanged.'
       : '';
     const featuresContextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Discovery File**: ${discoveryFile}\n**Project Index**: ${projectIndexFile}\n**Output File**: ${roadmapFile}\n${preservedSection}${languageInstruction}\n\nUse the paths above when reading input files and writing output. Write the complete roadmap JSON to the Output File path.`;
 
     const prompt = loadedFeaturesPrompt
       ? loadedFeaturesPrompt + featuresContextBlock
-      : `You are a product strategist. Generate a roadmap with prioritized features.
+      : `Generate a roadmap with prioritized features.
 
 **Discovery File**: ${discoveryFile}
 **Project Index**: ${projectIndexFile}

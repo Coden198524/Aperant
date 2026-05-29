@@ -138,8 +138,8 @@ async function mergeWithAi(
   taskContents: string[],
   conflicts: ConflictRegion[],
 ): Promise<MergeResult> {
-  const systemPrompt = `You are a code merge expert. You need to merge changes from multiple tasks into a single coherent file.
-Preserve all intended functionality from each task. Return ONLY the merged file content, no explanation.`;
+  const systemPrompt = `Merge task versions into one coherent file.
+Preserve intended functionality from each task. Return only merged file content.`;
 
   const conflictSummary = conflicts
     .map((c) => `- ${c.location}: ${c.reason} (severity: ${c.severity})`)

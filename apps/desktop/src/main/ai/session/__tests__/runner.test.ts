@@ -351,7 +351,7 @@ describe('runAgentSession', () => {
 
     expect(result.outcome).toBe('error');
     expect(result.error!.message).toContain('tool \'write\' input json failed');
-    expect(injectedSystem).toContain('CRITICAL TOOL CALL CORRECTION');
+    expect(injectedSystem).toContain('WRITE TOOL INPUT CORRECTION');
     expect(injectedSystem).toContain('e:/work/project/.autocode/specs/001/spec.md');
   });
 
@@ -394,7 +394,7 @@ describe('runAgentSession', () => {
     const result = await runAgentSession(createMockConfig());
 
     expect(result.outcome).toBe('completed');
-    expect(injectedSystem).toContain('CRITICAL TOOL CALL CORRECTION');
+    expect(injectedSystem).toContain('WRITE TOOL INPUT CORRECTION');
     expect(injectedSystem).toContain('e:/work/test/aitest/.autocode/worktrees/tasks/004-web/tank-battle.js');
   });
 

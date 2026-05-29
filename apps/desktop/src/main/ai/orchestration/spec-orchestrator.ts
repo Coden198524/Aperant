@@ -1166,40 +1166,38 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
   const normalizedSpecDir = specDir.replace(/\\/g, '/');
   if (phase === 'planning') {
     return [
-      'CRITICAL - RETRY IMPLEMENTATION PLAN WITH WRITE TOOL',
+      'RETRY IMPLEMENTATION PLAN WRITE',
       '',
-      'Your previous Write tool call was rejected before execution.',
+      'The previous Write call was rejected before execution.',
       `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} instead of returning plan text in the final response.`,
       '',
-      'Rules for the retry:',
+      'Retry rules:',
       `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
-      '- Pass a JSON object, not a string containing JSON.',
-      '- Include BOTH required keys in the same object: file_path and content.',
-      '- Use forward slashes in file_path, including Windows paths.',
+      '- Pass one JSON object with file_path and content, not a string containing JSON.',
+      '- Use forward slashes in file_path.',
       '- Write checklist Markdown, not JSON.',
       '- Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" items.',
       '- Keep descriptions concise and preserve necessary subtasks in the single Markdown file.',
-      '- Do not embed source code, long analysis, or copied documentation.',
+      '- Omit source code, long analysis, and copied documentation.',
       '',
-      'Required Write tool input shape:',
+      'Write input shape:',
       `{"file_path":"${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}","content":"..."}`,
     ].join('\n');
   }
 
   if (phase === 'quick_spec') {
     return [
-      'CRITICAL - RETRY QUICK SPEC FILE WRITES',
+      'RETRY QUICK SPEC WRITES',
       '',
-      'Your previous Write tool call was rejected before execution.',
+      'The previous Write call was rejected before execution.',
       '',
-      'Rules for the retry:',
+      'Retry rules:',
       `- Use the Write tool to create ${normalizedSpecDir}/spec.md.`,
       `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
-      '- Pass a JSON object, not a string containing JSON.',
-      '- Include BOTH required keys in each Write object: file_path and content.',
+      '- Pass one JSON object per Write call with file_path and content.',
       '- For spec.md, write a compact 20-60 line version first.',
       `- Keep ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} concise and parseable.`,
-      '- Do not paste the implementation plan into the final response.',
+      '- Do not paste the plan into the final response.',
     ].join('\n');
   }
 
@@ -1222,22 +1220,20 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       ];
 
   return [
-    'CRITICAL - RETRY WRITE TOOL WITH VALID JSON',
+    'RETRY WRITE WITH VALID INPUT',
     '',
-    'Your previous Write tool call was rejected before execution because the tool input JSON was incomplete, malformed, or passed as the wrong type.',
-    'Do not repeat the same tool call.',
+    'The previous Write call was rejected because the tool input JSON was incomplete, malformed, or the wrong type.',
     '',
-    'Required Write tool input shape:',
+    'Write input shape:',
     `{"file_path":"${targetFiles.split(', ')[0]}","content":"..."}`,
     '',
-    'Rules for the retry:',
+    'Retry rules:',
     `- Use the Write tool to create: ${targetFiles}`,
-    '- Pass a JSON object, not a string containing JSON.',
-    '- Include BOTH required keys in the same object: file_path and content.',
-    '- For multiple required files, call Write once per file with a separate valid object.',
-    '- Use forward slashes in file_path, including Windows paths.',
+    '- Pass one JSON object with file_path and content, not a string containing JSON.',
+    '- For multiple required files, call Write once per file.',
+    '- Use forward slashes in file_path.',
     '- Keep each Write content short enough that the JSON closes correctly.',
-    '- If the previous error text ended after "file_path", that means the content key was omitted or the tool JSON was truncated.',
+    '- If the error text ended after "file_path", the content key was omitted or the tool JSON was truncated.',
     ...phaseSpecificGuidance.map((line) => `- ${line}`),
   ].join('\n');
 }
@@ -1274,18 +1270,17 @@ function buildStructuredJsonOutputRetryPrompt(
     : 'JSON';
 
   return [
-    `CRITICAL - RETURN ${finalJsonTarget} AS FINAL JSON`,
+    `RETURN ${finalJsonTarget} AS FINAL JSON`,
     '',
     'Your previous structured output could not be parsed or validated.',
-    `Do NOT call the Write tool for this ${diskFormat} file.`,
+    `Return final JSON instead of calling Write for this ${diskFormat} file.`,
     '',
     `Return the complete ${finalJsonTarget} as the final response JSON object.`,
     `The orchestrator will validate that final JSON and write ${fileName} to disk as ${diskFormat}.`,
     '',
-    'Rules for the retry:',
-    `- Do NOT call Write for ${normalizedSpecDir}/${fileName}.`,
-    '- Do NOT wrap the JSON in a markdown fence.',
-    '- Do NOT add prose before or after the JSON.',
+    'Retry rules:',
+    `- Target file: ${normalizedSpecDir}/${fileName}.`,
+    '- No markdown fence and no prose outside the JSON object.',
     '- Use forward slashes in any file paths.',
     '- Keep the JSON compact so it can be parsed reliably.',
     '- Prefer summaries and exact file paths over copied source code, large tables, or long analysis.',
@@ -2038,26 +2033,26 @@ function buildPlanStructuredOutputValidationRetryPrompt(
   schemaHint?: string,
 ): string {
   const lines = [
-    '## IMPLEMENTATION PLAN FILE VALIDATION ERRORS',
+    '## IMPLEMENTATION PLAN VALIDATION',
     '',
-    'The implementation plan file written by your previous attempt was missing or invalid.',
+    'The previous implementation plan was missing or invalid.',
     '',
-    '### Errors found:',
+    '### Errors',
     ...errors.map((error) => `- ${error}`),
     '',
   ];
 
   if (schemaHint) {
-    lines.push('### Required schema:', schemaHint, '');
+    lines.push('### Schema', schemaHint, '');
   }
 
   lines.push(
-    '### How to fix:',
+    '### Fix',
     `1. Use the Write tool to rewrite ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
     '2. Use checklist Markdown with "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" items.',
     '3. Keep each subtask concise and include _Files_, _Depends on_, _Requirements_, and _Verification_ metadata when useful.',
     '4. Do not paste the full plan into the final response.',
-    '5. Do not include top-level summary, verification_strategy, qa_acceptance, research notes, copied source, or long analysis.',
+    '5. Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   );
 
   if (phase === 'quick_spec') {
@@ -2689,18 +2684,17 @@ export class SpecOrchestrator extends EventEmitter {
             if (noToolCalls) {
               const fileList = missingFiles.map(f => `${this.config.specDir}/${f}`).join(', ');
               toolUseRetryContext = [
-                'CRITICAL — TOOL USE REQUIRED',
+                'WRITE TOOL REQUIRED',
                 '',
-                'Your previous attempt failed because you did NOT call any tools.',
-                'You MUST use the Write tool to create the required output file(s).',
-                'Do NOT describe file contents in your text response — you must invoke the Write tool.',
+                'The previous attempt produced no tool calls.',
+                'Use the Write tool to create the required output file(s); do not describe file contents in text.',
                 '',
-                `Missing file(s) that MUST be created using the Write tool: ${fileList}`,
+                `Missing file(s): ${fileList}`,
                 '',
                 'Steps:',
-                `1. Use the Write tool to create each missing file listed above`,
-                '2. Include the full file content in the Write tool call',
-                '3. Do NOT skip tool calls or assume files were already created',
+                '1. Call Write once per missing file.',
+                '2. Include full file content in each Write call.',
+                '3. Return only a short confirmation after the files are written.',
               ].join('\n');
             }
             continue; // Retry the phase
