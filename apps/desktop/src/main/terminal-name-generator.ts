@@ -17,6 +17,18 @@ function debug(...args: unknown[]): void {
 const SYSTEM_PROMPT =
   'Generate terminal names in 2-3 words. Output only the name: no quotes, preamble, or explanation.';
 
+function isResponsesApiModel(modelId: string | undefined): boolean {
+  if (!modelId) return false;
+  return (
+    modelId.startsWith('gpt-5') ||
+    modelId.includes('codex') ||
+    modelId === 'o3' ||
+    modelId.startsWith('o3-') ||
+    modelId === 'o4-mini' ||
+    modelId.startsWith('o4-')
+  );
+}
+
 /**
  * Service for generating terminal names from commands using the Vercel AI SDK.
  *
@@ -58,10 +70,17 @@ export class TerminalNameGenerator extends EventEmitter {
         thinkingLevel: namingSettings.thinkingLevel as 'low' | 'medium' | 'high' | 'xhigh',
       });
 
+      const isResponsesModel = isResponsesApiModel(client.resolvedModelId);
       const result = await generateText({
         model: client.model,
-        system: client.systemPrompt,
+        system: isResponsesModel ? undefined : client.systemPrompt,
         prompt,
+        providerOptions: isResponsesModel ? {
+          openai: {
+            ...(client.systemPrompt ? { instructions: client.systemPrompt } : {}),
+            store: false,
+          },
+        } : undefined,
       });
 
       const raw = result.text.trim();

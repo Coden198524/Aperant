@@ -180,6 +180,7 @@ export interface TaskDraft {
   images: ImageAttachment[];
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
+  developmentMode?: TaskDevelopmentMode;
   workflowMode?: TaskWorkflowMode;
   enableBatchExecution?: boolean;
   useWorktree?: boolean;
@@ -192,6 +193,7 @@ export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
+export type TaskDevelopmentMode = 'fast' | 'standard' | 'spec';
 export type ProjectDocumentType = 'full' | 'product' | 'architecture' | 'technical';
 // Re-export ThinkingLevel (defined in settings.ts) for convenience
 export type { ThinkingLevel };
@@ -210,7 +212,8 @@ export type TaskCategory =
 
 export interface TaskMetadata {
   // Origin tracking
-  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
+  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
+  developmentMode?: TaskDevelopmentMode;
   ideationType?: string;  // e.g., 'code_improvements', 'security_hardening'
   ideaId?: string;  // Reference to original idea if converted
   featureId?: string;  // Reference to roadmap feature if from roadmap
@@ -236,6 +239,7 @@ export interface TaskMetadata {
   priority?: TaskPriority;
 
   // Context
+  language?: string;  // UI/content language captured when the task was created
   rationale?: string;  // Why this task matters
   problemSolved?: string;  // What problem this addresses
   targetAudience?: string;  // Who benefits
@@ -256,6 +260,16 @@ export interface TaskMetadata {
   projectDocumentType?: ProjectDocumentType;
   projectDocumentOutputDir?: string;
   projectDocumentOutputs?: string[];
+  openSpecChangeId?: string;
+  openSpecChangeDir?: string;
+  openSpecProposalPath?: string;
+  openSpecDesignPath?: string;
+  openSpecTasksPath?: string;
+  openSpecSpecDeltaPaths?: string[];
+  openSpecGenerationMode?: 'ai' | 'template' | 'deferred';
+  openSpecValidationCommand?: string;
+  upstreamSpecSystem?: 'openspec';
+  downstreamExecutionSystem?: 'autocode';
 
   // Image attachments (screenshots, mockups, diagrams)
   attachedImages?: ImageAttachment[];

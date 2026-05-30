@@ -63,17 +63,16 @@ export class DescriptionImprover extends EventEmitter {
         thinkingLevel: namingSettings.thinkingLevel as 'low' | 'medium' | 'high' | 'xhigh',
       });
 
-      const isCodex = client.resolvedModelId?.includes('codex') ?? false;
       const isResponsesModel = isResponsesApiModel(client.resolvedModelId);
 
       const result = streamText({
         model: client.model,
-        system: isCodex ? undefined : client.systemPrompt,
+        system: isResponsesModel ? undefined : client.systemPrompt,
         prompt: userPrompt,
         providerOptions: isResponsesModel ? {
           openai: {
-            ...(isCodex && client.systemPrompt ? { instructions: client.systemPrompt } : {}),
-            store: true,
+            ...(client.systemPrompt ? { instructions: client.systemPrompt } : {}),
+            store: false,
           },
         } : undefined,
       });

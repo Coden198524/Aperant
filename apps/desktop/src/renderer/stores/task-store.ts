@@ -1437,6 +1437,7 @@ export function isDraftEmpty(draft: TaskDraft | null): boolean {
     !draft.priority &&
     !draft.complexity &&
     !draft.impact &&
+    (!draft.developmentMode || draft.developmentMode === 'standard') &&
     draft.enableBatchExecution !== true
   );
 }

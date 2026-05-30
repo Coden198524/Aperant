@@ -24,6 +24,7 @@ import {
   getAutocodeTerminalWorktreesRelativeDir,
   isAutocodePathWithinBase,
 } from '@autocode/core';
+import { debugLog } from '../shared/utils/debug-logger';
 
 // Path constants for worktree directories
 export const TASK_WORKTREE_DIR = getAutocodeTaskWorktreesRelativeDir();
@@ -98,12 +99,12 @@ export function findTaskWorktree(projectPath: string, specId: string): string | 
     }
 
     if (existsSync(resolvedCandidate)) {
-      console.log('[worktree-paths] Found worktree at:', resolvedCandidate);
+      debugLog('[worktree-paths] Found worktree at:', resolvedCandidate);
       return resolvedCandidate;
     }
   }
 
-  console.log('[worktree-paths] No dedicated worktree found for task:', specId);
+  debugLog('[worktree-paths] No dedicated worktree found for task:', specId);
   return null;
 }
 

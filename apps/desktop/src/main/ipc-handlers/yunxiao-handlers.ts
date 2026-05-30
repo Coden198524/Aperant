@@ -189,19 +189,18 @@ async function generateYunxiaoIssueAnalysis(issue: YunxiaoIssue): Promise<string
   });
 
   const modelId = typeof client.model === 'string' ? client.model : client.model.modelId;
-  const isCodex = modelId?.includes('codex') ?? false;
   const isResponsesModel = isResponsesApiModel(modelId);
   const prompt = buildYunxiaoIssueAnalysisPrompt(issue);
 
   const result = await generateText({
     model: client.model,
-    system: isCodex ? undefined : client.systemPrompt,
+    system: isResponsesModel ? undefined : client.systemPrompt,
     prompt,
     ...(isResponsesModel ? {
       providerOptions: {
         openai: {
-          ...(isCodex && client.systemPrompt ? { instructions: client.systemPrompt } : {}),
-          store: true,
+          ...(client.systemPrompt ? { instructions: client.systemPrompt } : {}),
+          store: false,
         },
       },
     } : {}),

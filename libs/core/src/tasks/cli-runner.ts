@@ -1,9 +1,11 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
+import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs.js';
 import {
   getAutocodeSpecDir,
   listAutocodeTasks,
+  resolveAutocodeTaskDevelopmentMode,
   type AutocodePlanStatus,
   type AutocodeTask,
 } from './spec-store.js';
@@ -45,6 +47,8 @@ export interface AutocodeTaskRunPlan {
 
 const PROMPT_FILE_NAME = 'autocode-run-prompt.md';
 const RUNNER_FILE_NAME = 'autocode-runner.cjs';
+const OPENSPEC_ARTIFACT_PROMPT_LIMIT = 12000;
+const requireFromCore = createRequire(import.meta.url);
 
 export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput): AutocodeTaskRunPlan {
   const task = resolveTask(input.projectRoot, input.dataDirName, input.taskId);
@@ -57,7 +61,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
     dataDirName: input.dataDirName,
     specId: task.specId,
   });
-  const phase = input.phase ?? resolveRunPhase(specDir);
+  const phase = input.phase ?? resolveRunPhase(specDir, task);
   const prompt = buildTaskRunPrompt({
     task,
     phase,
@@ -147,7 +151,11 @@ function resolveTask(projectRoot: string, dataDirName: string, taskId: string): 
     .find((task) => task.id === taskId || task.specId === taskId) ?? null;
 }
 
-function resolveRunPhase(specDir: string): AutocodeTaskRunPhase {
+function resolveRunPhase(specDir: string, task: AutocodeTask): AutocodeTaskRunPhase {
+  if (resolveAutocodeTaskDevelopmentMode(task.metadata) === 'fast' || task.metadata?.workflowMode === 'off') {
+    return 'direct';
+  }
+
   const hasSpec = existsSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
   const plan = loadAutocodeImplementationPlanSync(specDir) as { phases?: Array<{ subtasks?: unknown[]; chunks?: unknown[] }> } | null;
   const hasSubtasks = plan?.phases?.some((phase) => {
@@ -186,6 +194,11 @@ function buildTaskRunPrompt(input: {
   });
   const contextReference = projectDocsReference ? `${projectDocsReference}\n\n` : '';
   const humanInputReference = buildTaskHumanInputReference(input.specDir);
+  const openSpecExecutionReference = buildTaskOpenSpecCompactContextReference({
+    task: input.task,
+    specDir: input.specDir,
+    forcePlanning: false,
+  });
 
   if (input.phase === 'direct') {
     return `${header}${contextReference}${humanInputReference}${[
@@ -226,7 +239,13 @@ function buildTaskRunPrompt(input: {
   }
 
   if (input.phase === 'planning') {
+    const openSpecReference = buildTaskOpenSpecCompactContextReference({
+      task: input.task,
+      specDir: input.specDir,
+      forcePlanning: true,
+    });
     return `${header}${contextReference}${humanInputReference}${[
+      ...(openSpecReference ? [openSpecReference, ''] : []),
       '## Goal',
       '',
       'Create or repair the implementation plan.',
@@ -235,26 +254,103 @@ function buildTaskRunPrompt(input: {
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
       `- If ${input.specDir}/HUMAN_INPUT.md exists, address it as plan-review feedback.`,
+      '- For OpenSpec-backed tasks, apply plan-review feedback to upstream OpenSpec artifacts first, then derive the downstream implementation plan.',
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as an OpenSpec-style Markdown checklist with concrete phases and subtasks.`,
       '- Keep subtasks independently implementable and verifiable.',
       '- Set new subtask checkboxes to [ ].',
     ].join('\n')}`;
   }
 
-  return `${header}${contextReference}${humanInputReference}${[
+  return `${header}${contextReference}${humanInputReference}${openSpecExecutionReference ? `${openSpecExecutionReference}\n\n` : ''}${[
     '## Goal',
     '',
-    'Implement the task from the existing spec and plan.',
+    'Implement the task from the existing spec and runtime work plan.',
     '',
     '## Required Workflow',
     '',
     `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} first.`,
+    `- If ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.openSpecContext} exists, use it as the OpenSpec context and open full OpenSpec artifacts only for exact wording.`,
     `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
-    '- Work through pending subtasks and mark completed items [x].',
-    '- Add concise _Completion: ..._ notes to completed subtasks when practical.',
+    '- The runner invokes you once per runtime work package. In each invocation, implement only the Current Work Item section.',
+    '- Do not start later work packages early, even if they look related.',
+    '- Mark only the current work item [x] when it is complete.',
+    '- Add a concise _Completion: ..._ note to the current work item when practical.',
     '- Run the most relevant validation command for the project.',
     `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or update the plan with completion details.`,
   ].join('\n')}`;
+}
+
+function buildTaskOpenSpecCompactContextReference(input: {
+  task: AutocodeTask;
+  specDir: string;
+  forcePlanning: boolean;
+}): string {
+  const metadata = input.task.metadata ?? {};
+  if (metadata.sourceType !== 'openspec') {
+    return '';
+  }
+
+  const contextPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.openSpecContext);
+  const artifacts = [
+    { label: 'proposal.md', path: stringFrom(metadata.openSpecProposalPath) },
+    { label: 'design.md', path: stringFrom(metadata.openSpecDesignPath) },
+    { label: 'tasks.md', path: stringFrom(metadata.openSpecTasksPath) },
+    ...toStringArray(metadata.openSpecSpecDeltaPaths).map((pathValue, index) => ({
+      label: index === 0 ? 'spec delta' : `spec delta ${index + 1}`,
+      path: pathValue,
+    })),
+  ].filter((artifact) => artifact.path);
+
+  const lines = [
+    '## OpenSpec Compact Context',
+    '',
+    'OpenSpec is the upstream specification layer. Autocode files are downstream runtime state.',
+    stringFrom(metadata.openSpecChangeId) ? `Change ID: ${stringFrom(metadata.openSpecChangeId)}` : '',
+    stringFrom(metadata.openSpecChangeDir) ? `Change directory: ${stringFrom(metadata.openSpecChangeDir)}` : '',
+    `Compact context: ${contextPath}`,
+    '',
+    input.forcePlanning ? 'Request Changes rule:' : 'Execution rule:',
+    input.forcePlanning
+      ? '- If HUMAN_INPUT.md exists, update the relevant upstream OpenSpec Markdown files first: proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md.'
+      : `- Read ${AUTOCODE_TASK_ARTIFACTS.openSpecContext} first and open full OpenSpec artifacts only for exact wording.`,
+    input.forcePlanning
+      ? `- Then regenerate ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} from the updated OpenSpec artifacts.`
+      : '- Treat implementation_plan.md as downstream runtime state, not product truth.',
+    input.forcePlanning
+      ? `- Do not make ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} the only changed planning artifact when feedback changes product behavior, requirements, design, or task scope.`
+      : '- Complete the current runtime work package and update downstream status only.',
+    input.forcePlanning ? '- Do not implement code in this planning pass.' : '',
+    '',
+    'OpenSpec artifact paths:',
+    ...artifacts.map((artifact) => `- ${artifact.label}: ${artifact.path}`),
+    '',
+  ].filter(Boolean);
+
+  if (existsSync(contextPath)) {
+    try {
+      lines.push('```markdown');
+      lines.push(limitPromptText(readFileSync(contextPath, 'utf8'), OPENSPEC_ARTIFACT_PROMPT_LIMIT));
+      lines.push('```');
+    } catch {
+      // Keep the path references even if the compact context cannot be read.
+    }
+  }
+
+  return lines.join('\n');
+}
+
+function stringFrom(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function toStringArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map((item) => stringFrom(item)).filter(Boolean)
+    : [];
+}
+
+function limitPromptText(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
 }
 
 function buildTaskHumanInputReference(specDir: string): string {
@@ -302,6 +398,14 @@ function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): strin
   return '';
 }
 
+function resolveOptionalRunnerDependency(moduleName: string): string | undefined {
+  try {
+    return requireFromCore.resolve(moduleName);
+  } catch {
+    return undefined;
+  }
+}
+
 function buildNodeRunnerScript(input: {
   cwd: string;
   command: string;
@@ -316,10 +420,12 @@ function buildNodeRunnerScript(input: {
   return `const { spawn } = require('node:child_process');
 const { existsSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
+const { TextDecoder } = require('node:util');
 
 const cwd = ${JSON.stringify(input.cwd)};
 const command = ${JSON.stringify(input.command)};
 const args = ${JSON.stringify(input.args)};
+const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const promptFilePath = ${JSON.stringify(input.promptFilePath)};
 const phase = ${JSON.stringify(input.phase)};
 const specDir = ${JSON.stringify(input.specDir)};
@@ -327,6 +433,7 @@ const taskTitle = ${JSON.stringify(input.taskTitle)};
 const taskDescription = ${JSON.stringify(input.taskDescription)};
 const language = ${JSON.stringify(input.language)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
+const iconvLite = loadIconvLite();
 const prompt = readFileSync(promptFilePath, 'utf8');
 const logPhase = phase === 'coding' || phase === 'direct' ? 'coding' : 'planning';
 const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
@@ -349,13 +456,23 @@ let codexJsonLineBuffer = '';
 let tokenUsageEventCount = 0;
 let lastTokenUsageLogTotal = 0;
 let lastCodexMessageText = '';
+let activeSubtaskId = undefined;
+let protectedSubtaskStatuses = undefined;
+let gb18030Decoder = undefined;
 const MODEL_OUTPUT_FLUSH_MS = 750;
 const MODEL_OUTPUT_MAX_CHARS = 3500;
 
-startAttempt(prompt);
+if (phase === 'coding') {
+  if (!startNextCodingSubtask()) {
+    finishRun(0, undefined, undefined, undefined);
+  }
+} else {
+  startAttempt(prompt);
+}
 
-function startAttempt(attemptPrompt) {
+function startAttempt(attemptPrompt, subtaskId) {
   const currentAttemptId = ++attemptId;
+  activeSubtaskId = subtaskId;
   const child = spawn(command, args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -405,7 +522,28 @@ function finalize(currentAttemptId, exitCode, signal, explicitError) {
     return;
   }
 
+  if (phase === 'coding' && activeSubtaskId) {
+    if (exitCode !== 0 || explicitError || validationError) {
+      markPlanSubtaskStatus(activeSubtaskId, 'failed', explicitError || validationError || 'CLI subtask run failed.');
+      syncOpenSpecTasksFromPlan();
+    } else {
+      restoreProtectedSubtaskStatuses(activeSubtaskId);
+      markPlanSubtaskStatus(activeSubtaskId, 'completed', 'Completed by Autocode CLI runner.');
+      syncOpenSpecTasksFromPlan();
+      const nextStarted = startNextCodingSubtask();
+      if (nextStarted) {
+        return;
+      }
+    }
+  }
+
+  finishRun(exitCode, signal, explicitError, validationError);
+}
+
+function finishRun(exitCode, signal, explicitError, validationError) {
+  if (finalized) return;
   finalized = true;
+  syncOpenSpecTasksFromPlan();
   const failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
   const now = new Date().toISOString();
   const result = {
@@ -426,8 +564,312 @@ function finalize(currentAttemptId, exitCode, signal, explicitError) {
   process.exit(failed ? 1 : 0);
 }
 
+function startNextCodingSubtask() {
+  const subtask = findNextRunnableSubtask();
+  if (!subtask) {
+    return false;
+  }
+
+  markPlanSubtaskStatus(subtask.id, 'in_progress');
+  protectedSubtaskStatuses = new Map(
+    readPlanItems()
+      .filter((item) => item.isSubtask && item.id !== subtask.id)
+      .map((item) => [item.id, item.status]),
+  );
+  syncOpenSpecTasksFromPlan();
+  const progress = getCodingProgress();
+  const workLabel = subtask.workPackage ? 'work package' : 'subtask';
+  const message = 'Working on ' + workLabel + ' ' + subtask.id + ': ' + subtask.title;
+  updateTaskLogs('coding', 'active', message);
+  emitPhase('coding', message, progress.percent);
+  lastCodexMessageText = '';
+  startAttempt(buildFocusedSubtaskPrompt(subtask), subtask.id);
+  return true;
+}
+
+function buildFocusedSubtaskPrompt(subtask) {
+  const workLabel = subtask.workPackage ? 'Work Package' : 'Subtask';
+  const workflowRules = subtask.workPackage
+    ? [
+        '- Implement every upstream OpenSpec task listed in this work package.',
+        '- Do not implement later pending work packages in this invocation.',
+        '- Keep other work package checkboxes unchanged.',
+        '- When done, mark only work package ' + subtask.id + ' as [x] in implementation_plan.md and add a concise _Completion: ..._ note.',
+      ]
+    : [
+        '- Implement only this current subtask.',
+        '- Do not implement later pending subtasks in this invocation.',
+        '- Keep other subtask checkboxes unchanged.',
+        '- When done, mark only subtask ' + subtask.id + ' as [x] in implementation_plan.md and add a concise _Completion: ..._ note.',
+      ];
+  const fields = [
+    '# Current Work Item',
+    '',
+    workLabel + ' ID: ' + subtask.id,
+    'Phase: ' + (subtask.phaseName || 'Implementation'),
+    'Title: ' + subtask.title,
+    subtask.upstreamTaskIds && subtask.upstreamTaskIds.length > 0 ? 'Upstream OpenSpec tasks: ' + subtask.upstreamTaskIds.join(', ') : '',
+    subtask.upstreamSource ? 'Upstream source: ' + subtask.upstreamSource : '',
+    '',
+    'Description:',
+    subtask.details.length > 0 ? subtask.details.join('\\n') : subtask.title,
+    '',
+    '## Required Workflow',
+    ...workflowRules,
+    '- If blocked, leave this work item incomplete and explain the blocker.',
+  ].filter(Boolean);
+  return [
+    prompt,
+    '',
+    '---',
+    '',
+    ...fields,
+  ].join('\\n');
+}
+
+function findNextRunnableSubtask() {
+  return readPlanItems().find((item) => item.isSubtask && (item.status === 'pending' || item.status === 'in_progress')) || null;
+}
+
+function getCodingProgress() {
+  const subtasks = readPlanItems().filter((item) => item.isSubtask);
+  const total = subtasks.length;
+  const completed = subtasks.filter((item) => item.status === 'completed').length;
+  return {
+    total,
+    completed,
+    percent: total > 0 ? Math.round((completed / total) * 100) : 100,
+  };
+}
+
+function readPlanItems() {
+  let content = '';
+  try {
+    content = readFileSync(join(specDir, artifacts.implementationPlan), 'utf8');
+  } catch {
+    return [];
+  }
+  const planMetadata = parsePlanMachineMetadata(content);
+  const subtaskMetadata = planMetadata && planMetadata.subtaskMetadata && typeof planMetadata.subtaskMetadata === 'object'
+    ? planMetadata.subtaskMetadata
+    : {};
+  const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
+  const items = [];
+  let currentPhaseName = '';
+  let current = null;
+  for (const line of lines) {
+    const match = /^(\\s*)-\\s+\\[([ xX/!\\-])\\]\\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(?:\\.)?\\s+(.+?)\\s*$/.exec(line);
+    if (match) {
+      const metadata = subtaskMetadata[match[3]] && typeof subtaskMetadata[match[3]] === 'object'
+        ? subtaskMetadata[match[3]]
+        : {};
+      current = {
+        indent: match[1].length,
+        marker: match[2],
+        id: match[3],
+        title: match[4].trim(),
+        status: markerToStatus(match[2]),
+        details: [],
+        phaseName: currentPhaseName,
+        isSubtask: match[1].length > 0 || /[.-]/.test(match[3]),
+        workPackage: metadata.work_package === true,
+        upstreamTaskIds: Array.isArray(metadata.upstream_task_ids)
+          ? metadata.upstream_task_ids.filter((item) => typeof item === 'string' && item.trim()).map((item) => item.trim())
+          : [],
+        upstreamSource: typeof metadata.upstream_source === 'string' ? metadata.upstream_source : '',
+      };
+      if (!current.isSubtask) {
+        currentPhaseName = current.title;
+        current.phaseName = current.title;
+      }
+      items.push(current);
+      continue;
+    }
+    if (current && /^\\s+-\\s+/.test(line)) {
+      const detail = line.replace(/^\\s+-\\s+/, '').trim();
+      if (detail) current.details.push(detail);
+    }
+  }
+  return items;
+}
+
+function parsePlanMachineMetadata(content) {
+  const match = /^<!--\\s*autocode-plan-meta:\\s*(\\{.*\\})\\s*-->\\s*$/m.exec(content);
+  if (!match) {
+    return {};
+  }
+  try {
+    const parsed = JSON.parse(match[1]);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function markerToStatus(marker) {
+  if (marker === 'x' || marker === 'X') return 'completed';
+  if (marker === '/') return 'in_progress';
+  if (marker === '!') return 'failed';
+  if (marker === '-') return 'blocked';
+  return 'pending';
+}
+
+function statusToMarker(status) {
+  if (status === 'completed') return 'x';
+  if (status === 'in_progress') return '/';
+  if (status === 'failed') return '!';
+  if (status === 'blocked') return '-';
+  return ' ';
+}
+
+function markPlanSubtaskStatus(subtaskId, status, note) {
+  const planPath = join(specDir, artifacts.implementationPlan);
+  let content = '';
+  try {
+    content = readFileSync(planPath, 'utf8');
+  } catch {
+    return false;
+  }
+
+  const marker = statusToMarker(status);
+  const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
+  let updated = false;
+  for (let index = 0; index < lines.length; index += 1) {
+    const pattern = /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+?)\\s*$/;
+    const match = pattern.exec(lines[index]);
+    if (!match || match[4] !== subtaskId) {
+      continue;
+    }
+
+    if (match[2] !== marker) {
+      lines[index] = match[1] + marker + match[3] + match[4] + match[5] + match[6];
+      updated = true;
+    }
+    const detailIndent = (match[1].match(/^\\s*/) || [''])[0] + '  ';
+    let insertAt = index + 1;
+    let hasCompletion = false;
+    let hasUpdated = false;
+    while (insertAt < lines.length) {
+      if (/^\\s*-\\s+\\[[ xX/!\\-]\\]\\s+[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*/.test(lines[insertAt])) {
+        break;
+      }
+      if (/^\\s*-\\s+_Completion:/i.test(lines[insertAt])) {
+        hasCompletion = true;
+        if (status !== 'completed') {
+          lines.splice(insertAt, 1);
+          updated = true;
+          continue;
+        }
+      }
+      if (/^\\s*-\\s+_Updated:/i.test(lines[insertAt])) hasUpdated = true;
+      insertAt += 1;
+    }
+    if (status === 'completed' && note && !hasCompletion) {
+      lines.splice(insertAt, 0, detailIndent + '- _Completion: ' + compactPlanField(note) + '_');
+      insertAt += 1;
+      updated = true;
+    }
+    if (updated && !hasUpdated) {
+      lines.splice(insertAt, 0, detailIndent + '- _Updated: ' + new Date().toISOString() + '_');
+    }
+    break;
+  }
+
+  if (!updated) {
+    return false;
+  }
+  content = lines.join('\\n');
+  content = upsertPlanMetadata(content, 'Updated', new Date().toISOString());
+  writeFileSync(planPath, content.endsWith('\\n') ? content : content + '\\n', 'utf8');
+  return true;
+}
+
+function restoreProtectedSubtaskStatuses(currentSubtaskId) {
+  if (!protectedSubtaskStatuses || protectedSubtaskStatuses.size === 0) {
+    return;
+  }
+  for (const [subtaskId, status] of protectedSubtaskStatuses.entries()) {
+    if (subtaskId !== currentSubtaskId) {
+      markPlanSubtaskStatus(subtaskId, status);
+    }
+  }
+  protectedSubtaskStatuses = undefined;
+}
+
+function compactPlanField(value) {
+  return cleanLogText(value).replace(/\\s+/g, ' ').replace(/_/g, '\\\\_').trim().slice(0, 500);
+}
+
+function syncOpenSpecTasksFromPlan() {
+  const metadata = readJson(join(specDir, artifacts.taskMetadata));
+  if (!metadata || metadata.sourceType !== 'openspec' || typeof metadata.openSpecTasksPath !== 'string') {
+    return;
+  }
+  const tasksPath = join(cwd, metadata.openSpecTasksPath);
+  if (!existsSync(tasksPath)) {
+    return;
+  }
+  const statusById = new Map();
+  const items = readPlanItems();
+  for (const item of items) {
+    if (!item.isSubtask) continue;
+    const status = item.status === 'completed' ? 'completed' : 'pending';
+    statusById.set(item.id, status);
+    for (const upstreamTaskId of item.upstreamTaskIds || []) {
+      statusById.set(upstreamTaskId, status);
+    }
+  }
+  for (const item of items.filter((candidate) => !candidate.isSubtask)) {
+    const childPrefix = item.id + '.';
+    const children = items.filter((candidate) => candidate.isSubtask && candidate.id.startsWith(childPrefix));
+    if (children.length > 0) {
+      statusById.set(item.id, children.every((child) => child.status === 'completed') ? 'completed' : 'pending');
+    }
+  }
+
+  let content = '';
+  try {
+    content = readFileSync(tasksPath, 'utf8');
+  } catch {
+    return;
+  }
+  populateParentOpenSpecTaskStatuses(content, statusById);
+  const updated = content.replace(
+    /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+)$/gm,
+    (line, prefix, oldMarker, suffix, id, dot, rest) => {
+      const status = statusById.get(id);
+      if (!status) return line;
+      return prefix + (status === 'completed' ? 'x' : ' ') + suffix + id + dot + rest;
+    },
+  );
+  if (updated !== content) {
+    writeFileSync(tasksPath, updated, 'utf8');
+  }
+}
+
+function populateParentOpenSpecTaskStatuses(content, statusById) {
+  const taskIds = [...content.matchAll(/^\\s*-\\s+\\[[ xX/!\\-]\\]\\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(?:\\.?)\\s+.+$/gm)]
+    .map((match) => match[1])
+    .filter(Boolean)
+    .sort((a, b) => b.length - a.length);
+
+  for (const taskId of taskIds) {
+    if (statusById.has(taskId)) {
+      continue;
+    }
+    const children = taskIds.filter((candidate) => candidate !== taskId && candidate.startsWith(taskId + '.'));
+    if (children.length === 0 || children.some((childId) => !statusById.has(childId))) {
+      continue;
+    }
+    statusById.set(
+      taskId,
+      children.every((childId) => statusById.get(childId) === 'completed') ? 'completed' : 'pending',
+    );
+  }
+}
+
 function handleChildOutput(stream, data) {
-  const text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+  const text = decodeCliOutputChunk(data);
   if (!text) return;
   if (codexJsonMode && stream === 'stdout') {
     processCodexJsonOutput(text);
@@ -439,6 +881,122 @@ function handleChildOutput(stream, data) {
     process.stdout.write(text);
   }
   queueModelOutput(text);
+}
+
+function decodeCliOutputChunk(data) {
+  const utf8Text = Buffer.isBuffer(data) ? data.toString('utf8') : String(data);
+  const repairedUtf8Text = repairChineseMojibakeText(utf8Text);
+  if (!Buffer.isBuffer(data)) {
+    return repairedUtf8Text;
+  }
+
+  const legacyText = decodeLegacyCliOutput(data);
+  if (!legacyText) {
+    return repairedUtf8Text;
+  }
+
+  const repairedLegacyText = repairChineseMojibakeText(legacyText);
+  return shouldPreferEncodingCandidate(repairedUtf8Text, repairedLegacyText)
+    ? repairedLegacyText
+    : repairedUtf8Text;
+}
+
+function decodeLegacyCliOutput(data) {
+  if (!data.toString('utf8').includes('\\uFFFD')) {
+    return '';
+  }
+
+  try {
+    gb18030Decoder = gb18030Decoder || new TextDecoder('gb18030');
+    return gb18030Decoder.decode(data);
+  } catch {
+    return '';
+  }
+}
+
+function repairChineseMojibakeText(text) {
+  if (!text || text.includes('\\uFFFD') || scoreEncodingDamage(text) < 2 || !iconvLite) {
+    return text;
+  }
+
+  let candidate = text;
+  try {
+    candidate = iconvLite.decode(iconvLite.encode(text, 'gbk'), 'utf8');
+  } catch {
+    return text;
+  }
+
+  return shouldPreferEncodingCandidate(text, candidate) ? candidate : text;
+}
+
+function shouldPreferEncodingCandidate(original, candidate) {
+  if (!candidate || candidate === original) {
+    return false;
+  }
+  const originalScore = scoreEncodingDamage(original);
+  const candidateScore = scoreEncodingDamage(candidate);
+  return originalScore >= 2 && candidateScore + 1 < originalScore;
+}
+
+function scoreEncodingDamage(text) {
+  const patterns = [
+    '锟斤拷',
+    '锛',
+    '锚',
+    '涓€',
+    '涓�',
+    '涓',
+    '瀛愪',
+    '换鍔',
+    '浠诲姟',
+    '褰撳墠',
+    '鏂',
+    '绋',
+    '鐢',
+    '寮€濮',
+    '鐨',
+    '缃戦',
+    '椤电',
+    '瀹炵幇',
+    '淇勭綏',
+    '娓告垙',
+    '鏂瑰潡',
+    '瑰潡',
+    '告垙',
+    '犲',
+    '佸',
+    '傚',
+    '熷',
+    '堕',
+    '姝',
+    '垚',
+  ];
+  let score = 0;
+  for (const char of text) {
+    if (char.charCodeAt(0) === 0xfffd) {
+      score += 12;
+    }
+  }
+  for (const pattern of patterns) {
+    let index = text.indexOf(pattern);
+    while (index >= 0) {
+      score += pattern.length;
+      index = text.indexOf(pattern, index + pattern.length);
+    }
+  }
+  return score;
+}
+
+function loadIconvLite() {
+  const candidates = [iconvLiteModulePath, 'iconv-lite'].filter(Boolean);
+  for (const candidate of candidates) {
+    try {
+      return require(candidate);
+    } catch {
+      // Try the next lookup path.
+    }
+  }
+  return null;
 }
 
 function queueModelOutput(text) {
@@ -1178,7 +1736,7 @@ function readOptionalNumber(value) {
 }
 
 function cleanLogText(value) {
-  return String(value ?? '')
+  return repairChineseMojibakeText(String(value ?? ''))
     .replace(/\\r\\n/g, '\\n')
     .replace(/\\r/g, '\\n')
     .replace(/\\x1B\\[[0-?]*[ -/]*[@-~]/g, '')

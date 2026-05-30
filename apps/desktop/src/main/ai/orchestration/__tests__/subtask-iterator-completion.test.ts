@@ -443,4 +443,52 @@ describe('iterateSubtasks completion gating', () => {
     expect(typedPlanDuringRun.executionPhase).toBe('coding');
     expect(typedPlanDuringRun.phases[0].subtasks[0].status).toBe('in_progress');
   });
+
+  it('does not accept model-completed later subtasks before their turn', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 'first', description: 'first work', status: 'pending' },
+            { id: 's2', title: 'second', description: 'second work', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+
+    const started: string[] = [];
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      onSubtaskStart: (subtask) => started.push(subtask.id),
+      runSubtaskSession: async () => {
+        const currentPlan = await loadPlan<{
+          phases: Array<{ subtasks: Array<{ status: string; completion_summary?: string }> }>;
+        }>(specDir);
+        for (const phase of currentPlan.phases) {
+          for (const subtask of phase.subtasks) {
+            subtask.status = 'completed';
+            subtask.completion_summary = 'Model tried to complete this early.';
+          }
+        }
+        await savePlan(specDir, currentPlan);
+        return makeResult('completed');
+      },
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
+    }>(specDir);
+
+    expect(started).toEqual(['s1', 's2']);
+    expect(result.completedSubtasks).toBe(2);
+    expect(updatedPlan.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
+  });
 });

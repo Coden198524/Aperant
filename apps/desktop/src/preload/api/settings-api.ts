@@ -17,8 +17,12 @@ export interface SettingsAPI {
     python: ToolDetectionResult;
     git: ToolDetectionResult;
     gh: ToolDetectionResult;
+    glab: ToolDetectionResult;
     claude: ToolDetectionResult;
+    openspec: ToolDetectionResult;
   }>>;
+  checkOpenSpecCli: () => Promise<IPCResult<{ installed: boolean; version?: string; path?: string }>>;
+  installOpenSpecCli: () => Promise<IPCResult<{ command: string }>>;
 
   // Claude Code onboarding status
   getClaudeCodeOnboardingStatus: () => Promise<IPCResult<{ hasCompletedOnboarding: boolean }>>;
@@ -67,9 +71,17 @@ export const createSettingsAPI = (): SettingsAPI => ({
     python: ToolDetectionResult;
     git: ToolDetectionResult;
     gh: ToolDetectionResult;
+    glab: ToolDetectionResult;
     claude: ToolDetectionResult;
+    openspec: ToolDetectionResult;
   }>> =>
     ipcRenderer.invoke(IPC_CHANNELS.SETTINGS_GET_CLI_TOOLS_INFO),
+
+  checkOpenSpecCli: (): Promise<IPCResult<{ installed: boolean; version?: string; path?: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OPENSPEC_CHECK_CLI),
+
+  installOpenSpecCli: (): Promise<IPCResult<{ command: string }>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.OPENSPEC_INSTALL_CLI),
 
   // Claude Code onboarding status
   getClaudeCodeOnboardingStatus: (): Promise<IPCResult<{ hasCompletedOnboarding: boolean }>> =>

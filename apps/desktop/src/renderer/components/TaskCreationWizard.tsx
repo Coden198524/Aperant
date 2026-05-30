@@ -27,7 +27,7 @@ import { createTask, saveDraft, loadDraft, clearDraft, isDraftEmpty } from '../s
 import { useProjectStore } from '../stores/project-store';
 import { buildBranchOptions } from '../lib/branch-utils';
 import { cn } from '../lib/utils';
-import type { TaskCategory, TaskPriority, TaskComplexity, TaskImpact, TaskMetadata, ImageAttachment, TaskDraft, ModelType, ThinkingLevel, ReferencedFile, GitBranchDetail, TaskWorkflowMode } from '../../shared/types';
+import type { TaskCategory, TaskPriority, TaskComplexity, TaskImpact, TaskMetadata, ImageAttachment, TaskDraft, ModelType, ThinkingLevel, ReferencedFile, GitBranchDetail, TaskWorkflowMode, TaskDevelopmentMode } from '../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
 import {
   DEFAULT_AGENT_PROFILES,
@@ -47,12 +47,23 @@ interface TaskCreationWizardProps {
 // Special value for "use project default" branch
 const PROJECT_DEFAULT_BRANCH = AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER;
 
+function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflowMode {
+  return mode === 'fast' ? 'off' : 'balanced';
+}
+
+function resolveDraftDevelopmentMode(draft: TaskDraft): TaskDevelopmentMode {
+  if (draft.developmentMode === 'fast' || draft.developmentMode === 'standard' || draft.developmentMode === 'spec') {
+    return draft.developmentMode;
+  }
+  return draft.workflowMode === 'off' ? 'fast' : 'standard';
+}
+
 export function TaskCreationWizard({
   projectId,
   open,
   onOpenChange
 }: TaskCreationWizardProps) {
-  const { t } = useTranslation(['tasks', 'common']);
+  const { t, i18n } = useTranslation(['tasks', 'common']);
   const { settings } = useSettingsStore();
   const { provider: activeProvider } = useActiveProvider();
   const [isSyncingSettings, setIsSyncingSettings] = useState(false);
@@ -146,6 +157,7 @@ export function TaskCreationWizard({
 
   // Review setting
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
+  const [developmentMode, setDevelopmentMode] = useState<TaskDevelopmentMode>('standard');
   const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('balanced');
   const [enableBatchExecution, setEnableBatchExecution] = useState(false);
 
@@ -212,8 +224,10 @@ export function TaskCreationWizard({
         setImages(draft.images);
         setReferencedFiles(draft.referencedFiles ?? []);
         setRequireReviewBeforeCoding(draft.requireReviewBeforeCoding ?? false);
-        setWorkflowMode(draft.workflowMode ?? 'balanced');
-        setEnableBatchExecution(draft.enableBatchExecution === true);
+        const draftDevelopmentMode = resolveDraftDevelopmentMode(draft);
+        setDevelopmentMode(draftDevelopmentMode);
+        setWorkflowMode(workflowModeForDevelopmentMode(draftDevelopmentMode));
+        setEnableBatchExecution(draftDevelopmentMode !== 'fast' && draft.enableBatchExecution === true);
         setUseWorktree(draft.useWorktree ?? false);
         setPushNewBranches(draft.pushNewBranches ?? projectPushNewBranches);
         setIsDraftRestored(true);
@@ -238,6 +252,7 @@ export function TaskCreationWizard({
         setImages([]);
         setReferencedFiles([]);
         setRequireReviewBeforeCoding(false);
+        setDevelopmentMode('standard');
         setWorkflowMode('balanced');
         setEnableBatchExecution(false);
         setBaseBranch(PROJECT_DEFAULT_BRANCH);
@@ -317,12 +332,13 @@ export function TaskCreationWizard({
     images,
     referencedFiles,
     requireReviewBeforeCoding,
+    developmentMode,
     workflowMode,
     enableBatchExecution,
     useWorktree,
     pushNewBranches,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, workflowMode, enableBatchExecution, useWorktree, pushNewBranches]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, developmentMode, workflowMode, enableBatchExecution, useWorktree, pushNewBranches]);
 
   /**
    * Detect @ mention being typed and show autocomplete
@@ -499,6 +515,15 @@ export function TaskCreationWizard({
     }
   }, [description, title, isImproving, isCreating, t]);
 
+  const handleDevelopmentModeChange = useCallback((mode: TaskDevelopmentMode) => {
+    setDevelopmentMode(mode);
+    setWorkflowMode(workflowModeForDevelopmentMode(mode));
+    if (mode === 'fast') {
+      setEnableBatchExecution(false);
+      setRequireReviewBeforeCoding(false);
+    }
+  }, []);
+
   const handleCreate = async () => {
     if (!description.trim()) {
       setError(t('tasks:form.errors.descriptionRequired'));
@@ -511,7 +536,11 @@ export function TaskCreationWizard({
     try {
       const allReferencedFiles = parseFileMentions(description, referencedFiles);
 
-      const metadata: TaskMetadata = { sourceType: 'manual' };
+      const metadata: TaskMetadata = {
+        sourceType: developmentMode === 'spec' ? 'openspec' : 'manual',
+        developmentMode,
+        language: settings.language || i18n.language,
+      };
       if (category) metadata.category = category;
       if (priority) metadata.priority = priority;
       if (complexity) metadata.complexity = complexity;
@@ -551,9 +580,14 @@ export function TaskCreationWizard({
 
       if (images.length > 0) metadata.attachedImages = images;
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
-      if (requireReviewBeforeCoding) metadata.requireReviewBeforeCoding = true;
-      metadata.workflowMode = workflowMode;
-      metadata.enableBatchExecution = enableBatchExecution;
+      if (requireReviewBeforeCoding && developmentMode !== 'fast') metadata.requireReviewBeforeCoding = true;
+      metadata.workflowMode = workflowModeForDevelopmentMode(developmentMode);
+      metadata.enableBatchExecution = developmentMode !== 'fast' && enableBatchExecution;
+      if (developmentMode === 'spec') {
+        metadata.openSpecGenerationMode = 'deferred';
+        metadata.upstreamSpecSystem = 'openspec';
+        metadata.downstreamExecutionSystem = 'autocode';
+      }
       metadata.useWorktree = useWorktree;
       if (useWorktree) {
         // Resolve PROJECT_DEFAULT_BRANCH to the actual branch name for worktree creation.
@@ -598,8 +632,9 @@ export function TaskCreationWizard({
     setImages([]);
     setReferencedFiles([]);
     setRequireReviewBeforeCoding(false);
+    setDevelopmentMode('standard');
     setWorkflowMode('balanced');
-    setEnableBatchExecution(true);
+    setEnableBatchExecution(false);
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
     setUseWorktree(false);
     setPushNewBranches(projectPushNewBranches);
@@ -783,8 +818,8 @@ export function TaskCreationWizard({
           onImagesChange={setImages}
           requireReviewBeforeCoding={requireReviewBeforeCoding}
           onRequireReviewChange={setRequireReviewBeforeCoding}
-          workflowMode={workflowMode}
-          onWorkflowModeChange={setWorkflowMode}
+          developmentMode={developmentMode}
+          onDevelopmentModeChange={handleDevelopmentModeChange}
           disabled={isCreating || isSyncingSettings}
           error={error}
           onError={setError}
@@ -820,9 +855,9 @@ export function TaskCreationWizard({
           </div>
           <Switch
             id="batch-execution"
-            checked={enableBatchExecution}
+            checked={developmentMode !== 'fast' && enableBatchExecution}
             onCheckedChange={(checked) => setEnableBatchExecution(checked === true)}
-            disabled={isCreating || isSyncingSettings}
+            disabled={isCreating || isSyncingSettings || developmentMode === 'fast'}
             aria-label={t('tasks:wizard.batchExecution.label')}
           />
         </div>

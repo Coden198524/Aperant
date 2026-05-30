@@ -17,6 +17,7 @@ export function isTaskRenderEquivalent(prevTask: Task, nextTask: Task): boolean 
     prevTask.executionProgress?.phaseProgress === nextTask.executionProgress?.phaseProgress &&
     prevTask.executionProgress?.currentSubtask === nextTask.executionProgress?.currentSubtask &&
     prevTask.subtasks.length === nextTask.subtasks.length &&
+    prevTask.metadata?.developmentMode === nextTask.metadata?.developmentMode &&
     prevTask.metadata?.workflowMode === nextTask.metadata?.workflowMode &&
     prevTask.metadata?.category === nextTask.metadata?.category &&
     prevTask.metadata?.complexity === nextTask.metadata?.complexity &&

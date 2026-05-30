@@ -11,7 +11,7 @@
  */
 import { useRef, useState, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, Info, Gauge, Sparkles, Loader2 } from 'lucide-react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, FileText, ListChecks, Sparkles, Loader2, Zap } from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
@@ -33,6 +33,7 @@ import type {
   ImageAttachment,
   ModelType,
   ThinkingLevel,
+  TaskDevelopmentMode,
   TaskWorkflowMode
 } from '../../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../../shared/types/settings';
@@ -88,6 +89,8 @@ interface TaskFormFieldsProps {
   onRequireReviewChange: (require: boolean) => void;
 
   // Workflow mode
+  developmentMode?: TaskDevelopmentMode;
+  onDevelopmentModeChange?: (value: TaskDevelopmentMode) => void;
   workflowMode?: TaskWorkflowMode;
   onWorkflowModeChange?: (value: TaskWorkflowMode) => void;
 
@@ -145,8 +148,8 @@ export function TaskFormFields({
   onImagesChange,
   requireReviewBeforeCoding,
   onRequireReviewChange,
-  workflowMode = 'balanced',
-  onWorkflowModeChange,
+  developmentMode = 'standard',
+  onDevelopmentModeChange,
   disabled = false,
   error,
   onError,
@@ -561,7 +564,7 @@ export function TaskFormFields({
             id={`${prefix}require-review`}
             checked={requireReviewBeforeCoding}
             onCheckedChange={(checked) => onRequireReviewChange(checked === true)}
-            disabled={disabled}
+            disabled={disabled || developmentMode === 'fast'}
             className="mt-0.5"
           />
           <div className="flex-1 space-y-1">
@@ -577,95 +580,50 @@ export function TaskFormFields({
           </div>
         </div>
 
-        {onWorkflowModeChange && (
+        {onDevelopmentModeChange && (
           <div className="space-y-2">
             <Label className="text-sm font-medium text-foreground">
-              {t('tasks:form.workflowOptimization.label')}
+              {t('tasks:form.developmentMode.label')}
             </Label>
             <p className="text-xs text-muted-foreground">
-              {t('tasks:form.workflowOptimization.description')}
+              {t('tasks:form.developmentMode.description')}
             </p>
             <div className="grid grid-cols-1 gap-2 mt-3">
-              {/* Off / Direct */}
-              <button
-                type="button"
-                onClick={() => onWorkflowModeChange('off')}
-                disabled={disabled}
-                className={cn(
-                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
-                  workflowMode === 'off'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
-                )}
-              >
-                <div className="flex-1">
-                  <div className="font-medium text-sm">{t('tasks:form.workflowOptimization.off.title')}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.off.description')}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.off.performance')}</div>
-                </div>
-              </button>
-
-              {/* Conservative */}
-              <button
-                type="button"
-                onClick={() => onWorkflowModeChange('conservative')}
-                disabled={disabled}
-                className={cn(
-                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
-                  workflowMode === 'conservative'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
-                )}
-              >
-                <div className="flex-1">
-                  <div className="font-medium text-sm">{t('tasks:form.workflowOptimization.conservative.title')}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.conservative.description')}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.conservative.performance')}</div>
-                </div>
-              </button>
-
-              {/* Balanced (Recommended) */}
-              <button
-                type="button"
-                onClick={() => onWorkflowModeChange('balanced')}
-                disabled={disabled}
-                className={cn(
-                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
-                  workflowMode === 'balanced'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
-                )}
-              >
-                <div className="flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">{t('tasks:form.workflowOptimization.balanced.title')}</span>
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
-                      {t('tasks:form.workflowOptimization.recommended')}
-                    </span>
+              {([
+                { mode: 'fast' as const, icon: Zap },
+                { mode: 'standard' as const, icon: ListChecks },
+                { mode: 'spec' as const, icon: FileText },
+              ]).map(({ mode, icon: Icon }) => (
+                <button
+                  key={mode}
+                  type="button"
+                  onClick={() => onDevelopmentModeChange(mode)}
+                  disabled={disabled}
+                  className={cn(
+                    'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
+                    developmentMode === mode
+                      ? 'border-primary bg-primary/5'
+                      : 'border-border hover:border-primary/50 hover:bg-muted/50'
+                  )}
+                >
+                  <Icon className={cn(
+                    'h-4 w-4 mt-0.5 flex-shrink-0',
+                    developmentMode === mode ? 'text-primary' : 'text-muted-foreground'
+                  )} />
+                  <div className="flex-1 min-w-0">
+                    <div className="flex items-center gap-2">
+                      <span className="font-medium text-sm">{t(`tasks:form.developmentMode.${mode}.title`)}</span>
+                      {mode === 'standard' && (
+                        <span className="text-[10px] px-1.5 py-0.5 rounded bg-primary/10 text-primary font-medium">
+                          {t('tasks:form.developmentMode.recommended')}
+                        </span>
+                      )}
+                    </div>
+                    <div className="text-xs text-muted-foreground mt-1">{t(`tasks:form.developmentMode.${mode}.description`)}</div>
+                    <div className="text-xs text-muted-foreground mt-1">{t(`tasks:form.developmentMode.${mode}.performance`)}</div>
                   </div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.balanced.description')}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.balanced.performance')}</div>
-                </div>
-              </button>
-
-              {/* Aggressive */}
-              <button
-                type="button"
-                onClick={() => onWorkflowModeChange('aggressive')}
-                disabled={disabled}
-                className={cn(
-                  'flex items-start gap-3 p-3 rounded-lg border-2 transition-all text-left',
-                  workflowMode === 'aggressive'
-                    ? 'border-primary bg-primary/5'
-                    : 'border-border hover:border-primary/50 hover:bg-muted/50'
-                )}
-              >
-                <div className="flex-1">
-                  <div className="font-medium text-sm">{t('tasks:form.workflowOptimization.aggressive.title')}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.aggressive.description')}</div>
-                  <div className="text-xs text-muted-foreground mt-1">{t('tasks:form.workflowOptimization.aggressive.performance')}</div>
-                </div>
-              </button>
+                </button>
+              ))}
             </div>
           </div>
         )}

@@ -2,7 +2,7 @@
 
 import '@testing-library/jest-dom/vitest';
 import '../../../shared/i18n';
-import { fireEvent, render, screen, within } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task } from '../../../shared/types';
 import { TooltipProvider } from '../ui/tooltip';
@@ -127,7 +127,7 @@ describe('TaskSubtasks', () => {
     expect(screen.queryByText(/\\\|项目\\\|内容\\\|/)).not.toBeInTheDocument();
   });
 
-  it('shows runtime logs next to the subtask list', () => {
+  it('shows only model output next to the subtask list', () => {
     render(
       <TooltipProvider>
         <TaskSubtasks task={createTask()} />
@@ -136,8 +136,9 @@ describe('TaskSubtasks', () => {
 
     const runtimePanel = screen.getByTestId('task-runtime-logs');
     expect(runtimePanel).toBeInTheDocument();
-    expect(within(runtimePanel).getAllByText('Runtime').length).toBeGreaterThan(0);
-    expect(screen.getByText(/Starting QA validation loop/)).toBeInTheDocument();
-    expect(screen.getByText(/Running qa_reviewer session/)).toBeInTheDocument();
+    expect(runtimePanel).toHaveTextContent('Model output');
+    expect(runtimePanel).not.toHaveTextContent('Runtime');
+    expect(screen.queryByText(/Starting QA validation loop/)).not.toBeInTheDocument();
+    expect(screen.queryByText(/Running qa_reviewer session/)).not.toBeInTheDocument();
   });
 });

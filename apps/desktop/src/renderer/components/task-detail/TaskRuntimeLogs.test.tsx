@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { fireEvent, render, screen, waitFor } from '@testing-library/react';
+import { render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task, TaskLogStreamChunk, TaskLogs } from '../../../shared/types';
 import { TaskRuntimeLogs } from './TaskRuntimeLogs';
@@ -119,11 +119,6 @@ vi.mock('react-i18next', () => ({
   }),
 }));
 
-vi.mock('../../stores/settings-store', () => ({
-  useSettingsStore: (selector: (state: { settings: { logOrder: 'chronological' | 'reverse-chronological' } }) => unknown) =>
-    selector({ settings: { logOrder: 'chronological' } }),
-}));
-
 vi.mock('../../stores/task-store', () => ({
   useTaskStore: (selector: (state: { tasks: Task[] }) => unknown) => selector({ tasks: storeTasks }),
 }));
@@ -166,70 +161,23 @@ describe('TaskRuntimeLogs', () => {
     } as typeof window.electronAPI;
   });
 
-  it('uses live store logs when they are newer than the task prop snapshot', () => {
-    const snapshot = createTask({ logs: ['initial snapshot log'] });
-    storeTasks = [
-      createTask({
-        logs: ['initial snapshot log', 'live runtime update'],
-      }),
-    ];
-
-    render(<TaskRuntimeLogs task={snapshot} />);
-
-    expect(screen.getByText(/live runtime update/)).toBeInTheDocument();
-  });
-
-  it('renders runtime logs as markdown preview', () => {
-    const snapshot = createTask({
-      logs: [
-        [
-          '## Runtime Report',
-          '',
-          '- **Build** passed',
-          '- `npm test` passed',
-        ].join('\n'),
-      ],
-    });
-
-    render(<TaskRuntimeLogs task={snapshot} />);
-
-    expect(screen.getByRole('heading', { name: 'Runtime Report' })).toBeInTheDocument();
-    expect(screen.getByText('Build')).toBeInTheDocument();
-    expect(screen.getByText('npm test')).toBeInTheDocument();
-    expect(screen.queryByText(/## Runtime Report/)).not.toBeInTheDocument();
-  });
-
-  it('auto-scrolls runtime logs to the latest entry when new logs arrive', async () => {
-    const initialTask = createTask({ logs: ['first runtime log'] });
-    const { rerender } = render(<TaskRuntimeLogs task={initialTask} />);
-    const scrollContainer = screen.getByTestId('runtime-output-scroll');
-    const scrollTo = vi.fn();
-
-    Object.defineProperty(scrollContainer, 'scrollHeight', { configurable: true, value: 1200 });
-    Object.defineProperty(scrollContainer, 'clientHeight', { configurable: true, value: 300 });
-    Object.defineProperty(scrollContainer, 'scrollTo', { configurable: true, value: scrollTo });
-
-    await waitFor(() => {
-      expect(scrollTo).toHaveBeenCalled();
-    });
-    scrollTo.mockClear();
-
-    rerender(<TaskRuntimeLogs task={createTask({ logs: ['first runtime log', 'second runtime log'] })} />);
-
-    await waitFor(() => {
-      expect(screen.getByText(/second runtime log/)).toBeInTheDocument();
-      expect(scrollTo).toHaveBeenCalledWith({ top: 1200, behavior: 'auto' });
-    });
-  });
-
-  it('can switch to model output from phase text logs', async () => {
+  it('shows model output by default and hides the runtime view', async () => {
     render(<TaskRuntimeLogs task={createTask()} />);
-
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
 
     await waitFor(() => {
       expect(screen.getByText('The model is planning the implementation.')).toBeInTheDocument();
     });
+    expect(screen.queryByRole('button', { name: /runtime/i })).not.toBeInTheDocument();
+    expect(screen.queryByTestId('runtime-output-scroll')).not.toBeInTheDocument();
+  });
+
+  it('omits phase badges from model output entries', async () => {
+    render(<TaskRuntimeLogs task={createTask()} />);
+
+    await waitFor(() => {
+      expect(screen.getByText('The model is planning the implementation.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Plan')).not.toBeInTheDocument();
   });
 
   it('does not duplicate model output when live stream is followed by persisted logs', async () => {
@@ -239,8 +187,6 @@ describe('TaskRuntimeLogs', () => {
     })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     await waitFor(() => {
       expect(taskLogsStreamCallback).toBeTruthy();
       expect(taskLogsChangedCallback).toBeTruthy();
@@ -276,8 +222,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: createMarkdownTaskLogs() })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     expect(await screen.findByRole('heading', { name: 'Implementation' })).toBeInTheDocument();
     expect(screen.getByText('Add streaming output')).toBeInTheDocument();
     expect(screen.getByText('Markdown')).toBeInTheDocument();
@@ -288,8 +232,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask({ executionProgress: { phase: 'planning', phaseProgress: 10, overallProgress: 5 } })} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     expect(await screen.findByText('Thinking...')).toBeInTheDocument();
     expect(screen.getByText('The model is preparing its next response.')).toBeInTheDocument();
 
@@ -313,8 +255,6 @@ describe('TaskRuntimeLogs', () => {
     })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask({ status: 'human_review' })} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     expect(await screen.findByText('No model output yet')).toBeInTheDocument();
     expect(screen.queryByText('Working...')).not.toBeInTheDocument();
     expect(screen.queryByText('Thinking...')).not.toBeInTheDocument();
@@ -325,8 +265,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: createToolTaskLogs() })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     await waitFor(() => {
       expect(screen.getByText('I need to inspect the file.')).toBeInTheDocument();
     });
@@ -341,8 +279,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     taskLogsStreamCallback?.('spec-1', {
       type: 'text',
       phase: 'coding',
@@ -378,8 +314,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     taskLogsStreamCallback?.('spec-1', {
       type: 'text',
       phase: 'coding',
@@ -415,8 +349,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     taskLogsStreamCallback?.('spec-1', {
       type: 'text',
       phase: 'coding',
@@ -444,8 +376,6 @@ describe('TaskRuntimeLogs', () => {
       },
       executionProgress: { phase: 'coding', phaseProgress: 20, overallProgress: 40 },
     })} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     expect(await screen.findByText(/OpenAI · GPT-5.4/)).toBeInTheDocument();
   });
 
@@ -453,8 +383,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     taskLogsStreamCallback?.('spec-1', {
       type: 'tool_start',
       phase: 'coding',
@@ -496,8 +424,6 @@ describe('TaskRuntimeLogs', () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 
     render(<TaskRuntimeLogs task={createTask()} />);
-    fireEvent.click(screen.getByRole('button', { name: /model output/i }));
-
     taskLogsStreamCallback?.('spec-1', {
       type: 'tool_start',
       phase: 'coding',

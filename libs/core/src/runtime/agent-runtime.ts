@@ -1,6 +1,7 @@
 import type {
   AutocodePlanStatus,
   AutocodeReviewReason,
+  AutocodeTaskDevelopmentMode,
   AutocodeTaskStatus,
   AutocodeTaskWorkflowMode,
 } from '../tasks/spec-store.js';
@@ -25,6 +26,7 @@ export interface AutocodeAgentRuntimeOptions {
 }
 
 export interface AutocodeAgentRuntimeMetadata {
+  developmentMode?: AutocodeTaskDevelopmentMode | string;
   workflowMode?: AutocodeTaskWorkflowMode | string;
   useWorktree?: boolean;
   useLocalBranch?: boolean;
@@ -335,5 +337,5 @@ function createAutocodeAgentRuntimeMessages(
 }
 
 function isDirectAutocodeWorkflow(metadata: AutocodeAgentRuntimeMetadata | undefined): boolean {
-  return metadata?.workflowMode === 'off';
+  return metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
 }

@@ -108,11 +108,37 @@ interface PlanSubtask {
   notes?: string;
   completion_summary?: string;
   completed_at?: string;
+  started_at?: string;
+  updated_at?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
   pattern_files?: string[];
   verification?: string;
+  work_package?: boolean;
+  upstream_task_ids?: string[];
+  upstream_source?: string;
 }
+
+type ProtectedSubtaskField =
+  | 'status'
+  | 'notes'
+  | 'completion_summary'
+  | 'completed_at'
+  | 'started_at'
+  | 'updated_at';
+
+type ProtectedSubtaskState = Partial<Pick<PlanSubtask, ProtectedSubtaskField>> & {
+  status: string;
+};
+
+const PROTECTED_SUBTASK_FIELDS: ProtectedSubtaskField[] = [
+  'status',
+  'notes',
+  'completion_summary',
+  'completed_at',
+  'started_at',
+  'updated_at',
+];
 
 // =============================================================================
 // Core Functions
@@ -176,6 +202,9 @@ export async function iterateSubtasks(
       filesToModify: subtask.files_to_modify,
       patternFiles: subtask.pattern_files,
       verification: subtask.verification,
+      workPackage: subtask.work_package === true,
+      upstreamTaskIds: Array.isArray(subtask.upstream_task_ids) ? subtask.upstream_task_ids : [],
+      upstreamSource: typeof subtask.upstream_source === 'string' ? subtask.upstream_source : undefined,
       status: subtask.status as 'pending' | 'in_progress' | 'completed' | 'blocked' | 'stuck',
     };
 
@@ -200,6 +229,7 @@ export async function iterateSubtasks(
     if (config.sourceSpecDir) {
       await syncExecutionStateToMain(config.specDir, config.sourceSpecDir);
     }
+    const protectedSubtaskStates = await snapshotProtectedSubtaskStates(config.specDir, subtask.id);
 
     // Notify start
     config.onSubtaskStart?.(subtaskInfo, currentAttempt);
@@ -220,6 +250,7 @@ export async function iterateSubtasks(
 
     // Run the session
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
+    await restoreProtectedSubtaskStates(config.specDir, subtask.id, protectedSubtaskStates);
 
     const subtaskCompletedByTool = result.completedSubtaskIds?.includes(subtask.id) === true;
     if (subtaskCompletedByTool) {
@@ -610,6 +641,101 @@ async function markSubtaskInProgress(
   } catch {
     // Non-fatal: the session can still run even if progress persistence fails
   }
+}
+
+async function snapshotProtectedSubtaskStates(
+  specDir: string,
+  currentSubtaskId: string,
+): Promise<Map<string, ProtectedSubtaskState>> {
+  const states = new Map<string, ProtectedSubtaskState>();
+  try {
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) {
+      return states;
+    }
+
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        const subtaskId = getSubtaskId(subtask);
+        if (!subtaskId || subtaskId === currentSubtaskId) {
+          continue;
+        }
+        states.set(subtaskId, pickProtectedSubtaskState(subtask));
+      }
+    }
+  } catch {
+    // Best-effort guard; normal session flow should continue.
+  }
+  return states;
+}
+
+async function restoreProtectedSubtaskStates(
+  specDir: string,
+  currentSubtaskId: string,
+  protectedStates: Map<string, ProtectedSubtaskState>,
+): Promise<void> {
+  if (protectedStates.size === 0) {
+    return;
+  }
+
+  try {
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) {
+      return;
+    }
+
+    let updated = false;
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        const subtaskId = getSubtaskId(subtask);
+        if (!subtaskId || subtaskId === currentSubtaskId) {
+          continue;
+        }
+        const protectedState = protectedStates.get(subtaskId);
+        if (!protectedState) {
+          continue;
+        }
+
+        for (const field of PROTECTED_SUBTASK_FIELDS) {
+          const nextValue = protectedState[field];
+          if (nextValue === undefined) {
+            if (subtask[field] !== undefined) {
+              delete subtask[field];
+              updated = true;
+            }
+            continue;
+          }
+          if (subtask[field] !== nextValue) {
+            subtask[field] = nextValue;
+            updated = true;
+          }
+        }
+      }
+    }
+
+    if (updated) {
+      await saveImplementationPlanToFiles(specDir, plan as never);
+    }
+  } catch {
+    // Non-fatal: the current subtask completion fallback still runs below.
+  }
+}
+
+function pickProtectedSubtaskState(subtask: PlanSubtask): ProtectedSubtaskState {
+  const state: ProtectedSubtaskState = {
+    status: subtask.status,
+  };
+  for (const field of PROTECTED_SUBTASK_FIELDS) {
+    if (field !== 'status' && subtask[field] !== undefined) {
+      state[field] = subtask[field];
+    }
+  }
+  return state;
+}
+
+function getSubtaskId(subtask: PlanSubtask): string | undefined {
+  const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
+  return subtask.id ?? withLegacyId.subtask_id;
 }
 
 /**

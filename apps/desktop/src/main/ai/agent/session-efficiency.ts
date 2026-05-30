@@ -1,3 +1,5 @@
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS, loadAutocodeImplementationPlanSync } from '@autocode/core';
 import { formatAutocodeIgnoredDirNamesForPrompt } from '@autocode/core/workspace/ignore-rules';
 
@@ -37,6 +39,9 @@ export interface CoderKickoffSubtaskContext {
   filesToModify: string[];
   patternFiles: string[];
   verification?: string | VerificationLike;
+  workPackage?: boolean;
+  upstreamTaskIds?: string[];
+  upstreamSource?: string;
   completedSummaries?: Array<{ id: string; title?: string; summary: string }>;
   projectType?: string;
   documentationProfile?: string;
@@ -61,6 +66,22 @@ function formatPathForPrompt(filePath: string): string {
 function shortenForPrompt(value: string, maxLength = 700): string {
   const compact = value.replace(/\s+/g, ' ').trim();
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength).trimEnd()}...`;
+}
+
+function readCompactOpenSpecContext(specDir: string): string | null {
+  const contextPath = join(specDir, AUTOCODE_TASK_ARTIFACTS.openSpecContext);
+  if (!existsSync(contextPath)) {
+    return null;
+  }
+  try {
+    const content = readFileSync(contextPath, 'utf8').trim();
+    if (!content) {
+      return null;
+    }
+    return content.length <= 8000 ? content : `${content.slice(0, 8000).trimEnd()}\n...[truncated]`;
+  } catch {
+    return null;
+  }
 }
 
 function formatVerification(verification: string | VerificationLike | undefined): string | null {
@@ -193,6 +214,9 @@ export function findSubtaskKickoffContext(
         files_to_modify?: unknown;
         pattern_files?: unknown;
         verification?: unknown;
+        work_package?: unknown;
+        upstream_task_ids?: unknown;
+        upstream_source?: unknown;
       };
       if (subtaskRecord.id !== subtaskId) {
         continue;
@@ -220,6 +244,9 @@ export function findSubtaskKickoffContext(
           || (subtaskRecord.verification && typeof subtaskRecord.verification === 'object')
           ? subtaskRecord.verification as string | VerificationLike
           : undefined,
+        workPackage: subtaskRecord.work_package === true,
+        upstreamTaskIds: toStringArray(subtaskRecord.upstream_task_ids),
+        upstreamSource: typeof subtaskRecord.upstream_source === 'string' ? subtaskRecord.upstream_source : undefined,
         completedSummaries,
       };
     }
@@ -254,8 +281,11 @@ export function buildFocusedCoderKickoffMessageFromContext(
   const documentationOnly = isDocumentationContext(context);
   const gameMmoDocumentation = isGameMmoDocumentationContext(context);
   const gameMmoImplementation = isGameMmoImplementationContext(context);
+  const workLabel = context?.workPackage ? 'work package' : 'subtask';
+  const workHeading = context?.workPackage ? '## Current Work Package' : '## Current Work Item';
+  const openSpecContext = readCompactOpenSpecContext(specDir);
   const lines: string[] = [
-    `Implement subtask "${subtaskId}" only.`,
+    `Implement ${workLabel} "${subtaskId}" only.`,
     `Project root: ${promptProjectDir}.`,
     `Plan file for final status update: ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
   ];
@@ -265,7 +295,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
 
   if (context) {
     lines.push('');
-    lines.push('## Current Subtask');
+    lines.push(workHeading);
     if (context.workflowType) {
       lines.push(`- Workflow: ${context.workflowType}`);
     }
@@ -278,9 +308,25 @@ export function buildFocusedCoderKickoffMessageFromContext(
     if (context.description) {
       lines.push(`- Description: ${context.description}`);
     }
+    if (context.upstreamTaskIds?.length) {
+      lines.push(`- Upstream OpenSpec tasks: ${context.upstreamTaskIds.join(', ')}`);
+    }
+    if (context.upstreamSource) {
+      lines.push(`- Upstream source: ${context.upstreamSource}`);
+    }
   } else {
     lines.push('');
-    lines.push(`Read ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}, locate subtask "${subtaskId}", and implement only that subtask.`);
+    lines.push(`Read ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}, locate work item "${subtaskId}", and implement only that item.`);
+  }
+
+  if (openSpecContext) {
+    lines.push('');
+    lines.push(`## OpenSpec Compact Context (${AUTOCODE_TASK_ARTIFACTS.openSpecContext})`);
+    lines.push('Use this compact upstream context first; open full OpenSpec artifacts only when exact wording is needed.');
+    lines.push('');
+    lines.push('```markdown');
+    lines.push(openSpecContext);
+    lines.push('```');
   }
 
   if (context?.completedSummaries?.length) {
@@ -334,7 +380,7 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('');
   lines.push('## Execution Rules');
   if (context) {
-    lines.push(`- The Current Subtask section above is already loaded from the plan. Do not read spec.md or ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} before implementation.`);
+    lines.push(`- The Current Work Item section above is already loaded from the plan. Do not read spec.md or ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} before implementation.`);
   }
   if (documentationOnly) {
     lines.push('- Documentation-only workflow: do not edit product source files and do not run builds, tests, or AI QA.');
@@ -366,9 +412,9 @@ export function buildFocusedCoderKickoffMessageFromContext(
     lines.push('- For data or content changes, preserve schema/content compatibility, migration/rollback behavior, validation, cooking/import paths, GM/editor workflows, and recovery paths.');
     lines.push('- In the completion summary, state verification run and residual MMO risks for relevant domains: server authority, network sync, persistence/data, performance, security, tools/content pipeline, and liveops/release.');
   }
-  lines.push('- Focus on this one subtask until it is done.');
+  lines.push(`- Focus on this one ${workLabel} until it is done.`);
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');
-  lines.push('- Prefer the smallest code change that satisfies the subtask.');
+  lines.push(`- Prefer the smallest code change that satisfies the ${workLabel}.`);
   lines.push('- Prefer one broad Write for new files or a few grouped Edits for existing files. Do not perform many tiny adjacent Edit calls when one replacement can cover the block.');
   lines.push('- After reading a file once, do not reread the whole file. If an edit misses, read only the narrow surrounding lines needed to repair that edit.');
   lines.push('- If a listed file was just written successfully, do not read it back unless verification fails or the next edit needs exact local context.');

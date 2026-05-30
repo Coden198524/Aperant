@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { basename, dirname, join } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { getAutocodeSpecDir, listAutocodeTasks } from './spec-store.js';
+import { repairAutocodeChineseMojibakeText } from '../text/encoding.js';
 
 export type AutocodeTaskLogPhase = 'planning' | 'coding' | 'validation';
 export type AutocodeTaskLogPhaseStatus = 'pending' | 'active' | 'completed' | 'failed';
@@ -395,7 +396,7 @@ function sanitizeText(value: unknown, maxLength: number): string {
     : value === null || value === undefined
       ? ''
       : String(value);
-  const normalized = text
+  const normalized = repairAutocodeChineseMojibakeText(text)
     .replace(/\r\n/g, '\n')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
   return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;

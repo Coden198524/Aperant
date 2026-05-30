@@ -44,6 +44,7 @@ export type AutocodeTaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 
 export type AutocodeTaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type AutocodeTaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type AutocodeTaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
+export type AutocodeTaskDevelopmentMode = 'fast' | 'standard' | 'spec';
 export type AutocodeSubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 export type AutocodeExecutionPhase =
   | 'idle'
@@ -58,7 +59,8 @@ export type AutocodeExecutionPhase =
   | 'stopped';
 
 export interface AutocodeTaskMetadata {
-  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
+  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
+  developmentMode?: AutocodeTaskDevelopmentMode;
   category?: AutocodeTaskCategory;
   complexity?: AutocodeTaskComplexity;
   impact?: AutocodeTaskImpact;
@@ -100,6 +102,9 @@ export interface AutocodePlanSubtask {
   status: AutocodeSubtaskStatus;
   completionSummary?: string;
   files: string[];
+  workPackage?: boolean;
+  upstreamTaskIds?: string[];
+  upstreamSource?: string;
 }
 
 export interface AutocodeTask {
@@ -199,6 +204,9 @@ interface RawPlanSubtask {
   files_to_create?: unknown;
   files_to_modify?: unknown;
   pattern_files?: unknown;
+  work_package?: unknown;
+  upstream_task_ids?: unknown;
+  upstream_source?: unknown;
 }
 
 const MAX_SPEC_SLUG_LENGTH = 50;
@@ -324,6 +332,64 @@ export function buildAutocodeTaskRequirements(
     ...requirements,
     task_description: description,
     workflow_type: workflowType,
+  };
+}
+
+export function isAutocodeTaskDevelopmentMode(value: unknown): value is AutocodeTaskDevelopmentMode {
+  return value === 'fast' || value === 'standard' || value === 'spec';
+}
+
+export function resolveAutocodeTaskDevelopmentMode(
+  metadata: AutocodeTaskMetadata | null | undefined,
+  defaultMode: AutocodeTaskDevelopmentMode = 'standard',
+): AutocodeTaskDevelopmentMode {
+  if (isAutocodeTaskDevelopmentMode(metadata?.developmentMode)) {
+    return metadata.developmentMode;
+  }
+  if (metadata?.workflowMode === 'off') {
+    return 'fast';
+  }
+  if (metadata?.sourceType === 'openspec' || metadata?.upstreamSpecSystem === 'openspec') {
+    return 'spec';
+  }
+  return defaultMode;
+}
+
+export function buildAutocodeTaskModeMetadata(
+  developmentMode: AutocodeTaskDevelopmentMode,
+  metadata: AutocodeTaskMetadata = {},
+): AutocodeTaskMetadata {
+  if (developmentMode === 'fast') {
+    return {
+      ...stripOpenSpecTaskMetadata(metadata),
+      sourceType: 'manual',
+      developmentMode: 'fast',
+      workflowMode: 'off',
+      enableBatchExecution: false,
+    };
+  }
+
+  if (developmentMode === 'spec') {
+    return {
+      ...metadata,
+      sourceType: 'openspec',
+      developmentMode: 'spec',
+      workflowMode: metadata.workflowMode && metadata.workflowMode !== 'off'
+        ? metadata.workflowMode
+        : 'balanced',
+      enableBatchExecution: metadata.enableBatchExecution === true,
+      openSpecGenerationMode: metadata.openSpecGenerationMode ?? 'deferred',
+      upstreamSpecSystem: 'openspec',
+      downstreamExecutionSystem: 'autocode',
+    };
+  }
+
+  return {
+    ...stripOpenSpecTaskMetadata(metadata),
+    sourceType: 'manual',
+    developmentMode: 'standard',
+    workflowMode: 'balanced',
+    enableBatchExecution: metadata.enableBatchExecution === true,
   };
 }
 
@@ -460,6 +526,9 @@ function extractSubtasks(plan: ImplementationPlanFile | null): AutocodePlanSubta
           ...toStringArray(subtask.files_to_modify),
           ...toStringArray(subtask.pattern_files),
         ],
+        ...(subtask.work_package === true ? { workPackage: true } : {}),
+        ...(toStringArray(subtask.upstream_task_ids).length > 0 ? { upstreamTaskIds: toStringArray(subtask.upstream_task_ids) } : {}),
+        ...(stringFrom(subtask.upstream_source) ? { upstreamSource: stringFrom(subtask.upstream_source) } : {}),
       };
     });
   });
@@ -548,6 +617,45 @@ function readJson<T>(filePath: string): T | null {
 function writeJson(filePath: string, value: unknown): void {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
+}
+
+function stripOpenSpecTaskMetadata(metadata: AutocodeTaskMetadata): AutocodeTaskMetadata {
+  const {
+    openSpecChangeId,
+    openSpecChangeDir,
+    openSpecProposalPath,
+    openSpecDesignPath,
+    openSpecTasksPath,
+    openSpecSpecDeltaPaths,
+    openSpecGenerationMode,
+    openSpecGeneratedAt,
+    openSpecCapability,
+    openSpecContextPath,
+    openSpecReviewFeedback,
+    openSpecReviewFeedbackUpdatedAt,
+    openSpecScaffoldCommand,
+    openSpecValidationCommand,
+    upstreamSpecSystem,
+    downstreamExecutionSystem,
+    ...manualMetadata
+  } = metadata;
+  void openSpecChangeId;
+  void openSpecChangeDir;
+  void openSpecProposalPath;
+  void openSpecDesignPath;
+  void openSpecTasksPath;
+  void openSpecSpecDeltaPaths;
+  void openSpecGenerationMode;
+  void openSpecGeneratedAt;
+  void openSpecCapability;
+  void openSpecContextPath;
+  void openSpecReviewFeedback;
+  void openSpecReviewFeedbackUpdatedAt;
+  void openSpecScaffoldCommand;
+  void openSpecValidationCommand;
+  void upstreamSpecSystem;
+  void downstreamExecutionSystem;
+  return manualMetadata;
 }
 
 function optionalStringFrom(...values: unknown[]): string | undefined {

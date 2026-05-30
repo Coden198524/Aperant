@@ -14,6 +14,7 @@ import {
   buildAutocodeWorkspaceSummaryViewModel,
   buildProjectIndex,
   createProcessAgentRuntimeAdapter,
+  createAutocodeTaskFromOpenSpecChange,
   createAutocodeProjectDocumentationTask,
   createManualAutocodeTask,
   createStartedAutocodeAgentRuntime,
@@ -23,7 +24,9 @@ import {
   getAutocodeStringOption,
   hasAutocodeJsonOption,
   isAutocodeProjectDocType,
+  isAutocodeTaskDevelopmentMode,
   isAutocodeCli,
+  listOpenSpecChanges,
   markAutocodeTaskDone,
   parseAutocodeCommandArgs,
   readAutocodeTaskLogs,
@@ -34,6 +37,7 @@ import {
   type NotificationAdapter,
   type ProcessAdapter,
   type AutocodeTask,
+  type AutocodeTaskDevelopmentMode,
   type AutocodeProjectDocType,
   type AutocodeTaskLogEntry,
   type AutocodeTaskLogs,
@@ -65,6 +69,10 @@ async function main(): Promise<void> {
     case 'docs':
     case 'project-docs':
       createProjectDocsTask(parsed);
+      return;
+    case 'openspec':
+    case 'open-spec':
+      createOpenSpecTaskOrList(parsed);
       return;
     case 'run':
     case 'start':
@@ -160,10 +168,12 @@ function createTask(parsed: ParsedAutocodeCommandArgs): void {
     throw new Error('Task description is required. Pass --description or a second positional argument.');
   }
 
+  const developmentMode = getDevelopmentModeOption(parsed);
   const task = createManualAutocodeTask({
     ...context,
     title,
     description,
+    metadata: { developmentMode },
   });
 
   if (isJson(parsed)) {
@@ -172,7 +182,11 @@ function createTask(parsed: ParsedAutocodeCommandArgs): void {
   }
 
   console.log(`Created ${task.specId}: ${task.title}`);
-  console.log(task.specsPath);
+  console.log(`Mode: ${task.metadata?.developmentMode ?? developmentMode}`);
+  if (task.metadata?.openSpecChangeDir) {
+    console.log(`OpenSpec: ${task.metadata.openSpecChangeDir}`);
+  }
+  console.log(`Autocode spec dir: ${task.specsPath}`);
 }
 
 function createProjectDocsTask(parsed: ParsedAutocodeCommandArgs): void {
@@ -223,6 +237,73 @@ function createProjectDocsTask(parsed: ParsedAutocodeCommandArgs): void {
   for (const output of result.plan.outputs) {
     console.log(`  - ${output.relativePath}`);
   }
+  console.log(`Run: autocode run ${result.task.specId} --runtime agent --execute`);
+}
+
+function createOpenSpecTaskOrList(parsed: ParsedAutocodeCommandArgs): void {
+  const context = resolveContext(parsed);
+  const action = parsed.positionals[0] ?? 'list';
+  if (action === 'list' || action === 'changes') {
+    const changes = listOpenSpecChanges(context.projectRoot);
+    if (isJson(parsed)) {
+      writeJson({ ...context, changes });
+      return;
+    }
+    if (changes.length === 0) {
+      console.log('No OpenSpec changes found in openspec/changes.');
+      return;
+    }
+    console.log('OpenSpec changes:');
+    for (const change of changes) {
+      console.log(`  - ${change}`);
+    }
+    return;
+  }
+
+  if (action !== 'import' && action !== 'create' && action !== 'create-task') {
+    throw new Error('Unsupported openspec command. Use "autocode openspec list" or "autocode openspec import <change-id>".');
+  }
+
+  const changeId = getStringOption(parsed, 'change')
+    ?? getStringOption(parsed, 'change-id')
+    ?? parsed.positionals[1];
+  const changeDir = getStringOption(parsed, 'change-dir')
+    ?? getStringOption(parsed, 'dir');
+  if (!changeId?.trim() && !changeDir?.trim()) {
+    throw new Error('OpenSpec change id is required. Use "autocode openspec import <change-id>".');
+  }
+
+  const result = createAutocodeTaskFromOpenSpecChange({
+    ...context,
+    changeId,
+    changeDir,
+    title: getStringOption(parsed, 'title'),
+    specId: getStringOption(parsed, 'spec-id') ?? getStringOption(parsed, 'specId'),
+    overwrite: getBooleanOption(parsed, 'overwrite'),
+  });
+
+  if (isJson(parsed)) {
+    writeJson({
+      ...context,
+      task: result.task,
+      change: {
+        changeId: result.change.changeId,
+        changeDir: result.change.relativeChangeDir,
+        proposal: result.change.proposal?.relativePath,
+        design: result.change.design?.relativePath,
+        tasks: result.change.tasks?.relativePath,
+        specDeltas: result.change.specDeltas.map((delta) => ({
+          capability: delta.capability,
+          path: delta.relativePath,
+        })),
+      },
+    });
+    return;
+  }
+
+  console.log(`Created OpenSpec execution task ${result.task.specId}: ${result.task.title}`);
+  console.log(`Upstream change: ${result.change.relativeChangeDir}`);
+  console.log(`Spec dir: ${result.task.specsPath}`);
   console.log(`Run: autocode run ${result.task.specId} --runtime agent --execute`);
 }
 
@@ -390,6 +471,14 @@ function resolveCli(value: string): AutocodeCli {
   throw new Error(`Unsupported CLI "${value}". Supported values: ${SUPPORTED_AUTOCODE_CLIS.join(', ')}.`);
 }
 
+function getDevelopmentModeOption(parsed: ParsedAutocodeCommandArgs): AutocodeTaskDevelopmentMode {
+  const mode = getStringOption(parsed, 'mode') ?? getStringOption(parsed, 'development-mode') ?? 'standard';
+  if (isAutocodeTaskDevelopmentMode(mode)) {
+    return mode;
+  }
+  throw new Error(`Unsupported task mode "${mode}". Supported values: fast, standard, spec.`);
+}
+
 function getStringOption(parsed: ParsedAutocodeCommandArgs, key: string): string | undefined {
   return getAutocodeStringOption(parsed, key);
 }
@@ -447,8 +536,10 @@ function printHelp(): void {
 Usage:
   autocode info [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
   autocode tasks [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
-  autocode create --title <title> --description <text>
+  autocode create --title <title> --description <text> [--mode fast|standard|spec]
   autocode docs generate [--type full|product|architecture|technical]
+  autocode openspec list
+  autocode openspec import <change-id>
   autocode run <task-id> [--cli claude-code|codex|gemini|opencode|kilocode|deepseek|custom]
   autocode run <task-id> --runtime agent [--execute] [--json]
   autocode run <task-id> --cli custom --custom-command "<command>"
@@ -460,8 +551,9 @@ Usage:
 Commands:
   info       Print workspace and shared core information.
   tasks      List shared Autocode task files.
-  create     Create a task under ${DEFAULT_DATA_DIR}/specs.
+  create     Create an Autocode task. Default mode is standard; use --mode spec for OpenSpec.
   docs       Create a project documentation task used as context by future spec and coding phases.
+  openspec   Import an OpenSpec change as a downstream Autocode execution task.
   run        Write a task prompt and runner using @autocode/core.
   logs       Show recent task log entries.
   done       Mark a task complete in the shared plan file.

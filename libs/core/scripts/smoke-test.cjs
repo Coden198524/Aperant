@@ -3,9 +3,14 @@ const { spawnSync } = require('node:child_process');
 const { chmodSync, existsSync, mkdtempSync, readFileSync, writeFileSync, rmSync, mkdirSync } = require('node:fs');
 const { tmpdir } = require('node:os');
 const { delimiter, join } = require('node:path');
+const iconvLite = require('iconv-lite');
 
 function normalizePath(value) {
   return value.replace(/\\/g, '/');
+}
+
+function makeChineseMojibake(value) {
+  return iconvLite.decode(Buffer.from(value, 'utf8'), 'gbk');
 }
 
 async function main() {
@@ -210,6 +215,660 @@ async function main() {
     assert.deepEqual(requirements.attached_images, [
       { filename: 'settings.png', path: 'attachments/settings.png', description: '' },
     ]);
+
+    const openSpecChangeDir = join(projectRoot, 'openspec', 'changes', 'share-runtime');
+    mkdirSync(join(openSpecChangeDir, 'specs', 'agent-runtime'), { recursive: true });
+    writeFileSync(join(openSpecChangeDir, 'proposal.md'), '# Share Runtime\n\nBridge upstream specs to downstream execution.\n');
+    writeFileSync(join(openSpecChangeDir, 'design.md'), '# Runtime Bridge Design\n\nOpenSpec owns specs; Autocode owns execution.\n');
+    writeFileSync(
+      join(openSpecChangeDir, 'tasks.md'),
+      [
+        '# Tasks',
+        '',
+        '- [ ] 1. Connect OpenSpec source',
+        '  - _Files: libs/core/src/openspec/index.ts_',
+        '- [ ] 2. Expose runtime import',
+        '  - _Depends on: 1_',
+        '  - _Verification: npm run build_',
+        '- [ ] 3. Reuse compact context',
+        '  - _Files: libs/core/src/runtime/agent-messages.ts_',
+        '- [ ] 4. Sync OpenSpec parent status',
+        '  - [ ] 4.1 Complete parent from merged runtime package',
+        '    - _Files: libs/core/src/openspec/index.ts_',
+        '  - [ ] 4.2 Keep compact context available',
+        '    - _Files: libs/core/src/tasks/cli-runner.ts_',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(openSpecChangeDir, 'specs', 'agent-runtime', 'spec.md'),
+      '## MODIFIED Requirements\n\n### Requirement: Runtime bridge\nAutocode SHALL execute OpenSpec changes downstream.\n',
+    );
+    assert.deepEqual(core.listOpenSpecChanges(projectRoot), ['share-runtime']);
+    const openSpecTaskResult = core.createAutocodeTaskFromOpenSpecChange({
+      projectRoot,
+      dataDirName: '.autocode-openspec',
+      changeId: 'share-runtime',
+      now: '2026-01-02T03:04:00.000Z',
+    });
+    assert.equal(openSpecTaskResult.task.metadata.sourceType, 'openspec');
+    assert.equal(openSpecTaskResult.task.metadata.openSpecChangeId, 'share-runtime');
+    assert.equal(openSpecTaskResult.task.subtasks.length, 2);
+    assert.ok(openSpecTaskResult.task.subtasks.every((subtask) => subtask.workPackage === true));
+    assert.deepEqual(openSpecTaskResult.task.subtasks.flatMap((subtask) => subtask.upstreamTaskIds), ['1', '2', '3', '4.1', '4.2']);
+    assert.equal(core.normalizeOpenSpecChangeId('001-build-game'), 'change-001-build-game');
+    assert.equal(core.normalizeOpenSpecChangeId('Build game'), 'build-game');
+    const openSpecTaskSpec = readFileSync(join(openSpecTaskResult.task.specsPath, 'spec.md'), 'utf8');
+    assert.ok(openSpecTaskSpec.includes('downstream Autocode execution handoff'));
+    assert.ok(openSpecTaskSpec.includes('openspec/changes/share-runtime/tasks.md'));
+    assert.ok(existsSync(join(openSpecTaskResult.task.specsPath, 'openspec_context.md')));
+    const openSpecRuntimePlan = core.loadAutocodeImplementationPlanSync(openSpecTaskResult.task.specsPath);
+    assert.equal(openSpecRuntimePlan.source_task.kind, 'openspec-change');
+    assert.equal(openSpecRuntimePlan.source_task.runtime_granularity, 'work_package');
+    assert.equal(openSpecRuntimePlan.source_task.ownership.upstream, 'openspec');
+    assert.equal(openSpecRuntimePlan.phases[0].subtasks[0].id, 'wp-1');
+    assert.equal(openSpecRuntimePlan.phases[0].subtasks[1].id, 'wp-2');
+    assert.deepEqual(openSpecRuntimePlan.phases[0].subtasks.flatMap((subtask) => subtask.upstream_task_ids), ['1', '2', '3', '4.1', '4.2']);
+    assert.equal(
+      core.createAutocodeTaskRunPlan({
+        projectRoot,
+        dataDirName: '.autocode-openspec',
+        taskId: openSpecTaskResult.task.id,
+        cli: 'custom',
+        customCommand: 'node fake-agent.js',
+      }).phase,
+      'coding',
+    );
+    for (const phase of openSpecRuntimePlan.phases) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (subtask.id === 'wp-1' || subtask.id === 'wp-2') {
+          subtask.status = 'completed';
+        }
+      }
+    }
+    core.saveAutocodeImplementationPlanSync(openSpecTaskResult.task.specsPath, openSpecRuntimePlan);
+    const openSpecSyncResult = core.syncOpenSpecTasksFromAutocodePlan({
+      specDir: openSpecTaskResult.task.specsPath,
+      projectRoot,
+    });
+    assert.equal(openSpecSyncResult.changed, true);
+    const syncedOpenSpecTasks = readFileSync(join(openSpecChangeDir, 'tasks.md'), 'utf8');
+    assert.match(syncedOpenSpecTasks, /- \[x\] 1\. Connect OpenSpec source/);
+    assert.match(syncedOpenSpecTasks, /- \[x\] 2\. Expose runtime import/);
+    assert.match(syncedOpenSpecTasks, /- \[x\] 3\. Reuse compact context/);
+    assert.match(syncedOpenSpecTasks, /- \[x\] 4\. Sync OpenSpec parent status/);
+    assert.match(syncedOpenSpecTasks, /- \[x\] 4\.1 Complete parent from merged runtime package/);
+    assert.match(syncedOpenSpecTasks, /- \[x\] 4\.2 Keep compact context available/);
+
+    const fakeOpenSpecCliCalls = [];
+    const fakeOpenSpecProtocolCalls = [];
+    const fakeOpenSpecCli = {
+      createChange(input) {
+        fakeOpenSpecCliCalls.push(input);
+        const changeDir = join(input.projectRoot, 'openspec', 'changes', input.changeId);
+        mkdirSync(changeDir, { recursive: true });
+        writeFileSync(join(changeDir, '.openspec.yaml'), `schema: ${input.schema || 'spec-driven'}\n`);
+        writeFileSync(join(changeDir, 'README.md'), `${input.description}\n`);
+        return {
+          command: 'openspec',
+          args: [
+            'new',
+            'change',
+            '--description',
+            input.description,
+            '--schema',
+            input.schema || 'spec-driven',
+            input.changeId,
+          ],
+          cwd: input.projectRoot,
+          status: 0,
+          stdout: 'Created change',
+          stderr: '',
+        };
+      },
+      getStatus(input) {
+        fakeOpenSpecProtocolCalls.push({ command: 'status', changeId: input.changeId });
+        return {
+          command: 'openspec',
+          args: ['status', '--change', input.changeId, '--json'],
+          cwd: input.projectRoot,
+          status: 0,
+          stdout: '',
+          stderr: '',
+          data: {
+            changeName: input.changeId,
+            schemaName: input.schema || 'spec-driven',
+            isComplete: true,
+            applyRequires: ['proposal', 'design', 'specs', 'tasks'],
+            artifacts: [
+              { id: 'proposal', outputPath: 'proposal.md', status: 'done' },
+              { id: 'design', outputPath: 'design.md', status: 'done' },
+              { id: 'specs', outputPath: 'specs/feature/spec.md', status: 'done' },
+              { id: 'tasks', outputPath: 'tasks.md', status: 'done' },
+            ],
+          },
+        };
+      },
+      getInstructions(input) {
+        fakeOpenSpecProtocolCalls.push({
+          command: 'instructions',
+          changeId: input.changeId,
+          artifactId: input.artifactId,
+        });
+        const templates = {
+          proposal: '## Why\n\n## What Changes\n\n## Capabilities\n\n## Impact\n',
+          design: '## Context\n\n## Goals / Non-Goals\n\n## Decisions\n\n## Risks / Trade-offs\n',
+          specs: '## ADDED Requirements\n\n### Requirement: <name>\n\n#### Scenario: <scenario>\n- **WHEN** ...\n- **THEN** ...\n',
+          tasks: '- [ ] 1. Task group\n  - [ ] 1.1 Concrete task\n',
+        };
+        return {
+          command: 'openspec',
+          args: ['instructions', input.artifactId, '--change', input.changeId, '--json'],
+          cwd: input.projectRoot,
+          status: 0,
+          stdout: '',
+          stderr: '',
+          data: {
+            artifactId: input.artifactId,
+            outputPath: input.artifactId === 'specs' ? 'specs/feature/spec.md' : `${input.artifactId}.md`,
+            instruction: `Create or revise ${input.artifactId} through the OpenSpec instructions interface.`,
+            template: templates[input.artifactId] || '',
+            rules: ['Use OpenSpec schema rules.'],
+            dependencies: [],
+          },
+        };
+      },
+    };
+
+    const manualStandardTask = core.createManualAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode-manual-standard',
+      title: 'Add standard default task',
+      description: 'Create normal UI tasks with the lightweight Autocode workflow by default.',
+      metadata: {
+        category: 'feature',
+      },
+      now: '2026-01-02T03:03:30.000Z',
+      openSpecCli: fakeOpenSpecCli,
+    });
+    assert.equal(fakeOpenSpecCliCalls.length, 0);
+    assert.equal(manualStandardTask.metadata.sourceType, 'manual');
+    assert.equal(manualStandardTask.metadata.developmentMode, 'standard');
+    assert.equal(manualStandardTask.metadata.workflowMode, 'balanced');
+    assert.ok(existsSync(join(manualStandardTask.specsPath, 'spec.md')));
+
+    const manualFastTask = core.createManualAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode-manual-fast',
+      title: 'Add fast task',
+      description: 'Implement a small change directly.',
+      metadata: {
+        developmentMode: 'fast',
+        enableBatchExecution: true,
+      },
+      now: '2026-01-02T03:03:45.000Z',
+    });
+    assert.equal(manualFastTask.metadata.sourceType, 'manual');
+    assert.equal(manualFastTask.metadata.developmentMode, 'fast');
+    assert.equal(manualFastTask.metadata.workflowMode, 'off');
+    assert.equal(manualFastTask.metadata.enableBatchExecution, false);
+    assert.equal(
+      core.createAutocodeTaskRunPlan({
+        projectRoot,
+        dataDirName: '.autocode-manual-fast',
+        taskId: manualFastTask.id,
+        cli: 'custom',
+        customCommand: 'node fake-agent.js',
+      }).phase,
+      'direct',
+    );
+
+    const deferredSpecTask = core.createManualAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode-manual-spec-deferred',
+      title: 'Add deferred spec task',
+      description: 'Generate OpenSpec artifacts when planning starts.',
+      metadata: {
+        developmentMode: 'spec',
+      },
+      now: '2026-01-02T03:03:50.000Z',
+      openSpecCli: fakeOpenSpecCli,
+    });
+    assert.equal(fakeOpenSpecCliCalls.length, 0);
+    assert.equal(deferredSpecTask.metadata.sourceType, 'openspec');
+    assert.equal(deferredSpecTask.metadata.developmentMode, 'spec');
+    assert.equal(deferredSpecTask.metadata.openSpecGenerationMode, 'deferred');
+    assert.equal(
+      core.createAutocodeTaskRunPlan({
+        projectRoot,
+        dataDirName: '.autocode-manual-spec-deferred',
+        taskId: deferredSpecTask.id,
+        cli: 'custom',
+        customCommand: 'node fake-agent.js',
+      }).phase,
+      'planning',
+    );
+
+    const manualOpenSpecTask = core.createAutocodeTaskFromOpenSpecDraft({
+      projectRoot,
+      dataDirName: '.autocode-manual-openspec',
+      title: 'Add OpenSpec default task',
+      description: 'Create spec-mode UI tasks through OpenSpec upstream documents.',
+      metadata: {
+        developmentMode: 'spec',
+        category: 'feature',
+        acceptanceCriteria: ['OpenSpec files are created before Autocode execution starts.'],
+      },
+      now: '2026-01-02T03:04:00.000Z',
+      openSpecCli: fakeOpenSpecCli,
+    }).task;
+    assert.equal(fakeOpenSpecCliCalls.length, 1);
+    assert.equal(fakeOpenSpecCliCalls[0].changeId, 'add-openspec-default-task');
+    assert.equal(fakeOpenSpecCliCalls[0].schema, undefined);
+    assert.equal(manualOpenSpecTask.metadata.sourceType, 'openspec');
+    assert.ok(manualOpenSpecTask.metadata.openSpecScaffoldCommand.includes('openspec new change'));
+    assert.equal(manualOpenSpecTask.subtasks.length, 1);
+    assert.ok(core.listOpenSpecChanges(projectRoot).includes('add-openspec-default-task'));
+    assert.ok(existsSync(join(projectRoot, 'openspec', 'changes', 'add-openspec-default-task', '.openspec.yaml')));
+    assert.ok(existsSync(join(projectRoot, 'openspec', 'changes', 'add-openspec-default-task', 'proposal.md')));
+    assert.ok(existsSync(join(projectRoot, 'openspec', 'changes', 'add-openspec-default-task', 'design.md')));
+    assert.ok(existsSync(join(projectRoot, 'openspec', 'changes', 'add-openspec-default-task', 'tasks.md')));
+    assert.ok(existsSync(join(projectRoot, 'openspec', 'changes', 'add-openspec-default-task', 'specs', 'feature', 'spec.md')));
+
+    const chineseOpenSpecTask = core.createAutocodeTaskFromOpenSpecDraft({
+      projectRoot,
+      dataDirName: '.autocode-zh-openspec',
+      title: '生成中文 OpenSpec 文档',
+      description: '为中文界面创建任务时，OpenSpec 提案、设计和任务文档应使用简体中文。',
+      metadata: {
+        category: 'feature',
+        language: 'zh-CN',
+        acceptanceCriteria: ['OpenSpec 文档正文使用简体中文。'],
+      },
+      now: '2026-01-02T03:04:30.000Z',
+      openSpecCli: false,
+    }).task;
+    const chineseProposal = readFileSync(join(projectRoot, chineseOpenSpecTask.metadata.openSpecProposalPath), 'utf8');
+    const chineseDesign = readFileSync(join(projectRoot, chineseOpenSpecTask.metadata.openSpecDesignPath), 'utf8');
+    const chineseTasks = readFileSync(join(projectRoot, chineseOpenSpecTask.metadata.openSpecTasksPath), 'utf8');
+    const chineseSpecDelta = readFileSync(join(projectRoot, chineseOpenSpecTask.metadata.openSpecSpecDeltaPaths[0]), 'utf8');
+    assert.match(chineseProposal, /## 背景/);
+    assert.match(chineseProposal, /## 变更内容/);
+    assert.doesNotMatch(chineseProposal, /## Why|## What Changes/);
+    assert.match(chineseDesign, /## 上下文/);
+    assert.match(chineseDesign, /## 决策/);
+    assert.doesNotMatch(chineseDesign, /## Context|## Decisions/);
+    assert.match(chineseTasks, /# 任务/);
+    assert.match(chineseTasks, /_验证：/);
+    assert.doesNotMatch(chineseTasks, /Implement the OpenSpec change|_Verification|_Created/);
+    assert.match(chineseSpecDelta, /## ADDED Requirements/);
+    assert.match(chineseSpecDelta, /用户执行相关流程/);
+
+    assert.equal(
+      core.createAutocodeTaskRunPlan({
+        projectRoot,
+        dataDirName: '.autocode-manual-openspec',
+        taskId: manualOpenSpecTask.id,
+        cli: 'custom',
+        customCommand: 'node fake-agent.js',
+      }).phase,
+      'coding',
+    );
+
+    const generatedArtifactCalls = [];
+    const generatedOpenSpecTask = await core.createManualAutocodeTaskWithOpenSpecArtifacts({
+      projectRoot,
+      dataDirName: '.autocode-generated-openspec',
+      title: 'Generate rich OpenSpec documents',
+      description: 'Use the OpenSpec workflow instructions to produce proposal, design, specs, and tasks before creating the downstream Autocode runtime task.',
+      metadata: {
+        category: 'feature',
+      },
+      now: '2026-01-02T03:05:00.000Z',
+      openSpecCli: fakeOpenSpecCli,
+      validateOpenSpec: false,
+      openSpecArtifactGenerator: {
+        async generateArtifact(input) {
+          generatedArtifactCalls.push(input.artifactId);
+          if (input.artifactId === 'proposal') {
+            return [
+              '## Why',
+              'Task creation should produce real upstream OpenSpec artifacts.',
+              '',
+              '## What Changes',
+              'Generate proposal, design, spec deltas, and tasks from OpenSpec instructions before Autocode runtime files are created.',
+              '',
+              '## Capabilities',
+              '',
+              '### New Capabilities',
+              '- `feature`: OpenSpec-backed task creation.',
+              '',
+              '### Modified Capabilities',
+              '- None',
+              '',
+              '## Impact',
+              '- Desktop task creation receives richer upstream documents.',
+            ].join('\n');
+          }
+          if (input.artifactId === 'design') {
+            if (generatedArtifactCalls.filter((artifactId) => artifactId === 'design').length === 1) {
+              return [
+                '## Context',
+                'This first draft intentionally misses required sections so retry repair is exercised.',
+              ].join('\n');
+            }
+            return [
+              '## Context',
+              'OpenSpec owns durable specification artifacts while Autocode owns runtime execution state.',
+              '',
+              '## Goals / Non-Goals',
+              '**Goals:**',
+              '- Generate complete upstream artifacts before creating the downstream task.',
+              '',
+              '**Non-Goals:**',
+              '- Store transient runtime logs in OpenSpec.',
+              '',
+              '## Decisions',
+              '- Keep the artifact generator behind a core adapter contract.',
+              '',
+              '## Risks / Trade-offs',
+              '- Bad model output must fail validation instead of creating vague tasks.',
+            ].join('\n');
+          }
+          if (input.artifactId === 'specs') {
+            return [
+              '## ADDED Requirements',
+              '',
+              '### Requirement: OpenSpec artifact generation',
+              'Task creation SHALL generate upstream OpenSpec documents before creating downstream Autocode runtime state.',
+              '',
+              '#### Scenario: Create task through generated OpenSpec artifacts',
+              '- **WHEN** a user creates a task',
+              '- **THEN** proposal, design, spec delta, and tasks artifacts are generated first',
+            ].join('\n');
+          }
+          return [
+            '- [ ] 1. Generate upstream artifacts',
+            '  - [ ] 1.1 Create proposal, design, and spec delta documents',
+            '    - _Files: libs/core/src/openspec/index.ts_',
+            '  - [ ] 1.2 Create executable OpenSpec task list',
+            '    - _Files: libs/core/src/openspec/index.ts_',
+          ].join('\n');
+        },
+      },
+    });
+    assert.deepEqual(generatedArtifactCalls, ['proposal', 'design', 'design', 'specs', 'tasks']);
+    assert.equal(generatedOpenSpecTask.metadata.openSpecGenerationMode, 'ai');
+    assert.equal(generatedOpenSpecTask.subtasks.length, 1);
+    assert.equal(generatedOpenSpecTask.subtasks[0].workPackage, true);
+    assert.match(
+      readFileSync(join(projectRoot, 'openspec', 'changes', 'generate-rich-openspec-documents', 'tasks.md'), 'utf8'),
+      /1\.2 Create executable OpenSpec task list/,
+    );
+
+    const chineseGeneratedInputs = [];
+    await core.createManualAutocodeTaskWithOpenSpecArtifacts({
+      projectRoot,
+      dataDirName: '.autocode-generated-zh-openspec',
+      title: 'AI 生成中文 OpenSpec 文档',
+      description: '中文界面下，AI 生成的 OpenSpec 文档应优先使用简体中文。',
+      metadata: {
+        category: 'feature',
+        language: 'zh-CN',
+      },
+      now: '2026-01-02T03:05:30.000Z',
+      openSpecCli: fakeOpenSpecCli,
+      validateOpenSpec: false,
+      openSpecArtifactGenerator: {
+        async generateArtifact(input) {
+          chineseGeneratedInputs.push(input);
+          if (input.artifactId === 'proposal') {
+            return '## 背景\n需要中文文档。\n\n## 变更内容\n生成中文 OpenSpec 文档。\n\n## 能力范围\n- `feature`: 中文文档。\n\n## 影响\n- 用户阅读更顺畅。';
+          }
+          if (input.artifactId === 'design') {
+            return '## 上下文\n当前模板可能包含英文。\n\n## 目标 / 非目标\n**目标：**\n- 输出中文。\n\n**非目标：**\n- 改变 OpenSpec 结构关键字。\n\n## 决策\n- 将语言规则传入生成器。\n\n## 风险 / 权衡\n- spec delta 保留必要关键字。';
+          }
+          if (input.artifactId === 'specs') {
+            return '## ADDED Requirements\n\n### Requirement: 中文 OpenSpec 文档\nOpenSpec 文档正文 SHALL 使用简体中文。\n\n#### Scenario: 创建中文任务\n- **WHEN** 用户使用中文界面创建任务\n- **THEN** OpenSpec 文档正文使用简体中文';
+          }
+          return '- [ ] 1. 生成中文文档\n  - [ ] 1.1 写入中文 proposal、design、spec 和 tasks\n    - _验证：检查文档没有英文模板标题_';
+        },
+      },
+    });
+    assert.ok(chineseGeneratedInputs.every((input) => input.language === 'zh-CN'));
+    assert.ok(chineseGeneratedInputs.every((input) => JSON.stringify(input.instructions.rules ?? []).includes('简体中文')));
+
+    const openSpecCliCallsBeforeDeferred = fakeOpenSpecCliCalls.length;
+    const deferredOpenSpecTask = core.createManualAutocodeTaskWithDeferredOpenSpecArtifacts({
+      projectRoot,
+      dataDirName: '.autocode-deferred-openspec',
+      title: 'Defer rich OpenSpec documents',
+      description: 'Create the Desktop task quickly, then generate proposal, design, spec deltas, and tasks when the task starts planning.',
+      metadata: {
+        category: 'feature',
+      },
+      now: '2026-01-02T03:06:00.000Z',
+    });
+    assert.equal(fakeOpenSpecCliCalls.length, openSpecCliCallsBeforeDeferred);
+    assert.equal(deferredOpenSpecTask.metadata.sourceType, 'openspec');
+    assert.equal(deferredOpenSpecTask.metadata.openSpecGenerationMode, 'deferred');
+    const deferredOpenSpecChangeId = deferredOpenSpecTask.metadata.openSpecChangeId;
+    assert.match(deferredOpenSpecChangeId, /^[a-z]/);
+    assert.equal(deferredOpenSpecChangeId, `change-${deferredOpenSpecTask.id}`);
+    assert.equal(deferredOpenSpecTask.subtasks.length, 0);
+    assert.ok(readFileSync(join(deferredOpenSpecTask.specsPath, 'spec.md'), 'utf8').includes('Planning Startup'));
+    assert.ok(!existsSync(join(projectRoot, 'openspec', 'changes', deferredOpenSpecChangeId, 'tasks.md')));
+    assert.equal(
+      core.createAutocodeTaskRunPlan({
+        projectRoot,
+        dataDirName: '.autocode-deferred-openspec',
+        taskId: deferredOpenSpecTask.id,
+        cli: 'custom',
+        customCommand: 'node fake-agent.js',
+      }).phase,
+      'planning',
+    );
+
+    const deferredArtifactCalls = [];
+    const ensuredDeferredOpenSpecTask = await core.ensureOpenSpecArtifactsForAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode-deferred-openspec',
+      taskId: deferredOpenSpecTask.id,
+      now: '2026-01-02T03:07:00.000Z',
+      openSpecCli: fakeOpenSpecCli,
+      validateOpenSpec: false,
+      artifactGenerator: {
+        async generateArtifact(input) {
+          deferredArtifactCalls.push(input.artifactId);
+          if (input.artifactId === 'proposal') {
+            return [
+              '## Why',
+              'Desktop task creation should stay responsive while still using OpenSpec as upstream truth.',
+              '',
+              '## What Changes',
+              'Generate OpenSpec proposal, design, spec delta, and tasks when the task starts planning.',
+              '',
+              '## Capabilities',
+              '',
+              '### New Capabilities',
+              '- `feature`: Deferred OpenSpec generation.',
+              '',
+              '### Modified Capabilities',
+              '- None',
+              '',
+              '## Impact',
+              '- Task creation returns quickly and planning owns upstream artifact generation.',
+            ].join('\n');
+          }
+          if (input.artifactId === 'design') {
+            return [
+              '## Context',
+              'OpenSpec generation can be slow because it asks the model for multiple upstream documents.',
+              '',
+              '## Goals / Non-Goals',
+              '**Goals:**',
+              '- Generate artifacts during task planning startup.',
+              '',
+              '**Non-Goals:**',
+              '- Generate implementation code while creating the task.',
+              '',
+              '## Decisions',
+              '- Store a deferred marker in task metadata and complete artifacts when execution starts.',
+              '',
+              '## Risks / Trade-offs',
+              '- Planning startup now owns generation failures and must surface them in task logs.',
+            ].join('\n');
+          }
+          if (input.artifactId === 'specs') {
+            return [
+              '## ADDED Requirements',
+              '',
+              '### Requirement: Deferred OpenSpec generation',
+              'Desktop task creation SHALL create a lightweight task and defer rich OpenSpec artifact generation until task planning starts.',
+              '',
+              '#### Scenario: Start a deferred OpenSpec task',
+              '- **WHEN** the user starts the task',
+              '- **THEN** proposal, design, spec delta, and tasks artifacts are generated before downstream execution continues',
+            ].join('\n');
+          }
+          return [
+            '- [ ] 1. Generate deferred OpenSpec artifacts',
+            '  - [ ] 1.1 Create proposal, design, and spec delta documents',
+            '    - _Files: libs/core/src/openspec/index.ts_',
+            '  - [ ] 1.2 Create the downstream runtime plan from OpenSpec tasks',
+            '    - _Files: libs/core/src/tasks/workspace-state.ts_',
+          ].join('\n');
+        },
+      },
+    });
+    assert.deepEqual(deferredArtifactCalls, ['proposal', 'design', 'specs', 'tasks']);
+    assert.equal(ensuredDeferredOpenSpecTask.generated, true);
+    assert.equal(ensuredDeferredOpenSpecTask.task.metadata.openSpecGenerationMode, 'ai');
+    assert.equal(ensuredDeferredOpenSpecTask.task.metadata.openSpecChangeId, deferredOpenSpecChangeId);
+    assert.equal(ensuredDeferredOpenSpecTask.task.subtasks.length, 1);
+    assert.equal(ensuredDeferredOpenSpecTask.task.subtasks[0].workPackage, true);
+    assert.ok(existsSync(join(ensuredDeferredOpenSpecTask.task.specsPath, 'openspec_context.md')));
+    assert.ok(existsSync(join(projectRoot, 'openspec', 'changes', deferredOpenSpecChangeId, 'tasks.md')));
+
+    const reviewHumanInput = [
+      '# Human Input',
+      '',
+      'The user reviewed the generated plan/specification and requested planning changes.',
+      '',
+      '## Requested Changes',
+      '',
+      'Add an audit trail requirement to the OpenSpec upstream documents.',
+      '',
+      '## Instructions',
+      '',
+      '- Update OpenSpec artifacts before regenerating the downstream implementation plan.',
+      '',
+    ].join('\n');
+    writeFileSync(join(ensuredDeferredOpenSpecTask.task.specsPath, 'HUMAN_INPUT.md'), reviewHumanInput);
+    const reviewArtifactCalls = [];
+    const reviewProtocolCallStart = fakeOpenSpecProtocolCalls.length;
+    const reviewedOpenSpecTask = await core.ensureOpenSpecArtifactsForAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode-deferred-openspec',
+      taskId: deferredOpenSpecTask.id,
+      overwrite: true,
+      now: '2026-01-02T03:08:00.000Z',
+      openSpecCli: fakeOpenSpecCli,
+      validateOpenSpec: false,
+      artifactGenerator: {
+        async generateArtifact(input) {
+          reviewArtifactCalls.push({
+            artifactId: input.artifactId,
+            feedback: input.requirements.plan_review_feedback,
+            description: input.description,
+          });
+          if (input.artifactId === 'proposal') {
+            return [
+              '## Why',
+              'Desktop task planning must preserve reviewer feedback in upstream OpenSpec documents.',
+              '',
+              '## What Changes',
+              'Add an audit trail requirement to the OpenSpec upstream documents.',
+              '',
+              '## Capabilities',
+              '',
+              '### New Capabilities',
+              '- `feature`: Review-driven OpenSpec updates.',
+              '',
+              '### Modified Capabilities',
+              '- None',
+              '',
+              '## Impact',
+              '- Downstream plans are regenerated from updated OpenSpec artifacts.',
+            ].join('\n');
+          }
+          if (input.artifactId === 'design') {
+            return [
+              '## Context',
+              'Plan review feedback is upstream specification feedback.',
+              '',
+              '## Goals / Non-Goals',
+              '**Goals:**',
+              '- Update OpenSpec proposal, design, specs, and tasks before downstream planning.',
+              '',
+              '**Non-Goals:**',
+              '- Treat implementation_plan.md as the source of truth.',
+              '',
+              '## Decisions',
+              '- Carry review feedback into OpenSpec artifact generation.',
+              '',
+              '## Risks / Trade-offs',
+              '- Regeneration must preserve useful existing OpenSpec details.',
+            ].join('\n');
+          }
+          if (input.artifactId === 'specs') {
+            return [
+              '## ADDED Requirements',
+              '',
+              '### Requirement: Review feedback audit trail',
+              'Plan review feedback SHALL update upstream OpenSpec documents before downstream Autocode plans are regenerated.',
+              '',
+              '#### Scenario: Request planning changes',
+              '- **WHEN** a reviewer requests planning changes',
+              '- **THEN** OpenSpec artifacts include the requested audit trail requirement before implementation_plan.md is updated',
+            ].join('\n');
+          }
+          return [
+            '- [ ] 1. Apply review feedback upstream',
+            '  - [ ] 1.1 Update OpenSpec proposal, design, spec delta, and tasks with the audit trail requirement',
+            '    - _Files: libs/core/src/openspec/index.ts_',
+            '  - [ ] 1.2 Regenerate downstream runtime plan after OpenSpec is updated',
+            '    - _Files: libs/core/src/tasks/cli-runner.ts_',
+          ].join('\n');
+        },
+      },
+    });
+    assert.deepEqual(reviewArtifactCalls.map((call) => call.artifactId), ['proposal', 'design', 'specs', 'tasks']);
+    assert.deepEqual(
+      fakeOpenSpecProtocolCalls
+        .slice(reviewProtocolCallStart)
+        .filter((call) => call.changeId === deferredOpenSpecChangeId)
+        .map((call) => call.command === 'instructions' ? `${call.command}:${call.artifactId}` : call.command),
+      ['status', 'instructions:proposal', 'instructions:design', 'instructions:specs', 'instructions:tasks'],
+    );
+    assert.ok(reviewArtifactCalls.every((call) => call.feedback.includes('audit trail requirement')));
+    assert.ok(reviewArtifactCalls.every((call) => call.description.includes('audit trail requirement')));
+    assert.equal(reviewedOpenSpecTask.generated, true);
+    assert.equal(reviewedOpenSpecTask.task.metadata.openSpecReviewFeedback, 'Add an audit trail requirement to the OpenSpec upstream documents.');
+    assert.match(
+      readFileSync(join(projectRoot, 'openspec', 'changes', deferredOpenSpecChangeId, 'tasks.md'), 'utf8'),
+      /audit trail requirement/,
+    );
+    assert.equal(
+      core.createAutocodeTaskRunPlan({
+        projectRoot,
+        dataDirName: '.autocode-deferred-openspec',
+        taskId: deferredOpenSpecTask.id,
+        cli: 'custom',
+        customCommand: 'node fake-agent.js',
+      }).phase,
+      'coding',
+    );
 
     const specRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
       projectRoot,
@@ -531,6 +1190,7 @@ async function main() {
     assert.ok(runnerScript.includes('autocode-run-result.json'));
     assert.ok(runnerScript.includes("stdio: ['pipe', 'pipe', 'pipe']"));
     assert.ok(runnerScript.includes("appendTaskLogEntry(logPhase, 'text'"));
+    assert.ok(runnerScript.includes('repairChineseMojibakeText'));
     assert.ok(runnerScript.includes('emitPhase(executionPhase, startMessage, 0)'));
     assert.ok(runnerScript.includes("upsertPlanMetadata(content, 'Execution Phase'"));
     assert.ok(runnerScript.includes('upsertPlanMachineMetadata(content'));
@@ -822,8 +1482,8 @@ async function main() {
     assert.equal(fakePlannedTask.status, 'human_review');
     assert.equal(fakePlannedTask.reviewReason, 'plan_review');
     assert.equal(fakePlannedTask.executionPhase, 'planning');
-    assert.equal(fakePlannedTask.subtasks.length, 1);
-    assert.equal(fakePlannedTask.subtasks[0].status, 'pending');
+    assert.equal(fakePlannedTask.subtasks.length, 2);
+    assert.deepEqual(fakePlannedTask.subtasks.map((subtask) => subtask.status), ['pending', 'pending']);
 
     const fakeCodingRuntime = core.createStartedAutocodeAgentRuntime({
       projectRoot,
@@ -846,7 +1506,18 @@ async function main() {
     assert.equal(fakeImplementedTask.status, 'human_review');
     assert.equal(fakeImplementedTask.reviewReason, 'completed');
     assert.equal(fakeImplementedTask.executionPhase, 'complete');
-    assert.equal(fakeImplementedTask.subtasks[0].status, 'completed');
+    assert.deepEqual(fakeImplementedTask.subtasks.map((subtask) => subtask.status), ['completed', 'completed']);
+    const fakeCliCalls = readFileSync(join(fakeFlowTask.specsPath, 'fake-cli-calls.log'), 'utf8')
+      .trim()
+      .split(/\r?\n/)
+      .filter(Boolean)
+      .map((line) => JSON.parse(line));
+    assert.deepEqual(
+      fakeCliCalls
+        .filter((call) => call.mode === 'coding')
+        .map((call) => call.currentSubtaskId),
+      ['1.1', '1.2'],
+    );
     const fakeLogs = core.readAutocodeTaskLogs({
       projectRoot,
       dataDirName: '.autocode',
@@ -854,12 +1525,18 @@ async function main() {
     });
     assert.equal(fakeLogs.phases.planning.status, 'completed');
     assert.equal(fakeLogs.phases.coding.status, 'completed');
+    const fakeLogText = [
+      ...fakeLogs.phases.planning.entries,
+      ...fakeLogs.phases.coding.entries,
+    ].map((entry) => entry.content).join('\n');
     assert.ok(
       [
         ...fakeLogs.phases.planning.entries,
         ...fakeLogs.phases.coding.entries,
       ].some((entry) => entry.type === 'text' && entry.content.includes('Fake custom CLI')),
     );
+    assert.ok(fakeLogText.includes('当前子任务：1.1'));
+    assert.equal(fakeLogText.includes(makeChineseMojibake('当前子任务：1.1')), false);
 
     const fakeDoneTask = core.markAutocodeTaskDone({
       projectRoot,
@@ -1232,6 +1909,11 @@ async function main() {
     assert.match(core.formatReadContent('one\ntwo\nthree', 1, 1), /2\ttwo/);
     assert.match(core.formatReadContent('one\ntwo\nthree', 1, 1), /Showing lines 2-2 of 3/);
     assert.equal(core.decodeTextBuffer(Buffer.from('plain text')).content, 'plain text');
+    const chineseLogText = '当前子任务：1.1 实现一个网页版的俄罗斯方块游戏';
+    const mojibakeChineseLogText = makeChineseMojibake(chineseLogText);
+    assert.equal(core.repairAutocodeChineseMojibakeText(mojibakeChineseLogText), chineseLogText);
+    assert.equal(core.decodeAutocodeCliOutputChunk(Buffer.from(mojibakeChineseLogText, 'utf8')), chineseLogText);
+    assert.equal(core.decodeAutocodeCliOutputChunk(iconvLite.encode(chineseLogText, 'gbk')), chineseLogText);
     assert.match(
       core.summarizeTaskLog('{"type":"tool_start","tool_name":"Read"}', 'task_logs.json'),
       /tool_start=1/,
@@ -1512,20 +2194,32 @@ exec node "$SCRIPT_DIR/fake-codex-cli.cjs" "$@"
 
 function writeFakeCustomCli(projectRoot) {
   const fakeCliPath = join(projectRoot, 'fake-autocode-cli.cjs');
-  writeFileSync(fakeCliPath, `const { readFileSync, writeFileSync } = require('node:fs');
+  const mojibakeSubtaskLogPrefix = makeChineseMojibake('当前子任务：');
+  writeFileSync(fakeCliPath, `const { appendFileSync, readFileSync, writeFileSync } = require('node:fs');
 const { join } = require('node:path');
 
 const prompt = readFileSync(0, 'utf8');
 const specDir = readPromptField('Spec directory');
 const taskId = readPromptField('Task ID');
 const title = readPromptField('Task title') || taskId;
+const currentSubtaskId = readCurrentSubtaskId();
+const mojibakeSubtaskLogPrefix = ${JSON.stringify(mojibakeSubtaskLogPrefix)};
 
 if (!specDir) {
   console.error('Missing Spec directory in prompt.');
   process.exit(2);
 }
 
-if (prompt.includes('Create the initial task specification artifacts')) {
+appendFileSync(
+  join(specDir, 'fake-cli-calls.log'),
+  JSON.stringify({
+    mode: currentSubtaskId ? 'coding' : prompt.includes('Create or repair the implementation plan') ? 'planning' : 'spec',
+    currentSubtaskId,
+  }) + '\\n',
+  'utf8',
+);
+
+if (prompt.includes('Create initial spec artifacts') || prompt.includes('Create the initial task specification artifacts')) {
   console.log('Fake custom CLI: generating spec artifacts.');
   writeFileSync(
     join(specDir, 'spec.md'),
@@ -1548,8 +2242,13 @@ if (prompt.includes('Create or repair the implementation plan')) {
   process.exit(0);
 }
 
-if (prompt.includes('Implement the task according to the existing spec and implementation plan')) {
-  console.log('Fake custom CLI: completing implementation plan.');
+if (prompt.includes('Implement the task from the existing spec and runtime work plan') || prompt.includes('Implement the task from the existing spec and plan') || prompt.includes('Implement the task according to the existing spec and implementation plan')) {
+  if (!currentSubtaskId) {
+    console.error('Missing Current Work Item section for coding prompt.');
+    process.exit(4);
+  }
+  console.log('Fake custom CLI: completing implementation plan for ' + currentSubtaskId + '.');
+  console.error(mojibakeSubtaskLogPrefix + currentSubtaskId);
   writePlan('completed');
   writeFileSync(
     join(specDir, 'direct_summary.md'),
@@ -1578,6 +2277,11 @@ function readPromptField(label) {
   return line ? line.slice(prefix.length).trim() : '';
 }
 
+function readCurrentSubtaskId() {
+  const match = /^Subtask ID:\\s*(.+?)\\s*$/m.exec(prompt);
+  return match ? match[1].trim() : '';
+}
+
 function writePlan(status) {
   const completed = status === 'completed';
   const marker = completed ? 'x' : ' ';
@@ -1600,6 +2304,11 @@ function writePlan(status) {
       '    - Prove the runner can pass a prompt to a custom CLI and validate returned artifacts.',
       '    - _Files: src/fake-flow.ts_',
       '    - _Requirements: 1.1_' + completion,
+      '',
+      '  - [' + marker + '] 1.2 Verify fake lifecycle',
+      '    - Prove the runner invokes the custom CLI once per subtask.',
+      '    - _Files: src/fake-flow.test.ts_',
+      '    - _Requirements: 1.2_' + completion,
       '',
     ].join('\\n'),
     'utf8',

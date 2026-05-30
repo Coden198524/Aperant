@@ -282,15 +282,14 @@ export async function runInsightsQuery(
   const toolCalls: ToolCallInfo[] = [];
   let responseText = '';
 
-  // Detect Codex models — they require instructions via providerOptions, not system
+  // Responses models require instructions via providerOptions, not system.
   const insightsModelId = typeof client.model === 'string' ? client.model : client.model.modelId;
-  const isCodexInsights = insightsModelId?.includes('codex') ?? false;
   const isResponsesInsights = isResponsesApiModel(insightsModelId);
 
   try {
     const result = streamText({
       model: client.model,
-      system: isCodexInsights ? undefined : client.systemPrompt,
+      system: isResponsesInsights ? undefined : client.systemPrompt,
       prompt: fullPrompt,
       tools: client.tools,
       stopWhen: stepCountIs(client.maxSteps),
@@ -298,8 +297,8 @@ export async function runInsightsQuery(
       ...(isResponsesInsights ? {
         providerOptions: {
           openai: {
-            ...(isCodexInsights ? { instructions: client.systemPrompt } : {}),
-            store: true,
+            ...(client.systemPrompt ? { instructions: client.systemPrompt } : {}),
+            store: false,
           },
         },
       } : {}),

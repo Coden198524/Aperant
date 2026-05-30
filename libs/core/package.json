@@ -67,6 +67,11 @@
       "import": "./dist/tasks/worktree-paths.js",
       "default": "./dist/tasks/worktree-paths.js"
     },
+    "./text/encoding": {
+      "types": "./dist/text/encoding.d.ts",
+      "import": "./dist/text/encoding.js",
+      "default": "./dist/text/encoding.js"
+    },
     "./project/data-paths": {
       "types": "./dist/project/data-paths.d.ts",
       "import": "./dist/project/data-paths.js",
@@ -116,6 +121,11 @@
       "types": "./dist/memory/index.d.ts",
       "import": "./dist/memory/index.js",
       "default": "./dist/memory/index.js"
+    },
+    "./openspec": {
+      "types": "./dist/openspec/index.d.ts",
+      "import": "./dist/openspec/index.js",
+      "default": "./dist/openspec/index.js"
     }
   },
   "files": [
@@ -135,6 +145,7 @@
   },
   "license": "AGPL-3.0",
   "dependencies": {
+    "iconv-lite": "^0.6.3",
     "zod": "^4.3.6"
   }
 }

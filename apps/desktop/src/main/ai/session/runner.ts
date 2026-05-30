@@ -739,15 +739,12 @@ async function executeStream(
     content: msg.content,
   }));
 
-  // Responses API models need response persistence enabled when the SDK performs
-  // multi-step/tool-call continuation; otherwise later steps can reference
-  // transient `fc_*` items that no longer exist. Codex models additionally
-  // require `instructions` instead of system messages in `input`.
+  // Responses models require `instructions` instead of system messages in `input`.
+  // Subscription-backed Responses models also require `store: false`.
   const modelId = typeof config.model === 'string' ? config.model : config.model.modelId;
   const modelProviderId = typeof config.model === 'string' ? undefined : config.model.provider;
   const isResponsesModel = isResponsesApiModel(modelId);
   const usesResponsesTransport = isOpenAIResponsesTransport(modelProviderId, modelId);
-  const isCodex = modelId?.includes('codex') ?? false;
   const isAnthropicModel = modelId?.startsWith('claude-') ?? false;
 
   // Compute thinking/reasoning provider options from session config
@@ -788,11 +785,11 @@ async function executeStream(
   const hasTools = tools != null && Object.keys(tools).length > 0;
   const useOutputSchema = config.outputSchema != null && !hasTools;
   const maxOutputTokens = resolveMaxOutputTokens(config);
-  const responsePersistence = config.responsePersistence !== false;
+  const responsePersistence = config.responsePersistence === true;
 
   const result = streamText({
     model: config.model,
-    system: usesResponsesTransport && isCodex ? undefined : config.systemPrompt,
+    system: usesResponsesTransport ? undefined : config.systemPrompt,
     messages: aiMessages,
     tools: tools ?? {},
     ...(useOutputSchema ? { output: Output.object({ schema: config.outputSchema! }) } : {}),
@@ -805,8 +802,8 @@ async function executeStream(
         ...(usesResponsesTransport ? {
           openai: {
             ...(thinkingOptions?.openai ?? {}),
-            ...(isCodex && config.systemPrompt ? { instructions: config.systemPrompt } : {}),
-            ...(responsePersistence ? { store: true } : {}),
+            ...(config.systemPrompt ? { instructions: config.systemPrompt } : {}),
+            store: responsePersistence,
           },
         } : {}),
         ...(useOutputSchema && isAnthropicModel ? {

@@ -30,8 +30,19 @@ export const settingsMock = {
       git: { found: false, source: 'fallback' as const, message: 'Not available in browser mode' },
       gh: { found: false, source: 'fallback' as const, message: 'Not available in browser mode' },
       glab: { found: false, source: 'fallback' as const, message: 'Not available in browser mode' },
-      claude: { found: false, source: 'fallback' as const, message: 'Not available in browser mode' }
+      claude: { found: false, source: 'fallback' as const, message: 'Not available in browser mode' },
+      openspec: { found: false, source: 'fallback' as const, message: 'Not available in browser mode' }
     }
+  }),
+
+  checkOpenSpecCli: async () => ({
+    success: true,
+    data: { installed: false }
+  }),
+
+  installOpenSpecCli: async () => ({
+    success: false,
+    error: 'Not available in browser mode'
   }),
 
   // Claude Code onboarding status (mock - always returns false in browser mode)

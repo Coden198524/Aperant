@@ -68,6 +68,27 @@ describe('scanAndRecoverStuckTasks', () => {
     expect(recoverStuckTask).not.toHaveBeenCalled();
   });
 
+  it('skips recovery when the backend reports an active runtime', async () => {
+    const checkTaskRunning = vi.fn().mockResolvedValue(true);
+    const recoverStuckTask = vi.fn();
+
+    await scanAndRecoverStuckTasks(
+      {
+        recoveringTaskIds: new Set<string>(),
+        lastRecoveryAttemptAt: new Map<string, number>(),
+      },
+      {
+        tasks: [createTask('004', 'in_progress')],
+        hasRecentActivity: () => false,
+        checkTaskRunning,
+        recoverStuckTask,
+      }
+    );
+
+    expect(checkTaskRunning).toHaveBeenCalledWith('004');
+    expect(recoverStuckTask).not.toHaveBeenCalled();
+  });
+
   it('skips repeated recovery attempts during cooldown', async () => {
     const checkTaskRunning = vi.fn().mockResolvedValue(false);
     const recoverStuckTask = vi.fn();

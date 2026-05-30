@@ -384,7 +384,7 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         continue;
       }
       const fields: Record<string, unknown> = {};
-      for (const key of ['completion_summary', 'notes', 'completed_at', 'started_at']) {
+      for (const key of ['completion_summary', 'notes', 'completed_at', 'started_at', 'work_package', 'upstream_task_ids', 'upstream_source']) {
         if (subtask[key] !== undefined) {
           fields[key] = subtask[key];
         }
@@ -413,7 +413,7 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
         continue;
       }
       const fieldRecord = fields as Record<string, unknown>;
-      for (const key of ['completion_summary', 'notes', 'completed_at', 'started_at']) {
+      for (const key of ['completion_summary', 'notes', 'completed_at', 'started_at', 'work_package', 'upstream_task_ids', 'upstream_source']) {
         if (fieldRecord[key] !== undefined) {
           subtask[key] = fieldRecord[key];
         }

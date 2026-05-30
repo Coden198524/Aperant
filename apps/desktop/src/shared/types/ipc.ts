@@ -445,7 +445,10 @@ export interface ElectronAPI {
     gh: import('./cli').ToolDetectionResult;
     glab: import('./cli').ToolDetectionResult;
     claude: import('./cli').ToolDetectionResult;
+    openspec: import('./cli').ToolDetectionResult;
   }>>;
+  checkOpenSpecCli: () => Promise<IPCResult<{ installed: boolean; version?: string; path?: string }>>;
+  installOpenSpecCli: () => Promise<IPCResult<{ command: string }>>;
   /** Check if Claude Code onboarding is complete (reads ~/.claude.json) */
   getClaudeCodeOnboardingStatus: () => Promise<IPCResult<{ hasCompletedOnboarding: boolean }>>;
 

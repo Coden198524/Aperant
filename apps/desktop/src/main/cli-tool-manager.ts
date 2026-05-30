@@ -27,10 +27,12 @@ import path from 'path';
 import os from 'os';
 import { promisify } from 'util';
 import { isMainThread } from 'worker_threads';
+import { detectOpenSpecCli } from '@autocode/core';
 import { findExecutable, findExecutableAsync, getAugmentedEnv, getAugmentedEnvAsync, shouldUseShell, existsAsync } from './env-utils';
 import { isWindows, isMacOS, isUnix, joinPaths, getExecutableExtension } from './platform';
 import type { ToolDetectionResult } from '../shared/types';
 import { findHomebrewPython as findHomebrewPythonUtil } from './utils/homebrew-python';
+import { debugLog } from '../shared/utils/debug-logger';
 
 // Conditionally import electron only in main thread
 const requireFromModule = createRequire(import.meta.url);
@@ -64,7 +66,7 @@ import {
 /**
  * Supported CLI tools managed by this system
  */
-export type CLITool = 'python' | 'git' | 'gh' | 'glab' | 'claude';
+export type CLITool = 'python' | 'git' | 'gh' | 'glab' | 'claude' | 'openspec';
 
 /**
  * User configuration for CLI tool paths
@@ -318,7 +320,7 @@ class CLIToolManager {
     // Check cache first
     const cached = this.cache.get(tool);
     if (cached) {
-      console.debug(
+      debugLog(
         `[CLI Tools] Using cached ${tool}: ${cached.path} (${cached.source})`
       );
       return cached.path;
@@ -356,7 +358,7 @@ class CLIToolManager {
     // On Windows, .cmd files cannot be executed by anyio.open_process() / asyncio.create_subprocess_exec().
     // Return null so the Claude Agent SDK uses its bundled claude.exe instead.
     if (isWindows() && claudePath.toLowerCase().endsWith('.cmd')) {
-      console.warn(
+      debugLog(
         `[CLI Tools] Claude CLI is .cmd file, returning null so SDK uses bundled CLI: ${claudePath}`
       );
       return null;
@@ -385,6 +387,8 @@ class CLIToolManager {
         return this.detectGitLabCLI();
       case 'claude':
         return this.detectClaude();
+      case 'openspec':
+        return this.detectOpenSpec();
       default:
         return {
           found: false,
@@ -832,6 +836,32 @@ class CLIToolManager {
   }
 
   /**
+   * Detect OpenSpec CLI.
+   *
+   * OpenSpec is installed through npm and does not currently have a user
+   * configured path in app settings. The shared core helper contains the
+   * Windows npm-bin resolution used by the OpenSpec runtime adapter.
+   */
+  private detectOpenSpec(): ToolDetectionResult {
+    const result = detectOpenSpecCli({ timeoutMs: 5000 });
+    if (result.found) {
+      return {
+        found: true,
+        path: result.displayCommand,
+        version: result.version,
+        source: 'system-path',
+        message: result.message,
+      };
+    }
+
+    return {
+      found: false,
+      source: 'fallback',
+      message: result.message || 'OpenSpec CLI not found. Install @fission-ai/openspec from npm.',
+    };
+  }
+
+  /**
    * Detect Claude CLI with multi-level priority
    *
    * Priority order:
@@ -1180,7 +1210,7 @@ class CLIToolManager {
     // Check cache first (instant return if cached)
     const cached = this.cache.get(tool);
     if (cached) {
-      console.debug(
+      debugLog(
         `[CLI Tools] Using cached ${tool}: ${cached.path} (${cached.source})`
       );
       return cached.path;
@@ -1217,7 +1247,7 @@ class CLIToolManager {
     // On Windows, .cmd files cannot be executed by anyio.open_process() / asyncio.create_subprocess_exec().
     // Return null so the Claude Agent SDK uses its bundled claude.exe instead.
     if (isWindows() && claudePath.toLowerCase().endsWith('.cmd')) {
-      console.warn(
+      debugLog(
         `[CLI Tools] Claude CLI is .cmd file, returning null so SDK uses bundled CLI: ${claudePath}`
       );
       return null;
@@ -1246,6 +1276,8 @@ class CLIToolManager {
         return this.detectGitHubCLIAsync();
       case 'glab':
         return this.detectGitLabCLIAsync();
+      case 'openspec':
+        return this.detectOpenSpecAsync();
       default:
         return {
           found: false,
@@ -1996,6 +2028,16 @@ class CLIToolManager {
       source: 'fallback',
       message: 'GitLab CLI (glab) not found. Install from https://gitlab.com/gitlab-org/cli',
     };
+  }
+
+  /**
+   * Detect OpenSpec CLI asynchronously.
+   *
+   * This delegates to the shared core detector so Desktop, CLI, and VS Code
+   * can agree on how OpenSpec is found.
+   */
+  private async detectOpenSpecAsync(): Promise<ToolDetectionResult> {
+    return this.detectOpenSpec();
   }
 
   /**

@@ -195,16 +195,15 @@ export async function runIdeation(
 
   let responseText = '';
 
-  // Detect Codex models — they require instructions via providerOptions, not system
+  // Responses models require instructions via providerOptions, not system.
   const modelId = typeof client.model === 'string' ? client.model : client.model.modelId;
-  const isCodex = modelId?.includes('codex') ?? false;
   const isResponsesModel = isResponsesApiModel(modelId);
   const userPrompt = `Analyze the project at ${projectDir} and generate up to ${maxIdeasPerType} ${ideationType.replace(/_/g, ' ')} ideas. Use the available tools to explore the codebase, then write your findings as a JSON file to the output directory.`;
 
   try {
     const result = streamText({
       model: client.model,
-      system: isCodex ? undefined : prompt,
+      system: isResponsesModel ? undefined : prompt,
       prompt: userPrompt,
       tools: client.tools,
       stopWhen: stepCountIs(client.maxSteps),
@@ -212,8 +211,8 @@ export async function runIdeation(
       ...(isResponsesModel ? {
         providerOptions: {
           openai: {
-            ...(isCodex ? { instructions: prompt } : {}),
-            store: true,
+            instructions: prompt,
+            store: false,
           },
         },
       } : {}),

@@ -212,6 +212,11 @@
     "baseBranchUpdateFailed": "Unable to save the base branch right now.",
     "editBaseBranch": "Edit",
     "saveBaseBranch": "Save",
+    "developmentMode": {
+      "fast": "Fast",
+      "standard": "Standard",
+      "spec": "Spec"
+    },
     "severity": "severity",
     "pullRequest": "Pull Request",
     "showMore": "Show more",
@@ -310,6 +315,26 @@
     "classificationOptional": "Classification (optional)",
     "requireReviewLabel": "Require human review before coding",
     "requireReviewDescription": "When enabled, you'll be prompted to review the spec and implementation plan before the coding phase begins. This allows you to approve, request changes, or provide feedback.",
+    "developmentMode": {
+      "label": "Development Mode",
+      "description": "Choose the amount of upstream planning for this task.",
+      "recommended": "Recommended",
+      "fast": {
+        "title": "Fast",
+        "description": "One direct coding session. Skips OpenSpec, staged planning, and QA.",
+        "performance": "Closest to using the model directly; best for small or obvious changes."
+      },
+      "standard": {
+        "title": "Standard",
+        "description": "Lightweight Autocode spec and implementation plan. No OpenSpec upstream docs.",
+        "performance": "Balanced speed and structure for most development work."
+      },
+      "spec": {
+        "title": "Spec",
+        "description": "Generate OpenSpec proposal, design, tasks, and spec deltas before execution.",
+        "performance": "Most traceable path for complex, risky, or product-facing changes."
+      }
+    },
     "workflowOptimization": {
       "label": "Workflow Optimization",
       "description": "Choose how this task should be executed. Direct mode skips staged planning and QA; other modes run the normal workflow with different quality checks.",

@@ -223,7 +223,24 @@ function feedbackRequiresImplementationRestart(feedback: string): boolean {
   return IMPLEMENTATION_FAILURE_FEEDBACK_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-function buildHumanInputContent(feedback: string, imageReferences: string): string {
+function buildHumanInputContent(
+  feedback: string,
+  imageReferences: string,
+  scope: 'planning' | 'implementation' = 'implementation',
+): string {
+  if (scope === 'planning') {
+    return (
+      `# Human Input\n\n` +
+      `The user reviewed the generated plan/specification and requested planning changes.\n\n` +
+      `## Requested Changes\n\n` +
+      `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
+      `## Instructions\n\n` +
+      `- If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first.\n` +
+      `- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback.\n` +
+      `- Do not implement code in this planning pass.\n`
+    );
+  }
+
   return (
     `# Human Input\n\n` +
     `The user reviewed the previous implementation and reported issues that require another coding pass.\n\n` +
@@ -234,6 +251,42 @@ function buildHumanInputContent(feedback: string, imageReferences: string): stri
     `- Re-run the relevant build/test/validation steps.\n` +
     `- Update implementation_plan.md as you make progress.\n`
   );
+}
+
+function writeOpenSpecReviewFeedback(projectPath: string, task: Task, humanInputContent: string): void {
+  const metadata = task.metadata;
+  if (metadata?.sourceType !== 'openspec' || typeof metadata.openSpecChangeDir !== 'string') {
+    return;
+  }
+
+  const changeDir = path.resolve(projectPath, metadata.openSpecChangeDir);
+  const relativeChangeDir = path.relative(projectPath, changeDir);
+  if (relativeChangeDir.startsWith('..') || path.isAbsolute(relativeChangeDir)) {
+    console.warn('[TASK_REVIEW] Skipping OpenSpec review feedback write outside project:', metadata.openSpecChangeDir);
+    return;
+  }
+
+  try {
+    if (!existsSync(changeDir)) {
+      mkdirSync(changeDir, { recursive: true });
+    }
+    writeFileSync(
+      path.join(changeDir, 'review-feedback.md'),
+      [
+        '# Review Feedback',
+        '',
+        'This feedback came from Autocode plan review. Apply it to the upstream OpenSpec artifacts before regenerating downstream runtime plans.',
+        '',
+        humanInputContent.trimEnd(),
+        '',
+        `Recorded at: ${new Date().toISOString()}`,
+        '',
+      ].join('\n'),
+      'utf-8',
+    );
+  } catch (error) {
+    console.warn('[TASK_REVIEW] Failed to write OpenSpec review feedback:', error);
+  }
 }
 
 function buildFollowupSummary(feedback: string): string {
@@ -811,7 +864,8 @@ export function registerTaskExecutionHandlers(
       if (isPlanReview) {
           const humanInputContent = buildHumanInputContent(
             feedback || 'Address the reported plan review issues and regenerate the implementation plan.',
-            imageReferences
+            imageReferences,
+            'planning',
           );
 
           const humanInputPaths = new Set<string>([
@@ -827,6 +881,7 @@ export function registerTaskExecutionHandlers(
               return { success: false, error: 'Failed to write human input file' };
             }
           }
+          writeOpenSpecReviewFeedback(project.path, task, humanInputContent);
 
           taskStateManager.prepareForRestart(taskId);
           taskStateManager.handleUiEvent(

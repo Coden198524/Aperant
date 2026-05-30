@@ -16,12 +16,13 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync } from 'fs';
+import { existsSync, mkdirSync, readFileSync } from 'fs';
 import { cp, rm } from 'fs/promises';
-import { join, resolve } from 'path';
+import { isAbsolute, join, resolve } from 'path';
 import { promisify } from 'util';
 import {
   AUTOCODE_DEFAULT_BASE_BRANCH,
+  AUTOCODE_TASK_ARTIFACTS,
   buildAutocodeTaskBranchName,
   getAutocodeTaskWorktreePath,
 } from '@autocode/core';
@@ -85,6 +86,8 @@ export interface WorktreeResult {
  *                        tracking after worktree creation. Defaults to false.
  * @param autoBuildPath  Optional custom data directory (e.g. ".autocode").
  *                       Passed to getSpecsDir() for spec-copy logic.
+ * @param syncSpecDir    If true, refresh existing spec/OpenSpec files in the
+ *                       worktree before returning.
  */
 export async function createOrGetWorktree(
   projectPath: string,
@@ -93,6 +96,7 @@ export async function createOrGetWorktree(
   useLocalBranch = false,
   pushNewBranches = false,
   autoBuildPath?: string,
+  syncSpecDir = false,
 ): Promise<WorktreeResult> {
   const worktreePath = getAutocodeTaskWorktreePath(projectPath, specId);
   const branchName = buildAutocodeTaskBranchName(specId);
@@ -113,6 +117,7 @@ export async function createOrGetWorktree(
       console.warn(
         `[WorktreeManager] Using existing worktree: ${specId} on branch ${branchName}`,
       );
+      await syncTaskRuntimeFilesToWorktree(projectPath, worktreePath, specId, autoBuildPath, syncSpecDir);
       return { worktreePath: resolve(worktreePath), branch: branchName };
     }
 
@@ -248,11 +253,23 @@ export async function createOrGetWorktree(
   // newly-created worktree checkout. Copy it from the main project so
   // that agents can read spec.md, implementation_plan.md, etc.
   // ------------------------------------------------------------------
+  await syncTaskRuntimeFilesToWorktree(projectPath, worktreePath, specId, autoBuildPath, false);
+
+  return { worktreePath: resolve(worktreePath), branch: branchName };
+}
+
+async function syncTaskRuntimeFilesToWorktree(
+  projectPath: string,
+  worktreePath: string,
+  specId: string,
+  autoBuildPath: string | undefined,
+  overwriteExisting: boolean,
+): Promise<void> {
   const specsRelDir = getSpecsDir(autoBuildPath); // e.g. ".autocode/specs"
   const sourceSpecDir = join(projectPath, specsRelDir, specId);
   const destSpecDir = join(worktreePath, specsRelDir, specId);
 
-  if (existsSync(sourceSpecDir) && !existsSync(destSpecDir)) {
+  if (existsSync(sourceSpecDir) && (overwriteExisting || !existsSync(destSpecDir))) {
     console.warn(
       `[WorktreeManager] Copying spec directory into worktree: ${specsRelDir}/${specId}`,
     );
@@ -262,7 +279,7 @@ export async function createOrGetWorktree(
     mkdirSync(destParent, { recursive: true });
 
     try {
-      await cp(sourceSpecDir, destSpecDir, { recursive: true });
+      await cp(sourceSpecDir, destSpecDir, { recursive: true, force: true });
     } catch (err: unknown) {
       // Non-fatal: log and continue. The spec may already be present via
       // a symlink or the agent can regenerate it.
@@ -273,7 +290,50 @@ export async function createOrGetWorktree(
     }
   }
 
-  return { worktreePath: resolve(worktreePath), branch: branchName };
+  const openSpecChangeDir = readTaskOpenSpecChangeDir(sourceSpecDir);
+  if (!openSpecChangeDir) {
+    return;
+  }
+
+  const sourceChangeDir = join(projectPath, openSpecChangeDir);
+  const destChangeDir = join(worktreePath, openSpecChangeDir);
+  if (!existsSync(sourceChangeDir) || (!overwriteExisting && existsSync(destChangeDir))) {
+    return;
+  }
+
+  try {
+    mkdirSync(join(destChangeDir, '..'), { recursive: true });
+    await cp(sourceChangeDir, destChangeDir, { recursive: true, force: true });
+    console.warn(`[WorktreeManager] Synced OpenSpec change into worktree: ${openSpecChangeDir}`);
+  } catch (err: unknown) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.warn(`[WorktreeManager] Warning: Could not copy OpenSpec change to worktree: ${message}`);
+  }
+}
+
+function readTaskOpenSpecChangeDir(specDir: string): string {
+  try {
+    const metadataPath = join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
+    if (!existsSync(metadataPath)) {
+      return '';
+    }
+    const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
+    const openSpecChangeDir = typeof metadata.openSpecChangeDir === 'string'
+      ? metadata.openSpecChangeDir.trim()
+      : '';
+    if (
+      !openSpecChangeDir ||
+      isAbsolute(openSpecChangeDir) ||
+      openSpecChangeDir.startsWith('..') ||
+      openSpecChangeDir.includes('../') ||
+      openSpecChangeDir.includes('..\\')
+    ) {
+      return '';
+    }
+    return openSpecChangeDir;
+  } catch {
+    return '';
+  }
 }
 
 // ---------------------------------------------------------------------------

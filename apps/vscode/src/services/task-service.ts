@@ -11,6 +11,7 @@ import {
   requestAutocodeTaskChanges,
   updateAutocodeTaskPlanStatus,
   type AutocodeCli,
+  type AutocodeTaskDevelopmentMode,
   type AutocodeProjectDocType,
 } from '@autocode/core';
 import { getConfiguredDataDirName } from '../adapters/workspace-adapter.js';
@@ -20,12 +21,15 @@ export function listState(projectRoot: string) {
   return buildAutocodeWorkspaceState({ projectRoot, dataDirName });
 }
 
-export function createManualTask(projectRoot: string, title: string, description: string) {
+export function createManualTask(projectRoot: string, title: string, description: string, options: {
+  developmentMode?: AutocodeTaskDevelopmentMode;
+} = {}) {
   return createManualAutocodeTask({
     projectRoot,
     dataDirName: getConfiguredDataDirName(),
     title,
     description,
+    metadata: { developmentMode: options.developmentMode ?? 'standard' },
   });
 }
 

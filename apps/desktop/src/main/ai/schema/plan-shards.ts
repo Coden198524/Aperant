@@ -4,6 +4,7 @@ import {
   loadAutocodeImplementationPlanSync,
   saveAutocodeImplementationPlan,
   saveAutocodeImplementationPlanSync,
+  syncOpenSpecTasksFromAutocodePlan,
   type MutableAutocodePlan,
 } from '@autocode/core';
 
@@ -62,6 +63,7 @@ export async function saveImplementationPlanToFiles(
   plan: ShardableImplementationPlan,
 ): Promise<void> {
   await saveAutocodeImplementationPlan(specDirOrPlanPath, plan);
+  syncOpenSpecTasksFromAutocodePlanSafe(specDirOrPlanPath);
 }
 
 export function saveImplementationPlanToFilesSync(
@@ -69,6 +71,7 @@ export function saveImplementationPlanToFilesSync(
   plan: ShardableImplementationPlan,
 ): void {
   saveAutocodeImplementationPlanSync(specDirOrPlanPath, plan);
+  syncOpenSpecTasksFromAutocodePlanSafe(specDirOrPlanPath);
 }
 
 export function listImplementationPlanWatchFiles(specDir: string): string[] {
@@ -84,4 +87,12 @@ function countSubtasks(plan: ShardableImplementationPlan): number {
         : [];
     return total + subtasks.length;
   }, 0);
+}
+
+function syncOpenSpecTasksFromAutocodePlanSafe(specDirOrPlanPath: string): void {
+  try {
+    syncOpenSpecTasksFromAutocodePlan({ specDir: specDirOrPlanPath });
+  } catch {
+    // OpenSpec task sync is best-effort; plan persistence must remain reliable.
+  }
 }

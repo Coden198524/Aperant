@@ -2,20 +2,17 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowDownToLine, Bot, Terminal } from 'lucide-react';
+import { ArrowDownToLine, Bot } from 'lucide-react';
 import { PROVIDER_REGISTRY } from '@shared/constants/providers';
 import { getProviderModelLabel } from '@shared/utils/model-display';
 import { cn } from '../../lib/utils';
-import { useSettingsStore } from '../../stores/settings-store';
 import { useTaskStore } from '../../stores/task-store';
 import type { Task, TaskLogEntry, TaskLogPhase, TaskLogStreamChunk, TaskLogs as TaskLogsData } from '../../../shared/types';
 import type { PhaseModelConfig } from '../../../shared/types/settings';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
 import {
   buildDisplayLogEntries,
-  buildDisplayRuntimeLogs,
   formatLogMarkdownForDisplay,
-  type DisplayRuntimeLog,
   type DisplayTaskLogEntry,
 } from './task-log-display';
 import { Button } from '../ui/button';
@@ -25,7 +22,6 @@ interface TaskRuntimeLogsProps {
   className?: string;
 }
 
-type RuntimePanelMode = 'runtime' | 'model';
 type ModelOutputEntryType = 'text' | 'tool_start' | 'tool_end' | 'error';
 
 interface RuntimeModelInfo {
@@ -41,26 +37,18 @@ const MODEL_OUTPUT_ENTRY_TYPES = new Set<ModelOutputEntryType>([
 ]);
 
 const MODEL_PHASE_STYLES: Record<TaskLogPhase, {
-  accent: string;
-  badge: string;
   glow: string;
   prompt: string;
 }> = {
   planning: {
-    accent: 'text-amber-300',
-    badge: 'border-amber-400/30 bg-amber-400/10 text-amber-200',
     glow: 'from-amber-400/20',
     prompt: 'text-amber-300',
   },
   coding: {
-    accent: 'text-cyan-300',
-    badge: 'border-cyan-400/30 bg-cyan-400/10 text-cyan-200',
     glow: 'from-cyan-400/20',
     prompt: 'text-cyan-300',
   },
   validation: {
-    accent: 'text-emerald-300',
-    badge: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
     glow: 'from-emerald-400/20',
     prompt: 'text-emerald-300',
   },
@@ -68,113 +56,9 @@ const MODEL_PHASE_STYLES: Record<TaskLogPhase, {
 
 const TYPEWRITER_CHARS_PER_TICK = 12;
 const TYPEWRITER_TICK_MS = 18;
-const INITIAL_RENDERED_RUNTIME_ENTRIES = 250;
 const INITIAL_RENDERED_MODEL_ENTRIES = 250;
 const LOG_RENDER_BATCH_SIZE = 250;
 const LOAD_MORE_SCROLL_THRESHOLD = 96;
-
-const runtimeMarkdownComponents: Components = {
-  p: ({ children }) => (
-    <p className="my-1 leading-relaxed text-slate-200">
-      {children}
-    </p>
-  ),
-  h1: ({ children }) => (
-    <h1 className="mb-1.5 mt-2 text-sm font-semibold text-sky-300">
-      {children}
-    </h1>
-  ),
-  h2: ({ children }) => (
-    <h2 className="mb-1.5 mt-2 text-[13px] font-semibold text-sky-300">
-      {children}
-    </h2>
-  ),
-  h3: ({ children }) => (
-    <h3 className="mb-1 mt-1.5 text-xs font-semibold text-cyan-300">
-      {children}
-    </h3>
-  ),
-  ul: ({ children }) => (
-    <ul className="my-1 ml-4 list-disc space-y-0.5 text-slate-200">
-      {children}
-    </ul>
-  ),
-  ol: ({ children }) => (
-    <ol className="my-1 ml-4 list-decimal space-y-0.5 text-slate-200">
-      {children}
-    </ol>
-  ),
-  li: ({ children }) => (
-    <li className="pl-1 leading-relaxed marker:text-cyan-400">
-      {children}
-    </li>
-  ),
-  strong: ({ children }) => (
-    <strong className="font-semibold text-emerald-300">
-      {children}
-    </strong>
-  ),
-  em: ({ children }) => (
-    <em className="text-amber-300">
-      {children}
-    </em>
-  ),
-  blockquote: ({ children }) => (
-    <blockquote className="my-1.5 border-l-2 border-sky-500/50 pl-3 text-slate-300">
-      {children}
-    </blockquote>
-  ),
-  a: ({ href, children }) => (
-    <a
-      href={href}
-      target="_blank"
-      rel="noreferrer"
-      className="break-all text-sky-300 underline-offset-2 hover:underline"
-    >
-      {children}
-    </a>
-  ),
-  code: ({ className, children, ...props }) => {
-    const isInline = !className;
-
-    if (isInline) {
-      return (
-        <code className="rounded border border-slate-700 bg-slate-950 px-1 py-0.5 text-[10px] text-amber-200" {...props}>
-          {children}
-        </code>
-      );
-    }
-
-    return (
-      <code className={cn('block whitespace-pre font-mono text-[10px] leading-relaxed text-teal-100', className)} {...props}>
-        {children}
-      </code>
-    );
-  },
-  pre: ({ children }) => (
-    <pre className="my-1.5 max-w-full overflow-x-auto rounded-md border border-slate-700/80 bg-slate-950/90 p-2.5">
-      {children}
-    </pre>
-  ),
-  table: ({ children }) => (
-    <div className="my-1.5 max-w-full overflow-x-auto rounded-md border border-slate-700/80">
-      <table className="w-full border-collapse text-[10px] text-slate-200">
-        {children}
-      </table>
-    </div>
-  ),
-  th: ({ children }) => (
-    <th className="border-b border-r border-slate-700 bg-slate-900 px-2 py-1 text-left font-semibold text-cyan-200 last:border-r-0">
-      {children}
-    </th>
-  ),
-  td: ({ children }) => (
-    <td className="border-b border-r border-slate-800 px-2 py-1 align-top leading-relaxed break-words last:border-r-0">
-      {children}
-    </td>
-  ),
-  hr: () => <hr className="my-2 border-slate-700" />,
-};
 
 const modelMarkdownComponents: Components = {
   p: ({ children }) => (
@@ -552,16 +436,6 @@ function mergeFullLogsWithoutRegressingStream(
   return mergedLogs;
 }
 
-function getPhaseLabel(phase: TaskLogPhase, t: ReturnType<typeof useTranslation>['t']): string {
-  const labels: Record<TaskLogPhase, string> = {
-    planning: t('tasks:logs.phaseLabels.planning', { defaultValue: 'Plan' }),
-    coding: t('tasks:logs.phaseLabels.coding', { defaultValue: 'Code' }),
-    validation: t('tasks:logs.phaseLabels.validation', { defaultValue: 'QA' }),
-  };
-
-  return labels[phase];
-}
-
 function getTaskExecutionLogPhase(task: Task): TaskLogPhase | null {
   const phase = String(task.executionProgress?.phase ?? '');
 
@@ -691,81 +565,6 @@ function formatEntryTime(timestamp: string): string {
   });
 }
 
-function parseRuntimeKeyValueList(value: string): Record<string, string> {
-  const fields: Record<string, string> = {};
-
-  for (const part of value.split(',')) {
-    const [rawKey, ...rawValue] = part.trim().split('=');
-    const key = rawKey?.trim();
-    const fieldValue = rawValue.join('=').trim();
-
-    if (key && fieldValue) {
-      fields[key] = fieldValue;
-    }
-  }
-
-  return fields;
-}
-
-function formatRuntimeDuration(value?: string): string | undefined {
-  if (!value) return undefined;
-
-  const match = value.match(/^(\d+)ms$/i);
-  if (!match) return value;
-
-  const milliseconds = Number(match[1]);
-  if (!Number.isFinite(milliseconds)) return value;
-
-  if (milliseconds < 1000) {
-    return `${milliseconds}ms`;
-  }
-
-  return `${(milliseconds / 1000).toFixed(1)}s`;
-}
-
-function getRuntimeStatus(content: string): {
-  kind: 'worker' | 'start' | 'complete';
-  label: string;
-  fields: Array<{ label: string; value: string }>;
-} | null {
-  const trimmed = content.trim();
-  const workerMatch = trimmed.match(/^Worker thread online:\s*(.+)$/i);
-  if (workerMatch) {
-    return {
-      kind: 'worker',
-      label: 'Worker online',
-      fields: [{ label: 'file', value: workerMatch[1].trim() }],
-    };
-  }
-
-  const startMatch = trimmed.match(/^Starting agent session:\s*(.+)$/i);
-  if (startMatch) {
-    const fields = parseRuntimeKeyValueList(startMatch[1]);
-    return {
-      kind: 'start',
-      label: 'Agent session started',
-      fields: Object.entries(fields).map(([label, value]) => ({ label, value })),
-    };
-  }
-
-  const completeMatch = trimmed.match(/^Session complete:\s*(.+)$/i);
-  if (completeMatch) {
-    const fields = parseRuntimeKeyValueList(completeMatch[1]);
-    return {
-      kind: 'complete',
-      label: 'Session complete',
-      fields: [
-        ...(fields.outcome ? [{ label: 'outcome', value: fields.outcome }] : []),
-        ...(fields.steps ? [{ label: 'steps', value: fields.steps }] : []),
-        ...(fields.tools ? [{ label: 'tools', value: fields.tools }] : []),
-        ...(fields.duration ? [{ label: 'duration', value: formatRuntimeDuration(fields.duration) ?? fields.duration }] : []),
-      ],
-    };
-  }
-
-  return null;
-}
-
 function getToolDisplay(entry: DisplayTaskLogEntry): { name: string; input: string; status: 'running' | 'done' | 'error' } {
   const name = entry.tool_name || entry.content.match(/^\[([^\]]+)\]/)?.[1] || 'Tool';
   const input = entry.tool_input || entry.content.replace(/^\[[^\]]+\]\s*/, '').replace(/^(Done|Error)$/i, '').trim();
@@ -885,23 +684,15 @@ function useTypewriterText(content: string, enabled: boolean): string {
 
 export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
   const { t } = useTranslation(['tasks']);
-  const [mode, setMode] = useState<RuntimePanelMode>('runtime');
   const [modelLogs, setModelLogs] = useState<TaskLogsData | null>(null);
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
-  const runtimeScrollRef = useRef<HTMLDivElement | null>(null);
   const modelScrollRef = useRef<HTMLDivElement | null>(null);
   const modelEndRef = useRef<HTMLDivElement | null>(null);
-  const isRuntimePinnedToBottomRef = useRef(true);
   const isModelPinnedToBottomRef = useRef(true);
-  const logOrder = useSettingsStore(s => s.settings.logOrder);
   const liveTask = useTaskStore(state =>
     state.tasks.find(item => item.id === task.id || item.specId === task.specId)
   );
   const runtimeSourceTask = liveTask ?? task;
-  const fullRuntimeLogs = useMemo(() => {
-    const logs = buildDisplayRuntimeLogs(runtimeSourceTask.logs || []);
-    return logOrder === 'reverse-chronological' ? [...logs].reverse() : logs;
-  }, [runtimeSourceTask.logs, logOrder]);
   const fullModelOutputEntries = useMemo(() => {
     if (!modelLogs) return [];
 
@@ -914,46 +705,22 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     return mergeToolLifecycleEntries(buildDisplayLogEntries(entries));
   }, [modelLogs]);
-  const [visibleRuntimeCount, setVisibleRuntimeCount] = useState(INITIAL_RENDERED_RUNTIME_ENTRIES);
   const [visibleModelCount, setVisibleModelCount] = useState(INITIAL_RENDERED_MODEL_ENTRIES);
-  const runtimeLogs = useMemo(() => {
-    return logOrder === 'reverse-chronological'
-      ? fullRuntimeLogs.slice(0, visibleRuntimeCount)
-      : fullRuntimeLogs.slice(-visibleRuntimeCount);
-  }, [fullRuntimeLogs, logOrder, visibleRuntimeCount]);
   const modelOutputEntries = useMemo(() => {
     return fullModelOutputEntries.slice(-visibleModelCount);
   }, [fullModelOutputEntries, visibleModelCount]);
-  const visibleCount = mode === 'runtime' ? runtimeLogs.length : modelOutputEntries.length;
-  const totalCount = mode === 'runtime' ? fullRuntimeLogs.length : fullModelOutputEntries.length;
-  const hasMoreRuntimeLogs = visibleRuntimeCount < fullRuntimeLogs.length;
+  const visibleCount = modelOutputEntries.length;
+  const totalCount = fullModelOutputEntries.length;
   const hasMoreModelOutput = visibleModelCount < fullModelOutputEntries.length;
   const activeModelPhase = getActiveModelPhase(modelLogs, runtimeSourceTask);
   const runtimeModelInfo = getRuntimeModelInfo(modelOutputEntries, runtimeSourceTask, activeModelPhase);
   const runtimeModelLabel = formatModelInfo(runtimeModelInfo);
   const isTaskModelActive = runtimeSourceTask.status === 'in_progress' || runtimeSourceTask.status === 'ai_review';
   const isModelActive = isTaskModelActive;
-  const isModelStreaming = mode === 'model' && isModelActive;
+  const isModelStreaming = isModelActive;
   const modelActivityCopy = getModelActivityCopy(activeModelPhase, t);
-  const latestRuntimeContent = runtimeLogs[runtimeLogs.length - 1]?.content;
   const latestModelEntry = modelOutputEntries[modelOutputEntries.length - 1];
   const latestModelContent = latestModelEntry?.content;
-
-  const scrollRuntimeToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
-    const container = runtimeScrollRef.current;
-    if (!container) return;
-
-    if (typeof container.scrollTo === 'function') {
-      container.scrollTo({
-        top: container.scrollHeight,
-        behavior,
-      });
-    } else {
-      container.scrollTop = container.scrollHeight;
-    }
-    isRuntimePinnedToBottomRef.current = true;
-    setShowJumpToLatest(false);
-  }, []);
 
   const scrollModelToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const container = modelScrollRef.current;
@@ -971,25 +738,6 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     setShowJumpToLatest(false);
   }, []);
 
-  const handleRuntimeScroll = useCallback(() => {
-    const container = runtimeScrollRef.current;
-    if (!container) return;
-
-    const isReverseOrder = logOrder === 'reverse-chronological';
-    const distanceFromTop = container.scrollTop;
-    const distanceFromBottom = container.scrollHeight - container.scrollTop - container.clientHeight;
-    const isAtOlderHistoryEdge = isReverseOrder
-      ? distanceFromBottom < LOAD_MORE_SCROLL_THRESHOLD
-      : distanceFromTop < LOAD_MORE_SCROLL_THRESHOLD;
-    if (isAtOlderHistoryEdge) {
-      setVisibleRuntimeCount(count => Math.min(count + LOG_RENDER_BATCH_SIZE, fullRuntimeLogs.length));
-    }
-
-    const isPinned = distanceFromBottom < 48;
-    isRuntimePinnedToBottomRef.current = isPinned;
-    setShowJumpToLatest(!isPinned);
-  }, [fullRuntimeLogs.length, logOrder]);
-
   const handleModelScroll = useCallback(() => {
     const container = modelScrollRef.current;
     if (!container) return;
@@ -1004,10 +752,6 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     isModelPinnedToBottomRef.current = isPinned;
     setShowJumpToLatest(!isPinned);
   }, [fullModelOutputEntries.length]);
-
-  useEffect(() => {
-    setVisibleRuntimeCount(count => Math.max(count, INITIAL_RENDERED_RUNTIME_ENTRIES));
-  }, [task.id, task.specId]);
 
   useEffect(() => {
     setVisibleModelCount(count => Math.max(count, INITIAL_RENDERED_MODEL_ENTRIES));
@@ -1049,36 +793,7 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
   }, [task.projectId, task.specId]);
 
   useEffect(() => {
-    if (mode !== 'runtime' || !isRuntimePinnedToBottomRef.current) {
-      return;
-    }
-
-    const frame = window.requestAnimationFrame(() => {
-      scrollRuntimeToLatest('auto');
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [mode, runtimeLogs.length, latestRuntimeContent, scrollRuntimeToLatest]);
-
-  useEffect(() => {
-    if (mode !== 'runtime') {
-      return undefined;
-    }
-
-    isRuntimePinnedToBottomRef.current = true;
-    const frame = window.requestAnimationFrame(() => {
-      scrollRuntimeToLatest('auto');
-    });
-
-    return () => {
-      window.cancelAnimationFrame(frame);
-    };
-  }, [mode, scrollRuntimeToLatest]);
-
-  useEffect(() => {
-    if (mode !== 'model' || !isModelPinnedToBottomRef.current) {
+    if (!isModelPinnedToBottomRef.current) {
       return;
     }
 
@@ -1089,13 +804,9 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [mode, modelOutputEntries.length, latestModelContent, scrollModelToLatest]);
+  }, [modelOutputEntries.length, latestModelContent, scrollModelToLatest]);
 
   useEffect(() => {
-    if (mode !== 'model') {
-      return undefined;
-    }
-
     isModelPinnedToBottomRef.current = true;
     const frame = window.requestAnimationFrame(() => {
       scrollModelToLatest('auto');
@@ -1104,7 +815,7 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     return () => {
       window.cancelAnimationFrame(frame);
     };
-  }, [mode, scrollModelToLatest]);
+  }, [scrollModelToLatest]);
 
   return (
     <section
@@ -1113,16 +824,10 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
-          {mode === 'runtime' ? (
-            <Terminal className="h-4 w-4 shrink-0 text-muted-foreground" />
-          ) : (
-            <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
-          )}
+          <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
           <span className="truncate text-sm font-medium text-foreground">
-            {mode === 'runtime'
-              ? t('tasks:logs.runtimeLabel', { defaultValue: 'Runtime' })
-              : t('tasks:logs.modelOutputLabel', { defaultValue: 'Model output' })}
-            {mode === 'model' && runtimeModelLabel && (
+            {t('tasks:logs.modelOutputLabel', { defaultValue: 'Model output' })}
+            {runtimeModelLabel && (
               <span className="ml-2 text-xs font-normal text-muted-foreground">
                 {runtimeModelLabel}
               </span>
@@ -1148,63 +853,7 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
               })}
         </span>
       </div>
-      <div className="flex shrink-0 items-center gap-1 border-b border-border/70 bg-background/40 px-4 py-2">
-        <Button
-          type="button"
-          variant={mode === 'runtime' ? 'secondary' : 'ghost'}
-          size="sm"
-          className="h-7 gap-1.5 px-2"
-          onClick={() => setMode('runtime')}
-        >
-          <Terminal className="h-3.5 w-3.5" />
-          {t('tasks:logs.runtimeTab', { defaultValue: 'Runtime' })}
-        </Button>
-        <Button
-          type="button"
-          variant={mode === 'model' ? 'secondary' : 'ghost'}
-          size="sm"
-          className="h-7 gap-1.5 px-2"
-          onClick={() => setMode('model')}
-        >
-          <Bot className="h-3.5 w-3.5" />
-          {t('tasks:logs.modelOutputTab', { defaultValue: 'Model output' })}
-        </Button>
-      </div>
-
-      {mode === 'runtime' && runtimeLogs.length > 0 ? (
-        <div className="relative min-h-0 flex-1 bg-[#0B1020]">
-          <div
-            ref={runtimeScrollRef}
-            className="h-full overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
-            onScroll={handleRuntimeScroll}
-            data-testid="runtime-output-scroll"
-          >
-            <div className="space-y-2">
-              {hasMoreRuntimeLogs && logOrder !== 'reverse-chronological' && (
-                <LogHistoryLoadingHint label={t('tasks:logs.scrollForOlder', { defaultValue: 'Scroll up to load older logs' })} />
-              )}
-              {runtimeLogs.map((log, index) => (
-                <RuntimeLogEntry key={`${index}-${log.content.slice(0, 80)}`} log={log} />
-              ))}
-              {hasMoreRuntimeLogs && logOrder === 'reverse-chronological' && (
-                <LogHistoryLoadingHint label={t('tasks:logs.scrollForOlder', { defaultValue: 'Scroll down to load older logs' })} />
-              )}
-            </div>
-          </div>
-          {showJumpToLatest && (
-            <Button
-              type="button"
-              variant="secondary"
-              size="sm"
-              className="absolute bottom-3 right-3 h-7 gap-1.5 border border-slate-600/60 bg-slate-900/90 px-2 text-[11px] text-slate-100 shadow-lg hover:bg-slate-800"
-              onClick={() => scrollRuntimeToLatest()}
-            >
-              <ArrowDownToLine className="h-3.5 w-3.5" />
-              {t('tasks:logs.jumpToLatest', { defaultValue: 'Latest' })}
-            </Button>
-          )}
-        </div>
-      ) : mode === 'model' && modelOutputEntries.length > 0 ? (
+      {modelOutputEntries.length > 0 ? (
         <div className="relative min-h-0 flex-1 bg-[#080B10]">
           <div
             ref={modelScrollRef}
@@ -1246,13 +895,11 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
         <div
           className={cn(
             'flex min-h-0 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground',
-            mode === 'model' && isModelActive && 'bg-[#080B10]'
+            isModelActive && 'bg-[#080B10]'
           )}
         >
           <div>
-            {mode === 'runtime' ? (
-              <Terminal className="mx-auto mb-2 h-8 w-8 opacity-40" />
-            ) : isModelActive ? (
+            {isModelActive ? (
               <ModelActivityStatus
                 label={modelActivityCopy.label}
                 description={modelActivityCopy.description}
@@ -1261,21 +908,15 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
             ) : (
               <Bot className="mx-auto mb-2 h-8 w-8 opacity-40" />
             )}
-            {(mode !== 'model' || !isModelActive) && (
+            {!isModelActive && (
               <>
                 <p>
-                  {mode === 'runtime'
-                    ? t('tasks:logs.runtimeEmpty', { defaultValue: 'No runtime logs yet' })
-                    : t('tasks:logs.modelOutputEmpty', { defaultValue: 'No model output yet' })}
+                  {t('tasks:logs.modelOutputEmpty', { defaultValue: 'No model output yet' })}
                 </p>
                 <p className="mt-1 text-xs text-muted-foreground/70">
-                  {mode === 'runtime'
-                    ? t('tasks:logs.runtimeEmptyDescription', {
-                        defaultValue: 'Runtime output will appear here when the task runs'
-                      })
-                    : t('tasks:logs.modelOutputEmptyDescription', {
-                        defaultValue: 'Model text output will appear here while the task runs'
-                      })}
+                  {t('tasks:logs.modelOutputEmptyDescription', {
+                    defaultValue: 'Model text output will appear here while the task runs'
+                  })}
                 </p>
               </>
             )}
@@ -1283,63 +924,6 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
         </div>
       )}
     </section>
-  );
-}
-
-function RuntimeLogEntry({ log }: { log: DisplayRuntimeLog }) {
-  const status = getRuntimeStatus(log.content);
-  const markdownContent = formatLogMarkdownForDisplay(log.content);
-
-  if (status) {
-    const statusStyles = {
-      worker: {
-        container: 'border-sky-500/30 bg-sky-500/10',
-        dot: 'bg-sky-300',
-        label: 'text-sky-200',
-      },
-      start: {
-        container: 'border-amber-500/30 bg-amber-500/10',
-        dot: 'bg-amber-300',
-        label: 'text-amber-200',
-      },
-      complete: {
-        container: 'border-emerald-500/30 bg-emerald-500/10',
-        dot: 'bg-emerald-300',
-        label: 'text-emerald-200',
-      },
-    }[status.kind];
-
-    return (
-      <div className={cn('rounded-md border px-3 py-2 font-mono text-[11px] shadow-sm', statusStyles.container)}>
-        <div className="flex min-w-0 flex-wrap items-center gap-2">
-          <span className={cn('h-2 w-2 shrink-0 rounded-full', statusStyles.dot)} />
-          <span className={cn('shrink-0 font-medium', statusStyles.label)}>
-            {status.label}
-          </span>
-          <div className="flex min-w-0 flex-wrap items-center gap-1.5">
-            {status.fields.map(field => (
-              <span
-                key={`${field.label}-${field.value}`}
-                className="inline-flex max-w-full items-center gap-1 rounded border border-slate-700/70 bg-slate-950/50 px-1.5 py-0.5 text-[10px] leading-none"
-              >
-                <span className="shrink-0 text-slate-500">{field.label}</span>
-                <span className="min-w-0 truncate text-slate-200">{field.value}</span>
-              </span>
-            ))}
-          </div>
-        </div>
-      </div>
-    );
-  }
-
-  return (
-    <div className="rounded-md border border-slate-700/70 bg-slate-950/70 px-3 py-2 font-mono text-[11px] leading-relaxed shadow-sm">
-      <div className="max-w-none break-words [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
-        <ReactMarkdown remarkPlugins={[remarkGfm]} components={runtimeMarkdownComponents}>
-          {markdownContent}
-        </ReactMarkdown>
-      </div>
-    </div>
   );
 }
 
@@ -1391,7 +975,6 @@ interface ModelOutputEntryProps {
 
 function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryProps) {
   const styles = MODEL_PHASE_STYLES[entry.phase];
-  const phaseLabel = getPhaseLabel(entry.phase, t);
   const timeLabel = formatEntryTime(entry.timestamp);
   const visibleContent = useTypewriterText(entry.content, isStreaming);
   const markdownContent = formatLogMarkdownForDisplay(visibleContent);
@@ -1455,9 +1038,6 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
       <div className={cn('pointer-events-none absolute inset-y-0 left-0 w-20 bg-gradient-to-r to-transparent opacity-80', styles.glow)} />
       <div className="relative mb-1.5 flex items-center gap-2 font-mono text-[10px] leading-none text-slate-500">
         <span className={cn('text-[11px]', styles.prompt)}>{'>'}</span>
-        <span className={cn('rounded border px-1.5 py-0.5 uppercase tracking-wide', styles.badge)}>
-          {phaseLabel}
-        </span>
         {timeLabel && <span className="tabular-nums text-slate-500">{timeLabel}</span>}
         {entry.mergedEntryCount && entry.mergedEntryCount > 1 && (
           <span className="rounded bg-slate-800/80 px-1.5 py-0.5 text-slate-400">

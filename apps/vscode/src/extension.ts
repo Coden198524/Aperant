@@ -12,6 +12,7 @@ import {
   isAutocodeCli,
   startAutocodeAgentRuntime,
   type AutocodeCli,
+  type AutocodeTaskDevelopmentMode,
   type AutocodeProjectDocType,
   type AutocodeTask,
   type AutocodeTaskLogs,
@@ -291,10 +292,39 @@ async function createTaskFromInput(sidebarProvider?: AutocodeSidebarProvider): P
     return;
   }
 
+  const modePick = await vscode.window.showQuickPick(
+    [
+      {
+        label: 'Standard',
+        description: 'Lightweight Autocode plan, no OpenSpec docs',
+        mode: 'standard' as AutocodeTaskDevelopmentMode,
+      },
+      {
+        label: 'Fast',
+        description: 'Direct one-session coding',
+        mode: 'fast' as AutocodeTaskDevelopmentMode,
+      },
+      {
+        label: 'Spec',
+        description: 'OpenSpec upstream docs before execution',
+        mode: 'spec' as AutocodeTaskDevelopmentMode,
+      },
+    ],
+    {
+      title: 'Development Mode',
+      placeHolder: 'Choose how much planning this task needs',
+      ignoreFocusOut: true,
+    },
+  );
+
+  if (!modePick) {
+    return;
+  }
+
   try {
-    const task = createManualTask(projectRoot, title, description);
+    const task = createManualTask(projectRoot, title, description, { developmentMode: modePick.mode });
     sidebarProvider?.refresh(`Created ${task.specId}`);
-    await notificationAdapter.info(`Autocode task created: ${task.title}`);
+    await notificationAdapter.info(`Autocode task created: ${task.title} (${modePick.label})`);
   } catch (error) {
     const message = error instanceof Error ? error.message : 'Failed to create Autocode task.';
     await notificationAdapter.error(message);

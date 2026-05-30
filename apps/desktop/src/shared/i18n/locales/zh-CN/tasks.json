@@ -230,6 +230,11 @@
     "baseBranchUpdateFailed": "暂时无法保存基础分支。",
     "editBaseBranch": "编辑",
     "saveBaseBranch": "保存",
+    "developmentMode": {
+      "fast": "快速",
+      "standard": "标准",
+      "spec": "Spec"
+    },
     "fastMode": "快速",
     "severity": "严重程度",
     "pullRequest": "拉取请求",
@@ -391,6 +396,26 @@
           "high": "高影响",
           "critical": "关键影响"
         }
+      }
+    },
+    "developmentMode": {
+      "label": "开发模式",
+      "description": "选择这个任务需要多少上游规划。",
+      "recommended": "推荐",
+      "fast": {
+        "title": "Fast 快速模式",
+        "description": "单次直接编码，跳过 OpenSpec、分阶段规划和 QA。",
+        "performance": "最接近直接使用大模型，适合小改动或目标明确的任务。"
+      },
+      "standard": {
+        "title": "Standard 标准模式",
+        "description": "使用 Autocode 轻量规格和实现计划，不生成 OpenSpec 上游文档。",
+        "performance": "适合大多数开发任务，在速度和结构之间平衡。"
+      },
+      "spec": {
+        "title": "Spec 模式",
+        "description": "执行前生成 OpenSpec proposal、design、tasks 和 spec delta。",
+        "performance": "适合复杂、高风险或产品规格需要追踪的改动。"
       }
     },
     "workflowOptimization": {

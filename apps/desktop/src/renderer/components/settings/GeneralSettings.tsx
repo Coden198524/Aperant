@@ -1,9 +1,11 @@
 import { useTranslation } from 'react-i18next';
-import { useEffect, useState } from 'react';
+import { useCallback, useEffect, useState } from 'react';
+import { AlertTriangle, Check, Download, ExternalLink, Loader2, RefreshCw } from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '../ui/select';
 import { Switch } from '../ui/switch';
+import { Button } from '../ui/button';
 import { SettingsSection } from './SettingsSection';
 import { ProviderAgentTabs } from './ProviderAgentTabs';
 import type {
@@ -87,28 +89,58 @@ export function GeneralSettings({ settings, onSettingsChange, section }: General
     gh: ToolDetectionResult;
     glab: ToolDetectionResult;
     claude: ToolDetectionResult;
+    openspec: ToolDetectionResult;
   } | null>(null);
   const [isLoadingTools, setIsLoadingTools] = useState(false);
+  const [isInstallingOpenSpec, setIsInstallingOpenSpec] = useState(false);
+  const [openSpecInstallSuccess, setOpenSpecInstallSuccess] = useState(false);
+  const [openSpecInstallError, setOpenSpecInstallError] = useState<string | null>(null);
+
+  const refreshToolsInfo = useCallback(async () => {
+    setIsLoadingTools(true);
+    try {
+      const result = await window.electronAPI.getCliToolsInfo();
+      if (result.success && result.data) {
+        setToolsInfo(result.data);
+      }
+    } catch (error) {
+      console.error('Failed to fetch CLI tools info:', error);
+    } finally {
+      setIsLoadingTools(false);
+    }
+  }, []);
 
   // Fetch CLI tools detection info when component mounts (paths section only)
   useEffect(() => {
     if (section === 'paths') {
-      setIsLoadingTools(true);
-      window.electronAPI
-        .getCliToolsInfo()
-        .then((result: { success: boolean; data?: { python: ToolDetectionResult; git: ToolDetectionResult; gh: ToolDetectionResult; glab: ToolDetectionResult; claude: ToolDetectionResult } }) => {
-          if (result.success && result.data) {
-            setToolsInfo(result.data);
-          }
-        })
-        .catch((error: unknown) => {
-          console.error('Failed to fetch CLI tools info:', error);
-        })
-        .finally(() => {
-          setIsLoadingTools(false);
-        });
+      refreshToolsInfo();
     }
-  }, [section]);
+  }, [refreshToolsInfo, section]);
+
+  const handleInstallOpenSpec = async () => {
+    setIsInstallingOpenSpec(true);
+    setOpenSpecInstallSuccess(false);
+    setOpenSpecInstallError(null);
+
+    try {
+      const result = await window.electronAPI.installOpenSpecCli();
+      if (result.success) {
+        setOpenSpecInstallSuccess(true);
+        window.setTimeout(() => {
+          refreshToolsInfo();
+        }, 5000);
+      } else {
+        setOpenSpecInstallError(result.error || t('general.openSpecInstallError'));
+      }
+    } catch (error) {
+      setOpenSpecInstallError(error instanceof Error ? error.message : t('general.openSpecInstallError'));
+    } finally {
+      setIsInstallingOpenSpec(false);
+    }
+  };
+
+  const openSpecInfo = toolsInfo?.openspec || null;
+  const openSpecInstalled = openSpecInfo?.found === true;
 
   if (section === 'agent') {
     return (
@@ -256,6 +288,90 @@ export function GeneralSettings({ settings, onSettingsChange, section }: General
               t={t}
             />
           )}
+        </div>
+        <div className="space-y-3">
+          <div className="flex max-w-lg items-start justify-between gap-4">
+            <div className="space-y-1">
+              <Label className="text-sm font-medium text-foreground">{t('general.openSpecCli')}</Label>
+              <p className="text-sm text-muted-foreground">{t('general.openSpecCliDescription')}</p>
+            </div>
+            <Button
+              variant="ghost"
+              size="icon"
+              onClick={() => refreshToolsInfo()}
+              disabled={isLoadingTools || isInstallingOpenSpec}
+              title={t('general.refresh')}
+            >
+              <RefreshCw className={`h-4 w-4 ${isLoadingTools ? 'animate-spin' : ''}`} />
+            </Button>
+          </div>
+
+          <div
+            className={`max-w-lg rounded-md border p-3 ${
+              openSpecInstalled
+                ? 'border-success/30 bg-success/10'
+                : 'border-warning/30 bg-warning/10'
+            }`}
+          >
+            <div className="flex items-start gap-3">
+              {isLoadingTools ? (
+                <Loader2 className="mt-0.5 h-4 w-4 animate-spin text-muted-foreground" />
+              ) : openSpecInstalled ? (
+                <Check className="mt-0.5 h-4 w-4 text-success" />
+              ) : (
+                <AlertTriangle className="mt-0.5 h-4 w-4 text-warning" />
+              )}
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium text-foreground">
+                  {openSpecInstalled ? t('general.openSpecInstalled') : t('general.openSpecMissing')}
+                </p>
+                <ToolDetectionDisplay
+                  info={openSpecInfo}
+                  isLoading={isLoadingTools}
+                  t={t}
+                />
+                {openSpecInstallSuccess && (
+                  <p className="mt-2 text-xs text-success">{t('general.openSpecInstallSuccess')}</p>
+                )}
+                {openSpecInstallError && (
+                  <p className="mt-2 text-xs text-destructive">{openSpecInstallError}</p>
+                )}
+              </div>
+            </div>
+
+            {!openSpecInstalled && (
+              <div className="mt-3 flex flex-wrap items-center gap-2">
+                <Button
+                  variant="outline"
+                  size="sm"
+                  onClick={handleInstallOpenSpec}
+                  disabled={isInstallingOpenSpec || isLoadingTools}
+                  className="gap-2"
+                >
+                  {isInstallingOpenSpec ? (
+                    <>
+                      <Loader2 className="h-3 w-3 animate-spin" />
+                      {t('general.openSpecInstalling')}
+                    </>
+                  ) : (
+                    <>
+                      <Download className="h-3 w-3" />
+                      {t('general.openSpecInstall')}
+                    </>
+                  )}
+                </Button>
+                <Button
+                  variant="ghost"
+                  size="sm"
+                  onClick={() => window.electronAPI?.openExternal?.('https://github.com/Fission-AI/OpenSpec#quick-start')}
+                  className="gap-1.5"
+                >
+                  {t('general.openSpecLearnMore')}
+                  <ExternalLink className="h-3 w-3" />
+                </Button>
+              </div>
+            )}
+          </div>
         </div>
         <div className="space-y-3">
           <Label htmlFor="autoBuildPath" className="text-sm font-medium text-foreground">{t('general.autoClaudePath')}</Label>

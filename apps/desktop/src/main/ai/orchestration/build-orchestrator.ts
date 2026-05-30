@@ -217,6 +217,9 @@ export interface SubtaskInfo {
   filesToModify?: string[];
   patternFiles?: string[];
   verification?: string;
+  workPackage?: boolean;
+  upstreamTaskIds?: string[];
+  upstreamSource?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'blocked' | 'stuck';
 }
 

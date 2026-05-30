@@ -9,12 +9,14 @@ import os from 'os';
 import { execFileSync } from 'child_process';
 import {
   getToolInfo,
+  getToolPath,
   getToolPathAsync,
   clearToolCache,
   getClaudeDetectionPaths,
   sortNvmVersionDirs,
   buildClaudeDetectionResult
 } from '../cli-tool-manager';
+import { debugLog } from '../../shared/utils/debug-logger';
 import {
   findWindowsExecutableViaWhere,
   findWindowsExecutableViaWhereAsync,
@@ -159,6 +161,10 @@ vi.mock('../utils/homebrew-python', () => ({
   findHomebrewPython: vi.fn(() => null)
 }));
 
+vi.mock('../../shared/utils/debug-logger', () => ({
+  debugLog: vi.fn(),
+}));
+
 // Mock windows-paths utility
 vi.mock('../utils/windows-paths', () => ({
   findWindowsExecutableViaWhere: vi.fn(() => null),
@@ -184,6 +190,26 @@ describe('cli-tool-manager - Claude CLI NVM detection', () => {
   });
 
   const mockHomeDir = '/mock/home';
+
+  it('keeps repeated cached tool path lookups out of default console output', () => {
+    const consoleDebug = vi.spyOn(console, 'debug').mockImplementation(() => undefined);
+
+    try {
+      vi.mocked(findExecutable).mockReturnValue('/usr/bin/git');
+      vi.mocked(execFileSync).mockReturnValue('git version 2.45.0\n');
+
+      expect(getToolPath('git')).toBe('/usr/bin/git');
+      expect(getToolPath('git')).toBe('/usr/bin/git');
+
+      expect(consoleDebug).not.toHaveBeenCalled();
+      expect(debugLog).toHaveBeenCalledWith(
+        '[CLI Tools] Using cached git: /usr/bin/git (system-path)'
+      );
+    } finally {
+      vi.mocked(findExecutable).mockReturnValue(null);
+      consoleDebug.mockRestore();
+    }
+  });
 
   describe('NVM path detection on Unix/Linux/macOS', () => {
     it('should detect Claude CLI in NVM directory when multiple Node versions exist', () => {

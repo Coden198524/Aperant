@@ -35,7 +35,7 @@ import { TaskFormFields } from './task-form/TaskFormFields';
 import { type FileReferenceData } from './task-form/useImageUpload';
 import { persistUpdateTask } from '../stores/task-store';
 import { useProjectStore } from '../stores/project-store';
-import type { Task, ImageAttachment, TaskCategory, TaskPriority, TaskComplexity, TaskImpact, ModelType, ThinkingLevel, TaskWorkflowMode } from '../../shared/types';
+import type { Task, ImageAttachment, TaskCategory, TaskPriority, TaskComplexity, TaskImpact, ModelType, ThinkingLevel, TaskDevelopmentMode, TaskMetadata, TaskWorkflowMode } from '../../shared/types';
 import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_PHASE_MODELS,
@@ -60,6 +60,22 @@ interface TaskEditDialogProps {
   onOpenChange: (open: boolean) => void;
   /** Optional callback when task is successfully saved */
   onSaved?: () => void;
+}
+
+function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflowMode {
+  return mode === 'fast' ? 'off' : 'balanced';
+}
+
+function resolveTaskDevelopmentMode(metadata: TaskMetadata | undefined): TaskDevelopmentMode {
+  if (metadata?.developmentMode === 'fast' || metadata?.developmentMode === 'standard' || metadata?.developmentMode === 'spec') {
+    return metadata.developmentMode;
+  }
+  if (metadata?.workflowMode === 'off') {
+    return 'fast';
+  }
+  return metadata?.sourceType === 'openspec' || metadata?.upstreamSpecSystem === 'openspec'
+    ? 'spec'
+    : 'standard';
 }
 
 export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDialogProps) {
@@ -133,7 +149,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(
     task.metadata?.requireReviewBeforeCoding ?? false
   );
-  const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>(task.metadata?.workflowMode ?? 'balanced');
+  const [developmentMode, setDevelopmentMode] = useState<TaskDevelopmentMode>(resolveTaskDevelopmentMode(task.metadata));
 
   // Reset form when task changes or dialog opens
   useEffect(() => {
@@ -175,7 +191,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
 
       setImages(task.metadata?.attachedImages || []);
       setRequireReviewBeforeCoding(task.metadata?.requireReviewBeforeCoding ?? false);
-      setWorkflowMode(task.metadata?.workflowMode ?? 'balanced');
+      setDevelopmentMode(resolveTaskDevelopmentMode(task.metadata));
       setError(null);
 
       // Auto-expand classification if it has content
@@ -200,6 +216,13 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     });
   }, []);
 
+  const handleDevelopmentModeChange = useCallback((mode: TaskDevelopmentMode) => {
+    setDevelopmentMode(mode);
+    if (mode === 'fast') {
+      setRequireReviewBeforeCoding(false);
+    }
+  }, []);
+
   const handleSave = async () => {
     // Validate input
     if (!description.trim()) {
@@ -220,7 +243,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
       model !== (task.metadata?.model || '') ||
       thinkingLevel !== (task.metadata?.thinkingLevel || '') ||
       requireReviewBeforeCoding !== (task.metadata?.requireReviewBeforeCoding ?? false) ||
-      workflowMode !== (task.metadata?.workflowMode ?? 'balanced') ||
+      developmentMode !== resolveTaskDevelopmentMode(task.metadata) ||
       JSON.stringify(images) !== JSON.stringify(task.metadata?.attachedImages || []) ||
       JSON.stringify(phaseModels) !== JSON.stringify(task.metadata?.phaseModels || DEFAULT_PHASE_MODELS) ||
       JSON.stringify(phaseThinking) !== JSON.stringify(task.metadata?.phaseThinking || DEFAULT_PHASE_THINKING);
@@ -248,8 +271,14 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     }
     // Always set attachedImages to persist removal when all images are deleted
     metadataUpdates.attachedImages = images.length > 0 ? images : [];
-    metadataUpdates.requireReviewBeforeCoding = requireReviewBeforeCoding;
-    metadataUpdates.workflowMode = workflowMode;
+    metadataUpdates.requireReviewBeforeCoding = developmentMode !== 'fast' && requireReviewBeforeCoding;
+    metadataUpdates.developmentMode = developmentMode;
+    metadataUpdates.workflowMode = workflowModeForDevelopmentMode(developmentMode);
+    metadataUpdates.sourceType = developmentMode === 'spec' ? 'openspec' : 'manual';
+    metadataUpdates.enableBatchExecution = developmentMode === 'fast' ? false : task.metadata?.enableBatchExecution === true;
+    metadataUpdates.openSpecGenerationMode = developmentMode === 'spec' ? 'deferred' : undefined;
+    metadataUpdates.upstreamSpecSystem = developmentMode === 'spec' ? 'openspec' : undefined;
+    metadataUpdates.downstreamExecutionSystem = developmentMode === 'spec' ? 'autocode' : undefined;
 
     const success = await persistUpdateTask(task.id, {
       title: trimmedTitle,
@@ -329,8 +358,8 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
         onImagesChange={setImages}
         requireReviewBeforeCoding={requireReviewBeforeCoding}
         onRequireReviewChange={setRequireReviewBeforeCoding}
-        workflowMode={workflowMode}
-        onWorkflowModeChange={setWorkflowMode}
+        developmentMode={developmentMode}
+        onDevelopmentModeChange={handleDevelopmentModeChange}
         disabled={isSaving}
         error={error}
         onError={setError}

@@ -5,6 +5,7 @@ import { existsSync, readFileSync } from 'fs';
 import { app } from 'electron';
 import {
   AUTOCODE_PROJECT_ENV_FILE_NAME,
+  decodeAutocodeCliOutputChunk,
   getAutocodeProjectEnvPath,
   loadAutocodeImplementationPlanSync,
 } from '@autocode/core';
@@ -831,11 +832,11 @@ export class AgentProcessManager {
     };
 
     childProcess.stdout?.on('data', (data: Buffer) => {
-      stdoutBuffer = processBufferedOutput(stdoutBuffer, data.toString('utf-8'));
+      stdoutBuffer = processBufferedOutput(stdoutBuffer, decodeAutocodeCliOutputChunk(data));
     });
 
     childProcess.stderr?.on('data', (data: Buffer) => {
-      stderrBuffer = processBufferedOutput(stderrBuffer, data.toString('utf-8'));
+      stderrBuffer = processBufferedOutput(stderrBuffer, decodeAutocodeCliOutputChunk(data));
     });
 
     childProcess.on('exit', (code: number | null) => {

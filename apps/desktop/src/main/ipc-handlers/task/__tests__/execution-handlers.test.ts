@@ -307,7 +307,14 @@ describe('registerTaskExecutionHandlers', () => {
         reviewReason: 'plan_review',
         subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'pending', files: [] }],
         logs: [],
-        metadata: {},
+        metadata: {
+          sourceType: 'openspec',
+          openSpecChangeDir: 'openspec/changes/change-001-plan-review',
+          openSpecProposalPath: 'openspec/changes/change-001-plan-review/proposal.md',
+          openSpecDesignPath: 'openspec/changes/change-001-plan-review/design.md',
+          openSpecTasksPath: 'openspec/changes/change-001-plan-review/tasks.md',
+          openSpecSpecDeltaPaths: ['openspec/changes/change-001-plan-review/specs/game/spec.md'],
+        },
       },
       project: {
         id: 'project-fast',
@@ -334,6 +341,11 @@ describe('registerTaskExecutionHandlers', () => {
     expect(fs.writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
       expect.stringContaining('need changes'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('review-feedback.md'),
+      expect.stringContaining('upstream OpenSpec artifacts'),
       'utf-8'
     );
     expect(fs.unlinkSync).not.toHaveBeenCalled();

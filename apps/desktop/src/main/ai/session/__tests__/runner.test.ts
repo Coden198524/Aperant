@@ -586,7 +586,7 @@ describe('runAgentSession', () => {
     expect(callArgs.providerOptions?.openai).toBeUndefined();
   });
 
-  it('should only enable instructions/store for openai responses transport', async () => {
+  it('should use instructions and store=false for openai responses transport', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
     );
@@ -603,11 +603,11 @@ describe('runAgentSession', () => {
     expect(callArgs.system).toBeUndefined();
     expect(callArgs.providerOptions?.openai).toMatchObject({
       instructions: 'Spec prompt',
-      store: true,
+      store: false,
     });
   });
 
-  it('should enable instructions/store for hyphenated openai-responses provider ids', async () => {
+  it('should use instructions and store=false for hyphenated openai-responses provider ids', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
     );
@@ -624,11 +624,11 @@ describe('runAgentSession', () => {
     expect(callArgs.system).toBeUndefined();
     expect(callArgs.providerOptions?.openai).toMatchObject({
       instructions: 'Spec prompt',
-      store: true,
+      store: false,
     });
   });
 
-  it('should enable instructions/store for generic openai provider ids with responses models', async () => {
+  it('should use instructions and store=false for generic openai provider ids with responses models', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult([], { text: '', totalUsage: { inputTokens: 0, outputTokens: 0 } }),
     );
@@ -642,9 +642,10 @@ describe('runAgentSession', () => {
     }));
 
     const callArgs = mockStreamText.mock.calls[0][0];
-    expect(callArgs.system).toBe('Spec prompt');
+    expect(callArgs.system).toBeUndefined();
     expect(callArgs.providerOptions?.openai).toMatchObject({
-      store: true,
+      instructions: 'Spec prompt',
+      store: false,
     });
   });
 
@@ -665,7 +666,7 @@ describe('runAgentSession', () => {
     const callArgs = mockStreamText.mock.calls[0][0];
     expect(callArgs.providerOptions?.openai).toMatchObject({
       instructions: 'Spec prompt',
+      store: false,
     });
-    expect(callArgs.providerOptions?.openai?.store).toBeUndefined();
   });
 });

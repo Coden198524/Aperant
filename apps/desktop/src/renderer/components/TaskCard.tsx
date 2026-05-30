@@ -79,6 +79,18 @@ interface TaskCardProps {
   onToggleSelect?: () => void;
 }
 
+function resolveCardDevelopmentMode(task: Task): 'fast' | 'standard' | 'spec' {
+  if (task.metadata?.developmentMode === 'fast' || task.metadata?.developmentMode === 'standard' || task.metadata?.developmentMode === 'spec') {
+    return task.metadata.developmentMode;
+  }
+  if (task.metadata?.workflowMode === 'off') {
+    return 'fast';
+  }
+  return task.metadata?.sourceType === 'openspec' || task.metadata?.upstreamSpecSystem === 'openspec'
+    ? 'spec'
+    : 'standard';
+}
+
 // Custom comparator for React.memo - only re-render when relevant task data changes
 function taskCardPropsAreEqual(prevProps: TaskCardProps, nextProps: TaskCardProps): boolean {
   const prevTask = prevProps.task;
@@ -177,6 +189,7 @@ export const TaskCard = memo(function TaskCard({
   const hasActiveExecution = executionPhase && executionPhase !== 'idle' && executionPhase !== 'complete' && executionPhase !== 'failed';
   const activeBatchCount = taskView.activeSubtaskCount;
   const hasParallelSubtasks = isRunning && taskView.hasParallelSubtasks;
+  const developmentMode = resolveCardDevelopmentMode(task);
 
   // Check if task is in human_review but has no completed subtasks (crashed/incomplete)
   const isIncomplete = isIncompleteHumanReview(task);
@@ -608,14 +621,20 @@ export const TaskCard = memo(function TaskCard({
                 {reviewReasonInfo.label}
               </Badge>
             )}
-            {/* Workflow Mode badge */}
-            {task.metadata?.workflowMode === 'aggressive' && (
+            {/* Development mode badge */}
+            {developmentMode !== 'standard' && (
               <Badge
                 variant="outline"
                 className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
               >
-                <Zap className="h-2.5 w-2.5" />
-                {t('metadata.workflowMode.aggressive')}
+                {developmentMode === 'fast' ? (
+                  <Zap className="h-2.5 w-2.5" />
+                ) : (
+                  <FileCode className="h-2.5 w-2.5" />
+                )}
+                {t(`metadata.developmentMode.${developmentMode}`, {
+                  defaultValue: developmentMode === 'fast' ? 'Fast' : 'Spec',
+                })}
               </Badge>
             )}
             {/* Category badge with icon */}

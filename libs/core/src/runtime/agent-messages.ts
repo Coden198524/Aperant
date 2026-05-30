@@ -37,6 +37,17 @@ export interface BuildAutocodeRuntimeMessagesInput {
 const DIRECT_TASK_TEXT_LIMIT = 6000;
 const DIRECT_TASK_REFERENCE_LIMIT = 25;
 const DIRECT_TASK_ATTACHMENT_LIMIT = 10;
+const OPENSPEC_ARTIFACT_TEXT_LIMIT = 12000;
+
+interface OpenSpecRuntimeMetadata {
+  sourceType?: string;
+  openSpecChangeId?: string;
+  openSpecChangeDir?: string;
+  openSpecProposalPath?: string;
+  openSpecDesignPath?: string;
+  openSpecTasksPath?: string;
+  openSpecSpecDeltaPaths?: string[];
+}
 
 export function buildAutocodeDefaultSpecPrompt(input: BuildAutocodeSpecPromptInput): string {
   if (input.projectType === 'game-mmo') {
@@ -189,6 +200,8 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('');
   }
 
+  appendOpenSpecUpstreamPlanningContext(parts, input, humanInputContent);
+
   const specPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
   const specContent = readText(specPath);
   if (specContent !== null) {
@@ -210,14 +223,14 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('```');
     parts.push('');
     if (input.forcePlanning) {
-      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated OpenSpec-style Markdown checklist. Do not code in this planning pass.`);
+      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated OpenSpec-style Markdown checklist. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. Do not code in this planning pass.`);
     } else {
-      parts.push(`Resume pending or in-progress subtasks. Leave completed subtasks alone. Mark each finished subtask completed in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
+      parts.push(`Resume pending or in-progress runtime work items. Leave completed work items alone. Mark each finished work item completed in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
     }
   } else {
     parts.push(input.forcePlanning
-      ? `Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, addressing Human Review Input if present. Do not code in this planning pass.`
-      : `No implementation plan exists yet. Start by creating ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and subtasks, then implement each subtask.`);
+      ? `Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items, addressing Human Review Input if present. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. Do not code in this planning pass.`
+      : `No implementation plan exists yet. Start by creating ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items, then implement each item.`);
   }
 
   return [{ role: 'user', content: parts.join('\n') }];
@@ -275,6 +288,90 @@ function readJson<T>(filePath: string): T | null {
   } catch {
     return null;
   }
+}
+
+function appendOpenSpecUpstreamPlanningContext(
+  parts: string[],
+  input: BuildAutocodeRuntimeMessagesInput,
+  humanInputContent: string | null,
+): void {
+  const metadata = readJson<OpenSpecRuntimeMetadata>(join(input.specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata));
+  if (metadata?.sourceType !== 'openspec') {
+    return;
+  }
+
+  const artifacts = collectOpenSpecRuntimeArtifactPaths(metadata);
+  const compactContextPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.openSpecContext);
+  const compactContext = readText(compactContextPath);
+  parts.push('## OpenSpec Upstream');
+  parts.push('');
+  parts.push('OpenSpec is the upstream specification layer. Autocode files are downstream runtime state.');
+  if (metadata.openSpecChangeId) {
+    parts.push(`Change ID: ${metadata.openSpecChangeId}`);
+  }
+  if (metadata.openSpecChangeDir) {
+    parts.push(`Change directory: ${metadata.openSpecChangeDir}`);
+  }
+  parts.push(`Compact context: ${compactContextPath}`);
+  parts.push('');
+
+  if (input.forcePlanning) {
+    parts.push('Request Changes rule:');
+    parts.push('- Apply the reviewer feedback to the relevant OpenSpec upstream Markdown files first: proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md.');
+    parts.push(`- Then regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} from the updated OpenSpec artifacts.`);
+    parts.push(`- Do not make ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} the only changed planning artifact when the feedback changes product behavior, requirements, design, or task scope.`);
+    parts.push('- Do not implement code in this planning pass.');
+    if (humanInputContent) {
+      parts.push('- Treat HUMAN_INPUT.md as required OpenSpec change feedback, not just runtime-plan feedback.');
+    }
+  } else {
+    parts.push(`Use ${AUTOCODE_TASK_ARTIFACTS.openSpecContext} as the compact source context before changing ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
+    parts.push('Open full OpenSpec artifacts only when exact wording is needed.');
+  }
+  parts.push('');
+
+  parts.push('OpenSpec artifact paths:');
+  for (const artifact of artifacts) {
+    parts.push(`- ${artifact.label}: ${artifact.displayPath}`);
+  }
+  parts.push('');
+
+  if (compactContext !== null) {
+    parts.push(`### Compact Context (${AUTOCODE_TASK_ARTIFACTS.openSpecContext})`);
+    parts.push('');
+    parts.push('```markdown');
+    parts.push(limitText(compactContext, OPENSPEC_ARTIFACT_TEXT_LIMIT));
+    parts.push('```');
+    parts.push('');
+  } else {
+    parts.push(`Compact context is missing; read the listed OpenSpec artifacts only as needed and regenerate ${AUTOCODE_TASK_ARTIFACTS.openSpecContext} during planning when possible.`);
+    parts.push('');
+  }
+}
+
+function collectOpenSpecRuntimeArtifactPaths(
+  metadata: OpenSpecRuntimeMetadata,
+): Array<{ label: string; displayPath: string }> {
+  const entries: Array<{ label: string; relativePath?: string }> = [
+    { label: 'proposal.md', relativePath: metadata.openSpecProposalPath },
+    { label: 'design.md', relativePath: metadata.openSpecDesignPath },
+    { label: 'tasks.md', relativePath: metadata.openSpecTasksPath },
+    ...(metadata.openSpecSpecDeltaPaths ?? []).map((relativePath, index) => ({
+      label: index === 0 ? 'spec delta' : `spec delta ${index + 1}`,
+      relativePath,
+    })),
+  ];
+
+  return entries
+    .filter((entry): entry is { label: string; relativePath: string } => Boolean(entry.relativePath?.trim()))
+    .map((entry) => ({
+      label: entry.label,
+      displayPath: entry.relativePath,
+    }));
+}
+
+function limitText(value: string, maxLength: number): string {
+  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
 }
 
 function appendProjectDocsReference(parts: string[], projectRoot: string, dataDirName?: string): void {

@@ -2,12 +2,15 @@
 import {
   AUTOCODE_PROJECT_DATA_DIR_NAME,
   AUTOCODE_TASK_ARTIFACTS,
+  buildAutocodeTaskModeMetadata,
   createAutocodeProjectDocumentationTask,
   createManualAutocodeTask,
+  createManualAutocodeTaskWithDeferredOpenSpecArtifacts,
   getAutocodeRoadmapFilePath,
   getAutocodeSpecDir,
   isAutocodeProjectDocType,
   loadAutocodeTaskRequirementsSync,
+  resolveAutocodeTaskDevelopmentMode,
   saveAutocodeTaskRequirementsSync,
   type AutocodeTask,
   type AutocodeProjectDocType,
@@ -15,6 +18,7 @@ import {
   type AutocodeTaskRequirements,
 } from '@autocode/core';
 import { IPC_CHANNELS, getSpecsDir, VALID_THINKING_LEVELS, sanitizeThinkingLevel } from '../../../shared/constants';
+import { resolveSupportedLanguage } from '../../../shared/constants/i18n';
 import type { IPCResult, Task, TaskMetadata, TaskOutcome } from '../../../shared/types';
 import path from 'path';
 import { execFileSync } from 'child_process';
@@ -33,6 +37,7 @@ import { getIsolatedGitEnv } from '../../utils/git-isolation';
 import { taskStateManager } from '../../task-state-manager';
 import { safeBreadcrumb } from '../../sentry';
 import { updatePlanFile } from './plan-file-utils';
+import { readSettingsFile } from '../../settings-utils';
 
 const TITLE_GENERATION_TIMEOUT_MS = 5000;
 const UNTITLED_TASK_FALLBACK = 'Untitled task';
@@ -121,6 +126,16 @@ function buildTaskRequirementsExtras(metadata: TaskMetadata): AutocodeTaskRequir
   return attachedImages && attachedImages.length > 0
     ? { attached_images: attachedImages }
     : {};
+}
+
+function resolveTaskLanguage(metadata?: TaskMetadata): string | undefined {
+  if (typeof metadata?.language === 'string' && metadata.language.trim()) {
+    return resolveSupportedLanguage(metadata.language);
+  }
+  const language = readSettingsFile()?.language;
+  return typeof language === 'string' && language.trim()
+    ? resolveSupportedLanguage(language)
+    : undefined;
 }
 
 function toDesktopTask(coreTask: AutocodeTask, projectId: string): Task {
@@ -307,35 +322,45 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         finalTitle = await generateTitleWithFallback(description, 'TASK_CREATE');
       }
 
-      // Build metadata with source type
-      const taskMetadata: TaskMetadata = {
-        sourceType: 'manual',
+      const requestedMode = resolveAutocodeTaskDevelopmentMode(metadata as AutocodeTaskMetadata | undefined);
+      const taskMetadata = buildAutocodeTaskModeMetadata(requestedMode, {
         ...metadata,
-        enableBatchExecution: metadata?.enableBatchExecution === true
-      };
+        language: resolveTaskLanguage(metadata),
+        enableBatchExecution: requestedMode === 'fast' ? false : metadata?.enableBatchExecution === true,
+      } as AutocodeTaskMetadata) as TaskMetadata;
 
-      const coreTask = createManualAutocodeTask({
-        projectRoot: project.path,
-        dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
-        title: finalTitle,
-        description,
-        metadata: taskMetadata as AutocodeTaskMetadata,
-        prepareSpecArtifacts: ({ specDir, metadata: coreMetadata, specId }) => {
-          const preparedMetadata = coreMetadata as TaskMetadata;
-          sanitizeThinkingLevels(preparedMetadata);
-          const metadataWithAttachments = persistTaskAttachments(specDir, preparedMetadata, 'TASK_CREATE');
-          console.warn(`[TASK_CREATE] [Workflow Mode] ${metadataWithAttachments.workflowMode || 'balanced'} written to task_metadata.json for spec ${specId}`);
-          return {
-            metadata: metadataWithAttachments as AutocodeTaskMetadata,
-            requirements: buildTaskRequirementsExtras(metadataWithAttachments),
-          };
-        },
-      });
-      const task = toDesktopTask(coreTask, projectId);
-      // Invalidate cache since a new task was created
-      projectStore.invalidateTasksCache(projectId);
+      try {
+        const createCoreTask = requestedMode === 'spec'
+          ? createManualAutocodeTaskWithDeferredOpenSpecArtifacts
+          : createManualAutocodeTask;
+        const coreTask = createCoreTask({
+          projectRoot: project.path,
+          dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
+          title: finalTitle,
+          description,
+          metadata: taskMetadata as AutocodeTaskMetadata,
+          prepareSpecArtifacts: ({ specDir, metadata: coreMetadata, specId }) => {
+            const preparedMetadata = coreMetadata as TaskMetadata;
+            sanitizeThinkingLevels(preparedMetadata);
+            const metadataWithAttachments = persistTaskAttachments(specDir, preparedMetadata, 'TASK_CREATE');
+            console.warn(`[TASK_CREATE] [Workflow Mode] ${metadataWithAttachments.workflowMode || 'balanced'} written to task_metadata.json for spec ${specId}`);
+            return {
+              metadata: metadataWithAttachments as AutocodeTaskMetadata,
+              requirements: buildTaskRequirementsExtras(metadataWithAttachments),
+            };
+          },
+        });
+        const task = toDesktopTask(coreTask, projectId);
+        // Invalidate cache since a new task was created
+        projectStore.invalidateTasksCache(projectId);
 
-      return { success: true, data: task };
+        return { success: true, data: task };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to create task',
+        };
+      }
     }
   );
 

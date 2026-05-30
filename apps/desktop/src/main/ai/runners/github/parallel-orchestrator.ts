@@ -313,16 +313,15 @@ Return valid JSON only; no markdown fence:
 /**
  * Build provider-agnostic options for generateText().
  *
- * Codex models require system prompt via providerOptions.openai.instructions
- * instead of the `system` parameter. Responses API models also need
- * `store: true` so multi-step tool continuations can reference prior items.
+ * Responses API models require system prompt via providerOptions.openai.instructions
+ * instead of the `system` parameter. They also need
+ * `store: false` for subscription-backed Responses models.
  * Other providers use the standard `system` parameter.
  */
 function buildGenerateTextOptions(
   client: SimpleClientResult,
 ): { system: string | undefined; providerOptions?: Record<string, Record<string, string | number | boolean | null>> } {
   const modelId = client.resolvedModelId;
-  const isCodex = modelId?.includes('codex') ?? false;
   const isResponsesModel = Boolean(
     modelId &&
       (
@@ -342,13 +341,13 @@ function buildGenerateTextOptions(
 
   if (isResponsesModel) {
     return {
-      system: isCodex ? undefined : client.systemPrompt,
+      system: undefined,
       providerOptions: {
         ...(thinkingOptions ?? {}),
         openai: {
           ...(thinkingOptions?.openai as Record<string, string | number | boolean | null> ?? {}),
-          ...(isCodex && client.systemPrompt ? { instructions: client.systemPrompt } : {}),
-          store: true,
+          ...(client.systemPrompt ? { instructions: client.systemPrompt } : {}),
+          store: false,
         },
       },
     };

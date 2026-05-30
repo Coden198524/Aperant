@@ -21,6 +21,7 @@ import { createProvider } from '../providers/factory';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenAICompatibleEndpointFetch } from '../providers/openai-base-url';
 import {
+  AUTOCODE_TASK_ARTIFACTS,
   AUTOCODE_PROJECT_INDEX_FILE_NAME,
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
   isOfficialOpenAIBaseUrl,
@@ -578,13 +579,16 @@ function readPlanReviewFeedback(session: SerializableSessionConfig): string | nu
 function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig): string {
   const promptSpecDir = formatPathForPrompt(session.specDir);
   const feedback = readPlanReviewFeedback(session);
+  const openSpecDirective = buildOpenSpecPlanReviewDirective(session, promptSpecDir);
   const lines = [
     '## PLAN REVIEW REGENERATION',
     'This run was started from Request Changes in plan review.',
     `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
-    `Rewrite ${promptSpecDir}/implementation_plan.md to address that feedback.`,
+    openSpecDirective || `Rewrite ${promptSpecDir}/implementation_plan.md to address that feedback.`,
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
-    'Preserve useful parts of the previous plan only when they still match the reviewer feedback; otherwise replace them.',
+    openSpecDirective
+      ? 'Preserve useful parts of the previous OpenSpec artifacts and plan only when they still match the reviewer feedback; otherwise replace them.'
+      : 'Preserve useful parts of the previous plan only when they still match the reviewer feedback; otherwise replace them.',
   ];
 
   if (feedback) {
@@ -592,6 +596,52 @@ function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig
   }
 
   return lines.join('\n');
+}
+
+function buildOpenSpecPlanReviewDirective(
+  session: SerializableSessionConfig,
+  promptSpecDir: string,
+): string {
+  const metadata = readTaskMetadata(session.specDir);
+  if (metadata?.sourceType !== 'openspec') {
+    return '';
+  }
+
+  const artifactLines = [
+    metadata.openSpecProposalPath ? `- proposal.md: ${metadata.openSpecProposalPath}` : '',
+    metadata.openSpecDesignPath ? `- design.md: ${metadata.openSpecDesignPath}` : '',
+    metadata.openSpecTasksPath ? `- tasks.md: ${metadata.openSpecTasksPath}` : '',
+    ...((Array.isArray(metadata.openSpecSpecDeltaPaths) ? metadata.openSpecSpecDeltaPaths : [])
+      .map((artifactPath, index) => `- spec delta ${index + 1}: ${artifactPath}`)),
+  ].filter(Boolean);
+
+  return [
+    'OpenSpec is the upstream specification layer for this task.',
+    'First update the relevant OpenSpec Markdown artifacts to reflect the reviewer feedback.',
+    ...(metadata.openSpecChangeId ? [`OpenSpec change ID: ${metadata.openSpecChangeId}`] : []),
+    ...(metadata.openSpecChangeDir ? [`OpenSpec change directory: ${metadata.openSpecChangeDir}`] : []),
+    ...(artifactLines.length > 0 ? ['OpenSpec artifacts:', ...artifactLines] : []),
+    `After updating OpenSpec artifacts, regenerate ${promptSpecDir}/implementation_plan.md from the updated tasks.md and spec deltas.`,
+    `Do not make ${promptSpecDir}/implementation_plan.md the only changed planning artifact when the feedback changes requirements, design, user behavior, or task scope.`,
+  ].join('\n');
+}
+
+function readTaskMetadata(specDir: string): {
+  sourceType?: string;
+  openSpecChangeId?: string;
+  openSpecChangeDir?: string;
+  openSpecProposalPath?: string;
+  openSpecDesignPath?: string;
+  openSpecTasksPath?: string;
+  openSpecSpecDeltaPaths?: unknown;
+} | null {
+  try {
+    const content = readFileSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata), 'utf-8');
+    const parsed = JSON.parse(content);
+    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
+  } catch {
+    return null;
+  }
 }
 
 function countPlanSubtasks(plan: ShardableImplementationPlan | null): number {
@@ -755,7 +805,7 @@ async function assemblePrompt(
       '',
       '## AGGRESSIVE WORKFLOW CODING LIMITS',
       'This task is running in aggressive mode. Keep coding to one compact implementation session.',
-      '- Use the kickoff subtask details as primary context; do not start by reading spec.md or implementation_plan.md when Current Subtask is present.',
+      '- Use the kickoff work item details as primary context; do not start by reading spec.md or implementation_plan.md when Current Work Item or Current Work Package is present.',
       '- Avoid broad repository discovery. Read only files required for the implementation.',
       '- On Windows project roots such as E:\\path, use that path directly in commands; do not rewrite it as /e/path.',
       '- Prefer one target write/edit pass, one targeted verification, then completion.',
@@ -2233,7 +2283,9 @@ function buildKickoffMessage(
       kickoffMessage += [
         '',
         '## PLAN REVIEW REGENERATION',
-        `Read ${promptSpecDir}/HUMAN_INPUT.md and rewrite ${promptSpecDir}/implementation_plan.md to address the reviewer feedback.`,
+        `Read ${promptSpecDir}/HUMAN_INPUT.md and address the reviewer feedback.`,
+        `If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first, then regenerate ${promptSpecDir}/implementation_plan.md from those upstream artifacts.`,
+        `If this task is not backed by OpenSpec, rewrite ${promptSpecDir}/implementation_plan.md directly.`,
         'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
       ].join('\n');
     }

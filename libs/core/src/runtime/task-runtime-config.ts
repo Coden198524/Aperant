@@ -7,7 +7,7 @@ import {
 } from '../config/types.js';
 import type { SupportedProvider } from '../providers/types.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
-import type { AutocodeTaskWorkflowMode } from '../tasks/spec-store.js';
+import type { AutocodeTaskDevelopmentMode, AutocodeTaskWorkflowMode } from '../tasks/spec-store.js';
 
 export type AutocodeRuntimePhase = Phase;
 
@@ -17,6 +17,7 @@ export interface AutocodeTaskRuntimeMetadataConfig {
   phaseProviders?: Partial<Record<AutocodeRuntimePhase, string>>;
   model?: string;
   provider?: string;
+  developmentMode?: AutocodeTaskDevelopmentMode | string;
   workflowMode?: AutocodeTaskWorkflowMode | string;
   enableBatchExecution?: boolean;
 }

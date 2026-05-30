@@ -250,9 +250,8 @@ async function runDiscoveryPhase(
 
   const errors: string[] = [];
 
-  // Detect Codex models — they require instructions via providerOptions, not system
+  // Responses models require instructions via providerOptions, not system.
   const discoveryModelId = typeof client.model === 'string' ? client.model : client.model.modelId;
-  const isCodexDiscovery = discoveryModelId?.includes('codex') ?? false;
   const isResponsesDiscovery = isResponsesApiModel(discoveryModelId);
 
   // Load the full prompt file with JSON schema; fall back to inline prompt
@@ -294,7 +293,7 @@ The JSON must contain at minimum: project_name, target_audience, product_vision,
     try {
       const result = streamText({
         model: client.model,
-        system: isCodexDiscovery ? undefined : prompt,
+        system: isResponsesDiscovery ? undefined : prompt,
         prompt: discoveryUserPrompt,
         tools: client.tools,
         stopWhen: stepCountIs(client.maxSteps),
@@ -302,8 +301,8 @@ The JSON must contain at minimum: project_name, target_audience, product_vision,
         ...(isResponsesDiscovery ? {
           providerOptions: {
             openai: {
-              ...(isCodexDiscovery ? { instructions: prompt } : {}),
-              store: true,
+              instructions: prompt,
+              store: false,
             },
           },
         } : {}),
@@ -421,9 +420,8 @@ async function runFeaturesPhase(
 
   const errors: string[] = [];
 
-  // Detect Codex models — they require instructions via providerOptions, not system
+  // Responses models require instructions via providerOptions, not system.
   const featuresModelId = typeof client.model === 'string' ? client.model : client.model.modelId;
-  const isCodexFeatures = featuresModelId?.includes('codex') ?? false;
   const isResponsesFeatures = isResponsesApiModel(featuresModelId);
 
   // Load the full prompt file with JSON schema; fall back to inline prompt
@@ -469,7 +467,7 @@ The JSON must contain: vision, target_audience (object with "primary" key), phas
     try {
       const result = streamText({
         model: client.model,
-        system: isCodexFeatures ? undefined : prompt,
+        system: isResponsesFeatures ? undefined : prompt,
         prompt: featuresUserPrompt,
         tools: client.tools,
         stopWhen: stepCountIs(client.maxSteps),
@@ -477,8 +475,8 @@ The JSON must contain: vision, target_audience (object with "primary" key), phas
         ...(isResponsesFeatures ? {
           providerOptions: {
             openai: {
-              ...(isCodexFeatures ? { instructions: prompt } : {}),
-              store: true,
+              instructions: prompt,
+              store: false,
             },
           },
         } : {}),
