@@ -20,9 +20,21 @@ import { Button } from '../ui/button';
 interface TaskRuntimeLogsProps {
   task: Task;
   className?: string;
+  modelLogs?: TaskLogsData | null;
+  scope?: TaskRuntimeLogScope;
+  compact?: boolean;
+  title?: string;
 }
 
 type ModelOutputEntryType = 'text' | 'tool_start' | 'tool_end' | 'error';
+
+export type TaskRuntimeLogScope =
+  | { type: 'global' }
+  | { type: 'work-item'; workItemId: string };
+
+interface UseTaskModelLogsOptions {
+  enabled?: boolean;
+}
 
 interface RuntimeModelInfo {
   provider?: string;
@@ -59,6 +71,70 @@ const TYPEWRITER_TICK_MS = 18;
 const INITIAL_RENDERED_MODEL_ENTRIES = 250;
 const LOG_RENDER_BATCH_SIZE = 250;
 const LOAD_MORE_SCROLL_THRESHOLD = 96;
+const GLOBAL_LOG_SCOPE: TaskRuntimeLogScope = { type: 'global' };
+
+function isConcurrentRuntimeTask(task: Task): boolean {
+  const concurrency = task.metadata?.runtimeConcurrency;
+  return concurrency?.mode === 'concurrent' && (concurrency.workers ?? 1) > 1;
+}
+
+export function isWorkPackageSubtask(subtask: Task['subtasks'][number]): boolean {
+  const workItem = subtask as Task['subtasks'][number] & { workPackage?: boolean };
+  return workItem.workPackage === true || /^wp-\d+$/i.test(subtask.id);
+}
+
+function getConcurrentWorkPackageIds(task: Task): Set<string> {
+  if (!isConcurrentRuntimeTask(task)) {
+    return new Set();
+  }
+
+  return new Set(
+    task.subtasks
+      .filter(isWorkPackageSubtask)
+      .map(subtask => subtask.id)
+      .filter(Boolean)
+  );
+}
+
+export function shouldSplitConcurrentWorkPackageLogs(task: Task): boolean {
+  return getConcurrentWorkPackageIds(task).size > 0;
+}
+
+function shouldIncludeModelEntryInScope(
+  entry: TaskLogEntry,
+  task: Task,
+  scope: TaskRuntimeLogScope,
+): boolean {
+  if (scope.type === 'work-item') {
+    return entry.subtask_id === scope.workItemId;
+  }
+
+  const splitWorkPackageIds = getConcurrentWorkPackageIds(task);
+  if (splitWorkPackageIds.size === 0) {
+    return true;
+  }
+
+  return !entry.subtask_id || !splitWorkPackageIds.has(entry.subtask_id);
+}
+
+export function countTaskRuntimeLogEntriesForScope(
+  logs: TaskLogsData | null,
+  task: Task,
+  scope: TaskRuntimeLogScope,
+): number {
+  if (!logs) {
+    return 0;
+  }
+
+  return [
+    ...logs.phases.planning.entries,
+    ...logs.phases.coding.entries,
+    ...logs.phases.validation.entries,
+  ].filter(entry =>
+    MODEL_OUTPUT_ENTRY_TYPES.has(entry.type as ModelOutputEntryType) &&
+    shouldIncludeModelEntryInScope(entry, task, scope)
+  ).length;
+}
 
 const modelMarkdownComponents: Components = {
   p: ({ children }) => (
@@ -682,9 +758,64 @@ function useTypewriterText(content: string, enabled: boolean): string {
   return enabled ? content.slice(0, visibleLength) : content;
 }
 
-export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
-  const { t } = useTranslation(['tasks']);
+export function useTaskModelLogs(
+  task: Task,
+  options: UseTaskModelLogsOptions = {},
+): { modelLogs: TaskLogsData | null } {
+  const enabled = options.enabled ?? true;
   const [modelLogs, setModelLogs] = useState<TaskLogsData | null>(null);
+
+  useEffect(() => {
+    if (!enabled) {
+      return undefined;
+    }
+
+    let cancelled = false;
+    setModelLogs(null);
+
+    const loadModelLogs = async () => {
+      const result = await window.electronAPI.getTaskLogs(task.projectId, task.specId);
+      if (!cancelled && result.success) {
+        setModelLogs(currentLogs => mergeFullLogsWithoutRegressingStream(currentLogs, result.data ?? null));
+      }
+    };
+
+    void loadModelLogs();
+    void window.electronAPI.watchTaskLogs(task.projectId, task.specId);
+
+    const unsubscribe = window.electronAPI.onTaskLogsChanged((specId, logs) => {
+      if (specId === task.specId) {
+        setModelLogs(currentLogs => mergeFullLogsWithoutRegressingStream(currentLogs, logs));
+      }
+    });
+    const unsubscribeStream = window.electronAPI.onTaskLogsStream((specId, chunk) => {
+      if (specId === task.specId) {
+        setModelLogs(currentLogs => mergeModelTextChunk(currentLogs, task.specId, chunk));
+      }
+    });
+
+    return () => {
+      cancelled = true;
+      unsubscribe();
+      unsubscribeStream();
+      void window.electronAPI.unwatchTaskLogs(task.specId);
+    };
+  }, [enabled, task.projectId, task.specId]);
+
+  return { modelLogs };
+}
+
+export function TaskRuntimeLogs({
+  task,
+  className,
+  modelLogs: providedModelLogs,
+  scope = GLOBAL_LOG_SCOPE,
+  compact = false,
+  title,
+}: TaskRuntimeLogsProps) {
+  const { t } = useTranslation(['tasks']);
+  const { modelLogs: internalModelLogs } = useTaskModelLogs(task, { enabled: providedModelLogs === undefined });
+  const modelLogs = providedModelLogs === undefined ? internalModelLogs : providedModelLogs;
   const [showJumpToLatest, setShowJumpToLatest] = useState(false);
   const modelScrollRef = useRef<HTMLDivElement | null>(null);
   const modelEndRef = useRef<HTMLDivElement | null>(null);
@@ -693,6 +824,7 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
     state.tasks.find(item => item.id === task.id || item.specId === task.specId)
   );
   const runtimeSourceTask = liveTask ?? task;
+  const scopeKey = scope.type === 'work-item' ? `work-item:${scope.workItemId}` : 'global';
   const fullModelOutputEntries = useMemo(() => {
     if (!modelLogs) return [];
 
@@ -702,9 +834,10 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
       ...modelLogs.phases.validation.entries,
     ]
       .filter(entry => MODEL_OUTPUT_ENTRY_TYPES.has(entry.type as ModelOutputEntryType))
+      .filter(entry => shouldIncludeModelEntryInScope(entry, runtimeSourceTask, scope))
       .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime());
     return mergeToolLifecycleEntries(buildDisplayLogEntries(entries));
-  }, [modelLogs]);
+  }, [modelLogs, runtimeSourceTask, scope, scopeKey]);
   const [visibleModelCount, setVisibleModelCount] = useState(INITIAL_RENDERED_MODEL_ENTRIES);
   const modelOutputEntries = useMemo(() => {
     return fullModelOutputEntries.slice(-visibleModelCount);
@@ -715,12 +848,22 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
   const activeModelPhase = getActiveModelPhase(modelLogs, runtimeSourceTask);
   const runtimeModelInfo = getRuntimeModelInfo(modelOutputEntries, runtimeSourceTask, activeModelPhase);
   const runtimeModelLabel = formatModelInfo(runtimeModelInfo);
-  const isTaskModelActive = runtimeSourceTask.status === 'in_progress' || runtimeSourceTask.status === 'ai_review';
+  const scopedSubtask = scope.type === 'work-item'
+    ? runtimeSourceTask.subtasks.find(subtask => subtask.id === scope.workItemId)
+    : null;
+  const isScopedModelActive = scope.type === 'work-item'
+    ? scopedSubtask?.status === 'in_progress' || runtimeSourceTask.executionProgress?.currentSubtask === scope.workItemId
+    : true;
+  const isTaskModelActive = (
+    runtimeSourceTask.status === 'in_progress' ||
+    runtimeSourceTask.status === 'ai_review'
+  ) && isScopedModelActive;
   const isModelActive = isTaskModelActive;
   const isModelStreaming = isModelActive;
   const modelActivityCopy = getModelActivityCopy(activeModelPhase, t);
   const latestModelEntry = modelOutputEntries[modelOutputEntries.length - 1];
   const latestModelContent = latestModelEntry?.content;
+  const resolvedTitle = title ?? t('tasks:logs.modelOutputLabel', { defaultValue: 'Model output' });
 
   const scrollModelToLatest = useCallback((behavior: ScrollBehavior = 'smooth') => {
     const container = modelScrollRef.current;
@@ -755,42 +898,9 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
 
   useEffect(() => {
     setVisibleModelCount(count => Math.max(count, INITIAL_RENDERED_MODEL_ENTRIES));
-  }, [task.id, task.specId]);
-
-  useEffect(() => {
-    let cancelled = false;
-    setModelLogs(null);
     isModelPinnedToBottomRef.current = true;
     setShowJumpToLatest(false);
-
-    const loadModelLogs = async () => {
-      const result = await window.electronAPI.getTaskLogs(task.projectId, task.specId);
-      if (!cancelled && result.success) {
-        setModelLogs(currentLogs => mergeFullLogsWithoutRegressingStream(currentLogs, result.data ?? null));
-      }
-    };
-
-    void loadModelLogs();
-    void window.electronAPI.watchTaskLogs(task.projectId, task.specId);
-
-    const unsubscribe = window.electronAPI.onTaskLogsChanged((specId, logs) => {
-      if (specId === task.specId) {
-        setModelLogs(currentLogs => mergeFullLogsWithoutRegressingStream(currentLogs, logs));
-      }
-    });
-    const unsubscribeStream = window.electronAPI.onTaskLogsStream((specId, chunk) => {
-      if (specId === task.specId) {
-        setModelLogs(currentLogs => mergeModelTextChunk(currentLogs, task.specId, chunk));
-      }
-    });
-
-    return () => {
-      cancelled = true;
-      unsubscribe();
-      unsubscribeStream();
-      void window.electronAPI.unwatchTaskLogs(task.specId);
-    };
-  }, [task.projectId, task.specId]);
+  }, [task.id, task.specId, scopeKey]);
 
   useEffect(() => {
     if (!isModelPinnedToBottomRef.current) {
@@ -819,14 +929,22 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
 
   return (
     <section
-      className={cn('flex h-full min-h-0 flex-col border-l border-border bg-muted/10', className)}
+      className={cn(
+        compact
+          ? 'flex h-72 min-h-[16rem] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-muted/10'
+          : 'flex h-full min-h-0 flex-col border-l border-border bg-muted/10',
+        className
+      )}
       data-testid="task-runtime-logs"
     >
-      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+      <div className={cn(
+        'flex shrink-0 items-center justify-between gap-3 border-b border-border',
+        compact ? 'px-3 py-2' : 'px-4 py-3'
+      )}>
         <div className="flex min-w-0 items-center gap-2">
-          <Bot className="h-4 w-4 shrink-0 text-muted-foreground" />
-          <span className="truncate text-sm font-medium text-foreground">
-            {t('tasks:logs.modelOutputLabel', { defaultValue: 'Model output' })}
+          <Bot className={cn('shrink-0 text-muted-foreground', compact ? 'h-3.5 w-3.5' : 'h-4 w-4')} />
+          <span className={cn('truncate font-medium text-foreground', compact ? 'text-xs' : 'text-sm')}>
+            {resolvedTitle}
             {runtimeModelLabel && (
               <span className="ml-2 text-xs font-normal text-muted-foreground">
                 {runtimeModelLabel}
@@ -857,11 +975,14 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
         <div className="relative min-h-0 flex-1 bg-[#080B10]">
           <div
             ref={modelScrollRef}
-            className="h-full overflow-y-auto p-4 scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent"
+            className={cn(
+              'h-full overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent',
+              compact ? 'p-3' : 'p-4'
+            )}
             onScroll={handleModelScroll}
             data-testid="model-output-scroll"
           >
-            <div className="space-y-3">
+            <div className={compact ? 'space-y-2.5' : 'space-y-3'}>
               {hasMoreModelOutput && (
                 <LogHistoryLoadingHint label={t('tasks:logs.scrollForOlder', { defaultValue: 'Scroll up to load older output' })} />
               )}
@@ -894,7 +1015,8 @@ export function TaskRuntimeLogs({ task, className }: TaskRuntimeLogsProps) {
       ) : (
         <div
           className={cn(
-            'flex min-h-0 flex-1 items-center justify-center p-6 text-center text-sm text-muted-foreground',
+            'flex min-h-0 flex-1 items-center justify-center text-center text-sm text-muted-foreground',
+            compact ? 'p-4' : 'p-6',
             isModelActive && 'bg-[#080B10]'
           )}
         >

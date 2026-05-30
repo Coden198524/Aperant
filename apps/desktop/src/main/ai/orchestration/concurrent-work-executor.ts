@@ -13,6 +13,14 @@ import type {
 } from './work-executor-types';
 import type { SessionResult } from '../session/types';
 import {
+  analyzeAutocodeWorkDependencies,
+  buildAutocodeWorkDependencyStatusMap,
+  describeAutocodeWorkDependencyBlocker,
+  describeAutocodeWorkDependencyBlockers,
+  normalizeAutocodeWorkDependencyIds,
+  type AutocodeWorkDependencyBlockedItem,
+} from '@autocode/core';
+import {
   detectFileConflicts,
   groupConflictingWorkItems,
 } from './conflict-detector';
@@ -26,7 +34,7 @@ import { iterateSubtasks } from './subtask-iterator';
 import type { SubtaskIteratorConfig } from './subtask-iterator';
 import {
   loadImplementationPlanFromFiles,
-  saveImplementationPlanToFiles,
+  updateImplementationPlanInFiles,
 } from '../schema/plan-shards';
 
 const MAX_RATE_LIMIT_WAIT_MS = 30 * 60 * 1000;
@@ -50,6 +58,8 @@ export interface ConcurrentWorkExecutorConfig {
 interface ImplementationPlan {
   feature?: string;
   workflow_type?: string;
+  executionPhase?: string;
+  updated_at?: string;
   phases: PlanPhase[];
 }
 
@@ -67,9 +77,13 @@ interface PlanSubtask {
   status: string;
   notes?: string;
   completion_summary?: string;
+  completed_at?: string;
+  started_at?: string;
+  updated_at?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
   pattern_files?: string[];
+  depends_on?: unknown;
   verification?: unknown;
   work_package?: boolean;
   upstream_task_ids?: unknown;
@@ -101,7 +115,7 @@ export async function executeConcurrentWorkItems(
       };
     }
 
-    await planWriter(() => resetRoundInProgressWorkItems(config.specDir, plan, log));
+    await planWriter(() => resetRoundInProgressWorkItems(config, log));
 
     const pendingItems = getPendingWorkItems(plan);
     if (pendingItems.length === 0) {
@@ -109,7 +123,22 @@ export async function executeConcurrentWorkItems(
       break;
     }
 
-    const { independent, sequential } = detectFileConflicts(pendingItems);
+    const statusById = getWorkItemStatusMap(plan);
+    const dependencyAnalysis = analyzeAutocodeWorkDependencies(pendingItems, { statusById });
+    const runnableItems = dependencyAnalysis.runnable;
+    if (runnableItems.length === 0) {
+      const blockedSummary = describeAutocodeWorkDependencyBlockers(dependencyAnalysis.blocked, statusById);
+      await planWriter(() => markDependencyBlockedWorkItems(config, dependencyAnalysis.blocked, statusById));
+      log(`[ConcurrentWorkExecutor] No runnable work items because dependencies are unresolved: ${blockedSummary}`);
+      return {
+        success: false,
+        totalCompleted,
+        totalFailed: pendingItems.length,
+        error: `No runnable work items because dependencies are unresolved: ${blockedSummary}`,
+      };
+    }
+
+    const { independent, sequential } = detectFileConflicts(runnableItems);
     const independentItems = independent.flat();
     const conflictGroups = groupConflictingWorkItems(sequential);
     log(
@@ -139,6 +168,15 @@ export async function executeConcurrentWorkItems(
         : await executeConcurrentGroup(group.items, workers, config, planWriter);
 
       config.onGroupComplete?.(group.items, result);
+
+      if (config.abortSignal?.aborted || result.sessionResult.outcome === 'cancelled') {
+        return {
+          success: false,
+          totalCompleted: totalCompleted + roundCompleted + result.completed.length,
+          cancelled: true,
+        };
+      }
+
       roundCompleted += result.completed.length;
       roundFailed += result.failed.length;
 
@@ -183,12 +221,19 @@ async function executeConcurrentGroup(
   config: ConcurrentWorkExecutorConfig,
   planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
 ): Promise<WorkItemResult> {
-  await planWriter(() => markWorkItemsInProgress(config.specDir, items.map((item) => item.id)));
-
+  let cancelled = false;
   const results = await runWithConcurrency(
     items,
     workers,
-    async (item) => executeWorkItemWithRetries(item, config, planWriter),
+    async (item) => {
+      await planWriter(() => markWorkItemsInProgress(config, [item.id]));
+      const result = await executeWorkItemIsolated(item, config, planWriter);
+      if (result.sessionResult.outcome === 'cancelled') {
+        cancelled = true;
+      }
+      return result;
+    },
+    () => !config.abortSignal?.aborted && !cancelled,
   );
 
   return summarizeWorkItemResults(results);
@@ -209,10 +254,42 @@ async function executeSerialGroup(
         sessionResult: { outcome: 'cancelled' } as SessionResult,
       };
     }
-    await planWriter(() => markWorkItemsInProgress(config.specDir, [item.id]));
-    results.push(await executeWorkItemWithRetries(item, config, planWriter));
+    await planWriter(() => markWorkItemsInProgress(config, [item.id]));
+    results.push(await executeWorkItemIsolated(item, config, planWriter));
   }
   return summarizeWorkItemResults(results);
+}
+
+async function executeWorkItemIsolated(
+  item: WorkItemInfo,
+  config: ConcurrentWorkExecutorConfig,
+  planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+): Promise<WorkItemResult> {
+  try {
+    return await executeWorkItemWithRetries(item, config, planWriter);
+  } catch (error) {
+    const sessionResult = createErrorSessionResult(error, Date.now());
+    config.onLog?.(
+      `[ConcurrentWorkExecutor] Work item ${item.id} failed outside session: ${sessionResult.error?.message ?? sessionResult.outcome}`,
+    );
+
+    try {
+      await planWriter(() => updateWorkItemStatuses(config, [
+        { id: item.id, summary: summarizeFailureResult(sessionResult) },
+      ], 'failed'));
+    } catch (statusError) {
+      config.onLog?.(
+        `[ConcurrentWorkExecutor] Failed to persist failure for ${item.id}: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
+      );
+    }
+
+    return {
+      completed: [],
+      failed: [item.id],
+      blocked: [],
+      sessionResult,
+    };
+  }
 }
 
 async function executeWorkItemWithRetries(
@@ -224,6 +301,15 @@ async function executeWorkItemWithRetries(
   let lastResult: SessionResult = { outcome: 'error' } as SessionResult;
 
   for (let attempt = 0; attempt <= config.maxRetries; attempt++) {
+    if (config.abortSignal?.aborted) {
+      return {
+        completed: [],
+        failed: [item.id],
+        blocked: [],
+        sessionResult: { outcome: 'cancelled' } as SessionResult,
+      };
+    }
+
     const attemptNumber = attempt + 1;
     const sessionNumber = config.onWorkItemStart?.(item, attemptNumber);
     log(`[ConcurrentWorkExecutor] Working on ${item.id} (attempt ${attemptNumber})`);
@@ -237,7 +323,7 @@ async function executeWorkItemWithRetries(
     config.onWorkItemSessionComplete?.(item, sessionResult);
     lastResult = sessionResult;
 
-    if (sessionResult.outcome === 'cancelled' || config.abortSignal?.aborted) {
+    if (sessionResult.outcome === 'cancelled') {
       return {
         completed: [],
         failed: [item.id],
@@ -247,7 +333,7 @@ async function executeWorkItemWithRetries(
     }
 
     if (sessionResult.outcome === 'completed') {
-      await planWriter(() => updateWorkItemStatuses(config.specDir, [
+      await planWriter(() => updateWorkItemStatuses(config, [
         { id: item.id, summary: summarizeSessionResult(sessionResult) },
       ], 'completed'));
       return {
@@ -258,10 +344,23 @@ async function executeWorkItemWithRetries(
       };
     }
 
+    if (config.abortSignal?.aborted) {
+      return {
+        completed: [],
+        failed: [item.id],
+        blocked: [],
+        sessionResult: { outcome: 'cancelled' } as SessionResult,
+      };
+    }
+
     if (attempt < config.maxRetries) {
       log(`[ConcurrentWorkExecutor] Retrying ${item.id} after outcome ${sessionResult.outcome}`);
     }
   }
+
+  await planWriter(() => updateWorkItemStatuses(config, [
+    { id: item.id, summary: summarizeFailureResult(lastResult) },
+  ], 'failed'));
 
   return {
     completed: [],
@@ -291,6 +390,7 @@ async function fallbackToSerial(
       filesToCreate: subtask.filesToCreate,
       filesToModify: subtask.filesToModify,
       patternFiles: subtask.patternFiles,
+      dependsOn: subtask.dependsOn,
       verification: subtask.verification,
       workPackage: subtask.workPackage,
       upstreamTaskIds: subtask.upstreamTaskIds,
@@ -318,7 +418,7 @@ async function executeWorkItemSession(
   const log = (message: string) => config.onLog?.(message);
 
   while (true) {
-    const sessionResult = await config.runWorkItemSession(item, attempt, sessionNumber);
+    const sessionResult = await runWorkItemSessionSafely(config, item, attempt, sessionNumber);
 
     if (sessionResult.outcome === 'rate_limited') {
       log(`[ConcurrentWorkExecutor] Work item ${item.id} rate limited, waiting for reset...`);
@@ -355,6 +455,50 @@ async function executeWorkItemSession(
   }
 }
 
+async function runWorkItemSessionSafely(
+  config: ConcurrentWorkExecutorConfig,
+  item: WorkItemInfo,
+  attempt: number,
+  sessionNumber?: number,
+): Promise<SessionResult> {
+  const startedAt = Date.now();
+  try {
+    return await config.runWorkItemSession(item, attempt, sessionNumber);
+  } catch (error) {
+    return createErrorSessionResult(error, startedAt);
+  }
+}
+
+function createErrorSessionResult(error: unknown, startedAt: number): SessionResult {
+  const message = error instanceof Error ? error.message : String(error);
+  const outcome = classifyThrownSessionOutcome(message);
+  return {
+    outcome,
+    stepsExecuted: 0,
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    messages: [],
+    durationMs: Date.now() - startedAt,
+    toolCallCount: 0,
+    error: {
+      code: outcome,
+      message,
+      retryable: outcome !== 'auth_failure',
+      cause: error,
+    },
+  };
+}
+
+function classifyThrownSessionOutcome(message: string): SessionResult['outcome'] {
+  const lower = message.toLowerCase();
+  if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('authentication')) {
+    return 'auth_failure';
+  }
+  if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many requests')) {
+    return 'rate_limited';
+  }
+  return 'error';
+}
+
 async function loadImplementationPlan(specDir: string): Promise<ImplementationPlan | null> {
   return loadImplementationPlanFromFiles(specDir) as Promise<ImplementationPlan | null>;
 }
@@ -369,31 +513,29 @@ function createPlanWriter(): <T>(write: PlanWrite<T>) => Promise<T> {
 }
 
 async function resetRoundInProgressWorkItems(
-  specDir: string,
-  plan: ImplementationPlan,
+  config: ConcurrentWorkExecutorConfig,
   log?: (message: string) => void,
 ): Promise<void> {
   let updated = false;
-
-  for (const phase of plan.phases) {
-    for (const subtask of phase.subtasks) {
-      if (subtask.status === 'in_progress') {
-        subtask.status = 'pending';
-        updated = true;
+  await updateImplementationPlanInFiles(config.specDir, (plan) => {
+    for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (subtask.status === 'in_progress') {
+          subtask.status = 'pending';
+          updated = true;
+        }
       }
     }
+    return updated ? plan : false;
+  });
+  if (updated) {
+    await syncWorkItemPlanToSource(config);
+    log?.('[ConcurrentWorkExecutor] Reset stale in_progress work items to pending before scheduling');
   }
-
-  if (!updated) {
-    return;
-  }
-
-  await saveImplementationPlanToFiles(specDir, plan as never);
-  log?.('[ConcurrentWorkExecutor] Reset stale in_progress work items to pending before scheduling');
 }
 
 async function markWorkItemsInProgress(
-  specDir: string,
+  config: ConcurrentWorkExecutorConfig,
   workItemIds: string[],
 ): Promise<void> {
   if (workItemIds.length === 0) {
@@ -401,28 +543,57 @@ async function markWorkItemsInProgress(
   }
 
   const activeIds = new Set(workItemIds);
-  const plan = await loadImplementationPlan(specDir);
-  if (!plan) return;
-
+  const now = new Date().toISOString();
   let updated = false;
-  for (const phase of plan.phases ?? []) {
-    for (const subtask of phase.subtasks ?? []) {
-      if (activeIds.has(subtask.id) && subtask.status !== 'in_progress') {
-        subtask.status = 'in_progress';
-        updated = true;
+  await updateImplementationPlanInFiles(config.specDir, (plan) => {
+    for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (activeIds.has(subtask.id) && subtask.status !== 'in_progress') {
+          subtask.status = 'in_progress';
+          subtask.started_at = subtask.started_at || now;
+          subtask.updated_at = now;
+          updated = true;
+        }
       }
     }
+    return updated ? plan : false;
+  });
+  if (updated) {
+    await syncWorkItemPlanToSource(config);
+  }
+}
+
+async function syncWorkItemPlanToSource(config: ConcurrentWorkExecutorConfig): Promise<void> {
+  if (!config.sourceSpecDir || config.sourceSpecDir === config.specDir) {
+    return;
   }
 
-  if (updated) {
-    await saveImplementationPlanToFiles(specDir, plan as never);
+  try {
+    const worktreePlan = await loadImplementationPlan(config.specDir);
+    if (!worktreePlan?.phases) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    await updateImplementationPlanInFiles(config.sourceSpecDir, (mainPlan) => {
+      mainPlan.phases = worktreePlan.phases as never;
+      if (typeof worktreePlan.executionPhase === 'string') {
+        mainPlan.executionPhase = worktreePlan.executionPhase;
+      }
+      mainPlan.updated_at = now;
+      return mainPlan;
+    });
+  } catch (error) {
+    config.onLog?.(
+      `[ConcurrentWorkExecutor] Failed to sync work item state to source spec: ${error instanceof Error ? error.message : String(error)}`,
+    );
   }
 }
 
 async function updateWorkItemStatuses(
-  specDir: string,
+  config: ConcurrentWorkExecutorConfig,
   updates: Array<{ id: string; summary?: string }>,
-  status: 'completed',
+  status: 'completed' | 'failed' | 'blocked',
 ): Promise<void> {
   if (updates.length === 0) {
     return;
@@ -430,33 +601,56 @@ async function updateWorkItemStatuses(
 
   const targetIds = new Set(updates.map((update) => update.id));
   const summaries = new Map(updates.map((update) => [update.id, update.summary]));
-  const plan = await loadImplementationPlan(specDir);
-  if (!plan) return;
-
+  const now = new Date().toISOString();
   let updated = false;
-  for (const phase of plan.phases ?? []) {
-    for (const subtask of phase.subtasks ?? []) {
-      if (!targetIds.has(subtask.id)) {
-        continue;
-      }
-      if (subtask.status !== status) {
-        subtask.status = status;
-        updated = true;
-      }
-      const summary = summaries.get(subtask.id);
-      if (summary && !subtask.completion_summary) {
-        subtask.completion_summary = summary;
-        if (!subtask.notes) {
-          subtask.notes = summary;
+  await updateImplementationPlanInFiles(config.specDir, (plan) => {
+    for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (!targetIds.has(subtask.id)) {
+          continue;
         }
-        updated = true;
+        if (subtask.status !== status) {
+          subtask.status = status;
+          updated = true;
+        }
+        if (status === 'completed' && !subtask.completed_at) {
+          subtask.completed_at = now;
+          updated = true;
+        }
+        subtask.updated_at = now;
+        const summary = summaries.get(subtask.id);
+        if (summary && !subtask.completion_summary) {
+          subtask.completion_summary = summary;
+          if (!subtask.notes) {
+            subtask.notes = summary;
+          }
+          updated = true;
+        } else if (summary && status !== 'completed' && !subtask.notes) {
+          subtask.notes = summary;
+          updated = true;
+        }
       }
     }
-  }
-
+    return updated ? plan : false;
+  });
   if (updated) {
-    await saveImplementationPlanToFiles(specDir, plan as never);
+    await syncWorkItemPlanToSource(config);
   }
+}
+
+async function markDependencyBlockedWorkItems(
+  config: ConcurrentWorkExecutorConfig,
+  blockedItems: Array<AutocodeWorkDependencyBlockedItem<WorkItemInfo>>,
+  statusById: ReadonlyMap<string, string>,
+): Promise<void> {
+  await updateWorkItemStatuses(
+    config,
+    blockedItems.map((blocked) => ({
+      id: blocked.item.id,
+      summary: describeAutocodeWorkDependencyBlocker(blocked, statusById),
+    })),
+    'blocked',
+  );
 }
 
 function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
@@ -473,6 +667,7 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
           filesToCreate: subtask.files_to_create,
           filesToModify: subtask.files_to_modify,
           patternFiles: subtask.pattern_files,
+          dependsOn: normalizeAutocodeWorkDependencyIds(subtask.depends_on),
           verification: stringifyVerification(subtask.verification),
           workPackage: subtask.work_package === true,
           upstreamTaskIds: Array.isArray(subtask.upstream_task_ids)
@@ -488,22 +683,39 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
   return items;
 }
 
+function getWorkItemStatusMap(plan: ImplementationPlan): Map<string, string> {
+  return buildAutocodeWorkDependencyStatusMap(
+    plan.phases.flatMap((phase) => phase.subtasks.map((subtask) => ({
+      id: subtask.id,
+      status: subtask.status,
+      dependsOn: normalizeAutocodeWorkDependencyIds(subtask.depends_on),
+    }))),
+  );
+}
+
 async function runWithConcurrency<T>(
   items: WorkItemInfo[],
   concurrency: number,
   worker: (item: WorkItemInfo) => Promise<T>,
+  shouldContinue: () => boolean = () => true,
 ): Promise<T[]> {
-  const results: T[] = new Array(items.length);
+  const results: T[] = [];
   let nextIndex = 0;
 
   const runWorker = async (): Promise<void> => {
     while (true) {
+      if (!shouldContinue()) {
+        return;
+      }
       const currentIndex = nextIndex;
       nextIndex++;
       if (currentIndex >= items.length) {
         return;
       }
-      results[currentIndex] = await worker(items[currentIndex]);
+      if (!shouldContinue()) {
+        return;
+      }
+      results.push(await worker(items[currentIndex]));
     }
   };
 
@@ -548,6 +760,24 @@ function summarizeSessionResult(result: SessionResult): string | undefined {
     : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
 
   return formatCompletionSummaryTable(compacted, result);
+}
+
+function summarizeFailureResult(result: SessionResult): string {
+  const reason = result.error?.message
+    ?? `Session ended with outcome: ${result.outcome}`;
+  const verification = [
+    `Session outcome: ${result.outcome}`,
+    `Steps: ${result.stepsExecuted ?? 0}`,
+    `Tools: ${result.toolCallCount ?? 0}`,
+  ].join('. ');
+
+  return [
+    '| Item | Details |',
+    '| --- | --- |',
+    `| Failure | ${escapeMarkdownTableCell(reason)} |`,
+    `| Verification | ${escapeMarkdownTableCell(verification)} |`,
+    '| Review notes | Retry this work item after reviewing runtime output and git diff. |',
+  ].join('\n');
 }
 
 function escapeMarkdownTableCell(value: string): string {

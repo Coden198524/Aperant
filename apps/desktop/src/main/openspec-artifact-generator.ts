@@ -27,6 +27,10 @@ function buildSystemPrompt(language?: string): string {
     '- Output only Markdown for the requested artifact. No preamble, no code fence.',
     '- Do not leave placeholders, TODO, TBD, HTML comments, or example tokens.',
     '- Keep OpenSpec as upstream product/design/spec truth. Do not write Autocode runtime logs or status.',
+    '- When generating tasks.md, every executable checkbox task must include one standalone `- _Depends on: ..._` line that forms a task-level DAG. Do not put it on the task title line or repeat it.',
+    '- When generating tasks.md, keep dependencies minimal. Do not serialize tasks by section or list order unless a real prerequisite exists.',
+    '- When generating tasks.md, expose independent implementation, UI, test, and validation work as fan-out/join branches so runtime work packages can run concurrently.',
+    '- When generating specs/<capability>/spec.md, every Requirement body must include the literal English word SHALL or MUST.',
   ];
 
   if (isChineseLanguage(language)) {
@@ -34,7 +38,7 @@ function buildSystemPrompt(language?: string): string {
       ...baseRules,
       '- Output Simplified Chinese for all natural-language headings and prose, except OpenSpec required structural keywords, paths, commands, code identifiers, and filenames.',
       '- For proposal.md, design.md, and tasks.md, translate template headings to Chinese instead of copying English headings.',
-      '- For specs/<capability>/spec.md, keep only OpenSpec structural keywords in English: ADDED/MODIFIED/REMOVED Requirements, Requirement, Scenario, WHEN, THEN. Write requirement names, scenario names, and body text in Simplified Chinese.',
+      '- For specs/<capability>/spec.md, keep OpenSpec structural keywords in English: ADDED/MODIFIED/REMOVED Requirements, Requirement, Scenario, WHEN, THEN, and the required SHALL/MUST keyword. Write Chinese requirement bodies like "系统 SHALL ...".',
     ].join('\n');
   }
 
@@ -340,6 +344,7 @@ function artifactSpecificRules(artifactId: string, capability: string, language?
       return [
         '规格要求：',
         '- 使用 OpenSpec delta 格式：## ADDED Requirements、## MODIFIED Requirements 或 ## REMOVED Requirements。',
+        '- 每个 Requirement 正文必须包含字面英文 SHALL 或 MUST；中文正文写成“系统 SHALL ...”。',
         '- 每个 requirement 至少包含一个 #### Scenario，并包含 WHEN 和 THEN 项。',
         '- Requirement 名称、Scenario 名称、条件和结果正文使用简体中文。',
         '- 描述外部可观察行为，不写实现杂项。',
@@ -351,7 +356,13 @@ function artifactSpecificRules(artifactId: string, capability: string, language?
         '任务要求：',
         '- 使用分组 Markdown checkbox：顶层 `- [ ] 1. 阶段名称`，缩进子项 `  - [ ] 1.1 具体任务`。',
         '- 将工作拆成具体实现和验证步骤。',
-        '- 文件提示、依赖提示、需求引用、验证说明都使用中文。',
+        '- 每个可执行 checkbox 任务必须包含一个独立的 `- _Depends on: ..._` 元数据行，不能写在任务标题同一行，也不能重复。',
+        '- 根任务写 `_Depends on: none_`；有前置任务时只写任务 ID，例如 `_Depends on: 1.1, 1.2_`。',
+        '- 根据实现顺序、共享文件、验证前置条件和运行时前置条件推断最小依赖图。',
+        '- 依赖必须最小化：不要按章节顺序或任务列表顺序自动串行化，只有真实数据、接口、文件或运行前置关系才算依赖。',
+        '- 独立实现、独立 UI 区域、独立测试和独立验收场景要形成扇出/汇合 DAG，便于并发执行。',
+        '- 多个验证任务可以共同依赖同一个实现完成点；除非验证场景之间真实有前后关系，否则不要互相串行依赖。',
+        '- 文件提示、需求引用、验证说明都使用中文；`Depends on` 键名保持英文，便于解析。',
         '- 不要创建单个笼统的“实现全部功能”任务。',
       ].join('\n');
     }
@@ -391,7 +402,13 @@ function artifactSpecificRules(artifactId: string, capability: string, language?
       'Tasks requirements:',
       '- Use grouped Markdown checkbox tasks: a top-level `- [ ] 1. Phase name`, then indented `  - [ ] 1.1 Concrete task` items.',
       '- Split work into concrete implementation and verification steps.',
-      '- Include file hints, dependency hints, or requirement references when useful.',
+      '- Every executable checkbox task must include one `_Depends on: ..._` metadata line.',
+      '- Root tasks use `_Depends on: none_`; dependent tasks list prerequisite task IDs only, for example `_Depends on: 1.1, 1.2_`.',
+      '- Infer the minimum dependency DAG from implementation order, shared files, verification prerequisites, and runtime prerequisites.',
+      '- Keep dependencies minimal: do not serialize by section or list order unless a real data, interface, file, or runtime prerequisite exists.',
+      '- Independent implementation, UI, test, and validation work should form fan-out/join DAGs so runtime work packages can run concurrently.',
+      '- Verification tasks may share the same implementation prerequisite; do not chain independent verification scenarios together.',
+      '- Include file hints and requirement references when useful.',
       '- Do not create a single vague "implement everything" task.',
     ].join('\n');
   }

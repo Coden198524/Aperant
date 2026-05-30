@@ -221,6 +221,7 @@ export interface SubtaskInfo {
   filesToModify?: string[];
   patternFiles?: string[];
   verification?: string;
+  dependsOn?: string[];
   workPackage?: boolean;
   upstreamTaskIds?: string[];
   upstreamSource?: string;
@@ -236,6 +237,7 @@ function workItemToSubtaskInfo(workItem: WorkItemInfo): SubtaskInfo {
     filesToModify: workItem.filesToModify,
     patternFiles: workItem.patternFiles,
     verification: workItem.verification,
+    dependsOn: workItem.dependsOn,
     workPackage: workItem.workPackage,
     upstreamTaskIds: workItem.upstreamTaskIds,
     upstreamSource: workItem.upstreamSource,

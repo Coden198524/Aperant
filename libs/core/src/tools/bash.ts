@@ -94,6 +94,32 @@ export function detectFastCommandFailure(
   return null;
 }
 
+export function extractBashWriteFileTargets(command: string): string[] {
+  const tokens = tokenizeBashCommand(command);
+  const targets = new Set<string>();
+
+  for (let index = 0; index < tokens.length; index++) {
+    const token = tokens[index];
+    if (isBashWriteRedirectionOperator(token)) {
+      addBashWriteTarget(targets, tokens[index + 1]);
+      index++;
+      continue;
+    }
+
+    const attachedRedirection = parseAttachedWriteRedirection(token);
+    if (attachedRedirection) {
+      addBashWriteTarget(targets, attachedRedirection);
+      continue;
+    }
+
+    if (isBashTeeCommandToken(token)) {
+      index = collectBashTeeTargets(tokens, index + 1, targets);
+    }
+  }
+
+  return [...targets].sort((a, b) => a.localeCompare(b));
+}
+
 export function formatBashCommandDenied(reason: string): string {
   return `Error: Command not allowed - ${reason}`;
 }
@@ -129,4 +155,152 @@ export function formatBashExecutionResult(result: BashExecutionResult): string {
   }
 
   return parts.length > 0 ? parts.join('\n') : '(no output)';
+}
+
+function tokenizeBashCommand(command: string): string[] {
+  const tokens: string[] = [];
+  let current = '';
+  let quote: '"' | "'" | null = null;
+
+  const pushCurrent = () => {
+    if (current) {
+      tokens.push(current);
+      current = '';
+    }
+  };
+
+  for (let index = 0; index < command.length; index++) {
+    const char = command[index];
+    const next = command[index + 1];
+
+    if (quote) {
+      if (char === quote) {
+        quote = null;
+      } else if (char === '\\' && quote === '"' && next) {
+        current += next;
+        index++;
+      } else {
+        current += char;
+      }
+      continue;
+    }
+
+    if (char === '"' || char === "'") {
+      quote = char;
+      continue;
+    }
+
+    if (/\s/.test(char)) {
+      pushCurrent();
+      continue;
+    }
+
+    if (char === '\\' && next) {
+      current += next;
+      index++;
+      continue;
+    }
+
+    if (char === '>' || (char === '&' && next === '>')) {
+      const fdPrefix = /^\d+$/.test(current) || current === '&' ? current : '';
+      if (fdPrefix) {
+        current = '';
+      } else {
+        pushCurrent();
+      }
+      const append = next === '>' || (char === '&' && command[index + 2] === '>');
+      tokens.push(`${fdPrefix || (char === '&' ? '&' : '')}${append ? '>>' : '>'}`);
+      index += append ? (char === '&' ? 2 : 1) : (char === '&' ? 1 : 0);
+      continue;
+    }
+
+    if (char === '|' || char === ';' || char === '(' || char === ')') {
+      pushCurrent();
+      tokens.push(char);
+      continue;
+    }
+
+    if (char === '&') {
+      pushCurrent();
+      tokens.push(char);
+      continue;
+    }
+
+    current += char;
+  }
+
+  pushCurrent();
+  return tokens;
+}
+
+function parseAttachedWriteRedirection(token: string): string | null {
+  const match = /^(?:\d*|&)>>?(.+)$/.exec(token);
+  return match?.[1]?.trim() || null;
+}
+
+function isBashWriteRedirectionOperator(token: string): boolean {
+  return /^(?:\d*|&)>>?$/.test(token);
+}
+
+function isBashTeeCommandToken(token: string): boolean {
+  const normalized = token.replace(/\\/g, '/').split('/').pop()?.toLowerCase();
+  return normalized === 'tee' || normalized === 'tee.exe';
+}
+
+function collectBashTeeTargets(tokens: string[], startIndex: number, targets: Set<string>): number {
+  let index = startIndex;
+  let endIndex = startIndex - 1;
+
+  for (; index < tokens.length; index++) {
+    const token = tokens[index];
+    endIndex = index;
+
+    if (isBashCommandSeparator(token)) {
+      break;
+    }
+
+    if (isBashWriteRedirectionOperator(token)) {
+      index++;
+      endIndex = index;
+      continue;
+    }
+
+    if (token === '--') {
+      continue;
+    }
+
+    if (token.startsWith('-')) {
+      continue;
+    }
+
+    addBashWriteTarget(targets, token);
+  }
+
+  return endIndex;
+}
+
+function isBashCommandSeparator(token: string): boolean {
+  return token === '|' || token === ';' || token === '&' || token === '(' || token === ')';
+}
+
+function addBashWriteTarget(targets: Set<string>, target: string | null | undefined): void {
+  const normalized = target?.trim();
+  if (!normalized || shouldIgnoreBashWriteTarget(normalized)) {
+    return;
+  }
+  targets.add(normalized);
+}
+
+function shouldIgnoreBashWriteTarget(target: string): boolean {
+  const lower = target.toLowerCase();
+  return (
+    lower === '-' ||
+    lower === 'nul' ||
+    lower === '/dev/null' ||
+    lower === '&1' ||
+    lower === '&2' ||
+    target.startsWith('$') ||
+    target.startsWith('`') ||
+    target.startsWith('(')
+  );
 }

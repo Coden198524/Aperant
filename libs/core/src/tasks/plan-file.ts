@@ -218,7 +218,7 @@ export function resetAutocodeStuckSubtasksInPlan(plan: MutableAutocodePlan): {
         ? phase.chunks
         : [];
     for (const subtask of subtasks) {
-      if (subtask.status === 'in_progress' || subtask.status === 'failed') {
+      if (subtask.status === 'in_progress' || subtask.status === 'failed' || subtask.status === 'blocked') {
         subtask.status = 'pending';
         subtask.started_at = null;
         subtask.completed_at = null;

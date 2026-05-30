@@ -131,6 +131,7 @@ export {
   AUTOCODE_SESSION_OUTCOMES,
   AUTOCODE_SESSION_PATTERNS_FILE_NAME,
   AUTOCODE_SESSION_TYPES,
+  appendAutocodeSessionGotcha,
   buildAutocodeSessionContext,
   createEmptyAutocodeSessionCodebaseMap,
   formatAutocodeGotchaMarkdownEntry,
@@ -143,9 +144,11 @@ export {
   isAutocodeMemoryScope,
   isAutocodeMemorySource,
   isAutocodeMemoryType,
+  loadAutocodeSessionCodebaseMapSync,
   nativePlugin,
   parseAutocodeSessionCodebaseMap,
   recordAutocodeSessionDiscovery,
+  recordAutocodeSessionDiscoveryInFile,
   stringifyAutocodeSessionCodebaseMap,
   toAutocodeContextSearchResult,
   toAutocodeRendererMemory,
@@ -163,6 +166,8 @@ export {
   type AutocodeSessionOutcome,
   type AutocodeSessionType,
   type AutocodeUniversalPhase,
+  type AppendAutocodeSessionGotchaInput,
+  type AppendAutocodeSessionGotchaResult,
   type BuildAutocodeSessionContextInput,
   type ExecutionContext,
   type FormatAutocodeGotchaInput,
@@ -177,6 +182,7 @@ export {
   type MemoryType,
   type MemoryTypeDefinition,
   type RecordAutocodeSessionDiscoveryInput,
+  type RecordAutocodeSessionDiscoveryFileInput,
   type RelayTransition,
   type SessionOutcome,
   type SessionType,
@@ -234,6 +240,7 @@ export {
   MAX_BASH_TIMEOUT_MS,
   clampBashTimeout,
   detectFastCommandFailure,
+  extractBashWriteFileTargets,
   formatBackgroundCommandStarted,
   formatBashCommandDenied,
   formatBashExecutionResult,
@@ -262,6 +269,7 @@ export {
   TOOL_OUTPUT_MAX_BYTES,
   TOOL_OUTPUT_MAX_LINES,
   buildToolOutputTruncationContent,
+  createToolOutputSpilloverFileName,
   planToolOutputTruncation,
   sanitizeToolOutputName,
   type ToolOutputTruncationContentOptions,
@@ -434,6 +442,22 @@ export {
 } from './runtime/task-runtime-config.js';
 
 export {
+  type AnalyzeAutocodeWorkDependenciesOptions,
+  type AutocodeWorkDependencyAnalysis,
+  type AutocodeWorkDependencyBlockedItem,
+  type AutocodeWorkDependencyIssue,
+  type AutocodeWorkDependencyIssueType,
+  type AutocodeWorkDependencyItem,
+  analyzeAutocodeWorkDependencies,
+  areAutocodeWorkDependenciesSatisfied,
+  buildAutocodeWorkDependencyStatusMap,
+  describeAutocodeWorkDependencyBlocker,
+  describeAutocodeWorkDependencyBlockers,
+  getAutocodeUnresolvedWorkDependencies,
+  normalizeAutocodeWorkDependencyIds,
+} from './runtime/work-dependencies.js';
+
+export {
   AUTOCODE_AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS,
   AUTOCODE_DEFAULT_SESSION_MAX_STEPS,
   AUTOCODE_DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS,
@@ -482,6 +506,41 @@ export {
   createProcessAgentRuntimeAdapter,
   createTerminalAgentRuntimeAdapter,
 } from './runtime/agent-runtime-adapters.js';
+
+export {
+  AUTOCODE_RUNTIME_FILE_WRITE_LOCKS_DIR_NAME,
+  AUTOCODE_RUNTIME_FILE_WRITE_LOCK_RETRY_MS,
+  AUTOCODE_RUNTIME_FILE_WRITE_LOCK_STALE_MS,
+  AUTOCODE_RUNTIME_FILE_WRITE_LOCK_TIMEOUT_MS,
+  autocodeRuntimeWorkspaceClaims,
+  type AutocodeRuntimeFileWriteLock,
+  type AutocodeRuntimeFileWriteLockInput,
+  type AutocodeRuntimeFileWriteLockMetadata,
+  type AutocodeRuntimeFileWriteLockScope,
+  type AutocodeRuntimeFileIntent,
+  type AutocodeRuntimeFileIntentInput,
+  type AutocodeRuntimeWorkspaceClaim,
+  type AutocodeRuntimeWorkspaceClaimInput,
+  type AutocodeRuntimeWorkspaceClaimResult,
+  type AutocodeRuntimeWorkspaceConflict,
+  type AutocodeRuntimeWorkspaceConflictReason,
+  type AutocodeRuntimeWorkspaceMode,
+  AutocodeRuntimeWorkspaceClaimManager,
+  acquireAutocodeRuntimeFileWriteLock,
+  acquireAutocodeRuntimeFileWriteLockSync,
+  collectAutocodeRuntimeFileIntentsFromPlan,
+  createAutocodeRuntimeWorkspaceClaim,
+  getAutocodeRuntimeWorkspaceConflict,
+  getAutocodeRuntimeFileWriteLockDir,
+  getAutocodeRuntimeFileWriteLocksDir,
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  normalizeAutocodeRuntimeFileIntent,
+  normalizeAutocodeRuntimeFileIntents,
+  normalizeAutocodeRuntimePath,
+  releaseAutocodeRuntimeFileWriteLock,
+  withAutocodeRuntimeFileWriteLock,
+  withAutocodeRuntimeFileWriteLockSync,
+} from './runtime/workspace-claims.js';
 
 export {
   type CreateTaskDraftInput,
@@ -624,6 +683,7 @@ export {
 
 export {
   type AutocodePlanMarkdownStatus,
+  type AutocodePlanUpdater,
   applyAutocodePlanQaSignoff,
   getAutocodeImplementationPlanPath,
   listAutocodeImplementationPlanWatchFiles,
@@ -634,6 +694,7 @@ export {
   saveAutocodeImplementationPlan,
   saveAutocodeImplementationPlanSync,
   stringifyAutocodeImplementationPlanMarkdown,
+  updateAutocodeImplementationPlan,
   updateAutocodePlanSubtask,
 } from './tasks/plan-store.js';
 

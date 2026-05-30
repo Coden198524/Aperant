@@ -423,8 +423,9 @@ export function registerSettingsHandlers(
         }
       }
 
-      // Configure CLI tools with current settings
-      configureTools({
+      // Apply saved CLI paths once per actual config change. Plain settings reads
+      // should not repeatedly clear the CLI cache or restart tool detection.
+      const cliToolsChanged = configureTools({
         pythonPath: settings.pythonPath,
         gitPath: settings.gitPath,
         githubCLIPath: settings.githubCLIPath,
@@ -432,10 +433,12 @@ export function registerSettingsHandlers(
         claudePath: settings.claudePath,
       });
 
-      // Re-warm cache asynchronously after configuring (non-blocking)
-      preWarmToolCache(['claude']).catch((error) => {
-        console.warn('[SETTINGS_GET] Failed to re-warm CLI cache:', error);
-      });
+      if (cliToolsChanged) {
+        // Re-warm cache asynchronously after configuring (non-blocking)
+        preWarmToolCache(['claude']).catch((error) => {
+          console.warn('[SETTINGS_GET] Failed to re-warm CLI cache:', error);
+        });
+      }
 
       return { success: true, data: settings as AppSettings };
     }
@@ -482,7 +485,7 @@ export function registerSettingsHandlers(
           settings.gitlabCLIPath !== undefined ||
           settings.claudePath !== undefined
         ) {
-          configureTools({
+          const cliToolsChanged = configureTools({
             pythonPath: newSettings.pythonPath,
             gitPath: newSettings.gitPath,
             githubCLIPath: newSettings.githubCLIPath,
@@ -490,10 +493,12 @@ export function registerSettingsHandlers(
             claudePath: newSettings.claudePath,
           });
 
-          // Re-warm cache asynchronously after configuring (non-blocking)
-          preWarmToolCache(['claude']).catch((error) => {
-            console.warn('[SETTINGS_SAVE] Failed to re-warm CLI cache:', error);
-          });
+          if (cliToolsChanged) {
+            // Re-warm cache asynchronously after configuring (non-blocking)
+            preWarmToolCache(['claude']).catch((error) => {
+              console.warn('[SETTINGS_SAVE] Failed to re-warm CLI cache:', error);
+            });
+          }
         }
 
         // Reset memory service singleton when memory-related settings change

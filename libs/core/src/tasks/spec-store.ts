@@ -106,6 +106,7 @@ export interface AutocodePlanSubtask {
   status: AutocodeSubtaskStatus;
   completionSummary?: string;
   files: string[];
+  dependsOn?: string[];
   workPackage?: boolean;
   upstreamTaskIds?: string[];
   upstreamSource?: string;
@@ -208,6 +209,7 @@ interface RawPlanSubtask {
   files_to_create?: unknown;
   files_to_modify?: unknown;
   pattern_files?: unknown;
+  depends_on?: unknown;
   work_package?: unknown;
   upstream_task_ids?: unknown;
   upstream_source?: unknown;
@@ -548,6 +550,7 @@ function extractSubtasks(plan: ImplementationPlanFile | null): AutocodePlanSubta
           ...toStringArray(subtask.files_to_modify),
           ...toStringArray(subtask.pattern_files),
         ],
+        ...(toStringArray(subtask.depends_on).length > 0 ? { dependsOn: toStringArray(subtask.depends_on) } : {}),
         ...(subtask.work_package === true ? { workPackage: true } : {}),
         ...(toStringArray(subtask.upstream_task_ids).length > 0 ? { upstreamTaskIds: toStringArray(subtask.upstream_task_ids) } : {}),
         ...(stringFrom(subtask.upstream_source) ? { upstreamSource: stringFrom(subtask.upstream_source) } : {}),

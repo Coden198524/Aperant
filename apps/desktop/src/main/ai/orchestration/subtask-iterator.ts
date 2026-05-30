@@ -16,6 +16,12 @@ import { extractSessionInsights } from '../runners/insight-extractor';
 import type { SessionResult } from '../session/types';
 import type { SubtaskInfo } from './build-orchestrator';
 import {
+  analyzeAutocodeWorkDependencies,
+  buildAutocodeWorkDependencyStatusMap,
+  describeAutocodeWorkDependencyBlocker,
+  normalizeAutocodeWorkDependencyIds,
+} from '@autocode/core';
+import {
   writeAuthPauseFile,
   writeRateLimitPauseFile,
   waitForAuthResume,
@@ -113,6 +119,7 @@ interface PlanSubtask {
   files_to_create?: string[];
   files_to_modify?: string[];
   pattern_files?: string[];
+  depends_on?: unknown;
   verification?: string;
   work_package?: boolean;
   upstream_task_ids?: string[];
@@ -129,6 +136,12 @@ type ProtectedSubtaskField =
 
 type ProtectedSubtaskState = Partial<Pick<PlanSubtask, ProtectedSubtaskField>> & {
   status: string;
+};
+
+type DependencyBlockedSubtask = {
+  subtask: PlanSubtask;
+  phaseName: string;
+  reason: string;
 };
 
 const PROTECTED_SUBTASK_FIELDS: ProtectedSubtaskField[] = [
@@ -186,6 +199,33 @@ export async function iterateSubtasks(
     // Find next subtask
     const next = getNextPendingSubtask(plan, stuckSubtasks);
     if (!next) {
+      const blockedSubtasks = getDependencyBlockedSubtasks(plan, stuckSubtasks);
+      if (blockedSubtasks.length > 0) {
+        const newlyBlockedIds = [...new Set(blockedSubtasks
+          .map(({ subtask }) => subtask.id))]
+          .filter((subtaskId) => !stuckSubtasks.includes(subtaskId));
+        stuckSubtasks.push(...newlyBlockedIds);
+        await markSubtasksBlockedByDependencies(config.specDir, blockedSubtasks);
+        for (const blocked of blockedSubtasks) {
+          config.onSubtaskStuck?.({
+            id: blocked.subtask.id,
+            description: blocked.subtask.description,
+            phaseName: blocked.phaseName,
+            filesToCreate: blocked.subtask.files_to_create,
+            filesToModify: blocked.subtask.files_to_modify,
+            patternFiles: blocked.subtask.pattern_files,
+            dependsOn: toStringArray(blocked.subtask.depends_on),
+            verification: blocked.subtask.verification,
+            workPackage: blocked.subtask.work_package === true,
+            upstreamTaskIds: Array.isArray(blocked.subtask.upstream_task_ids) ? blocked.subtask.upstream_task_ids : [],
+            upstreamSource: typeof blocked.subtask.upstream_source === 'string' ? blocked.subtask.upstream_source : undefined,
+            status: 'blocked',
+          }, blocked.reason);
+        }
+        if (config.sourceSpecDir) {
+          await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+        }
+      }
       if (normalizedPlan && config.sourceSpecDir) {
         await syncPhasesToMain(config.specDir, config.sourceSpecDir);
       }
@@ -201,6 +241,7 @@ export async function iterateSubtasks(
       filesToCreate: subtask.files_to_create,
       filesToModify: subtask.files_to_modify,
       patternFiles: subtask.pattern_files,
+      dependsOn: toStringArray(subtask.depends_on),
       verification: subtask.verification,
       workPackage: subtask.work_package === true,
       upstreamTaskIds: Array.isArray(subtask.upstream_task_ids) ? subtask.upstream_task_ids : [],
@@ -643,6 +684,52 @@ async function markSubtaskInProgress(
   }
 }
 
+async function markSubtasksBlockedByDependencies(
+  specDir: string,
+  blockedSubtasks: DependencyBlockedSubtask[],
+): Promise<void> {
+  if (blockedSubtasks.length === 0) {
+    return;
+  }
+
+  try {
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) {
+      return;
+    }
+
+    const blockedIds = new Set(blockedSubtasks.map(({ subtask }) => subtask.id));
+    const reasonBySubtaskId = new Map(blockedSubtasks.map((blocked) => [blocked.subtask.id, blocked.reason]));
+    const now = new Date().toISOString();
+    let updated = false;
+
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        if (!blockedIds.has(subtask.id)) {
+          continue;
+        }
+        const reason = reasonBySubtaskId.get(subtask.id) ?? 'Blocked by unresolved dependencies.';
+        if (subtask.status !== 'blocked') {
+          subtask.status = 'blocked';
+          updated = true;
+        }
+        if (!subtask.notes || !subtask.notes.includes(reason)) {
+          subtask.notes = reason;
+          updated = true;
+        }
+        subtask.updated_at = now;
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      await saveImplementationPlanToFiles(specDir, plan as never);
+    }
+  } catch {
+    // Non-fatal: the iterator result still reports the blocked subtasks.
+  }
+}
+
 async function snapshotProtectedSubtaskStates(
   specDir: string,
   currentSubtaskId: string,
@@ -850,27 +937,90 @@ function getNextPendingSubtask(
   plan: ImplementationPlan,
   stuckSubtaskIds: string[],
 ): { subtask: PlanSubtask; phaseName: string } | null {
+  const statusById = getSubtaskStatusMap(plan);
+  const candidates: Array<{
+    id: string;
+    status: string;
+    dependsOn: string[];
+    subtask: PlanSubtask;
+    phaseName: string;
+  }> = [];
+
   for (const phase of plan.phases) {
     for (const subtask of phase.subtasks) {
       if (hasSubtaskCompletionEvidence(subtask)) {
         continue;
       }
       if (
-        subtask.status === 'pending' &&
+        (subtask.status === 'pending' || subtask.status === 'in_progress') &&
         !stuckSubtaskIds.includes(subtask.id)
       ) {
-        return { subtask, phaseName: phase.name };
-      }
-      // Also pick up in_progress subtasks (may need retry after crash)
-      if (
-        subtask.status === 'in_progress' &&
-        !stuckSubtaskIds.includes(subtask.id)
-      ) {
-        return { subtask, phaseName: phase.name };
+        candidates.push({
+          id: subtask.id,
+          status: subtask.status,
+          dependsOn: toStringArray(subtask.depends_on),
+          subtask,
+          phaseName: phase.name,
+        });
       }
     }
   }
-  return null;
+
+  const next = analyzeAutocodeWorkDependencies(candidates, { statusById }).runnable[0];
+  return next ? { subtask: next.subtask, phaseName: next.phaseName } : null;
+}
+
+function getDependencyBlockedSubtasks(
+  plan: ImplementationPlan,
+  stuckSubtaskIds: string[],
+): DependencyBlockedSubtask[] {
+  const statusById = getSubtaskStatusMap(plan);
+  const candidates: Array<{
+    id: string;
+    status: string;
+    dependsOn: string[];
+    subtask: PlanSubtask;
+    phaseName: string;
+  }> = [];
+
+  for (const phase of plan.phases) {
+    for (const subtask of phase.subtasks) {
+      if (hasSubtaskCompletionEvidence(subtask) || stuckSubtaskIds.includes(subtask.id)) {
+        continue;
+      }
+      if (subtask.status === 'pending' || subtask.status === 'in_progress') {
+        candidates.push({
+          id: subtask.id,
+          status: subtask.status,
+          dependsOn: toStringArray(subtask.depends_on),
+          subtask,
+          phaseName: phase.name,
+        });
+      }
+    }
+  }
+
+  return analyzeAutocodeWorkDependencies(candidates, { statusById }).blocked
+    .filter((blocked) => blocked.item.dependsOn.length > 0 || blocked.issues.length > 0)
+    .map((blocked) => ({
+      subtask: blocked.item.subtask,
+      phaseName: blocked.item.phaseName,
+      reason: describeAutocodeWorkDependencyBlocker(blocked, statusById),
+    }));
+}
+
+function getSubtaskStatusMap(plan: ImplementationPlan): Map<string, string> {
+  return buildAutocodeWorkDependencyStatusMap(
+    plan.phases.flatMap((phase) => phase.subtasks.map((subtask) => ({
+      id: subtask.id,
+      status: subtask.status,
+      dependsOn: toStringArray(subtask.depends_on),
+    }))),
+  );
+}
+
+function toStringArray(value: unknown): string[] {
+  return normalizeAutocodeWorkDependencyIds(value);
 }
 
 /**

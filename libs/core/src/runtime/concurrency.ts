@@ -62,7 +62,7 @@ function getDefaultRuntimeWorkers(
     metadata?.sourceType === 'openspec' ||
     metadata?.upstreamSpecSystem === 'openspec'
   ) {
-    return 3;
+    return 5;
   }
   return 2;
 }

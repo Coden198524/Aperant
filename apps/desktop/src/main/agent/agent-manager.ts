@@ -15,15 +15,19 @@ import {
   buildAutocodeQAInitialMessages,
   buildAutocodeSessionRuntimeOptions,
   buildAutocodeTaskExecutionMessages,
+  collectAutocodeRuntimeFileIntentsFromPlan,
   createStartedAutocodeAgentRuntime,
   ensureOpenSpecArtifactsForAutocodeTask,
   getAutocodeSpecDir,
   getAutocodeSpecsDir,
   getAutocodeSpecsRelativeDir,
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   inferAutocodePinnedProviderFromModel,
   isAutocodeCommonBaseBranch,
+  loadAutocodeImplementationPlanSync,
   loadAutocodeTaskRuntimeMetadataConfig,
   normalizeAutocodeBaseBranch,
+  normalizeAutocodeRuntimePath,
   parseAutocodeOriginHeadBranch,
   resolveAutocodeCrossProviderModelRequest,
   resolveAutocodeTaskPhaseModelId,
@@ -32,7 +36,9 @@ import {
   resolveAutocodeTaskWorkflowMode,
   appendAutocodeTaskLogEntry,
   updateAutocodeTaskLogPhase,
+  withAutocodeRuntimeFileWriteLockSync,
   type AutocodeTaskRuntimeConcurrencyResolved,
+  type AutocodeRuntimeWorkspaceMode,
   type OpenSpecArtifactProgress,
 } from '@autocode/core';
 import { AgentState } from './agent-state';
@@ -181,33 +187,51 @@ function getGitHeadCommit(projectPath: string): string | null {
 function captureDirectWorkspaceBaseline(projectPath: string, specDir: string): void {
   try {
     const metadataPath = path.join(specDir, 'task_metadata.json');
-    let metadata: Record<string, unknown> = {};
+    const lockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir);
 
-    if (existsSync(metadataPath)) {
-      try {
-        metadata = JSON.parse(readFileSync(metadataPath, 'utf-8')) as Record<string, unknown>;
-      } catch {
-        metadata = {};
+    const writeBaseline = () => {
+      let metadata: Record<string, unknown> = {};
+
+      if (existsSync(metadataPath)) {
+        try {
+          metadata = JSON.parse(readFileSync(metadataPath, 'utf-8')) as Record<string, unknown>;
+        } catch {
+          metadata = {};
+        }
       }
-    }
 
-    if (typeof metadata.directWorkspaceBaselineCommit === 'string' && metadata.directWorkspaceBaselineCommit.trim()) {
+      if (typeof metadata.directWorkspaceBaselineCommit === 'string' && metadata.directWorkspaceBaselineCommit.trim()) {
+        return;
+      }
+
+      const commit = getGitHeadCommit(projectPath);
+      if (!commit) {
+        return;
+      }
+
+      const branch = getCurrentGitBranch(projectPath);
+      metadata.directWorkspaceBaselineCommit = commit;
+      metadata.directWorkspaceBaselineCapturedAt = new Date().toISOString();
+      if (branch) {
+        metadata.directWorkspaceBaselineBranch = branch;
+      }
+
+      writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    };
+
+    if (!existsSync(lockScope.projectRoot)) {
+      writeBaseline();
       return;
     }
 
-    const commit = getGitHeadCommit(projectPath);
-    if (!commit) {
-      return;
-    }
-
-    const branch = getCurrentGitBranch(projectPath);
-    metadata.directWorkspaceBaselineCommit = commit;
-    metadata.directWorkspaceBaselineCapturedAt = new Date().toISOString();
-    if (branch) {
-      metadata.directWorkspaceBaselineBranch = branch;
-    }
-
-    writeFileSync(metadataPath, JSON.stringify(metadata, null, 2), 'utf-8');
+    withAutocodeRuntimeFileWriteLockSync(
+      {
+        ...lockScope,
+        filePath: metadataPath,
+        ownerId: 'desktop:direct-workspace-baseline',
+      },
+      writeBaseline,
+    );
   } catch (error) {
     console.warn('[AgentManager] Failed to capture direct workspace baseline:', error);
   }
@@ -875,6 +899,7 @@ export class AgentManager extends EventEmitter {
         options,
         processType: 'task-execution',
         projectId,
+        specDir: worktreeSpecDir,
       });
       return;
     }
@@ -1061,6 +1086,7 @@ export class AgentManager extends EventEmitter {
         processType: 'task-execution',
         projectId,
         direct: true,
+        specDir: worktreeSpecDir,
       });
       return;
     }
@@ -1830,6 +1856,11 @@ export class AgentManager extends EventEmitter {
     baseBranch?: string;
     direct?: boolean;
   }): Promise<void> {
+    const runtimeSpecDir = input.specDir ?? getAutocodeSpecDir({
+      projectRoot: input.runtimeProjectRoot,
+      dataDirName: input.dataDirName,
+      specId: input.specId,
+    });
     const settings = readSettingsFile();
     const started = createStartedAutocodeAgentRuntime({
       projectRoot: input.runtimeProjectRoot,
@@ -1853,7 +1884,7 @@ export class AgentManager extends EventEmitter {
       input.options,
       input.isSpecCreation === true,
       input.taskDescription,
-      input.specDir,
+      runtimeSpecDir,
       input.metadata,
       input.baseBranch,
       input.projectId,
@@ -1882,7 +1913,33 @@ export class AgentManager extends EventEmitter {
       this.processManager.getCombinedEnv(input.projectPath),
       input.processType,
       input.projectId,
+      {
+        taskId: input.taskId,
+        projectId: input.projectId,
+        projectRoot: input.projectPath,
+        workspaceRoot: input.runtimeProjectRoot,
+        mode: this.resolveRuntimeWorkspaceMode(input.projectPath, input.runtimeProjectRoot),
+        fileIntents: this.collectRuntimeWorkspaceFileIntents(runtimeSpecDir),
+        label: `${input.processType}:${input.taskId}`,
+      },
     );
+  }
+
+  private resolveRuntimeWorkspaceMode(projectRoot: string, workspaceRoot: string): AutocodeRuntimeWorkspaceMode {
+    return normalizeAutocodeRuntimePath(projectRoot) === normalizeAutocodeRuntimePath(workspaceRoot)
+      ? 'direct'
+      : 'worktree';
+  }
+
+  private collectRuntimeWorkspaceFileIntents(specDir: string | undefined): string[] {
+    if (!specDir) {
+      return [];
+    }
+    try {
+      return collectAutocodeRuntimeFileIntentsFromPlan(loadAutocodeImplementationPlanSync(specDir));
+    } catch {
+      return [];
+    }
   }
 
   private buildSessionRuntimeOptions(
@@ -1978,15 +2035,15 @@ function formatOpenSpecArtifactProgressMessage(
       case 'artifact_model_start':
         return `[OpenSpec] 已请求模型${model}生成 ${artifact}${position}。`;
       case 'artifact_model_delta':
-        return `[OpenSpec] ${artifact} 正在输出，已生成 ${chars} 字，耗时 ${elapsed}。`;
+        return `[OpenSpec] ${artifact} 正在输出，耗时 ${elapsed}。`;
       case 'artifact_heartbeat':
         return chars > 0
-          ? `[OpenSpec] ${artifact} 仍在生成，已输出 ${chars} 字，耗时 ${elapsed}。`
+          ? `[OpenSpec] ${artifact} 仍在生成，耗时 ${elapsed}。`
           : `[OpenSpec] ${artifact} 生成中，模型仍在思考，耗时 ${elapsed}。`;
       case 'artifact_model_complete':
         return `[OpenSpec] ${artifact} 模型输出完成，正在校验并写入文件。`;
       case 'artifact_complete':
-        return `[OpenSpec] ${artifact} 已写入 ${event.outputPath}，共 ${chars} 字。`;
+        return `[OpenSpec] ${artifact} 已写入 ${event.outputPath}，耗时 ${elapsed}。`;
       case 'artifact_retry':
         return `[OpenSpec] ${artifact} 校验未通过，正在重试：${event.error ?? '未知错误'}`;
       case 'artifact_failed':
@@ -2000,15 +2057,15 @@ function formatOpenSpecArtifactProgressMessage(
     case 'artifact_model_start':
       return `[OpenSpec] Requested model${model} for ${artifact}${position}.`;
     case 'artifact_model_delta':
-      return `[OpenSpec] ${artifact} is streaming, ${chars} characters generated, elapsed ${elapsed}.`;
+      return `[OpenSpec] ${artifact} is streaming, elapsed ${elapsed}.`;
     case 'artifact_heartbeat':
       return chars > 0
-        ? `[OpenSpec] ${artifact} is still generating, ${chars} characters streamed, elapsed ${elapsed}.`
+        ? `[OpenSpec] ${artifact} is still generating, elapsed ${elapsed}.`
         : `[OpenSpec] ${artifact} is still generating; waiting for model output, elapsed ${elapsed}.`;
     case 'artifact_model_complete':
       return `[OpenSpec] ${artifact} model output finished. Validating and writing the file.`;
     case 'artifact_complete':
-      return `[OpenSpec] Wrote ${artifact} to ${event.outputPath} (${chars} characters).`;
+      return `[OpenSpec] Wrote ${artifact} to ${event.outputPath}, elapsed ${elapsed}.`;
     case 'artifact_retry':
       return `[OpenSpec] ${artifact} failed validation; retrying: ${event.error ?? 'Unknown error'}`;
     case 'artifact_failed':

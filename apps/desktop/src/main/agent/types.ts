@@ -1,5 +1,6 @@
 import { ChildProcess } from 'child_process';
 import type { Worker } from 'worker_threads';
+import type { AutocodeRuntimeWorkspaceClaim } from '@autocode/core';
 import type { CompletablePhase, ExecutionPhase } from '../../shared/constants/phase-protocol';
 import type { TaskLogStreamChunk, TaskWorkflowMode, TokenUsage } from '../../shared/types';
 import type { TaskEventPayload } from './task-event-schema';
@@ -19,6 +20,10 @@ export interface AgentProcess {
   queueProcessType?: QueueProcessType; // Type of queue process (ideation or roadmap)
   /** Worker thread instance for TypeScript AI SDK agent execution */
   worker?: Worker | null;
+  /** Core runtime workspace/file claim for cross-task conflict control */
+  workspaceClaimId?: string;
+  workspaceClaim?: AutocodeRuntimeWorkspaceClaim;
+  workspaceClaimStatus?: 'pending' | 'claimed';
 }
 
 export interface ExecutionProgressData {

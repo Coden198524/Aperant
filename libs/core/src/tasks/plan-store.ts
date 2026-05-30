@@ -1,7 +1,13 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
-import { basename, dirname, join } from 'node:path';
+import { basename, dirname, join, resolve } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import {
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  withAutocodeRuntimeFileWriteLock,
+  withAutocodeRuntimeFileWriteLockSync,
+  type AutocodeRuntimeFileWriteLockInput,
+} from '../runtime/workspace-claims.js';
 import type {
   MutableAutocodePlan,
   MutableAutocodePlanPhase,
@@ -9,6 +15,11 @@ import type {
 } from './plan-file.js';
 
 export type AutocodePlanMarkdownStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'failed';
+
+export type AutocodePlanUpdateResult = MutableAutocodePlan | void | false | null;
+export type AutocodePlanUpdater = (
+  plan: MutableAutocodePlan,
+) => AutocodePlanUpdateResult | Promise<AutocodePlanUpdateResult>;
 
 interface ParsedPlanItem {
   id: string;
@@ -48,6 +59,7 @@ const PLAN_ITEM_PATTERN = /^(\s*)-\s+\[([ xX/!\-])\]\s+([A-Za-z0-9]+(?:[.-][A-Za
 const PLAN_FIELD_PATTERN = /^\s*-\s+_([^:]+):\s*(.*?)_\s*$/;
 const PLAN_DETAIL_PATTERN = /^\s*-\s+(.*)$/;
 const PLAN_MACHINE_META_PATTERN = /^<!--\s*autocode-plan-meta:\s*(\{.*\})\s*-->\s*$/;
+const planUpdateQueues = new Map<string, Promise<void>>();
 
 const MACHINE_META_KEYS = [
   'planStatus',
@@ -243,15 +255,67 @@ export async function saveAutocodeImplementationPlan(
   specDirOrPlanPath: string,
   plan: MutableAutocodePlan,
 ): Promise<void> {
-  const specDir = resolveAutocodePlanSpecDir(specDirOrPlanPath);
-  mkdirSync(specDir, { recursive: true });
-  await writeFile(getAutocodeImplementationPlanPath(specDir), stringifyAutocodeImplementationPlanMarkdown(plan), 'utf-8');
+  await enqueueAutocodePlanUpdate(specDirOrPlanPath, async () => {
+    const specDir = resolveAutocodePlanSpecDir(specDirOrPlanPath);
+    await withAutocodeRuntimeFileWriteLock(
+      getAutocodePlanFileWriteLockInput(specDir, 'implementation-plan:save'),
+      async () => {
+        mkdirSync(specDir, { recursive: true });
+        await writeFile(
+          getAutocodeImplementationPlanPath(specDir),
+          stringifyAutocodeImplementationPlanMarkdown(plan),
+          'utf-8',
+        );
+      },
+    );
+  });
 }
 
 export function saveAutocodeImplementationPlanSync(specDirOrPlanPath: string, plan: MutableAutocodePlan): void {
   const specDir = resolveAutocodePlanSpecDir(specDirOrPlanPath);
-  mkdirSync(specDir, { recursive: true });
-  writeFileSync(getAutocodeImplementationPlanPath(specDir), stringifyAutocodeImplementationPlanMarkdown(plan), 'utf-8');
+  withAutocodeRuntimeFileWriteLockSync(
+    getAutocodePlanFileWriteLockInput(specDir, 'implementation-plan:save-sync'),
+    () => {
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(
+        getAutocodeImplementationPlanPath(specDir),
+        stringifyAutocodeImplementationPlanMarkdown(plan),
+        'utf-8',
+      );
+    },
+  );
+}
+
+export async function updateAutocodeImplementationPlan(
+  specDirOrPlanPath: string,
+  updater: AutocodePlanUpdater,
+): Promise<MutableAutocodePlan | null> {
+  return enqueueAutocodePlanUpdate(specDirOrPlanPath, async () => {
+    const specDir = resolveAutocodePlanSpecDir(specDirOrPlanPath);
+    return withAutocodeRuntimeFileWriteLock(
+      getAutocodePlanFileWriteLockInput(specDir, 'implementation-plan:update'),
+      async () => {
+        const plan = loadAutocodeImplementationPlanSync(specDir);
+        if (!plan) {
+          return null;
+        }
+
+        const updateResult = await updater(plan);
+        if (updateResult === false || updateResult === null) {
+          return plan;
+        }
+
+        const nextPlan = updateResult ?? plan;
+        mkdirSync(specDir, { recursive: true });
+        await writeFile(
+          getAutocodeImplementationPlanPath(specDir),
+          stringifyAutocodeImplementationPlanMarkdown(nextPlan),
+          'utf-8',
+        );
+        return nextPlan;
+      },
+    );
+  });
 }
 
 export function listAutocodeImplementationPlanWatchFiles(specDir: string): string[] {
@@ -294,6 +358,38 @@ export function updateAutocodePlanSubtask(
     }
   }
   return false;
+}
+
+async function enqueueAutocodePlanUpdate<T>(
+  specDirOrPlanPath: string,
+  operation: () => Promise<T>,
+): Promise<T> {
+  const specDir = resolveAutocodePlanSpecDir(specDirOrPlanPath);
+  const planPath = resolve(getAutocodeImplementationPlanPath(specDir));
+  const previous = planUpdateQueues.get(planPath) ?? Promise.resolve();
+  const current = previous.catch(() => undefined).then(operation);
+  const settled = current.then(() => undefined, () => undefined);
+  planUpdateQueues.set(planPath, settled);
+
+  try {
+    return await current;
+  } finally {
+    if (planUpdateQueues.get(planPath) === settled) {
+      planUpdateQueues.delete(planPath);
+    }
+  }
+}
+
+function getAutocodePlanFileWriteLockInput(
+  specDir: string,
+  ownerId: string,
+): AutocodeRuntimeFileWriteLockInput {
+  const scope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir);
+  return {
+    ...scope,
+    filePath: getAutocodeImplementationPlanPath(specDir),
+    ownerId,
+  };
 }
 
 export function applyAutocodePlanQaSignoff(
@@ -384,7 +480,22 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         continue;
       }
       const fields: Record<string, unknown> = {};
-      for (const key of ['completion_summary', 'notes', 'completed_at', 'started_at', 'work_package', 'upstream_task_ids', 'upstream_source']) {
+      for (const key of [
+        'completion_summary',
+        'notes',
+        'completed_at',
+        'started_at',
+        'work_package',
+        'upstream_task_ids',
+        'upstream_source',
+        'files',
+        'files_to_create',
+        'files_to_modify',
+        'pattern_files',
+        'depends_on',
+        'requirements',
+        'verification',
+      ]) {
         if (subtask[key] !== undefined) {
           fields[key] = subtask[key];
         }
@@ -413,7 +524,22 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
         continue;
       }
       const fieldRecord = fields as Record<string, unknown>;
-      for (const key of ['completion_summary', 'notes', 'completed_at', 'started_at', 'work_package', 'upstream_task_ids', 'upstream_source']) {
+      for (const key of [
+        'completion_summary',
+        'notes',
+        'completed_at',
+        'started_at',
+        'work_package',
+        'upstream_task_ids',
+        'upstream_source',
+        'files',
+        'files_to_create',
+        'files_to_modify',
+        'pattern_files',
+        'depends_on',
+        'requirements',
+        'verification',
+      ]) {
         if (fieldRecord[key] !== undefined) {
           subtask[key] = fieldRecord[key];
         }

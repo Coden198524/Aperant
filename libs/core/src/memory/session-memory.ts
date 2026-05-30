@@ -1,5 +1,10 @@
+import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import {
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  withAutocodeRuntimeFileWriteLockSync,
+} from '../runtime/workspace-claims.js';
 import { safeParseAutocodeJson } from '../tasks/json-repair.js';
 
 export const AUTOCODE_SESSION_MEMORY_DIR_NAME = 'memory';
@@ -30,6 +35,22 @@ export interface RecordAutocodeSessionDiscoveryInput {
 export interface FormatAutocodeGotchaInput {
   gotcha: string;
   context?: string;
+}
+
+export interface RecordAutocodeSessionDiscoveryFileInput extends RecordAutocodeSessionDiscoveryInput {
+  specDir: string;
+  now?: Date;
+}
+
+export interface AppendAutocodeSessionGotchaInput extends FormatAutocodeGotchaInput {
+  specDir: string;
+  now?: Date;
+}
+
+export interface AppendAutocodeSessionGotchaResult {
+  filePath: string;
+  entry: string;
+  isNew: boolean;
 }
 
 export interface BuildAutocodeSessionContextInput {
@@ -83,6 +104,14 @@ export function stringifyAutocodeSessionCodebaseMap(map: AutocodeSessionCodebase
   return `${JSON.stringify(map, null, 2)}\n`;
 }
 
+export function loadAutocodeSessionCodebaseMapSync(specDir: string): AutocodeSessionCodebaseMap | null {
+  const mapPath = getAutocodeSessionCodebaseMapPath(specDir);
+  if (!existsSync(mapPath)) {
+    return null;
+  }
+  return parseAutocodeSessionCodebaseMap(readFileSync(mapPath, 'utf-8'));
+}
+
 export function recordAutocodeSessionDiscovery(
   map: AutocodeSessionCodebaseMap,
   input: RecordAutocodeSessionDiscoveryInput,
@@ -100,6 +129,36 @@ export function recordAutocodeSessionDiscovery(
     },
     last_updated: timestamp,
   };
+}
+
+export function recordAutocodeSessionDiscoveryInFile(
+  input: RecordAutocodeSessionDiscoveryFileInput,
+): AutocodeSessionCodebaseMap {
+  const mapPath = getAutocodeSessionCodebaseMapPath(input.specDir);
+  const scope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(input.specDir);
+
+  return withAutocodeRuntimeFileWriteLockSync(
+    {
+      ...scope,
+      filePath: mapPath,
+      ownerId: `session-memory:discovery:${input.filePath}`,
+    },
+    () => {
+      mkdirSync(getAutocodeSessionMemoryDir(input.specDir), { recursive: true });
+      const current = loadAutocodeSessionCodebaseMapSync(input.specDir) ?? createEmptyAutocodeSessionCodebaseMap();
+      const next = recordAutocodeSessionDiscovery(
+        current,
+        {
+          filePath: input.filePath,
+          description: input.description,
+          category: input.category,
+        },
+        input.now,
+      );
+      writeAutocodeSessionCodebaseMapAtomic(mapPath, next);
+      return next;
+    },
+  );
 }
 
 export function formatAutocodeGotchaTimestamp(date: Date = new Date()): string {
@@ -129,6 +188,42 @@ export function formatAutocodeGotchaMarkdownEntry(
     entry += `\n\n_Context: ${input.context}_`;
   }
   return `${entry}\n`;
+}
+
+export function appendAutocodeSessionGotcha(
+  input: AppendAutocodeSessionGotchaInput,
+): AppendAutocodeSessionGotchaResult {
+  const gotchasPath = getAutocodeSessionGotchasPath(input.specDir);
+  const scope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(input.specDir);
+
+  return withAutocodeRuntimeFileWriteLockSync(
+    {
+      ...scope,
+      filePath: gotchasPath,
+      ownerId: 'session-memory:gotcha',
+    },
+    () => {
+      mkdirSync(getAutocodeSessionMemoryDir(input.specDir), { recursive: true });
+      const isNew = isMissingOrEmptyFile(gotchasPath);
+      const entry = formatAutocodeGotchaMarkdownEntry(
+        {
+          gotcha: input.gotcha,
+          context: input.context,
+        },
+        input.now,
+      );
+      writeFileSync(
+        gotchasPath,
+        `${isNew ? formatAutocodeGotchasFileHeader() : ''}${entry}`,
+        { flag: isNew ? 'w' : 'a', encoding: 'utf-8' },
+      );
+      return {
+        filePath: gotchasPath,
+        entry,
+        isNew,
+      };
+    },
+  );
 }
 
 export function buildAutocodeSessionContext(input: BuildAutocodeSessionContextInput): string {
@@ -183,6 +278,35 @@ function normalizeDiscoveredFiles(value: unknown): Record<string, AutocodeSessio
     };
   }
   return files;
+}
+
+function writeAutocodeSessionCodebaseMapAtomic(
+  mapPath: string,
+  map: AutocodeSessionCodebaseMap,
+): void {
+  const tmpPath = `${mapPath}.tmp`;
+  try {
+    writeFileSync(tmpPath, stringifyAutocodeSessionCodebaseMap(map), 'utf-8');
+    renameSync(tmpPath, mapPath);
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // Ignore cleanup errors and rethrow the original write failure.
+    }
+    throw error;
+  }
+}
+
+function isMissingOrEmptyFile(filePath: string): boolean {
+  try {
+    return statSync(filePath).size === 0;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === 'ENOENT') {
+      return true;
+    }
+    throw error;
+  }
 }
 
 function tailText(value: string, maxChars: number): string {

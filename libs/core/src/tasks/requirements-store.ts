@@ -2,6 +2,10 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { safeParseAutocodeJson } from './json-repair.js';
+import {
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  withAutocodeRuntimeFileWriteLockSync,
+} from '../runtime/workspace-claims.js';
 
 export interface AutocodeTaskRequirements extends Record<string, unknown> {
   task_description?: string;
@@ -61,11 +65,21 @@ export function saveAutocodeTaskRequirementsSync(
   requirements: AutocodeTaskRequirements,
 ): void {
   const specDir = resolveAutocodeRequirementsSpecDir(specDirOrRequirementsPath);
-  mkdirSync(specDir, { recursive: true });
-  writeFileSync(
-    getAutocodeTaskRequirementsPath(specDir),
-    stringifyAutocodeTaskRequirementsMarkdown(requirements),
-    'utf-8',
+  const requirementsPath = getAutocodeTaskRequirementsPath(specDir);
+  withAutocodeRuntimeFileWriteLockSync(
+    {
+      ...inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir),
+      filePath: requirementsPath,
+      ownerId: 'requirements-store:save',
+    },
+    () => {
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(
+        requirementsPath,
+        stringifyAutocodeTaskRequirementsMarkdown(requirements),
+        'utf-8',
+      );
+    },
   );
 }
 

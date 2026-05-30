@@ -1,9 +1,16 @@
 import { describe, it, expect } from 'vitest';
 import { z } from 'zod/v3';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 
 import { Tool, sanitizeFilePathArg } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 import type { ToolContext } from '../types';
+import {
+  acquireAutocodeRuntimeFileWriteLock,
+  releaseAutocodeRuntimeFileWriteLock,
+} from '@autocode/core';
 
 // =============================================================================
 // sanitizeFilePathArg
@@ -116,6 +123,51 @@ describe('Tool.define write-path containment', () => {
     await expect(
       boundTool.execute?.({ file_path: 'Designer/Setting/' }, {} as never),
     ).resolves.toBe('recorded:Designer/Setting/');
+  });
+
+  it('uses the shared file write lock when enabled', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-tool-lock-'));
+    const filePath = join(projectRoot, 'src', 'locked.ts');
+    const externalLock = await acquireAutocodeRuntimeFileWriteLock({
+      projectRoot,
+      filePath,
+      ownerId: 'external-test-lock',
+      timeoutMs: 20,
+      retryMs: 1,
+    });
+
+    try {
+      const writeLikeTool = Tool.define({
+        metadata: {
+          name: 'WriteLike',
+          description: 'Test write-like tool',
+          permission: ToolPermission.Auto,
+          executionOptions: DEFAULT_EXECUTION_OPTIONS,
+        },
+        inputSchema: z.object({ file_path: z.string() }),
+        execute: () => 'ok',
+      });
+
+      const boundTool = writeLikeTool.bind({
+        ...baseContext,
+        projectDir: projectRoot,
+        allowedWritePaths: undefined,
+        fileWriteLock: {
+          enabled: true,
+          projectRoot,
+          ownerId: 'tool-test-lock',
+          timeoutMs: 5,
+          retryMs: 1,
+        },
+      });
+
+      await expect(
+        boundTool.execute?.({ file_path: filePath }, {} as never),
+      ).rejects.toThrow(/Timed out waiting for write lock|already held by this process/);
+    } finally {
+      releaseAutocodeRuntimeFileWriteLock(externalLock);
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 });
 

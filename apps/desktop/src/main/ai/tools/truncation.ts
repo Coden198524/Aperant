@@ -11,7 +11,9 @@ import * as path from 'node:path';
 import {
   TOOL_OUTPUT_MAX_BYTES,
   buildToolOutputTruncationContent,
+  createToolOutputSpilloverFileName,
   planToolOutputTruncation,
+  withAutocodeRuntimeFileWriteLockSync,
 } from '@autocode/core';
 import { getAutocodeToolOutputDir } from '@autocode/core/project/data-paths';
 
@@ -51,13 +53,19 @@ export function truncateToolOutput(
     // Directory may already exist.
   }
 
-  const spilloverPath = path.join(
-    spilloverDir,
-    `${plan.sanitizedToolName}-${Date.now()}.txt`,
-  );
+  const spilloverPath = path.join(spilloverDir, createToolOutputSpilloverFileName(toolName));
 
   try {
-    fs.writeFileSync(spilloverPath, output, 'utf-8');
+    withAutocodeRuntimeFileWriteLockSync(
+      {
+        projectRoot: projectDir,
+        filePath: spilloverPath,
+        ownerId: `tool-output:${plan.sanitizedToolName}`,
+      },
+      () => {
+        fs.writeFileSync(spilloverPath, output, { encoding: 'utf-8', flag: 'wx' });
+      },
+    );
   } catch {
     return {
       content: buildToolOutputTruncationContent(plan, { spilloverWriteFailed: true }),

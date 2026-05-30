@@ -80,6 +80,31 @@ export interface ToolConfig {
   claudePath?: string;
 }
 
+const TOOL_CONFIG_KEYS = [
+  'pythonPath',
+  'gitPath',
+  'githubCLIPath',
+  'gitlabCLIPath',
+  'claudePath',
+] as const satisfies readonly (keyof ToolConfig)[];
+
+function normalizeToolConfig(config: ToolConfig): ToolConfig {
+  const normalized: ToolConfig = {};
+
+  for (const key of TOOL_CONFIG_KEYS) {
+    const value = config[key]?.trim();
+    if (value) {
+      normalized[key] = value;
+    }
+  }
+
+  return normalized;
+}
+
+function areToolConfigsEqual(left: ToolConfig, right: ToolConfig): boolean {
+  return TOOL_CONFIG_KEYS.every((key) => left[key] === right[key]);
+}
+
 /**
  * Internal validation result for a CLI tool
  */
@@ -292,6 +317,8 @@ export function buildClaudeDetectionResult(
 class CLIToolManager {
   private cache: Map<CLITool, CacheEntry> = new Map();
   private userConfig: ToolConfig = {};
+  private asyncDetections: Map<CLITool, Promise<string>> = new Map();
+  private configRevision = 0;
 
   /**
    * Configure the tool manager with user settings
@@ -301,10 +328,18 @@ class CLIToolManager {
    *
    * @param config - User configuration for CLI tool paths
    */
-  configure(config: ToolConfig): void {
-    this.userConfig = config;
+  configure(config: ToolConfig): boolean {
+    const normalizedConfig = normalizeToolConfig(config);
+    if (areToolConfigsEqual(this.userConfig, normalizedConfig)) {
+      return false;
+    }
+
+    this.userConfig = normalizedConfig;
     this.cache.clear();
+    this.asyncDetections.clear();
+    this.configRevision += 1;
     console.warn('[CLI Tools] Configuration updated, cache cleared');
+    return true;
   }
 
   /**
@@ -1216,21 +1251,39 @@ class CLIToolManager {
       return cached.path;
     }
 
-    // Detect asynchronously
-    const result = await this.detectToolPathAsync(tool);
-    if (result.found && result.path) {
-      this.cache.set(tool, {
-        path: result.path,
-        version: result.version,
-        source: result.source,
-      });
-      console.warn(`[CLI Tools] Detected ${tool}: ${result.path} (${result.source})`);
-      return result.path;
+    const inFlight = this.asyncDetections.get(tool);
+    if (inFlight) {
+      return inFlight;
     }
 
-    // Fallback to tool name (let system PATH resolve it)
-    console.warn(`[CLI Tools] ${tool} not found, using fallback: "${tool}"`);
-    return tool;
+    const configRevision = this.configRevision;
+    const detection = (async () => {
+      const result = await this.detectToolPathAsync(tool);
+      if (this.configRevision !== configRevision) {
+        return this.getToolPathAsync(tool);
+      }
+
+      if (result.found && result.path) {
+        this.cache.set(tool, {
+          path: result.path,
+          version: result.version,
+          source: result.source,
+        });
+        console.warn(`[CLI Tools] Detected ${tool}: ${result.path} (${result.source})`);
+        return result.path;
+      }
+
+      // Fallback to tool name (let system PATH resolve it)
+      console.warn(`[CLI Tools] ${tool} not found, using fallback: "${tool}"`);
+      return tool;
+    })().finally(() => {
+      if (this.asyncDetections.get(tool) === detection) {
+        this.asyncDetections.delete(tool);
+      }
+    });
+
+    this.asyncDetections.set(tool, detection);
+    return detection;
   }
 
   /**
@@ -2171,8 +2224,8 @@ export function getClaudeCliPathForSdk(): string | null {
  * });
  * ```
  */
-export function configureTools(config: ToolConfig): void {
-  cliToolManager.configure(config);
+export function configureTools(config: ToolConfig): boolean {
+  return cliToolManager.configure(config);
 }
 
 /**
@@ -2300,8 +2353,38 @@ export async function getClaudeCliPathForSdkAsync(): Promise<string | null> {
  * });
  * ```
  */
+const preWarmToolCacheInFlight = new Map<CLITool, Promise<void>>();
+
 export async function preWarmToolCache(tools: CLITool[] = ['claude']): Promise<void> {
-  console.warn('[CLI Tools] Pre-warming cache for:', tools.join(', '));
-  await Promise.all(tools.map(tool => cliToolManager.getToolPathAsync(tool)));
-  console.warn('[CLI Tools] Cache pre-warming complete');
+  const uniqueTools = [...new Set(tools)];
+  const startedTools: CLITool[] = [];
+
+  const warmups = uniqueTools.map((tool) => {
+    const inFlight = preWarmToolCacheInFlight.get(tool);
+    if (inFlight) {
+      return inFlight;
+    }
+
+    startedTools.push(tool);
+    const warmup = cliToolManager.getToolPathAsync(tool)
+      .then(() => undefined)
+      .finally(() => {
+        if (preWarmToolCacheInFlight.get(tool) === warmup) {
+          preWarmToolCacheInFlight.delete(tool);
+        }
+      });
+
+    preWarmToolCacheInFlight.set(tool, warmup);
+    return warmup;
+  });
+
+  if (startedTools.length > 0) {
+    console.warn('[CLI Tools] Pre-warming cache for:', startedTools.join(', '));
+  }
+
+  await Promise.all(warmups);
+
+  if (startedTools.length > 0) {
+    console.warn('[CLI Tools] Cache pre-warming complete');
+  }
 }

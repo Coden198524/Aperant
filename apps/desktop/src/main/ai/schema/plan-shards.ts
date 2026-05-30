@@ -5,6 +5,8 @@ import {
   saveAutocodeImplementationPlan,
   saveAutocodeImplementationPlanSync,
   syncOpenSpecTasksFromAutocodePlan,
+  updateAutocodeImplementationPlan,
+  type AutocodePlanUpdater,
   type MutableAutocodePlan,
 } from '@autocode/core';
 
@@ -64,6 +66,17 @@ export async function saveImplementationPlanToFiles(
 ): Promise<void> {
   await saveAutocodeImplementationPlan(specDirOrPlanPath, plan);
   syncOpenSpecTasksFromAutocodePlanSafe(specDirOrPlanPath);
+}
+
+export async function updateImplementationPlanInFiles(
+  specDirOrPlanPath: string,
+  updater: AutocodePlanUpdater,
+): Promise<ShardableImplementationPlan | null> {
+  const plan = await updateAutocodeImplementationPlan(specDirOrPlanPath, updater);
+  if (plan) {
+    syncOpenSpecTasksFromAutocodePlanSafe(specDirOrPlanPath);
+  }
+  return plan as ShardableImplementationPlan | null;
 }
 
 export function saveImplementationPlanToFilesSync(

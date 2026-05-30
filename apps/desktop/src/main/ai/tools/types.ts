@@ -8,6 +8,7 @@
 
 import type { z } from 'zod/v3';
 import type {
+  AutocodeRuntimeFileWriteLockInput,
   ToolMetadata as CoreToolMetadata,
   ToolPolicyContext as CoreToolPolicyContext,
   ToolUsageLimits as CoreToolUsageLimits,
@@ -65,6 +66,10 @@ export interface ToolContext extends CoreToolPolicyContext {
   toolUsageState?: CoreToolUsageState;
   /** Optional per-session overrides for generic tool usage limits */
   toolUsageLimits?: CoreToolUsageLimits;
+  /** Optional cross-runtime file write lock policy for mutating tools */
+  fileWriteLock?: Partial<AutocodeRuntimeFileWriteLockInput> & {
+    enabled?: boolean;
+  };
 }
 
 /**

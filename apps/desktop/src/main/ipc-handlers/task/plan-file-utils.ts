@@ -1,24 +1,13 @@
 ﻿/**
  * Plan File Utilities
  *
- * Provides thread-safe operations for reading and writing implementation_plan.md files.
- * Uses an in-memory lock to serialize updates and prevent race conditions when multiple
- * IPC handlers try to update the same plan file concurrently.
- *
- * IMPORTANT LIMITATION:
- * The synchronous function `persistPlanStatusSync` does NOT participate in the locking
- * mechanism. It bypasses the async lock entirely, which means:
- * - It can race with concurrent async operations (persistPlanStatus, updatePlanFile, etc.)
- * - It should ONLY be used when you are certain no async operations are pending on the same file
- * - Prefer using the async `persistPlanStatus` whenever possible
- *
- * If you need synchronous behavior, ensure that:
- * 1. No async plan operations are in flight for the same file path
- * 2. The calling context truly cannot use async/await (e.g., synchronous event handlers)
+ * Provides serialized operations for reading and writing implementation_plan.md files.
+ * Async callers are queued in-process, and all plan saves route through the core
+ * runtime file lock so sync and async paths share the same cross-process guard.
  */
 
 import path from 'path';
-import { readFileSync, mkdirSync } from 'fs';
+import { existsSync, readFileSync, mkdirSync } from 'fs';
 import {
   applyAutocodePlanPhase,
   applyAutocodePlanStatus,
@@ -27,8 +16,10 @@ import {
   canSyncAutocodePlanPhases,
   countAutocodePlanSubtasks,
   createMinimalAutocodePlan,
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   mapAutocodeTaskStatusToPlanStatus,
   resetAutocodeStuckSubtasksInPlan,
+  withAutocodeRuntimeFileWriteLockSync,
   AUTOCODE_TASK_ARTIFACTS,
   type MutableAutocodePlan,
 } from '@autocode/core';
@@ -144,22 +135,8 @@ export async function persistPlanStatus(planPath: string, status: TaskStatus, pr
 /**
  * Persist task status synchronously (for use in event handlers where async isn't practical).
  *
- * WARNING: This function bypasses the async locking mechanism entirely!
- *
- * This means it can race with concurrent async operations (persistPlanStatus, updatePlanFile,
- * createPlanIfNotExists) that may be in flight for the same file. Using this function while
- * async operations are pending can result in:
- * - Lost updates (this write may overwrite changes from an async operation, or vice versa)
- * - Corrupted plan content (if writes interleave at the filesystem level)
- * - Inconsistent state between what was written and what the async operation expected to read
- *
- * ONLY use this function when ALL of the following conditions are met:
- * 1. You are in a synchronous context that cannot use async/await (e.g., certain event handlers)
- * 2. You are certain no async plan operations are pending or in-flight for this file path
- * 3. No other code will initiate async plan operations until this function returns
- *
- * When possible, prefer using the async `persistPlanStatus` function instead, which properly
- * participates in the locking mechanism and prevents race conditions.
+ * Prefer the async `persistPlanStatus` when the caller can await the in-process queue.
+ * The sync save still uses the core cross-process file lock.
  *
  * @param planPath - Path to the implementation_plan.md file
  * @param status - The TaskStatus to persist
@@ -198,8 +175,8 @@ export function persistPlanStatusSync(planPath: string, status: TaskStatus, proj
 /**
  * Persist lastEvent metadata synchronously.
  *
- * WARNING: This bypasses async locking. Use only in sync event handlers where
- * async isn't practical. Prefer updatePlanFile when possible.
+ * Prefer updatePlanFile when the caller can await the in-process queue.
+ * The sync save still uses the core cross-process file lock.
  */
 export function persistPlanLastEventSync(planPath: string, event: TaskEventPayload): boolean {
   try {
@@ -453,7 +430,7 @@ export async function createPlanIfNotExists(
 }
 
 /**
- * Reset all stuck subtasks (in_progress or failed) to pending state.
+ * Reset all stuck subtasks (in_progress, failed, or blocked) to pending state.
  * This enables automatic recovery when tasks are interrupted by rate limits or errors.
  * Thread-safe with withPlanLock.
  *
@@ -504,7 +481,8 @@ export async function resetStuckSubtasks(planPath: string, projectId?: string): 
 
 /**
  * Update task_metadata.json to add PR URL.
- * This is a simple JSON file update (no locking needed as it's rarely updated concurrently).
+ * Uses the shared runtime file lock because review metadata can be updated from
+ * main-project and worktree flows at nearly the same time.
  *
  * @param metadataPath - Path to the task_metadata.json file
  * @param prUrl - The PR URL to add to metadata
@@ -515,32 +493,47 @@ export function updateTaskMetadataReviewRequest(
   updates: { prUrl?: string; gitblitTicketId?: number },
 ): boolean {
   try {
-    let metadata: Record<string, unknown> = {};
+    const writeMetadata = (): boolean => {
+      let metadata: Record<string, unknown> = {};
 
-    // Try to read existing metadata
-    try {
-      const content = readFileSync(metadataPath, 'utf-8');
-      metadata = safeParseJson<Record<string, unknown>>(content) || {};
-    } catch (err) {
-      if (!isFileNotFoundError(err)) {
-        throw err;
+      // Try to read existing metadata
+      try {
+        const content = readFileSync(metadataPath, 'utf-8');
+        metadata = safeParseJson<Record<string, unknown>>(content) || {};
+      } catch (err) {
+        if (!isFileNotFoundError(err)) {
+          throw err;
+        }
+        // File doesn't exist, will create new one
       }
-      // File doesn't exist, will create new one
-    }
 
-    if (updates.prUrl !== undefined) {
-      metadata.prUrl = updates.prUrl;
-    }
-    if (updates.gitblitTicketId !== undefined) {
-      metadata.gitblitTicketId = updates.gitblitTicketId;
-    }
+      if (updates.prUrl !== undefined) {
+        metadata.prUrl = updates.prUrl;
+      }
+      if (updates.gitblitTicketId !== undefined) {
+        metadata.gitblitTicketId = updates.gitblitTicketId;
+      }
 
-    // Ensure parent directory exists before writing
-    mkdirSync(path.dirname(metadataPath), { recursive: true });
+      // Ensure parent directory exists before writing
+      mkdirSync(path.dirname(metadataPath), { recursive: true });
 
-    // Write back
-    writeFileAtomicSync(metadataPath, JSON.stringify(metadata, null, 2));
-    return true;
+      // Write back
+      writeFileAtomicSync(metadataPath, JSON.stringify(metadata, null, 2));
+      return true;
+    };
+
+    const lockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(path.dirname(metadataPath));
+    if (!existsSync(lockScope.projectRoot)) {
+      return writeMetadata();
+    }
+    return withAutocodeRuntimeFileWriteLockSync(
+      {
+        ...lockScope,
+        filePath: metadataPath,
+        ownerId: 'desktop:task-metadata-review-request',
+      },
+      writeMetadata,
+    );
   } catch (err) {
     console.warn(`[plan-file-utils] Could not update metadata at ${metadataPath}:`, err);
     return false;

@@ -171,7 +171,7 @@ export function removePauseFile(specDir: string, fileName: string): void {
  * @param waitMs         Maximum milliseconds to wait.
  * @param sourceSpecDir  Optional fallback dir to also check for RESUME file.
  * @param signal         AbortSignal for cancellation.
- * @returns true if the user signalled an early resume, false if we waited out the full duration.
+ * @returns true if the user signalled or cleared an early resume, false if we waited out the full duration.
  */
 export async function waitForRateLimitResume(
   specDir: string,
@@ -192,6 +192,13 @@ export async function waitForRateLimitResume(
     if (signal?.aborted) break;
 
     if (checkAndClearResumeFile(resumeFile, pauseFile, fallbackResume)) {
+      return true;
+    }
+
+    // When multiple workers are paused, the first worker that sees RESUME will
+    // delete the shared pause file. Treat that as a resume signal for the rest.
+    if (!existsSync(pauseFile)) {
+      try { if (existsSync(resumeFile)) unlinkSync(resumeFile); } catch { /* ignore */ }
       return true;
     }
 

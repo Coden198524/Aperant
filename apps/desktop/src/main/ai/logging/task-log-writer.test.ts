@@ -1,4 +1,4 @@
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it, vi } from 'vitest';
@@ -37,6 +37,39 @@ afterEach(() => {
 });
 
 describe('TaskLogWriter', () => {
+  it('merges external log entries written after the writer was created', () => {
+    const { specDir, writer } = createWriterFixture('spec-merge');
+    const externalLogs: TaskLogs = {
+      spec_id: 'spec-merge',
+      created_at: '2026-01-01T00:00:00.000Z',
+      updated_at: '2026-01-01T00:01:00.000Z',
+      phases: {
+        planning: { phase: 'planning', status: 'pending', started_at: null, completed_at: null, entries: [] },
+        coding: {
+          phase: 'coding',
+          status: 'active',
+          started_at: '2026-01-01T00:01:00.000Z',
+          completed_at: null,
+          entries: [{
+            timestamp: '2026-01-01T00:01:00.000Z',
+            type: 'info',
+            content: 'external runtime event',
+            phase: 'coding',
+          }],
+        },
+        validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] },
+      },
+    };
+    writeFileSync(join(specDir, 'task_logs.json'), JSON.stringify(externalLogs, null, 2), 'utf-8');
+
+    writer.startPhase('coding', 'writer coding start');
+
+    const contents = readTaskLogs(specDir);
+    const codingContents = contents.phases.coding.entries.map((entry) => entry.content);
+    expect(codingContents).toContain('external runtime event');
+    expect(codingContents).toContain('writer coding start');
+  });
+
   it('writes text entries for different subtasks when each step flushes output', () => {
     const writer = createWriter();
     writer.startPhase('coding', 'Starting implementation');

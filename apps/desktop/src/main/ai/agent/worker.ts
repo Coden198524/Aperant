@@ -24,6 +24,7 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   AUTOCODE_PROJECT_INDEX_FILE_NAME,
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   isOfficialOpenAIBaseUrl,
   normalizeOpenAICompatibleBaseUrl,
   resolveAutocodeTaskRuntimeConcurrency,
@@ -274,6 +275,7 @@ function buildSecurityProfile(session: SerializableSessionConfig): SecurityProfi
  * Build a ToolContext for the given session config.
  */
 function buildToolContext(session: SerializableSessionConfig, securityProfile: SecurityProfile, fileCache?: FileContentCache): ToolContext {
+  const fileWriteLockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(session.sourceSpecDir ?? session.specDir);
   const allowedPathRoots = [
     session.toolContext.projectDir,
     session.sourceProjectDir,
@@ -291,6 +293,12 @@ function buildToolContext(session: SerializableSessionConfig, securityProfile: S
     fileCache,
     workflowMode: session.workflowMode,
     toolUsageState,
+    fileWriteLock: {
+      enabled: true,
+      dataDirName: fileWriteLockScope.dataDirName,
+      projectRoot: session.sourceProjectDir ?? session.projectDir,
+      ownerId: [config.taskId, session.subtaskId, session.phase].filter(Boolean).join(':') || config.taskId,
+    },
   };
 }
 

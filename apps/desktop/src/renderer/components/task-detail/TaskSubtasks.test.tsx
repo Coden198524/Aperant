@@ -2,9 +2,9 @@
 
 import '@testing-library/jest-dom/vitest';
 import '../../../shared/i18n';
-import { fireEvent, render, screen } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '../../../shared/types';
+import type { Task, TaskLogs } from '../../../shared/types';
 import { TooltipProvider } from '../ui/tooltip';
 import { TaskSubtasks } from './TaskSubtasks';
 
@@ -41,6 +41,143 @@ function createTask(): Task {
     ],
     createdAt: new Date('2026-01-01T00:00:00Z'),
     updatedAt: new Date('2026-01-01T00:00:00Z'),
+  };
+}
+
+function createConcurrentWorkPackageTask(): Task {
+  return {
+    ...createTask(),
+    status: 'in_progress',
+    metadata: {
+      runtimeConcurrency: {
+        mode: 'concurrent',
+        workers: 2,
+        unit: 'work_item',
+        conflictPolicy: 'lock-and-queue',
+      },
+    },
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Build board package',
+        description: 'Render the board and core interactions',
+        status: 'in_progress',
+        files: [],
+        workPackage: true,
+      } as Task['subtasks'][number] & { workPackage: boolean },
+      {
+        id: 'wp-2',
+        title: 'Build scoring package',
+        description: 'Render score and level UI',
+        status: 'pending',
+        files: [],
+        workPackage: true,
+      } as Task['subtasks'][number] & { workPackage: boolean },
+    ],
+  };
+}
+
+function createFanOutWorkPackageTask(): Task {
+  return {
+    ...createTask(),
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Create shared contract',
+        description: 'Create shared contract',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+      },
+      {
+        id: 'wp-2',
+        title: 'Build desktop adapter',
+        description: 'Build desktop adapter',
+        status: 'pending',
+        files: [],
+        dependsOn: ['wp-1'],
+        workPackage: true,
+      },
+      {
+        id: 'wp-3',
+        title: 'Build CLI adapter',
+        description: 'Build CLI adapter',
+        status: 'pending',
+        files: [],
+        dependsOn: ['wp-1'],
+        workPackage: true,
+      },
+      {
+        id: 'wp-4',
+        title: 'Build VS Code adapter',
+        description: 'Build VS Code adapter',
+        status: 'pending',
+        files: [],
+        dependsOn: ['wp-1'],
+        workPackage: true,
+      },
+      {
+        id: 'wp-5',
+        title: 'Verify shared runtime',
+        description: 'Verify shared runtime',
+        status: 'pending',
+        files: [],
+        dependsOn: ['wp-2', 'wp-3', 'wp-4'],
+        workPackage: true,
+      },
+    ],
+  };
+}
+
+function createConcurrentWorkPackageLogs(): TaskLogs {
+  return {
+    spec_id: 'spec-1',
+    created_at: '2026-01-01T00:00:00.000Z',
+    updated_at: '2026-01-01T00:00:03.000Z',
+    phases: {
+      planning: {
+        phase: 'planning',
+        status: 'completed',
+        started_at: '2026-01-01T00:00:00.000Z',
+        completed_at: '2026-01-01T00:00:01.000Z',
+        entries: [],
+      },
+      coding: {
+        phase: 'coding',
+        status: 'active',
+        started_at: '2026-01-01T00:00:01.000Z',
+        completed_at: null,
+        entries: [
+          {
+            timestamp: '2026-01-01T00:00:01.500Z',
+            type: 'text',
+            phase: 'coding',
+            content: 'Global coordinator output.',
+          },
+          {
+            timestamp: '2026-01-01T00:00:02.000Z',
+            type: 'text',
+            phase: 'coding',
+            content: 'Board package model output.',
+            subtask_id: 'wp-1',
+          },
+          {
+            timestamp: '2026-01-01T00:00:02.500Z',
+            type: 'text',
+            phase: 'coding',
+            content: 'Scoring package model output.',
+            subtask_id: 'wp-2',
+          },
+        ],
+      },
+      validation: {
+        phase: 'validation',
+        status: 'pending',
+        started_at: null,
+        completed_at: null,
+        entries: [],
+      },
+    },
   };
 }
 
@@ -140,5 +277,45 @@ describe('TaskSubtasks', () => {
     expect(runtimePanel).not.toHaveTextContent('Runtime');
     expect(screen.queryByText(/Starting QA validation loop/)).not.toBeInTheDocument();
     expect(screen.queryByText(/Running qa_reviewer session/)).not.toBeInTheDocument();
+  });
+
+  it('renders the execution graph beside the subtask list', () => {
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createFanOutWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByTestId('subtask-execution-graph')).toBeInTheDocument();
+    expect(screen.getByText('Execution graph')).toBeInTheDocument();
+    expect(screen.getByText('Sequential 5t')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 3t')).toBeInTheDocument();
+    expect(screen.getByText('Saves 2t')).toBeInTheDocument();
+    expect(screen.getByText('Max parallel 3')).toBeInTheDocument();
+    expect(screen.getByText('wp-5')).toBeInTheDocument();
+  });
+
+  it('shows concurrent work package model output inside the expanded package only', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({
+      success: true,
+      data: createConcurrentWorkPackageLogs(),
+    })) as typeof window.electronAPI.getTaskLogs;
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createConcurrentWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    await waitFor(() => {
+      expect(screen.getByText('Global coordinator output.')).toBeInTheDocument();
+    });
+    expect(screen.queryByText('Board package model output.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Scoring package model output.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('Build board package'));
+
+    expect(await screen.findByText('Board package model output.')).toBeInTheDocument();
+    expect(screen.queryByText('Scoring package model output.')).not.toBeInTheDocument();
   });
 });

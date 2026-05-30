@@ -13,6 +13,14 @@ import {
   saveAutocodeTaskRequirementsSync,
 } from '../tasks/requirements-store.js';
 import {
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  withAutocodeRuntimeFileWriteLockSync,
+} from '../runtime/workspace-claims.js';
+import {
+  analyzeAutocodeWorkDependencies,
+  describeAutocodeWorkDependencyBlockers,
+} from '../runtime/work-dependencies.js';
+import {
   createAutocodeTask,
   getAutocodeSpecDir,
   listAutocodeTasks,
@@ -868,16 +876,46 @@ export function syncOpenSpecTasksFromAutocodePlan(
     return { changed: false, tasksPath, updatedCount: 0 };
   }
 
-  const plan = loadAutocodeImplementationPlanSync(specDir);
-  if (!plan) {
+  const lockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir);
+  const statusById = withAutocodeRuntimeFileWriteLockSync(
+    {
+      ...lockScope,
+      filePath: join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
+      ownerId: `openspec-sync:${metadata.openSpecChangeId ?? metadata.openSpecTasksPath}:plan`,
+    },
+    () => {
+      const plan = loadAutocodeImplementationPlanSync(specDir);
+      if (!plan) {
+        return null;
+      }
+
+      const statusById = buildPlanTaskStatusMap(plan);
+      if (statusById.size === 0) {
+        return null;
+      }
+
+      return statusById;
+    },
+  );
+
+  if (!statusById) {
     return { changed: false, tasksPath, updatedCount: 0 };
   }
 
-  const statusById = buildPlanTaskStatusMap(plan);
-  if (statusById.size === 0) {
-    return { changed: false, tasksPath, updatedCount: 0 };
-  }
+  return withAutocodeRuntimeFileWriteLockSync(
+    {
+      ...lockScope,
+      filePath: tasksPath,
+      ownerId: `openspec-sync:${metadata.openSpecChangeId ?? metadata.openSpecTasksPath}:tasks`,
+    },
+    () => syncOpenSpecTasksFile(tasksPath, statusById),
+  );
+}
 
+function syncOpenSpecTasksFile(
+  tasksPath: string,
+  statusById: Map<string, string>,
+): SyncOpenSpecTasksFromAutocodePlanResult {
   const original = readFileSync(tasksPath, 'utf8');
   populateParentOpenSpecTaskStatuses(original, statusById);
   let updatedCount = 0;
@@ -1202,6 +1240,7 @@ async function generateAndWriteOpenSpecArtifact(input: {
   let lastError: unknown;
 
   for (let attempt = 0; attempt < 2; attempt += 1) {
+    const artifactStartedAt = Date.now();
     const existingArtifacts = collectAvailableOpenSpecArtifacts(input.projectRoot, input.changeDir);
     const instructions = attempt === 0
       ? input.instructions
@@ -1216,6 +1255,7 @@ async function generateAndWriteOpenSpecArtifact(input: {
         artifactIndex: input.artifactIndex,
         totalArtifacts: input.totalArtifacts,
         attempt: attempt + 1,
+        elapsedMs: Date.now() - artifactStartedAt,
       });
       const generated = await input.artifactGenerator.generateArtifact({
         projectRoot: input.projectRoot,
@@ -1239,7 +1279,7 @@ async function generateAndWriteOpenSpecArtifact(input: {
         attempt: attempt + 1,
         onProgress: input.onProgress,
       });
-      const artifact = normalizeGeneratedOpenSpecArtifact(generated);
+      const artifact = normalizeGeneratedOpenSpecArtifact(input.artifactId, generated);
       const targetPath = resolveGeneratedArtifactPath(
         input.projectRoot,
         input.changeDir,
@@ -1260,6 +1300,7 @@ async function generateAndWriteOpenSpecArtifact(input: {
         totalArtifacts: input.totalArtifacts,
         attempt: attempt + 1,
         generatedChars: artifact.content.length,
+        elapsedMs: Date.now() - artifactStartedAt,
       });
       return;
     } catch (error) {
@@ -1273,6 +1314,7 @@ async function generateAndWriteOpenSpecArtifact(input: {
         artifactIndex: input.artifactIndex,
         totalArtifacts: input.totalArtifacts,
         attempt: attempt + 1,
+        elapsedMs: Date.now() - artifactStartedAt,
         error: error instanceof Error ? error.message : String(error),
       });
     }
@@ -1396,13 +1438,21 @@ function readOpenSpecArtifactInstructions(
       throw new Error('OpenSpec instructions interface is not available.');
     }
     const instructions = cli?.getInstructions?.(input).data ?? fallbackOpenSpecArtifactInstructions(input.artifactId, language);
-    return localizeOpenSpecArtifactInstructions(instructions, input.artifactId, language);
+    return enforceOpenSpecTaskDependencyInstructions(
+      localizeOpenSpecArtifactInstructions(instructions, input.artifactId, language),
+      input.artifactId,
+      language,
+    );
   } catch (error) {
     if (requireProtocol) {
       const message = error instanceof Error ? error.message : String(error);
       throw new Error(`OpenSpec instructions interface failed for ${input.artifactId}: ${message}`);
     }
-    return fallbackOpenSpecArtifactInstructions(input.artifactId, language);
+    return enforceOpenSpecTaskDependencyInstructions(
+      fallbackOpenSpecArtifactInstructions(input.artifactId, language),
+      input.artifactId,
+      language,
+    );
   }
 }
 
@@ -1431,6 +1481,7 @@ function resolveGeneratedArtifactPath(
 }
 
 function normalizeGeneratedOpenSpecArtifact(
+  artifactId: string,
   generated: string | OpenSpecGeneratedArtifact,
 ): OpenSpecGeneratedArtifact {
   const candidate = typeof generated === 'string'
@@ -1442,8 +1493,18 @@ function normalizeGeneratedOpenSpecArtifact(
   }
   return {
     ...candidate,
-    content,
+    content: normalizeGeneratedOpenSpecArtifactContent(artifactId, content),
   };
+}
+
+function normalizeGeneratedOpenSpecArtifactContent(artifactId: string, content: string): string {
+  if (artifactId === 'tasks') {
+    return normalizeGeneratedOpenSpecTasksMarkdown(content);
+  }
+  if (artifactId === 'specs') {
+    return normalizeGeneratedOpenSpecSpecMarkdown(content);
+  }
+  return content;
 }
 
 function stripMarkdownFence(content: string): string {
@@ -1476,6 +1537,7 @@ function validateGeneratedOpenSpecArtifact(artifactId: string, content: string):
     if (!/^\s*-\s+\[[ xX]\]\s+.+$/m.test(content)) {
       throw new Error('Generated OpenSpec tasks must contain Markdown checkbox tasks.');
     }
+    assertGeneratedOpenSpecTasksHaveDependencyMetadata(content);
     return;
   }
 
@@ -1497,6 +1559,316 @@ function requireAnyMarkdownSection(content: string, sections: string[], artifact
     }
   }
   throw new Error(`Generated OpenSpec ${artifactId} must include "## ${displaySection}".`);
+}
+
+interface OpenSpecTaskMarkdownItem {
+  id: string;
+  indent: number;
+  lineIndex: number;
+}
+
+function assertGeneratedOpenSpecTasksHaveDependencyMetadata(content: string): void {
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  const items = collectOpenSpecTaskMarkdownItems(lines);
+  const leafItems = items.filter((item, index) => {
+    const nextItem = items[index + 1];
+    return !nextItem || nextItem.indent <= item.indent;
+  });
+  const executableTaskIds = new Set(leafItems.map((item) => item.id));
+
+  for (const [index, item] of leafItems.entries()) {
+    const nextItem = items.find((candidate) => candidate.lineIndex > item.lineIndex && candidate.indent <= item.indent);
+    const block = lines.slice(item.lineIndex + 1, nextItem?.lineIndex ?? lines.length);
+    const dependencyLines = block.filter((line) => /^\s*-\s+_Depends on:\s*.*?_\s*$/i.test(line));
+    if (dependencyLines.length === 0) {
+      throw new Error(`Generated OpenSpec tasks must include _Depends on: ..._ for executable task ${item.id}.`);
+    }
+    if (dependencyLines.length > 1) {
+      throw new Error(`Generated OpenSpec task ${item.id} must include exactly one Depends on line.`);
+    }
+
+    const dependencyValue = dependencyLines[0].replace(/^\s*-\s+_Depends on:\s*/i, '').replace(/_\s*$/, '').trim();
+    if (!dependencyValue) {
+      throw new Error(`Generated OpenSpec task ${item.id} has an empty Depends on value.`);
+    }
+
+    if (/^none$/i.test(dependencyValue)) {
+      continue;
+    }
+
+    for (const dependencyId of dependencyValue.split(',').map((value) => value.trim()).filter(Boolean)) {
+      if (!executableTaskIds.has(dependencyId)) {
+        throw new Error(`Generated OpenSpec task ${item.id} depends on unknown task ${dependencyId}.`);
+      }
+      if (dependencyId === item.id) {
+        throw new Error(`Generated OpenSpec task ${item.id} cannot depend on itself.`);
+      }
+      const dependencyIndex = leafItems.findIndex((candidate) => candidate.id === dependencyId);
+      if (dependencyIndex > index) {
+        throw new Error(`Generated OpenSpec task ${item.id} depends on later task ${dependencyId}; dependencies must form a DAG in execution order.`);
+      }
+    }
+  }
+
+  const parsedPlan = parseAutocodeImplementationPlanMarkdown(lines.join('\n'));
+  const runtimeTasks = completeOpenSpecRuntimeTaskDependencyGraph(flattenOpenSpecRuntimeTasks(parsedPlan.phases ?? []));
+  assertOpenSpecRuntimeTasksHaveValidDependencies(runtimeTasks);
+}
+
+function collectOpenSpecTaskMarkdownItems(lines: string[]): OpenSpecTaskMarkdownItem[] {
+  const pattern = /^(\s*)-\s+\[[ xX]\]\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(?:\.)?\s+.+?\s*$/;
+  const items: OpenSpecTaskMarkdownItem[] = [];
+  for (const [lineIndex, line] of lines.entries()) {
+    const match = pattern.exec(line);
+    if (match) {
+      items.push({
+        id: match[2],
+        indent: match[1].length,
+        lineIndex,
+      });
+    }
+  }
+  return items;
+}
+
+function normalizeGeneratedOpenSpecTasksMarkdown(content: string): string {
+  const lines = expandInlineOpenSpecDependencyMetadataLines(content.replace(/\r\n/g, '\n').split('\n'));
+  const items = collectOpenSpecTaskMarkdownItems(lines);
+  if (items.length === 0) {
+    return content;
+  }
+
+  const leafItems = collectOpenSpecExecutableTaskMarkdownItems(items);
+  if (leafItems.length === 0) {
+    return content;
+  }
+
+  const parsedPlan = parseAutocodeImplementationPlanMarkdown(content);
+  const runtimeTasks = completeOpenSpecRuntimeTaskDependencyGraph(flattenOpenSpecRuntimeTasks(parsedPlan.phases ?? []));
+  const dependsOnByTaskId = new Map(
+    runtimeTasks.map((task) => [
+      task.id,
+      task.dependsOn.length > 0 ? task.dependsOn.join(', ') : 'none',
+    ]),
+  );
+
+  for (let index = leafItems.length - 1; index >= 0; index -= 1) {
+    const item = leafItems[index];
+    const nextItem = items.find((candidate) => candidate.lineIndex > item.lineIndex && candidate.indent <= item.indent);
+    const blockEnd = nextItem?.lineIndex ?? lines.length;
+    const dependencyLineIndexes = collectOpenSpecDependencyMetadataLineIndexes(lines, item.lineIndex + 1, blockEnd);
+    const dependencyValue = resolveOpenSpecDependencyMetadataValue(lines, dependencyLineIndexes)
+      ?? dependsOnByTaskId.get(item.id)
+      ?? 'none';
+    const canonicalLine = `${' '.repeat(item.indent + 2)}- _Depends on: ${dependencyValue}_`;
+
+    if (dependencyLineIndexes.length === 0) {
+      lines.splice(item.lineIndex + 1, 0, canonicalLine);
+      continue;
+    }
+
+    const [firstDependencyLineIndex, ...duplicateDependencyLineIndexes] = dependencyLineIndexes;
+    lines[firstDependencyLineIndex] = canonicalLine;
+    for (const duplicateLineIndex of duplicateDependencyLineIndexes.reverse()) {
+      lines.splice(duplicateLineIndex, 1);
+    }
+  }
+
+  return lines.join('\n').trimEnd();
+}
+
+function expandInlineOpenSpecDependencyMetadataLines(lines: string[]): string[] {
+  const expanded: string[] = [];
+  for (const line of lines) {
+    const splitLine = splitOpenSpecTaskLineWithInlineDependencyMetadata(line);
+    if (splitLine) {
+      expanded.push(splitLine.taskLine, splitLine.dependencyLine);
+      if (splitLine.trailingLine) {
+        expanded.push(splitLine.trailingLine);
+      }
+      continue;
+    }
+
+    const metadata = parseOpenSpecDependencyMetadataLine(line);
+    if (metadata?.trailing) {
+      expanded.push(`${metadata.indent}${metadata.hasBullet ? '- ' : ''}_Depends on: ${metadata.value}_`);
+      expanded.push(`${metadata.indent}${metadata.trailing}`);
+      continue;
+    }
+
+    expanded.push(line);
+  }
+  return expanded;
+}
+
+function splitOpenSpecTaskLineWithInlineDependencyMetadata(line: string): {
+  taskLine: string;
+  dependencyLine: string;
+  trailingLine?: string;
+} | null {
+  const itemMatch = /^(\s*)-\s+\[[ xX]\]\s+[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*(?:\.)?\s+.+$/u.exec(line);
+  if (!itemMatch) {
+    return null;
+  }
+
+  const metadataStart = line.search(/\s+-\s+_(?:Depends on|依赖|依赖于|前置任务|前置|先决条件)\s*[:：]/iu);
+  if (metadataStart < 0) {
+    return null;
+  }
+
+  const metadata = parseOpenSpecDependencyMetadataLine(line.slice(metadataStart).trim());
+  if (!metadata) {
+    return null;
+  }
+
+  const childIndent = ' '.repeat(itemMatch[1].length + 2);
+  return {
+    taskLine: line.slice(0, metadataStart).trimEnd(),
+    dependencyLine: `${childIndent}- _Depends on: ${metadata.value}_`,
+    trailingLine: metadata.trailing ? `${childIndent}${metadata.trailing}` : undefined,
+  };
+}
+
+function collectOpenSpecExecutableTaskMarkdownItems(items: OpenSpecTaskMarkdownItem[]): OpenSpecTaskMarkdownItem[] {
+  return items.filter((item, index) => {
+    const nextItem = items[index + 1];
+    return !nextItem || nextItem.indent <= item.indent;
+  });
+}
+
+function collectOpenSpecDependencyMetadataLineIndexes(lines: string[], startIndex: number, endIndex: number): number[] {
+  const indexes: number[] = [];
+  for (let index = startIndex; index < endIndex; index += 1) {
+    if (isOpenSpecDependencyMetadataLine(lines[index])) {
+      indexes.push(index);
+    }
+  }
+  return indexes;
+}
+
+function isOpenSpecDependencyMetadataLine(line: string): boolean {
+  return Boolean(parseOpenSpecDependencyMetadataLine(line));
+}
+
+function parseOpenSpecDependencyMetadataLine(line: string): {
+  indent: string;
+  hasBullet: boolean;
+  value: string;
+  trailing: string;
+} | null {
+  const match = /^(\s*)(-\s+)?_(?:Depends on|依赖|依赖于|前置任务|前置|先决条件)\s*[:：]\s*([^_]+?)_\s*(.*?)\s*$/iu.exec(line);
+  if (!match) {
+    return null;
+  }
+  return {
+    indent: match[1],
+    hasBullet: Boolean(match[2]),
+    value: normalizeOpenSpecDependencyMetadataValue(match[3]),
+    trailing: match[4].trim(),
+  };
+}
+
+function resolveOpenSpecDependencyMetadataValue(lines: string[], dependencyLineIndexes: number[]): string | undefined {
+  for (const lineIndex of [...dependencyLineIndexes].reverse()) {
+    const value = parseOpenSpecDependencyMetadataLine(lines[lineIndex])?.value;
+    if (value) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function normalizeOpenSpecDependencyMetadataValue(value: string): string {
+  const normalized = value.trim();
+  if (!normalized || /^(none|无|なし|n\/a|na)$/iu.test(normalized)) {
+    return 'none';
+  }
+  const dependencyIds = normalized
+    .split(/[,，、;；]/u)
+    .map((item) => item.trim())
+    .filter((item) => /^[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*$/u.test(item));
+  return dependencyIds.length > 0 ? uniqueStrings(dependencyIds).join(', ') : 'none';
+}
+
+function normalizeGeneratedOpenSpecSpecMarkdown(content: string): string {
+  const lines = content.replace(/\r\n/g, '\n').split('\n');
+  let requirementStart = -1;
+  let firstBodyLine = -1;
+  let hasShallOrMust = false;
+  let insideScenario = false;
+
+  const flushRequirement = (): boolean => {
+    if (requirementStart < 0 || hasShallOrMust) {
+      return false;
+    }
+    if (firstBodyLine >= 0) {
+      lines[firstBodyLine] = addShallToOpenSpecRequirementLine(lines[firstBodyLine]);
+      return false;
+    }
+    lines.splice(requirementStart + 1, 0, '系统 SHALL 满足该需求。');
+    return true;
+  };
+
+  for (let index = 0; index < lines.length; index += 1) {
+    const line = lines[index];
+    if (/^###\s+Requirement:/u.test(line)) {
+      if (flushRequirement()) {
+        index += 1;
+      }
+      requirementStart = index;
+      firstBodyLine = -1;
+      hasShallOrMust = false;
+      insideScenario = false;
+      continue;
+    }
+
+    if (requirementStart < 0) {
+      continue;
+    }
+
+    if (/^##\s+/u.test(line) && !/^####\s+Scenario:/u.test(line)) {
+      if (flushRequirement()) {
+        index += 1;
+      }
+      requirementStart = -1;
+      firstBodyLine = -1;
+      hasShallOrMust = false;
+      insideScenario = false;
+      continue;
+    }
+
+    if (/^####\s+Scenario:/u.test(line)) {
+      insideScenario = true;
+      continue;
+    }
+
+    if (insideScenario || !line.trim()) {
+      continue;
+    }
+
+    if (/\b(?:SHALL|MUST)\b/iu.test(line)) {
+      hasShallOrMust = true;
+    }
+    if (firstBodyLine < 0 && !/^#/u.test(line.trim())) {
+      firstBodyLine = index;
+    }
+  }
+
+  flushRequirement();
+  return lines.join('\n').trimEnd();
+}
+
+function addShallToOpenSpecRequirementLine(line: string): string {
+  const leadingWhitespace = line.match(/^\s*/u)?.[0] ?? '';
+  const text = line.trim();
+  if (/\b(?:SHALL|MUST)\b/iu.test(text)) {
+    return line;
+  }
+  const chineseModal = /^(系统|软件|应用|页面|服务|功能|用户界面)?\s*(必须|应当|需要|可以|能够|要)\s*/u.exec(text);
+  if (chineseModal) {
+    return `${leadingWhitespace}${chineseModal[1] || '系统'} SHALL ${text.slice(chineseModal[0].length)}`;
+  }
+  return `${leadingWhitespace}系统 SHALL ${text}`;
 }
 
 function fallbackOpenSpecArtifactInstructions(artifactId: string, language?: string): OpenSpecArtifactInstructions {
@@ -1554,21 +1926,32 @@ function fallbackOpenSpecArtifactInstructions(artifactId: string, language?: str
         '## 1. Task Group',
         '',
         '- [ ] 1.1 Task description',
+        '  - _Depends on: none_',
+        '- [ ] 1.2 Follow-up task',
+        '  - _Depends on: 1.1_',
       ].join('\n'),
-      instruction: 'Create concrete implementation tasks grouped by phase.',
+      instruction: 'Create concrete implementation tasks grouped by phase. Every executable task must include a machine-readable _Depends on: ..._ line.',
+      rules: [
+        'Every executable checkbox task must include exactly one _Depends on: ..._ metadata line.',
+        'Use _Depends on: none_ only for root tasks. Otherwise list prerequisite task IDs only, separated by commas.',
+        'Infer the minimum required dependency graph from implementation order, file ownership, verification needs, and runtime prerequisites.',
+        'Keep dependencies minimal: do not make each task depend on the previous task or phase unless it is truly blocked by that work.',
+        'Expose parallel branches for independent modules, files, UI surfaces, tests, and validation scenarios.',
+        'Verification tasks may share the same implementation prerequisite; do not chain them together unless one scenario genuinely requires another.',
+      ],
     };
   }
   return {
     artifactId,
     outputPath: 'specs/**/*.md',
-    template: [
-      '## ADDED Requirements',
-      '',
-      '### Requirement: Requirement name',
-      'Requirement text',
-      '',
-      '#### Scenario: Scenario name',
-      '- **WHEN** condition',
+      template: [
+        '## ADDED Requirements',
+        '',
+        '### Requirement: Requirement name',
+        'The system SHALL describe the required behavior.',
+        '',
+        '#### Scenario: Scenario name',
+        '- **WHEN** condition',
       '- **THEN** expected outcome',
     ].join('\n'),
     instruction: 'Create OpenSpec requirement deltas with scenarios.',
@@ -1635,30 +2018,40 @@ function fallbackChineseOpenSpecArtifactInstructions(artifactId: string): OpenSp
         '',
         '- [ ] 1. 任务分组',
         '  - [ ] 1.1 具体任务',
+        '    - _Depends on: none_',
+        '  - [ ] 1.2 后续任务',
+        '    - _Depends on: 1.1_',
       ].join('\n'),
-      instruction: '创建按阶段分组、可执行、可验证的 OpenSpec 任务清单。任务标题和说明使用简体中文。',
+      instruction: '创建按阶段分组、可执行、可验证的 OpenSpec 任务清单。任务标题和说明使用简体中文；每个可执行任务必须包含机器可解析的 _Depends on: ..._ 行。',
       rules: [
         'tasks.md 的任务标题、说明、文件提示、依赖提示、需求引用和验证说明使用简体中文。',
         '保留 Markdown checkbox 语法和数字编号，例如 - [ ] 1.1。',
+        '每个可执行 checkbox 任务必须包含且只包含一个独立的 `- _Depends on: ..._` 元数据行，不能写在任务标题同一行，也不能重复。',
+        '根任务使用 _Depends on: none_；有前置任务时只填写任务 ID，多个 ID 用英文逗号分隔。',
+        '根据实现顺序、文件归属、验证前置条件和运行依赖推断最小依赖图。',
+        '依赖必须最小化：不要默认让每个任务依赖上一条任务或上一整个阶段，只有真实阻塞时才写依赖。',
+        '独立模块、独立文件、独立 UI 区域、独立测试和独立验收场景要拆成可并行分支。',
+        '多个验证任务可以共同依赖同一个实现任务；除非验证场景之间真实有前后关系，否则不要互相串行依赖。',
       ],
     };
   }
   return {
     artifactId,
     outputPath: 'specs/**/*.md',
-    template: [
-      '## ADDED Requirements',
-      '',
-      '### Requirement: 需求名称',
-      '需求正文使用简体中文。',
-      '',
-      '#### Scenario: 场景名称',
-      '- **WHEN** 触发条件',
+      template: [
+        '## ADDED Requirements',
+        '',
+        '### Requirement: 需求名称',
+        '系统 SHALL 使用简体中文描述需求正文。',
+        '',
+        '#### Scenario: 场景名称',
+        '- **WHEN** 触发条件',
       '- **THEN** 期望结果',
     ].join('\n'),
     instruction: '创建 OpenSpec 需求增量和场景。除 OpenSpec 必需结构关键字外，需求名称、场景名称和正文使用简体中文。',
     rules: [
       '保留 OpenSpec 必需结构关键字：ADDED/MODIFIED/REMOVED Requirements、Requirement、Scenario、WHEN、THEN。',
+      '每个 Requirement 正文必须包含字面英文 SHALL 或 MUST；中文正文写成“系统 SHALL ...”。',
       '除上述结构关键字、代码标识、命令和路径外，所有自然语言使用简体中文。',
     ],
   };
@@ -1674,7 +2067,7 @@ function localizeOpenSpecArtifactInstructions(
   }
 
   const languageRule = artifactId === 'specs'
-    ? '中文输出规则：保留 OpenSpec 必需结构关键字 ADDED/MODIFIED/REMOVED Requirements、Requirement、Scenario、WHEN、THEN；其余需求名称、场景名称、条件和结果正文使用简体中文。'
+    ? '中文输出规则：保留 OpenSpec 必需结构关键字 ADDED/MODIFIED/REMOVED Requirements、Requirement、Scenario、WHEN、THEN；每个 Requirement 正文必须包含字面英文 SHALL 或 MUST，中文正文写成“系统 SHALL ...”；其余需求名称、场景名称、条件和结果正文使用简体中文。'
     : '中文输出规则：标题、正文、任务描述、文件提示、依赖提示、需求引用和验证说明都使用简体中文；不要沿用英文模板标题。';
   const rules = Array.isArray(instructions.rules)
     ? [...instructions.rules, languageRule]
@@ -1689,6 +2082,52 @@ function localizeOpenSpecArtifactInstructions(
       languageRule,
     ].filter(Boolean).join('\n\n'),
     rules,
+  };
+}
+
+function enforceOpenSpecTaskDependencyInstructions(
+  instructions: OpenSpecArtifactInstructions,
+  artifactId: string,
+  language?: string,
+): OpenSpecArtifactInstructions {
+  if (artifactId !== 'tasks') {
+    return instructions;
+  }
+
+  const dependencyRules = isChineseLanguage(language)
+    ? [
+      '依赖图规则：OpenSpec tasks.md 必须显式写出任务之间的依赖关系。',
+      '每个可执行 checkbox 任务必须包含一个机器可解析的独立 `- _Depends on: ..._` 行，不能写在任务标题同一行，也不能重复。',
+      '根任务写 _Depends on: none_；非根任务只写前置任务 ID，例如 _Depends on: 1.1, 1.2_。',
+      '不要在 Depends on 中写自然语言、章节标题、需求 ID、文件路径或“见上文”。',
+      '如果依赖不明显，请根据实现顺序、共享文件、验证前置条件和运行时前置条件推断最小 DAG。',
+      '依赖必须最小化：不要按章节顺序或任务列表顺序自动串行化；只有真实数据、接口、文件或运行前置关系才算依赖。',
+      '能并行的任务必须显式形成扇出/汇合 DAG，例如 1.1 -> 1.2, 1.3 -> 1.4，而不是 1.1 -> 1.2 -> 1.3 -> 1.4。',
+      '验证任务默认依赖被验证的实现完成点，不要把不同验证场景互相串起来。',
+    ]
+    : [
+      'Dependency graph rule: OpenSpec tasks.md must explicitly describe task-to-task dependencies.',
+      'Every executable checkbox task must include one machine-readable _Depends on: ..._ line.',
+      'Root tasks use _Depends on: none_; non-root tasks list prerequisite task IDs only, for example _Depends on: 1.1, 1.2_.',
+      'Do not put prose, phase titles, requirement IDs, file paths, or "see above" in Depends on.',
+      'When dependencies are unclear, infer the minimum DAG from implementation order, shared files, verification prerequisites, and runtime prerequisites.',
+      'Keep dependencies minimal: do not serialize by phase or list order unless there is a real data, interface, file, or runtime prerequisite.',
+      'Tasks that can run independently must form fan-out/join DAGs, for example 1.1 -> 1.2, 1.3 -> 1.4, instead of 1.1 -> 1.2 -> 1.3 -> 1.4.',
+      'Verification tasks normally depend on the implementation point they verify; do not chain independent verification scenarios together.',
+    ];
+  const existingRules = Array.isArray(instructions.rules)
+    ? instructions.rules
+    : typeof instructions.rules === 'string' && instructions.rules.trim()
+      ? [instructions.rules]
+      : [];
+
+  return {
+    ...instructions,
+    instruction: [
+      stringFrom(instructions.instruction),
+      ...dependencyRules,
+    ].filter(Boolean).join('\n\n'),
+    rules: [...existingRules, ...dependencyRules],
   };
 }
 
@@ -1872,9 +2311,10 @@ function buildOpenSpecTasksMarkdown(input: {
       '',
       '- [ ] 1. 实现 OpenSpec 变更',
       `  - ${singleLine(input.description)}`,
+      '  - _Depends on: none_',
     ];
     if (affectedFiles.length > 0) lines.push(`  - _文件：${affectedFiles.join(', ')}_`);
-    if (dependencies.length > 0) lines.push(`  - _依赖：${dependencies.join(', ')}_`);
+    if (dependencies.length > 0) lines.push(`  - 项目依赖：${dependencies.join(', ')}`);
     if (acceptance.length > 0) lines.push(`  - _需求：${acceptance.map((_, index) => `1.${index + 1}`).join(', ')}_`);
     lines.push('  - _验证：运行最相关的项目验证命令，并在 Autocode 中记录结果。_');
     lines.push('');
@@ -1888,9 +2328,10 @@ function buildOpenSpecTasksMarkdown(input: {
     '',
     '- [ ] 1. Implement the OpenSpec change',
     `  - ${singleLine(input.description)}`,
+    '  - _Depends on: none_',
   ];
   if (affectedFiles.length > 0) lines.push(`  - _Files: ${affectedFiles.join(', ')}_`);
-  if (dependencies.length > 0) lines.push(`  - _Depends on: ${dependencies.join(', ')}_`);
+  if (dependencies.length > 0) lines.push(`  - Project dependencies: ${dependencies.join(', ')}`);
   if (acceptance.length > 0) lines.push(`  - _Requirements: ${acceptance.map((_, index) => `1.${index + 1}`).join(', ')}_`);
   lines.push('  - _Verification: Run the most relevant project validation and record the result in Autocode._');
   lines.push('');
@@ -2104,6 +2545,7 @@ interface OpenSpecRuntimeWorkPackage {
   phaseId: string;
   phaseName: string;
   tasks: OpenSpecRuntimeTask[];
+  dependsOn: string[];
 }
 
 const OPENSPEC_WORK_PACKAGE_MAX_TASKS = 4;
@@ -2113,7 +2555,10 @@ function buildOpenSpecRuntimeWorkPackagePhases(
   parsedPhases: Array<Record<string, unknown>>,
   language?: string,
 ): MutableAutocodePlanPhase[] {
-  const runtimeTasks = flattenOpenSpecRuntimeTasks(parsedPhases, language);
+  const runtimeTasks = completeOpenSpecRuntimeTaskDependencyGraph(
+    flattenOpenSpecRuntimeTasks(parsedPhases, language),
+  );
+  assertOpenSpecRuntimeTasksHaveValidDependencies(runtimeTasks);
   if (runtimeTasks.length === 0) {
     return [
       {
@@ -2136,6 +2581,25 @@ function buildOpenSpecRuntimeWorkPackagePhases(
   ];
 }
 
+function assertOpenSpecRuntimeTasksHaveValidDependencies(tasks: OpenSpecRuntimeTask[]): void {
+  if (tasks.length === 0) {
+    return;
+  }
+  const analysis = analyzeAutocodeWorkDependencies(
+    tasks.map((task) => ({
+      id: task.id,
+      status: task.status,
+      dependsOn: task.dependsOn,
+    })),
+  );
+  if (analysis.issues.length === 0) {
+    return;
+  }
+
+  const summary = describeAutocodeWorkDependencyBlockers(analysis.blocked);
+  throw new Error(`OpenSpec task dependency graph is invalid: ${summary}`);
+}
+
 function flattenOpenSpecRuntimeTasks(parsedPhases: Array<Record<string, unknown>>, language?: string): OpenSpecRuntimeTask[] {
   const tasks: OpenSpecRuntimeTask[] = [];
   for (const [phaseIndex, phase] of parsedPhases.entries()) {
@@ -2155,10 +2619,11 @@ function flattenOpenSpecRuntimeTasks(parsedPhases: Array<Record<string, unknown>
       const id = stringFrom(subtask.id ?? subtask.subtask_id) || `${phaseId}.${subtaskIndex + 1}`;
       const title = stringFrom(subtask.title ?? subtask.description)
         || (isChineseLanguage(language) ? `OpenSpec 任务 ${id}` : `OpenSpec task ${id}`);
+      const description = sanitizeOpenSpecTaskDescriptionForRuntime(stringFrom(subtask.description) || title, title);
       tasks.push({
         id,
         title,
-        description: stringFrom(subtask.description) || title,
+        description,
         status: stringFrom(subtask.status) || 'pending',
         phaseId,
         phaseName,
@@ -2168,7 +2633,7 @@ function flattenOpenSpecRuntimeTasks(parsedPhases: Array<Record<string, unknown>
           ...toStringArray(subtask.files),
         ]),
         patternFiles: toStringArray(subtask.pattern_files),
-        dependsOn: toStringArray(subtask.depends_on),
+        dependsOn: sanitizeOpenSpecDependencyIds(toStringArray(subtask.depends_on)),
         requirements: toStringArray(subtask.requirements),
         verification: subtask.verification,
       });
@@ -2177,36 +2642,323 @@ function flattenOpenSpecRuntimeTasks(parsedPhases: Array<Record<string, unknown>
   return tasks;
 }
 
+function sanitizeOpenSpecTaskDescriptionForRuntime(description: string, fallbackTitle = ''): string {
+  const cleanedLines = description
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => stripOpenSpecDependencyMetadataPrefix(line).trim())
+    .filter(Boolean);
+  return cleanedLines.join('\n') || fallbackTitle;
+}
+
+function stripOpenSpecDependencyMetadataPrefix(line: string): string {
+  return line.replace(/^\s*(?:-\s+)?_(?:Depends on|依赖|依赖于|前置任务|前置|先决条件)\s*[:：]\s*[^_]+?_\s*/iu, '');
+}
+
+function sanitizeOpenSpecDependencyIds(values: string[]): string[] {
+  return uniqueStrings(
+    values.flatMap((value) => normalizeOpenSpecDependencyMetadataValue(value).split(/,\s*/u))
+      .map((value) => value.trim())
+      .filter((value) => value && value.toLowerCase() !== 'none')
+      .filter((value) => /^[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*$/u.test(value)),
+  );
+}
+
 function groupOpenSpecTasksIntoWorkPackages(tasks: OpenSpecRuntimeTask[], language?: string): OpenSpecRuntimeWorkPackage[] {
   const packages: OpenSpecRuntimeWorkPackage[] = [];
   let packageIndex = 1;
-  let active: OpenSpecRuntimeTask[] = [];
 
-  const flush = () => {
-    if (active.length === 0) {
+  const pushPackage = (packageTasks: OpenSpecRuntimeTask[]) => {
+    if (packageTasks.length === 0) {
       return;
     }
-    const packagePhases = uniqueStrings(active.map((task) => task.phaseName));
     packages.push({
       id: `wp-${packageIndex++}`,
-      title: buildWorkPackageTitle(active, language),
+      title: buildWorkPackageTitle(packageTasks, language),
       phaseId: 'wp',
-      phaseName: packagePhases.length === 1 ? packagePhases[0] : isChineseLanguage(language) ? 'OpenSpec 工作包' : 'OpenSpec work packages',
-      tasks: active,
+      phaseName: buildWorkPackagePhaseName(packageTasks, language),
+      tasks: packageTasks,
+      dependsOn: [],
     });
-    active = [];
   };
 
+  for (const phaseTasks of groupOpenSpecTasksByPhase(tasks)) {
+    for (const packageTasks of buildOpenSpecTaskDependencyChains(phaseTasks)) {
+      pushPackage(packageTasks);
+    }
+  }
+
+  populateOpenSpecWorkPackageDependencies(packages);
+  assertOpenSpecWorkPackagesHaveValidDependencies(packages);
+  return packages;
+}
+
+function completeOpenSpecRuntimeTaskDependencyGraph(tasks: OpenSpecRuntimeTask[]): OpenSpecRuntimeTask[] {
+  if (tasks.length <= 1) {
+    return tasks;
+  }
+
+  const hasExplicitDependencyGraph = tasks.some((task) => task.dependsOn.length > 0);
+  return tasks.map((task, index) => {
+    if (task.dependsOn.length > 0) {
+      return { ...task, dependsOn: uniqueStrings(task.dependsOn) };
+    }
+
+    const inferred = inferOpenSpecTaskDependencies(task, index, tasks, hasExplicitDependencyGraph);
+    return inferred.length > 0
+      ? { ...task, dependsOn: inferred }
+      : { ...task, dependsOn: [] };
+  });
+}
+
+function inferOpenSpecTaskDependencies(
+  task: OpenSpecRuntimeTask,
+  taskIndex: number,
+  tasks: OpenSpecRuntimeTask[],
+  hasExplicitDependencyGraph: boolean,
+): string[] {
+  const mentionedDependencies = extractOpenSpecTaskDependencyMentions(task, taskIndex, tasks);
+  if (mentionedDependencies.length > 0) {
+    return mentionedDependencies;
+  }
+
+  const previousSamePhase = findPreviousOpenSpecTaskInPhase(task, taskIndex, tasks);
+  if (!hasExplicitDependencyGraph) {
+    return previousSamePhase
+      ? [previousSamePhase.id]
+      : findPreviousOpenSpecPhaseTerminalTaskIds(task, taskIndex, tasks);
+  }
+
+  if (isVerificationOpenSpecTask(task)) {
+    return previousSamePhase
+      ? [previousSamePhase.id]
+      : findPreviousOpenSpecPhaseTerminalTaskIds(task, taskIndex, tasks);
+  }
+
+  return [];
+}
+
+function extractOpenSpecTaskDependencyMentions(
+  task: OpenSpecRuntimeTask,
+  taskIndex: number,
+  tasks: OpenSpecRuntimeTask[],
+): string[] {
+  const text = `${task.title}\n${task.description}`;
+  if (!/\b(depends?|requires?|after|prerequisite|blocked by|based on)\b|依赖|前置|先完成|完成后|基于/u.test(text)) {
+    return [];
+  }
+
+  const previousTasks = tasks.slice(0, taskIndex);
+  const previousById = new Map(previousTasks.map((candidate) => [candidate.id, candidate]));
+  return previousTasks
+    .map((candidate) => candidate.id)
+    .sort((left, right) => right.length - left.length)
+    .filter((candidateId) => previousById.has(candidateId) && containsOpenSpecTaskId(text, candidateId));
+}
+
+function containsOpenSpecTaskId(text: string, taskId: string): boolean {
+  const escaped = taskId.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return new RegExp(`(^|[^A-Za-z0-9.])${escaped}($|[^A-Za-z0-9.])`, 'u').test(text);
+}
+
+function findPreviousOpenSpecTaskInPhase(
+  task: OpenSpecRuntimeTask,
+  taskIndex: number,
+  tasks: OpenSpecRuntimeTask[],
+): OpenSpecRuntimeTask | undefined {
+  for (let index = taskIndex - 1; index >= 0; index -= 1) {
+    const candidate = tasks[index];
+    if (candidate.phaseId === task.phaseId) {
+      return candidate;
+    }
+  }
+  return undefined;
+}
+
+function findPreviousOpenSpecPhaseTerminalTaskIds(
+  task: OpenSpecRuntimeTask,
+  taskIndex: number,
+  tasks: OpenSpecRuntimeTask[],
+): string[] {
+  for (let index = taskIndex - 1; index >= 0; index -= 1) {
+    const candidate = tasks[index];
+    if (candidate.phaseId !== task.phaseId) {
+      return [candidate.id];
+    }
+  }
+  return [];
+}
+
+function isVerificationOpenSpecTask(task: OpenSpecRuntimeTask): boolean {
+  return /\b(test|verify|verification|validate|validation|qa|review)\b|测试|验证|验收|检查|审核/u
+    .test(`${task.title}\n${task.description}`.toLowerCase());
+}
+
+function groupOpenSpecTasksByPhase(tasks: OpenSpecRuntimeTask[]): OpenSpecRuntimeTask[][] {
+  const groups: OpenSpecRuntimeTask[][] = [];
+  let active: OpenSpecRuntimeTask[] = [];
+  let activePartitionId = '';
+
   for (const task of tasks) {
-    const full = active.length >= OPENSPEC_WORK_PACKAGE_MAX_TASKS;
-    const hasExplicitDependency = task.dependsOn.length > 0;
-    if (full || (hasExplicitDependency && active.length > 0)) {
-      flush();
+    const partitionId = getOpenSpecTaskPackagingPartitionId(task);
+    if (active.length > 0 && activePartitionId !== partitionId) {
+      groups.push(active);
+      active = [];
     }
     active.push(task);
+    activePartitionId = partitionId;
   }
-  flush();
-  return packages;
+
+  if (active.length > 0) {
+    groups.push(active);
+  }
+  return groups;
+}
+
+function getOpenSpecTaskPackagingPartitionId(task: OpenSpecRuntimeTask): string {
+  return isTopLevelOpenSpecTask(task) ? '__top_level_tasks__' : task.phaseId;
+}
+
+function buildOpenSpecTaskDependencyChains(tasks: OpenSpecRuntimeTask[]): OpenSpecRuntimeTask[][] {
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const internalDependenciesById = new Map(tasks.map((task) => [task.id, new Set<string>()]));
+  const internalChildrenById = new Map(tasks.map((task) => [task.id, new Set<string>()]));
+
+  for (const task of tasks) {
+    for (const dependencyId of task.dependsOn) {
+      const dependency = taskById.get(dependencyId);
+      if (!dependency || !canGroupOpenSpecTaskDependency(task, dependency)) {
+        continue;
+      }
+      internalDependenciesById.get(task.id)?.add(dependencyId);
+      internalChildrenById.get(dependencyId)?.add(task.id);
+    }
+  }
+
+  const orderedTasks = topologicallySortOpenSpecTasks(tasks);
+  const visited = new Set<string>();
+  const chains: OpenSpecRuntimeTask[][] = [];
+
+  for (const task of orderedTasks) {
+    if (visited.has(task.id)) {
+      continue;
+    }
+
+    const chain: OpenSpecRuntimeTask[] = [];
+    let current: OpenSpecRuntimeTask | undefined = task;
+
+    while (current && !visited.has(current.id) && chain.length < OPENSPEC_WORK_PACKAGE_MAX_TASKS) {
+      chain.push(current);
+      visited.add(current.id);
+
+      const nextIds = [...(internalChildrenById.get(current.id) ?? [])]
+        .filter((childId) => !visited.has(childId))
+        .sort((left, right) => getOpenSpecTaskOrder(orderedTasks, left) - getOpenSpecTaskOrder(orderedTasks, right));
+      if (nextIds.length !== 1) {
+        break;
+      }
+
+      const [nextId] = nextIds;
+      const next = taskById.get(nextId);
+      const nextDependencies = internalDependenciesById.get(nextId) ?? new Set<string>();
+      if (!next || nextDependencies.size !== 1 || !nextDependencies.has(current.id)) {
+        break;
+      }
+
+      current = next;
+    }
+
+    chains.push(chain);
+  }
+
+  return chains;
+}
+
+function getOpenSpecTaskOrder(tasks: OpenSpecRuntimeTask[], taskId: string): number {
+  const index = tasks.findIndex((task) => task.id === taskId);
+  return index >= 0 ? index : Number.MAX_SAFE_INTEGER;
+}
+
+function canGroupOpenSpecTaskDependency(task: OpenSpecRuntimeTask, dependency: OpenSpecRuntimeTask): boolean {
+  return task.phaseId === dependency.phaseId || (isTopLevelOpenSpecTask(task) && isTopLevelOpenSpecTask(dependency));
+}
+
+function isTopLevelOpenSpecTask(task: OpenSpecRuntimeTask): boolean {
+  return !task.id.includes('.');
+}
+
+function topologicallySortOpenSpecTasks(tasks: OpenSpecRuntimeTask[]): OpenSpecRuntimeTask[] {
+  const remaining = new Set(tasks.map((task) => task.id));
+  const taskById = new Map(tasks.map((task) => [task.id, task]));
+  const orderById = new Map(tasks.map((task, index) => [task.id, index]));
+  const sorted: OpenSpecRuntimeTask[] = [];
+
+  while (remaining.size > 0) {
+    const runnable = [...remaining]
+      .map((id) => taskById.get(id))
+      .filter((task): task is OpenSpecRuntimeTask => Boolean(task))
+      .filter((task) => task.dependsOn.every((dependencyId) => !remaining.has(dependencyId)))
+      .sort((left, right) => (orderById.get(left.id) ?? 0) - (orderById.get(right.id) ?? 0));
+
+    if (runnable.length === 0) {
+      return tasks;
+    }
+
+    for (const task of runnable) {
+      sorted.push(task);
+      remaining.delete(task.id);
+    }
+  }
+
+  return sorted;
+}
+
+function buildWorkPackagePhaseName(tasks: OpenSpecRuntimeTask[], language?: string): string {
+  const packagePhases = uniqueStrings(tasks.map((task) => task.phaseName));
+  return packagePhases.length === 1
+    ? packagePhases[0]
+    : isChineseLanguage(language)
+      ? 'OpenSpec 工作包'
+      : 'OpenSpec work packages';
+}
+
+function populateOpenSpecWorkPackageDependencies(packages: OpenSpecRuntimeWorkPackage[]): void {
+  const packageByTaskId = new Map<string, string>();
+  for (const workPackage of packages) {
+    for (const task of workPackage.tasks) {
+      packageByTaskId.set(task.id, workPackage.id);
+    }
+  }
+
+  for (const workPackage of packages) {
+    const dependsOn = new Set<string>();
+    for (const task of workPackage.tasks) {
+      for (const upstreamDependencyId of task.dependsOn) {
+        const dependencyPackageId = packageByTaskId.get(upstreamDependencyId);
+        if (dependencyPackageId && dependencyPackageId !== workPackage.id) {
+          dependsOn.add(dependencyPackageId);
+        }
+      }
+    }
+    const packageOrder = new Map(packages.map((candidate, index) => [candidate.id, index]));
+    workPackage.dependsOn = [...dependsOn].sort(
+      (left, right) => (packageOrder.get(left) ?? 0) - (packageOrder.get(right) ?? 0),
+    );
+  }
+}
+
+function assertOpenSpecWorkPackagesHaveValidDependencies(packages: OpenSpecRuntimeWorkPackage[]): void {
+  const analysis = analyzeAutocodeWorkDependencies(
+    packages.map((workPackage) => ({
+      id: workPackage.id,
+      status: 'pending',
+      dependsOn: workPackage.dependsOn,
+    })),
+  );
+  if (analysis.issues.length > 0) {
+    const summary = describeAutocodeWorkDependencyBlockers(analysis.blocked);
+    throw new Error(`OpenSpec work package dependency graph is invalid: ${summary}`);
+  }
 }
 
 function buildOpenSpecWorkPackageSubtask(
@@ -2231,6 +2983,7 @@ function buildOpenSpecWorkPackageSubtask(
     ...(filesToCreate.length > 0 ? { files_to_create: filesToCreate } : {}),
     ...(filesToModify.length > 0 ? { files_to_modify: filesToModify } : {}),
     ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+    ...(workPackage.dependsOn.length > 0 ? { depends_on: workPackage.dependsOn } : {}),
     ...(requirements.length > 0 ? { requirements } : {}),
     verification: {
       type: 'manual',
@@ -2307,7 +3060,8 @@ function buildRuntimeWorkPackageDescription(
       '包含的 OpenSpec 任务：',
       ...workPackage.tasks.flatMap((task) => [
         `- ${task.id} ${task.title}`,
-        `  ${singleLine(task.description)}`,
+        `  ${singleLine(sanitizeOpenSpecTaskDescriptionForRuntime(task.description, task.title))}`,
+        ...(task.dependsOn.length > 0 ? [`  依赖：${task.dependsOn.join(', ')}`] : []),
       ]),
       '',
       '运行规则：在单次 agent 执行中完成所有包含的上游任务，然后将此工作包标记为完成。',
@@ -2325,7 +3079,8 @@ function buildRuntimeWorkPackageDescription(
     'Included OpenSpec tasks:',
     ...workPackage.tasks.flatMap((task) => [
       `- ${task.id} ${task.title}`,
-      `  ${singleLine(task.description)}`,
+      `  ${singleLine(sanitizeOpenSpecTaskDescriptionForRuntime(task.description, task.title))}`,
+      ...(task.dependsOn.length > 0 ? [`  Depends on: ${task.dependsOn.join(', ')}`] : []),
     ]),
     '',
     'Runtime rule: complete all included upstream tasks in this single agent run, then mark this work package completed.',

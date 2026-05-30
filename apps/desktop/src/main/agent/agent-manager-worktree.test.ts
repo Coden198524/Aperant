@@ -2,6 +2,19 @@ import { afterAll, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const createOrGetWorktreeMock = vi.fn();
 const spawnWorkerProcessMock = vi.fn();
+const spawnProcessMock = vi.fn();
+const createStartedAutocodeAgentRuntimeMock = vi.fn(() => ({
+  request: {
+    runner: {
+      process: {
+        cwd: 'E:/repo',
+        command: 'codex',
+        args: ['exec', 'run'],
+        shellCommand: 'codex exec run',
+      },
+    },
+  },
+}));
 const emitSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
 
 const writeFileSyncMock = vi.fn();
@@ -18,6 +31,12 @@ vi.mock('fs', async (importOriginal) => {
 });
 
 vi.mock('child_process', () => ({
+  execFile: vi.fn((_command: string, _args: string[], optionsOrCallback?: unknown, callback?: unknown) => {
+    const cb = typeof optionsOrCallback === 'function' ? optionsOrCallback : callback;
+    if (typeof cb === 'function') {
+      cb(null, '', '');
+    }
+  }),
   execSync: vi.fn(() => 'master\n'),
   execFileSync: vi.fn((_command: string, args: string[]) => {
     const joined = args.join(' ');
@@ -39,6 +58,15 @@ vi.mock('child_process', () => ({
     return '';
   }),
 }));
+
+vi.mock('@autocode/core', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('@autocode/core')>();
+  return {
+    ...actual,
+    createStartedAutocodeAgentRuntime: (_input: unknown) =>
+      createStartedAutocodeAgentRuntimeMock(),
+  };
+});
 
 vi.mock('../claude-profile-manager', () => ({
   initializeClaudeProfileManager: vi.fn(async () => ({ hasValidAuth: () => true })),
@@ -101,6 +129,7 @@ vi.mock('./agent-process', () => ({
   AgentProcessManager: vi.fn().mockImplementation(function MockAgentProcessManager() {
     return {
       spawnWorkerProcess: spawnWorkerProcessMock,
+      spawnProcess: spawnProcessMock,
       killProcess: vi.fn(),
       killAllProcesses: vi.fn(async () => undefined),
       getCombinedEnv: vi.fn(() => ({})),
@@ -125,6 +154,8 @@ describe('AgentManager worktree execution', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     writeFileSyncMock.mockReset();
+    spawnProcessMock.mockReset();
+    createStartedAutocodeAgentRuntimeMock.mockClear();
     createOrGetWorktreeMock.mockResolvedValue({
       worktreePath: 'E:/repo/.autocode/worktrees/tasks/001-task',
       branch: 'autocode/001-task',
@@ -142,6 +173,12 @@ describe('AgentManager worktree execution', () => {
     const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
     expect(executorConfig.session.projectDir).toBe('E:/repo');
     expect(executorConfig.session.toolContext.cwd).toBe('E:/repo');
+    expect(executorConfig.session.runtimeConcurrency).toEqual({
+      mode: 'concurrent',
+      workers: 2,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
   });
 
   it('captures the baseline commit when running in the current project workspace', async () => {
@@ -174,6 +211,7 @@ describe('AgentManager worktree execution', () => {
       false,
       false,
       '.autocode',
+      false,
     );
     expect(spawnWorkerProcessMock).toHaveBeenCalled();
     const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
@@ -251,6 +289,48 @@ describe('AgentManager worktree execution', () => {
       yunxiaoEnabled: false,
     });
     expect(executorConfig.session.projectDir).toBe('E:/repo');
+  });
+
+  it('passes the task spec directory to Codex CLI workspace claims', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'codex-1', provider: 'openai' }],
+      globalPriorityOrder: ['codex-1'],
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'codex-1',
+      resolvedProvider: 'openai',
+      resolvedModelId: 'gpt-5.5',
+      source: 'codex-oauth',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') || filePath.endsWith('implementation_plan.md')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('implementation_plan.md')) {
+        return [
+          '# Implementation Plan',
+          '',
+          '- [ ] 1. Build UI',
+          '  - [ ] 1.1 Add board',
+          '    - _Files: src/board.ts_',
+        ].join('\n');
+      }
+      return JSON.stringify({ workflowMode: 'balanced', model: 'gpt-5.5' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(spawnProcessMock).toHaveBeenCalled();
+    const workspaceClaim = spawnProcessMock.mock.calls[0][6];
+    expect(workspaceClaim.fileIntents).toEqual(['src/board.ts']);
   });
 });
 

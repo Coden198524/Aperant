@@ -8,13 +8,19 @@
  */
 
 import { execFile } from 'node:child_process';
+import { isAbsolute, resolve } from 'node:path';
 import {
   DEFAULT_BASH_TIMEOUT_MS,
+  acquireAutocodeRuntimeFileWriteLock,
   clampBashTimeout,
   detectFastCommandFailure,
+  extractBashWriteFileTargets,
   formatBackgroundCommandStarted,
   formatBashCommandDenied,
   formatBashExecutionResult,
+  normalizeAutocodeRuntimeFileIntent,
+  releaseAutocodeRuntimeFileWriteLock,
+  type AutocodeRuntimeFileWriteLock,
 } from '@autocode/core';
 import { z } from 'zod/v3';
 
@@ -22,6 +28,7 @@ import { findExecutable, isWindows, killProcessGracefully } from '../../../platf
 import { bashSecurityHook } from '../../security/bash-validator';
 import { Tool } from '../define';
 import { ToolPermission } from '../types';
+import type { ToolContext } from '../types';
 
 // ---------------------------------------------------------------------------
 // Input Schema
@@ -95,6 +102,45 @@ function executeCommand(
   });
 }
 
+async function acquireBashWriteLocks(
+  targets: string[],
+  context: ToolContext,
+): Promise<AutocodeRuntimeFileWriteLock[]> {
+  if (context.fileWriteLock?.enabled !== true) {
+    return [];
+  }
+
+  const projectRoot = context.fileWriteLock.projectRoot ?? context.projectDir;
+  const sortedTargets = [...targets]
+    .map((target) => isAbsolute(target) ? target : resolve(context.cwd, target))
+    .sort((left, right) => {
+      const leftKey = normalizeAutocodeRuntimeFileIntent(left, projectRoot) ?? left;
+      const rightKey = normalizeAutocodeRuntimeFileIntent(right, projectRoot) ?? right;
+      return leftKey.localeCompare(rightKey);
+    });
+  const locks: AutocodeRuntimeFileWriteLock[] = [];
+  try {
+    for (const target of sortedTargets) {
+      locks.push(await acquireAutocodeRuntimeFileWriteLock({
+        ...context.fileWriteLock,
+        projectRoot,
+        filePath: target,
+        ownerId: context.fileWriteLock.ownerId ?? `Bash:${Date.now()}`,
+      }));
+    }
+    return locks;
+  } catch (error) {
+    releaseBashWriteLocks(locks);
+    throw error;
+  }
+}
+
+function releaseBashWriteLocks(locks: AutocodeRuntimeFileWriteLock[]): void {
+  for (const lock of locks.reverse()) {
+    releaseAutocodeRuntimeFileWriteLock(lock);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool Definition
 // ---------------------------------------------------------------------------
@@ -135,25 +181,38 @@ export const bashTool = Tool.define({
     }
 
     const timeoutMs = clampBashTimeout(timeout);
+    const fileWriteTargets = context.fileWriteLock?.enabled === true
+      ? extractBashWriteFileTargets(command)
+      : [];
 
-    if (run_in_background) {
-      executeCommand(command, context.cwd, timeoutMs, context.abortSignal);
-      return formatBackgroundCommandStarted(command);
+    if (run_in_background && fileWriteTargets.length > 0) {
+      return 'Error: Background Bash commands with detected file writes are disabled. Run the command in the foreground so file write locks can be held until completion.';
     }
 
-    const { stdout, stderr, exitCode } = await executeCommand(
-      command,
-      context.cwd,
-      timeoutMs,
-      context.abortSignal,
-    );
+    const fileWriteLocks = await acquireBashWriteLocks(fileWriteTargets, context);
 
-    return formatBashExecutionResult({
-      command,
-      stdout,
-      stderr,
-      exitCode,
-      workflowMode: context.workflowMode,
-    });
+    try {
+      if (run_in_background) {
+        executeCommand(command, context.cwd, timeoutMs, context.abortSignal);
+        return formatBackgroundCommandStarted(command);
+      }
+
+      const { stdout, stderr, exitCode } = await executeCommand(
+        command,
+        context.cwd,
+        timeoutMs,
+        context.abortSignal,
+      );
+
+      return formatBashExecutionResult({
+        command,
+        stdout,
+        stderr,
+        exitCode,
+        workflowMode: context.workflowMode,
+      });
+    } finally {
+      releaseBashWriteLocks(fileWriteLocks);
+    }
   },
 });

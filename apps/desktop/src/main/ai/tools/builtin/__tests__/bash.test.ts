@@ -1,4 +1,11 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import {
+  acquireAutocodeRuntimeFileWriteLock,
+  releaseAutocodeRuntimeFileWriteLock,
+} from '@autocode/core';
 
 import { bashTool } from '../bash';
 import type { ToolContext } from '../../types';
@@ -228,6 +235,65 @@ describe('Bash Tool', () => {
 
     expect(result).toContain('Command started in background');
     expect(result).toContain('sleep 100');
+  });
+
+  it('should reject background commands with detected file writes when locking is enabled', async () => {
+    mockExecFile.mockImplementation(
+      (_shell: unknown, _args: unknown, _opts: unknown, _callback: unknown) => {
+        return { pid: 5678 };
+      },
+    );
+
+    const result = await bashTool.config.execute(
+      { command: 'echo hello > result.txt', run_in_background: true },
+      {
+        ...baseContext,
+        fileWriteLock: {
+          enabled: true,
+          projectRoot: baseContext.projectDir,
+          ownerId: 'bash-background-test',
+        },
+      },
+    );
+
+    expect(result).toContain('Background Bash commands with detected file writes are disabled');
+    expect(mockExecFile).not.toHaveBeenCalled();
+  });
+
+  it('should use shared file write locks for redirection targets', async () => {
+    const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-bash-lock-'));
+    const lockedFile = join(projectRoot, 'result.txt');
+    const externalLock = await acquireAutocodeRuntimeFileWriteLock({
+      projectRoot,
+      filePath: lockedFile,
+      ownerId: 'external-bash-test',
+      timeoutMs: 20,
+      retryMs: 1,
+    });
+
+    try {
+      await expect(
+        bashTool.config.execute(
+          { command: 'echo hello > result.txt' },
+          {
+            ...baseContext,
+            cwd: projectRoot,
+            projectDir: projectRoot,
+            fileWriteLock: {
+              enabled: true,
+              projectRoot,
+              ownerId: 'bash-tool-test',
+              timeoutMs: 5,
+              retryMs: 1,
+            },
+          },
+        ),
+      ).rejects.toThrow(/Timed out waiting for write lock|already held by this process/);
+      expect(mockExecFile).not.toHaveBeenCalled();
+    } finally {
+      releaseAutocodeRuntimeFileWriteLock(externalLock);
+      rmSync(projectRoot, { recursive: true, force: true });
+    }
   });
 
   it('should pass cwd from context to execFile', async () => {

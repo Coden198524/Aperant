@@ -76,6 +76,29 @@ function coerceVerification(value: unknown): unknown {
   return value;
 }
 
+function coerceStringArray(value: unknown): string[] | undefined {
+  if (Array.isArray(value)) {
+    const items = value
+      .map((item) => {
+        if (typeof item === 'string') return item.trim();
+        if (typeof item === 'number' && Number.isFinite(item)) return String(item);
+        return '';
+      })
+      .filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+
+  if (typeof value === 'string') {
+    const items = value
+      .split(',')
+      .map((item) => item.trim())
+      .filter(Boolean);
+    return items.length > 0 ? items : undefined;
+  }
+
+  return undefined;
+}
+
 // =============================================================================
 // Subtask Schema (with coercion)
 // =============================================================================
@@ -106,6 +129,8 @@ function coerceSubtask(input: unknown): unknown {
     files_to_modify: raw.files_to_modify ?? raw.file_paths ?? raw.files_modified ?? undefined,
     // Coerce files_to_create: accept new_files as alias
     files_to_create: raw.files_to_create ?? raw.new_files ?? undefined,
+    // Coerce dependency aliases into canonical string ids.
+    depends_on: coerceStringArray(raw.depends_on ?? raw.dependsOn ?? raw.dependencies),
     // Coerce verification object: accept method as alias for type.
     // Non-object verification values (strings, etc.) are NOT coerced — let Zod
     // reject them so the validation retry loop can tell the LLM what's wrong.
@@ -120,6 +145,7 @@ export const PlanSubtaskSchema = z.preprocess(coerceSubtask, z.object({
   status: z.enum(SUBTASK_STATUS_VALUES).default('pending'),
   files_to_create: z.array(z.string()).optional(),
   files_to_modify: z.array(z.string()).optional(),
+  depends_on: z.array(z.string()).optional(),
   verification: z.object({
     type: z.string(),
     run: z.string().optional(),

@@ -511,7 +511,15 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                 description,
                 completionSummary: getPlanSubtaskCompletionSummary(subtask),
                 status,
-                files: [],
+                files: [
+                  ...(subtask.files_to_create ?? []),
+                  ...(subtask.files_to_modify ?? []),
+                  ...(subtask.pattern_files ?? []),
+                ],
+                ...(subtask.depends_on && subtask.depends_on.length > 0 ? { dependsOn: subtask.depends_on } : {}),
+                ...(subtask.work_package === true ? { workPackage: true } : {}),
+                ...(subtask.upstream_task_ids && subtask.upstream_task_ids.length > 0 ? { upstreamTaskIds: subtask.upstream_task_ids } : {}),
+                ...(subtask.upstream_source ? { upstreamSource: subtask.upstream_source } : {}),
                 verification: subtask.verification as Subtask['verification']
               };
             })

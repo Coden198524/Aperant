@@ -17,7 +17,9 @@ import { join } from 'node:path';
 
 import {
   AUTOCODE_TASK_ARTIFACTS,
+  analyzeAutocodeWorkDependencies,
   loadAutocodeImplementationPlanSync,
+  normalizeAutocodeWorkDependencyIds,
   saveAutocodeImplementationPlanSync,
 } from '@autocode/core';
 import { AUTOCODE_PROJECT_INDEX_FILE_NAME } from '@autocode/core/project/data-paths';
@@ -564,6 +566,19 @@ function validateDependencies(phases: Record<string, unknown>[]): string[] {
         errors.push(`Phase ${phaseId}: cannot depend on phase ${dep} (would create cycle)`);
       }
     }
+  }
+
+  const subtaskDependencyIssues = analyzeAutocodeWorkDependencies(
+    phases.flatMap((phase) => ((phase.subtasks as Record<string, unknown>[] | undefined) ?? [])
+      .map((subtask) => ({
+        id: String(subtask.id ?? ''),
+        status: typeof subtask.status === 'string' ? subtask.status : undefined,
+        dependsOn: normalizeAutocodeWorkDependencyIds(subtask.depends_on),
+      }))
+      .filter((subtask) => subtask.id)),
+  ).issues;
+  for (const message of new Set(subtaskDependencyIssues.map((issue) => issue.message))) {
+    errors.push(message);
   }
 
   return errors;

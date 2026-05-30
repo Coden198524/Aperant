@@ -491,4 +491,149 @@ describe('iterateSubtasks completion gating', () => {
       'completed',
     ]);
   });
+
+  it('runs dependent subtasks only after their dependencies are completed', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 'first', description: 'first work', status: 'pending' },
+            { id: 's2', title: 'second', description: 'second work', status: 'pending', depends_on: ['s1'] },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+
+    const started: string[] = [];
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      onSubtaskStart: (subtask) => started.push(subtask.id),
+      runSubtaskSession: async () => makeResult('completed'),
+    });
+
+    expect(started).toEqual(['s1', 's2']);
+    expect(result.completedSubtasks).toBe(2);
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ id: string; status: string }> }>;
+    }>(specDir);
+    expect(updatedPlan.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
+      'completed',
+      'completed',
+    ]);
+  });
+
+  it('marks subtasks blocked when dependencies cannot be resolved', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 'blocked', description: 'blocked work', status: 'pending', depends_on: ['missing'] },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+    const stuckReasons: string[] = [];
+
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      onSubtaskStuck: (_subtask, reason) => stuckReasons.push(reason),
+      runSubtaskSession: async () => makeResult('completed'),
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ status: string; notes?: string }> }>;
+    }>(specDir);
+    expect(result.completedSubtasks).toBe(0);
+    expect(result.stuckSubtasks).toEqual(['s1']);
+    expect(updatedPlan.phases[0].subtasks[0].status).toBe('blocked');
+    expect(updatedPlan.phases[0].subtasks[0].notes).toContain('missing work item missing');
+    expect(stuckReasons[0]).toContain('missing work item missing');
+  });
+
+  it('marks dependency cycles blocked with a clear reason', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 'first', description: 'first work', status: 'pending', depends_on: ['s2'] },
+            { id: 's2', title: 'second', description: 'second work', status: 'pending', depends_on: ['s1'] },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+    const stuckReasons: string[] = [];
+
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      onSubtaskStuck: (_subtask, reason) => stuckReasons.push(reason),
+      runSubtaskSession: async () => makeResult('completed'),
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ status: string; notes?: string }> }>;
+    }>(specDir);
+    expect(result.completedSubtasks).toBe(0);
+    expect(result.stuckSubtasks).toEqual(['s1', 's2']);
+    expect(updatedPlan.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
+      'blocked',
+      'blocked',
+    ]);
+    expect(stuckReasons.join('\n')).toContain('dependency cycle');
+  });
+
+  it('marks duplicate subtask ids blocked before running the agent', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 'first', description: 'first work', status: 'pending' },
+            { id: 's1', title: 'second', description: 'second work', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+    const stuckReasons: string[] = [];
+    let runs = 0;
+
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      onSubtaskStuck: (_subtask, reason) => stuckReasons.push(reason),
+      runSubtaskSession: async () => {
+        runs++;
+        return makeResult('completed');
+      },
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ status: string; notes?: string }> }>;
+    }>(specDir);
+    expect(runs).toBe(0);
+    expect(result.completedSubtasks).toBe(0);
+    expect(result.stuckSubtasks).toEqual(['s1']);
+    expect(updatedPlan.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
+      'blocked',
+      'blocked',
+    ]);
+    expect(stuckReasons.join('\n')).toContain('Duplicate work item id s1');
+  });
 });

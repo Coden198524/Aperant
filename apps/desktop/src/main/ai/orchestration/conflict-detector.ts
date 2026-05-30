@@ -6,6 +6,7 @@
  * concurrently while overlapping file edits are serialized.
  */
 
+import { posix as pathPosix } from 'node:path';
 import type { ConflictGraph, WorkItemInfo } from './work-executor-types';
 
 // =============================================================================
@@ -18,27 +19,32 @@ import type { ConflictGraph, WorkItemInfo } from './work-executor-types';
  * A conflict occurs when multiple work items modify or create the same file.
  */
 export function detectFileConflicts(workItems: WorkItemInfo[]): ConflictGraph {
-  const fileToWorkItems = new Map<string, string[]>();
+  const fileIntentsByWorkItem = new Map<string, string[]>();
 
   for (const workItem of workItems) {
-    const files = [
+    const files = normalizeWorkItemFiles([
       ...(workItem.filesToModify || []),
       ...(workItem.filesToCreate || []),
-    ];
+      ...(workItem.patternFiles || []),
+    ]);
 
-    for (const file of files) {
-      if (!fileToWorkItems.has(file)) {
-        fileToWorkItems.set(file, []);
-      }
-      fileToWorkItems.get(file)!.push(workItem.id);
+    if (files.length === 0) {
+      continue;
     }
+
+    fileIntentsByWorkItem.set(workItem.id, files);
   }
 
   const conflicts = new Set<string>();
-  for (const workItemIds of fileToWorkItems.values()) {
-    if (workItemIds.length > 1) {
-      for (const id of workItemIds) {
-        conflicts.add(id);
+  for (let leftIndex = 0; leftIndex < workItems.length; leftIndex++) {
+    const left = workItems[leftIndex];
+    const leftFiles = fileIntentsByWorkItem.get(left.id) ?? [];
+    for (let rightIndex = leftIndex + 1; rightIndex < workItems.length; rightIndex++) {
+      const right = workItems[rightIndex];
+      const rightFiles = fileIntentsByWorkItem.get(right.id) ?? [];
+      if (doWorkItemFileIntentsOverlap(leftFiles, rightFiles)) {
+        conflicts.add(left.id);
+        conflicts.add(right.id);
       }
     }
   }
@@ -60,41 +66,34 @@ export function groupConflictingWorkItems(workItems: WorkItemInfo[]): WorkItemIn
     return [];
   }
 
-  const fileToWorkItems = new Map<string, Set<string>>();
-
-  for (const workItem of workItems) {
-    const files = [
-      ...(workItem.filesToModify || []),
-      ...(workItem.filesToCreate || []),
-    ];
-
-    for (const file of files) {
-      if (!fileToWorkItems.has(file)) {
-        fileToWorkItems.set(file, new Set());
-      }
-      fileToWorkItems.get(file)!.add(workItem.id);
-    }
-  }
-
   const workItemToGroup = new Map<string, number>();
   let nextGroupId = 0;
 
   for (const workItem of workItems) {
-    const files = [
+    const files = normalizeWorkItemFiles([
       ...(workItem.filesToModify || []),
       ...(workItem.filesToCreate || []),
-    ];
+      ...(workItem.patternFiles || []),
+    ]);
+
+    if (files.length === 0) {
+      workItemToGroup.set(workItem.id, nextGroupId++);
+      continue;
+    }
 
     const relatedGroups = new Set<number>();
-    for (const file of files) {
-      const relatedWorkItems = fileToWorkItems.get(file);
-      if (relatedWorkItems) {
-        for (const relatedId of relatedWorkItems) {
-          const groupId = workItemToGroup.get(relatedId);
-          if (groupId !== undefined) {
-            relatedGroups.add(groupId);
-          }
-        }
+    for (const previousWorkItem of workItems) {
+      const groupId = workItemToGroup.get(previousWorkItem.id);
+      if (groupId === undefined) {
+        continue;
+      }
+      const previousFiles = normalizeWorkItemFiles([
+        ...(previousWorkItem.filesToModify || []),
+        ...(previousWorkItem.filesToCreate || []),
+        ...(previousWorkItem.patternFiles || []),
+      ]);
+      if (doWorkItemFileIntentsOverlap(files, previousFiles)) {
+        relatedGroups.add(groupId);
       }
     }
 
@@ -122,5 +121,44 @@ export function groupConflictingWorkItems(workItems: WorkItemInfo[]): WorkItemIn
     groups.get(groupId)!.push(workItem);
   }
 
-  return Array.from(groups.values());
+  return Array.from(groups.values()).filter((group) => group.length > 0);
+}
+
+function normalizeWorkItemFiles(files: string[]): string[] {
+  return [...new Set(files
+    .map(normalizeWorkItemFileIntent)
+    .filter(Boolean))];
+}
+
+function normalizeWorkItemFileIntent(file: string): string {
+  const normalized = file.trim().replace(/\\/g, '/').replace(/\/+/g, '/').toLowerCase();
+  if (!normalized || normalized === '.') {
+    return '';
+  }
+
+  const wildcardIndex = normalized.search(/[*?[{]/);
+  const stablePrefix = wildcardIndex >= 0 ? normalized.slice(0, wildcardIndex) : normalized;
+  const pathLike = stablePrefix.replace(/\/+$/, '');
+  const intentPath = pathLike || '.';
+  const normalizedPath = pathPosix.normalize(intentPath).replace(/\/+$/, '');
+  return normalizedPath === '.' ? '' : normalizedPath;
+}
+
+function doWorkItemFileIntentsOverlap(leftFiles: string[], rightFiles: string[]): boolean {
+  for (const leftFile of leftFiles) {
+    for (const rightFile of rightFiles) {
+      if (doWorkItemPathsOverlap(leftFile, rightFile)) {
+        return true;
+      }
+    }
+  }
+  return false;
+}
+
+function doWorkItemPathsOverlap(leftPath: string, rightPath: string): boolean {
+  return (
+    leftPath === rightPath ||
+    leftPath.startsWith(`${rightPath}/`) ||
+    rightPath.startsWith(`${leftPath}/`)
+  );
 }

@@ -5,9 +5,16 @@ import { existsSync, readFileSync } from 'fs';
 import { app } from 'electron';
 import {
   AUTOCODE_PROJECT_ENV_FILE_NAME,
+  autocodeRuntimeWorkspaceClaims,
+  collectAutocodeRuntimeFileIntentsFromPlan,
   decodeAutocodeCliOutputChunk,
   getAutocodeProjectEnvPath,
   loadAutocodeImplementationPlanSync,
+  normalizeAutocodeRuntimePath,
+  type AutocodeRuntimeWorkspaceClaim,
+  type AutocodeRuntimeWorkspaceClaimInput,
+  type AutocodeRuntimeWorkspaceConflict,
+  type AutocodeRuntimeWorkspaceMode,
 } from '@autocode/core';
 
 // ESM-compatible __dirname
@@ -96,6 +103,10 @@ function readOptionalPositiveNumber(value: unknown): number | undefined {
   return number > 0 ? number : undefined;
 }
 
+function waitForWorkspaceClaimRetry(delayMs: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, delayMs));
+}
+
 /**
  * Mapping of CLI tools to their environment variable names
  * This ensures type safety - tools cannot be mismatched with env vars.
@@ -106,6 +117,7 @@ const CLI_TOOL_ENV_MAP: Readonly<Record<CliTool, string>> = {
   glab: 'GITLAB_CLI_PATH'
 } as const;
 
+const WORKSPACE_CLAIM_PENDING_SETUP_STALE_MS = 60_000;
 
 function deriveGitBashPath(gitExePath: string): string | null {
   if (!isWindows()) {
@@ -174,6 +186,145 @@ export class AgentProcessManager {
     this.state = state;
     this.events = events;
     this.emitter = emitter;
+  }
+
+  private deleteTrackedProcess(taskId: string): boolean {
+    const agentProcess = this.state.getProcess(taskId);
+    if (agentProcess?.workspaceClaimId) {
+      autocodeRuntimeWorkspaceClaims.release(agentProcess.workspaceClaimId);
+    } else {
+      autocodeRuntimeWorkspaceClaims.releaseByTask(taskId);
+    }
+    return this.state.deleteProcess(taskId);
+  }
+
+  private async waitForRuntimeWorkspaceClaim(
+    taskId: string,
+    input: AutocodeRuntimeWorkspaceClaimInput | null | undefined,
+    spawnId: number,
+    processType: ProcessType,
+    projectId?: string,
+  ): Promise<AutocodeRuntimeWorkspaceClaim | null> {
+    if (!input) {
+      return null;
+    }
+
+    const RETRY_MS = 1000;
+    let conflictNoticeEmitted = false;
+
+    while (true) {
+      if (this.state.wasSpawnKilled(spawnId) || !this.state.getProcess(taskId)) {
+        return null;
+      }
+
+      const result = autocodeRuntimeWorkspaceClaims.tryClaim(input);
+      if (result.ok) {
+        this.state.updateProcess(taskId, {
+          workspaceClaimId: result.claim.id,
+          workspaceClaim: result.claim,
+          workspaceClaimStatus: 'claimed',
+        });
+        return result.claim;
+      }
+
+      if (this.releaseStaleWorkspaceConflict(result.conflict)) {
+        continue;
+      }
+
+      this.state.updateProcess(taskId, { workspaceClaimStatus: 'pending' });
+      if (!conflictNoticeEmitted) {
+        this.emitter.emit('execution-progress', taskId, {
+          phase: getInitialPhaseForProcess(processType),
+          phaseProgress: 0,
+          overallProgress: 0,
+          message: this.formatWorkspaceConflictMessage(result.conflict),
+        }, projectId);
+        conflictNoticeEmitted = true;
+      }
+
+      await waitForWorkspaceClaimRetry(RETRY_MS);
+    }
+  }
+
+  private releaseStaleWorkspaceConflict(conflict: AutocodeRuntimeWorkspaceConflict): boolean {
+    const activeProcess = this.state.getProcess(conflict.activeClaim.taskId);
+    if (!activeProcess) {
+      return autocodeRuntimeWorkspaceClaims.release(conflict.activeClaim.id);
+    }
+
+    if (activeProcess.process) {
+      const processExited =
+        activeProcess.process.exitCode !== null && activeProcess.process.exitCode !== undefined ||
+        activeProcess.process.signalCode !== null && activeProcess.process.signalCode !== undefined;
+      return processExited
+        ? autocodeRuntimeWorkspaceClaims.release(conflict.activeClaim.id)
+        : false;
+    }
+
+    if (activeProcess.worker) {
+      return false;
+    }
+
+    const pendingForMs = Date.now() - activeProcess.startedAt.getTime();
+    return pendingForMs > WORKSPACE_CLAIM_PENDING_SETUP_STALE_MS
+      ? autocodeRuntimeWorkspaceClaims.release(conflict.activeClaim.id)
+      : false;
+  }
+
+  private formatWorkspaceConflictMessage(conflict: AutocodeRuntimeWorkspaceConflict): string {
+    const activeLabel = conflict.activeClaim.label || conflict.activeClaim.taskId;
+    if (conflict.reason === 'overlapping_files' && conflict.overlappingFiles.length > 0) {
+      const file = conflict.overlappingFiles[0];
+      return `Waiting for workspace lock: ${activeLabel} is editing ${file}`;
+    }
+    return `Waiting for workspace lock: ${activeLabel}`;
+  }
+
+  private buildWorkerWorkspaceClaimInput(
+    taskId: string,
+    executorConfig: AgentExecutorConfig,
+    processType: ProcessType,
+  ): AutocodeRuntimeWorkspaceClaimInput | null {
+    const session = executorConfig.session;
+    const projectRoot = session.sourceProjectDir || session.toolContext?.projectDir || session.projectDir;
+    const workspaceRoot = session.projectDir || session.toolContext?.cwd || projectRoot;
+    if (!projectRoot || !workspaceRoot) {
+      return null;
+    }
+
+    return {
+      taskId,
+      projectId: executorConfig.projectId,
+      projectRoot,
+      workspaceRoot,
+      mode: this.resolveWorkspaceMode(projectRoot, workspaceRoot, session.sourceProjectDir),
+      fileIntents: this.collectWorkspaceFileIntents(session.sourceSpecDir || session.specDir),
+      label: `${processType}:${taskId}`,
+    };
+  }
+
+  private resolveWorkspaceMode(
+    projectRoot: string,
+    workspaceRoot: string,
+    sourceProjectDir?: string,
+  ): AutocodeRuntimeWorkspaceMode {
+    if (sourceProjectDir) {
+      return 'worktree';
+    }
+    return normalizeAutocodeRuntimePath(projectRoot) === normalizeAutocodeRuntimePath(workspaceRoot)
+      ? 'direct'
+      : 'worktree';
+  }
+
+  private collectWorkspaceFileIntents(specDir: string | null | undefined): string[] {
+    if (!specDir) {
+      return [];
+    }
+    try {
+      return collectAutocodeRuntimeFileIntentsFromPlan(loadAutocodeImplementationPlanSync(specDir));
+    } catch {
+      return [];
+    }
   }
 
   configure(_pythonPath?: string, autoBuildSourcePath?: string): void {
@@ -597,7 +748,8 @@ export class AgentProcessManager {
     args: string[],
     extraEnv: Record<string, string> = {},
     processType: ProcessType = 'task-execution',
-    projectId?: string
+    projectId?: string,
+    workspaceClaim?: AutocodeRuntimeWorkspaceClaimInput | false,
   ): Promise<void> {
     const isSpecRunner = processType === 'spec-creation';
     this.killProcess(taskId);
@@ -612,8 +764,18 @@ export class AgentProcessManager {
       taskId,
       process: null, // Will be set after spawn() call completes below
       startedAt: new Date(),
-      spawnId
+      spawnId,
+      ...(workspaceClaim ? { workspaceClaimStatus: 'pending' as const } : {}),
     });
+
+    if (workspaceClaim) {
+      const claim = await this.waitForRuntimeWorkspaceClaim(taskId, workspaceClaim, spawnId, processType, projectId);
+      if (!claim) {
+        this.deleteTrackedProcess(taskId);
+        this.state.clearKilledSpawn(spawnId);
+        return;
+      }
+    }
 
     const env = this.setupProcessEnvironment(extraEnv);
 
@@ -661,7 +823,7 @@ export class AgentProcessManager {
     } catch (err) {
       // spawn() failed synchronously (e.g., command not found, permission denied)
       // Clean up tracking entry and propagate error
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
       this.emitter.emit('error', taskId, err instanceof Error ? err.message : String(err), projectId);
       throw err;
     }
@@ -685,7 +847,7 @@ export class AgentProcessManager {
         debugPrefix: '[AgentProcess]',
         debug: process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development'
       });
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
       this.state.clearKilledSpawn(currentSpawnId);
       return; // Do not proceed with this spawn
     }
@@ -851,7 +1013,7 @@ export class AgentProcessManager {
         processLog(stderrBuffer);
       }
 
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
 
       if (this.state.wasSpawnKilled(spawnId)) {
         this.state.clearKilledSpawn(spawnId);
@@ -886,7 +1048,7 @@ export class AgentProcessManager {
     // Handle process error
     childProcess.on('error', (err: Error) => {
       console.error('[AgentProcess] Process error:', err.message);
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
 
       this.emitter.emit('execution-progress', taskId, {
         phase: 'failed',
@@ -930,11 +1092,20 @@ export class AgentProcessManager {
       startedAt: new Date(),
       spawnId,
       worker: null, // Will be set after bridge.spawn()
+      workspaceClaimStatus: 'pending',
     });
+
+    const workspaceClaim = this.buildWorkerWorkspaceClaimInput(taskId, executorConfig, processType);
+    const claim = await this.waitForRuntimeWorkspaceClaim(taskId, workspaceClaim, spawnId, processType, projectId);
+    if (workspaceClaim && !claim) {
+      this.deleteTrackedProcess(taskId);
+      this.state.clearKilledSpawn(spawnId);
+      return;
+    }
 
     // Check if killed during setup
     if (this.state.wasSpawnKilled(spawnId)) {
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
       this.state.clearKilledSpawn(spawnId);
       return;
     }
@@ -973,7 +1144,7 @@ export class AgentProcessManager {
     });
 
     bridge.on('exit', (tId: string, code: number | null, pType: ProcessType, pId?: string) => {
-      this.state.deleteProcess(tId);
+      this.deleteTrackedProcess(tId);
 
       if (this.state.wasSpawnKilled(spawnId)) {
         this.state.clearKilledSpawn(spawnId);
@@ -1029,7 +1200,7 @@ export class AgentProcessManager {
         processType,
       });
     } catch (err) {
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
       this.emitter.emit('error', taskId, err instanceof Error ? err.message : String(err), projectId);
       throw err;
     }
@@ -1041,7 +1212,7 @@ export class AgentProcessManager {
     const currentSpawnId = this.state.getProcess(taskId)?.spawnId ?? spawnId;
     if (this.state.wasSpawnKilled(currentSpawnId)) {
       await bridge.terminate();
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
       this.state.clearKilledSpawn(currentSpawnId);
       return;
     }
@@ -1070,7 +1241,7 @@ export class AgentProcessManager {
     // just remove from tracking. The spawn() call will still complete, but the spawned process
     // will be terminated by the post-spawn wasSpawnKilled() check (see spawnProcess() after updateProcess).
     if (!agentProcess.process && !agentProcess.worker) {
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
       return true;
     }
 
@@ -1081,7 +1252,7 @@ export class AgentProcessManager {
       } catch {
         // Worker may already be terminated
       }
-      this.state.deleteProcess(taskId);
+      this.deleteTrackedProcess(taskId);
       return true;
     }
 
@@ -1093,7 +1264,7 @@ export class AgentProcessManager {
       });
     }
 
-    this.state.deleteProcess(taskId);
+    this.deleteTrackedProcess(taskId);
     return true;
   }
 

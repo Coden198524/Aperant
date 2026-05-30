@@ -107,6 +107,16 @@
       "import": "./dist/runtime/agent-messages.js",
       "default": "./dist/runtime/agent-messages.js"
     },
+    "./runtime/workspace-claims": {
+      "types": "./dist/runtime/workspace-claims.d.ts",
+      "import": "./dist/runtime/workspace-claims.js",
+      "default": "./dist/runtime/workspace-claims.js"
+    },
+    "./runtime/work-dependencies": {
+      "types": "./dist/runtime/work-dependencies.d.ts",
+      "import": "./dist/runtime/work-dependencies.js",
+      "default": "./dist/runtime/work-dependencies.js"
+    },
     "./runtime/task-runtime-config": {
       "types": "./dist/runtime/task-runtime-config.d.ts",
       "import": "./dist/runtime/task-runtime-config.js",

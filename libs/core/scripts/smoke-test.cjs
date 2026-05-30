@@ -18,6 +18,24 @@ async function main() {
   const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-core-smoke-'));
 
   try {
+    const dependencyAnalysis = core.analyzeAutocodeWorkDependencies([
+      { id: '1', status: 'pending', dependsOn: [] },
+      { id: '2', status: 'pending', dependsOn: ['1'] },
+      { id: '3', status: 'pending', dependsOn: ['missing'] },
+      { id: '4', status: 'pending', dependsOn: ['5'] },
+      { id: '5', status: 'pending', dependsOn: ['4'] },
+    ]);
+    assert.deepEqual(dependencyAnalysis.runnable.map((item) => item.id), ['1']);
+    assert.ok(dependencyAnalysis.issues.some((issue) => issue.type === 'missing' && issue.itemId === '3'));
+    assert.ok(dependencyAnalysis.issues.some((issue) => issue.type === 'cycle' && issue.cycle.includes('4')));
+    assert.match(core.describeAutocodeWorkDependencyBlockers(dependencyAnalysis.blocked), /dependency cycle/);
+    const duplicateDependencyAnalysis = core.analyzeAutocodeWorkDependencies([
+      { id: 'dup', status: 'pending', dependsOn: [] },
+      { id: 'dup', status: 'pending', dependsOn: [] },
+    ]);
+    assert.equal(duplicateDependencyAnalysis.runnable.length, 0);
+    assert.ok(duplicateDependencyAnalysis.issues.every((issue) => issue.type === 'duplicate'));
+
     writeFileSync(
       join(projectRoot, 'package.json'),
       JSON.stringify({
@@ -139,6 +157,43 @@ async function main() {
       core.formatAutocodeGotchaMarkdownEntry({ gotcha: 'Use Edit for small corrections.', context: 'tooling' }, new Date('2026-01-02T03:04:00.000Z')),
       '\n## [2026-01-02 03:04]\nUse Edit for small corrections.\n\n_Context: tooling_\n',
     );
+    const sessionSpecDir = join(projectRoot, '.autocode', 'specs', 'session-memory-task');
+    mkdirSync(sessionSpecDir, { recursive: true });
+    core.recordAutocodeSessionDiscoveryInFile({
+      specDir: sessionSpecDir,
+      filePath: 'src/App.tsx',
+      description: 'Main application component',
+      category: 'ui',
+      now: new Date('2026-01-02T03:05:00.000Z'),
+    });
+    core.recordAutocodeSessionDiscoveryInFile({
+      specDir: sessionSpecDir,
+      filePath: 'src/api.ts',
+      description: 'API client helpers',
+      category: 'api',
+      now: new Date('2026-01-02T03:06:00.000Z'),
+    });
+    const persistedCodebaseMap = core.loadAutocodeSessionCodebaseMapSync(sessionSpecDir);
+    assert.equal(persistedCodebaseMap.discovered_files['src/App.tsx'].category, 'ui');
+    assert.equal(persistedCodebaseMap.discovered_files['src/api.ts'].description, 'API client helpers');
+    assert.equal(persistedCodebaseMap.last_updated, '2026-01-02T03:06:00.000Z');
+    const firstGotcha = core.appendAutocodeSessionGotcha({
+      specDir: sessionSpecDir,
+      gotcha: 'Keep writes atomic.',
+      context: 'concurrency',
+      now: new Date('2026-01-02T03:07:00.000Z'),
+    });
+    const secondGotcha = core.appendAutocodeSessionGotcha({
+      specDir: sessionSpecDir,
+      gotcha: 'Reuse core lock helpers.',
+      now: new Date('2026-01-02T03:08:00.000Z'),
+    });
+    assert.equal(firstGotcha.isNew, true);
+    assert.equal(secondGotcha.isNew, false);
+    const persistedGotchas = readFileSync(core.getAutocodeSessionGotchasPath(sessionSpecDir), 'utf8');
+    assert.match(persistedGotchas, /# Gotchas & Pitfalls/);
+    assert.match(persistedGotchas, /Keep writes atomic\./);
+    assert.match(persistedGotchas, /Reuse core lock helpers\./);
     const sessionContext = core.buildAutocodeSessionContext({
       codebaseMap,
       gotchasMarkdown: '# Gotchas\n\nUse Edit for small corrections.',
@@ -216,6 +271,42 @@ async function main() {
       { filename: 'settings.png', path: 'attachments/settings.png', description: '' },
     ]);
 
+    const raceSpecDir = join(projectRoot, '.autocode-plan-race', 'specs', 'plan-update-race');
+    mkdirSync(raceSpecDir, { recursive: true });
+    core.saveAutocodeImplementationPlanSync(raceSpecDir, {
+      feature: 'Plan update race',
+      phases: [
+        {
+          id: '1',
+          name: 'Implementation',
+          subtasks: [
+            { id: '1.1', title: 'First concurrent update', description: 'First concurrent update', status: 'pending' },
+            { id: '1.2', title: 'Second concurrent update', description: 'Second concurrent update', status: 'pending' },
+          ],
+        },
+      ],
+    });
+    await Promise.all([
+      core.updateAutocodeImplementationPlan(raceSpecDir, async (plan) => {
+        await new Promise((resolve) => setTimeout(resolve, 5));
+        core.updateAutocodePlanSubtask(plan, '1.1', {
+          status: 'completed',
+          completionSummary: 'first done',
+          now: '2026-01-02T03:04:01.000Z',
+        });
+      }),
+      core.updateAutocodeImplementationPlan(raceSpecDir, (plan) => {
+        core.updateAutocodePlanSubtask(plan, '1.2', {
+          status: 'completed',
+          completionSummary: 'second done',
+          now: '2026-01-02T03:04:02.000Z',
+        });
+      }),
+    ]);
+    const racePlan = core.loadAutocodeImplementationPlanSync(raceSpecDir);
+    assert.equal(racePlan.phases[0].subtasks[0].status, 'completed');
+    assert.equal(racePlan.phases[0].subtasks[1].status, 'completed');
+
     const openSpecChangeDir = join(projectRoot, 'openspec', 'changes', 'share-runtime');
     mkdirSync(join(openSpecChangeDir, 'specs', 'agent-runtime'), { recursive: true });
     writeFileSync(join(openSpecChangeDir, 'proposal.md'), '# Share Runtime\n\nBridge upstream specs to downstream execution.\n');
@@ -227,16 +318,20 @@ async function main() {
         '',
         '- [ ] 1. Connect OpenSpec source',
         '  - _Files: libs/core/src/openspec/index.ts_',
+        '  - _Depends on: none_',
         '- [ ] 2. Expose runtime import',
         '  - _Depends on: 1_',
         '  - _Verification: npm run build_',
         '- [ ] 3. Reuse compact context',
         '  - _Files: libs/core/src/runtime/agent-messages.ts_',
+        '  - _Depends on: none_',
         '- [ ] 4. Sync OpenSpec parent status',
         '  - [ ] 4.1 Complete parent from merged runtime package',
         '    - _Files: libs/core/src/openspec/index.ts_',
+        '    - _Depends on: none_',
         '  - [ ] 4.2 Keep compact context available',
         '    - _Files: libs/core/src/tasks/cli-runner.ts_',
+        '    - _Depends on: none_',
         '',
       ].join('\n'),
     );
@@ -253,7 +348,7 @@ async function main() {
     });
     assert.equal(openSpecTaskResult.task.metadata.sourceType, 'openspec');
     assert.equal(openSpecTaskResult.task.metadata.openSpecChangeId, 'share-runtime');
-    assert.equal(openSpecTaskResult.task.subtasks.length, 2);
+    assert.equal(openSpecTaskResult.task.subtasks.length, 4);
     assert.ok(openSpecTaskResult.task.subtasks.every((subtask) => subtask.workPackage === true));
     assert.deepEqual(openSpecTaskResult.task.subtasks.flatMap((subtask) => subtask.upstreamTaskIds), ['1', '2', '3', '4.1', '4.2']);
     assert.equal(core.normalizeOpenSpecChangeId('001-build-game'), 'change-001-build-game');
@@ -268,6 +363,12 @@ async function main() {
     assert.equal(openSpecRuntimePlan.source_task.ownership.upstream, 'openspec');
     assert.equal(openSpecRuntimePlan.phases[0].subtasks[0].id, 'wp-1');
     assert.equal(openSpecRuntimePlan.phases[0].subtasks[1].id, 'wp-2');
+    assert.equal(openSpecRuntimePlan.phases[0].subtasks[2].id, 'wp-3');
+    assert.equal(openSpecRuntimePlan.phases[0].subtasks[3].id, 'wp-4');
+    assert.deepEqual(openSpecRuntimePlan.phases[0].subtasks[0].upstream_task_ids, ['1', '2']);
+    assert.deepEqual(openSpecRuntimePlan.phases[0].subtasks[1].upstream_task_ids, ['3']);
+    assert.deepEqual(openSpecRuntimePlan.phases[0].subtasks[2].upstream_task_ids, ['4.1']);
+    assert.deepEqual(openSpecRuntimePlan.phases[0].subtasks[3].upstream_task_ids, ['4.2']);
     assert.deepEqual(openSpecRuntimePlan.phases[0].subtasks.flatMap((subtask) => subtask.upstream_task_ids), ['1', '2', '3', '4.1', '4.2']);
     assert.equal(
       core.createAutocodeTaskRunPlan({
@@ -281,7 +382,7 @@ async function main() {
     );
     for (const phase of openSpecRuntimePlan.phases) {
       for (const subtask of phase.subtasks ?? []) {
-        if (subtask.id === 'wp-1' || subtask.id === 'wp-2') {
+        if (subtask.id === 'wp-1' || subtask.id === 'wp-2' || subtask.id === 'wp-3' || subtask.id === 'wp-4') {
           subtask.status = 'completed';
         }
       }
@@ -299,6 +400,127 @@ async function main() {
     assert.match(syncedOpenSpecTasks, /- \[x\] 4\. Sync OpenSpec parent status/);
     assert.match(syncedOpenSpecTasks, /- \[x\] 4\.1 Complete parent from merged runtime package/);
     assert.match(syncedOpenSpecTasks, /- \[x\] 4\.2 Keep compact context available/);
+
+    const dependencyPackageChangeDir = join(projectRoot, 'openspec', 'changes', 'dependency-graph-packages');
+    mkdirSync(join(dependencyPackageChangeDir, 'specs', 'runtime'), { recursive: true });
+    writeFileSync(join(dependencyPackageChangeDir, 'proposal.md'), '# Dependency Graph Packages\n');
+    writeFileSync(join(dependencyPackageChangeDir, 'design.md'), '# Design\n\nUse task dependencies to create runtime work packages.\n');
+    writeFileSync(
+      join(dependencyPackageChangeDir, 'tasks.md'),
+      [
+        '# Tasks',
+        '',
+        '- [ ] 1. UI foundation',
+        '  - [ ] 1.1 Create board markup',
+        '    - _Depends on: none_',
+        '  - [ ] 1.2 Wire board state',
+        '    - _Depends on: 1.1_',
+        '  - [ ] 1.3 Add keyboard controls',
+        '    - _Depends on: 1.2_',
+        '- [ ] 2. Scoring',
+        '  - [ ] 2.1 Add score state',
+        '    - _Depends on: none_',
+        '  - [ ] 2.2 Render score panel',
+        '    - _Depends on: 2.1_',
+        '- [ ] 3. Verification',
+        '  - [ ] 3.1 Add browser smoke test',
+        '    - _Depends on: 1.3, 2.2_',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(dependencyPackageChangeDir, 'specs', 'runtime', 'spec.md'),
+      '## ADDED Requirements\n\n### Requirement: Dependency graph packages\nWork packages SHALL follow OpenSpec task dependencies.\n\n#### Scenario: Package dependent tasks\n- **WHEN** tasks declare dependencies\n- **THEN** runtime packages keep dependent chains together and use package dependencies across phases\n',
+    );
+    const dependencyPackageTask = core.createAutocodeTaskFromOpenSpecChange({
+      projectRoot,
+      dataDirName: '.autocode-openspec-dependencies',
+      changeId: 'dependency-graph-packages',
+      now: '2026-01-02T03:04:10.000Z',
+    });
+    const dependencyPackagePlan = core.loadAutocodeImplementationPlanSync(dependencyPackageTask.task.specsPath);
+    assert.deepEqual(
+      dependencyPackagePlan.phases[0].subtasks.map((subtask) => subtask.upstream_task_ids),
+      [['1.1', '1.2', '1.3'], ['2.1', '2.2'], ['3.1']],
+    );
+    assert.deepEqual(dependencyPackagePlan.phases[0].subtasks[2].depends_on, ['wp-1', 'wp-2']);
+
+    const fanOutPackageChangeDir = join(projectRoot, 'openspec', 'changes', 'fan-out-work-packages');
+    mkdirSync(join(fanOutPackageChangeDir, 'specs', 'runtime'), { recursive: true });
+    writeFileSync(join(fanOutPackageChangeDir, 'proposal.md'), '# Fan Out Work Packages\n');
+    writeFileSync(join(fanOutPackageChangeDir, 'design.md'), '# Design\n\nExpose parallel branches in runtime work packages.\n');
+    writeFileSync(
+      join(fanOutPackageChangeDir, 'tasks.md'),
+      [
+        '# Tasks',
+        '',
+        '- [ ] 1. Runtime DAG',
+        '  - [ ] 1.1 Create shared runtime contract',
+        '    - _Depends on: none_',
+        '  - [ ] 1.2 Implement UI adapter',
+        '    - _Depends on: 1.1_',
+        '  - [ ] 1.3 Implement CLI adapter',
+        '    - _Depends on: 1.1_',
+        '  - [ ] 1.4 Implement VS Code adapter',
+        '    - _Depends on: 1.1_',
+        '  - [ ] 1.5 Add shared integration test',
+        '    - _Depends on: 1.2, 1.3, 1.4_',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(fanOutPackageChangeDir, 'specs', 'runtime', 'spec.md'),
+      '## ADDED Requirements\n\n### Requirement: Fan-out work packages\nRuntime planning SHALL preserve independent task branches as concurrent work packages.\n\n#### Scenario: Branching task graph\n- **WHEN** multiple tasks depend on the same prerequisite\n- **THEN** runtime packages expose those tasks as independent runnable packages\n',
+    );
+    const fanOutPackageTask = core.createAutocodeTaskFromOpenSpecChange({
+      projectRoot,
+      dataDirName: '.autocode-openspec-fan-out-packages',
+      changeId: 'fan-out-work-packages',
+      now: '2026-01-02T03:04:15.000Z',
+    });
+    const fanOutPackagePlan = core.loadAutocodeImplementationPlanSync(fanOutPackageTask.task.specsPath);
+    assert.deepEqual(
+      fanOutPackagePlan.phases[0].subtasks.map((subtask) => subtask.upstream_task_ids),
+      [['1.1'], ['1.2'], ['1.3'], ['1.4'], ['1.5']],
+    );
+    assert.deepEqual(fanOutPackagePlan.phases[0].subtasks[1].depends_on, ['wp-1']);
+    assert.deepEqual(fanOutPackagePlan.phases[0].subtasks[2].depends_on, ['wp-1']);
+    assert.deepEqual(fanOutPackagePlan.phases[0].subtasks[3].depends_on, ['wp-1']);
+    assert.deepEqual(fanOutPackagePlan.phases[0].subtasks[4].depends_on, ['wp-2', 'wp-3', 'wp-4']);
+
+    const inferredDependencyChangeDir = join(projectRoot, 'openspec', 'changes', 'infer-missing-task-dependencies');
+    mkdirSync(join(inferredDependencyChangeDir, 'specs', 'runtime'), { recursive: true });
+    writeFileSync(join(inferredDependencyChangeDir, 'proposal.md'), '# Infer Missing Dependencies\n');
+    writeFileSync(join(inferredDependencyChangeDir, 'design.md'), '# Design\n\nInfer a conservative DAG when tasks omit dependencies.\n');
+    writeFileSync(
+      join(inferredDependencyChangeDir, 'tasks.md'),
+      [
+        '# Tasks',
+        '',
+        '- [ ] 1. Implementation',
+        '  - [ ] 1.1 Create model',
+        '  - [ ] 1.2 Render view',
+        '- [ ] 2. Verification',
+        '  - [ ] 2.1 Add smoke test',
+        '',
+      ].join('\n'),
+    );
+    writeFileSync(
+      join(inferredDependencyChangeDir, 'specs', 'runtime', 'spec.md'),
+      '## ADDED Requirements\n\n### Requirement: Inferred dependencies\nRuntime planning SHALL infer missing OpenSpec task dependencies conservatively.\n\n#### Scenario: Missing task metadata\n- **WHEN** tasks omit Depends on metadata\n- **THEN** the runtime plan is not fully parallelized\n',
+    );
+    const inferredDependencyTask = core.createAutocodeTaskFromOpenSpecChange({
+      projectRoot,
+      dataDirName: '.autocode-openspec-inferred-dependencies',
+      changeId: 'infer-missing-task-dependencies',
+      now: '2026-01-02T03:04:20.000Z',
+    });
+    const inferredDependencyPlan = core.loadAutocodeImplementationPlanSync(inferredDependencyTask.task.specsPath);
+    assert.deepEqual(
+      inferredDependencyPlan.phases[0].subtasks.map((subtask) => subtask.upstream_task_ids),
+      [['1.1', '1.2'], ['2.1']],
+    );
+    assert.deepEqual(inferredDependencyPlan.phases[0].subtasks[1].depends_on, ['wp-1']);
 
     const fakeOpenSpecCliCalls = [];
     const fakeOpenSpecProtocolCalls = [];
@@ -442,6 +664,12 @@ async function main() {
     assert.equal(deferredSpecTask.metadata.sourceType, 'openspec');
     assert.equal(deferredSpecTask.metadata.developmentMode, 'spec');
     assert.equal(deferredSpecTask.metadata.openSpecGenerationMode, 'deferred');
+    assert.deepEqual(deferredSpecTask.metadata.runtimeConcurrency, {
+      mode: 'concurrent',
+      workers: 5,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
     assert.equal(
       core.createAutocodeTaskRunPlan({
         projectRoot,
@@ -609,6 +837,66 @@ async function main() {
       readFileSync(join(projectRoot, 'openspec', 'changes', 'generate-rich-openspec-documents', 'tasks.md'), 'utf8'),
       /1\.2 Create executable OpenSpec task list/,
     );
+    assert.match(
+      readFileSync(join(projectRoot, 'openspec', 'changes', 'generate-rich-openspec-documents', 'tasks.md'), 'utf8'),
+      /_Depends on: 1\.1_/,
+    );
+
+    const normalizedOpenSpecTask = await core.createManualAutocodeTaskWithOpenSpecArtifacts({
+      projectRoot,
+      dataDirName: '.autocode-normalized-openspec-artifacts',
+      title: 'Normalize OpenSpec artifacts',
+      description: 'Normalize model-generated OpenSpec tasks and Chinese requirement bodies before runtime planning.',
+      metadata: {
+        category: 'feature',
+        language: 'zh-CN',
+      },
+      now: '2026-01-02T03:05:20.000Z',
+      openSpecCli: fakeOpenSpecCli,
+      validateOpenSpec: false,
+      openSpecArtifactGenerator: {
+        async generateArtifact(input) {
+          if (input.artifactId === 'proposal') {
+            return '## 背景\n需要规范化模型输出。\n\n## 变更内容\n修复 OpenSpec 文档格式。\n\n## 能力范围\n- `project`: 文档规范化。\n\n## 影响\n- runtime plan 不再误读依赖。';
+          }
+          if (input.artifactId === 'design') {
+            return '## 上下文\n模型可能输出重复或裸露的 Depends on 行。\n\n## 目标 / 非目标\n**目标：**\n- 规范化 tasks 和 specs。\n\n**非目标：**\n- 改变 OpenSpec 结构。\n\n## 决策\n- core 在写入前清洗生成内容。\n\n## 风险 / 权衡\n- 不依赖单个模型格式。';
+          }
+          if (input.artifactId === 'specs') {
+            return '## ADDED Requirements\n\n### Requirement: 中文需求正文\n系统必须在中文需求正文中满足 OpenSpec 校验。\n\n#### Scenario: 生成中文规格\n- **WHEN** 模型输出中文 requirement 正文\n- **THEN** core 写入前补齐 OpenSpec 需要的 SHALL 或 MUST';
+          }
+          return [
+            '- [ ] 1. 文档规范化',
+            '  - [ ] 1.1 规范化任务依赖元数据',
+            '    - _Depends on: none_',
+            '    _Depends on: none_',
+            '    文件提示：检查 tasks.md。',
+            '  - [ ] 1.2 生成 runtime plan',
+            '    _Depends on: 1.1_',
+            '    文件提示：检查 implementation_plan.md。',
+          ].join('\n');
+        },
+      },
+    });
+    const normalizedTasksMarkdown = readFileSync(
+      join(projectRoot, 'openspec', 'changes', 'normalize-openspec-artifacts', 'tasks.md'),
+      'utf8',
+    );
+    assert.equal((normalizedTasksMarkdown.match(/_Depends on:/g) ?? []).length, 2);
+    assert.doesNotMatch(normalizedTasksMarkdown, /^\s*_Depends on:/m);
+    const normalizedSpecMarkdown = readFileSync(
+      join(projectRoot, 'openspec', 'changes', 'normalize-openspec-artifacts', 'specs', 'feature', 'spec.md'),
+      'utf8',
+    );
+    assert.match(normalizedSpecMarkdown, /\bSHALL\b/);
+    const normalizedRuntimePlan = core.loadAutocodeImplementationPlanSync(normalizedOpenSpecTask.specsPath);
+    const normalizedRuntimePlanMarkdown = readFileSync(join(normalizedOpenSpecTask.specsPath, 'implementation_plan.md'), 'utf8');
+    assert.ok(
+      normalizedRuntimePlan.phases
+        .flatMap((phase) => phase.subtasks)
+        .every((subtask) => (subtask.depends_on ?? []).every((dependency) => /^wp-\d+$/.test(dependency))),
+    );
+    assert.doesNotMatch(normalizedRuntimePlanMarkdown, /Depends on: none_.*文件提示/);
 
     const chineseGeneratedInputs = [];
     await core.createManualAutocodeTaskWithOpenSpecArtifacts({
@@ -635,7 +923,7 @@ async function main() {
           if (input.artifactId === 'specs') {
             return '## ADDED Requirements\n\n### Requirement: 中文 OpenSpec 文档\nOpenSpec 文档正文 SHALL 使用简体中文。\n\n#### Scenario: 创建中文任务\n- **WHEN** 用户使用中文界面创建任务\n- **THEN** OpenSpec 文档正文使用简体中文';
           }
-          return '- [ ] 1. 生成中文文档\n  - [ ] 1.1 写入中文 proposal、design、spec 和 tasks\n    - _验证：检查文档没有英文模板标题_';
+          return '- [ ] 1. 生成中文文档\n  - [ ] 1.1 写入中文 proposal、design、spec 和 tasks\n    - _Depends on: none_\n    - _验证：检查文档没有英文模板标题_';
         },
       },
     });
@@ -739,8 +1027,10 @@ async function main() {
             '- [ ] 1. Generate deferred OpenSpec artifacts',
             '  - [ ] 1.1 Create proposal, design, and spec delta documents',
             '    - _Files: libs/core/src/openspec/index.ts_',
+            '    - _Depends on: none_',
             '  - [ ] 1.2 Create the downstream runtime plan from OpenSpec tasks',
             '    - _Files: libs/core/src/tasks/workspace-state.ts_',
+            '    - _Depends on: 1.1_',
           ].join('\n');
         },
       },
@@ -841,8 +1131,10 @@ async function main() {
             '- [ ] 1. Apply review feedback upstream',
             '  - [ ] 1.1 Update OpenSpec proposal, design, spec delta, and tasks with the audit trail requirement',
             '    - _Files: libs/core/src/openspec/index.ts_',
+            '    - _Depends on: none_',
             '  - [ ] 1.2 Regenerate downstream runtime plan after OpenSpec is updated',
             '    - _Files: libs/core/src/tasks/cli-runner.ts_',
+            '    - _Depends on: 1.1_',
           ].join('\n');
         },
       },
@@ -1066,13 +1358,14 @@ async function main() {
         subtasks: [
           { id: '1', status: 'in_progress', started_at: 'now' },
           { id: '2', status: 'failed', completed_at: 'now' },
-          { id: '3', status: 'completed' },
+          { id: '3', status: 'blocked', started_at: 'now' },
+          { id: '4', status: 'completed' },
         ],
       }],
     };
     const resetResult = core.resetAutocodeStuckSubtasksInPlan(resetPlan);
-    assert.equal(resetResult.resetCount, 2);
-    assert.equal(core.countAutocodePlanSubtasks(resetPlan.phases), 3);
+    assert.equal(resetResult.resetCount, 3);
+    assert.equal(core.countAutocodePlanSubtasks(resetPlan.phases), 4);
     assert.equal(core.canSyncAutocodePlanPhases(resetPlan.phases, []), false);
 
     const parsedCliArgs = core.parseAutocodeCommandArgs(['run', task.id, '--cli', 'codex', '--json']);
@@ -1144,6 +1437,135 @@ async function main() {
       unit: 'work_item',
       conflictPolicy: 'lock-and-queue',
     });
+    const claimManager = new core.AutocodeRuntimeWorkspaceClaimManager();
+    const firstDirectClaim = claimManager.tryClaim({
+      taskId: 'task-a',
+      projectRoot,
+      workspaceRoot: projectRoot,
+      mode: 'direct',
+      fileIntents: ['src/main.tsx'],
+      now: '2026-01-02T03:09:00.000Z',
+    });
+    assert.equal(firstDirectClaim.ok, true);
+    assert.equal(claimManager.tryClaim({
+      taskId: 'task-b',
+      projectRoot,
+      workspaceRoot: projectRoot,
+      mode: 'direct',
+      fileIntents: ['src/other.tsx'],
+      now: '2026-01-02T03:09:01.000Z',
+    }).ok, true);
+    const overlappingDirectClaim = claimManager.tryClaim({
+      taskId: 'task-c',
+      projectRoot,
+      workspaceRoot: projectRoot,
+      mode: 'direct',
+      fileIntents: ['src/main.tsx'],
+      now: '2026-01-02T03:09:02.000Z',
+    });
+    assert.equal(overlappingDirectClaim.ok, false);
+    assert.equal(overlappingDirectClaim.conflict.reason, 'overlapping_files');
+    const unknownDirectClaim = claimManager.tryClaim({
+      taskId: 'task-d',
+      projectRoot,
+      workspaceRoot: projectRoot,
+      mode: 'direct',
+      now: '2026-01-02T03:09:03.000Z',
+    });
+    assert.equal(unknownDirectClaim.ok, false);
+    assert.equal(unknownDirectClaim.conflict.reason, 'unknown_direct_files');
+    assert.equal(claimManager.tryClaim({
+      taskId: 'task-e',
+      projectRoot: join(projectRoot, 'other-project'),
+      workspaceRoot: join(projectRoot, 'other-project'),
+      mode: 'direct',
+      now: '2026-01-02T03:09:04.000Z',
+    }).ok, true);
+    assert.equal(claimManager.tryClaim({
+      taskId: 'task-f',
+      projectRoot,
+      workspaceRoot: join(projectRoot, '.autocode', 'worktrees', 'tasks', 'task-f'),
+      mode: 'worktree',
+      now: '2026-01-02T03:09:05.000Z',
+    }).ok, true);
+    assert.deepEqual(core.collectAutocodeRuntimeFileIntentsFromPlan({
+      phases: [{
+        subtasks: [{
+          files_to_modify: ['src/main.tsx'],
+          files_to_create: ['src/new.tsx'],
+          pattern_files: ['docs/**/*.md'],
+        }],
+      }],
+    }), ['docs/**/*.md', 'src/main.tsx', 'src/new.tsx']);
+    const wildcardClaimManager = new core.AutocodeRuntimeWorkspaceClaimManager();
+    assert.equal(wildcardClaimManager.tryClaim({
+      taskId: 'wildcard-a',
+      projectRoot,
+      workspaceRoot: projectRoot,
+      mode: 'direct',
+      fileIntents: ['src/**/*.ts'],
+    }).ok, true);
+    const wildcardConflict = wildcardClaimManager.tryClaim({
+      taskId: 'wildcard-b',
+      projectRoot,
+      workspaceRoot: projectRoot,
+      mode: 'direct',
+      fileIntents: ['src/app.ts'],
+    });
+    assert.equal(wildcardConflict.ok, false);
+    assert.equal(wildcardConflict.conflict.reason, 'overlapping_files');
+    const writeLock = await core.acquireAutocodeRuntimeFileWriteLock({
+      projectRoot,
+      filePath: join(projectRoot, 'src', 'main.tsx'),
+      ownerId: 'smoke-lock-a',
+      timeoutMs: 20,
+      retryMs: 1,
+      now: '2026-01-02T03:09:06.000Z',
+    });
+    assert.equal(JSON.parse(readFileSync(join(writeLock.lockDir, 'metadata.json'), 'utf8')).processId, process.pid);
+    await assert.rejects(
+      () => core.acquireAutocodeRuntimeFileWriteLock({
+        projectRoot,
+        filePath: join(projectRoot, 'src', 'main.tsx'),
+        ownerId: 'smoke-lock-b',
+        timeoutMs: 5,
+        retryMs: 1,
+      }),
+      /already held by this process/,
+    );
+    assert.equal(core.releaseAutocodeRuntimeFileWriteLock(writeLock), true);
+    const reacquiredWriteLock = await core.acquireAutocodeRuntimeFileWriteLock({
+      projectRoot,
+      filePath: join(projectRoot, 'src', 'main.tsx'),
+      ownerId: 'smoke-lock-c',
+      timeoutMs: 20,
+      retryMs: 1,
+    });
+    assert.equal(core.releaseAutocodeRuntimeFileWriteLock(reacquiredWriteLock), true);
+    const syncWriteLock = core.acquireAutocodeRuntimeFileWriteLockSync({
+      projectRoot,
+      filePath: join(projectRoot, 'src', 'sync-lock.ts'),
+      ownerId: 'smoke-sync-lock-a',
+      timeoutMs: 20,
+      retryMs: 1,
+    });
+    assert.throws(
+      () => core.acquireAutocodeRuntimeFileWriteLockSync({
+        projectRoot,
+        filePath: join(projectRoot, 'src', 'sync-lock.ts'),
+        ownerId: 'smoke-sync-lock-b',
+        timeoutMs: 5,
+        retryMs: 1,
+      }),
+      /already held by this process/,
+    );
+    assert.equal(core.releaseAutocodeRuntimeFileWriteLock(syncWriteLock), true);
+    assert.deepEqual(core.inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(
+      join(projectRoot, '.autocode', 'specs', '001-task'),
+    ), {
+      projectRoot,
+      dataDirName: '.autocode',
+    });
     assert.equal(core.resolveAutocodeTaskPhaseModelId({
       metadata: {
         phaseModels: { coding: 'sonnet' },
@@ -1204,6 +1626,9 @@ async function main() {
     assert.ok(runnerScript.includes("upsertPlanMetadata(content, 'Execution Phase'"));
     assert.ok(runnerScript.includes('upsertPlanMachineMetadata(content'));
     assert.ok(runnerScript.includes("xstateState: phaseValue"));
+    assert.ok(runnerScript.includes('const activeFileWriteLockDirs = new Set()'));
+    assert.ok(runnerScript.includes('processId: process.pid'));
+    assert.ok(runnerScript.includes('is already held by this process'));
 
     writeFileSync(join(task.specsPath, 'spec.md'), '# Add provider settings\n\n## Overview\nImplement settings.\n');
     const planningRunPlan = core.createAutocodeTaskRunPlan({
@@ -1338,6 +1763,8 @@ async function main() {
     });
     assert.equal(codingRunPlan.phase, 'coding');
     assert.equal(codingRunPlan.command, 'gemini');
+    assert.match(codingRunPlan.prompt, /runner owns status updates/);
+    assert.doesNotMatch(codingRunPlan.prompt, /Mark only the current work item/);
     const codingRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
       projectRoot,
       dataDirName: '.autocode',
@@ -1503,6 +1930,15 @@ async function main() {
     });
     assert.equal(fakeCodingRuntime.runtimePlan.mode, 'coding');
     assert.equal(fakeCodingRuntime.taskRunPlan.phase, 'coding');
+    const fakeCodingRunnerScript = readFileSync(fakeCodingRuntime.taskRunPlan.runnerFilePath, 'utf8');
+    assert.ok(fakeCodingRunnerScript.includes('const runtimeConcurrency ='));
+    assert.ok(fakeCodingRunnerScript.includes('startCodingWorkQueue()'));
+    assert.ok(fakeCodingRunnerScript.includes('activeCodingAttempts'));
+    assert.ok(fakeCodingRunnerScript.includes('conflictsWithActiveCodingWork'));
+    assert.ok(fakeCodingRunnerScript.includes('patternFiles'));
+    assert.ok(fakeCodingRunnerScript.includes('workItemPathsOverlap'));
+    assert.ok(fakeCodingRunnerScript.includes('Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes'));
+    assert.equal(fakeCodingRunnerScript.includes('When done, mark only work package'), false);
     const fakeCodingResult = await core.startAutocodeAgentRuntime(
       fakeCodingRuntime.request,
       core.createProcessAgentRuntimeAdapter({ process: createSmokeProcessAdapter() }),
@@ -1895,6 +2331,10 @@ async function main() {
       /Write denied: WriteLike/,
     );
     assert.equal(core.sanitizeToolOutputName('Tool.Name@v2'), 'Tool_Name_v2');
+    assert.match(
+      core.createToolOutputSpilloverFileName('Tool.Name@v2', new Date('2026-01-02T03:04:00.000Z')),
+      /^Tool_Name_v2-20260102T030400000Z-[a-f0-9-]{8}\.txt$/,
+    );
     const truncationPlan = core.planToolOutputTruncation('line\n'.repeat(2100), 'Glob');
     assert.equal(truncationPlan.wasTruncated, true);
     assert.equal(truncationPlan.displayedLineCount, core.TOOL_OUTPUT_MAX_LINES);
@@ -1970,6 +2410,14 @@ async function main() {
     assert.equal(core.detectFastCommandFailure('grep needle src/index.ts', { isWindows: false }), null);
     assert.match(core.formatBashCommandDenied('blocked'), /Command not allowed - blocked/);
     assert.equal(core.formatBackgroundCommandStarted('sleep 1'), 'Command started in background: sleep 1');
+    assert.deepEqual(
+      core.extractBashWriteFileTargets('echo hi > src/out.txt && printf ok >> "logs/app.log" 2>nul'),
+      ['logs/app.log', 'src/out.txt'],
+    );
+    assert.deepEqual(
+      core.extractBashWriteFileTargets('printf ok | tee -a build/output.log | cat'),
+      ['build/output.log'],
+    );
     assert.equal(
       core.formatBashExecutionResult({ command: 'true', stdout: '', stderr: '', exitCode: 0 }),
       '(no output)',

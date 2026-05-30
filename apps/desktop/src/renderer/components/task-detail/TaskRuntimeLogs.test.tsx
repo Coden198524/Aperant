@@ -100,6 +100,37 @@ function createToolTaskLogs(): TaskLogs {
   return logs;
 }
 
+function createConcurrentWorkPackageLogs(): TaskLogs {
+  const logs = createTaskLogs();
+  logs.phases.planning.entries = [];
+  logs.phases.coding.status = 'completed';
+  logs.phases.coding.started_at = '2026-01-01T00:00:01.000Z';
+  logs.phases.coding.completed_at = '2026-01-01T00:00:04.000Z';
+  logs.phases.coding.entries = [
+    {
+      timestamp: '2026-01-01T00:00:01.000Z',
+      type: 'text',
+      phase: 'coding',
+      content: 'Global coding output.',
+    },
+    {
+      timestamp: '2026-01-01T00:00:02.000Z',
+      type: 'text',
+      phase: 'coding',
+      content: 'Work package one output.',
+      subtask_id: 'wp-1',
+    },
+    {
+      timestamp: '2026-01-01T00:00:03.000Z',
+      type: 'text',
+      phase: 'coding',
+      content: 'Work package two output.',
+      subtask_id: 'wp-2',
+    },
+  ];
+  return logs;
+}
+
 function createActiveEmptyTaskLogs(): TaskLogs {
   const logs = createTaskLogs();
   logs.phases.planning.status = 'active';
@@ -139,6 +170,38 @@ function createTask(overrides: Partial<Task> = {}): Task {
   };
 }
 
+function createConcurrentWorkPackageTask(): Task {
+  return createTask({
+    status: 'human_review',
+    metadata: {
+      runtimeConcurrency: {
+        mode: 'concurrent',
+        workers: 2,
+        unit: 'work_item',
+        conflictPolicy: 'lock-and-queue',
+      },
+    },
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Work package one',
+        description: 'First package',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+      } as Task['subtasks'][number] & { workPackage: boolean },
+      {
+        id: 'wp-2',
+        title: 'Work package two',
+        description: 'Second package',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+      } as Task['subtasks'][number] & { workPackage: boolean },
+    ],
+  });
+}
+
 describe('TaskRuntimeLogs', () => {
   beforeEach(() => {
     storeTasks = [];
@@ -169,6 +232,35 @@ describe('TaskRuntimeLogs', () => {
     });
     expect(screen.queryByRole('button', { name: /runtime/i })).not.toBeInTheDocument();
     expect(screen.queryByTestId('runtime-output-scroll')).not.toBeInTheDocument();
+  });
+
+  it('keeps concurrent work package output out of the global model log scope', () => {
+    render(
+      <TaskRuntimeLogs
+        task={createConcurrentWorkPackageTask()}
+        modelLogs={createConcurrentWorkPackageLogs()}
+        scope={{ type: 'global' }}
+      />
+    );
+
+    expect(screen.getByText('Global coding output.')).toBeInTheDocument();
+    expect(screen.queryByText('Work package one output.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Work package two output.')).not.toBeInTheDocument();
+  });
+
+  it('shows only the selected concurrent work package model log scope', () => {
+    render(
+      <TaskRuntimeLogs
+        task={createConcurrentWorkPackageTask()}
+        modelLogs={createConcurrentWorkPackageLogs()}
+        scope={{ type: 'work-item', workItemId: 'wp-1' }}
+        compact
+      />
+    );
+
+    expect(screen.getByText('Work package one output.')).toBeInTheDocument();
+    expect(screen.queryByText('Global coding output.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Work package two output.')).not.toBeInTheDocument();
   });
 
   it('omits phase badges from model output entries', async () => {

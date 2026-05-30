@@ -6,6 +6,8 @@
  * hint text.
  */
 
+import { randomUUID } from 'node:crypto';
+
 export const TOOL_OUTPUT_MAX_LINES = 2000;
 export const TOOL_OUTPUT_MAX_BYTES = 50_000;
 export const SAFETY_NET_MAX_BYTES = 100_000;
@@ -26,6 +28,11 @@ export interface ToolOutputTruncationContentOptions {
 
 export function sanitizeToolOutputName(toolName: string): string {
   return toolName.replace(/[^a-zA-Z0-9_-]/g, '_');
+}
+
+export function createToolOutputSpilloverFileName(toolName: string, now: Date = new Date()): string {
+  const timestamp = now.toISOString().replace(/[^0-9A-Za-z]/g, '');
+  return `${sanitizeToolOutputName(toolName)}-${timestamp}-${randomUUID().slice(0, 8)}.txt`;
 }
 
 export function planToolOutputTruncation(

@@ -21,9 +21,13 @@
 import { tool } from 'ai';
 import type { Tool as AITool } from 'ai';
 import {
+  acquireAutocodeRuntimeFileWriteLock,
   getToolWritePathDenial,
   guardReadOnlyToolUsage,
+  normalizeAutocodeRuntimeFileIntent,
+  releaseAutocodeRuntimeFileWriteLock,
   sanitizeFilePathArg,
+  type AutocodeRuntimeFileWriteLock,
 } from '@autocode/core';
 import { z } from 'zod/v3';
 
@@ -86,6 +90,74 @@ function runSecurityHooks(
   }
 }
 
+function getWritePathInputKeys(metadata: ToolMetadata): string[] {
+  return metadata.writePathInputKeys ?? ['file_path'];
+}
+
+function getWritePathsFromInput(
+  input: Record<string, unknown>,
+  metadata: ToolMetadata,
+): string[] {
+  const paths = new Set<string>();
+  for (const key of getWritePathInputKeys(metadata)) {
+    const value = input[key];
+    if (typeof value === 'string' && value.trim()) {
+      paths.add(value.trim());
+    } else if (Array.isArray(value)) {
+      for (const item of value) {
+        if (typeof item === 'string' && item.trim()) {
+          paths.add(item.trim());
+        }
+      }
+    }
+  }
+  return [...paths].sort((a, b) => a.localeCompare(b));
+}
+
+async function acquireFileWriteLocks(
+  toolName: string,
+  input: Record<string, unknown>,
+  context: ToolContext,
+  metadata: ToolMetadata,
+): Promise<AutocodeRuntimeFileWriteLock[]> {
+  if (context.fileWriteLock?.enabled !== true || metadata.permission === ToolPermission.ReadOnly) {
+    return [];
+  }
+
+  const writePaths = getWritePathsFromInput(input, metadata);
+  if (writePaths.length === 0) {
+    return [];
+  }
+
+  const projectRoot = context.fileWriteLock.projectRoot ?? context.projectDir;
+  const sortedWritePaths = [...writePaths].sort((left, right) => {
+    const leftKey = normalizeAutocodeRuntimeFileIntent(left, projectRoot) ?? left;
+    const rightKey = normalizeAutocodeRuntimeFileIntent(right, projectRoot) ?? right;
+    return leftKey.localeCompare(rightKey);
+  });
+  const locks: AutocodeRuntimeFileWriteLock[] = [];
+  try {
+    for (const filePath of sortedWritePaths) {
+      locks.push(await acquireAutocodeRuntimeFileWriteLock({
+        ...context.fileWriteLock,
+        projectRoot,
+        filePath,
+        ownerId: context.fileWriteLock.ownerId ?? `${toolName}:${Date.now()}`,
+      }));
+    }
+    return locks;
+  } catch (error) {
+    releaseFileWriteLocks(locks);
+    throw error;
+  }
+}
+
+function releaseFileWriteLocks(locks: AutocodeRuntimeFileWriteLock[]): void {
+  for (const lock of locks.reverse()) {
+    releaseAutocodeRuntimeFileWriteLock(lock);
+  }
+}
+
 // ---------------------------------------------------------------------------
 // Tool.define()
 // ---------------------------------------------------------------------------
@@ -141,7 +213,18 @@ function define<TInput extends z.ZodType, TOutput>(
           }
         }
 
-        const result = await (execute(input as z.infer<TInput>, context) as Promise<TOutput>);
+        const fileWriteLocks = await acquireFileWriteLocks(
+          metadata.name,
+          input as Record<string, unknown>,
+          context,
+          metadata,
+        );
+        let result: TOutput;
+        try {
+          result = await (execute(input as z.infer<TInput>, context) as Promise<TOutput>);
+        } finally {
+          releaseFileWriteLocks(fileWriteLocks);
+        }
 
         // Safety-net: apply disk-spillover truncation to string outputs.
         // Individual tools should catch most cases first.

@@ -18,6 +18,7 @@ const SubtaskOutputSchema = z.object({
   status: z.enum(['pending', 'in_progress', 'completed', 'blocked', 'failed']),
   files_to_create: z.array(z.string().max(240)).max(12),
   files_to_modify: z.array(z.string().max(240)).max(12),
+  depends_on: z.array(z.string().max(80)).max(24).optional(),
 });
 
 const PhaseOutputSchema = z.object({

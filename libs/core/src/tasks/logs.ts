@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileS
 import { basename, dirname, join } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { getAutocodeSpecDir, listAutocodeTasks } from './spec-store.js';
+import { withAutocodeRuntimeFileWriteLockSync } from '../runtime/workspace-claims.js';
 import { repairAutocodeChineseMojibakeText } from '../text/encoding.js';
 
 export type AutocodeTaskLogPhase = 'planning' | 'coding' | 'validation';
@@ -186,55 +187,65 @@ function readAutocodeTaskLogsFromFile(logPath: string, fallbackSpecId: string): 
 
 export function appendAutocodeTaskLogEntry(input: AppendAutocodeTaskLogEntryInput): AutocodeTaskLogs {
   const logPath = getAutocodeTaskLogsPath(input);
-  const now = new Date().toISOString();
-  const logs = readAutocodeTaskLogs(input) ?? createEmptyAutocodeTaskLogs(input.taskId, now);
-  const phaseLog = logs.phases[input.phase] ?? createEmptyPhaseLog(input.phase);
+  return withAutocodeRuntimeFileWriteLockSync(
+    getAutocodeTaskLogsFileWriteLockInput(input, logPath, `task-logs:${input.taskId}:${input.phase}:append`),
+    () => {
+      const now = new Date().toISOString();
+      const logs = readAutocodeTaskLogs(input) ?? createEmptyAutocodeTaskLogs(input.taskId, now);
+      const phaseLog = logs.phases[input.phase] ?? createEmptyPhaseLog(input.phase);
 
-  if (phaseLog.status === 'pending') {
-    phaseLog.status = 'active';
-    phaseLog.started_at = phaseLog.started_at ?? now;
-  }
+      if (phaseLog.status === 'pending') {
+        phaseLog.status = 'active';
+        phaseLog.started_at = phaseLog.started_at ?? now;
+      }
 
-  phaseLog.entries.push({
-    timestamp: input.timestamp ?? now,
-    type: input.type,
-    phase: input.phase,
-    content: sanitizeText(input.content, LOG_TEXT_MAX_CHARS),
-    ...(input.detail ? { detail: sanitizeText(input.detail, LOG_DETAIL_MAX_CHARS), collapsed: true } : {}),
-  });
-  logs.phases[input.phase] = phaseLog;
-  logs.updated_at = now;
-  writeAutocodeTaskLogs(logPath, logs);
-  return logs;
+      phaseLog.entries.push({
+        timestamp: input.timestamp ?? now,
+        type: input.type,
+        phase: input.phase,
+        content: sanitizeText(input.content, LOG_TEXT_MAX_CHARS),
+        ...(input.detail ? { detail: sanitizeText(input.detail, LOG_DETAIL_MAX_CHARS), collapsed: true } : {}),
+      });
+      logs.phases[input.phase] = phaseLog;
+      logs.updated_at = now;
+      writeAutocodeTaskLogs(logPath, logs);
+      return logs;
+    },
+  );
 }
 
 export function updateAutocodeTaskLogPhase(input: UpdateAutocodeTaskLogPhaseInput): AutocodeTaskLogs {
   const logPath = getAutocodeTaskLogsPath(input);
-  const now = new Date().toISOString();
-  const logs = readAutocodeTaskLogs(input) ?? createEmptyAutocodeTaskLogs(input.taskId, now);
-  const phaseLog = logs.phases[input.phase] ?? createEmptyPhaseLog(input.phase);
-  const wasPending = phaseLog.status === 'pending';
+  return withAutocodeRuntimeFileWriteLockSync(
+    getAutocodeTaskLogsFileWriteLockInput(input, logPath, `task-logs:${input.taskId}:${input.phase}:phase`),
+    () => {
+      const now = new Date().toISOString();
+      const logs = readAutocodeTaskLogs(input) ?? createEmptyAutocodeTaskLogs(input.taskId, now);
+      const phaseLog = logs.phases[input.phase] ?? createEmptyPhaseLog(input.phase);
+      const wasPending = phaseLog.status === 'pending';
 
-  phaseLog.status = input.status;
-  if ((input.status === 'active' || wasPending) && !phaseLog.started_at) {
-    phaseLog.started_at = now;
-  }
-  if (input.status === 'completed' || input.status === 'failed') {
-    phaseLog.completed_at = now;
-  }
-  if (input.message) {
-    phaseLog.entries.push({
-      timestamp: now,
-      type: input.status === 'failed' ? 'error' : input.status === 'completed' ? 'success' : 'info',
-      phase: input.phase,
-      content: sanitizeText(input.message, LOG_TEXT_MAX_CHARS),
-    });
-  }
+      phaseLog.status = input.status;
+      if ((input.status === 'active' || wasPending) && !phaseLog.started_at) {
+        phaseLog.started_at = now;
+      }
+      if (input.status === 'completed' || input.status === 'failed') {
+        phaseLog.completed_at = now;
+      }
+      if (input.message) {
+        phaseLog.entries.push({
+          timestamp: now,
+          type: input.status === 'failed' ? 'error' : input.status === 'completed' ? 'success' : 'info',
+          phase: input.phase,
+          content: sanitizeText(input.message, LOG_TEXT_MAX_CHARS),
+        });
+      }
 
-  logs.phases[input.phase] = phaseLog;
-  logs.updated_at = now;
-  writeAutocodeTaskLogs(logPath, logs);
-  return logs;
+      logs.phases[input.phase] = phaseLog;
+      logs.updated_at = now;
+      writeAutocodeTaskLogs(logPath, logs);
+      return logs;
+    },
+  );
 }
 
 function writeAutocodeTaskLogs(logPath: string, logs: AutocodeTaskLogs): void {
@@ -252,6 +263,19 @@ function writeAutocodeTaskLogs(logPath: string, logs: AutocodeTaskLogs): void {
     }
     throw error;
   }
+}
+
+function getAutocodeTaskLogsFileWriteLockInput(
+  input: AutocodeTaskLogsInput,
+  logPath: string,
+  ownerId: string,
+) {
+  return {
+    projectRoot: input.projectRoot,
+    dataDirName: input.dataDirName,
+    filePath: logPath,
+    ownerId,
+  };
 }
 
 function resolveTaskSpecDir(input: AutocodeTaskLogsInput): string {

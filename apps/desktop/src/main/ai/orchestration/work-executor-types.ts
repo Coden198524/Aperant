@@ -9,6 +9,7 @@ export interface WorkItemInfo {
   filesToModify?: string[];
   patternFiles?: string[];
   verification?: string;
+  dependsOn?: string[];
   workPackage?: boolean;
   upstreamTaskIds?: string[];
   upstreamSource?: string;

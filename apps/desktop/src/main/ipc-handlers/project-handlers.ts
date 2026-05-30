@@ -38,19 +38,8 @@ import { initializeProjectPromptProfile } from '../ai/prompts/project-prompt-pro
  */
 function getGitBranches(projectPath: string): string[] {
   try {
-    // First fetch to ensure we have latest remote refs
-    try {
-      execFileSync(getToolPath('git'), ['fetch', '--prune'], {
-        cwd: projectPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 10000 // 10 second timeout for fetch
-      });
-    } catch {
-      // Fetch may fail if offline or no remote, continue with local refs
-    }
-
-    // Get all branches (local + remote) using --all flag
+    // Read existing local and remote refs only. Network fetches happen in
+    // explicit git workflows so opening lightweight UI does not block.
     const result = execFileSync(getToolPath('git'), ['branch', '--all', '--format=%(refname:short)'], {
       cwd: projectPath,
       encoding: 'utf-8',
@@ -96,18 +85,6 @@ function getGitBranches(projectPath: string): string[] {
  */
 function getGitBranchesWithInfo(projectPath: string): GitBranchDetail[] {
   try {
-    // First fetch to ensure we have latest remote refs
-    try {
-      execFileSync(getToolPath('git'), ['fetch', '--prune'], {
-        cwd: projectPath,
-        encoding: 'utf-8',
-        stdio: ['pipe', 'pipe', 'pipe'],
-        timeout: 10000 // 10 second timeout for fetch
-      });
-    } catch {
-      // Fetch may fail if offline or no remote, continue with local refs
-    }
-
     // Get current branch for isCurrent indicator
     let currentBranch: string | null = null;
     try {

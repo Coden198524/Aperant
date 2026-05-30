@@ -20,8 +20,7 @@ import {
 import { Tool } from '../define';
 import { DEFAULT_EXECUTION_OPTIONS, ToolPermission } from '../types';
 import {
-  loadImplementationPlanFromFiles,
-  saveImplementationPlanToFiles,
+  updateImplementationPlanInFiles,
 } from '../../schema/plan-shards';
 
 // ---------------------------------------------------------------------------
@@ -65,21 +64,21 @@ export const updateSubtaskStatusTool = Tool.define({
       return 'Error: implementation_plan.md not found';
     }
 
-    const plan = await loadImplementationPlanFromFiles(context.specDir) as MutableAutocodePlan | null;
+    let found = false;
+    const plan = await updateImplementationPlanInFiles(context.specDir, (currentPlan) => {
+      found = updateAutocodePlanSubtask(currentPlan as MutableAutocodePlan, subtask_id, {
+        status,
+        notes,
+        completionSummary: completion_summary,
+      });
+      return found ? currentPlan : false;
+    }) as MutableAutocodePlan | null;
     if (!plan) {
       return 'Error: implementation_plan.md could not be parsed';
     }
-
-    const found = updateAutocodePlanSubtask(plan, subtask_id, {
-      status,
-      notes,
-      completionSummary: completion_summary,
-    });
     if (!found) {
       return `Error: Subtask '${subtask_id}' not found in implementation plan`;
     }
-
-    await saveImplementationPlanToFiles(context.specDir, plan);
 
     return `Successfully updated subtask '${subtask_id}' to status '${status}'`;
   },

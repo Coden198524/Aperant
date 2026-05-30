@@ -1,4 +1,4 @@
-import { useState, useCallback } from 'react';
+import { useState, useCallback, useMemo } from 'react';
 import type { ReactNode } from 'react';
 import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2, ClipboardCheck, TerminalSquare, Hash } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
@@ -8,7 +8,13 @@ import { cn, calculateProgress } from '../../lib/utils';
 import { resolveActiveSubtaskIndex } from '../../lib/subtask-progress';
 import { deleteSubtask } from '../../stores/task-store';
 import type { Task } from '../../../shared/types';
-import { TaskRuntimeLogs } from './TaskRuntimeLogs';
+import {
+  TaskRuntimeLogs,
+  countTaskRuntimeLogEntriesForScope,
+  isWorkPackageSubtask,
+  shouldSplitConcurrentWorkPackageLogs,
+  useTaskModelLogs,
+} from './TaskRuntimeLogs';
 
 interface TaskSubtasksProps {
   task: Task;
@@ -496,6 +502,302 @@ function getSubtaskStatusIcon(status: string, isInProgress: boolean) {
   }
 }
 
+interface ExecutionGraphNode {
+  id: string;
+  title: string;
+  status: string;
+  level: number;
+  row: number;
+  order: number;
+}
+
+interface ExecutionGraphEdge {
+  from: string;
+  to: string;
+}
+
+interface ExecutionGraphAnalysis {
+  nodes: ExecutionGraphNode[];
+  edges: ExecutionGraphEdge[];
+  sequentialUnits: number;
+  parallelUnits: number;
+  savedUnits: number;
+  maxParallel: number;
+  hasCycle: boolean;
+}
+
+function getSubtaskDependencies(subtask: Task['subtasks'][number]): string[] {
+  const withDependencies = subtask as Task['subtasks'][number] & {
+    dependsOn?: unknown;
+    depends_on?: unknown;
+  };
+  const raw = Array.isArray(withDependencies.dependsOn)
+    ? withDependencies.dependsOn
+    : Array.isArray(withDependencies.depends_on)
+      ? withDependencies.depends_on
+      : [];
+
+  return [...new Set(raw.map(String).map(value => value.trim()).filter(Boolean))];
+}
+
+function analyzeSubtaskExecutionGraph(subtasks: Task['subtasks']): ExecutionGraphAnalysis {
+  const ids = new Set(subtasks.map(subtask => subtask.id));
+  const orderById = new Map(subtasks.map((subtask, index) => [subtask.id, index]));
+  const dependenciesById = new Map<string, string[]>();
+  const childrenById = new Map<string, string[]>();
+  const inDegreeById = new Map<string, number>();
+
+  for (const subtask of subtasks) {
+    const dependencies = getSubtaskDependencies(subtask)
+      .filter(dependencyId => dependencyId !== subtask.id && ids.has(dependencyId));
+    dependenciesById.set(subtask.id, dependencies);
+    inDegreeById.set(subtask.id, dependencies.length);
+    childrenById.set(subtask.id, []);
+  }
+
+  for (const [id, dependencies] of dependenciesById) {
+    for (const dependencyId of dependencies) {
+      childrenById.get(dependencyId)?.push(id);
+    }
+  }
+
+  const sortedIds: string[] = [];
+  const ready = subtasks
+    .filter(subtask => (inDegreeById.get(subtask.id) ?? 0) === 0)
+    .map(subtask => subtask.id);
+
+  while (ready.length > 0) {
+    ready.sort((left, right) => (orderById.get(left) ?? 0) - (orderById.get(right) ?? 0));
+    const id = ready.shift();
+    if (!id) {
+      continue;
+    }
+    sortedIds.push(id);
+
+    for (const childId of childrenById.get(id) ?? []) {
+      const nextDegree = Math.max(0, (inDegreeById.get(childId) ?? 0) - 1);
+      inDegreeById.set(childId, nextDegree);
+      if (nextDegree === 0) {
+        ready.push(childId);
+      }
+    }
+  }
+
+  const hasCycle = sortedIds.length < subtasks.length;
+  const effectiveOrder = hasCycle ? subtasks.map(subtask => subtask.id) : sortedIds;
+  const levelById = new Map<string, number>();
+
+  for (const id of effectiveOrder) {
+    const dependencies = hasCycle ? [] : dependenciesById.get(id) ?? [];
+    const level = dependencies.reduce(
+      (maxLevel, dependencyId) => Math.max(maxLevel, (levelById.get(dependencyId) ?? 0) + 1),
+      0,
+    );
+    levelById.set(id, level);
+  }
+
+  const rowCounters = new Map<number, number>();
+  const nodes = subtasks.map((subtask, index) => {
+    const level = levelById.get(subtask.id) ?? 0;
+    const row = rowCounters.get(level) ?? 0;
+    rowCounters.set(level, row + 1);
+    return {
+      id: subtask.id,
+      title: subtask.title || subtask.id,
+      status: subtask.status,
+      level,
+      row,
+      order: index,
+    };
+  });
+  const edges = [...dependenciesById.entries()]
+    .flatMap(([to, dependencies]) => dependencies.map(from => ({ from, to })));
+  const parallelUnits = nodes.length > 0
+    ? Math.max(...nodes.map(node => node.level)) + 1
+    : 0;
+  const maxParallel = rowCounters.size > 0
+    ? Math.max(...rowCounters.values())
+    : 0;
+
+  return {
+    nodes,
+    edges,
+    sequentialUnits: nodes.length,
+    parallelUnits: hasCycle ? nodes.length : parallelUnits,
+    savedUnits: hasCycle ? 0 : Math.max(0, nodes.length - parallelUnits),
+    maxParallel,
+    hasCycle,
+  };
+}
+
+function getExecutionGraphNodeClass(status: string): string {
+  switch (status) {
+    case 'completed':
+      return 'border-success/50 bg-success/10 text-success';
+    case 'failed':
+      return 'border-destructive/50 bg-destructive/10 text-destructive';
+    case 'in_progress':
+      return 'border-info/60 bg-info/10 text-info';
+    default:
+      return 'border-border bg-background text-foreground';
+  }
+}
+
+function ExecutionGraphPanel({ task }: { task: Task }) {
+  const { t } = useTranslation(['tasks']);
+  const graph = useMemo(() => analyzeSubtaskExecutionGraph(task.subtasks), [task.subtasks]);
+
+  if (task.subtasks.length === 0) {
+    return null;
+  }
+
+  const nodeWidth = 118;
+  const nodeHeight = 42;
+  const columnGap = 148;
+  const rowGap = 56;
+  const paddingX = 18;
+  const paddingY = 16;
+  const width = Math.max(420, paddingX * 2 + (Math.max(...graph.nodes.map(node => node.level), 0) * columnGap) + nodeWidth);
+  const height = Math.max(118, paddingY * 2 + (Math.max(...graph.nodes.map(node => node.row), 0) * rowGap) + nodeHeight);
+  const nodeById = new Map(graph.nodes.map(node => [node.id, node]));
+  const speedup = graph.parallelUnits > 0
+    ? (graph.sequentialUnits / graph.parallelUnits).toFixed(1)
+    : '1.0';
+
+  return (
+    <section
+      className="flex max-h-[42%] min-h-[14rem] shrink-0 flex-col border-b border-border bg-muted/10"
+      data-testid="subtask-execution-graph"
+    >
+      <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
+        <div className="flex min-w-0 items-center gap-2">
+          <Hash className="h-4 w-4 shrink-0 text-muted-foreground" />
+          <span className="truncate text-sm font-medium text-foreground">
+            {t('tasks:subtasks.executionGraph', { defaultValue: 'Execution graph' })}
+          </span>
+        </div>
+        <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
+          <span className="rounded-md border border-border bg-background px-1.5 py-0.5 tabular-nums">
+            {t('tasks:subtasks.sequentialTime', {
+              count: graph.sequentialUnits,
+              defaultValue: 'Sequential {{count}}t',
+            })}
+          </span>
+          <span className="rounded-md border border-border bg-background px-1.5 py-0.5 tabular-nums">
+            {t('tasks:subtasks.parallelTime', {
+              count: graph.parallelUnits,
+              defaultValue: 'Parallel {{count}}t',
+            })}
+          </span>
+        </div>
+      </div>
+
+      <div className="flex shrink-0 items-center gap-2 px-4 py-2 text-[11px] text-muted-foreground">
+        <span>
+          {t('tasks:subtasks.savedTime', {
+            count: graph.savedUnits,
+            defaultValue: 'Saves {{count}}t',
+          })}
+        </span>
+        <span className="text-muted-foreground/40">/</span>
+        <span>
+          {t('tasks:subtasks.maxParallel', {
+            count: graph.maxParallel,
+            defaultValue: 'Max parallel {{count}}',
+          })}
+        </span>
+        <span className="text-muted-foreground/40">/</span>
+        <span className="tabular-nums">
+          {t('tasks:subtasks.speedup', {
+            value: speedup,
+            defaultValue: '{{value}}x',
+          })}
+        </span>
+        {graph.hasCycle && (
+          <span className="ml-auto rounded-md border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-destructive">
+            {t('tasks:subtasks.dependencyCycle', { defaultValue: 'Dependency cycle' })}
+          </span>
+        )}
+      </div>
+
+      <div className="min-h-0 flex-1 overflow-auto px-3 pb-3 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+        <div className="relative" style={{ width, height }}>
+          <svg
+            className="pointer-events-none absolute inset-0"
+            width={width}
+            height={height}
+            aria-hidden="true"
+          >
+            <defs>
+              <marker
+                id="subtask-graph-arrow"
+                markerWidth="6"
+                markerHeight="6"
+                refX="5"
+                refY="3"
+                orient="auto"
+                markerUnits="strokeWidth"
+              >
+                <path d="M0,0 L6,3 L0,6 Z" className="fill-border" />
+              </marker>
+            </defs>
+            {graph.edges.map(edge => {
+              const from = nodeById.get(edge.from);
+              const to = nodeById.get(edge.to);
+              if (!from || !to) {
+                return null;
+              }
+              const x1 = paddingX + from.level * columnGap + nodeWidth;
+              const y1 = paddingY + from.row * rowGap + nodeHeight / 2;
+              const x2 = paddingX + to.level * columnGap;
+              const y2 = paddingY + to.row * rowGap + nodeHeight / 2;
+              const midX = x1 + Math.max(20, (x2 - x1) / 2);
+              return (
+                <path
+                  key={`${edge.from}->${edge.to}`}
+                  d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2 - 6} ${y2}`}
+                  className="fill-none stroke-border"
+                  strokeWidth="1.4"
+                  markerEnd="url(#subtask-graph-arrow)"
+                />
+              );
+            })}
+          </svg>
+
+          {graph.nodes.map(node => (
+            <Tooltip key={node.id}>
+              <TooltipTrigger asChild>
+                <div
+                  className={cn(
+                    'absolute flex h-[42px] w-[118px] flex-col justify-center rounded-md border px-2 shadow-sm',
+                    getExecutionGraphNodeClass(node.status)
+                  )}
+                  style={{
+                    left: paddingX + node.level * columnGap,
+                    top: paddingY + node.row * rowGap,
+                  }}
+                >
+                  <div className="truncate text-[11px] font-semibold tabular-nums">{node.id}</div>
+                  <div className="truncate text-[10px] opacity-80">
+                    {t('tasks:subtasks.graphTimeSlot', {
+                      count: node.level + 1,
+                      defaultValue: 'T{{count}}',
+                    })}
+                  </div>
+                </div>
+              </TooltipTrigger>
+              <TooltipContent side="top" className="max-w-xs">
+                <div className="text-xs font-medium">{node.id}</div>
+                <div className="text-xs text-muted-foreground">{node.title}</div>
+              </TooltipContent>
+            </Tooltip>
+          ))}
+        </div>
+      </div>
+    </section>
+  );
+}
+
 export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const { t } = useTranslation(['tasks']);
   const progress = calculateProgress(task.subtasks);
@@ -503,6 +805,8 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const [deletingSubtaskId, setDeletingSubtaskId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const isTaskRunning = task.status === 'in_progress' || task.executionProgress?.phase === 'coding';
+  const { modelLogs } = useTaskModelLogs(task);
+  const splitConcurrentWorkPackageLogs = shouldSplitConcurrentWorkPackageLogs(task);
   const activeSubtaskIndex = resolveActiveSubtaskIndex({
     subtasks: task.subtasks,
     currentSubtask: task.executionProgress?.currentSubtask,
@@ -604,15 +908,23 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
               {task.subtasks.map((subtask, index) => {
             const isExpanded = expandedIds.has(subtask.id);
             const completionSummary = subtask.status === 'completed' ? subtask.completionSummary?.trim() : undefined;
-            const hasDetails = (subtask.description && subtask.description !== subtask.title) ||
-              completionSummary ||
-              (subtask.files && subtask.files.length > 0) ||
-              subtask.verification;
             const isDerivedInProgress = isTaskRunning &&
               activeSubtaskIndex === index &&
               subtask.status !== 'completed' &&
               subtask.status !== 'failed';
             const isInProgress = subtask.status === 'in_progress' || isDerivedInProgress;
+            const workPackageLogScope = { type: 'work-item' as const, workItemId: subtask.id };
+            const workPackageLogCount = splitConcurrentWorkPackageLogs && isWorkPackageSubtask(subtask)
+              ? countTaskRuntimeLogEntriesForScope(modelLogs, task, workPackageLogScope)
+              : 0;
+            const shouldShowWorkPackageModelLogs = splitConcurrentWorkPackageLogs &&
+              isWorkPackageSubtask(subtask) &&
+              (workPackageLogCount > 0 || isInProgress);
+            const hasDetails = (subtask.description && subtask.description !== subtask.title) ||
+              completionSummary ||
+              (subtask.files && subtask.files.length > 0) ||
+              subtask.verification ||
+              shouldShowWorkPackageModelLogs;
 
             return (
               <div
@@ -729,6 +1041,17 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
                         )}
                       </div>
                     )}
+                    {shouldShowWorkPackageModelLogs && (
+                      <div className="mt-3">
+                        <TaskRuntimeLogs
+                          task={task}
+                          modelLogs={modelLogs}
+                          scope={workPackageLogScope}
+                          compact
+                          title={t('tasks:subtasks.modelOutput', { defaultValue: 'Model output' })}
+                        />
+                      </div>
+                    )}
                   </div>
                 )}
               </div>
@@ -738,7 +1061,15 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
           )}
         </div>
       </div>
-      <TaskRuntimeLogs task={task} className="min-w-[460px] flex-1" />
+      <div className="flex min-h-0 min-w-[460px] flex-1 flex-col border-l border-border bg-muted/10">
+        <ExecutionGraphPanel task={task} />
+        <TaskRuntimeLogs
+          task={task}
+          modelLogs={modelLogs}
+          scope={{ type: 'global' }}
+          className="min-h-0 flex-1 border-l-0"
+        />
+      </div>
     </div>
   );
 }

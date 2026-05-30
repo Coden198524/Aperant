@@ -3,7 +3,11 @@ import type { BrowserWindow } from 'electron';
 import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskLogs, TaskLogStreamChunk } from '../../../shared/types';
 import path from 'path';
-import { mkdirSync, writeFileSync } from 'fs';
+import { existsSync, mkdirSync, writeFileSync } from 'fs';
+import {
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  withAutocodeRuntimeFileWriteLockSync,
+} from '@autocode/core';
 import { projectStore } from '../../project-store';
 import { taskLogService } from '../../task-log-service';
 import { isValidTaskId } from '../../utils/spec-path-helpers';
@@ -28,7 +32,22 @@ function createEmptyTaskLogs(specId: string, createdAt?: string): TaskLogs {
 function writeTaskLogs(specDir: string, logs: TaskLogs): void {
   mkdirSync(specDir, { recursive: true });
   const logFile = path.join(specDir, 'task_logs.json');
-  writeFileSync(logFile, JSON.stringify(logs, null, 2), 'utf-8');
+  const lockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir);
+  const writeLogs = () => {
+    writeFileSync(logFile, JSON.stringify(logs, null, 2), 'utf-8');
+  };
+  if (!existsSync(lockScope.projectRoot)) {
+    writeLogs();
+    return;
+  }
+  withAutocodeRuntimeFileWriteLockSync(
+    {
+      ...lockScope,
+      filePath: logFile,
+      ownerId: `desktop:task-logs-clear:${logs.spec_id}`,
+    },
+    writeLogs,
+  );
 }
 
 /**

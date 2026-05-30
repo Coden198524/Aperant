@@ -8,14 +8,8 @@
  * Tool name: mcp__autocode__record_discovery
  */
 
-import * as fs from 'node:fs';
 import {
-  createEmptyAutocodeSessionCodebaseMap,
-  getAutocodeSessionCodebaseMapPath,
-  getAutocodeSessionMemoryDir,
-  parseAutocodeSessionCodebaseMap,
-  recordAutocodeSessionDiscovery,
-  stringifyAutocodeSessionCodebaseMap,
+  recordAutocodeSessionDiscoveryInFile,
 } from '@autocode/core';
 import { z } from 'zod/v3';
 
@@ -52,33 +46,14 @@ export const recordDiscoveryTool = Tool.define({
   inputSchema,
   execute: (input, context) => {
     const { file_path, description, category = 'general' } = input;
-    const memoryDir = getAutocodeSessionMemoryDir(context.specDir);
 
     try {
-      fs.mkdirSync(memoryDir, { recursive: true });
-
-      const mapFile = getAutocodeSessionCodebaseMapPath(context.specDir);
-      let codebaseMap = createEmptyAutocodeSessionCodebaseMap();
-
-      if (fs.existsSync(mapFile)) {
-        try {
-          const parsed = parseAutocodeSessionCodebaseMap(fs.readFileSync(mapFile, 'utf-8'));
-          if (parsed) codebaseMap = parsed;
-          // Start fresh if corrupt (parsed === null)
-        } catch {
-          // Start fresh if corrupt
-        }
-      }
-
-      codebaseMap = recordAutocodeSessionDiscovery(codebaseMap, {
+      recordAutocodeSessionDiscoveryInFile({
+        specDir: context.specDir,
         filePath: file_path,
         description,
         category,
       });
-
-      const tmp = `${mapFile}.tmp`;
-      fs.writeFileSync(tmp, stringifyAutocodeSessionCodebaseMap(codebaseMap), 'utf-8');
-      fs.renameSync(tmp, mapFile);
 
       return `Recorded discovery for '${file_path}': ${description}`;
     } catch (e) {

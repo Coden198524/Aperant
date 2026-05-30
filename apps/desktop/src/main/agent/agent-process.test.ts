@@ -153,6 +153,7 @@ import { AgentEvents } from './agent-events';
 import * as profileService from '../services/profile';
 import * as rateLimitDetector from '../rate-limit-detector';
 import { getToolInfo, getClaudeCliPathForSdk } from '../cli-tool-manager';
+import { autocodeRuntimeWorkspaceClaims } from '@autocode/core';
 
 describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
   let processManager: AgentProcessManager;
@@ -164,6 +165,7 @@ describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
     // Reset all mocks and spawn calls
     vi.clearAllMocks();
     spawnCalls.length = 0;
+    autocodeRuntimeWorkspaceClaims.clear();
 
     // Clear environment variables that could interfere with tests
     delete process.env.ANTHROPIC_AUTH_TOKEN;
@@ -182,6 +184,7 @@ describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
 
   afterEach(() => {
     processManager.killAllProcesses();
+    autocodeRuntimeWorkspaceClaims.clear();
   });
 
   describe('AC1: API Profile Env Var Injection', () => {
@@ -835,6 +838,122 @@ describe('AgentProcessManager - API Profile Env Injection (Story 2.3)', () => {
 
       expect(progressEvents[0]?.phase).toBe('qa_review');
       expect(progressEvents[0]?.completedPhases).toEqual(['planning', 'coding']);
+    });
+  });
+
+  describe('Runtime workspace claims', () => {
+    it('should wait for conflicting direct workspace claims before spawning', async () => {
+      vi.mocked(profileService.getAPIProfileEnv).mockResolvedValue({});
+
+      await processManager.spawnProcess(
+        'task-claim-1',
+        '/fake/cwd',
+        ['run.py'],
+        {},
+        'task-execution',
+        'project-1',
+        {
+          taskId: 'task-claim-1',
+          projectId: 'project-1',
+          projectRoot: '/fake/cwd',
+          workspaceRoot: '/fake/cwd',
+          mode: 'direct',
+        },
+      );
+
+      const secondSpawn = processManager.spawnProcess(
+        'task-claim-2',
+        '/fake/cwd',
+        ['run.py'],
+        {},
+        'task-execution',
+        'project-1',
+        {
+          taskId: 'task-claim-2',
+          projectId: 'project-1',
+          projectRoot: '/fake/cwd',
+          workspaceRoot: '/fake/cwd',
+          mode: 'direct',
+        },
+      );
+
+      await new Promise((resolve) => setTimeout(resolve, 1));
+      expect(spawnCalls).toHaveLength(1);
+
+      await secondSpawn;
+      expect(spawnCalls).toHaveLength(2);
+      expect(spawnCalls[1].command).toBe('run.py');
+    });
+
+    it('should release orphaned direct workspace claims instead of waiting forever', async () => {
+      vi.mocked(profileService.getAPIProfileEnv).mockResolvedValue({});
+
+      const orphanClaim = autocodeRuntimeWorkspaceClaims.tryClaim({
+        taskId: 'orphaned-task',
+        projectId: 'project-1',
+        projectRoot: '/fake/cwd',
+        workspaceRoot: '/fake/cwd',
+        mode: 'direct',
+      });
+      expect(orphanClaim.ok).toBe(true);
+
+      await processManager.spawnProcess(
+        'task-claim-next',
+        '/fake/cwd',
+        ['run.py'],
+        {},
+        'task-execution',
+        'project-1',
+        {
+          taskId: 'task-claim-next',
+          projectId: 'project-1',
+          projectRoot: '/fake/cwd',
+          workspaceRoot: '/fake/cwd',
+          mode: 'direct',
+        },
+      );
+
+      expect(spawnCalls).toHaveLength(1);
+      expect(spawnCalls[0].command).toBe('run.py');
+    });
+
+    it('should release stale pending setup workspace claims', async () => {
+      vi.mocked(profileService.getAPIProfileEnv).mockResolvedValue({});
+      const staleSpawnId = state.generateSpawnId();
+      state.addProcess('stale-setup-task', {
+        taskId: 'stale-setup-task',
+        process: null,
+        worker: null,
+        startedAt: new Date(Date.now() - 61_000),
+        spawnId: staleSpawnId,
+        workspaceClaimStatus: 'claimed',
+      });
+      const staleClaim = autocodeRuntimeWorkspaceClaims.tryClaim({
+        taskId: 'stale-setup-task',
+        projectId: 'project-1',
+        projectRoot: '/fake/cwd',
+        workspaceRoot: '/fake/cwd',
+        mode: 'direct',
+      });
+      expect(staleClaim.ok).toBe(true);
+
+      await processManager.spawnProcess(
+        'task-after-stale-setup',
+        '/fake/cwd',
+        ['run.py'],
+        {},
+        'task-execution',
+        'project-1',
+        {
+          taskId: 'task-after-stale-setup',
+          projectId: 'project-1',
+          projectRoot: '/fake/cwd',
+          workspaceRoot: '/fake/cwd',
+          mode: 'direct',
+        },
+      );
+
+      expect(spawnCalls).toHaveLength(1);
     });
   });
 });

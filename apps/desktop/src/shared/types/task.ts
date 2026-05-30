@@ -43,6 +43,10 @@ export interface Subtask {
   completionSummary?: string;
   status: SubtaskStatus;
   files: string[];
+  dependsOn?: string[];
+  workPackage?: boolean;
+  upstreamTaskIds?: string[];
+  upstreamSource?: string;
   verification?: {
     type: 'command' | 'browser';
     run?: string;
@@ -380,7 +384,7 @@ export interface Phase {
   subtasks_file?: string;
   subtask_count?: number;
   status_counts?: Record<string, number>;
-  depends_on?: number[];
+  depends_on?: Array<string | number>;
 }
 
 export interface PlanSubtask {
@@ -395,6 +399,10 @@ export interface PlanSubtask {
   files_to_create?: string[];
   files_to_modify?: string[];
   pattern_files?: string[];
+  depends_on?: string[];
+  work_package?: boolean;
+  upstream_task_ids?: string[];
+  upstream_source?: string;
   verification?: {
     type: string;
     run?: string;

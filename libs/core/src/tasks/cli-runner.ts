@@ -17,6 +17,10 @@ import {
   type AutocodeCli,
 } from './cli-catalog.js';
 import type { AutocodeAgentLanguage } from '../runtime/agent-messages.js';
+import {
+  resolveAutocodeTaskRuntimeConcurrency,
+  type AutocodeTaskRuntimeConcurrencyResolved,
+} from '../runtime/concurrency.js';
 
 export type AutocodeTaskRunPhase = 'direct' | 'spec' | 'planning' | 'coding';
 
@@ -62,6 +66,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
     specId: task.specId,
   });
   const phase = input.phase ?? resolveRunPhase(specDir, task);
+  const runtimeConcurrency = resolveAutocodeTaskRuntimeConcurrency(task.metadata);
   const prompt = buildTaskRunPrompt({
     task,
     phase,
@@ -91,6 +96,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       taskTitle: task.title,
       taskDescription: task.description,
       language: input.language,
+      runtimeConcurrency,
     }),
     'utf8',
   );
@@ -273,10 +279,10 @@ function buildTaskRunPrompt(input: {
     `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
     '- The runner invokes you once per runtime work package. In each invocation, implement only the Current Work Item section.',
     '- Do not start later work packages early, even if they look related.',
-    '- Mark only the current work item [x] when it is complete.',
-    '- Add a concise _Completion: ..._ note to the current work item when practical.',
+    '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes during coding; the runner owns status updates after this invocation.',
+    '- Put completion details in your final response or the implementation summary, not by editing plan status.',
     '- Run the most relevant validation command for the project.',
-    `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or update the plan with completion details.`,
+    `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or include completion details in your final response.`,
   ].join('\n')}`;
 }
 
@@ -416,10 +422,12 @@ function buildNodeRunnerScript(input: {
   taskTitle: string;
   taskDescription: string;
   language?: AutocodeAgentLanguage;
+  runtimeConcurrency: AutocodeTaskRuntimeConcurrencyResolved;
 }): string {
   return `const { spawn } = require('node:child_process');
-const { existsSync, readFileSync, writeFileSync } = require('node:fs');
-const { join } = require('node:path');
+const { createHash, randomUUID } = require('node:crypto');
+const { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } = require('node:fs');
+const { basename, dirname, join, resolve } = require('node:path');
 const { TextDecoder } = require('node:util');
 
 const cwd = ${JSON.stringify(input.cwd)};
@@ -432,12 +440,15 @@ const specDir = ${JSON.stringify(input.specDir)};
 const taskTitle = ${JSON.stringify(input.taskTitle)};
 const taskDescription = ${JSON.stringify(input.taskDescription)};
 const language = ${JSON.stringify(input.language)};
+const runtimeConcurrency = ${JSON.stringify(input.runtimeConcurrency)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
+const fileWriteLockScope = inferFileWriteLockScope();
 const iconvLite = loadIconvLite();
 const prompt = readFileSync(promptFilePath, 'utf8');
 const logPhase = phase === 'coding' || phase === 'direct' ? 'coding' : 'planning';
 const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
 const codexJsonMode = isCodexJsonInvocation(command, args);
+const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
 let validationRetryCount = 0;
 let attemptId = 0;
@@ -450,29 +461,41 @@ updatePlanRunningState();
 updateTaskLogs(logPhase, 'active', startMessage);
 
 let finalized = false;
-let pendingModelOutput = '';
-let modelOutputFlushTimer = null;
-let codexJsonLineBuffer = '';
 let tokenUsageEventCount = 0;
 let lastTokenUsageLogTotal = 0;
-let lastCodexMessageText = '';
-let activeSubtaskId = undefined;
-let protectedSubtaskStatuses = undefined;
 let gb18030Decoder = undefined;
+const defaultAttemptState = createAttemptState('main');
+const codingWorkerLimit = phase === 'coding' && runtimeConcurrency.mode === 'concurrent'
+  ? Math.max(1, Math.floor(runtimeConcurrency.workers || 1))
+  : 1;
+const activeCodingAttempts = new Map();
+const activeCodingSubtaskIds = new Set();
+const completedCodingSubtaskIds = new Set();
+const failedCodingSubtaskIds = new Set();
+const codingFailures = [];
+let nextCodingWorkerId = 0;
 const MODEL_OUTPUT_FLUSH_MS = 750;
 const MODEL_OUTPUT_MAX_CHARS = 3500;
+const CODING_WORKER_INACTIVITY_TIMEOUT_MS = readPositiveInteger(
+  process.env.AUTOCODE_WORKER_INACTIVITY_TIMEOUT_MS,
+  10 * 60 * 1000,
+);
+const CODING_WORKER_COMPLETION_GRACE_MS = readPositiveInteger(
+  process.env.AUTOCODE_WORKER_COMPLETION_GRACE_MS,
+  45 * 1000,
+);
 
 if (phase === 'coding') {
-  if (!startNextCodingSubtask()) {
-    finishRun(0, undefined, undefined, undefined);
-  }
+  startCodingWorkQueue();
 } else {
   startAttempt(prompt);
 }
 
 function startAttempt(attemptPrompt, subtaskId) {
   const currentAttemptId = ++attemptId;
-  activeSubtaskId = subtaskId;
+  const state = defaultAttemptState;
+  state.attemptId = currentAttemptId;
+  state.subtaskId = subtaskId;
   const child = spawn(command, args, {
     cwd,
     stdio: ['pipe', 'pipe', 'pipe'],
@@ -481,10 +504,10 @@ function startAttempt(attemptPrompt, subtaskId) {
 
   child.stdin.end(attemptPrompt);
   child.stdout.on('data', (data) => {
-    handleChildOutput('stdout', data);
+    handleChildOutput('stdout', data, state);
   });
   child.stderr.on('data', (data) => {
-    handleChildOutput('stderr', data);
+    handleChildOutput('stderr', data, state);
   });
   child.on('error', (error) => {
     console.error(error instanceof Error ? error.message : String(error));
@@ -502,8 +525,8 @@ function startAttempt(attemptPrompt, subtaskId) {
 
 function finalize(currentAttemptId, exitCode, signal, explicitError) {
   if (finalized || currentAttemptId !== attemptId) return;
-  flushCodexJsonOutput();
-  flushModelOutput();
+  flushCodexJsonOutput(defaultAttemptState);
+  flushModelOutput(defaultAttemptState);
 
   const validationError = exitCode === 0 ? validateExpectedArtifacts() : undefined;
   if (validationError && validationRetryCount < maxValidationRetries) {
@@ -517,24 +540,9 @@ function finalize(currentAttemptId, exitCode, signal, explicitError) {
     updateTaskLogs(logPhase, 'active', retryMessage);
     updatePlanRunningState();
     emitPhase(executionPhase, retryMessage, 0);
-    lastCodexMessageText = '';
+    defaultAttemptState.lastCodexMessageText = '';
     startAttempt(buildArtifactValidationRetryPrompt(validationError));
     return;
-  }
-
-  if (phase === 'coding' && activeSubtaskId) {
-    if (exitCode !== 0 || explicitError || validationError) {
-      markPlanSubtaskStatus(activeSubtaskId, 'failed', explicitError || validationError || 'CLI subtask run failed.');
-      syncOpenSpecTasksFromPlan();
-    } else {
-      restoreProtectedSubtaskStatuses(activeSubtaskId);
-      markPlanSubtaskStatus(activeSubtaskId, 'completed', 'Completed by Autocode CLI runner.');
-      syncOpenSpecTasksFromPlan();
-      const nextStarted = startNextCodingSubtask();
-      if (nextStarted) {
-        return;
-      }
-    }
   }
 
   finishRun(exitCode, signal, explicitError, validationError);
@@ -564,27 +572,301 @@ function finishRun(exitCode, signal, explicitError, validationError) {
   process.exit(failed ? 1 : 0);
 }
 
-function startNextCodingSubtask() {
-  const subtask = findNextRunnableSubtask();
-  if (!subtask) {
-    return false;
+function createAttemptState(label, subtaskId) {
+  return {
+    label,
+    subtaskId,
+    attemptId: 0,
+    child: null,
+    lastOutputAt: Date.now(),
+    pendingModelOutput: '',
+    modelOutputFlushTimer: null,
+    inactivityTimer: null,
+    completionGraceTimer: null,
+    codexJsonLineBuffer: '',
+    lastCodexMessageText: '',
+    finalizing: false,
+  };
+}
+
+function isCodingWorkerAttempt(state) {
+  return Boolean(state?.subtaskId && activeCodingAttempts.has(state.attemptId));
+}
+
+function shouldAttachAttemptSubtaskId(state) {
+  return Boolean(
+    state?.subtaskId &&
+    phase === 'coding' &&
+    runtimeConcurrency.mode === 'concurrent' &&
+    codingWorkerLimit > 1
+  );
+}
+
+function buildAttemptLogExtra(state, extra) {
+  return {
+    ...(extra || {}),
+    ...(shouldAttachAttemptSubtaskId(state) ? { subtask_id: state.subtaskId } : {}),
+  };
+}
+
+function refreshAttemptActivity(state) {
+  if (!state) {
+    return;
+  }
+  state.lastOutputAt = Date.now();
+  if (state.completionGraceTimer) {
+    clearTimeout(state.completionGraceTimer);
+    state.completionGraceTimer = null;
+  }
+  scheduleAttemptInactivityWatchdog(state);
+}
+
+function scheduleAttemptInactivityWatchdog(state) {
+  if (!isCodingWorkerAttempt(state) || CODING_WORKER_INACTIVITY_TIMEOUT_MS <= 0) {
+    return;
+  }
+  if (state.inactivityTimer) {
+    clearTimeout(state.inactivityTimer);
+  }
+  state.inactivityTimer = setTimeout(() => {
+    if (!isCodingWorkerAttempt(state) || state.finalizing) {
+      return;
+    }
+    const idleMs = Date.now() - (state.lastOutputAt || 0);
+    if (idleMs < CODING_WORKER_INACTIVITY_TIMEOUT_MS) {
+      scheduleAttemptInactivityWatchdog(state);
+      return;
+    }
+    const message = 'Coding worker ' + state.label + ' for ' + state.subtaskId +
+      ' produced no output for ' + formatDuration(CODING_WORKER_INACTIVITY_TIMEOUT_MS) + '; marking it failed.';
+    appendTaskLogEntry('coding', 'error', message, undefined, buildAttemptLogExtra(state));
+    terminateAttemptChild(state, 'inactivity timeout');
+    finalizeCodingAttempt(state.attemptId, 1, undefined, message);
+  }, CODING_WORKER_INACTIVITY_TIMEOUT_MS);
+}
+
+function scheduleAttemptCompletionGrace(state) {
+  if (!isCodingWorkerAttempt(state) || state.completionGraceTimer || state.finalizing || !state.lastCodexMessageText) {
+    return;
+  }
+  state.completionGraceTimer = setTimeout(() => {
+    if (!isCodingWorkerAttempt(state) || state.finalizing) {
+      return;
+    }
+    const message = 'Coding worker ' + state.label + ' for ' + state.subtaskId +
+      ' finished model output but the CLI process did not exit; finalizing the work item.';
+    appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
+    terminateAttemptChild(state, 'model completed');
+    finalizeCodingAttempt(state.attemptId, 0, undefined);
+  }, CODING_WORKER_COMPLETION_GRACE_MS);
+}
+
+function clearAttemptTimers(state) {
+  if (!state) {
+    return;
+  }
+  if (state.modelOutputFlushTimer) {
+    clearTimeout(state.modelOutputFlushTimer);
+    state.modelOutputFlushTimer = null;
+  }
+  if (state.inactivityTimer) {
+    clearTimeout(state.inactivityTimer);
+    state.inactivityTimer = null;
+  }
+  if (state.completionGraceTimer) {
+    clearTimeout(state.completionGraceTimer);
+    state.completionGraceTimer = null;
+  }
+}
+
+function terminateAttemptChild(state, reason) {
+  const child = state?.child;
+  if (!child || child.killed) {
+    return;
+  }
+  try {
+    if (process.platform === 'win32' && child.pid) {
+      spawn('taskkill', ['/PID', String(child.pid), '/T', '/F'], {
+        stdio: 'ignore',
+        windowsHide: true,
+      }).on('error', () => {
+        try {
+          child.kill();
+        } catch {
+          // Ignore best-effort cleanup failures.
+        }
+      });
+    } else {
+      child.kill('SIGTERM');
+    }
+  } catch {
+    // The process may already have exited.
+  }
+}
+
+function formatDuration(ms) {
+  const seconds = Math.max(1, Math.round(ms / 1000));
+  if (seconds >= 60) {
+    return Math.round(seconds / 60) + 'm';
+  }
+  return seconds + 's';
+}
+
+function readPositiveInteger(value, fallback) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed > 0 ? Math.floor(parsed) : fallback;
+}
+
+function startCodingWorkQueue() {
+  resetInProgressCodingSubtasks();
+  const progress = getCodingProgress();
+  if (progress.total === 0 || !hasPendingCodingWork()) {
+    finishRun(0, undefined, undefined, undefined);
+    return;
   }
 
+  const workerCount = Math.min(codingWorkerLimit, Math.max(1, progress.total));
+  appendTaskLogEntry('coding', 'info', 'Starting ' + workerCount + ' coding worker(s).');
+  fillCodingWorkers();
+}
+
+function fillCodingWorkers() {
+  if (finalized) return;
+
+  while (activeCodingAttempts.size < codingWorkerLimit) {
+    const subtask = findNextRunnableSubtask();
+    if (!subtask) {
+      break;
+    }
+    startCodingWorkerAttempt(subtask);
+  }
+
+  if (activeCodingAttempts.size === 0) {
+    finishCodingWorkQueue();
+  }
+}
+
+function startCodingWorkerAttempt(subtask) {
+  const workerId = ++nextCodingWorkerId;
+  const currentAttemptId = ++attemptId;
+  const state = createAttemptState('worker-' + workerId, subtask.id);
+  state.attemptId = currentAttemptId;
+  activeCodingSubtaskIds.add(subtask.id);
+  activeCodingAttempts.set(currentAttemptId, { state, subtask, workerId });
   markPlanSubtaskStatus(subtask.id, 'in_progress');
-  protectedSubtaskStatuses = new Map(
-    readPlanItems()
-      .filter((item) => item.isSubtask && item.id !== subtask.id)
-      .map((item) => [item.id, item.status]),
-  );
+  restoreKnownCodingStatuses(subtask.id);
   syncOpenSpecTasksFromPlan();
+
   const progress = getCodingProgress();
   const workLabel = subtask.workPackage ? 'work package' : 'subtask';
-  const message = 'Working on ' + workLabel + ' ' + subtask.id + ': ' + subtask.title;
+  const message = 'Worker ' + workerId + ' coding ' + workLabel + ' ' + subtask.id + ': ' + subtask.title;
   updateTaskLogs('coding', 'active', message);
   emitPhase('coding', message, progress.percent);
-  lastCodexMessageText = '';
-  startAttempt(buildFocusedSubtaskPrompt(subtask), subtask.id);
-  return true;
+
+  const child = spawn(command, args, {
+    cwd,
+    stdio: ['pipe', 'pipe', 'pipe'],
+    shell: process.platform === 'win32',
+  });
+  state.child = child;
+  state.lastOutputAt = Date.now();
+  scheduleAttemptInactivityWatchdog(state);
+
+  child.stdin.end(buildFocusedSubtaskPrompt(subtask));
+  child.stdout.on('data', (data) => {
+    handleChildOutput('stdout', data, state);
+  });
+  child.stderr.on('data', (data) => {
+    handleChildOutput('stderr', data, state);
+  });
+  child.on('error', (error) => {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(message);
+    finalizeCodingAttempt(currentAttemptId, 1, undefined, message);
+  });
+  child.on('exit', (code, signal) => {
+    if (signal) {
+      const message = 'Autocode CLI exited by signal: ' + signal;
+      console.error(message);
+      finalizeCodingAttempt(currentAttemptId, 1, signal, message);
+      return;
+    }
+    finalizeCodingAttempt(currentAttemptId, code ?? 0, undefined);
+  });
+}
+
+function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError) {
+  if (finalized) return;
+  const attempt = activeCodingAttempts.get(currentAttemptId);
+  if (!attempt) return;
+
+  attempt.state.finalizing = true;
+  clearAttemptTimers(attempt.state);
+  activeCodingAttempts.delete(currentAttemptId);
+  activeCodingSubtaskIds.delete(attempt.subtask.id);
+  flushCodexJsonOutput(attempt.state);
+  flushModelOutput(attempt.state);
+
+  if (exitCode !== 0 || explicitError) {
+    const reason = explicitError || signal || 'CLI work item run failed.';
+    failedCodingSubtaskIds.add(attempt.subtask.id);
+    codingFailures.push(attempt.subtask.id + ': ' + reason);
+    markPlanSubtaskStatus(attempt.subtask.id, 'failed', reason);
+  } else {
+    completedCodingSubtaskIds.add(attempt.subtask.id);
+    markPlanSubtaskStatus(attempt.subtask.id, 'completed', 'Completed by Autocode CLI runner.');
+  }
+
+  restoreKnownCodingStatuses(attempt.subtask.id);
+  syncOpenSpecTasksFromPlan();
+  fillCodingWorkers();
+}
+
+function finishCodingWorkQueue() {
+  const progress = getCodingProgress();
+  const planItems = readPlanItems();
+  const pendingCount = planItems
+    .filter((item) => item.isSubtask && item.status === 'pending')
+    .length;
+  const dependencyBlockedItems = getDependencyBlockedPlanItems(planItems);
+  if (codingFailures.length > 0 || failedCodingSubtaskIds.size > 0) {
+    finishRun(1, undefined, codingFailures.join('; ') || 'One or more coding work items failed.', undefined);
+    return;
+  }
+  if (dependencyBlockedItems.length > 0) {
+    for (const item of dependencyBlockedItems) {
+      markPlanSubtaskStatus(item.id, 'blocked', formatRunnerDependencyBlocker(item));
+    }
+    syncOpenSpecTasksFromPlan();
+    finishRun(
+      1,
+      undefined,
+      'Coding incomplete because dependencies are unresolved: ' + dependencyBlockedItems
+        .map((item) => formatRunnerDependencyBlocker(item))
+        .join('; '),
+      undefined,
+    );
+    return;
+  }
+  if (pendingCount > 0 || progress.completed < progress.total) {
+    finishRun(1, undefined, 'Coding incomplete: ' + progress.completed + '/' + progress.total + ' work items completed.', undefined);
+    return;
+  }
+  finishRun(0, undefined, undefined, undefined);
+}
+
+function restoreKnownCodingStatuses(currentSubtaskId) {
+  for (const subtaskId of completedCodingSubtaskIds) {
+    markPlanSubtaskStatus(subtaskId, 'completed', 'Completed by Autocode CLI runner.');
+  }
+  for (const subtaskId of failedCodingSubtaskIds) {
+    markPlanSubtaskStatus(subtaskId, 'failed', 'CLI work item run failed.');
+  }
+  for (const subtaskId of activeCodingSubtaskIds) {
+    if (subtaskId !== currentSubtaskId && !completedCodingSubtaskIds.has(subtaskId) && !failedCodingSubtaskIds.has(subtaskId)) {
+      markPlanSubtaskStatus(subtaskId, 'in_progress');
+    }
+  }
 }
 
 function buildFocusedSubtaskPrompt(subtask) {
@@ -594,13 +876,15 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- Implement every upstream OpenSpec task listed in this work package.',
         '- Do not implement later pending work packages in this invocation.',
         '- Keep other work package checkboxes unchanged.',
-        '- When done, mark only work package ' + subtask.id + ' as [x] in implementation_plan.md and add a concise _Completion: ..._ note.',
+        '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes; this runner updates work package ' + subtask.id + ' after the CLI exits.',
+        '- Return a concise completion summary for this work package.',
       ]
     : [
         '- Implement only this current subtask.',
         '- Do not implement later pending subtasks in this invocation.',
         '- Keep other subtask checkboxes unchanged.',
-        '- When done, mark only subtask ' + subtask.id + ' as [x] in implementation_plan.md and add a concise _Completion: ..._ note.',
+        '- Do not edit implementation_plan.md status checkboxes; this runner updates subtask ' + subtask.id + ' after the CLI exits.',
+        '- Return a concise completion summary for this subtask.',
       ];
   const fields = [
     '# Current Work Item',
@@ -608,6 +892,7 @@ function buildFocusedSubtaskPrompt(subtask) {
     workLabel + ' ID: ' + subtask.id,
     'Phase: ' + (subtask.phaseName || 'Implementation'),
     'Title: ' + subtask.title,
+    subtask.dependsOn && subtask.dependsOn.length > 0 ? 'Depends on completed work items: ' + subtask.dependsOn.join(', ') : '',
     subtask.upstreamTaskIds && subtask.upstreamTaskIds.length > 0 ? 'Upstream OpenSpec tasks: ' + subtask.upstreamTaskIds.join(', ') : '',
     subtask.upstreamSource ? 'Upstream source: ' + subtask.upstreamSource : '',
     '',
@@ -628,7 +913,256 @@ function buildFocusedSubtaskPrompt(subtask) {
 }
 
 function findNextRunnableSubtask() {
-  return readPlanItems().find((item) => item.isSubtask && (item.status === 'pending' || item.status === 'in_progress')) || null;
+  const planItems = readPlanItems();
+  const candidates = planItems
+    .filter((item) => item.isSubtask && item.status === 'pending' && !activeCodingSubtaskIds.has(item.id));
+  const analysis = analyzeRunnerWorkDependencies(candidates, getPlanItemStatusMap(planItems));
+  return analysis.runnable.find((item) => !conflictsWithActiveCodingWork(item)) || null;
+}
+
+function hasPendingCodingWork() {
+  return readPlanItems().some((item) => item.isSubtask && item.status === 'pending');
+}
+
+function conflictsWithActiveCodingWork(candidate) {
+  const candidateFiles = getWorkItemFiles(candidate);
+
+  const activeItems = readPlanItems()
+    .filter((item) => item.isSubtask && activeCodingSubtaskIds.has(item.id));
+  for (const active of activeItems) {
+    const activeFiles = getWorkItemFiles(active);
+    if (candidateFiles.length === 0 || activeFiles.length === 0) {
+      continue;
+    }
+    if (candidateFiles.some((file) => activeFiles.some((activeFile) => workItemPathsOverlap(file, activeFile)))) {
+      return true;
+    }
+  }
+  return false;
+}
+
+function getPlanItemStatusMap(items) {
+  const statusById = new Map();
+  for (const item of items || readPlanItems()) {
+    if (item.isSubtask) {
+      statusById.set(item.id, item.status);
+    }
+  }
+  return statusById;
+}
+
+function getDependencyBlockedPlanItems(items) {
+  return analyzeRunnerWorkDependencies(
+    items.filter((item) => item.isSubtask && item.status === 'pending'),
+    getPlanItemStatusMap(items),
+  ).blocked;
+}
+
+function formatRunnerDependencyBlocker(item) {
+  const cycleIssue = (item.dependencyIssues || []).find((issue) => issue.type === 'cycle');
+  if (cycleIssue && cycleIssue.cycle) {
+    return item.id + ' blocked by dependency cycle ' + cycleIssue.cycle.join(' -> ');
+  }
+  const issueMessages = (item.dependencyIssues || [])
+    .filter((issue) => issue.type === 'missing' || issue.type === 'self' || issue.type === 'duplicate')
+    .map((issue) => issue.message);
+  if (issueMessages.length > 0) {
+    return item.id + ' blocked: ' + issueMessages.join('; ');
+  }
+  return item.id + ' waits for ' + (item.unresolvedDependencies || []).join(', ');
+}
+
+function analyzeRunnerWorkDependencies(items, statusById) {
+  const issues = collectRunnerDependencyIssues(items, statusById);
+  const issuesByItemId = new Map();
+  for (const issue of issues) {
+    const existing = issuesByItemId.get(issue.itemId) || [];
+    existing.push(issue);
+    issuesByItemId.set(issue.itemId, existing);
+  }
+
+  const runnable = [];
+  const blocked = [];
+  for (const item of items) {
+    const unresolvedDependencies = getUnresolvedRunnerWorkDependencies(item, statusById);
+    const itemIssues = issuesByItemId.get(item.id) || [];
+    if (unresolvedDependencies.length === 0 && itemIssues.length === 0) {
+      runnable.push(item);
+    } else {
+      blocked.push({
+        ...item,
+        unresolvedDependencies,
+        dependencyIssues: itemIssues,
+      });
+    }
+  }
+  return { runnable, blocked, issues };
+}
+
+function getUnresolvedRunnerWorkDependencies(item, statusById) {
+  return normalizeRunnerWorkDependencyIds(item.dependsOn)
+    .filter((dependencyId) => dependencyId === item.id || statusById.get(dependencyId) !== 'completed');
+}
+
+function collectRunnerDependencyIssues(items, statusById) {
+  const issues = [];
+  const counts = new Map();
+  for (const item of items) {
+    if (!item.id) continue;
+    counts.set(item.id, (counts.get(item.id) || 0) + 1);
+  }
+  const duplicateIds = new Set(
+    Array.from(counts.entries())
+      .filter((entry) => entry[1] > 1)
+      .map((entry) => entry[0]),
+  );
+  for (const itemId of duplicateIds) {
+    issues.push({
+      type: 'duplicate',
+      itemId,
+      message: 'Duplicate work item id ' + itemId,
+    });
+  }
+  for (const item of items) {
+    for (const dependencyId of normalizeRunnerWorkDependencyIds(item.dependsOn)) {
+      if (dependencyId === item.id) {
+        issues.push({
+          type: 'self',
+          itemId: item.id,
+          dependencyId,
+          message: item.id + ' cannot depend on itself',
+        });
+      } else if (!statusById.has(dependencyId)) {
+        issues.push({
+          type: 'missing',
+          itemId: item.id,
+          dependencyId,
+          message: item.id + ' depends on missing work item ' + dependencyId,
+        });
+      }
+    }
+  }
+  return issues.concat(collectRunnerCycleIssues(items));
+}
+
+function collectRunnerCycleIssues(items) {
+  const itemById = new Map(items.map((item) => [item.id, item]));
+  const visited = new Set();
+  const visiting = new Set();
+  const stack = [];
+  const seenCycleKeys = new Set();
+  const issues = [];
+
+  const visit = (itemId) => {
+    if (visiting.has(itemId)) {
+      const cycleStart = stack.indexOf(itemId);
+      if (cycleStart >= 0) {
+        const cycle = stack.slice(cycleStart).concat(itemId);
+        const key = canonicalRunnerCycleKey(cycle);
+        if (!seenCycleKeys.has(key)) {
+          seenCycleKeys.add(key);
+          for (const cycleItemId of cycle.slice(0, -1)) {
+            issues.push({
+              type: 'cycle',
+              itemId: cycleItemId,
+              cycle,
+              message: 'Dependency cycle detected: ' + cycle.join(' -> '),
+            });
+          }
+        }
+      }
+      return;
+    }
+    if (visited.has(itemId)) return;
+    const item = itemById.get(itemId);
+    if (!item) return;
+
+    visiting.add(itemId);
+    stack.push(itemId);
+    for (const dependencyId of normalizeRunnerWorkDependencyIds(item.dependsOn)) {
+      if (dependencyId !== itemId && itemById.has(dependencyId)) {
+        visit(dependencyId);
+      }
+    }
+    stack.pop();
+    visiting.delete(itemId);
+    visited.add(itemId);
+  };
+
+  for (const item of items) {
+    visit(item.id);
+  }
+  return issues;
+}
+
+function canonicalRunnerCycleKey(cycle) {
+  const body = cycle.slice(0, -1);
+  const rotations = body.map((_, index) => body.slice(index).concat(body.slice(0, index)).join('>'));
+  return rotations.sort()[0] || body.join('>');
+}
+
+function normalizeRunnerWorkDependencyIds(value) {
+  if (Array.isArray(value)) return normalizeRunnerStringArray(value);
+  if (typeof value === 'string') {
+    return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
+  }
+  return [];
+}
+
+function normalizeRunnerStringArray(value) {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+}
+
+function getWorkItemFiles(item) {
+  return [...new Set([
+    ...(item.filesToModify || []),
+    ...(item.filesToCreate || []),
+    ...(item.patternFiles || []),
+  ].map(normalizeWorkItemFileIntent).filter(Boolean))];
+}
+
+function normalizeWorkItemFileIntent(file) {
+  const normalized = String(file || '').trim().replace(/\\\\/g, '/').replace(/\\/+/g, '/').toLowerCase();
+  if (!normalized || normalized === '.') {
+    return '';
+  }
+
+  const wildcardIndex = normalized.search(/[*?[{]/);
+  const stablePrefix = wildcardIndex >= 0 ? normalized.slice(0, wildcardIndex) : normalized;
+  const pathLike = stablePrefix.replace(/\\/+\$/g, '');
+  if (!pathLike || pathLike === '.') {
+    return '';
+  }
+
+  const parts = [];
+  for (const part of pathLike.split('/')) {
+    if (!part || part === '.') {
+      continue;
+    }
+    if (part === '..') {
+      parts.pop();
+      continue;
+    }
+    parts.push(part);
+  }
+  return parts.join('/');
+}
+
+function workItemPathsOverlap(leftPath, rightPath) {
+  return leftPath === rightPath ||
+    leftPath.startsWith(rightPath + '/') ||
+    rightPath.startsWith(leftPath + '/');
+}
+
+function resetInProgressCodingSubtasks() {
+  for (const item of readPlanItems()) {
+    if (item.isSubtask && item.status === 'in_progress') {
+      markPlanSubtaskStatus(item.id, 'pending');
+    }
+  }
 }
 
 function getCodingProgress() {
@@ -670,6 +1204,14 @@ function readPlanItems() {
         title: match[4].trim(),
         status: markerToStatus(match[2]),
         details: [],
+        filesToCreate: normalizeRunnerStringArray(metadata.files_to_create),
+        filesToModify: [
+          ...normalizeRunnerStringArray(metadata.files),
+          ...normalizeRunnerStringArray(metadata.files_to_modify),
+        ],
+        patternFiles: normalizeRunnerStringArray(metadata.pattern_files),
+        dependsOn: normalizeRunnerWorkDependencyIds(metadata.depends_on),
+        requirements: normalizeRunnerStringArray(metadata.requirements),
         phaseName: currentPhaseName,
         isSubtask: match[1].length > 0 || /[.-]/.test(match[3]),
         workPackage: metadata.work_package === true,
@@ -687,10 +1229,48 @@ function readPlanItems() {
     }
     if (current && /^\\s+-\\s+/.test(line)) {
       const detail = line.replace(/^\\s+-\\s+/, '').trim();
-      if (detail) current.details.push(detail);
+      if (detail) {
+        current.details.push(detail);
+        applyPlanItemFileHint(current, detail);
+      }
     }
   }
   return items;
+}
+
+function applyPlanItemFileHint(item, detail) {
+  const clean = detail.replace(/^_+|_+$/g, '').trim();
+  const match = /^([^:]+):\\s*(.*?)\\s*$/.exec(clean);
+  if (!match) {
+    return;
+  }
+  const key = match[1].trim().toLowerCase();
+  const values = splitPlanList(match[2]);
+  if (values.length === 0) {
+    return;
+  }
+  if (key === 'files to create') {
+    item.filesToCreate.push(...values);
+    return;
+  }
+  if (key === 'files' || key === 'files to modify') {
+    item.filesToModify.push(...values);
+    return;
+  }
+  if (key === 'pattern files' || key === 'patterns from') {
+    item.patternFiles.push(...values);
+    return;
+  }
+  if (key === 'depends on') {
+    item.dependsOn.push(...values);
+  }
+}
+
+function splitPlanList(value) {
+  return String(value || '')
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item && !/^none$/i.test(item));
 }
 
 function parsePlanMachineMetadata(content) {
@@ -724,76 +1304,66 @@ function statusToMarker(status) {
 
 function markPlanSubtaskStatus(subtaskId, status, note) {
   const planPath = join(specDir, artifacts.implementationPlan);
-  let content = '';
-  try {
-    content = readFileSync(planPath, 'utf8');
-  } catch {
-    return false;
-  }
-
-  const marker = statusToMarker(status);
-  const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
-  let updated = false;
-  for (let index = 0; index < lines.length; index += 1) {
-    const pattern = /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+?)\\s*$/;
-    const match = pattern.exec(lines[index]);
-    if (!match || match[4] !== subtaskId) {
-      continue;
+  return withFileWriteLock(planPath, 'runner:plan-subtask:' + subtaskId, () => {
+    let content = '';
+    try {
+      content = readFileSync(planPath, 'utf8');
+    } catch {
+      return false;
     }
 
-    if (match[2] !== marker) {
-      lines[index] = match[1] + marker + match[3] + match[4] + match[5] + match[6];
-      updated = true;
-    }
-    const detailIndent = (match[1].match(/^\\s*/) || [''])[0] + '  ';
-    let insertAt = index + 1;
-    let hasCompletion = false;
-    let hasUpdated = false;
-    while (insertAt < lines.length) {
-      if (/^\\s*-\\s+\\[[ xX/!\\-]\\]\\s+[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*/.test(lines[insertAt])) {
-        break;
+    const marker = statusToMarker(status);
+    const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
+    let updated = false;
+    for (let index = 0; index < lines.length; index += 1) {
+      const pattern = /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+?)\\s*$/;
+      const match = pattern.exec(lines[index]);
+      if (!match || match[4] !== subtaskId) {
+        continue;
       }
-      if (/^\\s*-\\s+_Completion:/i.test(lines[insertAt])) {
-        hasCompletion = true;
-        if (status !== 'completed') {
-          lines.splice(insertAt, 1);
-          updated = true;
-          continue;
+
+      if (match[2] !== marker) {
+        lines[index] = match[1] + marker + match[3] + match[4] + match[5] + match[6];
+        updated = true;
+      }
+      const detailIndent = (match[1].match(/^\\s*/) || [''])[0] + '  ';
+      let insertAt = index + 1;
+      let hasCompletion = false;
+      let hasUpdated = false;
+      while (insertAt < lines.length) {
+        if (/^\\s*-\\s+\\[[ xX/!\\-]\\]\\s+[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*/.test(lines[insertAt])) {
+          break;
         }
+        if (/^\\s*-\\s+_Completion:/i.test(lines[insertAt])) {
+          hasCompletion = true;
+          if (status !== 'completed') {
+            lines.splice(insertAt, 1);
+            updated = true;
+            continue;
+          }
+        }
+        if (/^\\s*-\\s+_Updated:/i.test(lines[insertAt])) hasUpdated = true;
+        insertAt += 1;
       }
-      if (/^\\s*-\\s+_Updated:/i.test(lines[insertAt])) hasUpdated = true;
-      insertAt += 1;
+      if (status === 'completed' && note && !hasCompletion) {
+        lines.splice(insertAt, 0, detailIndent + '- _Completion: ' + compactPlanField(note) + '_');
+        insertAt += 1;
+        updated = true;
+      }
+      if (updated && !hasUpdated) {
+        lines.splice(insertAt, 0, detailIndent + '- _Updated: ' + new Date().toISOString() + '_');
+      }
+      break;
     }
-    if (status === 'completed' && note && !hasCompletion) {
-      lines.splice(insertAt, 0, detailIndent + '- _Completion: ' + compactPlanField(note) + '_');
-      insertAt += 1;
-      updated = true;
-    }
-    if (updated && !hasUpdated) {
-      lines.splice(insertAt, 0, detailIndent + '- _Updated: ' + new Date().toISOString() + '_');
-    }
-    break;
-  }
 
-  if (!updated) {
-    return false;
-  }
-  content = lines.join('\\n');
-  content = upsertPlanMetadata(content, 'Updated', new Date().toISOString());
-  writeFileSync(planPath, content.endsWith('\\n') ? content : content + '\\n', 'utf8');
-  return true;
-}
-
-function restoreProtectedSubtaskStatuses(currentSubtaskId) {
-  if (!protectedSubtaskStatuses || protectedSubtaskStatuses.size === 0) {
-    return;
-  }
-  for (const [subtaskId, status] of protectedSubtaskStatuses.entries()) {
-    if (subtaskId !== currentSubtaskId) {
-      markPlanSubtaskStatus(subtaskId, status);
+    if (!updated) {
+      return false;
     }
-  }
-  protectedSubtaskStatuses = undefined;
+    content = lines.join('\\n');
+    content = upsertPlanMetadata(content, 'Updated', new Date().toISOString());
+    writeFileSync(planPath, content.endsWith('\\n') ? content : content + '\\n', 'utf8');
+    return true;
+  });
 }
 
 function compactPlanField(value) {
@@ -827,24 +1397,26 @@ function syncOpenSpecTasksFromPlan() {
     }
   }
 
-  let content = '';
-  try {
-    content = readFileSync(tasksPath, 'utf8');
-  } catch {
-    return;
-  }
-  populateParentOpenSpecTaskStatuses(content, statusById);
-  const updated = content.replace(
-    /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+)$/gm,
-    (line, prefix, oldMarker, suffix, id, dot, rest) => {
-      const status = statusById.get(id);
-      if (!status) return line;
-      return prefix + (status === 'completed' ? 'x' : ' ') + suffix + id + dot + rest;
-    },
-  );
-  if (updated !== content) {
-    writeFileSync(tasksPath, updated, 'utf8');
-  }
+  withFileWriteLock(tasksPath, 'runner:openspec-tasks', () => {
+    let content = '';
+    try {
+      content = readFileSync(tasksPath, 'utf8');
+    } catch {
+      return;
+    }
+    populateParentOpenSpecTaskStatuses(content, statusById);
+    const updated = content.replace(
+      /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+)$/gm,
+      (line, prefix, oldMarker, suffix, id, dot, rest) => {
+        const status = statusById.get(id);
+        if (!status) return line;
+        return prefix + (status === 'completed' ? 'x' : ' ') + suffix + id + dot + rest;
+      },
+    );
+    if (updated !== content) {
+      writeFileSync(tasksPath, updated, 'utf8');
+    }
+  });
 }
 
 function populateParentOpenSpecTaskStatuses(content, statusById) {
@@ -868,11 +1440,127 @@ function populateParentOpenSpecTaskStatuses(content, statusById) {
   }
 }
 
-function handleChildOutput(stream, data) {
+function inferFileWriteLockScope() {
+  const specsDir = dirname(specDir);
+  if (basename(specsDir).toLowerCase() === 'specs') {
+    const dataDir = dirname(specsDir);
+    return {
+      projectRoot: dirname(dataDir),
+      dataDirName: basename(dataDir),
+    };
+  }
+  return {
+    projectRoot: cwd,
+    dataDirName: '.autocode',
+  };
+}
+
+function withFileWriteLock(filePath, ownerId, callback) {
+  const lock = acquireFileWriteLock(filePath, ownerId);
+  try {
+    return callback();
+  } finally {
+    releaseFileWriteLock(lock);
+  }
+}
+
+function acquireFileWriteLock(filePath, ownerId) {
+  const normalizedFilePath = normalizeLockPath(filePath);
+  const lockRoot = join(fileWriteLockScope.projectRoot, fileWriteLockScope.dataDirName, '.locks', 'runtime-file-writes');
+  const lockDir = join(lockRoot, createHash('sha256').update(normalizedFilePath).digest('hex').slice(0, 32) + '.lock');
+  const metadataPath = join(lockDir, 'metadata.json');
+  const token = randomUUID();
+  const deadline = Date.now() + 120000;
+  mkdirSync(lockRoot, { recursive: true });
+
+  while (true) {
+    try {
+      mkdirSync(lockDir);
+      try {
+        writeFileSync(metadataPath, JSON.stringify({
+          filePath: normalizedFilePath,
+          ownerId: ownerId || 'autocode-runner',
+          token,
+          acquiredAt: new Date().toISOString(),
+          processId: process.pid,
+        }, null, 2), 'utf8');
+      } catch (metadataError) {
+        rmSync(lockDir, { recursive: true, force: true });
+        throw metadataError;
+      }
+      activeFileWriteLockDirs.add(lockDir);
+      return { lockDir, metadataPath, token };
+    } catch (error) {
+      if (!error || error.code !== 'EEXIST') {
+        throw error;
+      }
+      if (isFileWriteLockHeldByThisProcess(lockDir)) {
+        throw new Error('Write lock on ' + normalizedFilePath + ' is already held by this process. Avoid nested writes to the same file.');
+      }
+      if (isFileWriteLockStale(lockDir)) {
+        rmSync(lockDir, { recursive: true, force: true });
+        continue;
+      }
+      if (Date.now() >= deadline) {
+        throw new Error('Timed out waiting for write lock on ' + normalizedFilePath + '.');
+      }
+      waitForFileWriteLock(100);
+    }
+  }
+}
+
+function releaseFileWriteLock(lock) {
+  try {
+    const metadata = readFileWriteLockMetadata(lock.lockDir);
+    if (metadata && metadata.token && metadata.token !== lock.token) {
+      return;
+    }
+    rmSync(lock.lockDir, { recursive: true, force: true });
+  } finally {
+    activeFileWriteLockDirs.delete(lock.lockDir);
+  }
+}
+
+function readFileWriteLockMetadata(lockDir) {
+  try {
+    const parsed = JSON.parse(readFileSync(join(lockDir, 'metadata.json'), 'utf8'));
+    return parsed && typeof parsed === 'object' ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function isFileWriteLockHeldByThisProcess(lockDir) {
+  if (activeFileWriteLockDirs.has(lockDir)) {
+    return true;
+  }
+  const metadata = readFileWriteLockMetadata(lockDir);
+  return metadata && metadata.processId === process.pid;
+}
+
+function isFileWriteLockStale(lockDir) {
+  try {
+    return Date.now() - statSync(lockDir).mtimeMs > 600000;
+  } catch {
+    return false;
+  }
+}
+
+function normalizeLockPath(filePath) {
+  return resolve(filePath).replace(/\\\\/g, '/').replace(/\\/+$|^\\s+|\\s+$/g, '').toLowerCase();
+}
+
+function waitForFileWriteLock(delayMs) {
+  const buffer = new SharedArrayBuffer(4);
+  Atomics.wait(new Int32Array(buffer), 0, 0, delayMs);
+}
+
+function handleChildOutput(stream, data, state = defaultAttemptState) {
   const text = decodeCliOutputChunk(data);
   if (!text) return;
+  refreshAttemptActivity(state);
   if (codexJsonMode && stream === 'stdout') {
-    processCodexJsonOutput(text);
+    processCodexJsonOutput(text, state);
     return;
   }
   if (stream === 'stderr') {
@@ -880,7 +1568,7 @@ function handleChildOutput(stream, data) {
   } else {
     process.stdout.write(text);
   }
-  queueModelOutput(text);
+  queueModelOutput(text, state);
 }
 
 function decodeCliOutputChunk(data) {
@@ -999,31 +1687,31 @@ function loadIconvLite() {
   return null;
 }
 
-function queueModelOutput(text) {
+function queueModelOutput(text, state = defaultAttemptState) {
   const cleaned = cleanLogText(text);
   if (!cleaned.trim()) {
     return;
   }
 
-  pendingModelOutput += cleaned;
-  if (pendingModelOutput.length >= MODEL_OUTPUT_MAX_CHARS || cleaned.includes('\\n')) {
-    flushModelOutput();
+  state.pendingModelOutput += cleaned;
+  if (state.pendingModelOutput.length >= MODEL_OUTPUT_MAX_CHARS || cleaned.includes('\\n')) {
+    flushModelOutput(state);
     return;
   }
 
-  if (!modelOutputFlushTimer) {
-    modelOutputFlushTimer = setTimeout(flushModelOutput, MODEL_OUTPUT_FLUSH_MS);
+  if (!state.modelOutputFlushTimer) {
+    state.modelOutputFlushTimer = setTimeout(() => flushModelOutput(state), MODEL_OUTPUT_FLUSH_MS);
   }
 }
 
-function flushModelOutput() {
-  if (modelOutputFlushTimer) {
-    clearTimeout(modelOutputFlushTimer);
-    modelOutputFlushTimer = null;
+function flushModelOutput(state = defaultAttemptState) {
+  if (state.modelOutputFlushTimer) {
+    clearTimeout(state.modelOutputFlushTimer);
+    state.modelOutputFlushTimer = null;
   }
 
-  const text = pendingModelOutput.trim();
-  pendingModelOutput = '';
+  const text = state.pendingModelOutput.trim();
+  state.pendingModelOutput = '';
   if (!text) {
     return;
   }
@@ -1032,29 +1720,29 @@ function flushModelOutput() {
     ? text.slice(0, MODEL_OUTPUT_MAX_CHARS - 3) + '...'
     : text;
   const detail = text.length > MODEL_OUTPUT_MAX_CHARS ? text : undefined;
-  appendTaskLogEntry(logPhase, 'text', content, detail);
+  appendTaskLogEntry(logPhase, 'text', content, detail, buildAttemptLogExtra(state));
 }
 
-function processCodexJsonOutput(text) {
-  codexJsonLineBuffer += text.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
-  const lines = codexJsonLineBuffer.split('\\n');
-  codexJsonLineBuffer = lines.pop() || '';
+function processCodexJsonOutput(text, state = defaultAttemptState) {
+  state.codexJsonLineBuffer += text.replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+  const lines = state.codexJsonLineBuffer.split('\\n');
+  state.codexJsonLineBuffer = lines.pop() || '';
 
   for (const line of lines) {
-    processCodexJsonLine(line);
+    processCodexJsonLine(line, state);
   }
 }
 
-function flushCodexJsonOutput() {
-  if (!codexJsonLineBuffer.trim()) {
-    codexJsonLineBuffer = '';
+function flushCodexJsonOutput(state = defaultAttemptState) {
+  if (!state.codexJsonLineBuffer.trim()) {
+    state.codexJsonLineBuffer = '';
     return;
   }
-  processCodexJsonLine(codexJsonLineBuffer);
-  codexJsonLineBuffer = '';
+  processCodexJsonLine(state.codexJsonLineBuffer, state);
+  state.codexJsonLineBuffer = '';
 }
 
-function processCodexJsonLine(line) {
+function processCodexJsonLine(line, state = defaultAttemptState) {
   const trimmed = String(line ?? '').trim();
   if (!trimmed) {
     return;
@@ -1065,18 +1753,24 @@ function processCodexJsonLine(line) {
     event = JSON.parse(trimmed);
   } catch {
     process.stdout.write(trimmed + '\\n');
-    queueModelOutput(trimmed + '\\n');
+    queueModelOutput(trimmed + '\\n', state);
     return;
   }
 
-  if (!handleCodexJsonEvent(event)) {
+  if (!handleCodexJsonEvent(event, state)) {
     if (process.env.AUTOCODE_DEBUG_CLI_JSON === '1') {
-      appendTaskLogEntry(logPhase, 'info', 'Unhandled Codex JSON event: ' + limitLogText(trimmed, 800), trimmed);
+      appendTaskLogEntry(
+        logPhase,
+        'info',
+        'Unhandled Codex JSON event: ' + limitLogText(trimmed, 800),
+        trimmed,
+        buildAttemptLogExtra(state),
+      );
     }
   }
 }
 
-function handleCodexJsonEvent(event) {
+function handleCodexJsonEvent(event, state = defaultAttemptState) {
   const envelope = asRecord(event);
   const payload = getCodexPayload(envelope);
   const payloadType = getFirstString(payload, ['type', 'event_type', 'kind']) || getFirstString(envelope, ['type', 'event_type', 'kind']);
@@ -1102,7 +1796,7 @@ function handleCodexJsonEvent(event) {
     handleTokenUsage();
     const message = stringifyCodexText(payload.message ?? payload.content ?? payload.text);
     if (message.trim()) {
-      appendCodexMessageLog(message);
+      appendCodexMessageLog(message, state);
       return true;
     }
   }
@@ -1111,7 +1805,7 @@ function handleCodexJsonEvent(event) {
     handleTokenUsage();
     const message = stringifyCodexText(payload.message ?? payload.content ?? payload.text);
     if (message.trim()) {
-      appendCodexMessageLog(message);
+      appendCodexMessageLog(message, state);
       return true;
     }
   }
@@ -1129,11 +1823,11 @@ function handleCodexJsonEvent(event) {
       'tool_start',
       'Tool started: ' + toolName,
       toolInput,
-      {
+      buildAttemptLogExtra(state, {
         tool_name: toolName,
         tool_input: toolInput ? limitLogText(toolInput, 1000) : undefined,
         tool_call_id: getFirstString(payload, ['call_id', 'callId', 'id']),
-      },
+      }),
     );
     return true;
   }
@@ -1151,11 +1845,11 @@ function handleCodexJsonEvent(event) {
       'tool_end',
       summary,
       output.length > 1200 ? output : undefined,
-      {
+      buildAttemptLogExtra(state, {
         tool_name: toolName,
         tool_success: success,
         tool_call_id: getFirstString(payload, ['call_id', 'callId', 'id']),
-      },
+      }),
     );
     return true;
   }
@@ -1167,27 +1861,46 @@ function handleCodexJsonEvent(event) {
   const usageOnlyEvent = handleTokenUsage();
   const message = stringifyCodexText(payload.message ?? payload.content ?? payload.text ?? envelope.message);
   if (message.trim()) {
-    appendTaskLogEntry(logPhase, 'info', limitLogText(message, 1600), message.length > 1600 ? message : undefined);
+    appendTaskLogEntry(
+      logPhase,
+      'info',
+      limitLogText(message, 1600),
+      message.length > 1600 ? message : undefined,
+      buildAttemptLogExtra(state),
+    );
     return true;
   }
 
   return payloadType === 'turn_started' ||
-    payloadType === 'turn_completed' ||
     payloadType === 'session_configured' ||
     payloadType === 'response_started' ||
-    payloadType === 'response_completed' ||
-    usageOnlyEvent;
+    usageOnlyEvent ||
+    handleCodexCompletionEvent(payloadType, state);
 }
 
-function appendCodexMessageLog(message) {
+function handleCodexCompletionEvent(payloadType, state) {
+  if (payloadType === 'turn_completed' || payloadType === 'response_completed') {
+    scheduleAttemptCompletionGrace(state);
+    return true;
+  }
+  return false;
+}
+
+function appendCodexMessageLog(message, state = defaultAttemptState) {
   const cleanMessage = cleanLogText(message).trim();
-  if (!cleanMessage || cleanMessage === lastCodexMessageText) {
+  if (!cleanMessage || cleanMessage === state.lastCodexMessageText) {
     return;
   }
-  lastCodexMessageText = cleanMessage;
+  state.lastCodexMessageText = cleanMessage;
   const content = limitLogText(cleanMessage, MODEL_OUTPUT_MAX_CHARS);
   process.stdout.write(content + '\\n');
-  appendTaskLogEntry(logPhase, 'text', content, cleanMessage.length > MODEL_OUTPUT_MAX_CHARS ? cleanMessage : undefined);
+  appendTaskLogEntry(
+    logPhase,
+    'text',
+    content,
+    cleanMessage.length > MODEL_OUTPUT_MAX_CHARS ? cleanMessage : undefined,
+    buildAttemptLogExtra(state),
+  );
 }
 
 function getCodexPayload(envelope) {
@@ -1281,36 +1994,39 @@ function extractCodexTokenUsage(envelope, payload, sessionId) {
 function updatePlanTokenUsage(usage) {
   const now = new Date().toISOString();
   const planPath = join(specDir, artifacts.implementationPlan);
-  let content = '';
-  try {
-    content = readFileSync(planPath, 'utf8');
-  } catch {
-    content = [
-      '# Implementation Plan',
-      '',
-      'Feature: ' + taskTitle,
-      'Description: ' + taskDescription,
-      'Created: ' + now,
-      '',
-    ].join('\\n');
-  }
+  const merged = withFileWriteLock(planPath, 'runner:plan-token-usage', () => {
+    let content = '';
+    try {
+      content = readFileSync(planPath, 'utf8');
+    } catch {
+      content = [
+        '# Implementation Plan',
+        '',
+        'Feature: ' + taskTitle,
+        'Description: ' + taskDescription,
+        'Created: ' + now,
+        '',
+      ].join('\\n');
+    }
 
-  const currentMetadata = readPlanMachineMetadata(content);
-  const previousUsage = normalizePersistedTokenUsage(currentMetadata.tokenUsage);
-  tokenUsageEventCount += 1;
-  const incoming = {
-    ...usage,
-    stepsExecuted: Math.max((previousUsage?.stepsExecuted ?? 0) + 1, tokenUsageEventCount),
-    sessionId: usage.sessionId || previousUsage?.sessionId,
-  };
-  const merged = mergeTokenUsage(previousUsage, incoming);
+    const currentMetadata = readPlanMachineMetadata(content);
+    const previousUsage = normalizePersistedTokenUsage(currentMetadata.tokenUsage);
+    tokenUsageEventCount += 1;
+    const incoming = {
+      ...usage,
+      stepsExecuted: Math.max((previousUsage?.stepsExecuted ?? 0) + 1, tokenUsageEventCount),
+      sessionId: usage.sessionId || previousUsage?.sessionId,
+    };
+    const nextUsage = mergeTokenUsage(previousUsage, incoming);
 
-  content = upsertPlanMetadata(content, 'Updated', now);
-  content = upsertPlanMachineMetadata(content, {
-    tokenUsage: merged,
-    last_updated: now,
+    content = upsertPlanMetadata(content, 'Updated', now);
+    content = upsertPlanMachineMetadata(content, {
+      tokenUsage: nextUsage,
+      last_updated: now,
+    });
+    writeFileSync(planPath, content.endsWith('\\n') ? content : content + '\\n', 'utf8');
+    return nextUsage;
   });
-  writeFileSync(planPath, content.endsWith('\\n') ? content : content + '\\n', 'utf8');
   emitTokenUsage(merged);
 
   if ((merged.totalTokens ?? 0) !== lastTokenUsageLogTotal) {
@@ -1516,33 +2232,35 @@ function updatePlanStatus(failed, message, now) {
 
 function updatePlanMetadata(input) {
   const planPath = join(specDir, artifacts.implementationPlan);
-  let content = '';
-  try {
-    content = readFileSync(planPath, 'utf8');
-  } catch {
-    content = [
-      '# Implementation Plan',
-      '',
-      \`Feature: \${taskTitle}\`,
-      \`Description: \${taskDescription}\`,
-      \`Created: \${input.updatedAt}\`,
-      '',
-    ].join('\\n');
-  }
-  content = upsertPlanMetadata(content, 'Status', input.status);
-  if (input.reviewReason) {
-    content = upsertPlanMetadata(content, 'Review Reason', input.reviewReason);
-  } else {
-    content = removePlanMetadata(content, 'Review Reason');
-  }
-  content = upsertPlanMetadata(content, 'Execution Phase', input.executionPhase);
-  content = upsertPlanMetadata(content, 'Updated', input.updatedAt);
-  content = upsertPlanMachineMetadata(content, {
-    planStatus: input.planStatus,
-    xstateState: input.xstateState,
-    last_updated: input.updatedAt,
+  withFileWriteLock(planPath, 'runner:plan-metadata', () => {
+    let content = '';
+    try {
+      content = readFileSync(planPath, 'utf8');
+    } catch {
+      content = [
+        '# Implementation Plan',
+        '',
+        \`Feature: \${taskTitle}\`,
+        \`Description: \${taskDescription}\`,
+        \`Created: \${input.updatedAt}\`,
+        '',
+      ].join('\\n');
+    }
+    content = upsertPlanMetadata(content, 'Status', input.status);
+    if (input.reviewReason) {
+      content = upsertPlanMetadata(content, 'Review Reason', input.reviewReason);
+    } else {
+      content = removePlanMetadata(content, 'Review Reason');
+    }
+    content = upsertPlanMetadata(content, 'Execution Phase', input.executionPhase);
+    content = upsertPlanMetadata(content, 'Updated', input.updatedAt);
+    content = upsertPlanMachineMetadata(content, {
+      planStatus: input.planStatus,
+      xstateState: input.xstateState,
+      last_updated: input.updatedAt,
+    });
+    writeFileSync(planPath, content.endsWith('\\n') ? content : \`\${content}\\n\`, 'utf8');
   });
-  writeFileSync(planPath, content.endsWith('\\n') ? content : \`\${content}\\n\`, 'utf8');
 }
 
 function upsertPlanMetadata(content, key, value) {
@@ -1601,46 +2319,50 @@ function upsertPlanMachineMetadata(content, updates) {
 function appendTaskLogEntry(logPhase, type, message, detail, extra) {
   const now = new Date().toISOString();
   const logsPath = join(specDir, artifacts.taskLogs);
-  const logs = readJson(logsPath) || createEmptyLogs(now);
-  const phaseLog = logs.phases[logPhase] || { phase: logPhase, status: 'pending', started_at: null, completed_at: null, entries: [] };
-  if (phaseLog.status === 'pending') {
-    phaseLog.status = 'active';
-  }
-  phaseLog.started_at = phaseLog.started_at || now;
-  phaseLog.entries.push({
-    timestamp: now,
-    type,
-    content: limitLogText(message, 4000),
-    phase: logPhase,
-    ...(detail ? { detail: limitLogText(detail, 12000), collapsed: true } : {}),
-    ...(extra ? dropUndefinedTokenUsage(extra) : {}),
+  withFileWriteLock(logsPath, 'runner:task-logs:append:' + logPhase, () => {
+    const logs = readJson(logsPath) || createEmptyLogs(now);
+    const phaseLog = logs.phases[logPhase] || { phase: logPhase, status: 'pending', started_at: null, completed_at: null, entries: [] };
+    if (phaseLog.status === 'pending') {
+      phaseLog.status = 'active';
+    }
+    phaseLog.started_at = phaseLog.started_at || now;
+    phaseLog.entries.push({
+      timestamp: now,
+      type,
+      content: limitLogText(message, 4000),
+      phase: logPhase,
+      ...(detail ? { detail: limitLogText(detail, 12000), collapsed: true } : {}),
+      ...(extra ? dropUndefinedTokenUsage(extra) : {}),
+    });
+    logs.phases[logPhase] = phaseLog;
+    logs.updated_at = now;
+    writeJson(logsPath, logs);
   });
-  logs.phases[logPhase] = phaseLog;
-  logs.updated_at = now;
-  writeJson(logsPath, logs);
 }
 
 function updateTaskLogs(logPhase, status, message) {
   const now = new Date().toISOString();
   const logsPath = join(specDir, artifacts.taskLogs);
-  const logs = readJson(logsPath) || createEmptyLogs(now);
-  const phaseLog = logs.phases[logPhase] || { phase: logPhase, status: 'pending', started_at: null, completed_at: null, entries: [] };
-  phaseLog.status = status;
-  phaseLog.started_at = phaseLog.started_at || now;
-  if (status === 'active') {
-    phaseLog.completed_at = null;
-  } else if (status === 'completed' || status === 'failed') {
-    phaseLog.completed_at = now;
-  }
-  phaseLog.entries.push({
-    timestamp: now,
-    type: status === 'failed' ? 'error' : status === 'completed' ? 'success' : 'info',
-    content: limitLogText(message, 4000),
-    phase: logPhase,
+  withFileWriteLock(logsPath, 'runner:task-logs:phase:' + logPhase, () => {
+    const logs = readJson(logsPath) || createEmptyLogs(now);
+    const phaseLog = logs.phases[logPhase] || { phase: logPhase, status: 'pending', started_at: null, completed_at: null, entries: [] };
+    phaseLog.status = status;
+    phaseLog.started_at = phaseLog.started_at || now;
+    if (status === 'active') {
+      phaseLog.completed_at = null;
+    } else if (status === 'completed' || status === 'failed') {
+      phaseLog.completed_at = now;
+    }
+    phaseLog.entries.push({
+      timestamp: now,
+      type: status === 'failed' ? 'error' : status === 'completed' ? 'success' : 'info',
+      content: limitLogText(message, 4000),
+      phase: logPhase,
+    });
+    logs.phases[logPhase] = phaseLog;
+    logs.updated_at = now;
+    writeJson(logsPath, logs);
   });
-  logs.phases[logPhase] = phaseLog;
-  logs.updated_at = now;
-  writeJson(logsPath, logs);
 }
 
 function createEmptyLogs(now) {

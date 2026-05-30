@@ -352,7 +352,9 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
         path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task'),
         { recursive: true }
       );
-      expect(writeFileSync).toHaveBeenCalledTimes(1);
+      const taskLogWrites = (writeFileSync as Mock).mock.calls
+        .filter(([filePath]) => String(filePath).endsWith('task_logs.json'));
+      expect(taskLogWrites).toHaveLength(1);
       expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
         'task:logsChanged',
         '001-test-task',
@@ -393,7 +395,9 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const result = await handler({}, 'project-123', '001-test-task') as IPCResult<TaskLogs>;
 
       expect(result.success).toBe(true);
-      expect(writeFileSync).toHaveBeenCalledTimes(2);
+      const taskLogWrites = (writeFileSync as Mock).mock.calls
+        .filter(([filePath]) => String(filePath).endsWith('task_logs.json'));
+      expect(taskLogWrites).toHaveLength(2);
       expect(writeFileSync).toHaveBeenCalledWith(
         path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task', 'task_logs.json'),
         expect.any(String),

@@ -7,6 +7,7 @@ import {
   getAutocodeAgentRuntimeModeLabel,
   resolveAutocodeTaskStartEvent,
   startAutocodeAgentRuntime,
+  withAutocodeRuntimeFileWriteLockSync,
 } from '@autocode/core';
 import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
@@ -270,19 +271,36 @@ function writeOpenSpecReviewFeedback(projectPath: string, task: Task, humanInput
     if (!existsSync(changeDir)) {
       mkdirSync(changeDir, { recursive: true });
     }
-    writeFileSync(
-      path.join(changeDir, 'review-feedback.md'),
-      [
-        '# Review Feedback',
-        '',
-        'This feedback came from Autocode plan review. Apply it to the upstream OpenSpec artifacts before regenerating downstream runtime plans.',
-        '',
-        humanInputContent.trimEnd(),
-        '',
-        `Recorded at: ${new Date().toISOString()}`,
-        '',
-      ].join('\n'),
-      'utf-8',
+    const feedbackPath = path.join(changeDir, 'review-feedback.md');
+    const writeFeedback = () => {
+      writeFileSync(
+        feedbackPath,
+        [
+          '# Review Feedback',
+          '',
+          'This feedback came from Autocode plan review. Apply it to the upstream OpenSpec artifacts before regenerating downstream runtime plans.',
+          '',
+          humanInputContent.trimEnd(),
+          '',
+          `Recorded at: ${new Date().toISOString()}`,
+          '',
+        ].join('\n'),
+        'utf-8',
+      );
+    };
+
+    if (!existsSync(projectPath)) {
+      writeFeedback();
+      return;
+    }
+
+    withAutocodeRuntimeFileWriteLockSync(
+      {
+        projectRoot: projectPath,
+        filePath: feedbackPath,
+        ownerId: `desktop:openspec-review-feedback:${task.specId}`,
+      },
+      writeFeedback,
     );
   } catch (error) {
     console.warn('[TASK_REVIEW] Failed to write OpenSpec review feedback:', error);

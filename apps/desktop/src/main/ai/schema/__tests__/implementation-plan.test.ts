@@ -186,6 +186,19 @@ describe('PlanSubtaskSchema', () => {
     }
   });
 
+  it('coerces dependency aliases to depends_on string ids', () => {
+    const result = PlanSubtaskSchema.safeParse({
+      id: '1.2',
+      title: 'Task',
+      status: 'pending',
+      dependsOn: [1, '1.1'],
+    });
+    expect(result.success).toBe(true);
+    if (result.success) {
+      expect(result.data.depends_on).toEqual(['1', '1.1']);
+    }
+  });
+
   it('preserves unknown fields via passthrough', () => {
     const result = PlanSubtaskSchema.safeParse({
       id: '1.1',

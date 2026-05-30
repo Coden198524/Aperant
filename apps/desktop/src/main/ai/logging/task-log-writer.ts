@@ -19,7 +19,12 @@ import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync, unlinkS
 import { join, dirname } from 'node:path';
 import type { TaskLogs, TaskLogPhase, TaskLogPhaseStatus, TaskLogEntry, TaskLogEntryType } from '../../../shared/types';
 import type { StreamEvent } from '../session/types';
-import type { Phase } from '@autocode/core';
+import {
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  withAutocodeRuntimeFileWriteLockSync,
+  type AutocodeRuntimeFileWriteLockScope,
+  type Phase,
+} from '@autocode/core';
 
 const DEFAULT_LIVE_TEXT_FLUSH_MS = 1000;
 const DEFAULT_LIVE_TEXT_MAX_CHARS = 1200;
@@ -167,6 +172,57 @@ function sanitizeLogs(logs: TaskLogs): TaskLogs {
   };
 }
 
+function mergeLogsForSave(existing: TaskLogs | null, next: TaskLogs): TaskLogs {
+  if (!existing) {
+    return next;
+  }
+
+  return {
+    spec_id: next.spec_id || existing.spec_id,
+    created_at: existing.created_at || next.created_at,
+    updated_at: existing.updated_at > next.updated_at ? existing.updated_at : next.updated_at,
+    phases: {
+      planning: mergePhaseLogs(existing.phases.planning, next.phases.planning, 'planning'),
+      coding: mergePhaseLogs(existing.phases.coding, next.phases.coding, 'coding'),
+      validation: mergePhaseLogs(existing.phases.validation, next.phases.validation, 'validation'),
+    },
+  };
+}
+
+function mergePhaseLogs(
+  existing: TaskLogs['phases'][TaskLogPhase] | undefined,
+  next: TaskLogs['phases'][TaskLogPhase] | undefined,
+  phase: TaskLogPhase,
+): TaskLogs['phases'][TaskLogPhase] {
+  const existingPhase = existing ?? { phase, status: 'pending', started_at: null, completed_at: null, entries: [] };
+  const nextPhase = next ?? { phase, status: 'pending', started_at: null, completed_at: null, entries: [] };
+  const seen = new Set<string>();
+  const entries = [...(existingPhase.entries ?? []), ...(nextPhase.entries ?? [])]
+    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
+    .filter((entry) => {
+      const key = [
+        entry.timestamp,
+        entry.type,
+        entry.phase,
+        entry.subtask_id ?? '',
+        entry.content,
+      ].join('|');
+      if (seen.has(key)) {
+        return false;
+      }
+      seen.add(key);
+      return true;
+    });
+
+  return {
+    phase,
+    status: nextPhase.status !== 'pending' ? nextPhase.status : existingPhase.status,
+    started_at: existingPhase.started_at || nextPhase.started_at,
+    completed_at: nextPhase.completed_at || existingPhase.completed_at,
+    entries,
+  };
+}
+
 // =============================================================================
 // TaskLogWriter
 // =============================================================================
@@ -184,6 +240,7 @@ function sanitizeLogs(logs: TaskLogs): TaskLogs {
  */
 export class TaskLogWriter {
   private readonly logFile: string;
+  private readonly fileWriteLockScope: AutocodeRuntimeFileWriteLockScope;
   private readonly liveTextFlushMs: number;
   private readonly liveTextMaxChars: number;
   private data: TaskLogs;
@@ -196,6 +253,7 @@ export class TaskLogWriter {
 
   constructor(specDir: string, specId: string, options: TaskLogWriterOptions = {}) {
     this.logFile = join(specDir, 'task_logs.json');
+    this.fileWriteLockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir);
     this.liveTextFlushMs = options.liveTextFlushMs ?? DEFAULT_LIVE_TEXT_FLUSH_MS;
     this.liveTextMaxChars = options.liveTextMaxChars ?? DEFAULT_LIVE_TEXT_MAX_CHARS;
     this.data = this.loadOrCreate(specDir, specId);
@@ -527,21 +585,30 @@ export class TaskLogWriter {
   private save(): void {
     this.data.updated_at = this.timestamp();
     try {
-      // Ensure directory exists
-      const dir = dirname(this.logFile);
-      if (!existsSync(dir)) {
-        mkdirSync(dir, { recursive: true });
-      }
+      withAutocodeRuntimeFileWriteLockSync(
+        {
+          ...this.fileWriteLockScope,
+          filePath: this.logFile,
+          ownerId: `desktop:task-log-writer:${this.data.spec_id}`,
+        },
+        () => {
+          // Ensure directory exists
+          const dir = dirname(this.logFile);
+          if (!existsSync(dir)) {
+            mkdirSync(dir, { recursive: true });
+          }
 
-      // Atomic-like write: write to temp file then rename
-      const tmpFile = `${this.logFile}.tmp`;
-      this.data = sanitizeLogs(this.data);
-      const serialized = JSON.stringify(this.data, null, 2);
-      JSON.parse(serialized);
-      writeFileSync(tmpFile, serialized, 'utf-8');
-      JSON.parse(readFileSync(tmpFile, 'utf-8'));
-      // renameSync is atomic on same filesystem (POSIX)
-      renameSync(tmpFile, this.logFile);
+          // Atomic-like write: write to temp file then rename
+          const tmpFile = `${this.logFile}.tmp`;
+          this.data = sanitizeLogs(mergeLogsForSave(this.readExistingLogForSave(), this.data));
+          const serialized = JSON.stringify(this.data, null, 2);
+          JSON.parse(serialized);
+          writeFileSync(tmpFile, serialized, 'utf-8');
+          JSON.parse(readFileSync(tmpFile, 'utf-8'));
+          // renameSync is atomic on same filesystem (POSIX)
+          renameSync(tmpFile, this.logFile);
+        },
+      );
     } catch {
       try {
         unlinkSync(`${this.logFile}.tmp`);
@@ -550,6 +617,17 @@ export class TaskLogWriter {
       }
       // Non-fatal: log write failures don't break execution
       // (The UI will just show an empty log section)
+    }
+  }
+
+  private readExistingLogForSave(): TaskLogs | null {
+    try {
+      if (!existsSync(this.logFile)) {
+        return null;
+      }
+      return sanitizeLogs(JSON.parse(readFileSync(this.logFile, 'utf-8')) as TaskLogs);
+    } catch {
+      return null;
     }
   }
 

@@ -108,6 +108,13 @@ interface RawProjectPlanSubtask {
   completed_summary?: unknown;
   notes?: unknown;
   actual_output?: unknown;
+  files_to_create?: unknown;
+  files_to_modify?: unknown;
+  pattern_files?: unknown;
+  depends_on?: unknown;
+  work_package?: unknown;
+  upstream_task_ids?: unknown;
+  upstream_source?: unknown;
 }
 
 export function loadAutocodeProjectTasks(input: LoadAutocodeProjectTasksInput): AutocodeProjectTask[] {
@@ -538,7 +545,15 @@ function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): Autoco
         description,
         ...(completionSummary ? { completionSummary } : {}),
         status: normalizeSubtaskStatus(subtask.status),
-        files: [],
+        files: [
+          ...toStringArray(subtask.files_to_create),
+          ...toStringArray(subtask.files_to_modify),
+          ...toStringArray(subtask.pattern_files),
+        ],
+        ...(toStringArray(subtask.depends_on).length > 0 ? { dependsOn: toStringArray(subtask.depends_on) } : {}),
+        ...(subtask.work_package === true ? { workPackage: true } : {}),
+        ...(toStringArray(subtask.upstream_task_ids).length > 0 ? { upstreamTaskIds: toStringArray(subtask.upstream_task_ids) } : {}),
+        ...(stringFrom(subtask.upstream_source) ? { upstreamSource: stringFrom(subtask.upstream_source) } : {}),
       };
     });
   });
@@ -704,6 +719,15 @@ function readJsonFile<T>(filePath: string): T | null {
 
 function normalizeSubtaskStatus(value: unknown): AutocodeSubtaskStatus {
   return value === 'in_progress' || value === 'completed' || value === 'failed' ? value : 'pending';
+}
+
+function toStringArray(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value
+    .map((item) => stringFrom(item))
+    .filter(Boolean);
 }
 
 function stringFrom(...values: unknown[]): string {

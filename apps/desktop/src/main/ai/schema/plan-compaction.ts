@@ -234,6 +234,7 @@ function compactSubtask(
     limits.maxPatternFiles,
     limits.maxFilePathChars,
   );
+  const dependsOn = toStringArray(rawSubtask.depends_on, limits.maxSubtasksPerPhase, 80);
   const verification = compactVerification(subtask.verification ?? rawSubtask.verification, limits);
   const completionSummary = subtask.status === 'completed'
     ? compactMultilineText(
@@ -257,6 +258,7 @@ function compactSubtask(
     files_to_create: toStringArray(subtask.files_to_create, limits.maxFileRefsPerList, limits.maxFilePathChars),
     files_to_modify: toStringArray(subtask.files_to_modify, limits.maxFileRefsPerList, limits.maxFilePathChars),
     ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+    ...(dependsOn.length > 0 ? { depends_on: dependsOn } : {}),
     ...(verification ? { verification } : {}),
   };
 }

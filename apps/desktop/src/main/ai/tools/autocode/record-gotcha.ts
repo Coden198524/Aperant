@@ -8,12 +8,8 @@
  * Tool name: mcp__autocode__record_gotcha
  */
 
-import * as fs from 'node:fs';
 import {
-  formatAutocodeGotchaMarkdownEntry,
-  formatAutocodeGotchasFileHeader,
-  getAutocodeSessionGotchasPath,
-  getAutocodeSessionMemoryDir,
+  appendAutocodeSessionGotcha,
 } from '@autocode/core';
 import { z } from 'zod/v3';
 
@@ -47,26 +43,13 @@ export const recordGotchaTool = Tool.define({
   inputSchema,
   execute: (input, context) => {
     const { gotcha, context: ctx } = input;
-    const memoryDir = getAutocodeSessionMemoryDir(context.specDir);
 
     try {
-      fs.mkdirSync(memoryDir, { recursive: true });
-
-      const gotchasFile = getAutocodeSessionGotchasPath(context.specDir);
-
-      // Determine whether file is new or empty without a separate existsSync check
-      let isNew: boolean;
-      try {
-        const stat = fs.statSync(gotchasFile);
-        isNew = stat.size === 0;
-      } catch (err: unknown) {
-        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') throw err;
-        isNew = true;
-      }
-      const header = isNew ? formatAutocodeGotchasFileHeader() : '';
-      const entry = formatAutocodeGotchaMarkdownEntry({ gotcha, context: ctx });
-
-      fs.writeFileSync(gotchasFile, header + entry, { flag: isNew ? 'w' : 'a', encoding: 'utf-8' });
+      appendAutocodeSessionGotcha({
+        specDir: context.specDir,
+        gotcha,
+        context: ctx,
+      });
 
       return `Recorded gotcha: ${gotcha}`;
     } catch (e) {

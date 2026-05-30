@@ -11,6 +11,7 @@ import { markSettingsLoaded } from '../lib/sentry';
 interface SettingsState {
   settings: AppSettings;
   isLoading: boolean;
+  hasLoadedSettings: boolean;
   error: string | null;
 
   // API Profile state
@@ -64,6 +65,7 @@ interface SettingsState {
 export const useSettingsStore = create<SettingsState>((set) => ({
   settings: DEFAULT_APP_SETTINGS as AppSettings,
   isLoading: true,  // Start as true since we load settings on app init
+  hasLoadedSettings: false,
   error: null,
 
   // API Profile state
@@ -85,7 +87,7 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   modelsError: null,
   discoveredModels: new Map<string, ModelInfo[]>(),
 
-  setSettings: (settings) => set({ settings }),
+  setSettings: (settings) => set({ settings, hasLoadedSettings: true }),
 
   updateSettings: (updates) =>
     set((state) => ({
@@ -476,42 +478,53 @@ async function migrateOnboardingCompleted(settings: AppSettings): Promise<AppSet
 /**
  * Load settings from main process
  */
+let settingsLoadPromise: Promise<void> | null = null;
+
 export async function loadSettings(): Promise<void> {
+  if (settingsLoadPromise) {
+    return settingsLoadPromise;
+  }
+
   const store = useSettingsStore.getState();
   store.setLoading(true);
 
-  try {
-    const result = await window.electronAPI.getSettings();
-    if (result.success && result.data) {
-      // Apply migration for onboardingCompleted flag
-      // This is now async since it needs to read ~/.claude.json
-      const migratedSettings = await migrateOnboardingCompleted(result.data);
-      store.setSettings(migratedSettings);
+  settingsLoadPromise = (async () => {
+    try {
+      const result = await window.electronAPI.getSettings();
+      if (result.success && result.data) {
+        // Apply migration for onboardingCompleted flag
+        // This is now async since it needs to read ~/.claude.json
+        const migratedSettings = await migrateOnboardingCompleted(result.data);
+        store.setSettings(migratedSettings);
 
-      // If migration changed the settings, persist them
-      if (migratedSettings.onboardingCompleted !== result.data.onboardingCompleted) {
-        await window.electronAPI.saveSettings({
-          onboardingCompleted: migratedSettings.onboardingCompleted
-        });
+        // If migration changed the settings, persist them
+        if (migratedSettings.onboardingCompleted !== result.data.onboardingCompleted) {
+          await window.electronAPI.saveSettings({
+            onboardingCompleted: migratedSettings.onboardingCompleted
+          });
+        }
+
+        // Load provider accounts from the dedicated IPC handler
+        await store.loadProviderAccounts();
+
+        // Only mark settings as loaded on SUCCESS
+        // This ensures Sentry respects user's opt-out preference even if settings fail to load
+        // (If settings fail to load, Sentry's beforeSend drops all events until successful load)
+        markSettingsLoaded();
       }
-
-      // Load provider accounts from the dedicated IPC handler
-      await store.loadProviderAccounts();
-
-      // Only mark settings as loaded on SUCCESS
-      // This ensures Sentry respects user's opt-out preference even if settings fail to load
-      // (If settings fail to load, Sentry's beforeSend drops all events until successful load)
-      markSettingsLoaded();
+      // Note: If result.success is false, we intentionally do NOT mark settings as loaded.
+      // This means Sentry will drop events, which is the safe default for privacy.
+    } catch (error) {
+      store.setError(error instanceof Error ? error.message : 'Failed to load settings');
+      // Note: On exception, we intentionally do NOT mark settings as loaded.
+      // Sentry's beforeSend will drop events, respecting potential user opt-out.
+    } finally {
+      store.setLoading(false);
+      settingsLoadPromise = null;
     }
-    // Note: If result.success is false, we intentionally do NOT mark settings as loaded.
-    // This means Sentry will drop events, which is the safe default for privacy.
-  } catch (error) {
-    store.setError(error instanceof Error ? error.message : 'Failed to load settings');
-    // Note: On exception, we intentionally do NOT mark settings as loaded.
-    // Sentry's beforeSend will drop events, respecting potential user opt-out.
-  } finally {
-    store.setLoading(false);
-  }
+  })();
+
+  return settingsLoadPromise;
 }
 
 /**
@@ -585,6 +598,7 @@ async function refreshSettingsAndProviderAccounts(): Promise<void> {
           crossProviderPriorityOrder: settingsResult.data.crossProviderPriorityOrder,
         }
         : state.settings,
+      hasLoadedSettings: settingsResult.success && settingsResult.data ? true : state.hasLoadedSettings,
       providerAccounts: accountsResult.success && accountsResult.data
         ? accountsResult.data.accounts
         : state.providerAccounts,

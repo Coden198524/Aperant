@@ -63,9 +63,10 @@ export function TaskCreationWizard({
   onOpenChange
 }: TaskCreationWizardProps) {
   const { t, i18n } = useTranslation(['tasks', 'common']);
-  const { settings } = useSettingsStore();
+  const { settings, hasLoadedSettings, isLoading: isSettingsLoading } = useSettingsStore();
   const { provider: activeProvider } = useActiveProvider();
   const [isSyncingSettings, setIsSyncingSettings] = useState(false);
+  const settingsBusy = isSyncingSettings || isSettingsLoading;
 
   // Resolve per-provider settings (same chain as AgentProfileSettings)
   const providerConfig = activeProvider ? settings.providerAgentConfig?.[activeProvider] : undefined;
@@ -178,10 +179,13 @@ export function TaskCreationWizard({
     descriptionValueRef.current = description;
   }, [description]);
 
-  // Reload settings when the dialog opens so provider/model defaults reflect
-  // the latest on-disk configuration even if settings changed externally.
+  // Load settings on demand only if app startup has not already done it.
   useEffect(() => {
     if (!open) return;
+    if (hasLoadedSettings || isSettingsLoading) {
+      setIsSyncingSettings(false);
+      return;
+    }
 
     let cancelled = false;
 
@@ -201,11 +205,11 @@ export function TaskCreationWizard({
     return () => {
       cancelled = true;
     };
-  }, [open]);
+  }, [open, hasLoadedSettings, isSettingsLoading]);
 
   // Load draft when dialog opens
   useEffect(() => {
-    if (open && projectId && !isSyncingSettings) {
+    if (open && projectId && !settingsBusy) {
       const draft = loadDraft(projectId);
       if (draft && !isDraftEmpty(draft)) {
         setTitle(draft.title);
@@ -260,9 +264,9 @@ export function TaskCreationWizard({
         setShowGitOptions(false);
       }
     }
-  }, [open, projectId, projectPushNewBranches, resolvedProfileId, resolvedPhaseModels, resolvedPhaseThinking, profilePrimaryModel, profilePrimaryThinking, isSyncingSettings]);
+  }, [open, projectId, projectPushNewBranches, resolvedProfileId, resolvedPhaseModels, resolvedPhaseThinking, profilePrimaryModel, profilePrimaryThinking, settingsBusy]);
 
-  // Fetch branches when dialog opens - using structured branch data with type indicators
+  // Fetch branches only when the git branch controls are actually needed.
   useEffect(() => {
     let isMounted = true;
 
@@ -299,7 +303,7 @@ export function TaskCreationWizard({
       }
     };
 
-    if (open && projectPath) {
+    if (open && showGitOptions && useWorktree && projectPath) {
       fetchBranches();
       fetchProjectDefaultBranch();
     }
@@ -307,7 +311,7 @@ export function TaskCreationWizard({
     return () => {
       isMounted = false;
     };
-  }, [open, projectPath, projectId]);
+  }, [open, showGitOptions, useWorktree, projectPath, projectId]);
 
   /**
    * Get current form state as a draft
@@ -693,7 +697,7 @@ export function TaskCreationWizard({
       onOpenChange={handleClose}
       title={t('tasks:wizard.createTitle')}
       description={t('tasks:wizard.createDescription')}
-      disabled={isCreating || isSyncingSettings}
+      disabled={isCreating || settingsBusy}
       sidebar={
         projectPath && (
           <TaskFileExplorerDrawer
@@ -742,10 +746,10 @@ export function TaskCreationWizard({
           </div>
 
           <div className="flex items-center gap-3">
-            <Button variant="outline" onClick={handleClose} disabled={isCreating || isSyncingSettings}>
+            <Button variant="outline" onClick={handleClose} disabled={isCreating || settingsBusy}>
               {t('common:buttons.cancel')}
             </Button>
-            <Button onClick={handleCreate} disabled={isCreating || isSyncingSettings || !description.trim()}>
+            <Button onClick={handleCreate} disabled={isCreating || settingsBusy || !description.trim()}>
               {isCreating ? (
                 <>
                   <Loader2 className="mr-2 h-4 w-4 animate-spin" />
@@ -812,7 +816,7 @@ export function TaskCreationWizard({
           onRequireReviewChange={setRequireReviewBeforeCoding}
           developmentMode={developmentMode}
           onDevelopmentModeChange={handleDevelopmentModeChange}
-          disabled={isCreating || isSyncingSettings}
+          disabled={isCreating || settingsBusy}
           error={error}
           onError={setError}
           onFileReferenceDrop={handleFileReferenceDrop}
@@ -840,7 +844,7 @@ export function TaskCreationWizard({
             'flex items-center gap-2 text-sm text-muted-foreground hover:text-foreground transition-colors',
             'w-full justify-between py-2 px-3 rounded-md hover:bg-muted/50'
           )}
-          disabled={isCreating || isSyncingSettings}
+          disabled={isCreating || settingsBusy}
           aria-expanded={showGitOptions}
           aria-controls="git-options-section"
         >
@@ -878,7 +882,7 @@ export function TaskCreationWizard({
                 }
                 searchPlaceholder={t('tasks:wizard.gitOptions.searchBranches')}
                 emptyMessage={t('tasks:wizard.gitOptions.noBranchesFound')}
-                disabled={isCreating || isSyncingSettings || isLoadingBranches || !useWorktree}
+                disabled={isCreating || settingsBusy || isLoadingBranches || !useWorktree}
                 className="h-9"
               />
               <p className="text-xs text-muted-foreground">
@@ -904,7 +908,7 @@ export function TaskCreationWizard({
                   pushNewBranches ? 'border-primary/40 text-primary' : 'border-border text-muted-foreground'
                 )}
                 onClick={() => setPushNewBranches((current) => !current)}
-                disabled={isCreating || isSyncingSettings || !useWorktree}
+                disabled={isCreating || settingsBusy || !useWorktree}
               >
                 {pushNewBranches ? 'On' : 'Off'}
               </Button>
@@ -928,7 +932,7 @@ export function TaskCreationWizard({
                   useWorktree ? 'border-primary/40 text-primary' : 'border-border text-muted-foreground'
                 )}
                 onClick={() => setUseWorktree((current) => !current)}
-                disabled={isCreating || isSyncingSettings}
+                disabled={isCreating || settingsBusy}
               >
                 {useWorktree ? 'On' : 'Off'}
               </Button>
