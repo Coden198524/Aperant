@@ -1,6 +1,6 @@
-import { useState, useCallback, useMemo } from 'react';
-import type { ReactNode } from 'react';
-import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2, ClipboardCheck, TerminalSquare, Hash } from 'lucide-react';
+import { useState, useCallback, useMemo, useEffect, useRef } from 'react';
+import type { ReactNode, PointerEvent as ReactPointerEvent } from 'react';
+import { CheckCircle2, Clock, XCircle, AlertCircle, ListChecks, FileCode, ChevronRight, ChevronsUpDown, Loader2, Trash2, ClipboardCheck, Hash } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { Badge } from '../ui/badge';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
@@ -10,9 +10,9 @@ import { deleteSubtask } from '../../stores/task-store';
 import type { Task } from '../../../shared/types';
 import {
   TaskRuntimeLogs,
-  countTaskRuntimeLogEntriesForScope,
   isWorkPackageSubtask,
   shouldSplitConcurrentWorkPackageLogs,
+  type TaskRuntimeLogScope,
   useTaskModelLogs,
 } from './TaskRuntimeLogs';
 
@@ -34,6 +34,55 @@ interface SummaryVisualData {
 }
 
 type TranslationFn = ReturnType<typeof useTranslation>['t'];
+
+interface TaskSubtasksLayoutPreferences {
+  subtasksWidthPercent: number;
+  graphHeightPercent: number;
+}
+
+type TaskSubtasksResizeTarget = 'subtasks' | 'graph' | null;
+
+const TASK_SUBTASKS_LAYOUT_STORAGE_KEY = 'task-subtasks-layout-preferences';
+const DEFAULT_SUBTASKS_WIDTH_PERCENT = 46;
+const MIN_SUBTASKS_WIDTH_PERCENT = 28;
+const MAX_SUBTASKS_WIDTH_PERCENT = 70;
+const DEFAULT_GRAPH_HEIGHT_PERCENT = 42;
+const MIN_GRAPH_HEIGHT_PERCENT = 22;
+const MAX_GRAPH_HEIGHT_PERCENT = 72;
+
+function clampLayoutPercent(value: number, min: number, max: number): number {
+  return Math.max(min, Math.min(max, value));
+}
+
+function readTaskSubtasksLayoutPreferences(): TaskSubtasksLayoutPreferences {
+  const fallback: TaskSubtasksLayoutPreferences = {
+    subtasksWidthPercent: DEFAULT_SUBTASKS_WIDTH_PERCENT,
+    graphHeightPercent: DEFAULT_GRAPH_HEIGHT_PERCENT,
+  };
+
+  if (typeof window === 'undefined') {
+    return fallback;
+  }
+
+  try {
+    const raw = window.localStorage.getItem(TASK_SUBTASKS_LAYOUT_STORAGE_KEY);
+    if (!raw) {
+      return fallback;
+    }
+
+    const parsed = JSON.parse(raw) as Partial<TaskSubtasksLayoutPreferences>;
+    return {
+      subtasksWidthPercent: typeof parsed.subtasksWidthPercent === 'number'
+        ? clampLayoutPercent(parsed.subtasksWidthPercent, MIN_SUBTASKS_WIDTH_PERCENT, MAX_SUBTASKS_WIDTH_PERCENT)
+        : fallback.subtasksWidthPercent,
+      graphHeightPercent: typeof parsed.graphHeightPercent === 'number'
+        ? clampLayoutPercent(parsed.graphHeightPercent, MIN_GRAPH_HEIGHT_PERCENT, MAX_GRAPH_HEIGHT_PERCENT)
+        : fallback.graphHeightPercent,
+    };
+  } catch {
+    return fallback;
+  }
+}
 
 function getChineseSummaryLabelKey(label: string): CompletionSummaryRowKey | null {
   switch (label) {
@@ -502,6 +551,42 @@ function getSubtaskStatusIcon(status: string, isInProgress: boolean) {
   }
 }
 
+function PaneResizeHandle({
+  orientation,
+  isDragging,
+  label,
+  onPointerDown,
+}: {
+  orientation: 'vertical' | 'horizontal';
+  isDragging: boolean;
+  label: string;
+  onPointerDown: (event: ReactPointerEvent<HTMLDivElement>) => void;
+}) {
+  const isVertical = orientation === 'vertical';
+
+  return (
+    <div
+      role="separator"
+      aria-orientation={isVertical ? 'vertical' : 'horizontal'}
+      aria-label={label}
+      onPointerDown={onPointerDown}
+      className={cn(
+        'group relative z-20 shrink-0 touch-none bg-border/40 transition-colors hover:bg-primary/20',
+        isVertical ? 'flex w-2 cursor-col-resize items-center justify-center' : 'flex h-2 cursor-row-resize items-center justify-center',
+        isDragging && 'bg-primary/30'
+      )}
+    >
+      <div
+        className={cn(
+          'rounded-full bg-muted-foreground/35 transition-colors group-hover:bg-primary/70',
+          isVertical ? 'h-10 w-0.5' : 'h-0.5 w-10',
+          isDragging && 'bg-primary'
+        )}
+      />
+    </div>
+  );
+}
+
 interface ExecutionGraphNode {
   id: string;
   title: string;
@@ -516,6 +601,12 @@ interface ExecutionGraphEdge {
   to: string;
 }
 
+interface ExecutionGraphEdgeTone {
+  id: string;
+  strokeClass: string;
+  markerClass: string;
+}
+
 interface ExecutionGraphAnalysis {
   nodes: ExecutionGraphNode[];
   edges: ExecutionGraphEdge[];
@@ -524,6 +615,59 @@ interface ExecutionGraphAnalysis {
   savedUnits: number;
   maxParallel: number;
   hasCycle: boolean;
+}
+
+const EXECUTION_GRAPH_EDGE_TONES: ExecutionGraphEdgeTone[] = [
+  { id: 'sky', strokeClass: 'stroke-sky-500/80', markerClass: 'fill-sky-500/80' },
+  { id: 'emerald', strokeClass: 'stroke-emerald-500/80', markerClass: 'fill-emerald-500/80' },
+  { id: 'amber', strokeClass: 'stroke-amber-500/85', markerClass: 'fill-amber-500/85' },
+  { id: 'cyan', strokeClass: 'stroke-cyan-500/80', markerClass: 'fill-cyan-500/80' },
+  { id: 'rose', strokeClass: 'stroke-rose-500/75', markerClass: 'fill-rose-500/75' },
+];
+const EXECUTION_GRAPH_DEFAULT_EDGE_TONE: ExecutionGraphEdgeTone = {
+  id: 'default',
+  strokeClass: 'stroke-border',
+  markerClass: 'fill-border',
+};
+
+function hashExecutionGraphId(value: string): number {
+  let hash = 0;
+  for (let index = 0; index < value.length; index += 1) {
+    hash = (hash * 31 + value.charCodeAt(index)) >>> 0;
+  }
+  return hash;
+}
+
+function getExecutionGraphEdgeTone(edge: ExecutionGraphEdge): ExecutionGraphEdgeTone {
+  return EXECUTION_GRAPH_EDGE_TONES[hashExecutionGraphId(edge.from) % EXECUTION_GRAPH_EDGE_TONES.length];
+}
+
+function isExecutionGraphEdgeSelected(edge: ExecutionGraphEdge, selectedNodeId: string | null): boolean {
+  return selectedNodeId === edge.from || selectedNodeId === edge.to;
+}
+
+function getExecutionGraphEdgePath({
+  x1,
+  y1,
+  x2,
+  y2,
+  edgeIndex,
+}: {
+  x1: number;
+  y1: number;
+  x2: number;
+  y2: number;
+  edgeIndex: number;
+}): string {
+  const endX = x2 - 8;
+  if (Math.abs(y1 - y2) < 1) {
+    return `M ${x1} ${y1} H ${endX}`;
+  }
+
+  const baseMidX = x1 + Math.max(16, (x2 - x1) / 2);
+  const laneOffset = ((edgeIndex % 5) - 2) * 3;
+  const midX = Math.max(x1 + 10, Math.min(endX - 6, baseMidX + laneOffset));
+  return `M ${x1} ${y1} H ${midX} V ${y2} H ${endX}`;
 }
 
 function getSubtaskDependencies(subtask: Task['subtasks'][number]): string[] {
@@ -643,7 +787,19 @@ function getExecutionGraphNodeClass(status: string): string {
   }
 }
 
-function ExecutionGraphPanel({ task }: { task: Task }) {
+function ExecutionGraphPanel({
+  task,
+  selectedNodeId,
+  onSelectNode,
+  onClearSelection,
+  heightPercent,
+}: {
+  task: Task;
+  selectedNodeId: string | null;
+  onSelectNode: (nodeId: string) => void;
+  onClearSelection: () => void;
+  heightPercent: number;
+}) {
   const { t } = useTranslation(['tasks']);
   const graph = useMemo(() => analyzeSubtaskExecutionGraph(task.subtasks), [task.subtasks]);
 
@@ -663,11 +819,16 @@ function ExecutionGraphPanel({ task }: { task: Task }) {
   const speedup = graph.parallelUnits > 0
     ? (graph.sequentialUnits / graph.parallelUnits).toFixed(1)
     : '1.0';
+  const graphEdges = [...graph.edges].sort((left, right) =>
+    Number(isExecutionGraphEdgeSelected(left, selectedNodeId)) -
+    Number(isExecutionGraphEdgeSelected(right, selectedNodeId))
+  );
 
   return (
     <section
-      className="flex max-h-[42%] min-h-[14rem] shrink-0 flex-col border-b border-border bg-muted/10"
+      className="flex min-h-[10rem] shrink-0 flex-col border-b border-border bg-muted/10"
       data-testid="subtask-execution-graph"
+      style={{ height: `${heightPercent}%` }}
     >
       <div className="flex shrink-0 items-center justify-between gap-3 border-b border-border px-4 py-3">
         <div className="flex min-w-0 items-center gap-2">
@@ -680,13 +841,13 @@ function ExecutionGraphPanel({ task }: { task: Task }) {
           <span className="rounded-md border border-border bg-background px-1.5 py-0.5 tabular-nums">
             {t('tasks:subtasks.sequentialTime', {
               count: graph.sequentialUnits,
-              defaultValue: 'Sequential {{count}}t',
+              defaultValue: 'Sequential {{count}} rounds',
             })}
           </span>
           <span className="rounded-md border border-border bg-background px-1.5 py-0.5 tabular-nums">
             {t('tasks:subtasks.parallelTime', {
               count: graph.parallelUnits,
-              defaultValue: 'Parallel {{count}}t',
+              defaultValue: 'Parallel {{count}} rounds',
             })}
           </span>
         </div>
@@ -696,7 +857,7 @@ function ExecutionGraphPanel({ task }: { task: Task }) {
         <span>
           {t('tasks:subtasks.savedTime', {
             count: graph.savedUnits,
-            defaultValue: 'Saves {{count}}t',
+            defaultValue: 'Saves {{count}} rounds',
           })}
         </span>
         <span className="text-muted-foreground/40">/</span>
@@ -721,7 +882,12 @@ function ExecutionGraphPanel({ task }: { task: Task }) {
       </div>
 
       <div className="min-h-0 flex-1 overflow-auto px-3 pb-3 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
-        <div className="relative" style={{ width, height }}>
+        <div
+          className="relative rounded-md border border-border/60 bg-background/65"
+          data-testid="execution-graph-canvas"
+          onClick={onClearSelection}
+          style={{ width, height }}
+        >
           <svg
             className="pointer-events-none absolute inset-0"
             width={width}
@@ -729,69 +895,97 @@ function ExecutionGraphPanel({ task }: { task: Task }) {
             aria-hidden="true"
           >
             <defs>
-              <marker
-                id="subtask-graph-arrow"
-                markerWidth="6"
-                markerHeight="6"
-                refX="5"
-                refY="3"
-                orient="auto"
-                markerUnits="strokeWidth"
-              >
-                <path d="M0,0 L6,3 L0,6 Z" className="fill-border" />
-              </marker>
+              {[EXECUTION_GRAPH_DEFAULT_EDGE_TONE, ...EXECUTION_GRAPH_EDGE_TONES].map(tone => (
+                <marker
+                  key={tone.id}
+                  id={`subtask-graph-arrow-${tone.id}`}
+                  markerWidth="7"
+                  markerHeight="7"
+                  refX="6"
+                  refY="3.5"
+                  orient="auto"
+                  markerUnits="strokeWidth"
+                >
+                  <path d="M0,0 L7,3.5 L0,7 Z" className={tone.markerClass} />
+                </marker>
+              ))}
             </defs>
-            {graph.edges.map(edge => {
+            {graphEdges.map((edge, edgeIndex) => {
               const from = nodeById.get(edge.from);
               const to = nodeById.get(edge.to);
               if (!from || !to) {
                 return null;
               }
+              const tone = getExecutionGraphEdgeTone(edge);
+              const isSelected = isExecutionGraphEdgeSelected(edge, selectedNodeId);
               const x1 = paddingX + from.level * columnGap + nodeWidth;
               const y1 = paddingY + from.row * rowGap + nodeHeight / 2;
               const x2 = paddingX + to.level * columnGap;
               const y2 = paddingY + to.row * rowGap + nodeHeight / 2;
-              const midX = x1 + Math.max(20, (x2 - x1) / 2);
+              const visibleTone = isSelected ? tone : EXECUTION_GRAPH_DEFAULT_EDGE_TONE;
               return (
                 <path
                   key={`${edge.from}->${edge.to}`}
-                  d={`M ${x1} ${y1} C ${midX} ${y1}, ${midX} ${y2}, ${x2 - 6} ${y2}`}
-                  className="fill-none stroke-border"
-                  strokeWidth="1.4"
-                  markerEnd="url(#subtask-graph-arrow)"
+                  d={getExecutionGraphEdgePath({ x1, y1, x2, y2, edgeIndex })}
+                  className={cn(
+                    'fill-none transition-opacity',
+                    visibleTone.strokeClass,
+                    selectedNodeId && !isSelected && 'opacity-70',
+                    isSelected && 'opacity-100 drop-shadow-sm'
+                  )}
+                  strokeWidth={isSelected ? 2.3 : 1.5}
+                  strokeLinecap="round"
+                  strokeLinejoin="round"
+                  markerEnd={`url(#subtask-graph-arrow-${visibleTone.id})`}
                 />
               );
             })}
           </svg>
 
-          {graph.nodes.map(node => (
-            <Tooltip key={node.id}>
-              <TooltipTrigger asChild>
-                <div
-                  className={cn(
-                    'absolute flex h-[42px] w-[118px] flex-col justify-center rounded-md border px-2 shadow-sm',
-                    getExecutionGraphNodeClass(node.status)
-                  )}
-                  style={{
-                    left: paddingX + node.level * columnGap,
-                    top: paddingY + node.row * rowGap,
-                  }}
-                >
-                  <div className="truncate text-[11px] font-semibold tabular-nums">{node.id}</div>
-                  <div className="truncate text-[10px] opacity-80">
-                    {t('tasks:subtasks.graphTimeSlot', {
-                      count: node.level + 1,
-                      defaultValue: 'T{{count}}',
+          {graph.nodes.map(node => {
+            const isSelected = node.id === selectedNodeId;
+
+            return (
+              <Tooltip key={node.id}>
+                <TooltipTrigger asChild>
+                  <button
+                    type="button"
+                    aria-pressed={isSelected}
+                    aria-label={t('tasks:subtasks.graphNodeAriaLabel', {
+                      id: node.id,
+                      title: node.title,
+                      defaultValue: 'Show model output for {{id}} {{title}}',
                     })}
-                  </div>
-                </div>
-              </TooltipTrigger>
-              <TooltipContent side="top" className="max-w-xs">
-                <div className="text-xs font-medium">{node.id}</div>
-                <div className="text-xs text-muted-foreground">{node.title}</div>
-              </TooltipContent>
-            </Tooltip>
-          ))}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      onSelectNode(node.id);
+                    }}
+                    className={cn(
+                      'absolute flex h-[42px] w-[118px] flex-col justify-center rounded-md border px-2 text-left shadow-sm transition-all hover:shadow',
+                      getExecutionGraphNodeClass(node.status),
+                      isSelected && 'border-primary/70 bg-primary/10 ring-2 ring-primary/35'
+                    )}
+                    style={{
+                      left: paddingX + node.level * columnGap,
+                      top: paddingY + node.row * rowGap,
+                    }}
+                  >
+                    <div className="truncate text-[11px] font-semibold tabular-nums">{node.id}</div>
+                    <div className="truncate text-[10px] opacity-80">
+                      {t('tasks:subtasks.graphTimeSlot', {
+                        count: node.level + 1,
+                        defaultValue: 'Round {{count}}',
+                      })}
+                    </div>
+                  </button>
+                </TooltipTrigger>
+                <TooltipContent side="top" className="max-w-xs">
+                  <div className="text-xs font-medium">{node.id}</div>
+                  <div className="text-xs text-muted-foreground">{node.title}</div>
+                </TooltipContent>
+              </Tooltip>
+            );
+          })}
         </div>
       </div>
     </section>
@@ -801,12 +995,43 @@ function ExecutionGraphPanel({ task }: { task: Task }) {
 export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const { t } = useTranslation(['tasks']);
   const progress = calculateProgress(task.subtasks);
+  const layoutContainerRef = useRef<HTMLDivElement | null>(null);
+  const rightPaneRef = useRef<HTMLDivElement | null>(null);
   const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+  const [selectedGraphNodeId, setSelectedGraphNodeId] = useState<string | null>(null);
+  const [layoutPreferences, setLayoutPreferences] = useState<TaskSubtasksLayoutPreferences>(readTaskSubtasksLayoutPreferences);
+  const [activeResizeTarget, setActiveResizeTarget] = useState<TaskSubtasksResizeTarget>(null);
   const [deletingSubtaskId, setDeletingSubtaskId] = useState<string | null>(null);
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const isTaskRunning = task.status === 'in_progress' || task.executionProgress?.phase === 'coding';
   const { modelLogs } = useTaskModelLogs(task);
   const splitConcurrentWorkPackageLogs = shouldSplitConcurrentWorkPackageLogs(task);
+  const selectedGraphSubtask = useMemo(
+    () => task.subtasks.find(subtask => subtask.id === selectedGraphNodeId) ?? null,
+    [selectedGraphNodeId, task.subtasks]
+  );
+  const selectedWorkPackageSubtask = splitConcurrentWorkPackageLogs &&
+    selectedGraphSubtask &&
+    isWorkPackageSubtask(selectedGraphSubtask)
+    ? selectedGraphSubtask
+    : null;
+  const runtimeLogScope = useMemo<TaskRuntimeLogScope>(() => {
+    if (selectedWorkPackageSubtask) {
+      return { type: 'work-item', workItemId: selectedWorkPackageSubtask.id };
+    }
+
+    if (splitConcurrentWorkPackageLogs) {
+      return { type: 'none' };
+    }
+
+    return { type: 'global' };
+  }, [selectedWorkPackageSubtask, splitConcurrentWorkPackageLogs]);
+  const runtimeLogTitle = selectedWorkPackageSubtask
+    ? t('tasks:subtasks.selectedWorkPackageModelOutput', {
+        title: selectedWorkPackageSubtask.title || selectedWorkPackageSubtask.id,
+        defaultValue: 'Model output · {{title}}',
+      })
+    : undefined;
   const activeSubtaskIndex = resolveActiveSubtaskIndex({
     subtasks: task.subtasks,
     currentSubtask: task.executionProgress?.currentSubtask,
@@ -834,6 +1059,106 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
       return new Set(task.subtasks.map(s => s.id));
     });
   }, [task.subtasks]);
+
+  const handleSelectGraphNode = useCallback((nodeId: string) => {
+    setSelectedGraphNodeId(current => current === nodeId ? null : nodeId);
+  }, []);
+
+  const handleClearGraphSelection = useCallback(() => {
+    setSelectedGraphNodeId(null);
+  }, []);
+
+  const handleResizeStart = useCallback((target: Exclude<TaskSubtasksResizeTarget, null>) => (
+    event: ReactPointerEvent<HTMLDivElement>
+  ) => {
+    event.preventDefault();
+    event.stopPropagation();
+    setActiveResizeTarget(target);
+  }, []);
+
+  useEffect(() => {
+    if (activeResizeTarget !== null) {
+      return;
+    }
+
+    try {
+      window.localStorage.setItem(TASK_SUBTASKS_LAYOUT_STORAGE_KEY, JSON.stringify(layoutPreferences));
+    } catch {
+      // Ignore storage failures; resizing should still work for the current session.
+    }
+  }, [activeResizeTarget, layoutPreferences]);
+
+  useEffect(() => {
+    if (!activeResizeTarget) {
+      return;
+    }
+
+    const previousCursor = document.body.style.cursor;
+    const previousUserSelect = document.body.style.userSelect;
+    document.body.style.cursor = activeResizeTarget === 'subtasks' ? 'col-resize' : 'row-resize';
+    document.body.style.userSelect = 'none';
+
+    const handlePointerMove = (event: PointerEvent) => {
+      if (activeResizeTarget === 'subtasks') {
+        const container = layoutContainerRef.current;
+        if (!container) {
+          return;
+        }
+
+        const rect = container.getBoundingClientRect();
+        if (rect.width <= 0) {
+          return;
+        }
+
+        const nextWidth = ((event.clientX - rect.left) / rect.width) * 100;
+        setLayoutPreferences(current => ({
+          ...current,
+          subtasksWidthPercent: clampLayoutPercent(
+            nextWidth,
+            MIN_SUBTASKS_WIDTH_PERCENT,
+            MAX_SUBTASKS_WIDTH_PERCENT
+          ),
+        }));
+        return;
+      }
+
+      const rightPane = rightPaneRef.current;
+      if (!rightPane) {
+        return;
+      }
+
+      const rect = rightPane.getBoundingClientRect();
+      if (rect.height <= 0) {
+        return;
+      }
+
+      const nextHeight = ((event.clientY - rect.top) / rect.height) * 100;
+      setLayoutPreferences(current => ({
+        ...current,
+        graphHeightPercent: clampLayoutPercent(
+          nextHeight,
+          MIN_GRAPH_HEIGHT_PERCENT,
+          MAX_GRAPH_HEIGHT_PERCENT
+        ),
+      }));
+    };
+
+    const handlePointerEnd = () => {
+      setActiveResizeTarget(null);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerEnd);
+    window.addEventListener('pointercancel', handlePointerEnd);
+
+    return () => {
+      document.body.style.cursor = previousCursor;
+      document.body.style.userSelect = previousUserSelect;
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerEnd);
+      window.removeEventListener('pointercancel', handlePointerEnd);
+    };
+  }, [activeResizeTarget]);
 
   const handleDeleteSubtask = useCallback(async (subtaskId: string, title: string) => {
     if (isTaskRunning || deletingSubtaskId) return;
@@ -864,8 +1189,11 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
   const allExpanded = expandedIds.size === task.subtasks.length && task.subtasks.length > 0;
 
   return (
-    <div className="flex h-full min-h-0 w-full overflow-hidden">
-      <div className="w-[46%] min-w-[560px] shrink-0 overflow-y-auto overflow-x-hidden p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent">
+    <div ref={layoutContainerRef} className="flex h-full min-h-0 w-full overflow-hidden">
+      <div
+        className="min-w-[20rem] shrink-0 overflow-y-auto overflow-x-hidden p-4 scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent"
+        style={{ flexBasis: `${layoutPreferences.subtasksWidthPercent}%` }}
+      >
         <div className="space-y-3">
           {task.subtasks.length === 0 ? (
             <div className="text-center py-12">
@@ -913,18 +1241,10 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
               subtask.status !== 'completed' &&
               subtask.status !== 'failed';
             const isInProgress = subtask.status === 'in_progress' || isDerivedInProgress;
-            const workPackageLogScope = { type: 'work-item' as const, workItemId: subtask.id };
-            const workPackageLogCount = splitConcurrentWorkPackageLogs && isWorkPackageSubtask(subtask)
-              ? countTaskRuntimeLogEntriesForScope(modelLogs, task, workPackageLogScope)
-              : 0;
-            const shouldShowWorkPackageModelLogs = splitConcurrentWorkPackageLogs &&
-              isWorkPackageSubtask(subtask) &&
-              (workPackageLogCount > 0 || isInProgress);
             const hasDetails = (subtask.description && subtask.description !== subtask.title) ||
               completionSummary ||
               (subtask.files && subtask.files.length > 0) ||
-              subtask.verification ||
-              shouldShowWorkPackageModelLogs;
+              subtask.verification;
 
             return (
               <div
@@ -1041,17 +1361,6 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
                         )}
                       </div>
                     )}
-                    {shouldShowWorkPackageModelLogs && (
-                      <div className="mt-3">
-                        <TaskRuntimeLogs
-                          task={task}
-                          modelLogs={modelLogs}
-                          scope={workPackageLogScope}
-                          compact
-                          title={t('tasks:subtasks.modelOutput', { defaultValue: 'Model output' })}
-                        />
-                      </div>
-                    )}
                   </div>
                 )}
               </div>
@@ -1061,12 +1370,31 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
           )}
         </div>
       </div>
-      <div className="flex min-h-0 min-w-[460px] flex-1 flex-col border-l border-border bg-muted/10">
-        <ExecutionGraphPanel task={task} />
+      <PaneResizeHandle
+        orientation="vertical"
+        isDragging={activeResizeTarget === 'subtasks'}
+        label={t('tasks:subtasks.resizeSubtasksPane', { defaultValue: 'Resize subtasks pane' })}
+        onPointerDown={handleResizeStart('subtasks')}
+      />
+      <div ref={rightPaneRef} className="flex min-h-0 min-w-[28rem] flex-1 flex-col bg-muted/10">
+        <ExecutionGraphPanel
+          task={task}
+          selectedNodeId={selectedGraphNodeId}
+          onSelectNode={handleSelectGraphNode}
+          onClearSelection={handleClearGraphSelection}
+          heightPercent={layoutPreferences.graphHeightPercent}
+        />
+        <PaneResizeHandle
+          orientation="horizontal"
+          isDragging={activeResizeTarget === 'graph'}
+          label={t('tasks:subtasks.resizeGraphPane', { defaultValue: 'Resize execution graph pane' })}
+          onPointerDown={handleResizeStart('graph')}
+        />
         <TaskRuntimeLogs
           task={task}
           modelLogs={modelLogs}
-          scope={{ type: 'global' }}
+          scope={runtimeLogScope}
+          title={runtimeLogTitle}
           className="min-h-0 flex-1 border-l-0"
         />
       </div>

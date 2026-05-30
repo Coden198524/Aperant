@@ -29,6 +29,7 @@ interface TaskRuntimeLogsProps {
 type ModelOutputEntryType = 'text' | 'tool_start' | 'tool_end' | 'error';
 
 export type TaskRuntimeLogScope =
+  | { type: 'none' }
   | { type: 'global' }
   | { type: 'work-item'; workItemId: string };
 
@@ -105,6 +106,10 @@ function shouldIncludeModelEntryInScope(
   task: Task,
   scope: TaskRuntimeLogScope,
 ): boolean {
+  if (scope.type === 'none') {
+    return false;
+  }
+
   if (scope.type === 'work-item') {
     return entry.subtask_id === scope.workItemId;
   }
@@ -824,7 +829,7 @@ export function TaskRuntimeLogs({
     state.tasks.find(item => item.id === task.id || item.specId === task.specId)
   );
   const runtimeSourceTask = liveTask ?? task;
-  const scopeKey = scope.type === 'work-item' ? `work-item:${scope.workItemId}` : 'global';
+  const scopeKey = scope.type === 'work-item' ? `work-item:${scope.workItemId}` : scope.type;
   const fullModelOutputEntries = useMemo(() => {
     if (!modelLogs) return [];
 
@@ -853,7 +858,7 @@ export function TaskRuntimeLogs({
     : null;
   const isScopedModelActive = scope.type === 'work-item'
     ? scopedSubtask?.status === 'in_progress' || runtimeSourceTask.executionProgress?.currentSubtask === scope.workItemId
-    : true;
+    : scope.type === 'global';
   const isTaskModelActive = (
     runtimeSourceTask.status === 'in_progress' ||
     runtimeSourceTask.status === 'ai_review'

@@ -181,8 +181,14 @@ function createConcurrentWorkPackageLogs(): TaskLogs {
   };
 }
 
+function getExecutionGraphEdgePaths(container: HTMLElement): SVGPathElement[] {
+  return Array.from(container.querySelectorAll('svg path'))
+    .filter(path => (path.getAttribute('d') ?? '').startsWith('M ')) as SVGPathElement[];
+}
+
 describe('TaskSubtasks', () => {
   beforeEach(() => {
+    window.localStorage.removeItem('task-subtasks-layout-preferences');
     window.electronAPI = {
       ...window.electronAPI,
       getTaskLogs: vi.fn(async () => ({ success: true, data: null })),
@@ -280,7 +286,7 @@ describe('TaskSubtasks', () => {
   });
 
   it('renders the execution graph beside the subtask list', () => {
-    render(
+    const { container } = render(
       <TooltipProvider>
         <TaskSubtasks task={createFanOutWorkPackageTask()} />
       </TooltipProvider>
@@ -288,14 +294,41 @@ describe('TaskSubtasks', () => {
 
     expect(screen.getByTestId('subtask-execution-graph')).toBeInTheDocument();
     expect(screen.getByText('Execution graph')).toBeInTheDocument();
-    expect(screen.getByText('Sequential 5t')).toBeInTheDocument();
-    expect(screen.getByText('Parallel 3t')).toBeInTheDocument();
-    expect(screen.getByText('Saves 2t')).toBeInTheDocument();
+    expect(screen.getByText('Sequential 5 rounds')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 3 rounds')).toBeInTheDocument();
+    expect(screen.getByText('Saves 2 rounds')).toBeInTheDocument();
     expect(screen.getByText('Max parallel 3')).toBeInTheDocument();
     expect(screen.getByText('wp-5')).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: /Resize subtasks pane/i })).toBeInTheDocument();
+    expect(screen.getByRole('separator', { name: /Resize execution graph pane/i })).toBeInTheDocument();
+
+    const edgePaths = getExecutionGraphEdgePaths(container).map(path => path.getAttribute('d') ?? '');
+    expect(edgePaths.length).toBeGreaterThan(0);
+    expect(edgePaths.every(path => path.includes(' H ') && !path.includes(' C '))).toBe(true);
   });
 
-  it('shows concurrent work package model output inside the expanded package only', async () => {
+  it('keeps execution graph edges gray until a connected node is selected', () => {
+    const { container } = render(
+      <TooltipProvider>
+        <TaskSubtasks task={createFanOutWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    const initialEdges = getExecutionGraphEdgePaths(container);
+    expect(initialEdges.length).toBeGreaterThan(0);
+    expect(initialEdges.every(path => path.getAttribute('class')?.includes('stroke-border'))).toBe(true);
+    expect(initialEdges.every(path => path.getAttribute('marker-end') === 'url(#subtask-graph-arrow-default)')).toBe(true);
+
+    fireEvent.click(screen.getByRole('button', { name: /Show model output for wp-1/i }));
+
+    const selectedEdges = getExecutionGraphEdgePaths(container);
+    expect(selectedEdges.some(path => !(path.getAttribute('class') ?? '').includes('stroke-border'))).toBe(true);
+    expect(selectedEdges.some(path => path.getAttribute('class')?.includes('stroke-border'))).toBe(true);
+    expect(selectedEdges.some(path => path.getAttribute('marker-end') !== 'url(#subtask-graph-arrow-default)')).toBe(true);
+    expect(selectedEdges.some(path => path.getAttribute('marker-end') === 'url(#subtask-graph-arrow-default)')).toBe(true);
+  });
+
+  it('shows selected work package model output in the shared model log panel', async () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({
       success: true,
       data: createConcurrentWorkPackageLogs(),
@@ -308,14 +341,25 @@ describe('TaskSubtasks', () => {
     );
 
     await waitFor(() => {
-      expect(screen.getByText('Global coordinator output.')).toBeInTheDocument();
+      expect(window.electronAPI.getTaskLogs).toHaveBeenCalled();
     });
+    expect(screen.getByText('No model output yet')).toBeInTheDocument();
+    expect(screen.queryByText('Global coordinator output.')).not.toBeInTheDocument();
     expect(screen.queryByText('Board package model output.')).not.toBeInTheDocument();
     expect(screen.queryByText('Scoring package model output.')).not.toBeInTheDocument();
 
     fireEvent.click(screen.getByText('Build board package'));
+    expect(screen.queryByText('Board package model output.')).not.toBeInTheDocument();
 
+    fireEvent.click(screen.getByRole('button', { name: /Show model output for wp-1/i }));
     expect(await screen.findByText('Board package model output.')).toBeInTheDocument();
+    expect(screen.getByText('Model output · Build board package')).toBeInTheDocument();
+    expect(screen.queryByText('Global coordinator output.')).not.toBeInTheDocument();
     expect(screen.queryByText('Scoring package model output.')).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByTestId('execution-graph-canvas'));
+
+    expect(screen.queryByText('Board package model output.')).not.toBeInTheDocument();
+    expect(screen.getByText('No model output yet')).toBeInTheDocument();
   });
 });

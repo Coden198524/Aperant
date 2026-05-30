@@ -453,7 +453,19 @@
     "summaryChanged": "完成内容",
     "summaryVerified": "验证结果",
     "summaryReviewNotes": "审核要点",
-    "summaryOther": "其它说明"
+    "summaryOther": "其它说明",
+    "executionGraph": "执行图",
+    "sequentialTime": "顺序 {{count}} 轮",
+    "parallelTime": "并发 {{count}} 轮",
+    "savedTime": "节省 {{count}} 轮",
+    "maxParallel": "最大并发 {{count}}",
+    "speedup": "加速 {{value}}x",
+    "dependencyCycle": "依赖循环",
+    "graphTimeSlot": "第 {{count}} 轮",
+    "graphNodeAriaLabel": "显示 {{id}} {{title}} 的大模型输出",
+    "selectedWorkPackageModelOutput": "大模型输出 · {{title}}",
+    "resizeSubtasksPane": "调整子任务区域宽度",
+    "resizeGraphPane": "调整执行图区域高度"
   },
   "bulkPR": {
     "selectAllInColumn": "选择当前列中的所有任务",

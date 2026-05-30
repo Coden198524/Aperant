@@ -416,7 +416,19 @@
     "summaryChanged": "What changed",
     "summaryVerified": "Verification",
     "summaryReviewNotes": "Review notes",
-    "summaryOther": "Other"
+    "summaryOther": "Other",
+    "executionGraph": "Execution graph",
+    "sequentialTime": "Sequential {{count}} rounds",
+    "parallelTime": "Parallel {{count}} rounds",
+    "savedTime": "Saves {{count}} rounds",
+    "maxParallel": "Max parallel {{count}}",
+    "speedup": "{{value}}x faster",
+    "dependencyCycle": "Dependency cycle",
+    "graphTimeSlot": "Round {{count}}",
+    "graphNodeAriaLabel": "Show model output for {{id}} {{title}}",
+    "selectedWorkPackageModelOutput": "Model output · {{title}}",
+    "resizeSubtasksPane": "Resize subtasks pane",
+    "resizeGraphPane": "Resize execution graph pane"
   },
   "logs": {
     "runtimeLabel": "Runtime",
