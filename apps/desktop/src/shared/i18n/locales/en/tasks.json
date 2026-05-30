@@ -251,10 +251,6 @@
       "title": "Current Workspace",
       "description": "By default, this task edits the currently checked out git workspace. Enable an isolated workspace in Git Options only when you want a separate worktree branch."
     },
-    "batchExecution": {
-      "label": "Enable batch execution",
-      "description": "Runs compatible subtasks in parallel agent sessions. Turn off to execute one subtask at a time."
-    },
     "gitOptions": {
       "title": "Git Options (optional)",
       "baseBranchLabel": "Base Branch (optional)",

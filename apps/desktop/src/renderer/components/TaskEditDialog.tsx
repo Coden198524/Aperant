@@ -275,7 +275,6 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     metadataUpdates.developmentMode = developmentMode;
     metadataUpdates.workflowMode = workflowModeForDevelopmentMode(developmentMode);
     metadataUpdates.sourceType = developmentMode === 'spec' ? 'openspec' : 'manual';
-    metadataUpdates.enableBatchExecution = developmentMode === 'fast' ? false : task.metadata?.enableBatchExecution === true;
     metadataUpdates.openSpecGenerationMode = developmentMode === 'spec' ? 'deferred' : undefined;
     metadataUpdates.upstreamSpecSystem = developmentMode === 'spec' ? 'openspec' : undefined;
     metadataUpdates.downstreamExecutionSystem = developmentMode === 'spec' ? 'autocode' : undefined;

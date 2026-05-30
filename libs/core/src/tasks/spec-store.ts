@@ -14,6 +14,10 @@ import {
   saveAutocodeTaskRequirementsSync,
   type AutocodeTaskRequirements,
 } from './requirements-store.js';
+import {
+  resolveAutocodeTaskRuntimeConcurrency,
+  type AutocodeTaskRuntimeConcurrencyMetadata,
+} from '../runtime/concurrency.js';
 import type { MutableAutocodePlan } from './plan-file.js';
 export type { AutocodeTaskRequirements } from './requirements-store.js';
 
@@ -72,7 +76,7 @@ export interface AutocodeTaskMetadata {
   phaseThinking?: Record<string, string>;
   phaseProviders?: Record<string, string>;
   workflowMode?: AutocodeTaskWorkflowMode;
-  enableBatchExecution?: boolean;
+  runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyMetadata;
   requireReviewBeforeCoding?: boolean;
   useWorktree?: boolean;
   pushNewBranches?: boolean;
@@ -233,6 +237,13 @@ export function listAutocodeTasks(input: ListAutocodeTasksInput): AutocodeTask[]
     .sort((a, b) => b.updatedAt.localeCompare(a.updatedAt));
 }
 
+function withResolvedRuntimeConcurrency(metadata: AutocodeTaskMetadata): AutocodeTaskMetadata {
+  return {
+    ...metadata,
+    runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency(metadata),
+  };
+}
+
 export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask {
   const projectRoot = requireNonEmpty(input.projectRoot, 'projectRoot');
   const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
@@ -250,11 +261,10 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
   mkdirSync(specDir, { recursive: true });
 
   const now = input.now ?? new Date().toISOString();
-  let metadata: AutocodeTaskMetadata = {
+  let metadata: AutocodeTaskMetadata = withResolvedRuntimeConcurrency({
     sourceType: 'manual',
     ...input.metadata,
-    enableBatchExecution: input.metadata?.enableBatchExecution === true,
-  };
+  });
 
   const prepared = input.prepareSpecArtifacts?.({
     projectRoot,
@@ -268,10 +278,7 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
   });
   if (prepared?.metadata) {
     const preparedMetadata = { ...metadata, ...prepared.metadata };
-    metadata = {
-      ...preparedMetadata,
-      enableBatchExecution: preparedMetadata.enableBatchExecution === true,
-    };
+    metadata = withResolvedRuntimeConcurrency(preparedMetadata);
   }
 
   const plan: ImplementationPlanFile = {
@@ -314,7 +321,6 @@ export function createImportedAutocodeTask(input: CreateImportedAutocodeTaskInpu
     metadata: {
       ...input.metadata,
       sourceType: input.metadata.sourceType,
-      enableBatchExecution: input.metadata.enableBatchExecution === true,
     },
   });
 }
@@ -365,7 +371,11 @@ export function buildAutocodeTaskModeMetadata(
       sourceType: 'manual',
       developmentMode: 'fast',
       workflowMode: 'off',
-      enableBatchExecution: false,
+      runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency({
+        ...metadata,
+        developmentMode: 'fast',
+        workflowMode: 'off',
+      }),
     };
   }
 
@@ -377,7 +387,15 @@ export function buildAutocodeTaskModeMetadata(
       workflowMode: metadata.workflowMode && metadata.workflowMode !== 'off'
         ? metadata.workflowMode
         : 'balanced',
-      enableBatchExecution: metadata.enableBatchExecution === true,
+      runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency({
+        ...metadata,
+        sourceType: 'openspec',
+        developmentMode: 'spec',
+        workflowMode: metadata.workflowMode && metadata.workflowMode !== 'off'
+          ? metadata.workflowMode
+          : 'balanced',
+        upstreamSpecSystem: 'openspec',
+      }),
       openSpecGenerationMode: metadata.openSpecGenerationMode ?? 'deferred',
       upstreamSpecSystem: 'openspec',
       downstreamExecutionSystem: 'autocode',
@@ -389,7 +407,11 @@ export function buildAutocodeTaskModeMetadata(
     sourceType: 'manual',
     developmentMode: 'standard',
     workflowMode: 'balanced',
-    enableBatchExecution: metadata.enableBatchExecution === true,
+    runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency({
+      ...metadata,
+      developmentMode: 'standard',
+      workflowMode: 'balanced',
+    }),
   };
 }
 

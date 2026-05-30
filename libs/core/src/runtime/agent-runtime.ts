@@ -5,6 +5,10 @@ import type {
   AutocodeTaskStatus,
   AutocodeTaskWorkflowMode,
 } from '../tasks/spec-store.js';
+import {
+  resolveAutocodeTaskRuntimeConcurrency,
+  type AutocodeTaskRuntimeConcurrencyMetadata,
+} from './concurrency.js';
 
 export type AutocodeAgentRuntimeMode = 'direct' | 'spec' | 'planning' | 'coding';
 export type AutocodeAgentRuntimeProcessType = 'spec-creation' | 'task-execution';
@@ -31,6 +35,7 @@ export interface AutocodeAgentRuntimeMetadata {
   useWorktree?: boolean;
   useLocalBranch?: boolean;
   pushNewBranches?: boolean;
+  runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyMetadata;
 }
 
 export interface AutocodeAgentRuntimePlan {
@@ -303,9 +308,10 @@ function buildAutocodeAgentRuntimeOptions(
   baseBranch: string | undefined,
   forcePlanning: boolean | undefined,
 ): AutocodeAgentRuntimeOptions {
+  const concurrency = resolveAutocodeTaskRuntimeConcurrency(metadata);
   return {
-    parallel: false,
-    workers: 1,
+    parallel: concurrency.mode === 'concurrent',
+    workers: concurrency.workers,
     ...(baseBranch ? { baseBranch } : {}),
     ...(forcePlanning ? { forcePlanning: true } : {}),
     ...(metadata?.useWorktree !== undefined ? { useWorktree: metadata.useWorktree } : {}),

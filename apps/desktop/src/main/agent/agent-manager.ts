@@ -26,12 +26,13 @@ import {
   normalizeAutocodeBaseBranch,
   parseAutocodeOriginHeadBranch,
   resolveAutocodeCrossProviderModelRequest,
-  resolveAutocodeTaskEnableBatchExecution,
   resolveAutocodeTaskPhaseModelId,
   resolveAutocodeTaskPhaseProvider,
+  resolveAutocodeTaskRuntimeConcurrency,
   resolveAutocodeTaskWorkflowMode,
   appendAutocodeTaskLogEntry,
   updateAutocodeTaskLogPhase,
+  type AutocodeTaskRuntimeConcurrencyResolved,
   type OpenSpecArtifactProgress,
 } from '@autocode/core';
 import { AgentState } from './agent-state';
@@ -781,7 +782,7 @@ export class AgentManager extends EventEmitter {
     // Load model configuration from task_metadata.json if available
     const modelId = await this.resolveTaskModelId(specDir, 'planning');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'planning');
-    const enableBatchExecution = this.resolveTaskEnableBatchExecution(specDir);
+    const runtimeConcurrency = this.resolveTaskRuntimeConcurrency(specDir);
     const agentProfile = resolveProjectAgentProfile(project?.settings?.projectType);
     const buildAgentType = agentProfile.buildOrchestrator;
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, buildAgentType);
@@ -912,7 +913,7 @@ export class AgentManager extends EventEmitter {
       workflowMode,
       forcePlanning: options.forcePlanning === true,
       projectType: agentProfile.id,
-      enableBatchExecution,
+      runtimeConcurrency,
       language,
       autoPushToRemote: !isMainBranch(projectPath),
       toolContext: {
@@ -1596,8 +1597,8 @@ export class AgentManager extends EventEmitter {
     return resolveAutocodeTaskWorkflowMode(loadAutocodeTaskRuntimeMetadataConfig(specDir));
   }
 
-  private resolveTaskEnableBatchExecution(specDir: string): boolean {
-    return resolveAutocodeTaskEnableBatchExecution(loadAutocodeTaskRuntimeMetadataConfig(specDir));
+  private resolveTaskRuntimeConcurrency(specDir: string): AutocodeTaskRuntimeConcurrencyResolved {
+    return resolveAutocodeTaskRuntimeConcurrency(loadAutocodeTaskRuntimeMetadataConfig(specDir));
   }
 
   private resolveAppLanguage(): SerializableSessionConfig['language'] {

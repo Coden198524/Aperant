@@ -13,6 +13,7 @@ import type { RunnerOptions } from '../session/runner';
 import type { CustomMcpServer, TaskLogPhase, TaskWorkflowMode, TokenUsage } from '../../../shared/types';
 import type { ProjectType } from '../../../shared/types';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
+import type { AutocodeTaskRuntimeConcurrencyResolved } from '@autocode/core';
 
 // =============================================================================
 // Worker Configuration
@@ -99,8 +100,8 @@ export interface SerializableSessionConfig {
   forcePlanning?: boolean;
   /** Project-level agent profile domain. Defaults to general. */
   projectType?: ProjectType;
-  /** Whether coding should process compatible subtasks in batch sessions */
-  enableBatchExecution?: boolean;
+  /** Work item concurrency policy for coding. */
+  runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyResolved;
   /** Preferred UI language from app settings */
   language?: SupportedLanguage;
   /** Whether to automatically push commits to remote Git repository */

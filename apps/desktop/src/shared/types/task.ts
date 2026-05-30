@@ -182,7 +182,7 @@ export interface TaskDraft {
   requireReviewBeforeCoding?: boolean;
   developmentMode?: TaskDevelopmentMode;
   workflowMode?: TaskWorkflowMode;
-  enableBatchExecution?: boolean;
+  runtimeConcurrency?: TaskRuntimeConcurrency;
   useWorktree?: boolean;
   pushNewBranches?: boolean;
   savedAt: Date;
@@ -195,6 +195,16 @@ export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
 export type TaskDevelopmentMode = 'fast' | 'standard' | 'spec';
 export type ProjectDocumentType = 'full' | 'product' | 'architecture' | 'technical';
+export type TaskRuntimeConcurrencyMode = 'serial' | 'concurrent';
+export type TaskRuntimeConcurrencyUnit = 'work_item';
+export type TaskRuntimeConflictPolicy = 'lock-and-queue';
+
+export interface TaskRuntimeConcurrency {
+  mode: TaskRuntimeConcurrencyMode;
+  workers: number;
+  unit: TaskRuntimeConcurrencyUnit;
+  conflictPolicy: TaskRuntimeConflictPolicy;
+}
 // Re-export ThinkingLevel (defined in settings.ts) for convenience
 export type { ThinkingLevel };
 /** Model identifier — Claude shorthands or concrete model IDs from any provider */
@@ -290,7 +300,7 @@ export interface TaskMetadata {
   phaseThinking?: PhaseThinkingConfig;  // Per-phase thinking configuration
   phaseProviders?: Record<string, string>;  // Per-phase provider preference (cross-provider mode)
   workflowMode?: TaskWorkflowMode;  // Workflow optimization level
-  enableBatchExecution?: boolean;  // If true, compatible subtasks run in batch sessions
+  runtimeConcurrency?: TaskRuntimeConcurrency;  // Work item concurrency policy
 
   // Git/Worktree configuration
   baseBranch?: string;  // Override base branch for this task's worktree

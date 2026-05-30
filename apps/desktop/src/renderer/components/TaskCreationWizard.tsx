@@ -17,7 +17,6 @@ import { AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER } from '@autocode/core/tasks/bra
 import { Button } from './ui/button';
 import { Label } from './ui/label';
 import { Combobox } from './ui/combobox';
-import { Switch } from './ui/switch';
 import { TaskModalLayout } from './task-form/TaskModalLayout';
 import { TaskFormFields } from './task-form/TaskFormFields';
 import { type FileReferenceData } from './task-form/useImageUpload';
@@ -159,7 +158,6 @@ export function TaskCreationWizard({
   const [requireReviewBeforeCoding, setRequireReviewBeforeCoding] = useState(false);
   const [developmentMode, setDevelopmentMode] = useState<TaskDevelopmentMode>('standard');
   const [workflowMode, setWorkflowMode] = useState<TaskWorkflowMode>('balanced');
-  const [enableBatchExecution, setEnableBatchExecution] = useState(false);
 
   // Draft state
   const [isDraftRestored, setIsDraftRestored] = useState(false);
@@ -227,7 +225,6 @@ export function TaskCreationWizard({
         const draftDevelopmentMode = resolveDraftDevelopmentMode(draft);
         setDevelopmentMode(draftDevelopmentMode);
         setWorkflowMode(workflowModeForDevelopmentMode(draftDevelopmentMode));
-        setEnableBatchExecution(draftDevelopmentMode !== 'fast' && draft.enableBatchExecution === true);
         setUseWorktree(draft.useWorktree ?? false);
         setPushNewBranches(draft.pushNewBranches ?? projectPushNewBranches);
         setIsDraftRestored(true);
@@ -254,7 +251,6 @@ export function TaskCreationWizard({
         setRequireReviewBeforeCoding(false);
         setDevelopmentMode('standard');
         setWorkflowMode('balanced');
-        setEnableBatchExecution(false);
         setBaseBranch(PROJECT_DEFAULT_BRANCH);
         setUseWorktree(false);
         setPushNewBranches(projectPushNewBranches);
@@ -334,11 +330,10 @@ export function TaskCreationWizard({
     requireReviewBeforeCoding,
     developmentMode,
     workflowMode,
-    enableBatchExecution,
     useWorktree,
     pushNewBranches,
     savedAt: new Date()
-  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, developmentMode, workflowMode, enableBatchExecution, useWorktree, pushNewBranches]);
+  }), [projectId, title, description, category, priority, complexity, impact, profileId, model, thinkingLevel, phaseModels, phaseThinking, images, referencedFiles, requireReviewBeforeCoding, developmentMode, workflowMode, useWorktree, pushNewBranches]);
 
   /**
    * Detect @ mention being typed and show autocomplete
@@ -519,7 +514,6 @@ export function TaskCreationWizard({
     setDevelopmentMode(mode);
     setWorkflowMode(workflowModeForDevelopmentMode(mode));
     if (mode === 'fast') {
-      setEnableBatchExecution(false);
       setRequireReviewBeforeCoding(false);
     }
   }, []);
@@ -582,7 +576,6 @@ export function TaskCreationWizard({
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding && developmentMode !== 'fast') metadata.requireReviewBeforeCoding = true;
       metadata.workflowMode = workflowModeForDevelopmentMode(developmentMode);
-      metadata.enableBatchExecution = developmentMode !== 'fast' && enableBatchExecution;
       if (developmentMode === 'spec') {
         metadata.openSpecGenerationMode = 'deferred';
         metadata.upstreamSpecSystem = 'openspec';
@@ -634,7 +627,6 @@ export function TaskCreationWizard({
     setRequireReviewBeforeCoding(false);
     setDevelopmentMode('standard');
     setWorkflowMode('balanced');
-    setEnableBatchExecution(false);
     setBaseBranch(PROJECT_DEFAULT_BRANCH);
     setUseWorktree(false);
     setPushNewBranches(projectPushNewBranches);
@@ -839,28 +831,6 @@ export function TaskCreationWizard({
             />
           )}
         </TaskFormFields>
-
-        {/* Batch Execution Toggle - unique to creation */}
-        <div className="flex items-center justify-between gap-4 p-4 rounded-lg border border-border bg-muted/30">
-          <div className="space-y-1">
-            <Label
-              htmlFor="batch-execution"
-              className="text-sm font-medium text-foreground cursor-pointer"
-            >
-              {t('tasks:wizard.batchExecution.label')}
-            </Label>
-            <p className="text-xs text-muted-foreground">
-              {t('tasks:wizard.batchExecution.description')}
-            </p>
-          </div>
-          <Switch
-            id="batch-execution"
-            checked={developmentMode !== 'fast' && enableBatchExecution}
-            onCheckedChange={(checked) => setEnableBatchExecution(checked === true)}
-            disabled={isCreating || isSyncingSettings || developmentMode === 'fast'}
-            aria-label={t('tasks:wizard.batchExecution.label')}
-          />
-        </div>
 
         {/* Git Options Toggle - unique to creation */}
         <button

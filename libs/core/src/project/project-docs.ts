@@ -10,6 +10,7 @@ import {
 } from '../tasks/spec-store.js';
 import { saveAutocodeImplementationPlanSync } from '../tasks/plan-store.js';
 import type { MutableAutocodePlan } from '../tasks/plan-file.js';
+import { resolveAutocodeTaskRuntimeConcurrency } from '../runtime/concurrency.js';
 import {
   AUTOCODE_PROJECT_DOCS_ARCHITECTURE_FILE_NAME,
   AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME,
@@ -189,18 +190,21 @@ export function buildAutocodeProjectDocumentationTaskPlan(
   const evidenceIndex = joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME);
   const title = input.title?.trim() || defaultProjectDocsTitle(documentType);
   const description = buildProjectDocsTaskDescription(documentType, outputs, outputDir);
-  const metadata: AutocodeTaskMetadata = {
+  const metadataBase: AutocodeTaskMetadata = {
     sourceType: 'project_docs',
     category: 'documentation',
     priority: 'high',
     impact: 'high',
     complexity: documentType === 'full' ? 'large' : 'medium',
     workflowMode: 'balanced',
-    enableBatchExecution: false,
     ...input.metadata,
     projectDocumentType: documentType,
     projectDocumentOutputDir: outputDir,
     projectDocumentOutputs: outputs.map((output) => output.relativePath),
+  };
+  const metadata: AutocodeTaskMetadata = {
+    ...metadataBase,
+    runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency(metadataBase),
   };
   const requirements: AutocodeTaskRequirements = {
     workflow_type: 'documentation',

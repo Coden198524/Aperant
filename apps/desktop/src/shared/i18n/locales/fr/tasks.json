@@ -241,10 +241,6 @@
       "title": "Espace de travail actuel",
       "description": "Par défaut, cette tâche modifie l'espace Git actuellement extrait. Activez un espace isolé dans les options Git uniquement si vous voulez une branche worktree séparée."
     },
-    "batchExecution": {
-      "label": "Activer l'exécution par lots",
-      "description": "Exécute les sous-tâches compatibles dans des sessions d'agent parallèles. Désactivez pour traiter une seule sous-tâche à la fois."
-    },
     "gitOptions": {
       "title": "Options Git (optionnel)",
       "baseBranchLabel": "Branche de base (optionnel)",

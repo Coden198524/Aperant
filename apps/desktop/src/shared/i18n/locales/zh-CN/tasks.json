@@ -291,10 +291,6 @@
       "title": "当前工作区",
       "description": "默认直接在当前检出的 Git 工作区中开发。只有需要单独的 worktree 分支时，才在 Git 选项中开启隔离工作区。"
     },
-    "batchExecution": {
-      "label": "启用批次执行",
-      "description": "将兼容的子任务放在并行智能体会话中执行。关闭后一次只执行一个子任务。"
-    },
     "gitOptions": {
       "title": "Git 选项（可选）",
       "baseBranchLabel": "基础分支（可选）",

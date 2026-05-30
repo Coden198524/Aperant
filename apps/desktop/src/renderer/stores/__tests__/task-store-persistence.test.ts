@@ -710,10 +710,10 @@ describe('task-store-persistence', () => {
   });
 
   describe('Task Creation Drafts', () => {
-    it('should persist the batch execution preference', () => {
+    it('should persist the runtime concurrency policy', () => {
       const draft: TaskDraft = {
         projectId: 'test-project',
-        title: '',
+        title: 'Runtime policy draft',
         description: '',
         category: '',
         priority: '',
@@ -724,7 +724,12 @@ describe('task-store-persistence', () => {
         images: [],
         referencedFiles: [],
         workflowMode: 'balanced',
-        enableBatchExecution: true,
+        runtimeConcurrency: {
+          mode: 'concurrent',
+          workers: 2,
+          unit: 'work_item',
+          conflictPolicy: 'lock-and-queue',
+        },
         savedAt: new Date()
       };
 
@@ -733,7 +738,8 @@ describe('task-store-persistence', () => {
       saveDraft(draft);
 
       const loaded = loadDraft('test-project');
-      expect(loaded?.enableBatchExecution).toBe(true);
+      expect(loaded?.runtimeConcurrency?.mode).toBe('concurrent');
+      expect(loaded?.runtimeConcurrency?.workers).toBe(2);
 
       clearDraft('test-project');
       expect(loadDraft('test-project')).toBeNull();

@@ -23,7 +23,7 @@ import {
 } from '../../../shared/constants/phase-protocol';
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import { AUTOCODE_TASK_ARTIFACTS, type Phase } from '@autocode/core';
+import { AUTOCODE_TASK_ARTIFACTS, type AutocodeTaskRuntimeConcurrencyResolved, type Phase } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   ImplementationPlanSchema,
@@ -35,8 +35,9 @@ import {
 } from '../schema';
 import type { SessionResult } from '../session/types';
 import { iterateSubtasks } from './subtask-iterator';
-import type { SubtaskIteratorConfig, SubtaskResult } from './subtask-iterator';
-import { executeBatches, type BatchExecutorConfig } from './batch-executor';
+import type { SubtaskIteratorConfig } from './subtask-iterator';
+import { executeConcurrentWorkItems, type ConcurrentWorkExecutorConfig } from './concurrent-work-executor';
+import type { WorkItemInfo } from './work-executor-types';
 import { translateLogMessage, translatePhaseMessage } from './log-messages';
 import type { WorkflowConfig } from './workflow-config';
 import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
@@ -56,6 +57,13 @@ const MAX_SUBTASK_RETRIES = 2; // Reduced from 3 to 2
 
 /** Delay before retrying after an error (ms) */
 const ERROR_RETRY_DELAY_MS = 5_000;
+
+const DEFAULT_RUNTIME_CONCURRENCY: AutocodeTaskRuntimeConcurrencyResolved = {
+  mode: 'serial',
+  workers: 1,
+  unit: 'work_item',
+  conflictPolicy: 'lock-and-queue',
+};
 
 function isWriteToolPlanOutputFailure(message: string): boolean {
   const lower = message.toLowerCase();
@@ -166,14 +174,10 @@ export interface BuildOrchestratorConfig {
   maxIterations?: number;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
-  /** Enable batch execution for parallel subtasks (default: false) */
-  enableBatchExecution?: boolean;
-  /** Batch size for parallel execution (default: 'auto') */
-  batchSize?: number | 'auto';
-  /** Maximum retries per batch (default: 2) */
-  maxBatchRetries?: number;
-  /** Hard cap on subtasks executed concurrently in a single batch */
-  maxConcurrentSubtasks?: number;
+  /** Work item concurrency policy shared by Standard subtasks and Spec work packages. */
+  runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyResolved;
+  /** Maximum retries per concurrent work item (default: subtask retry limit). */
+  maxConcurrentWorkItemRetries?: number;
   /** Workflow optimization configuration */
   workflowConfig?: WorkflowConfig;
   /** Rerun planning from human feedback and return to plan review without coding */
@@ -221,6 +225,22 @@ export interface SubtaskInfo {
   upstreamTaskIds?: string[];
   upstreamSource?: string;
   status: 'pending' | 'in_progress' | 'completed' | 'blocked' | 'stuck';
+}
+
+function workItemToSubtaskInfo(workItem: WorkItemInfo): SubtaskInfo {
+  return {
+    id: workItem.id,
+    description: workItem.description,
+    phaseName: workItem.phaseName ?? workItem.phaseId,
+    filesToCreate: workItem.filesToCreate,
+    filesToModify: workItem.filesToModify,
+    patternFiles: workItem.patternFiles,
+    verification: workItem.verification,
+    workPackage: workItem.workPackage,
+    upstreamTaskIds: workItem.upstreamTaskIds,
+    upstreamSource: workItem.upstreamSource,
+    status: workItem.status,
+  };
 }
 
 /** Configuration passed to runSession callback */
@@ -607,8 +627,12 @@ export class BuildOrchestrator extends EventEmitter {
     const retryLimits = getRetryLimits(this.config.workflowConfig!);
     const maxSubtaskRetries = retryLimits.subtask;
 
-    // Build common session runner for both serial and batch execution
-    const runSubtaskSession = async (subtask: SubtaskInfo, attempt: number): Promise<SessionResult> => {
+    // Build common session runner for both serial and concurrent work item execution.
+    const runSubtaskSession = async (
+      subtask: SubtaskInfo,
+      attempt: number,
+      sessionNumber = this.iteration,
+    ): Promise<SessionResult> => {
       // Run pre-implementation checklist if enabled
       if (this.config.qualityConfig?.enablePreImplementationChecklist) {
         const { generatePreImplementationChecklist } = await import('./pre-implementation-checklist');
@@ -624,7 +648,7 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       let prompt = await this.config.generatePrompt(agentType, 'coding', {
-        iteration: this.iteration,
+        iteration: sessionNumber,
         subtask,
         attemptCount: attempt,
       });
@@ -655,60 +679,60 @@ export class BuildOrchestrator extends EventEmitter {
         specDir: this.config.specDir,
         projectDir: this.config.projectDir,
         subtaskId: subtask.id,
-        sessionNumber: this.iteration,
+        sessionNumber,
         abortSignal: this.config.abortSignal,
         cliModel: this.config.cliModel,
         cliThinking: this.config.cliThinking,
       });
     };
 
-    // If batch execution is enabled, use batch executor for parallel-safe subtasks
-    if (this.config.enableBatchExecution) {
-      this.emitTyped('log', translateLogMessage('Batch execution enabled - analyzing parallel opportunities', this.config.language));
+    const runtimeConcurrency = this.config.runtimeConcurrency ?? DEFAULT_RUNTIME_CONCURRENCY;
 
-      const batchConfig: BatchExecutorConfig = {
+    if (runtimeConcurrency.mode === 'concurrent' && runtimeConcurrency.workers > 1) {
+      const workConfig: ConcurrentWorkExecutorConfig = {
         specDir: this.config.specDir,
         projectDir: this.config.projectDir,
         sourceSpecDir: this.config.sourceSpecDir,
-        maxRetries: this.config.maxBatchRetries ?? maxSubtaskRetries,
-        batchSize: this.config.batchSize ?? 'auto',
-        executionMode: 'batch',
-        maxConcurrentSubtasks: this.config.maxConcurrentSubtasks,
+        maxRetries: this.config.maxConcurrentWorkItemRetries ?? maxSubtaskRetries,
+        workers: runtimeConcurrency.workers,
         abortSignal: this.config.abortSignal,
-        runSubtaskSession,
-        onBatchStart: (batch, batchNum, totalBatches) => {
-          this.emitTyped('log', `Starting parallel batch ${batchNum}/${totalBatches}: ${batch.length} subtasks`);
+        runWorkItemSession: (workItem, attempt, sessionNumber) => {
+          return runSubtaskSession(workItemToSubtaskInfo(workItem), attempt, sessionNumber);
         },
-        onSubtaskStart: (subtask, attempt) => {
+        onGroupStart: (items, groupNum, totalGroups, mode) => {
+          this.emitTyped('log', `Work group ${groupNum}/${totalGroups}: ${items.length} item(s), ${mode}`);
+        },
+        onWorkItemStart: (workItem, attempt) => {
           this.iteration++;
           this.emitTyped('iteration-start', this.iteration, 'coding');
-          this.emitTyped('log', `Working on ${subtask.id}: ${subtask.description} (attempt ${attempt})`);
+          this.emitTyped('log', `Working on ${workItem.id}: ${workItem.description} (attempt ${attempt})`);
+          return this.iteration;
         },
-        onSubtaskSessionComplete: (_subtask, result) => {
+        onWorkItemSessionComplete: (_workItem, result) => {
           this.emitTyped('session-complete', result, 'coding');
         },
-        onBatchComplete: (batch, result) => {
-          this.emitTyped('log', `Batch completed: ${result.completed.length}/${batch.length} subtasks succeeded`);
+        onGroupComplete: (items, result) => {
+          this.emitTyped('log', `Work group completed: ${result.completed.length}/${items.length} item(s) succeeded`);
         },
         onLog: (message) => {
           this.emitTyped('log', message);
         },
       };
 
-      const batchResult = await executeBatches(batchConfig);
+      const workResult = await executeConcurrentWorkItems(workConfig);
 
-      if (batchResult.cancelled) {
+      if (workResult.cancelled) {
         return { success: false, error: 'Build cancelled' };
       }
 
-      if (!batchResult.success) {
+      if (!workResult.success) {
         return {
           success: false,
-          error: batchResult.error ?? `Batch execution failed: ${batchResult.totalCompleted} completed, ${batchResult.totalFailed ?? 0} failed`,
+          error: workResult.error ?? `Concurrent work execution failed: ${workResult.totalCompleted} completed, ${workResult.totalFailed ?? 0} failed`,
         };
       }
 
-      this.emitTyped('log', `Batch execution completed successfully: ${batchResult.totalCompleted} subtasks`);
+      this.emitTyped('log', `Concurrent work execution completed: ${workResult.totalCompleted} item(s)`);
     } else {
       // Fallback to serial execution (existing behavior)
       const iteratorConfig: SubtaskIteratorConfig = {

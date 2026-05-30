@@ -303,8 +303,6 @@ export function registerAgenteventsHandlers(
               specProject.path,
               specTask.specId,
               {
-                parallel: false,
-                workers: 1,
                 baseBranch,
                 useWorktree: specTask.metadata?.useWorktree,
                 useLocalBranch: specTask.metadata?.useLocalBranch,

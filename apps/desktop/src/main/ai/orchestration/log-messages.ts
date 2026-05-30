@@ -41,11 +41,6 @@ const LOG_MESSAGES = {
     fr: 'Sous-tâches incomplètes détectées après la phase de codage - poursuite du codage',
     'zh-CN': '编码阶段后检测到未完成的子任务 - 继续编码',
   },
-  'Batch execution enabled - analyzing parallel opportunities': {
-    en: 'Batch execution enabled - analyzing parallel opportunities',
-    fr: 'Exécution par lots activée - analyse des opportunités parallèles',
-    'zh-CN': '已启用批量执行 - 分析并行机会',
-  },
   'Wrote implementation plan from structured output (schema-guaranteed)': {
     en: 'Wrote implementation plan from structured output (schema-guaranteed)',
     fr: 'Plan d\'implémentation écrit à partir de la sortie structurée (garanti par schéma)',
@@ -85,31 +80,6 @@ const LOG_MESSAGES = {
     en: 'Pre-implementation checklist shows critical risk for',
     fr: 'La liste de contrôle pré-implémentation montre un risque critique pour',
     'zh-CN': '实现前检查清单显示关键风险',
-  },
-  'Starting batch': {
-    en: 'Starting batch',
-    fr: 'Démarrage du lot',
-    'zh-CN': '开始批次',
-  },
-  'subtasks': {
-    en: 'subtasks',
-    fr: 'sous-tâches',
-    'zh-CN': '个子任务',
-  },
-  'Batch completed': {
-    en: 'Batch completed',
-    fr: 'Lot terminé',
-    'zh-CN': '批次完成',
-  },
-  'subtasks succeeded': {
-    en: 'subtasks succeeded',
-    fr: 'sous-tâches réussies',
-    'zh-CN': '个子任务成功',
-  },
-  'Batch execution completed successfully': {
-    en: 'Batch execution completed successfully',
-    fr: 'Exécution par lots terminée avec succès',
-    'zh-CN': '批量执行成功完成',
   },
   'Working on': {
     en: 'Working on',

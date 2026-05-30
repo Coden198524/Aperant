@@ -26,6 +26,7 @@ import {
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
   isOfficialOpenAIBaseUrl,
   normalizeOpenAICompatibleBaseUrl,
+  resolveAutocodeTaskRuntimeConcurrency,
   type Phase,
   type SupportedProvider,
 } from '@autocode/core';
@@ -80,8 +81,6 @@ import { resolveProjectAgentProfile } from '../config/project-agent-profile';
 // =============================================================================
 // Validation
 // =============================================================================
-
-const MAX_PARALLEL_SUBTASKS_PER_BATCH = 3;
 
 if (!parentPort) {
   throw new Error('worker.ts must be run inside a worker_thread');
@@ -1409,11 +1408,10 @@ async function runBuildOrchestrator(
     forcePlanning: session.forcePlanning === true,
     abortSignal: abortController.signal,
 
-    // Per-task toggle: batch execution is opt-in until the parallel path is fully stable.
-    enableBatchExecution: session.enableBatchExecution === true,
-    batchSize: 'auto', // Auto-detect based on subtask dependencies
-    maxBatchRetries: 2,
-    maxConcurrentSubtasks: MAX_PARALLEL_SUBTASKS_PER_BATCH,
+    runtimeConcurrency: session.runtimeConcurrency ?? resolveAutocodeTaskRuntimeConcurrency({
+      workflowMode: session.workflowMode,
+    }),
+    maxConcurrentWorkItemRetries: 2,
 
     // Apply workflow optimization config based on task's workflowMode
     workflowConfig,

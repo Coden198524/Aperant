@@ -414,6 +414,8 @@ export {
 } from './runtime/agent-messages.js';
 
 export {
+  type AutocodeTaskRuntimeConcurrencyMetadata,
+  type AutocodeTaskRuntimeConcurrencyResolved,
   type AutocodeProviderModelEquivalent,
   type AutocodeRuntimePhase,
   type AutocodeTaskRuntimeMetadataConfig,
@@ -425,9 +427,9 @@ export {
   loadAutocodeTaskRuntimeMetadataConfig,
   resolveAutocodeCrossProviderModelRequest,
   resolveAutocodeModelId,
-  resolveAutocodeTaskEnableBatchExecution,
   resolveAutocodeTaskPhaseModelId,
   resolveAutocodeTaskPhaseProvider,
+  resolveAutocodeTaskRuntimeConcurrency,
   resolveAutocodeTaskWorkflowMode,
 } from './runtime/task-runtime-config.js';
 

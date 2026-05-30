@@ -326,7 +326,6 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       const taskMetadata = buildAutocodeTaskModeMetadata(requestedMode, {
         ...metadata,
         language: resolveTaskLanguage(metadata),
-        enableBatchExecution: requestedMode === 'fast' ? false : metadata?.enableBatchExecution === true,
       } as AutocodeTaskMetadata) as TaskMetadata;
 
       try {

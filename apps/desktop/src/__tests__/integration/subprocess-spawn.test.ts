@@ -251,15 +251,12 @@ describe('WorkerBridge Spawn Integration', () => {
       expect(config.session.agentType).toBe('qa_reviewer');
     }, 15000);
 
-    it('should accept parallel options without affecting process type', async () => {
+    it('should start task execution without deprecated parallel options', async () => {
       const { AgentManager } = await import('../../main/agent');
 
       const manager = new AgentManager();
 
-      await manager.startTaskExecution('task-1', '/project', 'spec-001', {
-        parallel: true,
-        workers: 4,
-      });
+      await manager.startTaskExecution('task-1', '/project', 'spec-001');
 
       expect(createdBridges).toHaveLength(1);
       const bridge = createdBridges[0];

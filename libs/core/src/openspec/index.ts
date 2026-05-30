@@ -23,6 +23,7 @@ import {
   type AutocodeTaskMetadata,
   type AutocodeTaskRequirements,
 } from '../tasks/spec-store.js';
+import { resolveAutocodeTaskRuntimeConcurrency } from '../runtime/concurrency.js';
 
 export const OPENSPEC_DIR_NAME = 'openspec';
 export const OPENSPEC_CHANGES_DIR_NAME = 'changes';
@@ -493,13 +494,12 @@ export function buildAutocodeTaskFromOpenSpecChangePlan(
   const title = input.title?.trim() || `Implement OpenSpec change: ${change.title}`;
   const language = resolveOpenSpecLanguage(input.metadata?.language, input.metadata);
   const description = buildOpenSpecTaskDescription(change, language);
-  const metadata: AutocodeTaskMetadata = {
+  const metadataBase: AutocodeTaskMetadata = {
     category: 'feature',
     priority: 'high',
     impact: 'high',
     complexity: inferOpenSpecChangeComplexity(change),
     workflowMode: 'balanced',
-    enableBatchExecution: false,
     ...input.metadata,
     sourceType: 'openspec',
     openSpecChangeId: change.changeId,
@@ -512,6 +512,10 @@ export function buildAutocodeTaskFromOpenSpecChangePlan(
     openSpecValidationCommand: change.validation ? formatOpenSpecCliInvocation(change.validation) : undefined,
     upstreamSpecSystem: 'openspec',
     downstreamExecutionSystem: 'autocode',
+  };
+  const metadata: AutocodeTaskMetadata = {
+    ...metadataBase,
+    runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency(metadataBase),
   };
   const requirements: AutocodeTaskRequirements = {
     ...input.requirements,

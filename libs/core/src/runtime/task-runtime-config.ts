@@ -8,6 +8,11 @@ import {
 import type { SupportedProvider } from '../providers/types.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import type { AutocodeTaskDevelopmentMode, AutocodeTaskWorkflowMode } from '../tasks/spec-store.js';
+import {
+  resolveAutocodeTaskRuntimeConcurrency,
+  type AutocodeTaskRuntimeConcurrencyMetadata,
+  type AutocodeTaskRuntimeConcurrencyResolved,
+} from './concurrency.js';
 
 export type AutocodeRuntimePhase = Phase;
 
@@ -19,7 +24,9 @@ export interface AutocodeTaskRuntimeMetadataConfig {
   provider?: string;
   developmentMode?: AutocodeTaskDevelopmentMode | string;
   workflowMode?: AutocodeTaskWorkflowMode | string;
-  enableBatchExecution?: boolean;
+  sourceType?: string;
+  upstreamSpecSystem?: string;
+  runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyMetadata;
 }
 
 export interface AutocodeProviderModelEquivalent {
@@ -128,11 +135,8 @@ export function resolveAutocodeTaskWorkflowMode(
   return isAutocodeTaskWorkflowMode(workflowMode) ? workflowMode : defaultWorkflowMode;
 }
 
-export function resolveAutocodeTaskEnableBatchExecution(
-  metadata: AutocodeTaskRuntimeMetadataConfig | null | undefined,
-): boolean {
-  return metadata?.enableBatchExecution === true;
-}
+export { resolveAutocodeTaskRuntimeConcurrency };
+export type { AutocodeTaskRuntimeConcurrencyMetadata, AutocodeTaskRuntimeConcurrencyResolved };
 
 export function inferAutocodePinnedProviderFromModel(model: string | undefined): SupportedProvider | null {
   if (!model || CROSS_PROVIDER_MODEL_SHORTHANDS.has(model)) {

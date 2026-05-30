@@ -2,59 +2,49 @@
  * Conflict Detector
  * =================
  *
- * Detects file conflicts between subtasks to determine which can be
- * executed in parallel (batched) and which must be serialized.
+ * Detects file conflicts between work items so independent work can run
+ * concurrently while overlapping file edits are serialized.
  */
 
-import type { SubtaskInfo, ConflictGraph } from './batch-types';
-
-const MAX_AUTO_BATCH_SIZE = 4;
+import type { ConflictGraph, WorkItemInfo } from './work-executor-types';
 
 // =============================================================================
 // Conflict Detection
 // =============================================================================
 
 /**
- * Detects file conflicts between subtasks.
+ * Detects file conflicts between work items.
  *
- * A conflict occurs when multiple subtasks modify or create the same file.
- * Conflicting subtasks should be executed serially to avoid race conditions.
- *
- * @param subtasks - Array of subtasks to analyze
- * @returns Conflict graph with independent and sequential subtasks
+ * A conflict occurs when multiple work items modify or create the same file.
  */
-export function detectFileConflicts(subtasks: SubtaskInfo[]): ConflictGraph {
-  // Build file → subtask mapping
-  const fileToSubtasks = new Map<string, string[]>();
+export function detectFileConflicts(workItems: WorkItemInfo[]): ConflictGraph {
+  const fileToWorkItems = new Map<string, string[]>();
 
-  for (const subtask of subtasks) {
+  for (const workItem of workItems) {
     const files = [
-      ...(subtask.filesToModify || []),
-      ...(subtask.filesToCreate || []),
+      ...(workItem.filesToModify || []),
+      ...(workItem.filesToCreate || []),
     ];
 
     for (const file of files) {
-      if (!fileToSubtasks.has(file)) {
-        fileToSubtasks.set(file, []);
+      if (!fileToWorkItems.has(file)) {
+        fileToWorkItems.set(file, []);
       }
-      fileToSubtasks.get(file)!.push(subtask.id);
+      fileToWorkItems.get(file)!.push(workItem.id);
     }
   }
 
-  // Identify conflicting subtasks
   const conflicts = new Set<string>();
-  for (const [_file, subtaskIds] of fileToSubtasks) {
-    if (subtaskIds.length > 1) {
-      // Multiple subtasks modify the same file → conflict
-      for (const id of subtaskIds) {
+  for (const workItemIds of fileToWorkItems.values()) {
+    if (workItemIds.length > 1) {
+      for (const id of workItemIds) {
         conflicts.add(id);
       }
     }
   }
 
-  // Separate independent and sequential subtasks
-  const independent = subtasks.filter((st) => !conflicts.has(st.id));
-  const sequential = subtasks.filter((st) => conflicts.has(st.id));
+  const independent = workItems.filter((workItem) => !conflicts.has(workItem.id));
+  const sequential = workItems.filter((workItem) => conflicts.has(workItem.id));
 
   return {
     independent: independent.length > 0 ? [independent] : [],
@@ -63,53 +53,44 @@ export function detectFileConflicts(subtasks: SubtaskInfo[]): ConflictGraph {
 }
 
 /**
- * Groups conflicting subtasks by shared files.
- *
- * Subtasks that modify the same files are grouped together.
- * This allows batching subtasks that conflict with each other
- * (letting the model coordinate changes) while keeping different
- * conflict groups separate.
- *
- * @param subtasks - Array of subtasks to group
- * @returns Array of subtask groups
+ * Groups conflicting work items by shared files.
  */
-export function groupConflictingSubtasks(subtasks: SubtaskInfo[]): SubtaskInfo[][] {
-  if (subtasks.length === 0) return [];
+export function groupConflictingWorkItems(workItems: WorkItemInfo[]): WorkItemInfo[][] {
+  if (workItems.length === 0) {
+    return [];
+  }
 
-  // Build file → subtask mapping
-  const fileToSubtasks = new Map<string, Set<string>>();
+  const fileToWorkItems = new Map<string, Set<string>>();
 
-  for (const subtask of subtasks) {
+  for (const workItem of workItems) {
     const files = [
-      ...(subtask.filesToModify || []),
-      ...(subtask.filesToCreate || []),
+      ...(workItem.filesToModify || []),
+      ...(workItem.filesToCreate || []),
     ];
 
     for (const file of files) {
-      if (!fileToSubtasks.has(file)) {
-        fileToSubtasks.set(file, new Set());
+      if (!fileToWorkItems.has(file)) {
+        fileToWorkItems.set(file, new Set());
       }
-      fileToSubtasks.get(file)!.add(subtask.id);
+      fileToWorkItems.get(file)!.add(workItem.id);
     }
   }
 
-  // Build subtask → group mapping using union-find
-  const subtaskToGroup = new Map<string, number>();
+  const workItemToGroup = new Map<string, number>();
   let nextGroupId = 0;
 
-  for (const subtask of subtasks) {
+  for (const workItem of workItems) {
     const files = [
-      ...(subtask.filesToModify || []),
-      ...(subtask.filesToCreate || []),
+      ...(workItem.filesToModify || []),
+      ...(workItem.filesToCreate || []),
     ];
 
-    // Find all groups this subtask should belong to
     const relatedGroups = new Set<number>();
     for (const file of files) {
-      const relatedSubtasks = fileToSubtasks.get(file);
-      if (relatedSubtasks) {
-        for (const relatedId of relatedSubtasks) {
-          const groupId = subtaskToGroup.get(relatedId);
+      const relatedWorkItems = fileToWorkItems.get(file);
+      if (relatedWorkItems) {
+        for (const relatedId of relatedWorkItems) {
+          const groupId = workItemToGroup.get(relatedId);
           if (groupId !== undefined) {
             relatedGroups.add(groupId);
           }
@@ -117,92 +98,29 @@ export function groupConflictingSubtasks(subtasks: SubtaskInfo[]): SubtaskInfo[]
       }
     }
 
-    // Merge all related groups
     if (relatedGroups.size === 0) {
-      // New group
-      subtaskToGroup.set(subtask.id, nextGroupId++);
-    } else {
-      // Merge into the first group
-      const targetGroup = Math.min(...relatedGroups);
-      subtaskToGroup.set(subtask.id, targetGroup);
+      workItemToGroup.set(workItem.id, nextGroupId++);
+      continue;
+    }
 
-      // Update all related subtasks to use the target group
-      for (const [id, groupId] of subtaskToGroup) {
-        if (relatedGroups.has(groupId)) {
-          subtaskToGroup.set(id, targetGroup);
-        }
+    const targetGroup = Math.min(...relatedGroups);
+    workItemToGroup.set(workItem.id, targetGroup);
+
+    for (const [id, groupId] of workItemToGroup) {
+      if (relatedGroups.has(groupId)) {
+        workItemToGroup.set(id, targetGroup);
       }
     }
   }
 
-  // Group subtasks by their group ID
-  const groups = new Map<number, SubtaskInfo[]>();
-  for (const subtask of subtasks) {
-    const groupId = subtaskToGroup.get(subtask.id)!;
+  const groups = new Map<number, WorkItemInfo[]>();
+  for (const workItem of workItems) {
+    const groupId = workItemToGroup.get(workItem.id)!;
     if (!groups.has(groupId)) {
       groups.set(groupId, []);
     }
-    groups.get(groupId)!.push(subtask);
+    groups.get(groupId)!.push(workItem);
   }
 
   return Array.from(groups.values());
-}
-
-/**
- * Calculates optimal batch size based on context window and subtask complexity.
- *
- * @param subtasks - Array of subtasks
- * @param contextLimit - Model context window limit (tokens)
- * @param maxBatchTokens - Maximum tokens to use for batch prompt
- * @param safetyMargin - Safety margin (0.8 = use 80% of available tokens)
- * @returns Optimal batch size
- */
-export function calculateOptimalBatchSize(
-  subtasks: SubtaskInfo[],
-  contextLimit: number,
-  maxBatchTokens: number,
-  safetyMargin: number
-): number {
-  // Estimate token usage
-  const basePromptTokens = 5_000; // Environment + instructions
-  const perSubtaskTokens = 500; // Each subtask description
-  const workingTokens = 50_000; // Model working space
-
-  // Calculate available tokens
-  const availableTokens = Math.min(
-    (contextLimit * safetyMargin) - basePromptTokens - workingTokens,
-    maxBatchTokens
-  );
-
-  // Calculate max subtasks that fit
-  const maxSubtasks = Math.floor(availableTokens / perSubtaskTokens);
-
-  // Cap at reasonable limits
-  const cappedMax = Math.min(maxSubtasks, MAX_AUTO_BATCH_SIZE); // Max 5 subtasks per batch
-
-  // Return at least 1, at most the number of subtasks
-  return Math.max(1, Math.min(cappedMax, subtasks.length));
-}
-
-/**
- * Splits subtasks into batches of the specified size.
- *
- * @param subtasks - Array of subtasks to split
- * @param batchSize - Size of each batch
- * @returns Array of batches
- */
-export function chunkSubtasks(
-  subtasks: SubtaskInfo[],
-  batchSize: number
-): SubtaskInfo[][] {
-  if (batchSize <= 0) {
-    throw new Error('Batch size must be positive');
-  }
-
-  const batches: SubtaskInfo[][] = [];
-  for (let i = 0; i < subtasks.length; i += batchSize) {
-    batches.push(subtasks.slice(i, i + batchSize));
-  }
-
-  return batches;
 }

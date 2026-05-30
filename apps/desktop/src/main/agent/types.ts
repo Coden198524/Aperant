@@ -53,8 +53,6 @@ export interface RoadmapConfig {
 }
 
 export interface TaskExecutionOptions {
-  parallel?: boolean;
-  workers?: number;
   baseBranch?: string;
   useWorktree?: boolean; // If true, use worktree isolation; omitted defaults to direct mode
   useLocalBranch?: boolean; // If true, use local branch directly instead of preferring origin/branch

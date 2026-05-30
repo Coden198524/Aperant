@@ -404,14 +404,18 @@ async function main() {
       description: 'Implement a small change directly.',
       metadata: {
         developmentMode: 'fast',
-        enableBatchExecution: true,
       },
       now: '2026-01-02T03:03:45.000Z',
     });
     assert.equal(manualFastTask.metadata.sourceType, 'manual');
     assert.equal(manualFastTask.metadata.developmentMode, 'fast');
     assert.equal(manualFastTask.metadata.workflowMode, 'off');
-    assert.equal(manualFastTask.metadata.enableBatchExecution, false);
+    assert.deepEqual(manualFastTask.metadata.runtimeConcurrency, {
+      mode: 'serial',
+      workers: 1,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
     assert.equal(
       core.createAutocodeTaskRunPlan({
         projectRoot,
@@ -1134,7 +1138,12 @@ async function main() {
       phaseModels: { coding: 'sonnet' },
     }, 'coding'), 'google');
     assert.equal(core.resolveAutocodeTaskWorkflowMode({ workflowMode: 'off' }), 'off');
-    assert.equal(core.resolveAutocodeTaskEnableBatchExecution({ enableBatchExecution: true }), true);
+    assert.deepEqual(core.resolveAutocodeTaskRuntimeConcurrency({ workflowMode: 'balanced' }), {
+      mode: 'concurrent',
+      workers: 2,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
     assert.equal(core.resolveAutocodeTaskPhaseModelId({
       metadata: {
         phaseModels: { coding: 'sonnet' },
