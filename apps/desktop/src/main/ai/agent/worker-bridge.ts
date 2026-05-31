@@ -15,6 +15,10 @@ import path from 'path';
 import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { app } from 'electron';
+import {
+  toAutocodeMemoryRuntimeRecentContext,
+  type AutocodeMemoryRuntimeIpcResponse,
+} from '@autocode/core';
 
 import type { AgentManagerEvents, ExecutionProgressData, ProcessType } from '../../agent/types';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
@@ -26,6 +30,10 @@ import type {
 } from './types';
 import type { SessionResult } from '../session/types';
 import { ProgressTracker } from '../session/progress-tracker';
+import { MemoryObserver } from '../memory/observer';
+import { StepInjectionDecider } from '../memory/injection';
+import type { MemoryIpcRequest, MemoryCandidate, SessionOutcome, SessionType } from '../memory/types';
+import type { MemoryToolIpcRequest, MemoryIpcMessage } from '../memory/ipc/worker-observer-proxy';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -76,6 +84,8 @@ export class WorkerBridge extends EventEmitter {
   private historicalTokenUsage: TokenUsage | null = null; // Baseline from previous sessions
   private activeTokenUsageSessionId: string | undefined;
   private tokenUsageSessionBaseline: TokenUsage | null = null;
+  private memoryObserver: MemoryObserver | null = null;
+  private memorySessionType: SessionType = 'build';
 
   /**
    * Spawn a worker thread with the given configuration.
@@ -94,6 +104,10 @@ export class WorkerBridge extends EventEmitter {
     this.processType = config.processType;
     this.progressTracker = new ProgressTracker();
     this.executionProgressSequence = 0;
+    this.memorySessionType = resolveMemorySessionType(config.processType);
+    this.memoryObserver = shouldEnableWorkerMemory(config)
+      ? new MemoryObserver(config.taskId, this.memorySessionType, config.projectId || config.taskId)
+      : null;
 
     // Initialize with historical token usage if provided (for task resume scenarios)
     // Store as both baseline and last usage
@@ -121,7 +135,7 @@ export class WorkerBridge extends EventEmitter {
       this.emitTyped('log', this.taskId, message, this.projectId);
     });
 
-    this.worker.on('message', (message: WorkerMessage) => {
+    this.worker.on('message', (message: WorkerMessage | MemoryIpcMessage) => {
       this.handleWorkerMessage(message);
     });
 
@@ -186,7 +200,12 @@ export class WorkerBridge extends EventEmitter {
   // Message Handling
   // ===========================================================================
 
-  private handleWorkerMessage(message: WorkerMessage): void {
+  private handleWorkerMessage(message: WorkerMessage | MemoryIpcMessage): void {
+    if (isMemoryIpcMessage(message)) {
+      this.handleMemoryMessage(message);
+      return;
+    }
+
     switch (message.type) {
       case 'log':
         this.emitTyped('log', message.taskId, message.data, message.projectId);
@@ -242,6 +261,111 @@ export class WorkerBridge extends EventEmitter {
       case 'result':
         this.handleResult(message.taskId, message.data, message.projectId);
         break;
+    }
+  }
+
+  private handleMemoryMessage(message: MemoryIpcMessage): void {
+    if (isMemoryObservationMessage(message)) {
+      this.memoryObserver?.observe(message);
+      return;
+    }
+
+    if (message.type === 'memory:step-injection-request') {
+      this.handleMemoryStepInjection(message);
+      return;
+    }
+
+    if (message.type === 'memory:search') {
+      this.handleMemorySearch(message);
+      return;
+    }
+
+    if (message.type === 'memory:record') {
+      this.handleMemoryRecord(message);
+    }
+  }
+
+  private handleMemorySearch(message: Extract<MemoryToolIpcRequest, { type: 'memory:search' }>): void {
+    getMemoryServiceLazy()
+      .then((service) => service.search(message.filters))
+      .then((memories) => {
+        this.postMemoryResponse({
+          type: 'memory:search-result',
+          requestId: message.requestId,
+          memories,
+        });
+      })
+      .catch((error) => {
+        this.postMemoryResponse({
+          type: 'memory:error',
+          requestId: message.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  private handleMemoryRecord(message: Extract<MemoryToolIpcRequest, { type: 'memory:record' }>): void {
+    getMemoryServiceLazy()
+      .then((service) => service.store(message.entry))
+      .then((id) => {
+        this.postMemoryResponse({
+          type: 'memory:stored',
+          requestId: message.requestId,
+          id,
+        });
+      })
+      .catch((error) => {
+        this.postMemoryResponse({
+          type: 'memory:error',
+          requestId: message.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  private handleMemoryStepInjection(
+    message: Extract<MemoryToolIpcRequest, { type: 'memory:step-injection-request' }>,
+  ): void {
+    const observer = this.memoryObserver;
+    const projectId = this.projectId || this.taskId;
+    if (!observer || !projectId) {
+      this.postMemoryResponse({
+        type: 'memory:step-injection-result',
+        requestId: message.requestId,
+        injection: null,
+      });
+      return;
+    }
+
+    getMemoryServiceLazy()
+      .then((service) => {
+        const decider = new StepInjectionDecider(service, observer.getScratchpad(), projectId);
+        return decider.decide(
+          message.stepNumber,
+          toAutocodeMemoryRuntimeRecentContext(message.recentContext),
+        );
+      })
+      .then((injection) => {
+        this.postMemoryResponse({
+          type: 'memory:step-injection-result',
+          requestId: message.requestId,
+          injection,
+        });
+      })
+      .catch((error) => {
+        this.postMemoryResponse({
+          type: 'memory:error',
+          requestId: message.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  private postMemoryResponse(response: AutocodeMemoryRuntimeIpcResponse): void {
+    try {
+      this.worker?.postMessage(response);
+    } catch {
+      // Worker may already be exiting; memory must not affect task completion.
     }
   }
 
@@ -398,9 +522,52 @@ export class WorkerBridge extends EventEmitter {
       this.emitTyped('error', taskId, result.error.message, projectId);
     }
 
+    this.finalizeMemoryObserver(result, projectId);
+
     // Emit exit and cleanup
     this.emitTyped('exit', taskId, exitCode, this.processType, projectId);
     this.cleanup();
+  }
+
+  private finalizeMemoryObserver(result: SessionResult, projectId?: string): void {
+    const observer = this.memoryObserver;
+    const memoryProjectId = projectId || this.projectId || this.taskId;
+    if (!observer || !memoryProjectId) {
+      return;
+    }
+
+    const outcome = mapSessionResultToMemoryOutcome(result);
+    observer.finalize(outcome)
+      .then((candidates) => this.storeMemoryCandidates(candidates, memoryProjectId))
+      .catch((error) => {
+        console.warn(`[WorkerBridge:${this.taskId}] Memory finalize failed:`, error);
+      });
+  }
+
+  private async storeMemoryCandidates(candidates: MemoryCandidate[], projectId: string): Promise<void> {
+    if (candidates.length === 0) {
+      return;
+    }
+
+    try {
+      const service = await getMemoryServiceLazy();
+      await Promise.all(candidates.map((candidate) => service.store({
+        type: candidate.proposedType,
+        content: candidate.content,
+        confidence: candidate.confidence,
+        tags: [candidate.signalType, this.memorySessionType],
+        relatedFiles: candidate.relatedFiles,
+        relatedModules: candidate.relatedModules,
+        source: 'observer_inferred',
+        scope: candidate.relatedFiles.length > 0 ? 'module' : 'session',
+        projectId,
+        sessionId: this.taskId,
+        needsReview: candidate.needsReview ?? candidate.trustFlags?.contaminated ?? false,
+      })));
+      this.emitTyped('log', this.taskId, `Memory learned: ${candidates.length} candidate(s) stored`, projectId);
+    } catch (error) {
+      console.warn(`[WorkerBridge:${this.taskId}] Failed to store memory candidates:`, error);
+    }
   }
 
   private emitExecutionProgress(taskId: string, progress: ExecutionProgressData, projectId?: string): void {
@@ -443,6 +610,7 @@ export class WorkerBridge extends EventEmitter {
     this.lastTokenUsage = null;
     this.activeTokenUsageSessionId = undefined;
     this.tokenUsageSessionBaseline = null;
+    this.memoryObserver = null;
   }
 
   private mergeIncomingTokenUsage(incoming: TokenUsage): TokenUsage {
@@ -461,6 +629,57 @@ export class WorkerBridge extends EventEmitter {
     const cumulativeForSession = addTokenUsage(this.tokenUsageSessionBaseline, incoming);
     return maxTokenUsage(this.lastTokenUsage, cumulativeForSession);
   }
+}
+
+function shouldEnableWorkerMemory(config: AgentExecutorConfig): boolean {
+  const envToggle = config.session.mcpOptions?.mcpEnv?.GRAPHITI_ENABLED;
+  return envToggle?.toLowerCase() !== 'false';
+}
+
+function resolveMemorySessionType(processType: ProcessType): SessionType {
+  switch (processType) {
+    case 'spec-creation':
+      return 'spec_creation';
+    case 'task-execution':
+    case 'qa-process':
+      return 'build';
+    default:
+      return 'build';
+  }
+}
+
+function mapSessionResultToMemoryOutcome(result: SessionResult): SessionOutcome {
+  switch (result.outcome) {
+    case 'completed':
+      return 'success';
+    case 'max_steps':
+    case 'context_window':
+      return 'partial';
+    case 'cancelled':
+      return 'abandoned';
+    default:
+      return 'failure';
+  }
+}
+
+function isMemoryIpcMessage(message: unknown): message is MemoryIpcMessage {
+  if (!message || typeof message !== 'object') {
+    return false;
+  }
+  const type = (message as { type?: unknown }).type;
+  return typeof type === 'string' && type.startsWith('memory:');
+}
+
+function isMemoryObservationMessage(message: MemoryIpcMessage): message is MemoryIpcRequest {
+  return message.type === 'memory:tool-call' ||
+    message.type === 'memory:tool-result' ||
+    message.type === 'memory:reasoning' ||
+    message.type === 'memory:step-complete';
+}
+
+async function getMemoryServiceLazy() {
+  const { getMemoryService } = await import('../../ipc-handlers/context/memory-service-factory');
+  return getMemoryService();
 }
 
 function addTokenUsage(

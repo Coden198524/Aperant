@@ -13,7 +13,10 @@
 
 import { writeFile, readFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { MemoryServiceImpl } from '../memory/memory-service';
+import {
+  buildAutocodeWorkUnitOutcomeMemoryEntry,
+  type MemoryService,
+} from '@autocode/core';
 import type { SessionResult } from '../session/types';
 
 // =============================================================================
@@ -36,7 +39,7 @@ export interface LearningConfig {
   /** Spec directory */
   specDir: string;
   /** Memory service for storing knowledge */
-  memoryService?: MemoryServiceImpl;
+  memoryService?: Pick<MemoryService, 'store'>;
   /** Project ID for memory scoping */
   projectId: string;
 }
@@ -613,6 +616,20 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
   if (!config.memoryService) return;
 
   try {
+    await config.memoryService.store(buildAutocodeWorkUnitOutcomeMemoryEntry({
+      projectId: config.projectId,
+      sessionId: knowledge.sessionId,
+      workUnitId: config.subtask.id,
+      workUnitDescription: config.subtask.description,
+      outcome: mapSessionOutcome(config.sessionResult.outcome),
+      phase: 'coding',
+      source: 'desktop-worker',
+      summary: summarizeSessionForMemory(knowledge),
+      error: config.sessionResult.error?.message,
+      relatedFiles: knowledge.keyFiles,
+      completedAt: knowledge.timestamp,
+    }));
+
     // Store success patterns
     if (knowledge.successPatterns) {
       for (const pattern of knowledge.successPatterns) {
@@ -657,6 +674,20 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
         });
       }
     }
+
+    for (const insight of knowledge.insights) {
+      await config.memoryService.store({
+        type: 'module_insight',
+        content: insight,
+        confidence: 0.7,
+        tags: ['insight', config.subtask.id, config.sessionResult.outcome],
+        relatedFiles: knowledge.keyFiles,
+        projectId: config.projectId,
+        sessionId: knowledge.sessionId,
+        scope: knowledge.keyFiles.length > 0 ? 'module' : 'session',
+        source: 'agent_explicit',
+      });
+    }
   } catch (error) {
     console.error('Failed to store knowledge to memory:', error);
   }
@@ -680,6 +711,33 @@ async function storeToLocalHistory(knowledge: ExtractedKnowledge, specDir: strin
 // =============================================================================
 // Utility Functions
 // =============================================================================
+
+function mapSessionOutcome(outcome: SessionResult['outcome']): 'success' | 'failure' | 'partial' | 'abandoned' {
+  switch (outcome) {
+    case 'completed':
+      return 'success';
+    case 'max_steps':
+    case 'context_window':
+      return 'partial';
+    case 'cancelled':
+      return 'abandoned';
+    default:
+      return 'failure';
+  }
+}
+
+function summarizeSessionForMemory(knowledge: ExtractedKnowledge): string {
+  const parts = [
+    knowledge.successPatterns?.[0]?.description,
+    knowledge.successPatterns?.[0]?.approach,
+    knowledge.failurePatterns?.[0]?.prevention,
+    knowledge.insights[0],
+  ].filter(Boolean);
+
+  return parts.length > 0
+    ? parts.join('\n')
+    : `Completed work unit ${knowledge.subtaskId} with outcome ${knowledge.outcome}.`;
+}
 
 /**
  * Generate a unique session ID.

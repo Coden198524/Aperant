@@ -222,11 +222,15 @@ describe('WorkerObserverProxy', () => {
   });
 
   describe('requestStepInjection()', () => {
-    it('returns null when server responds with empty search result', async () => {
+    it('returns step injection when server provides one', async () => {
       setupResponseMock(mockPort, (requestId) => ({
-        type: 'memory:search-result',
+        type: 'memory:step-injection-result',
         requestId,
-        memories: [],
+        injection: {
+          content: 'MEMORY ALERT: auth gotcha',
+          type: 'gotcha_injection',
+          memoryIds: ['mem-1'],
+        },
       }));
 
       const injection = await proxy.requestStepInjection(5, {
@@ -234,7 +238,8 @@ describe('WorkerObserverProxy', () => {
         injectedMemoryIds: new Set(),
       });
 
-      expect(injection).toBeNull();
+      expect(injection?.content).toContain('auth gotcha');
+      expect(injection?.memoryIds).toEqual(['mem-1']);
     });
 
     it('returns null on error response', async () => {
@@ -254,9 +259,9 @@ describe('WorkerObserverProxy', () => {
 
     it('sends serializable context (converts Set to Array)', async () => {
       setupResponseMock(mockPort, (requestId) => ({
-        type: 'memory:search-result',
+        type: 'memory:step-injection-result',
         requestId,
-        memories: [],
+        injection: null,
       }));
 
       await proxy.requestStepInjection(5, {

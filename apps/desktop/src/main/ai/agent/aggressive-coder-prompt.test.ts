@@ -29,6 +29,8 @@ describe('buildAggressiveCoderPrompt', () => {
     expect(prompt).toContain('avoid nested cmd/powershell quoting');
     expect(prompt).toContain('Never use Bash here-documents');
     expect(prompt).toContain('Avoid Python -c or Node -e checks containing non-ASCII text');
+    expect(prompt).toContain('never mix CommonJS `require(...)` with top-level `await`');
+    expect(prompt).toContain('Avoid brittle smoke assertions against initial or transient task status');
     expect(prompt).toContain('do not keep rewriting commands');
   });
 });

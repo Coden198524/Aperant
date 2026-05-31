@@ -9,7 +9,7 @@
 
 import type { SubtaskInfo } from './build-orchestrator';
 import type { SessionResult } from '../session/types';
-import type { MemoryServiceImpl } from '../memory/memory-service';
+import type { MemoryService } from '@autocode/core';
 import type { ProjectType } from '../../../shared/types';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
@@ -51,7 +51,7 @@ export interface QualityConfig {
   /** Project type used by specialized quality gates */
   projectType?: ProjectType;
   /** Memory service for learning and pattern retrieval */
-  memoryService?: MemoryServiceImpl;
+  memoryService?: MemoryService;
   /** Project ID for memory scoping */
   projectId?: string;
 }
@@ -556,7 +556,7 @@ export async function learnFromSession(
   const appliedConfig = { ...DEFAULT_CONFIG, ...config };
 
   // Extract and store knowledge (if enabled)
-  if (appliedConfig.enableActiveMemoryLearning && config.memoryService && config.projectId) {
+  if (appliedConfig.enableActiveMemoryLearning) {
     try {
       const knowledge = await extractAndStoreKnowledge({
         sessionResult,
@@ -564,7 +564,7 @@ export async function learnFromSession(
         projectDir,
         specDir,
         memoryService: config.memoryService,
-        projectId: config.projectId,
+        projectId: config.projectId ?? 'local',
       });
 
       console.log(formatKnowledgeSummary(knowledge));

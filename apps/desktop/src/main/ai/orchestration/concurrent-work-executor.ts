@@ -53,6 +53,7 @@ export interface ConcurrentWorkExecutorConfig {
   onWorkItemSessionComplete?: (item: WorkItemInfo, result: SessionResult) => void;
   onGroupComplete?: (items: WorkItemInfo[], result: WorkItemResult) => void;
   onLog?: (message: string) => void;
+  qualityConfig?: import('./quality-integration').QualityConfig;
 }
 
 interface ImplementationPlan {
@@ -129,6 +130,7 @@ export async function executeConcurrentWorkItems(
     if (runnableItems.length === 0) {
       const blockedSummary = describeAutocodeWorkDependencyBlockers(dependencyAnalysis.blocked, statusById);
       await planWriter(() => markDependencyBlockedWorkItems(config, dependencyAnalysis.blocked, statusById));
+      await learnFromBlockedWorkItems(config, dependencyAnalysis.blocked, statusById);
       log(`[ConcurrentWorkExecutor] No runnable work items because dependencies are unresolved: ${blockedSummary}`);
       return {
         success: false,
@@ -284,15 +286,8 @@ async function executeWorkItemIsolated(
       `[ConcurrentWorkExecutor] Work item ${item.id} failed outside session: ${sessionResult.error?.message ?? sessionResult.outcome}`,
     );
 
-    try {
-      await planWriter(() => updateWorkItemStatuses(config, [
-        { id: item.id, summary: summarizeFailureResult(sessionResult) },
-      ], 'failed'));
-    } catch (statusError) {
-      config.onLog?.(
-        `[ConcurrentWorkExecutor] Failed to persist failure for ${item.id}: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
-      );
-    }
+    await learnFromTerminalWorkItem(config, item, sessionResult, 'stuck');
+    await tryPersistFailedWorkItemStatus(config, item, sessionResult, planWriter);
 
     return {
       completed: [],
@@ -347,6 +342,7 @@ async function executeWorkItemWithRetries(
       await planWriter(() => updateWorkItemStatuses(config, [
         { id: item.id, summary: summarizeSessionResult(sessionResult) },
       ], 'completed'));
+      await learnFromCompletedWorkItem(config, item, sessionResult);
       return {
         completed: [item.id],
         failed: [],
@@ -369,9 +365,8 @@ async function executeWorkItemWithRetries(
     }
   }
 
-  await planWriter(() => updateWorkItemStatuses(config, [
-    { id: item.id, summary: summarizeFailureResult(lastResult) },
-  ], 'failed'));
+  await learnFromTerminalWorkItem(config, item, lastResult, 'stuck');
+  await tryPersistFailedWorkItemStatus(config, item, lastResult, planWriter);
 
   return {
     completed: [],
@@ -379,6 +374,23 @@ async function executeWorkItemWithRetries(
     blocked: [],
     sessionResult: lastResult,
   };
+}
+
+async function tryPersistFailedWorkItemStatus(
+  config: ConcurrentWorkExecutorConfig,
+  item: WorkItemInfo,
+  result: SessionResult,
+  planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+): Promise<void> {
+  try {
+    await planWriter(() => updateWorkItemStatuses(config, [
+      { id: item.id, summary: summarizeFailureResult(result) },
+    ], 'failed'));
+  } catch (statusError) {
+    config.onLog?.(
+      `[ConcurrentWorkExecutor] Failed to persist failure for ${item.id}: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
+    );
+  }
 }
 
 async function fallbackToSerial(
@@ -394,6 +406,7 @@ async function fallbackToSerial(
     maxRetries: config.maxRetries,
     autoContinueDelayMs: 500,
     abortSignal: config.abortSignal,
+    qualityConfig: config.qualityConfig,
     runSubtaskSession: async (subtask, attempt) => config.runWorkItemSession({
       id: subtask.id,
       phaseId: subtask.phaseName,
@@ -421,6 +434,74 @@ async function fallbackToSerial(
     totalFailed: result.totalSubtasks - result.completedSubtasks,
     cancelled: result.cancelled,
   };
+}
+
+async function learnFromCompletedWorkItem(
+  config: ConcurrentWorkExecutorConfig,
+  item: WorkItemInfo,
+  result: SessionResult,
+): Promise<void> {
+  await learnFromTerminalWorkItem(config, item, result, 'completed');
+}
+
+async function learnFromTerminalWorkItem(
+  config: ConcurrentWorkExecutorConfig,
+  item: WorkItemInfo,
+  result: SessionResult,
+  status: 'completed' | 'blocked' | 'stuck',
+): Promise<void> {
+  if (!config.qualityConfig?.enableActiveMemoryLearning) {
+    return;
+  }
+
+  try {
+    const { learnFromSession } = await import('./quality-integration');
+    await learnFromSession(
+      {
+        id: item.id,
+        description: item.description,
+        phaseName: item.phaseName ?? item.phaseId,
+        filesToCreate: item.filesToCreate,
+        filesToModify: item.filesToModify,
+        patternFiles: item.patternFiles,
+        verification: item.verification,
+        dependsOn: item.dependsOn,
+        hasFileMetadata: item.hasFileMetadata,
+        hasDependencyMetadata: item.hasDependencyMetadata,
+        hasVerificationMetadata: item.hasVerificationMetadata,
+        workPackage: item.workPackage,
+        upstreamTaskIds: item.upstreamTaskIds,
+        upstreamSource: item.upstreamSource,
+        status,
+      },
+      result,
+      config.qualityConfig,
+      config.projectDir,
+      config.specDir,
+    );
+  } catch (error) {
+    config.onLog?.(`[ConcurrentWorkExecutor] Failed to learn from ${item.id}: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+async function learnFromBlockedWorkItems(
+  config: ConcurrentWorkExecutorConfig,
+  blockedItems: Array<AutocodeWorkDependencyBlockedItem<WorkItemInfo>>,
+  statusById: ReadonlyMap<string, string>,
+): Promise<void> {
+  if (!config.qualityConfig?.enableActiveMemoryLearning) {
+    return;
+  }
+
+  for (const blocked of blockedItems) {
+    const reason = describeAutocodeWorkDependencyBlocker(blocked, statusById);
+    await learnFromTerminalWorkItem(
+      config,
+      blocked.item,
+      createBlockedSessionResult(reason),
+      'blocked',
+    );
+  }
 }
 
 async function executeWorkItemSession(
@@ -498,6 +579,22 @@ function createErrorSessionResult(error: unknown, startedAt: number): SessionRes
       message,
       retryable: outcome !== 'auth_failure',
       cause: error,
+    },
+  };
+}
+
+function createBlockedSessionResult(reason: string): SessionResult {
+  return {
+    outcome: 'error',
+    stepsExecuted: 0,
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    messages: [{ role: 'assistant', content: reason }],
+    durationMs: 0,
+    toolCallCount: 0,
+    error: {
+      code: 'dependency_blocked',
+      message: reason,
+      retryable: false,
     },
   };
 }

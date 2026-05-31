@@ -6,11 +6,16 @@ import type { SessionResult } from '../../session/types';
 const mockLoadImplementationPlanFromFiles = vi.fn();
 const mockSaveImplementationPlanToFiles = vi.fn();
 const mockUpdateImplementationPlanInFiles = vi.fn();
+const mockLearnFromSession = vi.fn();
 
 vi.mock('../../schema/plan-shards', () => ({
   loadImplementationPlanFromFiles: (...args: unknown[]) => mockLoadImplementationPlanFromFiles(...args),
   saveImplementationPlanToFiles: (...args: unknown[]) => mockSaveImplementationPlanToFiles(...args),
   updateImplementationPlanInFiles: (...args: unknown[]) => mockUpdateImplementationPlanInFiles(...args),
+}));
+
+vi.mock('../quality-integration', () => ({
+  learnFromSession: (...args: unknown[]) => mockLearnFromSession(...args),
 }));
 
 function makeSessionResult(outcome: SessionResult['outcome'] = 'completed'): SessionResult {
@@ -133,6 +138,7 @@ describe('executeConcurrentWorkItems', () => {
     mockLoadImplementationPlanFromFiles.mockReset();
     mockSaveImplementationPlanToFiles.mockReset();
     mockUpdateImplementationPlanInFiles.mockReset();
+    mockLearnFromSession.mockReset();
   });
 
   it('runs independent work items concurrently and marks them completed', async () => {
@@ -296,6 +302,46 @@ describe('executeConcurrentWorkItems', () => {
     expect(result.totalFailed).toBe(1);
     expect(getPlanState().phases[0].subtasks[0].status).toBe('failed');
     expect((getPlanState().phases[0].subtasks[0] as { notes?: string }).notes).toContain('boom');
+  });
+
+  it('records failed work item memory even when failure status persistence fails', async () => {
+    setupPlanState(['a.ts']);
+    let updateCalls = 0;
+    mockUpdateImplementationPlanInFiles.mockImplementation(async (_specDir: string, updater: (plan: ReturnType<typeof createPlan>) => unknown) => {
+      updateCalls++;
+      if (updateCalls >= 3) {
+        throw new Error('plan write failed');
+      }
+      const current = createPlan(['a.ts']);
+      const result = await updater(current);
+      return result === false || result === null ? current : (result ?? current);
+    });
+    const runWorkItemSession = vi.fn().mockResolvedValue({
+      ...makeSessionResult('error'),
+      error: { message: 'boom memory' },
+    });
+    const logs: string[] = [];
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      maxRetries: 0,
+      runWorkItemSession,
+      onLog: (message) => logs.push(message),
+      qualityConfig: {
+        enableActiveMemoryLearning: true,
+      } as NonNullable<ConcurrentWorkExecutorConfig['qualityConfig']>,
+    }));
+
+    expect(result.success).toBe(false);
+    expect(result.totalFailed).toBe(1);
+    expect(mockLearnFromSession).toHaveBeenCalledTimes(1);
+    expect(mockLearnFromSession.mock.calls[0][0]).toMatchObject({
+      id: 'work-1',
+      status: 'stuck',
+    });
+    expect(mockLearnFromSession.mock.calls[0][1]).toMatchObject({
+      error: { message: 'boom memory' },
+    });
+    expect(logs.some((message) => message.includes('Failed to persist failure for work-1'))).toBe(true);
   });
 
   it('isolates thrown session errors to the current work item', async () => {

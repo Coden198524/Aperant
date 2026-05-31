@@ -8,6 +8,8 @@ import type {
   AutoBuildVersionInfo,
   PromptProfileRefreshResult,
   ProjectEnvConfig,
+  InfrastructureStatus,
+  MemoryValidationResult,
   GitStatus,
   KanbanPreferences,
   GitBranchDetail
@@ -62,6 +64,11 @@ export interface ProjectAPI {
   pinMemory: (memoryId: string, pinned: boolean) => Promise<IPCResult<void>>;
   deprecateMemory: (memoryId: string) => Promise<IPCResult<void>>;
   deleteMemory: (memoryId: string) => Promise<IPCResult<void>>;
+
+  // Memory Infrastructure
+  getMemoryInfrastructureStatus: (dbPath?: string) => Promise<IPCResult<InfrastructureStatus>>;
+  listMemoryDatabases: (dbPath?: string) => Promise<IPCResult<string[]>>;
+  testMemoryConnection: (dbPath?: string, database?: string) => Promise<IPCResult<MemoryValidationResult>>;
 
   // Environment Configuration
   getProjectEnv: (projectId: string) => Promise<IPCResult<ProjectEnvConfig>>;
@@ -229,6 +236,16 @@ export const createProjectAPI = (): ProjectAPI => ({
 
   deleteMemory: (memoryId: string): Promise<IPCResult<void>> =>
     ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_MEMORY_DELETE, memoryId),
+
+  // Memory Infrastructure
+  getMemoryInfrastructureStatus: (dbPath?: string): Promise<IPCResult<InfrastructureStatus>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_INFRASTRUCTURE_STATUS, dbPath),
+
+  listMemoryDatabases: (dbPath?: string): Promise<IPCResult<string[]>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_DATABASES_LIST, dbPath),
+
+  testMemoryConnection: (dbPath?: string, database?: string): Promise<IPCResult<MemoryValidationResult>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.MEMORY_CONNECTION_TEST, dbPath, database),
 
   // Environment Configuration
   getProjectEnv: (projectId: string): Promise<IPCResult<ProjectEnvConfig>> =>

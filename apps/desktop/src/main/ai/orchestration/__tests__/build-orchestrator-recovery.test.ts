@@ -236,6 +236,63 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.finalPhase).toBe('complete');
   });
 
+  it('runs QA when an existing plan is complete but no passed QA report exists', async () => {
+    let reviewerRuns = 0;
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.md')) {
+        return Promise.resolve(makePlan(['completed']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return reviewerRuns > 0
+          ? Promise.resolve('Status: PASSED')
+          : Promise.reject(new Error('ENOENT'));
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'qa_reviewer') {
+        reviewerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = makeOrchestrator(runSession);
+    const phases: ExecutionPhase[] = [];
+    orchestrator.on('phase-change', (phase) => phases.push(phase));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'qa_reviewer')).toHaveLength(1);
+    expect(phases).toContain('qa_review');
+    expect(outcome.finalPhase).toBe('complete');
+  });
+
+  it('does not rerun QA when an existing complete plan already has a passed QA report', async () => {
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.md')) {
+        return Promise.resolve(makePlan(['completed']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve('Status: PASSED');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
+    const orchestrator = makeOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+    expect(runSession).not.toHaveBeenCalled();
+    expect(outcome.finalPhase).toBe('complete');
+  });
+
   it('returns from QA to coding when QA detects incomplete subtasks', async () => {
     let codingRuns = 0;
     let reviewerRuns = 0;

@@ -13,7 +13,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { MemoryServiceImpl } from '../memory/memory-service';
+import type { MemoryService } from '@autocode/core';
 
 // =============================================================================
 // Types
@@ -32,7 +32,7 @@ export interface PatternInjectionConfig {
   /** Spec directory */
   specDir: string;
   /** Memory service for retrieving success cases */
-  memoryService?: MemoryServiceImpl;
+  memoryService?: MemoryService;
 }
 
 export interface ExtractedPattern {
@@ -289,7 +289,7 @@ function extractTypePattern(content: string, fileName: string): ExtractedPattern
  */
 async function retrieveSuccessCases(
   subtaskDescription: string,
-  memoryService: MemoryServiceImpl,
+  memoryService: MemoryService,
 ): Promise<SuccessCase[]> {
   try {
     // Search for success patterns in memory

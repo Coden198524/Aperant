@@ -403,6 +403,7 @@ export function createStartedAutocodeAgentRuntime(
     projectRoot: input.projectRoot,
     dataDirName,
     taskId: input.taskId,
+    projectId: input.projectId,
     cli: input.cli,
     customCommand: input.customCommand,
     model: input.model,

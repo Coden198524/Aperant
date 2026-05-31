@@ -1,5 +1,5 @@
 ﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -103,6 +103,52 @@ describe('iterateSubtasks completion gating', () => {
     expect(result.completedSubtasks).toBe(1);
     expect(result.stuckSubtasks).toEqual([]);
     expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+  });
+
+  it('writes session memory when active memory learning is enabled', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'implement local memory', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+    const storedMemories: Array<{ type?: string; content?: string }> = [];
+    const memoryService = {
+      store: async (entry: { type?: string; content?: string }) => {
+        storedMemories.push(entry);
+        return `memory-${storedMemories.length}`;
+      },
+    };
+
+    await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      qualityConfig: {
+        enableActiveMemoryLearning: true,
+        enableIncrementalValidation: false,
+        enableContextAwareRecovery: false,
+        projectId: 'project-1',
+        memoryService: memoryService as never,
+      },
+      runSubtaskSession: async () => makeResult('completed'),
+    });
+
+    const memoryDir = join(specDir, 'memory', 'session_insights');
+    const files = await readdir(memoryDir);
+    expect(files).toHaveLength(1);
+
+    const raw = await readFile(join(memoryDir, files[0]), 'utf-8');
+    const memory = JSON.parse(raw) as { subtaskId?: string; outcome?: string };
+    expect(memory.subtaskId).toBe('s1');
+    expect(memory.outcome).toBe('completed');
+    expect(storedMemories.some((entry) => entry.type === 'work_unit_outcome')).toBe(true);
   });
 
   it('accepts a model-updated completed status even when the session outcome is error', async () => {

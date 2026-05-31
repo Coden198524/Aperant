@@ -392,6 +392,15 @@ export type MemoryIpcResponse =
       id: string;
     }
   | {
+      type: 'memory:step-injection-result';
+      requestId: string;
+      injection: {
+        content: string;
+        type: 'gotcha_injection' | 'scratchpad_reflection' | 'search_short_circuit';
+        memoryIds: string[];
+      } | null;
+    }
+  | {
       type: 'memory:error';
       requestId: string;
       error: string;

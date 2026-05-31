@@ -28,6 +28,7 @@ export interface CreateAutocodeTaskRunPlanInput {
   projectRoot: string;
   dataDirName: string;
   taskId: string;
+  projectId?: string;
   cli: AutocodeCli;
   customCommand?: string;
   model?: string;
@@ -96,6 +97,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       taskTitle: task.title,
       taskDescription: task.description,
       taskMetadata: task.metadata,
+      projectId: input.projectId,
       language: input.language,
       runtimeConcurrency,
     }),
@@ -223,6 +225,9 @@ function buildTaskRunPrompt(input: {
       '- Inspect the relevant project files before editing.',
       '- Make the smallest useful change.',
       '- Run the most relevant validation.',
+      '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
+      '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
+      buildCliMemoryNotesInstruction(),
       `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary}.`,
     ].join('\n')}`;
   }
@@ -295,8 +300,19 @@ function buildTaskRunPrompt(input: {
     '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes during coding; the runner owns status updates after this invocation.',
     '- Put completion details in your final response or the implementation summary, not by editing plan status.',
     '- Run the most relevant validation command for the project.',
+    '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
+    '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
+    buildCliMemoryNotesInstruction(),
     `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or include completion details in your final response.`,
   ].join('\n')}`;
+}
+
+function buildCliMemoryNotesInstruction(): string {
+  return [
+    '- If you discover durable project knowledge, add a final "Memory Notes" section.',
+    '- Memory Notes format: "- [gotcha|decision|pattern|error_pattern|module_insight] concise reusable note".',
+    '- Omit Memory Notes when there is nothing durable to remember.',
+  ].join('\n');
 }
 
 function buildTaskOpenSpecCompactContextReference(input: {
@@ -435,12 +451,13 @@ function buildNodeRunnerScript(input: {
   taskTitle: string;
   taskDescription: string;
   taskMetadata?: unknown;
+  projectId?: string;
   language?: AutocodeAgentLanguage;
   runtimeConcurrency: AutocodeTaskRuntimeConcurrencyResolved;
 }): string {
   return `const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
-const { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
 const { basename, dirname, join, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
@@ -450,12 +467,14 @@ const command = ${JSON.stringify(input.command)};
 const args = ${JSON.stringify(input.args)};
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
+const libsqlSqlite3ModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@libsql/client/sqlite3'))};
 const promptFilePath = ${JSON.stringify(input.promptFilePath)};
 const phase = ${JSON.stringify(input.phase)};
 const specDir = ${JSON.stringify(input.specDir)};
 const taskTitle = ${JSON.stringify(input.taskTitle)};
 const taskDescription = ${JSON.stringify(input.taskDescription)};
 const taskMetadata = ${JSON.stringify(input.taskMetadata ?? {})};
+const projectId = ${JSON.stringify(input.projectId)};
 const language = ${JSON.stringify(input.language)};
 const runtimeConcurrency = ${JSON.stringify(input.runtimeConcurrency)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
@@ -469,6 +488,8 @@ const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
 let validationRetryCount = 0;
 let attemptId = 0;
+let memoryContextBlock = '';
+const pendingMemoryWrites = [];
 const startMessage = logPhase === 'coding'
   ? localizeMessage('startCoding', \`Starting Autocode \${phase} coding session with \${command}.\`, { phase, command })
   : localizeMessage('startPlanning', \`Starting Autocode \${phase} planning session with \${command}.\`, { phase, command });
@@ -503,10 +524,449 @@ const CODING_WORKER_COMPLETION_GRACE_MS = readPositiveInteger(
   45 * 1000,
 );
 
-if (phase === 'coding') {
-  startCodingWorkQueue();
-} else {
-  startAttempt(prompt);
+initializeCliMemoryRuntime()
+  .then((contextBlock) => {
+    memoryContextBlock = contextBlock;
+    if (phase === 'coding') {
+      startCodingWorkQueue();
+    } else {
+      startAttempt(buildPromptWithMemoryContext(prompt));
+    }
+  })
+  .catch((error) => {
+    appendTaskLogEntry(logPhase, 'info', 'Memory context unavailable: ' + (error instanceof Error ? error.message : String(error)));
+    if (phase === 'coding') {
+      startCodingWorkQueue();
+    } else {
+      startAttempt(prompt);
+    }
+  });
+
+async function initializeCliMemoryRuntime() {
+  if (!isCliMemoryEnabled()) {
+    return '';
+  }
+  const memories = [
+    ...loadCliLocalSessionMemories(4),
+    ...await searchCliMemoryDatabase(taskDescription || taskTitle, 8),
+  ];
+  const deduped = dedupeCliMemories(memories).slice(0, 8);
+  if (deduped.length === 0) {
+    return '';
+  }
+  const lines = [
+    '## Project Memory',
+    '',
+    'Use these prior outcomes, gotchas, and decisions when relevant. Do not repeat failed approaches.',
+    '',
+  ];
+  for (const memory of deduped) {
+    const files = memory.relatedFiles && memory.relatedFiles.length > 0
+      ? ' Files: ' + memory.relatedFiles.join(', ') + '.'
+      : '';
+    lines.push('- [' + memory.type + '] ' + limitLogText(memory.content, 900) + files);
+  }
+  return lines.join('\\n');
+}
+
+function buildPromptWithMemoryContext(basePrompt) {
+  if (!memoryContextBlock) {
+    return basePrompt;
+  }
+  return [basePrompt, '', '---', '', memoryContextBlock].join('\\n');
+}
+
+function isCliMemoryEnabled() {
+  return String(process.env.GRAPHITI_ENABLED || 'true').toLowerCase() !== 'false';
+}
+
+function getCliMemoryProjectId() {
+  return projectId ||
+    (taskMetadata && typeof taskMetadata.projectId === 'string' && taskMetadata.projectId.trim()) ||
+    (taskMetadata && typeof taskMetadata.project_id === 'string' && taskMetadata.project_id.trim()) ||
+    cwd;
+}
+
+function getCliMemorySessionId(workUnitId) {
+  return 'cli:' + (specDir.split(/[\\\\/]/).pop() || taskTitle) + ':' + workUnitId + ':' + Date.now();
+}
+
+function loadCliLocalSessionMemories(limit) {
+  const dir = join(specDir, 'memory', 'session_insights');
+  if (!existsSync(dir)) {
+    return [];
+  }
+  try {
+    return readdirSync(dir)
+      .filter((name) => /^session_.+\\.json$/i.test(name))
+      .map((name) => {
+        const filePath = join(dir, name);
+        return { filePath, stat: statSync(filePath) };
+      })
+      .sort((a, b) => b.stat.mtimeMs - a.stat.mtimeMs)
+      .slice(0, limit)
+      .map(({ filePath }) => {
+        const insight = readJson(filePath);
+        if (!insight) return null;
+        return {
+          id: insight.sessionId || filePath,
+          type: 'work_unit_outcome',
+          content: Array.isArray(insight.insights)
+            ? insight.insights.filter(Boolean).join('\\n')
+            : JSON.stringify(insight),
+          confidence: 0.7,
+          relatedFiles: Array.isArray(insight.keyFiles) ? insight.keyFiles : [],
+          createdAt: insight.timestamp || new Date().toISOString(),
+        };
+      })
+      .filter(Boolean);
+  } catch {
+    return [];
+  }
+}
+
+async function searchCliMemoryDatabase(query, limit) {
+  if (!libsqlSqlite3ModulePath) {
+    return [];
+  }
+  let client = null;
+  try {
+    const mod = require(libsqlSqlite3ModulePath);
+    client = mod.createClient({ url: 'file:' + resolveCliMemoryDatabasePath() });
+    await ensureCliMemorySchema(client);
+    const projectFilter = getCliMemoryProjectId();
+    const ftsRows = query
+      ? await client.execute({
+          sql:
+            'SELECT m.id, m.type, m.content, m.confidence, m.related_files, m.tags, m.created_at ' +
+            'FROM memories_fts f JOIN memories m ON m.id = f.memory_id ' +
+            'WHERE memories_fts MATCH ? AND m.project_id = ? AND m.deprecated = 0 ' +
+            'ORDER BY bm25(memories_fts) LIMIT ?',
+          args: [sanitizeCliFtsQuery(query), projectFilter, limit],
+        }).catch(() => ({ rows: [] }))
+      : { rows: [] };
+    const rows = ftsRows.rows.length > 0
+      ? ftsRows
+      : await client.execute({
+          sql:
+            'SELECT id, type, content, confidence, related_files, tags, created_at ' +
+            'FROM memories WHERE project_id = ? AND deprecated = 0 ' +
+            'ORDER BY created_at DESC LIMIT ?',
+          args: [projectFilter, limit],
+        });
+    return rows.rows.map(cliMemoryRowToContextMemory);
+  } catch {
+    return [];
+  } finally {
+    try {
+      client?.close();
+    } catch {
+      // Ignore close failures.
+    }
+  }
+}
+
+function recordCliWorkItemMemory(subtask, outcome, summary, explicitNotes) {
+  if (!isCliMemoryEnabled()) {
+    return null;
+  }
+  const now = new Date().toISOString();
+  const files = getWorkItemFiles(subtask || {});
+  const sessionId = getCliMemorySessionId(subtask.id || 'task');
+  const memoryNotes = Array.isArray(explicitNotes) ? explicitNotes : [];
+  const content = buildCliWorkUnitOutcomeContent(subtask, outcome, summary, files, now);
+  const insight = {
+    sessionId,
+    subtaskId: subtask.id || 'task',
+    timestamp: now,
+    outcome,
+    insights: [
+      summary || content,
+      ...memoryNotes.map((note) => note.content),
+    ].filter(Boolean),
+    keyFiles: files,
+    source: 'cli-runner',
+    workUnit: {
+      id: subtask.id || 'task',
+      title: subtask.title || taskTitle,
+      description: Array.isArray(subtask.details) && subtask.details.length > 0 ? subtask.details.join('\\n') : taskDescription,
+      upstreamTaskIds: Array.isArray(subtask.upstreamTaskIds) ? subtask.upstreamTaskIds : [],
+    },
+  };
+  writeCliSessionInsight(sessionId, insight);
+  pendingMemoryWrites.push(storeCliMemoryDatabaseEntry({
+    id: randomUUID(),
+    type: 'work_unit_outcome',
+    content,
+    confidence: outcome === 'success' ? 0.82 : 0.72,
+    tags: ['work_unit', outcome, 'cli-runner', phase].filter(Boolean),
+    relatedFiles: files,
+    relatedModules: [],
+    createdAt: now,
+    sessionId,
+    scope: 'work_unit',
+    source: 'agent_explicit',
+    projectId: getCliMemoryProjectId(),
+    workUnitRef: {
+      methodology: 'autocode',
+      hierarchy: [phase, subtask.id || 'task'],
+      label: (subtask.id || 'task') + (subtask.title ? ': ' + subtask.title : ''),
+    },
+    citationText: summary,
+  }));
+  for (const note of memoryNotes) {
+    pendingMemoryWrites.push(storeCliMemoryDatabaseEntry({
+      id: randomUUID(),
+      type: note.type,
+      content: note.content,
+      confidence: 0.78,
+      tags: ['cli-runner', 'explicit_memory', phase, note.type].filter(Boolean),
+      relatedFiles: files,
+      relatedModules: [],
+      createdAt: now,
+      sessionId,
+      scope: files.length > 0 ? 'module' : 'session',
+      source: 'agent_explicit',
+      projectId: getCliMemoryProjectId(),
+      workUnitRef: {
+        methodology: 'autocode',
+        hierarchy: [phase, subtask.id || 'task', 'memory_notes'],
+        label: (subtask.id || 'task') + ' memory note',
+      },
+      citationText: note.content,
+    }));
+  }
+  return sessionId;
+}
+
+function writeCliSessionInsight(sessionId, insight) {
+  try {
+    const dir = join(specDir, 'memory', 'session_insights');
+    mkdirSync(dir, { recursive: true });
+    writeJson(join(dir, 'session_' + safeFileSegment(sessionId) + '.json'), insight);
+  } catch (error) {
+    appendTaskLogEntry('coding', 'info', 'Failed to write session memory: ' + (error instanceof Error ? error.message : String(error)));
+  }
+}
+
+async function storeCliMemoryDatabaseEntry(entry) {
+  if (!libsqlSqlite3ModulePath) {
+    return;
+  }
+  let client = null;
+  try {
+    const mod = require(libsqlSqlite3ModulePath);
+    client = mod.createClient({ url: 'file:' + resolveCliMemoryDatabasePath() });
+    await ensureCliMemorySchema(client);
+    await client.batch([
+      {
+        sql:
+          'INSERT OR REPLACE INTO memories (' +
+          'id, type, content, confidence, tags, related_files, related_modules, created_at, last_accessed_at, access_count, ' +
+          'session_id, scope, work_unit_ref, methodology, source, relations, provenance_session_ids, needs_review, pinned, citation_text, project_id, trust_level_scope, deprecated' +
+          ') VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?, ?, ?, ?, ?, ?, ?, 0, 0, ?, ?, ?, 0)',
+        args: [
+          entry.id,
+          entry.type,
+          entry.content,
+          entry.confidence,
+          JSON.stringify(entry.tags || []),
+          JSON.stringify(entry.relatedFiles || []),
+          JSON.stringify(entry.relatedModules || []),
+          entry.createdAt,
+          entry.createdAt,
+          entry.sessionId,
+          entry.scope,
+          JSON.stringify(entry.workUnitRef || null),
+          'autocode',
+          entry.source,
+          '[]',
+          '[]',
+          entry.citationText || null,
+          entry.projectId,
+          'personal',
+        ],
+      },
+      {
+        sql: 'INSERT INTO memories_fts (memory_id, content, tags, related_files) VALUES (?, ?, ?, ?)',
+        args: [
+          entry.id,
+          entry.content,
+          (entry.tags || []).join(' '),
+          (entry.relatedFiles || []).join(' '),
+        ],
+      },
+    ]);
+  } catch (error) {
+    appendTaskLogEntry('coding', 'info', 'Memory DB write skipped: ' + (error instanceof Error ? error.message : String(error)));
+  } finally {
+    try {
+      client?.close();
+    } catch {
+      // Ignore close failures.
+    }
+  }
+}
+
+async function flushCliMemoryWrites() {
+  if (pendingMemoryWrites.length === 0) {
+    return;
+  }
+  const writes = pendingMemoryWrites.splice(0, pendingMemoryWrites.length);
+  await Promise.allSettled(writes);
+}
+
+async function ensureCliMemorySchema(client) {
+  await client.execute(
+    'CREATE TABLE IF NOT EXISTS memories (' +
+    'id TEXT PRIMARY KEY, type TEXT NOT NULL, content TEXT NOT NULL, confidence REAL NOT NULL DEFAULT 0.8, ' +
+    'tags TEXT NOT NULL DEFAULT \\'[]\\', related_files TEXT NOT NULL DEFAULT \\'[]\\', related_modules TEXT NOT NULL DEFAULT \\'[]\\', ' +
+    'created_at TEXT NOT NULL, last_accessed_at TEXT NOT NULL, access_count INTEGER NOT NULL DEFAULT 0, session_id TEXT, commit_sha TEXT, ' +
+    'scope TEXT NOT NULL DEFAULT \\'global\\', work_unit_ref TEXT, methodology TEXT, source TEXT NOT NULL DEFAULT \\'agent_explicit\\', ' +
+    'target_node_id TEXT, impacted_node_ids TEXT DEFAULT \\'[]\\', relations TEXT NOT NULL DEFAULT \\'[]\\', decay_half_life_days REAL, ' +
+    'provenance_session_ids TEXT DEFAULT \\'[]\\', needs_review INTEGER NOT NULL DEFAULT 0, user_verified INTEGER NOT NULL DEFAULT 0, ' +
+    'citation_text TEXT, pinned INTEGER NOT NULL DEFAULT 0, deprecated INTEGER NOT NULL DEFAULT 0, deprecated_at TEXT, stale_at TEXT, ' +
+    'project_id TEXT NOT NULL, trust_level_scope TEXT DEFAULT \\'personal\\', chunk_type TEXT, chunk_start_line INTEGER, chunk_end_line INTEGER, ' +
+    'context_prefix TEXT, embedding_model_id TEXT)'
+  );
+  await client.execute(
+    'CREATE VIRTUAL TABLE IF NOT EXISTS memories_fts USING fts5(memory_id UNINDEXED, content, tags, related_files, tokenize=\\'porter unicode61\\')'
+  );
+}
+
+function buildCliWorkUnitOutcomeContent(subtask, outcome, summary, files, completedAt) {
+  const title = subtask.title ? ' (' + subtask.title + ')' : '';
+  const upstream = Array.isArray(subtask.upstreamTaskIds) && subtask.upstreamTaskIds.length > 0
+    ? 'Upstream tasks: ' + subtask.upstreamTaskIds.join(', ')
+    : '';
+  return [
+    'Work unit ' + (subtask.id || 'task') + title + ' finished with outcome: ' + outcome + '.',
+    Array.isArray(subtask.details) && subtask.details.length > 0 ? 'Task: ' + subtask.details.join('\\n') : '',
+    summary ? 'Summary: ' + summary : '',
+    upstream,
+    files.length > 0 ? 'Files: ' + files.join(', ') : '',
+    'Completed at: ' + completedAt,
+  ].filter(Boolean).join('\\n');
+}
+
+function resolveCliMemoryDatabasePath() {
+  const database = normalizeCliDatabaseFilename(process.env.GRAPHITI_DATABASE || 'auto_claude_memory');
+  const configuredPath = process.env.GRAPHITI_DB_PATH || join(getCliHomeDir(), '.autocode', 'memories');
+  const expanded = expandCliHomePath(configuredPath);
+  const basePath = resolve(expanded);
+  mkdirSync(basePath, { recursive: true });
+  return join(basePath, database);
+}
+
+function getCliHomeDir() {
+  return process.env.USERPROFILE || process.env.HOME || cwd;
+}
+
+function expandCliHomePath(value) {
+  const text = String(value || '').trim();
+  if (text === '~') return getCliHomeDir();
+  if (text.startsWith('~/') || text.startsWith('~\\\\')) {
+    return join(getCliHomeDir(), text.slice(2));
+  }
+  return text;
+}
+
+function normalizeCliDatabaseFilename(value) {
+  const name = String(value || 'auto_claude_memory').trim() || 'auto_claude_memory';
+  return name.toLowerCase().endsWith('.db') ? name : name + '.db';
+}
+
+function cliMemoryRowToContextMemory(row) {
+  return {
+    id: String(row.id || ''),
+    type: String(row.type || 'work_unit_outcome'),
+    content: String(row.content || ''),
+    confidence: Number(row.confidence || 0.7),
+    relatedFiles: parseJsonArray(row.related_files),
+    createdAt: String(row.created_at || ''),
+  };
+}
+
+function dedupeCliMemories(memories) {
+  const seen = new Set();
+  const result = [];
+  for (const memory of memories) {
+    if (!memory || !memory.content) continue;
+    const key = memory.id || memory.content;
+    if (seen.has(key)) continue;
+    seen.add(key);
+    result.push(memory);
+  }
+  return result;
+}
+
+function sanitizeCliFtsQuery(value) {
+  const words = String(value || '')
+    .replace(/["'\\x60*()[\\]{}:]/g, ' ')
+    .split(/\\s+/)
+    .map((word) => word.trim())
+    .filter((word) => word.length >= 2)
+    .slice(0, 12);
+  return words.length > 0 ? words.join(' OR ') : 'Autocode';
+}
+
+function parseJsonArray(value) {
+  if (Array.isArray(value)) return value;
+  if (typeof value !== 'string') return [];
+  try {
+    const parsed = JSON.parse(value);
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function safeFileSegment(value) {
+  return String(value || 'memory').replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 160);
+}
+
+function extractCliMemoryNotes(text) {
+  const normalized = String(text || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
+  const match = /^#{1,6}\\s*Memory Notes\\s*$/im.exec(normalized);
+  if (!match) {
+    return [];
+  }
+  const section = normalized.slice(match.index + match[0].length);
+  const nextHeading = /\\n#{1,6}\\s+\\S/.exec(section);
+  const body = (nextHeading ? section.slice(0, nextHeading.index) : section).trim();
+  const notes = [];
+  for (const line of body.split('\\n')) {
+    const bullet = /^\\s*(?:[-*]|\\d+[.)])\\s+(.*)$/.exec(line);
+    if (!bullet) continue;
+    let content = bullet[1].trim();
+    let type = 'module_insight';
+    const typed = /^\\[([a-z_]+)\\]\\s*(.*)$/.exec(content);
+    if (typed) {
+      type = normalizeCliMemoryNoteType(typed[1]);
+      content = typed[2].trim();
+    }
+    if (content.length >= 10) {
+      notes.push({ type, content: limitLogText(content, 500) });
+    }
+  }
+  return notes.slice(0, 5);
+}
+
+function normalizeCliMemoryNoteType(value) {
+  const type = String(value || '').trim().toLowerCase();
+  if ([
+    'gotcha',
+    'decision',
+    'pattern',
+    'error_pattern',
+    'module_insight',
+    'dead_end',
+    'causal_dependency',
+    'requirement',
+  ].includes(type)) {
+    return type;
+  }
+  return 'module_insight';
 }
 
 function startAttempt(attemptPrompt, subtaskId) {
@@ -562,14 +1022,14 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
     updatePlanRunningState();
     emitPhase(executionPhase, retryMessage, 0);
     defaultAttemptState.lastCodexMessageText = '';
-    startAttempt(buildArtifactValidationRetryPrompt(validationError));
+    startAttempt(buildPromptWithMemoryContext(buildArtifactValidationRetryPrompt(validationError)));
     return;
   }
 
   finishRun(exitCode, signal, explicitError, validationError);
 }
 
-function finishRun(exitCode, signal, explicitError, validationError) {
+async function finishRun(exitCode, signal, explicitError, validationError) {
   if (finalized) return;
   finalized = true;
   syncOpenSpecTasksFromPlan();
@@ -586,9 +1046,24 @@ function finishRun(exitCode, signal, explicitError, validationError) {
     updatedAt: now,
   };
 
+  if (phase === 'direct' || (!failed && phase === 'coding')) {
+    const finalText = defaultAttemptState.lastCodexMessageText || result.message;
+    const memoryNotes = extractCliMemoryNotes(finalText);
+    recordCliWorkItemMemory({
+      id: phase === 'direct' ? 'direct-implementation' : 'task-execution',
+      title: taskTitle,
+      details: [taskDescription],
+      filesToModify: [],
+      filesToCreate: [],
+      patternFiles: [],
+      upstreamTaskIds: [],
+    }, failed ? 'failure' : 'success', result.message, memoryNotes);
+  }
+
   writeJson(join(specDir, artifacts.runResult), result);
   updatePlanStatus(failed, result.message, now);
   updateTaskLogs(logPhase, failed ? 'failed' : 'completed', result.message);
+  await flushCliMemoryWrites();
   emitPhase(failed ? 'failed' : phase === 'coding' || phase === 'direct' ? 'complete' : executionPhase, result.message, failed ? 0 : 100);
   process.exit(failed ? 1 : 0);
 }
@@ -832,6 +1307,7 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
 
   if (exitCode !== 0 || explicitError) {
     const reason = explicitError || signal || 'CLI work item run failed.';
+    const memoryNotes = extractCliMemoryNotes(attempt.state.lastCodexMessageText);
     failedCodingSubtaskIds.add(attempt.subtask.id);
     codingFailures.push(attempt.subtask.id + ': ' + reason);
     appendTaskLogEntry(
@@ -842,7 +1318,9 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
       buildAttemptLogExtra(attempt.state),
     );
     markPlanSubtaskStatus(attempt.subtask.id, 'failed', reason);
+    recordCliWorkItemMemory(attempt.subtask, 'failure', reason, memoryNotes);
   } else {
+    const memoryNotes = extractCliMemoryNotes(attempt.state.lastCodexMessageText);
     completedCodingSubtaskIds.add(attempt.subtask.id);
     appendTaskLogEntry(
       'coding',
@@ -852,6 +1330,7 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
       buildAttemptLogExtra(attempt.state),
     );
     markPlanSubtaskStatus(attempt.subtask.id, 'completed', 'Completed by Autocode CLI runner.');
+    recordCliWorkItemMemory(attempt.subtask, 'success', 'Completed by Autocode CLI runner.', memoryNotes);
   }
 
   restoreKnownCodingStatuses(attempt.subtask.id);
@@ -915,6 +1394,8 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- Keep other work package checkboxes unchanged.',
         '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes; this runner updates work package ' + subtask.id + ' after the CLI exits.',
         '- Return a concise completion summary for this work package.',
+        '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
+        '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless this work package explicitly changes state-machine code.',
       ]
     : [
         '- Implement only this current subtask.',
@@ -922,6 +1403,8 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- Keep other subtask checkboxes unchanged.',
         '- Do not edit implementation_plan.md status checkboxes; this runner updates subtask ' + subtask.id + ' after the CLI exits.',
         '- Return a concise completion summary for this subtask.',
+        '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
+        '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless this subtask explicitly changes state-machine code.',
       ];
   const fields = [
     '# Current Work Item',
@@ -941,7 +1424,7 @@ function buildFocusedSubtaskPrompt(subtask) {
     '- If blocked, leave this work item incomplete and explain the blocker.',
   ].filter(Boolean);
   return [
-    prompt,
+    buildPromptWithMemoryContext(prompt),
     '',
     '---',
     '',

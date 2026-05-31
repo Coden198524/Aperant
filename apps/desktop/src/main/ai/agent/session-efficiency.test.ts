@@ -78,6 +78,8 @@ describe('session-efficiency', () => {
     expect(message).toContain('single existence/key-content check is enough');
     expect(message).toContain('avoid nested cmd/powershell quoting');
     expect(message).toContain('Never use Bash here-documents');
+    expect(message).toContain('never mix CommonJS `require(...)` with top-level `await`');
+    expect(message).toContain('Avoid brittle smoke assertions against initial or transient task status');
     expect(message).toContain('do not keep rewriting commands');
     expect(message).toContain('Do not re-plan completed work');
     expect(message).toContain('few grouped Edits');

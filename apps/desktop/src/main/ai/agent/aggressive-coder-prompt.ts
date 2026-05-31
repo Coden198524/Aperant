@@ -44,6 +44,8 @@ export function buildAggressiveCoderPrompt(): string {
     '- For simple create-only file tasks, a single existence/key-content check is enough; do not add separate dir/type/findstr checks after a successful write.',
     '- On Windows, avoid nested cmd/powershell quoting for smoke checks. Prefer one simple command, for example Test-Path, Get-Content -Raw, or dir on the target path.',
     '- Never use Bash here-documents such as `python - <<EOF` on Windows. Avoid Python -c or Node -e checks containing non-ASCII text.',
+    '- On Node 24+, never mix CommonJS `require(...)` with top-level `await` in `node -e`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM `import` with `node --input-type=module`.',
+    '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
     '- If verification fails because of shell quoting, encoding, or path syntax rather than product code, do not keep rewriting commands. Record the limitation and continue if the file/output exists.',
     '- Keep failed verification output compact; show only the first 3-5 relevant error lines needed to fix the issue.',
     '- On Windows build commands, filter noisy output when practical, for example with findstr /R /C:"error " /C:"fatal" /C:"failed" or by limiting the command output after failure.',

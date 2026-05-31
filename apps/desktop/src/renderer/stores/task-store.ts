@@ -544,15 +544,14 @@ export const useTaskStore = create<TaskState>((set, get) => ({
             console.warn(`[updateTaskFromPlan] Task ${taskId}: ${completedCount}/${subtasks.length} subtasks completed`);
           }
 
-          // NOTE: We do NOT update status from plan anymore.
+          // NOTE: We do NOT update status or title from plan anymore.
           // XState is the source of truth for status - it emits TASK_STATUS_CHANGE.
-          // Plan updates only update subtasks, title, and other non-status fields.
-          // This prevents race conditions where a stale plan overwrites XState status.
+          // The task metadata/spec title is the source of truth for the user-facing title.
+          // Plan updates only update subtasks and execution fields.
           const executionProgress = promoteExecutionPhaseFromPlan(t, subtasks);
 
           return {
             ...t,
-            title: plan.feature || t.title,
             subtasks,
             ...(executionProgress ? { executionProgress } : {}),
             // Keep existing status and reviewReason - XState manages these via TASK_STATUS_CHANGE

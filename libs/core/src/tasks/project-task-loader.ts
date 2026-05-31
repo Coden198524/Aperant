@@ -297,7 +297,7 @@ function readAutocodeProjectTaskFromSpecDir(input: LoadAutocodeProjectTasksInput
 
   const rawTitle = hasJsonError
     ? `${input.specId}${AUTOCODE_JSON_ERROR_TITLE_SUFFIX}`
-    : stringFrom(plan?.feature, plan?.title, specTitle, input.specId);
+    : stringFrom(metadata?.taskTitle, specTitle, plan?.feature, plan?.title, input.specId);
   const title = /^\d{3}-/.test(rawTitle) && !hasJsonError
     ? stringFrom(specTitle, rawTitle)
     : rawTitle;

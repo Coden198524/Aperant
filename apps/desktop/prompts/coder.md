@@ -52,6 +52,10 @@ Run the smallest reliable check for the subtask:
 
 If a check is unavailable, record the reason and the next best check. Do not run many equivalent commands.
 
+- On Node 24+, do not mix `require(...)` with top-level `await` in `node -e`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM `import` with `node --input-type=module`.
+- On Windows, avoid fragile nested shell quoting for quick smoke checks; prefer one simple command.
+- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the subtask explicitly changes state-machine code.
+
 ## Plan Update
 
 After successful implementation:

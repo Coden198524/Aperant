@@ -4,6 +4,7 @@ import { IPC_CHANNELS } from '../../../shared/constants';
 import type { IPCResult, MemorySystemStatus } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import { getMemoryService, getEmbeddingProvider } from './memory-service-factory';
+import { DEFAULT_MEMORY_DATABASE, getMemoryClientPath } from '../../ai/memory/db';
 
 /**
  * Build memory system status by probing the libSQL database and embedding service.
@@ -18,6 +19,8 @@ export async function buildMemoryStatus(): Promise<MemorySystemStatus> {
     return {
       enabled: true,
       available: true,
+      database: DEFAULT_MEMORY_DATABASE,
+      dbPath: getMemoryClientPath() ?? undefined,
       embeddingProvider,
       ...(embeddingProvider === 'none' && {
         reason:

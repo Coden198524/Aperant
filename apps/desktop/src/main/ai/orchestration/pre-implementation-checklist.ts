@@ -14,7 +14,7 @@
 
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
-import type { MemoryServiceImpl } from '../memory/memory-service';
+import type { MemoryService } from '@autocode/core';
 
 // =============================================================================
 // Types
@@ -34,7 +34,7 @@ export interface ChecklistConfig {
   /** Project directory */
   projectDir: string;
   /** Memory service for retrieving historical failures */
-  memoryService?: MemoryServiceImpl;
+  memoryService?: MemoryService;
 }
 
 export interface ChecklistItem {
@@ -146,7 +146,7 @@ export async function generatePreImplementationChecklist(
  */
 async function analyzeHistoricalFailures(
   subtaskDescription: string,
-  memoryService: MemoryServiceImpl,
+  memoryService: MemoryService,
 ): Promise<ChecklistItem[]> {
   try {
     // Search for error patterns related to this type of work

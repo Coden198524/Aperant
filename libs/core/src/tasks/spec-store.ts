@@ -64,6 +64,7 @@ export type AutocodeExecutionPhase =
 
 export interface AutocodeTaskMetadata {
   sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
+  taskTitle?: string;
   developmentMode?: AutocodeTaskDevelopmentMode;
   category?: AutocodeTaskCategory;
   complexity?: AutocodeTaskComplexity;
@@ -286,6 +287,10 @@ export function createAutocodeTask(input: CreateAutocodeTaskInput): AutocodeTask
     const preparedMetadata = { ...metadata, ...prepared.metadata };
     metadata = withResolvedRuntimeConcurrency(preparedMetadata);
   }
+  metadata = withResolvedRuntimeConcurrency({
+    ...metadata,
+    taskTitle: title,
+  });
 
   const plan: ImplementationPlanFile = {
     feature: title,
@@ -502,7 +507,7 @@ function readAutocodeTask(input: AutocodeTaskPathsInput & { specId: string }): A
     return null;
   }
 
-  const title = stringFrom(plan?.feature, plan?.title, specTitle, input.specId);
+  const title = stringFrom(metadata?.taskTitle, specTitle, plan?.feature, plan?.title, input.specId);
   const description = stringFrom(requirements?.task_description, plan?.description, '');
   const { status, reviewReason } = mapPlanStatus(plan?.status, plan?.reviewReason);
   const createdAt = stringFrom(plan?.created_at, new Date(0).toISOString());

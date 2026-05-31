@@ -701,6 +701,8 @@ ${formatCommands(profile.commands.typecheck)}
 - Follow the design pattern decision in the plan or the nearest existing code; do not add unplanned named patterns unless clearly necessary.
 - Preserve user changes unrelated to the subtask.
 - All new file names and paths must use ASCII characters.
+- On Node 24+, do not mix \`require(...)\` with top-level \`await\` in \`node -e\`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM \`import\` with \`node --input-type=module\`.
+- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the subtask explicitly changes state-machine code.
 `;
 }
 

@@ -1866,6 +1866,7 @@ export class AgentManager extends EventEmitter {
       projectRoot: input.runtimeProjectRoot,
       dataDirName: input.dataDirName,
       taskId: input.specId || input.taskId,
+      projectId: input.projectId,
       cli: 'codex',
       model: input.modelId,
       bypassPermissions: settings?.dangerouslySkipPermissions === true,

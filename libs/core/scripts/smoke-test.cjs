@@ -270,6 +270,17 @@ async function main() {
     assert.deepEqual(requirements.attached_images, [
       { filename: 'settings.png', path: 'attachments/settings.png', description: '' },
     ]);
+    const taskMetadata = JSON.parse(readFileSync(join(task.specsPath, 'task_metadata.json'), 'utf8'));
+    assert.equal(taskMetadata.taskTitle, 'Add provider settings');
+    const titleRewritePlan = core.loadAutocodeImplementationPlanSync(task.specsPath);
+    titleRewritePlan.feature = 'Agent regenerated implementation feature';
+    core.saveAutocodeImplementationPlanSync(task.specsPath, titleRewritePlan);
+    const stableListedTask = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' })
+      .find((candidate) => candidate.id === task.id);
+    assert.equal(stableListedTask.title, 'Add provider settings');
+    const stableProjectTask = core.loadAutocodeProjectTasks({ projectRoot, dataDirName: '.autocode' })
+      .find((candidate) => candidate.id === task.id);
+    assert.equal(stableProjectTask.title, 'Add provider settings');
 
     const raceSpecDir = join(projectRoot, '.autocode-plan-race', 'specs', 'plan-update-race');
     mkdirSync(raceSpecDir, { recursive: true });

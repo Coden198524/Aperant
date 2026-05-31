@@ -5,7 +5,12 @@
  * Three triggers: gotcha injection, scratchpad reflection, search short-circuit.
  */
 
-import type { Memory, MemoryService } from '../types';
+import type {
+  AutocodeMemoryRuntimeRecentToolCallContext,
+  AutocodeMemoryRuntimeStepInjection,
+  Memory,
+  MemoryService,
+} from '@autocode/core';
 import type { Scratchpad } from '../observer/scratchpad';
 import type { AcuteCandidate } from '../types';
 
@@ -13,16 +18,8 @@ import type { AcuteCandidate } from '../types';
 // TYPES
 // ============================================================
 
-export interface RecentToolCallContext {
-  toolCalls: Array<{ toolName: string; args: Record<string, unknown> }>;
-  injectedMemoryIds: Set<string>;
-}
-
-export interface StepInjection {
-  content: string;
-  type: 'gotcha_injection' | 'scratchpad_reflection' | 'search_short_circuit';
-  memoryIds: string[];
-}
+export type RecentToolCallContext = AutocodeMemoryRuntimeRecentToolCallContext;
+export type StepInjection = AutocodeMemoryRuntimeStepInjection;
 
 // ============================================================
 // STEP INJECTION DECIDER

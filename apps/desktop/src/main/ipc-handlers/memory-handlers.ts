@@ -12,8 +12,15 @@ import { getOllamaExecutablePaths, getOllamaInstallCommand as getPlatformOllamaI
 import { IPC_CHANNELS } from '../../shared/constants';
 import type {
   IPCResult,
+  InfrastructureStatus,
+  MemoryValidationResult,
 } from '../../shared/types';
 import { openTerminalWithCommand } from './claude-code-handlers';
+import {
+  DEFAULT_MEMORY_DATABASE,
+  initializeLocalMemoryDatabase,
+  resolveMemoryDatabasePath,
+} from '../ai/memory/db';
 
 /**
  * Ollama Service Status
@@ -62,6 +69,39 @@ interface OllamaRecommendedModel {
   size_estimate: string; // Estimated download size (e.g., '621 MB')
   dim: number;           // Embedding vector dimension
   installed: boolean;    // Whether model is currently installed
+}
+
+function getMemoryStorageDir(dbPath?: string): string {
+  return path.dirname(resolveMemoryDatabasePath(dbPath, DEFAULT_MEMORY_DATABASE));
+}
+
+function listLocalMemoryDatabases(dbPath?: string): string[] {
+  const storageDir = getMemoryStorageDir(dbPath);
+  if (!fs.existsSync(storageDir)) {
+    return [];
+  }
+
+  return fs.readdirSync(storageDir)
+    .filter((name) => name.toLowerCase().endsWith('.db'))
+    .sort((a, b) => a.localeCompare(b));
+}
+
+async function buildLocalMemoryInfrastructureStatus(dbPath?: string): Promise<InfrastructureStatus> {
+  const databasePath = resolveMemoryDatabasePath(dbPath, DEFAULT_MEMORY_DATABASE);
+  const databases = listLocalMemoryDatabases(dbPath);
+  const databaseExists = fs.existsSync(databasePath);
+
+  return {
+    memory: {
+      // Kept for existing UI compatibility. This now means the embedded libSQL
+      // database layer can be initialized without external services.
+      kuzuInstalled: true,
+      databasePath,
+      databaseExists,
+      databases,
+    },
+    ready: databaseExists,
+  };
 }
 
 /**
@@ -304,6 +344,87 @@ async function listOllamaModelsNative(baseUrl?: string): Promise<OllamaModel[]> 
  * @returns {void}
  */
 export function registerMemoryHandlers(): void {
+  // ============================================
+  // Embedded libSQL Memory Database Handlers
+  // ============================================
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_INFRASTRUCTURE_STATUS,
+    async (_event, dbPath?: string): Promise<IPCResult<InfrastructureStatus>> => {
+      try {
+        const status = await buildLocalMemoryInfrastructureStatus(dbPath);
+        return { success: true, data: status };
+      } catch (error) {
+        const databasePath = resolveMemoryDatabasePath(dbPath, DEFAULT_MEMORY_DATABASE);
+        return {
+          success: true,
+          data: {
+            memory: {
+              kuzuInstalled: false,
+              databasePath,
+              databaseExists: false,
+              databases: [],
+              error: error instanceof Error ? error.message : 'Failed to inspect memory database',
+            },
+            ready: false,
+          },
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_DATABASES_LIST,
+    async (_event, dbPath?: string): Promise<IPCResult<string[]>> => {
+      try {
+        return { success: true, data: listLocalMemoryDatabases(dbPath) };
+      } catch (error) {
+        return {
+          success: false,
+          error: error instanceof Error ? error.message : 'Failed to list memory databases',
+        };
+      }
+    },
+  );
+
+  ipcMain.handle(
+    IPC_CHANNELS.MEMORY_CONNECTION_TEST,
+    async (_event, dbPath?: string, database?: string): Promise<IPCResult<MemoryValidationResult>> => {
+      const startedAt = Date.now();
+      try {
+        const result = await initializeLocalMemoryDatabase({
+          dbPath,
+          database: database || DEFAULT_MEMORY_DATABASE,
+        });
+        return {
+          success: true,
+          data: {
+            success: true,
+            message: `Memory database ready: ${result.path}`,
+            details: {
+              provider: 'libsql',
+              model: database || DEFAULT_MEMORY_DATABASE,
+              latencyMs: Date.now() - startedAt,
+            },
+          },
+        };
+      } catch (error) {
+        return {
+          success: true,
+          data: {
+            success: false,
+            message: error instanceof Error ? error.message : 'Memory database initialization failed',
+            details: {
+              provider: 'libsql',
+              model: database || DEFAULT_MEMORY_DATABASE,
+              latencyMs: Date.now() - startedAt,
+            },
+          },
+        };
+      }
+    },
+  );
+
   // ============================================
   // Ollama Model Detection Handlers
   // ============================================

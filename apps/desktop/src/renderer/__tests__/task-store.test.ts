@@ -321,7 +321,7 @@ describe('Task Store', () => {
       expect(useTaskStore.getState().tasks[0].subtasks).toHaveLength(2);
     });
 
-    it('should update title from plan feature', () => {
+    it('should preserve task title when plan feature changes during refresh', () => {
       useTaskStore.setState({
         tasks: [createTestTask({ id: 'task-1', title: 'Original Title' })]
       });
@@ -330,7 +330,7 @@ describe('Task Store', () => {
 
       useTaskStore.getState().updateTaskFromPlan('task-1', plan);
 
-      expect(useTaskStore.getState().tasks[0].title).toBe('New Feature Name');
+      expect(useTaskStore.getState().tasks[0].title).toBe('Original Title');
     });
 
     it('should keep status when plan has no status', () => {

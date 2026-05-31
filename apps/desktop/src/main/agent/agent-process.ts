@@ -38,6 +38,7 @@ import { getToolInfo, getClaudeCliPathForSdk } from '../cli-tool-manager';
 import { killProcessGracefully, isWindows } from '../platform';
 import { debugLog } from '../../shared/utils/debug-logger';
 import type { TokenUsage } from '../../shared/types';
+import { readSettingsFile } from '../settings-utils';
 
 /**
  * Type for supported CLI tools
@@ -726,6 +727,16 @@ export class AgentProcessManager {
     return this.parseEnvFile(envPath);
   }
 
+  private loadAppMemoryEnv(): Record<string, string> {
+    const settings = readSettingsFile();
+    if (settings?.memoryEnabled === undefined) {
+      return {};
+    }
+    return {
+      GRAPHITI_ENABLED: settings.memoryEnabled ? 'true' : 'false',
+    };
+  }
+
   /**
    * Load environment variables from autocode .env file
    */
@@ -1329,9 +1340,10 @@ export class AgentProcessManager {
    * 4. Project settings (useClaudeMd) - Runtime overrides
    */
   getCombinedEnv(projectPath: string): Record<string, string> {
+    const appMemoryEnv = this.loadAppMemoryEnv();
     const autoBuildEnv = this.loadAutoBuildEnv();
     const projectFileEnv = this.loadProjectEnv(projectPath);
     const projectSettingsEnv = this.getProjectEnvVars(projectPath);
-    return { ...autoBuildEnv, ...projectFileEnv, ...projectSettingsEnv };
+    return { ...appMemoryEnv, ...autoBuildEnv, ...projectFileEnv, ...projectSettingsEnv };
   }
 }

@@ -424,6 +424,8 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('- For pure documentation, answer, or manual-check tasks, Read or simple file existence is enough; avoid python/node one-liners with non-ASCII quoting.');
   lines.push('- On Windows, avoid nested cmd/powershell quoting for smoke checks. Prefer one simple command such as Test-Path, Get-Content -Raw, or dir on the target path.');
   lines.push('- Never use Bash here-documents such as `python - <<EOF` on Windows. Avoid Python -c or Node -e checks containing non-ASCII text.');
+  lines.push('- On Node 24+, never mix CommonJS `require(...)` with top-level `await` in `node -e`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM `import` with `node --input-type=module`.');
+  lines.push('- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.');
   lines.push('- If verification fails because of shell quoting, encoding, or path syntax rather than product code, do not keep rewriting commands. Record the limitation and continue if the file/output exists.');
   lines.push('- Keep failed verification output compact; include only the first 3-5 relevant error lines needed to fix the issue.');
   lines.push('- When verification passes, immediately call update_subtask_status for this subtask before writing any final summary.');

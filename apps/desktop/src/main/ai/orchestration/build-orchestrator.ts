@@ -281,7 +281,7 @@ export interface BuildOrchestratorConfig {
   /** Quality improvement configuration */
   qualityConfig?: import('./quality-integration').QualityConfig;
   /** Memory service for storing knowledge */
-  memoryService?: import('../memory/memory-service').MemoryServiceImpl;
+  memoryService?: import('@autocode/core').MemoryService;
 }
 
 /** Context passed to prompt generation */
@@ -519,8 +519,29 @@ export class BuildOrchestrator extends EventEmitter {
 
       // Check if build is already complete
       if (await this.isBuildComplete()) {
-        this.transitionPhase('complete', translatePhaseMessage('complete', 'Build already complete', this.config.language));
-        return this.buildOutcome(true, Date.now() - startTime);
+        const completedPlan = await this.loadPlan();
+        const skipAIQAReview = this.config.workflowConfig?.skipAIQAReview || isDocumentationWorkflow(completedPlan);
+        if (skipAIQAReview) {
+          this.markPhaseCompleted('qa_review');
+          this.transitionPhase('complete', isDocumentationWorkflow(completedPlan)
+            ? 'Build complete - documentation QA skipped'
+            : 'Build complete - AI QA skipped by aggressive workflow');
+          return this.buildOutcome(true, Date.now() - startTime);
+        }
+
+        if (await this.hasPassedQAReport()) {
+          this.markPhaseCompleted('qa_review');
+          this.transitionPhase('complete', translatePhaseMessage('complete', 'Build already complete', this.config.language));
+          return this.buildOutcome(true, Date.now() - startTime);
+        }
+
+        this.markPhaseCompleted('coding');
+        this.emitTyped('log', translateLogMessage('Build already complete; running QA validation before completion', this.config.language));
+        await this.resetQAReport();
+        const qaResult = await this.runQAPhase();
+        if (!qaResult.resumeCoding) {
+          return this.buildOutcome(qaResult.success, Date.now() - startTime, qaResult.error);
+        }
       }
 
       while (true) {
@@ -785,6 +806,7 @@ export class BuildOrchestrator extends EventEmitter {
           subtask,
           projectDir: this.config.projectDir,
           specDir: this.config.specDir,
+          memoryService: this.config.qualityConfig?.memoryService,
         });
 
         if (checklistResult.riskLevel === 'critical') {
@@ -813,6 +835,7 @@ export class BuildOrchestrator extends EventEmitter {
           subtask,
           projectDir: this.config.projectDir,
           specDir: this.config.specDir,
+          memoryService: this.config.qualityConfig?.memoryService,
         });
         prompt = injectionResult.enhancedPrompt;
       }
@@ -841,6 +864,7 @@ export class BuildOrchestrator extends EventEmitter {
         maxRetries: this.config.maxConcurrentWorkItemRetries ?? maxSubtaskRetries,
         workers: runtimeConcurrency.workers,
         abortSignal: this.config.abortSignal,
+        qualityConfig: this.config.qualityConfig,
         runWorkItemSession: (workItem, attempt, sessionNumber) => {
           return runSubtaskSession(workItemToSubtaskInfo(workItem), attempt, sessionNumber);
         },
@@ -887,6 +911,7 @@ export class BuildOrchestrator extends EventEmitter {
         maxRetries: maxSubtaskRetries,
         autoContinueDelayMs: AUTO_CONTINUE_DELAY_MS,
         abortSignal: this.config.abortSignal,
+        qualityConfig: this.config.qualityConfig,
         onSubtaskStart: (subtask, attempt) => {
           this.iteration++;
           this.emitTyped('iteration-start', this.iteration, 'coding');
@@ -1272,6 +1297,17 @@ export class BuildOrchestrator extends EventEmitter {
    * Read QA status from the spec directory.
    * Returns 'passed', 'failed', or 'unknown'.
    */
+  private async hasPassedQAReport(): Promise<boolean> {
+    const qaReportPath = join(this.config.specDir, 'qa_report.md');
+    try {
+      const content = await readFile(qaReportPath, 'utf-8');
+      const lower = content.toLowerCase();
+      return lower.includes('status: passed') || lower.includes('status: approved');
+    } catch {
+      return false;
+    }
+  }
+
   private async readQAStatus(): Promise<'passed' | 'failed' | 'unknown'> {
     const qaReportPath = join(this.config.specDir, 'qa_report.md');
     try {

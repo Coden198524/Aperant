@@ -243,6 +243,11 @@ export const IPC_CHANNELS = {
   CONTEXT_MEMORY_DEPRECATE: 'context:memory:deprecate',
   CONTEXT_MEMORY_DELETE: 'context:memory:delete',
 
+  // Memory infrastructure
+  MEMORY_INFRASTRUCTURE_STATUS: 'memory:infrastructureStatus',
+  MEMORY_DATABASES_LIST: 'memory:databasesList',
+  MEMORY_CONNECTION_TEST: 'memory:connectionTest',
+
   // Environment configuration
   ENV_GET: 'env:get',
   ENV_UPDATE: 'env:update',

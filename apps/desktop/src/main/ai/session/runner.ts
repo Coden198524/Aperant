@@ -693,6 +693,7 @@ async function executeStream(
   // Per-step state for memory injection (only allocated when memory is active)
   const stepMemoryState = memoryContext ? new StepMemoryState() : null;
   let lastMemoryInjectionStep = 0;
+  let currentStepNumber = 0;
   let writeToolInputFailureCount = 0;
   const writeToolInputFailureCallIds = new Set<string>();
   let writeToolInputCorrectionPrompt: string | undefined;
@@ -714,10 +715,13 @@ async function executeStream(
     if (stepMemoryState && event.type === 'tool-call') {
       stepMemoryState.recordToolCall(event.toolName, event.args);
       // Also notify the observer proxy fire-and-forget
-      memoryContext?.proxy.onToolCall(event.toolName, event.args, 0);
+      memoryContext?.proxy.onToolCall(event.toolName, event.args, currentStepNumber);
     }
     if (stepMemoryState && event.type === 'tool-result') {
-      memoryContext?.proxy.onToolResult(event.toolName, event.result, 0);
+      memoryContext?.proxy.onToolResult(event.toolName, event.result, currentStepNumber);
+    }
+    if (stepMemoryState && event.type === 'thinking-delta' && event.text.trim()) {
+      memoryContext?.proxy.onReasoning(event.text, currentStepNumber);
     }
     // Track prompt tokens for context window guard
     if (event.type === 'step-finish') {
@@ -816,6 +820,7 @@ async function executeStream(
     } : {}),
     experimental_repairToolCall: repairMalformedToolCall,
     prepareStep: async ({ stepNumber }) => {
+      currentStepNumber = stepNumber;
       // Hard abort: if we're at 95%+ of context window, stop the session
       // so the continuation wrapper can checkpoint and resume.
       if (

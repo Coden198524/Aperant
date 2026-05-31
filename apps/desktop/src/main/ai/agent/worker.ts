@@ -78,6 +78,14 @@ import {
 } from '../schema/plan-shards';
 import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 import { resolveProjectAgentProfile } from '../config/project-agent-profile';
+import { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
+import { createRecordMemoryTool, createSearchMemoryTool } from '../memory/tools';
+import type {
+  Memory,
+  MemoryRecordEntry,
+  MemorySearchFilters,
+  MemoryService,
+} from '@autocode/core';
 
 // =============================================================================
 // Validation
@@ -145,7 +153,7 @@ function getQualityConfigFromWorkflowConfig(
     enablePreImplementationChecklist: qualityChecks.enablePreImplementationChecklist ?? gameMmoMode,
     enableSelfCritique: qualityChecks.enableSelfCritique ?? false,
     enableContextAwareRecovery: conservativeMode || gameMmoMode,
-    enableActiveMemoryLearning: false,
+    enableActiveMemoryLearning: true,
     enableTieredQualityStandards: qualityChecks.enableTieredQualityStandards ?? gameMmoMode,
     enableDocumentationQualityGate: true,
     projectType,
@@ -243,6 +251,91 @@ parentPort.on('message', (msg: MainToWorkerMessage) => {
     abortController.abort();
   }
 });
+
+// =============================================================================
+// Memory IPC
+// =============================================================================
+
+function isWorkerMemoryEnabled(session: SerializableSessionConfig): boolean {
+  const envToggle = session.mcpOptions?.mcpEnv?.GRAPHITI_ENABLED;
+  return envToggle?.toLowerCase() !== 'false';
+}
+
+const memoryProxy = isWorkerMemoryEnabled(config.session)
+  ? new WorkerObserverProxy(parentPort)
+  : null;
+
+function createWorkerMemoryService(
+  proxy: WorkerObserverProxy,
+  fallbackProjectId: string,
+): MemoryService {
+  const withProject = <T extends { projectId?: string }>(value: T): T & { projectId: string } => ({
+    ...value,
+    projectId: value.projectId || fallbackProjectId,
+  });
+
+  return {
+    store: async (entry: MemoryRecordEntry): Promise<string> => {
+      const id = await proxy.recordMemory(withProject(entry));
+      return id ?? `memory-unavailable-${Date.now()}`;
+    },
+    search: async (filters: MemorySearchFilters): Promise<Memory[]> => {
+      return proxy.searchMemory(withProject(filters));
+    },
+    searchByPattern: async (pattern: string): Promise<Memory | null> => {
+      const memories = await proxy.searchMemory({
+        query: pattern,
+        projectId: fallbackProjectId,
+        limit: 1,
+        excludeDeprecated: true,
+      });
+      return memories[0] ?? null;
+    },
+    insertUserTaught: async (content: string, projectId: string, tags: string[]): Promise<string> => {
+      const id = await proxy.recordMemory({
+        type: 'preference',
+        content,
+        projectId: projectId || fallbackProjectId,
+        tags,
+        source: 'user_taught',
+        scope: 'global',
+      });
+      return id ?? `memory-unavailable-${Date.now()}`;
+    },
+    searchWorkflowRecipe: async (taskDescription: string, opts?: { limit?: number }): Promise<Memory[]> => {
+      const memories = await proxy.searchMemory({
+        query: taskDescription,
+        projectId: fallbackProjectId,
+        types: ['workflow_recipe'],
+        limit: opts?.limit ?? 3,
+        excludeDeprecated: true,
+      });
+      return memories.filter((memory) => memory.type === 'workflow_recipe');
+    },
+    updateAccessCount: async (): Promise<void> => {},
+    deprecateMemory: async (): Promise<void> => {},
+    verifyMemory: async (): Promise<void> => {},
+    pinMemory: async (): Promise<void> => {},
+    deleteMemory: async (): Promise<void> => {},
+  };
+}
+
+function buildSessionQualityConfig(
+  session: SerializableSessionConfig,
+  workflowConfig: WorkflowConfig | undefined,
+): import('../orchestration/quality-integration').QualityConfig | undefined {
+  const qualityConfig = getQualityConfigFromWorkflowConfig(workflowConfig, session.projectType);
+  if (!qualityConfig) {
+    return undefined;
+  }
+
+  const projectId = config.projectId || config.taskId;
+  return {
+    ...qualityConfig,
+    projectId,
+    ...(memoryProxy ? { memoryService: createWorkerMemoryService(memoryProxy, projectId) } : {}),
+  };
+}
 
 // =============================================================================
 // Shared Helpers
@@ -853,11 +946,19 @@ async function runSingleSession(
   // would create a mismatch when the provider queue selected a non-Anthropic account.
   const phaseModelId = baseSession.modelId;
   const phaseThinking = await getPhaseThinking(specDir, phase);
+  const memorySessionId = `${config.taskId}:${agentType}:${phase}:${sessionNumber}:${subtaskId ?? 'task'}`;
+  const projectId = config.projectId || config.taskId;
 
   const model = createSessionModel(baseSession, phaseModelId);
 
   const tools: Record<string, AITool> = {
     ...registry.getToolsForAgent(agentType, toolContext),
+    ...(memoryProxy
+      ? {
+          search_memory: createSearchMemoryTool(memoryProxy, projectId),
+          record_memory: createRecordMemoryTool(memoryProxy, projectId, memorySessionId),
+        }
+      : {}),
     ...(mergeMcpTools(mcpClients) as Record<string, AITool>),
   };
 
@@ -901,6 +1002,7 @@ async function runSingleSession(
 
   const runnerOptions = {
     tools,
+    memoryContext: memoryProxy ? { proxy: memoryProxy } : undefined,
     onEvent: (event: StreamEvent) => {
       // Write stream events to task_logs.json for UI log display
       if (logWriter) {
@@ -1160,10 +1262,30 @@ function extractDirectTaskDescription(session: SerializableSessionConfig): strin
   return `Direct model execution for ${basename(session.specDir)}`;
 }
 
+function extractFilePathFromToolArgs(args: Record<string, unknown>): string | null {
+  const candidates = [
+    args.file_path,
+    args.filePath,
+    args.path,
+    args.target_file,
+  ];
+  for (const candidate of candidates) {
+    if (typeof candidate === 'string' && candidate.trim()) {
+      return candidate.trim();
+    }
+  }
+  return null;
+}
+
+function shouldTrackDirectModifiedFile(toolName: string): boolean {
+  return ['Edit', 'Write', 'MultiEdit', 'create_file', 'replace_file', 'write_file'].includes(toolName);
+}
+
 function persistDirectTaskCompletion(
   session: SerializableSessionConfig,
   result: SessionResult | undefined,
   streamedText: string,
+  modifiedFiles: string[] = [],
 ): void {
   const success = isSuccessfulDirectOutcome(result);
   const summary = buildDirectCompletionSummary(session, result, streamedText);
@@ -1214,6 +1336,7 @@ function persistDirectTaskCompletion(
               title: 'Direct model execution',
               description: extractDirectTaskDescription(session),
               status: success ? 'completed' : 'failed',
+              files_to_modify: modifiedFiles,
               completion_summary: summary,
               notes: summary,
               verification: {
@@ -1236,6 +1359,46 @@ function persistDirectTaskCompletion(
   }
 }
 
+async function learnFromDirectTaskSession(
+  session: SerializableSessionConfig,
+  result: SessionResult | undefined,
+  modifiedFiles: string[] = [],
+): Promise<void> {
+  if (!memoryProxy || !result) {
+    return;
+  }
+
+  const projectId = config.projectId || config.taskId;
+  const status = isSuccessfulDirectOutcome(result) ? 'completed' : 'stuck';
+
+  try {
+    const { learnFromSession } = await import('../orchestration/quality-integration');
+    await learnFromSession(
+      {
+        id: 'direct-implementation',
+        description: extractDirectTaskDescription(session),
+        phaseName: 'Direct execution',
+        filesToCreate: [],
+        filesToModify: modifiedFiles,
+        patternFiles: [],
+        verification: 'Review direct_summary.md, runtime logs, and git changes.',
+        status,
+      },
+      result,
+      {
+        enableActiveMemoryLearning: true,
+        memoryService: createWorkerMemoryService(memoryProxy, projectId),
+        projectId,
+        projectType: session.projectType,
+      },
+      session.projectDir,
+      session.specDir,
+    );
+  } catch (error) {
+    postLog(`Direct task memory learning failed: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 /**
  * Run a single agent session (default path for spec_orchestrator, etc.)
  */
@@ -1245,9 +1408,24 @@ async function runDefaultSession(
   registry: ToolRegistry,
 ): Promise<void> {
   const model = createSessionModel(session, session.modelId);
+  const defaultPhase: Phase = session.phase ?? 'coding';
+  const projectId = config.projectId || config.taskId;
+  const memorySessionId = [
+    config.taskId,
+    session.agentType,
+    defaultPhase,
+    session.sessionNumber ?? 1,
+    session.subtaskId ?? (isDirectTaskSession(session) ? 'direct-implementation' : 'task'),
+  ].join(':');
 
   const tools: Record<string, AITool> = {
     ...registry.getToolsForAgent(session.agentType, toolContext),
+    ...(memoryProxy
+      ? {
+          search_memory: createSearchMemoryTool(memoryProxy, projectId),
+          record_memory: createRecordMemoryTool(memoryProxy, projectId, memorySessionId),
+        }
+      : {}),
     ...(mergeMcpTools(mcpClients) as Record<string, AITool>),
   };
 
@@ -1274,19 +1452,26 @@ async function runDefaultSession(
   };
 
   // Start phase logging for default session
-  const defaultPhase: Phase = session.phase ?? 'coding';
   if (logWriter) {
     logWriter.startPhase(defaultPhase);
   }
 
   let result: SessionResult | undefined;
   let streamedText = '';
+  const directModifiedFiles = new Set<string>();
   try {
     const runnerOptions = {
       tools,
+      memoryContext: memoryProxy ? { proxy: memoryProxy } : undefined,
       onEvent: (event: StreamEvent) => {
         if (isDirectTaskSession(session) && event.type === 'text-delta') {
           streamedText += event.text;
+        }
+        if (isDirectTaskSession(session) && event.type === 'tool-call' && shouldTrackDirectModifiedFile(event.toolName)) {
+          const filePath = extractFilePathFromToolArgs(event.args);
+          if (filePath) {
+            directModifiedFiles.add(filePath);
+          }
         }
         // Write stream events to task_logs.json for UI log display
         if (logWriter) {
@@ -1362,7 +1547,9 @@ async function runDefaultSession(
   }
 
   if (isDirectTaskSession(session)) {
-    persistDirectTaskCompletion(session, result, streamedText);
+    const modifiedFiles = [...directModifiedFiles];
+    persistDirectTaskCompletion(session, result, streamedText, modifiedFiles);
+    await learnFromDirectTaskSession(session, result, modifiedFiles);
     if (isSuccessfulDirectOutcome(result)) {
       postTaskEvent('QA_PASSED', { iteration: 0, testsRun: { workflowMode: 'off' } });
     } else {
@@ -1406,6 +1593,7 @@ async function runBuildOrchestrator(
 
   const workflowConfig = getWorkflowConfigFromMode(session.workflowMode);
   const agentProfile = resolveProjectAgentProfile(session.projectType);
+  const qualityConfig = buildSessionQualityConfig(session, workflowConfig);
 
   const orchestrator = new BuildOrchestrator({
     specDir: session.specDir,
@@ -1423,7 +1611,7 @@ async function runBuildOrchestrator(
 
     // Apply workflow optimization config based on task's workflowMode
     workflowConfig,
-    qualityConfig: getQualityConfigFromWorkflowConfig(workflowConfig, session.projectType),
+    qualityConfig,
     agentProfile,
 
     generatePrompt: async (agentType, _phase, context) => {

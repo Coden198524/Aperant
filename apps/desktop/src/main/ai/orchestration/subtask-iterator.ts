@@ -171,6 +171,7 @@ export async function iterateSubtasks(
   config: SubtaskIteratorConfig,
 ): Promise<SubtaskIteratorResult> {
   const attemptCounts = new Map<string, number>();
+  const lastResults = new Map<string, SessionResult>();
   const stuckSubtasks: string[] = [];
   let completedSubtasks = 0;
   let totalSubtasks = 0;
@@ -228,6 +229,29 @@ export async function iterateSubtasks(
         if (config.sourceSpecDir) {
           await syncPhasesToMain(config.specDir, config.sourceSpecDir);
         }
+        for (const blocked of blockedSubtasks) {
+          await learnFromFailedSubtask(
+            config,
+            {
+              id: blocked.subtask.id,
+              description: blocked.subtask.description,
+              phaseName: blocked.phaseName,
+              filesToCreate: blocked.subtask.files_to_create,
+              filesToModify: blocked.subtask.files_to_modify,
+              patternFiles: blocked.subtask.pattern_files,
+              dependsOn: toStringArray(blocked.subtask.depends_on),
+              verification: blocked.subtask.verification,
+              hasFileMetadata: hasDeclaredFileMetadata(blocked.subtask),
+              hasDependencyMetadata: hasDeclaredField(blocked.subtask, 'depends_on'),
+              hasVerificationMetadata: hasDeclaredField(blocked.subtask, 'verification'),
+              workPackage: blocked.subtask.work_package === true,
+              upstreamTaskIds: Array.isArray(blocked.subtask.upstream_task_ids) ? blocked.subtask.upstream_task_ids : [],
+              upstreamSource: typeof blocked.subtask.upstream_source === 'string' ? blocked.subtask.upstream_source : undefined,
+              status: 'blocked',
+            },
+            createBlockedSessionResult(blocked.reason),
+          );
+        }
       }
       if (normalizedPlan && config.sourceSpecDir) {
         await syncPhasesToMain(config.specDir, config.sourceSpecDir);
@@ -262,9 +286,16 @@ export async function iterateSubtasks(
     // Check if stuck
     if (currentAttempt > config.maxRetries) {
       stuckSubtasks.push(subtask.id);
+      const reason = `Exceeded max retries (${config.maxRetries})`;
+      const result = lastResults.get(subtask.id) ?? createBlockedSessionResult(reason);
+      await markSubtaskFailed(config.specDir, subtask.id, reason, result);
+      if (config.sourceSpecDir) {
+        await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+      }
+      await learnFromFailedSubtask(config, { ...subtaskInfo, status: 'stuck' }, result);
       config.onSubtaskStuck?.(
         subtaskInfo,
-        `Exceeded max retries (${config.maxRetries})`,
+        reason,
       );
       continue;
     }
@@ -288,6 +319,7 @@ export async function iterateSubtasks(
         subtask: subtaskInfo,
         projectDir: config.projectDir,
         specDir: config.specDir,
+        memoryService: config.qualityConfig?.memoryService,
       });
 
       if (checklistResult.riskLevel === 'critical') {
@@ -297,11 +329,12 @@ export async function iterateSubtasks(
 
     // Run the session
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
+    lastResults.set(subtask.id, result);
     await restoreProtectedSubtaskStates(config.specDir, subtask.id, protectedSubtaskStates);
 
     const subtaskCompletedByTool = result.completedSubtaskIds?.includes(subtask.id) === true;
     if (subtaskCompletedByTool) {
-      await finalizeAcceptedSubtask(config, subtask, result, attemptCounts);
+      await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts);
       config.onSubtaskComplete?.(subtaskInfo, result);
 
       if (result.outcome === 'cancelled') {
@@ -338,7 +371,7 @@ export async function iterateSubtasks(
 
     // Run quality validation and learning after session completes
     if (result.outcome === 'completed' && config.qualityConfig) {
-      const { validateSubtaskQuality, learnFromSession } = await import('./quality-integration');
+      const { validateSubtaskQuality } = await import('./quality-integration');
 
       // Validate subtask quality (includes incremental validation)
       const validationResult = await validateSubtaskQuality(
@@ -359,14 +392,8 @@ export async function iterateSubtasks(
         continue;
       }
 
-      // Learn from successful session
-      await learnFromSession(
-        subtaskInfo,
-        result,
-        config.qualityConfig || {},
-        config.projectDir,
-        config.specDir,
-      );
+      // Learning runs from finalizeAcceptedSubtask() so both normal completion
+      // and tool-updated completion follow the same path.
     }
 
     // Notify complete
@@ -425,7 +452,7 @@ export async function iterateSubtasks(
 
     const subtaskCompletedInPlan = await isSubtaskCompleted(config.specDir, subtask.id);
     if (result.outcome === 'completed' || subtaskCompletedInPlan) {
-      await finalizeAcceptedSubtask(config, subtask, result, attemptCounts);
+      await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts);
     }
 
     // For errors, the subtask will be retried on next loop iteration
@@ -467,6 +494,7 @@ export async function iterateSubtasks(
 async function finalizeAcceptedSubtask(
   config: SubtaskIteratorConfig,
   subtask: PlanSubtask,
+  subtaskInfo: SubtaskInfo,
   result: SessionResult,
   attemptCounts: Map<string, number>,
 ): Promise<void> {
@@ -486,11 +514,59 @@ async function finalizeAcceptedSubtask(
 
   attemptCounts.delete(subtask.id);
 
+  await learnFromAcceptedSubtask(config, subtaskInfo, result);
+
   // Extract insights from the session (opt-in, never blocks the build)
   if (config.extractInsights) {
     extractInsightsAfterSession(config, subtask, result).then((insights) => {
       if (insights) config.onInsightsExtracted?.(subtask.id, insights);
     }).catch(() => { /* insight extraction is non-blocking */ });
+  }
+}
+
+async function learnFromAcceptedSubtask(
+  config: SubtaskIteratorConfig,
+  subtask: SubtaskInfo,
+  result: SessionResult,
+): Promise<void> {
+  if (!config.qualityConfig?.enableActiveMemoryLearning) {
+    return;
+  }
+
+  try {
+    const { learnFromSession } = await import('./quality-integration');
+    await learnFromSession(
+      subtask,
+      result,
+      config.qualityConfig,
+      config.projectDir,
+      config.specDir,
+    );
+  } catch (error) {
+    console.error('Failed to learn from accepted subtask:', error);
+  }
+}
+
+async function learnFromFailedSubtask(
+  config: SubtaskIteratorConfig,
+  subtask: SubtaskInfo,
+  result: SessionResult,
+): Promise<void> {
+  if (!config.qualityConfig?.enableActiveMemoryLearning) {
+    return;
+  }
+
+  try {
+    const { learnFromSession } = await import('./quality-integration');
+    await learnFromSession(
+      subtask,
+      result,
+      config.qualityConfig,
+      config.projectDir,
+      config.specDir,
+    );
+  } catch (error) {
+    console.error('Failed to learn from failed subtask:', error);
   }
 }
 
@@ -607,6 +683,35 @@ function summarizeSessionResult(result: SessionResult): string | undefined {
   return formatCompletionSummaryTable(compacted, result);
 }
 
+function summarizeFailureResult(result: SessionResult, fallback: string): string {
+  const finalAssistantText = [...result.messages]
+    .reverse()
+    .find((message) => message.role === 'assistant' && message.content.trim())?.content
+    ?.replace(/\s+/g, ' ')
+    .trim();
+  const error = result.error?.message;
+  return [error, finalAssistantText, fallback]
+    .filter((value): value is string => Boolean(value && value.trim()))
+    .join(' | ')
+    .slice(0, 3000);
+}
+
+function createBlockedSessionResult(reason: string): SessionResult {
+  return {
+    outcome: 'error',
+    stepsExecuted: 0,
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    messages: [{ role: 'assistant', content: reason }],
+    durationMs: 0,
+    toolCallCount: 0,
+    error: {
+      code: 'dependency_blocked',
+      message: reason,
+      retryable: false,
+    },
+  };
+}
+
 function extractCompletionSummaryTable(content: string): string | undefined {
   const lines = content
     .split(/\r?\n/)
@@ -687,6 +792,51 @@ async function markSubtaskInProgress(
     }
   } catch {
     // Non-fatal: the session can still run even if progress persistence fails
+  }
+}
+
+async function markSubtaskFailed(
+  specDir: string,
+  subtaskId: string,
+  reason: string,
+  result?: SessionResult,
+): Promise<void> {
+  try {
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) {
+      return;
+    }
+
+    const summary = result ? summarizeFailureResult(result, reason) : reason;
+    const now = new Date().toISOString();
+    let updated = false;
+
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
+        const id = subtask.id ?? withLegacyId.subtask_id;
+        if (id !== subtaskId) {
+          continue;
+        }
+
+        if (subtask.status !== 'failed') {
+          subtask.status = 'failed';
+          updated = true;
+        }
+        if (!subtask.notes || !subtask.notes.includes(reason)) {
+          subtask.notes = summary;
+          updated = true;
+        }
+        subtask.updated_at = now;
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      await saveImplementationPlanToFiles(specDir, plan as never);
+    }
+  } catch {
+    // Non-fatal: the iterator result still reports the stuck subtask.
   }
 }
 

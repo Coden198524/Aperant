@@ -229,6 +229,7 @@ export type TaskCategory =
 export interface TaskMetadata {
   // Origin tracking
   sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
+  taskTitle?: string;  // Stable user-facing task title; implementation plans must not overwrite it
   developmentMode?: TaskDevelopmentMode;
   ideationType?: string;  // e.g., 'code_improvements', 'security_hardening'
   ideaId?: string;  // Reference to original idea if converted
