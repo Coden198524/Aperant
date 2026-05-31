@@ -108,6 +108,8 @@ interface RawProjectPlanSubtask {
   completed_summary?: unknown;
   notes?: unknown;
   actual_output?: unknown;
+  started_at?: unknown;
+  completed_at?: unknown;
   files_to_create?: unknown;
   files_to_modify?: unknown;
   pattern_files?: unknown;
@@ -544,6 +546,8 @@ function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): Autoco
         title,
         description,
         ...(completionSummary ? { completionSummary } : {}),
+        ...(stringFrom(subtask.started_at) ? { startedAt: stringFrom(subtask.started_at) } : {}),
+        ...(stringFrom(subtask.completed_at) ? { completedAt: stringFrom(subtask.completed_at) } : {}),
         status: normalizeSubtaskStatus(subtask.status),
         files: [
           ...toStringArray(subtask.files_to_create),

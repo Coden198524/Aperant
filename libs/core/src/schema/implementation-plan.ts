@@ -76,6 +76,10 @@ function coerceVerification(value: unknown): unknown {
   return value;
 }
 
+function isNoneDependencyToken(value: string): boolean {
+  return /^(none|no dependencies?|n\/a|na|nil|null|无|无依赖|没有|没有依赖)$/i.test(value.trim());
+}
+
 function coerceStringArray(value: unknown): string[] | undefined {
   if (Array.isArray(value)) {
     const items = value
@@ -84,16 +88,25 @@ function coerceStringArray(value: unknown): string[] | undefined {
         if (typeof item === 'number' && Number.isFinite(item)) return String(item);
         return '';
       })
+      .filter((item) => item && !isNoneDependencyToken(item))
       .filter(Boolean);
-    return items.length > 0 ? items : undefined;
+    return items.length > 0 ? items : [];
   }
 
   if (typeof value === 'string') {
-    const items = value
+    const trimmed = value.trim();
+    if (!trimmed) {
+      return undefined;
+    }
+    if (isNoneDependencyToken(trimmed)) {
+      return [];
+    }
+    const items = trimmed
       .split(',')
       .map((item) => item.trim())
+      .filter((item) => item && !isNoneDependencyToken(item))
       .filter(Boolean);
-    return items.length > 0 ? items : undefined;
+    return items.length > 0 ? items : [];
   }
 
   return undefined;
@@ -165,7 +178,7 @@ function coercePhase(input: unknown): unknown {
   const phaseId = raw.id ?? raw.phase_id ?? (raw.phase !== undefined ? String(raw.phase) : undefined);
 
   // Resolve subtasks from known aliases. The canonical plan is a single
-  // OpenSpec-style Markdown file; phase shard references are not accepted.
+  // Autocode Markdown file; phase shard references are not accepted.
   let subtasks = raw.subtasks ?? raw.chunks ?? raw.tasks ?? undefined;
 
   // Coerce string/number subtask items to objects.

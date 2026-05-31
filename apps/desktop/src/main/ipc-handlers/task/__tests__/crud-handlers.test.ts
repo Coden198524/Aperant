@@ -1,4 +1,6 @@
 import path from 'path';
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'fs';
+import { tmpdir } from 'os';
 import { beforeEach, describe, expect, it, vi, type Mock } from 'vitest';
 import { ipcMain } from 'electron';
 import { AUTO_BUILD_PATHS, IPC_CHANNELS } from '../../../../shared/constants';
@@ -74,6 +76,10 @@ vi.mock('../../../task-state-manager', () => ({
 
 vi.mock('../../../sentry', () => ({
   safeBreadcrumb: vi.fn(),
+}));
+
+vi.mock('../../../settings-utils', () => ({
+  readSettingsFile: vi.fn(() => ({})),
 }));
 
 vi.mock('../plan-file-utils', () => ({
@@ -224,5 +230,88 @@ describe('registerTaskCRUDHandlers', () => {
       error: 'Cannot delete subtasks while the task is running',
     });
     expect(updatePlanFile).not.toHaveBeenCalled();
+  });
+
+  it('passes the app language to generated task titles', async () => {
+    const { projectStore } = await import('../../../project-store');
+    const { titleGenerator } = await import('../../../title-generator');
+    const { readSettingsFile } = await import('../../../settings-utils');
+    const tempProjectPath = mkdtempSync(path.join(tmpdir(), 'autocode-title-'));
+    const tempProject = { ...project, path: tempProjectPath };
+
+    try {
+      (projectStore.getProject as Mock).mockReturnValue(tempProject);
+      (readSettingsFile as Mock).mockReturnValue({ language: 'zh-CN' });
+      (titleGenerator.generateTitle as Mock).mockResolvedValue('实现网页游戏');
+
+      const createHandler = handleHandlers[IPC_CHANNELS.TASK_CREATE];
+      const result = await createHandler({}, project.id, '', '实现一个网页版俄罗斯方块游戏', {
+        developmentMode: 'standard',
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.title).toBe('实现网页游戏');
+      expect(titleGenerator.generateTitle).toHaveBeenCalledWith(
+        '实现一个网页版俄罗斯方块游戏',
+        { language: 'zh-CN' },
+      );
+    } finally {
+      rmSync(tempProjectPath, { recursive: true, force: true });
+    }
+  });
+
+  it('normalizes runtime concurrency when a fast task is edited to standard mode', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { updatePlanFile } = await import('../plan-file-utils');
+    const tempProjectPath = mkdtempSync(path.join(tmpdir(), 'autocode-crud-'));
+    const tempProject = { ...project, path: tempProjectPath };
+    const specDir = path.join(tempProjectPath, '.autocode', 'specs', task.specId);
+    const metadataPath = path.join(specDir, 'task_metadata.json');
+    const staleMetadata = {
+      sourceType: 'manual' as const,
+      developmentMode: 'fast' as const,
+      workflowMode: 'off' as const,
+      runtimeConcurrency: {
+        mode: 'serial' as const,
+        workers: 1,
+        unit: 'work_item' as const,
+        conflictPolicy: 'lock-and-queue' as const,
+      },
+    };
+
+    try {
+      mkdirSync(specDir, { recursive: true });
+      writeFileSync(metadataPath, JSON.stringify(staleMetadata, null, 2), 'utf-8');
+      (findTaskAndProject as Mock).mockReturnValue({
+        task: { ...task, metadata: staleMetadata },
+        project: tempProject,
+      });
+      (updatePlanFile as Mock).mockResolvedValue({});
+
+      const updateHandler = handleHandlers[IPC_CHANNELS.TASK_UPDATE];
+      const result = await updateHandler({}, task.id, {
+        metadata: {
+          developmentMode: 'standard',
+          workflowMode: 'balanced',
+          sourceType: 'manual',
+        },
+      });
+
+      expect(result.success).toBe(true);
+      expect(result.data.metadata.runtimeConcurrency).toEqual({
+        mode: 'concurrent',
+        workers: 2,
+        unit: 'work_item',
+        conflictPolicy: 'lock-and-queue',
+      });
+      expect(JSON.parse(readFileSync(metadataPath, 'utf-8')).runtimeConcurrency).toEqual({
+        mode: 'concurrent',
+        workers: 2,
+        unit: 'work_item',
+        conflictPolicy: 'lock-and-queue',
+      });
+    } finally {
+      rmSync(tempProjectPath, { recursive: true, force: true });
+    }
   });
 });

@@ -38,7 +38,7 @@ import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 10;
+export const PROJECT_PROMPT_PROFILE_VERSION = 11;
 export const PROJECT_PROMPT_PROFILE_PATH = getAutocodeProjectPromptProfileRelativePath();
 export const PROJECT_PROMPTS_PATH = getAutocodeProjectPromptsRelativeDir();
 
@@ -447,13 +447,13 @@ function getSpecLengthGuidance(profile: ProjectPromptProfile): string {
 
 function getComplexPlanningGuidance(profile: ProjectPromptProfile): string {
   if (profile.workflow.specStyle !== 'full' && profile.workflow.promptIntensity !== 'thorough') {
-    return '- For genuinely complex tasks, preserve necessary work items and use split plan files instead of merging unrelated areas.';
+    return '- For genuinely complex tasks, preserve necessary work items in tasks.md instead of merging unrelated areas.';
   }
 
   return [
-    '- For genuinely complex tasks, especially migrations, removals, replacements, refactors, or cross-system changes, do not compress the plan into the normal phase/subtask target.',
-    '- Split complex plans by dependency boundary such as runtime behavior, UI/editor surfaces, build/tooling, CI/release, data/assets, compatibility, migration tooling, and validation/rollback when those areas are relevant.',
-    '- Keep `implementation_plan.md` concise with checklist Markdown when preserving necessary work would otherwise make the plan hard to review.',
+    '- For genuinely complex tasks, especially migrations, removals, replacements, refactors, or cross-system changes, do not compress tasks.md into the normal phase/task target.',
+    '- Split complex tasks by dependency boundary such as runtime behavior, UI/editor surfaces, build/tooling, CI/release, data/assets, compatibility, migration tooling, and validation/rollback when those areas are relevant.',
+    '- Keep tasks.md concise with checklist Markdown when preserving necessary work would otherwise make the task list hard to review.',
   ].join('\n');
 }
 
@@ -507,17 +507,36 @@ Write rules:
 `;
 }
 
+function buildParallelExecutionPlanningGuidance(): string {
+  return `## PARALLEL EXECUTION PLANNING
+
+Plan for safe concurrency. The runtime schedules work from dependency metadata and file write intent.
+
+- Every executable subtask MUST include exactly one \`_Depends on: ..._\` line.
+- Use \`_Depends on: none_\` only when the subtask can run without prior output.
+- Otherwise list prerequisite subtask IDs only, separated by commas. Do not write prose, phase names, requirement IDs, or file paths in dependencies.
+- File metadata is write intent, not general context. Only list files the subtask is expected to create or modify.
+- Use \`_Files to modify: none_\` for read-only validation, manual QA, or investigation subtasks.
+- Do not list broad directories, globs, or every related file unless the subtask really writes them.
+- If two subtasks must modify the same file, either merge them or add a real dependency between them.
+- Keep integration and final verification late. Do not mark final verification as modifying all files unless it truly edits them.
+- Prefer independent early workstreams when they touch separate files, such as UI shell, core domain logic, data/model layer, tests, docs, or adapters.
+- Do not invent parallelism for tightly coupled work; represent the coupling with dependencies.
+`;
+}
+
 function buildSpecQuickPrompt(profile: ProjectPromptProfile): string {
   return `${buildGeneratedHeader(profile, 'spec_quick')}
 
 ## ROLE
 
-Create only the spec and plan needed for the current task.
+Create only the spec and upstream task list needed for the current task.
 
 ## OUTPUTS
 
 Use the Write tool to create \`spec.md\` in the spec directory.
-Use the Write tool to create \`implementation_plan.md\` in the spec directory.
+Use the Write tool to create \`tasks.md\` in the spec directory.
+Do not write \`implementation_plan.md\`; the runtime derives it as work packages.
 
 Do not modify project source code in this phase.
 
@@ -528,25 +547,27 @@ ${buildToolCallJsonGuidance()}
 1. Read the task and the project index from the kickoff message.
 2. Inspect only the files needed to identify the change.
 3. Write a short \`spec.md\` with overview, scope, files, change details, and success criteria.
-4. Write \`implementation_plan.md\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks unless the task truly needs more.
+4. Write \`tasks.md\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} tasks unless the task truly needs more.
 
 ## PLAN SIZE LIMITS
 
 - Use exactly 1 phase for simple tasks unless there is a real dependency split.
-- Use 1-${profile.workflow.maxRecommendedSubtasks} subtasks for simple tasks; if the task is no longer simple, keep all necessary subtasks and make each one concise.
+- Use 1-${profile.workflow.maxRecommendedSubtasks} tasks for simple tasks; if the task is no longer simple, keep all necessary tasks and make each one concise.
 - Keep each \`title\` under 120 characters and each \`description\` under 500 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
+
+${buildParallelExecutionPlanningGuidance()}
 
 ## DESIGN PATTERN GUIDANCE
 
 - Reuse the existing local design pattern if the touched files clearly use one.
 - Do not introduce a new named design pattern for a simple task unless it is already present nearby and necessary.
-- In \`spec.md\` notes or the subtask \`description\`, record "follow existing [pattern]" or "no new design pattern required" when relevant.
+- In \`spec.md\` notes or the task \`description\`, record "follow existing [pattern]" or "no new design pattern required" when relevant.
 
-## IMPLEMENTATION PLAN SHAPE
+## TASKS SHAPE
 
 \`\`\`markdown
-# Implementation Plan
+# Tasks
 
 Feature: Task name
 Workflow: simple
@@ -590,31 +611,33 @@ function buildPlannerPrompt(profile: ProjectPromptProfile): string {
 
 ## ROLE
 
-Convert the existing spec into a concrete implementation plan.
+Convert the existing spec into a concrete upstream task list. The runtime derives implementation_plan.md work packages from tasks.md.
 
 ## REQUIRED OUTPUT
 
-Use the Write tool to create \`implementation_plan.md\` in the spec directory. Do not return the full plan as final text.
+Use the Write tool to create \`tasks.md\` in the spec directory. Do not return the full task list as final text. Do not write \`implementation_plan.md\`.
 
 ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
 1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.json\` summaries.
-2. Read \`spec.md\`, \`requirements.md\`, or \`context.json\` only if the kickoff context is missing the detail needed for the plan; use Read \`limit\` for large files.
+2. Read \`spec.md\`, \`requirements.md\`, or \`context.json\` only if the kickoff context is missing the detail needed for tasks.md; use Read \`limit\` for large files.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
 4. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
 
-## PLAN SIZE LIMITS
+## TASK SIZE LIMITS
 
-- Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.
-- If the task is genuinely complex, do not omit necessary subtasks just to hit the normal target. Preserve all required work items and make each subtask description shorter instead.
-- The 1-${profile.workflow.maxRecommendedSubtasks} subtask guidance applies to small changes only, not complex migrations or broad rewrites.
+- Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.
+- If the task is genuinely complex, do not omit necessary tasks just to hit the normal target. Preserve all required work items and make each task description shorter instead.
+- The 1-${profile.workflow.maxRecommendedSubtasks} task guidance applies to small changes only, not complex migrations or broad rewrites.
 ${getComplexPlanningGuidance(profile)}
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
-- Put verification on each subtask using the smallest relevant command or manual check.
-- For large plans, keep one concise checklist Markdown file; do not split the plan into phase files.
+- Put verification on each task using the smallest relevant command or manual check.
+- For large plans, keep one concise checklist Markdown file; do not split tasks.md into phase files.
+
+${buildParallelExecutionPlanningGuidance()}
 
 ## DESIGN PATTERN DECISION
 
@@ -623,11 +646,11 @@ ${getComplexPlanningGuidance(profile)}
 - Introduce a named design pattern only when it reduces concrete complexity, and keep it scoped to the affected module.
 - If no formal pattern is needed, say so in the relevant subtask description or notes.
 
-## PLAN REQUIREMENTS
+## TASK REQUIREMENTS
 
-- Use OpenSpec-style checklist Markdown with \`- [ ] 1. Phase title\` and \`- [ ] 1.1 Subtask title\`.
-- Each subtask needs an id, title, concise description bullets, pending checkbox, file metadata, and verification.
-- When a design pattern matters, include the decision in a subtask bullet.
+- Use Autocode Markdown checklist format with \`- [ ] 1. Phase title\` and \`- [ ] 1.1 Subtask title\`.
+- Each task needs an id, title, concise description bullets, pending checkbox, precise file metadata, exactly one dependency line, and verification.
+- When a design pattern matters, include the decision in a task bullet.
 - Prefer targeted verification commands:
 ${formatCommands([
   ...profile.commands.typecheck,
@@ -635,7 +658,7 @@ ${formatCommands([
   ...profile.commands.test,
   ...profile.commands.build,
 ])}
-- Do not add research, rollout, or broad QA subtasks unless the task risk warrants them.
+- Do not add research, rollout, or broad QA tasks unless the task risk warrants them.
 `;
 }
 

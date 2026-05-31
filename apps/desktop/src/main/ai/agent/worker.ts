@@ -591,11 +591,11 @@ function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig
     '## PLAN REVIEW REGENERATION',
     'This run was started from Request Changes in plan review.',
     `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
-    openSpecDirective || `Rewrite ${promptSpecDir}/implementation_plan.md to address that feedback.`,
+    openSpecDirective || `Rewrite ${promptSpecDir}/tasks.md to address that feedback. Do not edit implementation_plan.md; the runtime derives it.`,
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
     openSpecDirective
       ? 'Preserve useful parts of the previous OpenSpec artifacts and plan only when they still match the reviewer feedback; otherwise replace them.'
-      : 'Preserve useful parts of the previous plan only when they still match the reviewer feedback; otherwise replace them.',
+      : 'Preserve useful parts of the previous tasks.md only when they still match the reviewer feedback; otherwise replace them.',
   ];
 
   if (feedback) {
@@ -2087,7 +2087,7 @@ function buildSpecKickoffMessage(
       baseMessage = `Write a compact spec.md for: ${taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep overview, touched files, behavior, and acceptance checks.`;
       break;
     case 'planner':
-      baseMessage = `Create ${promptSpecDir}/implementation_plan.md for: ${taskDescription}. Use provided phase context first; read only relevant spec.md sections if needed. Output concrete OpenSpec-style checklist subtasks. Project root: ${promptProjectDir}.`;
+      baseMessage = `Create ${promptSpecDir}/tasks.md for: ${taskDescription}. Use provided phase context first; read only relevant spec.md sections if needed. Output concrete Autocode Markdown checklist tasks. Do not write implementation_plan.md; the runtime derives it. Project root: ${promptProjectDir}.`;
       break;
     case 'spec_critic':
       baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
@@ -2228,7 +2228,7 @@ function buildKickoffMessage(
   let baseMessage: string;
   if (mmoRole) {
     if (agentType === 'mmo_system_designer') {
-      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.md with concrete checklist phases and subtasks. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
+      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
     } else if (agentType === 'mmo_qa_reviewer') {
       baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, then run one focused project-appropriate verification when available. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
     } else if (agentType === 'mmo_qa_fixer') {
@@ -2252,7 +2252,7 @@ function buildKickoffMessage(
     }
   } else switch (agentType) {
     case 'planner':
-      baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed OpenSpec-style checklist plan at ${promptSpecDir}/implementation_plan.md. Project root: ${promptProjectDir}`;
+      baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed Autocode Markdown checklist task list at ${promptSpecDir}/tasks.md. Do not write implementation_plan.md; the runtime derives it as work packages. Project root: ${promptProjectDir}`;
       break;
     case 'coder':
       if (subtaskId) {
@@ -2290,8 +2290,8 @@ function buildKickoffMessage(
         '',
         '## PLAN REVIEW REGENERATION',
         `Read ${promptSpecDir}/HUMAN_INPUT.md and address the reviewer feedback.`,
-        `If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first, then regenerate ${promptSpecDir}/implementation_plan.md from those upstream artifacts.`,
-        `If this task is not backed by OpenSpec, rewrite ${promptSpecDir}/implementation_plan.md directly.`,
+        `If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first, then let the runtime regenerate ${promptSpecDir}/implementation_plan.md from those upstream artifacts.`,
+        `If this task is not backed by OpenSpec, rewrite ${promptSpecDir}/tasks.md directly; do not edit implementation_plan.md.`,
         'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
       ].join('\n');
     }
@@ -2327,7 +2327,7 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
       shared.push('', buildMmoSpecialistList(), '', 'Use this roster as a coverage checklist for focused MMO review; work directly with the tools available in this session.');
     }
     if (agentType === 'mmo_system_designer') {
-      shared.push('', 'Create implementation_plan.md as an OpenSpec-style checklist with executable subtasks. Use [ ] for pending subtasks and concise metadata bullets for files, dependencies, requirements, and verification.');
+      shared.push('', 'Create tasks.md as an Autocode Markdown checklist with executable tasks. Do not write implementation_plan.md. Use [ ] for pending tasks and concise metadata bullets for files, dependencies, requirements, and verification.');
     }
     if (agentType === 'mmo_qa_reviewer') {
       shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`);
@@ -2339,7 +2339,7 @@ function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: 
   }
   switch (agentType) {
     case 'planner':
-      return `Read ${promptSpecDir}/spec.md and create ${promptSpecDir}/implementation_plan.md as an OpenSpec-style checklist. Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.`;
+      return `Read ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist. Do not write implementation_plan.md; the runtime derives it as work packages. Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.`;
     case 'coder':
       return `Implement the current pending subtask from ${promptSpecDir}/implementation_plan.md in ${promptProjectDir}. Mark it [x] and add a _Completion_ note when done.`;
     case 'direct_task':

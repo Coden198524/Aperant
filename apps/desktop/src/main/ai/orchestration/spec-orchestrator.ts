@@ -22,8 +22,11 @@ import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import {
   AUTOCODE_TASK_ARTIFACTS,
+  buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
   isAutocodeProjectDataPath,
+  saveAutocodeImplementationPlan,
   saveAutocodeTaskRequirementsSync,
+  stringifyAutocodeImplementationPlanMarkdown,
   type Phase,
 } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
@@ -34,7 +37,6 @@ import {
   validateImplementationPlanLanguage,
   ComplexityAssessmentOutputSchema,
   buildValidationRetryPrompt,
-  IMPLEMENTATION_PLAN_SCHEMA_HINT,
   loadImplementationPlanFromFiles,
   saveImplementationPlanToFiles,
   SpecContextOutputSchema,
@@ -140,8 +142,8 @@ const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
   context: ['context.json'],
   spec_writing: ['spec.md'],
   self_critique: ['spec.md'],
-  planning: [AUTOCODE_TASK_ARTIFACTS.implementationPlan],
-  quick_spec: [AUTOCODE_TASK_ARTIFACTS.specFile, AUTOCODE_TASK_ARTIFACTS.implementationPlan],
+  planning: [AUTOCODE_TASK_ARTIFACTS.tasks],
+  quick_spec: [AUTOCODE_TASK_ARTIFACTS.specFile, AUTOCODE_TASK_ARTIFACTS.tasks],
 };
 
 const STRUCTURED_JSON_PHASE_OUTPUTS: Partial<Record<SpecPhase, string>> = {
@@ -1166,13 +1168,14 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
   const normalizedSpecDir = specDir.replace(/\\/g, '/');
   if (phase === 'planning') {
     return [
-      'RETRY IMPLEMENTATION PLAN WRITE',
+      'RETRY TASKS WRITE',
       '',
       'The previous Write call was rejected before execution.',
-      `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} instead of returning plan text in the final response.`,
+      `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.tasks} instead of returning task text in the final response.`,
       '',
       'Retry rules:',
-      `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
+      `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
+      `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
       '- Pass one JSON object with file_path and content, not a string containing JSON.',
       '- Use forward slashes in file_path.',
       '- Write checklist Markdown, not JSON.',
@@ -1181,7 +1184,7 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       '- Omit source code, long analysis, and copied documentation.',
       '',
       'Write input shape:',
-      `{"file_path":"${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}","content":"..."}`,
+      `{"file_path":"${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.tasks}","content":"..."}`,
     ].join('\n');
   }
 
@@ -1193,11 +1196,12 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
       '',
       'Retry rules:',
       `- Use the Write tool to create ${normalizedSpecDir}/spec.md.`,
-      `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
+      `- Use the Write tool to create ${normalizedSpecDir}/${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
+      `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
       '- Pass one JSON object per Write call with file_path and content.',
       '- For spec.md, write a compact 20-60 line version first.',
-      `- Keep ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} concise and parseable.`,
-      '- Do not paste the plan into the final response.',
+      `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} concise and parseable.`,
+      '- Do not paste the task list into the final response.',
     ].join('\n');
   }
 
@@ -2033,9 +2037,9 @@ function buildPlanStructuredOutputValidationRetryPrompt(
   schemaHint?: string,
 ): string {
   const lines = [
-    '## IMPLEMENTATION PLAN VALIDATION',
+    '## TASKS VALIDATION',
     '',
-    'The previous implementation plan was missing or invalid.',
+    'The previous tasks.md was missing, invalid, or could not be converted into runtime work packages.',
     '',
     '### Errors',
     ...errors.map((error) => `- ${error}`),
@@ -2048,10 +2052,10 @@ function buildPlanStructuredOutputValidationRetryPrompt(
 
   lines.push(
     '### Fix',
-    `1. Use the Write tool to rewrite ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
+    `1. Use the Write tool to rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
     '2. Use checklist Markdown with "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" items.',
-    '3. Keep each subtask concise and include _Files_, _Depends on_, _Requirements_, and _Verification_ metadata when useful.',
-    '4. Do not paste the full plan into the final response.',
+    '3. Keep each task concise and include _Files_, _Depends on_, _Requirements_, and _Verification_ metadata.',
+    `4. Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
     '5. Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   );
 
@@ -2673,7 +2677,7 @@ export class SpecOrchestrator extends EventEmitter {
               continue;
             }
 
-            if (isPlanningPhase && missingFiles.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan)) {
+            if (isPlanningPhase && missingFiles.includes(AUTOCODE_TASK_ARTIFACTS.tasks)) {
               toolUseRetryContext = buildWriteToolJsonRetryPrompt(phase, this.config.specDir);
               continue;
             }
@@ -2711,9 +2715,7 @@ export class SpecOrchestrator extends EventEmitter {
           this.emitTyped('log', `Phase ${phase} schema validation failed (attempt ${attempt + 1}): ${schemaValidation.errors.join(', ')}`);
           if (attempt < maxPhaseRetries) {
             // Build LLM-friendly error feedback so the agent knows what to fix
-            const schemaHint = (phase === 'planning' || phase === 'quick_spec')
-              ? IMPLEMENTATION_PLAN_SCHEMA_HINT
-              : undefined;
+            const schemaHint = undefined;
             schemaRetryContext = isPlanningPhase
               ? buildPlanStructuredOutputValidationRetryPrompt(phase, schemaValidation.errors, schemaHint)
               : buildValidationRetryPrompt(
@@ -2918,6 +2920,16 @@ export class SpecOrchestrator extends EventEmitter {
     phase: SpecPhase,
   ): Promise<{ valid: boolean; errors: string[] } | null> {
     if (phase === 'planning' || phase === 'quick_spec') {
+      try {
+        await this.deriveRuntimePlanFromTasks();
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        return {
+          valid: false,
+          errors: [`Failed to generate implementation plan from ${AUTOCODE_TASK_ARTIFACTS.tasks}: ${message}`],
+        };
+      }
+
       const planFileName = AUTOCODE_TASK_ARTIFACTS.implementationPlan;
       try {
         const hydratedPlan = await loadImplementationPlanFromFiles(this.config.specDir);
@@ -2940,9 +2952,7 @@ export class SpecOrchestrator extends EventEmitter {
         const executionErrors = result.valid && !hasExecutableSubtasks(normalizedPlan)
           ? ['Implementation plan has no executable subtasks.']
           : [];
-        const compactErrors = result.valid && executionErrors.length === 0 && languageErrors.length === 0
-          ? await this.compactAggressiveSimplePlan()
-          : [];
+        const compactErrors: string[] = [];
 
         return {
           valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0 && compactErrors.length === 0,
@@ -2966,6 +2976,16 @@ export class SpecOrchestrator extends EventEmitter {
       }
     }
     return null; // No schema for this phase
+  }
+
+  private async deriveRuntimePlanFromTasks(): Promise<void> {
+    const tasksMarkdown = await readFile(join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks), 'utf-8');
+    const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
+      now: new Date().toISOString(),
+      language: this.config.language,
+      sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
+    });
+    await saveAutocodeImplementationPlan(this.config.specDir, plan);
   }
 
   private async writeAggressiveQuickSpec(
@@ -2994,12 +3014,20 @@ export class SpecOrchestrator extends EventEmitter {
 
     try {
       await writeFile(join(this.config.specDir, 'spec.md'), plan.specMarkdown, 'utf-8');
-      await saveImplementationPlanToFiles(this.config.specDir, plan.implementationPlan as never);
+      await writeFile(
+        join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks),
+        stringifyAutocodeImplementationPlanMarkdown(plan.implementationPlan as never).replace(
+          /^# Implementation Plan/m,
+          '# Tasks',
+        ),
+        'utf-8',
+      );
+      await this.deriveRuntimePlanFromTasks();
 
       const result: SpecPhaseResult = { phase, success: true, errors: [], retries: 0 };
       const patternFiles = plan.implementationPlan.phases[0]?.subtasks[0]?.pattern_files ?? [];
       const fileHint = patternFiles.length > 0 ? `; file hints: ${patternFiles.join(', ')}` : '';
-      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Aggressive workflow'} generated quick spec and one-subtask plan without an AI planning session${fileHint}`);
+      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Aggressive workflow'} generated quick spec and one-task source without an AI planning session${fileHint}`);
       this.emitTyped('phase-complete', phase, result);
       return result;
     } catch (error) {

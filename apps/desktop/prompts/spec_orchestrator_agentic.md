@@ -5,21 +5,21 @@ Create the required spec artifacts for the task.
 
 ## Required Outputs
 - `spec.md`
-- `implementation_plan.md`
+- `tasks.md`
 - `requirements.md` when requirements data exists
 - `context.json` when discovery/context data exists
 - `research.json` when external research was needed
 
 ## Process
 1. Read the task, injected project context, and project instructions.
-2. For simple tasks, write `spec.md` and `implementation_plan.md` directly.
+2. For simple tasks, write `spec.md` and `tasks.md` directly.
 3. For broader tasks, delegate only needed phases: discovery, requirements, research, context, writer, critic.
 4. Keep subagent context short and pass forward only relevant facts.
 5. Prefer project-specific, testable requirements over generic implementation advice.
 6. Read back required files before finishing.
 
-## Plan Format
-`implementation_plan.md` must be an OpenSpec-style checklist:
+## Task Format
+`tasks.md` must be an Autocode Markdown checklist. Do not write `implementation_plan.md`; the runtime derives it as work packages.
 
 ```md
 - [ ] 1. Phase title

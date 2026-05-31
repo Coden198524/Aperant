@@ -39,6 +39,11 @@ Append new work to an existing completed plan.
 Rules:
 
 - Continue numbering from the existing plan.
+- Every new executable subtask MUST include exactly one `_Depends on: ..._` line.
+- Use `_Depends on: none_` only when the new subtask can run without prior output; otherwise list prerequisite subtask IDs only.
+- File metadata is write intent, not context. Only list files the subtask will create or modify.
+- Use `_Files to modify: none_` for read-only validation or final checks.
+- If two new subtasks must modify the same file, merge them or add a dependency.
 - Use 1-3 files per subtask when possible.
 - Keep each subtask independently verifiable.
 - Do not rewrite old work to make the append look cleaner.

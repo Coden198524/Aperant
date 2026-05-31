@@ -41,6 +41,8 @@ export interface Subtask {
   title: string;
   description: string;
   completionSummary?: string;
+  startedAt?: string;
+  completedAt?: string;
   status: SubtaskStatus;
   files: string[];
   dependsOn?: string[];
@@ -394,6 +396,8 @@ export interface PlanSubtask {
   /** Detailed implementation notes for the coder agent */
   description: string;
   completion_summary?: string;
+  started_at?: string;
+  completed_at?: string;
   notes?: string;
   status: SubtaskStatus;
   files_to_create?: string[];

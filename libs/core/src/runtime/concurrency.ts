@@ -32,10 +32,23 @@ const MAX_WORKERS = 8;
 export function resolveAutocodeTaskRuntimeConcurrency(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
 ): AutocodeTaskRuntimeConcurrencyResolved {
+  if (isDirectRuntimeMode(metadata)) {
+    return {
+      mode: 'serial',
+      workers: 1,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    };
+  }
+
   const defaultWorkers = getDefaultRuntimeWorkers(metadata);
   const requested = metadata?.runtimeConcurrency;
-  const workers = clampWorkers(requested?.workers ?? defaultWorkers);
-  const mode = requested?.mode ?? (workers > 1 ? 'concurrent' : 'serial');
+  const requestedWorkers = requested?.workers === undefined ? undefined : clampWorkers(requested.workers);
+  const shouldUseDefaultConcurrency = shouldUseDefaultRuntimeConcurrency(requested, requestedWorkers, defaultWorkers);
+  const workers = shouldUseDefaultConcurrency ? defaultWorkers : clampWorkers(requestedWorkers ?? defaultWorkers);
+  const mode = shouldUseDefaultConcurrency
+    ? (workers > 1 ? 'concurrent' : 'serial')
+    : requested?.mode ?? (workers > 1 ? 'concurrent' : 'serial');
 
   return {
     mode: mode === 'concurrent' && workers > 1 ? 'concurrent' : 'serial',
@@ -54,7 +67,7 @@ export function buildAutocodeTaskRuntimeConcurrencyMetadata(
 function getDefaultRuntimeWorkers(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
 ): number {
-  if (metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off') {
+  if (isDirectRuntimeMode(metadata)) {
     return 1;
   }
   if (
@@ -65,6 +78,30 @@ function getDefaultRuntimeWorkers(
     return 5;
   }
   return 2;
+}
+
+function isDirectRuntimeMode(
+  metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
+): boolean {
+  return metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
+}
+
+function shouldUseDefaultRuntimeConcurrency(
+  requested: AutocodeTaskRuntimeConcurrencyMetadata | undefined,
+  requestedWorkers: number | undefined,
+  defaultWorkers: number,
+): boolean {
+  if (!requested || defaultWorkers <= 1) {
+    return false;
+  }
+
+  const mode = requested.mode;
+  const workers = requestedWorkers ?? defaultWorkers;
+  return (
+    (mode === 'serial' && (requestedWorkers === undefined || requestedWorkers <= 1)) ||
+    (mode === undefined && requestedWorkers !== undefined && requestedWorkers <= 1) ||
+    (mode === 'concurrent' && workers <= 1)
+  );
 }
 
 function clampWorkers(value: unknown): number {

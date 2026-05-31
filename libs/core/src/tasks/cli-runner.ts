@@ -95,6 +95,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       specDir,
       taskTitle: task.title,
       taskDescription: task.description,
+      taskMetadata: task.metadata,
       language: input.language,
       runtimeConcurrency,
     }),
@@ -200,6 +201,7 @@ function buildTaskRunPrompt(input: {
   });
   const contextReference = projectDocsReference ? `${projectDocsReference}\n\n` : '';
   const humanInputReference = buildTaskHumanInputReference(input.specDir);
+  const isOpenSpecTask = input.task.metadata?.sourceType === 'openspec';
   const openSpecExecutionReference = buildTaskOpenSpecCompactContextReference({
     task: input.task,
     specDir: input.specDir,
@@ -239,8 +241,9 @@ function buildTaskRunPrompt(input: {
       '',
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} with overview, scope, implementation notes, and success criteria.`,
       `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if the current task description needs structured requirements.`,
-      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as an OpenSpec-style Markdown checklist with concrete phases and subtasks.`,
-      '- Use [ ] for pending subtasks and concise metadata bullets.',
+      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as an Autocode Markdown checklist with concrete phases and tasks.`,
+      `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
+      '- Use [ ] for pending subtasks and concise metadata bullets: _Files to create/modify_, _Depends on_, _Requirements_, and _Verification_.',
     ].join('\n')}`;
   }
 
@@ -260,10 +263,18 @@ function buildTaskRunPrompt(input: {
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
       `- If ${input.specDir}/HUMAN_INPUT.md exists, address it as plan-review feedback.`,
-      '- For OpenSpec-backed tasks, apply plan-review feedback to upstream OpenSpec artifacts first, then derive the downstream implementation plan.',
-      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as an OpenSpec-style Markdown checklist with concrete phases and subtasks.`,
-      '- Keep subtasks independently implementable and verifiable.',
-      '- Set new subtask checkboxes to [ ].',
+      ...(isOpenSpecTask
+        ? ['- Apply plan-review feedback to upstream OpenSpec artifacts first, then derive the downstream implementation plan.']
+        : ['- Do not read or edit openspec/ artifacts for this Standard task.']),
+      ...(isOpenSpecTask
+        ? [`- Regenerate ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} only from updated OpenSpec artifacts.`]
+        : [
+            `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as the upstream Autocode task list.`,
+            `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
+          ]),
+      '- Keep tasks independently implementable and verifiable.',
+      '- Every executable task must include _Files to create/modify_, _Depends on_, and _Verification_. Use _Depends on: none_ only for root work.',
+      '- Set new task checkboxes to [ ].',
     ].join('\n')}`;
   }
 
@@ -275,7 +286,9 @@ function buildTaskRunPrompt(input: {
     '## Required Workflow',
     '',
     `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} first.`,
-    `- If ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.openSpecContext} exists, use it as the OpenSpec context and open full OpenSpec artifacts only for exact wording.`,
+    ...(isOpenSpecTask
+      ? [`- If ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.openSpecContext} exists, use it as the OpenSpec context and open full OpenSpec artifacts only for exact wording.`]
+      : ['- Do not read openspec/ artifacts unless the current work item explicitly references them.']),
     `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
     '- The runner invokes you once per runtime work package. In each invocation, implement only the Current Work Item section.',
     '- Do not start later work packages early, even if they look related.',
@@ -421,24 +434,28 @@ function buildNodeRunnerScript(input: {
   specDir: string;
   taskTitle: string;
   taskDescription: string;
+  taskMetadata?: unknown;
   language?: AutocodeAgentLanguage;
   runtimeConcurrency: AutocodeTaskRuntimeConcurrencyResolved;
 }): string {
   return `const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
-const { existsSync, mkdirSync, readFileSync, rmSync, statSync, writeFileSync } = require('node:fs');
+const { existsSync, mkdirSync, readFileSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
 const { basename, dirname, join, resolve } = require('node:path');
+const { pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
 
 const cwd = ${JSON.stringify(input.cwd)};
 const command = ${JSON.stringify(input.command)};
 const args = ${JSON.stringify(input.args)};
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
+const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
 const promptFilePath = ${JSON.stringify(input.promptFilePath)};
 const phase = ${JSON.stringify(input.phase)};
 const specDir = ${JSON.stringify(input.specDir)};
 const taskTitle = ${JSON.stringify(input.taskTitle)};
 const taskDescription = ${JSON.stringify(input.taskDescription)};
+const taskMetadata = ${JSON.stringify(input.taskMetadata ?? {})};
 const language = ${JSON.stringify(input.language)};
 const runtimeConcurrency = ${JSON.stringify(input.runtimeConcurrency)};
 const artifacts = ${JSON.stringify(AUTOCODE_TASK_ARTIFACTS)};
@@ -473,6 +490,7 @@ const activeCodingSubtaskIds = new Set();
 const completedCodingSubtaskIds = new Set();
 const failedCodingSubtaskIds = new Set();
 const codingFailures = [];
+let schedulingMetadataWarningLogged = false;
 let nextCodingWorkerId = 0;
 const MODEL_OUTPUT_FLUSH_MS = 750;
 const MODEL_OUTPUT_MAX_CHARS = 3500;
@@ -511,24 +529,27 @@ function startAttempt(attemptPrompt, subtaskId) {
   });
   child.on('error', (error) => {
     console.error(error instanceof Error ? error.message : String(error));
-    finalize(currentAttemptId, 1, undefined, error instanceof Error ? error.message : String(error));
+    finalize(currentAttemptId, 1, undefined, error instanceof Error ? error.message : String(error))
+      .catch((finalizeError) => finishRun(1, undefined, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
   });
   child.on('exit', (code, signal) => {
     if (signal) {
       console.error(\`Autocode CLI exited by signal: \${signal}\`);
-      finalize(currentAttemptId, 1, signal, \`Autocode CLI exited by signal: \${signal}\`);
+      finalize(currentAttemptId, 1, signal, \`Autocode CLI exited by signal: \${signal}\`)
+        .catch((finalizeError) => finishRun(1, signal, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
       return;
     }
-    finalize(currentAttemptId, code ?? 0, undefined);
+    finalize(currentAttemptId, code ?? 0, undefined)
+      .catch((finalizeError) => finishRun(1, undefined, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
   });
 }
 
-function finalize(currentAttemptId, exitCode, signal, explicitError) {
+async function finalize(currentAttemptId, exitCode, signal, explicitError) {
   if (finalized || currentAttemptId !== attemptId) return;
   flushCodexJsonOutput(defaultAttemptState);
   flushModelOutput(defaultAttemptState);
 
-  const validationError = exitCode === 0 ? validateExpectedArtifacts() : undefined;
+  const validationError = exitCode === 0 ? await validateExpectedArtifacts() : undefined;
   if (validationError && validationRetryCount < maxValidationRetries) {
     validationRetryCount += 1;
     const retryMessage = localizeMessage(
@@ -727,6 +748,7 @@ function startCodingWorkQueue() {
 
   const workerCount = Math.min(codingWorkerLimit, Math.max(1, progress.total));
   appendTaskLogEntry('coding', 'info', 'Starting ' + workerCount + ' coding worker(s).');
+  warnIfPlanSchedulingMetadataIsIncomplete();
   fillCodingWorkers();
 }
 
@@ -761,6 +783,7 @@ function startCodingWorkerAttempt(subtask) {
   const workLabel = subtask.workPackage ? 'work package' : 'subtask';
   const message = 'Worker ' + workerId + ' coding ' + workLabel + ' ' + subtask.id + ': ' + subtask.title;
   updateTaskLogs('coding', 'active', message);
+  appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
   emitPhase('coding', message, progress.percent);
 
   const child = spawn(command, args, {
@@ -811,9 +834,23 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
     const reason = explicitError || signal || 'CLI work item run failed.';
     failedCodingSubtaskIds.add(attempt.subtask.id);
     codingFailures.push(attempt.subtask.id + ': ' + reason);
+    appendTaskLogEntry(
+      'coding',
+      'error',
+      'Work item ' + attempt.subtask.id + ' failed: ' + reason,
+      undefined,
+      buildAttemptLogExtra(attempt.state),
+    );
     markPlanSubtaskStatus(attempt.subtask.id, 'failed', reason);
   } else {
     completedCodingSubtaskIds.add(attempt.subtask.id);
+    appendTaskLogEntry(
+      'coding',
+      'success',
+      'Work item ' + attempt.subtask.id + ' completed.',
+      undefined,
+      buildAttemptLogExtra(attempt.state),
+    );
     markPlanSubtaskStatus(attempt.subtask.id, 'completed', 'Completed by Autocode CLI runner.');
   }
 
@@ -929,6 +966,13 @@ function conflictsWithActiveCodingWork(candidate) {
 
   const activeItems = readPlanItems()
     .filter((item) => item.isSubtask && activeCodingSubtaskIds.has(item.id));
+  if (
+    activeItems.length > 0 &&
+    (!hasSafeConcurrentSchedulingMetadata(candidate) ||
+      activeItems.some((active) => !hasSafeConcurrentSchedulingMetadata(active)))
+  ) {
+    return true;
+  }
   for (const active of activeItems) {
     const activeFiles = getWorkItemFiles(active);
     if (candidateFiles.length === 0 || activeFiles.length === 0) {
@@ -939,6 +983,29 @@ function conflictsWithActiveCodingWork(candidate) {
     }
   }
   return false;
+}
+
+function warnIfPlanSchedulingMetadataIsIncomplete() {
+  if (schedulingMetadataWarningLogged || codingWorkerLimit <= 1) {
+    return;
+  }
+  const missing = readPlanItems()
+    .filter((item) => item.isSubtask && (!hasSafeConcurrentSchedulingMetadata(item) || !item.hasVerificationMetadata));
+  if (missing.length === 0) {
+    return;
+  }
+  schedulingMetadataWarningLogged = true;
+  appendTaskLogEntry(
+    'coding',
+    'info',
+    'Some work items are missing scheduling metadata; affected items will run serially to avoid unsafe parallel edits: ' +
+      missing.slice(0, 8).map((item) => item.id).join(', ') +
+      (missing.length > 8 ? ', ...' : ''),
+  );
+}
+
+function hasSafeConcurrentSchedulingMetadata(item) {
+  return Boolean(item?.hasFileMetadata && item?.hasDependencyMetadata);
 }
 
 function getPlanItemStatusMap(items) {
@@ -1104,7 +1171,7 @@ function canonicalRunnerCycleKey(cycle) {
 function normalizeRunnerWorkDependencyIds(value) {
   if (Array.isArray(value)) return normalizeRunnerStringArray(value);
   if (typeof value === 'string') {
-    return [...new Set(value.split(',').map((item) => item.trim()).filter(Boolean))];
+    return [...new Set(value.split(',').map((item) => item.trim()).filter((item) => item && !isNoneDependencyToken(item)))];
   }
   return [];
 }
@@ -1113,7 +1180,11 @@ function normalizeRunnerStringArray(value) {
   if (!Array.isArray(value)) {
     return [];
   }
-  return [...new Set(value.map((item) => String(item || '').trim()).filter(Boolean))];
+  return [...new Set(value.map((item) => String(item || '').trim()).filter((item) => item && !isNoneDependencyToken(item)))];
+}
+
+function isNoneDependencyToken(value) {
+  return /^(none|no dependencies?|n\\/a|na|nil|null|无|无依赖|没有|没有依赖)$/i.test(String(value || '').trim());
 }
 
 function getWorkItemFiles(item) {
@@ -1197,6 +1268,7 @@ function readPlanItems() {
       const metadata = subtaskMetadata[match[3]] && typeof subtaskMetadata[match[3]] === 'object'
         ? subtaskMetadata[match[3]]
         : {};
+      const hasMetadataField = (field) => Object.prototype.hasOwnProperty.call(metadata, field);
       current = {
         indent: match[1].length,
         marker: match[2],
@@ -1212,6 +1284,12 @@ function readPlanItems() {
         patternFiles: normalizeRunnerStringArray(metadata.pattern_files),
         dependsOn: normalizeRunnerWorkDependencyIds(metadata.depends_on),
         requirements: normalizeRunnerStringArray(metadata.requirements),
+        hasFileMetadata: hasMetadataField('files') ||
+          hasMetadataField('files_to_create') ||
+          hasMetadataField('files_to_modify') ||
+          hasMetadataField('pattern_files'),
+        hasDependencyMetadata: hasMetadataField('depends_on'),
+        hasVerificationMetadata: hasMetadataField('verification'),
         phaseName: currentPhaseName,
         isSubtask: match[1].length > 0 || /[.-]/.test(match[3]),
         workPackage: metadata.work_package === true,
@@ -1246,23 +1324,32 @@ function applyPlanItemFileHint(item, detail) {
   }
   const key = match[1].trim().toLowerCase();
   const values = splitPlanList(match[2]);
-  if (values.length === 0) {
-    return;
-  }
   if (key === 'files to create') {
+    item.hasFileMetadata = true;
+    if (values.length === 0) return;
     item.filesToCreate.push(...values);
     return;
   }
   if (key === 'files' || key === 'files to modify') {
+    item.hasFileMetadata = true;
+    if (values.length === 0) return;
     item.filesToModify.push(...values);
     return;
   }
   if (key === 'pattern files' || key === 'patterns from') {
+    item.hasFileMetadata = true;
+    if (values.length === 0) return;
     item.patternFiles.push(...values);
     return;
   }
   if (key === 'depends on') {
+    item.hasDependencyMetadata = true;
+    if (values.length === 0) return;
     item.dependsOn.push(...values);
+    return;
+  }
+  if (key === 'verification') {
+    item.hasVerificationMetadata = true;
   }
 }
 
@@ -1270,7 +1357,7 @@ function splitPlanList(value) {
   return String(value || '')
     .split(',')
     .map((item) => item.trim())
-    .filter((item) => item && !/^none$/i.test(item));
+    .filter((item) => item && !isNoneDependencyToken(item));
 }
 
 function parsePlanMachineMetadata(content) {
@@ -1313,6 +1400,7 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
     }
 
     const marker = statusToMarker(status);
+    const now = new Date().toISOString();
     const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
     let updated = false;
     for (let index = 0; index < lines.length; index += 1) {
@@ -1329,6 +1417,8 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
       const detailIndent = (match[1].match(/^\\s*/) || [''])[0] + '  ';
       let insertAt = index + 1;
       let hasCompletion = false;
+      let hasStarted = false;
+      let hasCompleted = false;
       let hasUpdated = false;
       while (insertAt < lines.length) {
         if (/^\\s*-\\s+\\[[ xX/!\\-]\\]\\s+[A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*/.test(lines[insertAt])) {
@@ -1342,6 +1432,22 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
             continue;
           }
         }
+        if (/^\\s*-\\s+_Started:/i.test(lines[insertAt])) {
+          hasStarted = true;
+          if (status === 'pending') {
+            lines.splice(insertAt, 1);
+            updated = true;
+            continue;
+          }
+        }
+        if (/^\\s*-\\s+_Completed:/i.test(lines[insertAt])) {
+          hasCompleted = true;
+          if (status === 'pending' || status === 'in_progress') {
+            lines.splice(insertAt, 1);
+            updated = true;
+            continue;
+          }
+        }
         if (/^\\s*-\\s+_Updated:/i.test(lines[insertAt])) hasUpdated = true;
         insertAt += 1;
       }
@@ -1350,8 +1456,18 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
         insertAt += 1;
         updated = true;
       }
+      if (status !== 'pending' && !hasStarted) {
+        lines.splice(insertAt, 0, detailIndent + '- _Started: ' + now + '_');
+        insertAt += 1;
+        updated = true;
+      }
+      if ((status === 'completed' || status === 'failed' || status === 'blocked') && !hasCompleted) {
+        lines.splice(insertAt, 0, detailIndent + '- _Completed: ' + now + '_');
+        insertAt += 1;
+        updated = true;
+      }
       if (updated && !hasUpdated) {
-        lines.splice(insertAt, 0, detailIndent + '- _Updated: ' + new Date().toISOString() + '_');
+        lines.splice(insertAt, 0, detailIndent + '- _Updated: ' + now + '_');
       }
       break;
     }
@@ -1360,7 +1476,7 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
       return false;
     }
     content = lines.join('\\n');
-    content = upsertPlanMetadata(content, 'Updated', new Date().toISOString());
+    content = upsertPlanMetadata(content, 'Updated', now);
     writeFileSync(planPath, content.endsWith('\\n') ? content : content + '\\n', 'utf8');
     return true;
   });
@@ -2123,7 +2239,12 @@ function emitTokenUsage(usage) {
   process.stdout.write('__TASK_TOKEN_USAGE__:' + JSON.stringify(usage) + '\\n');
 }
 
-function validateExpectedArtifacts() {
+async function validateExpectedArtifacts() {
+  const derivedPlanError = await deriveRuntimePlanFromStandardTasksIfNeeded();
+  if (derivedPlanError) {
+    return derivedPlanError;
+  }
+
   if (phase === 'spec') {
     if (!existsSync(join(specDir, artifacts.specFile))) {
       return \`CLI finished without creating \${artifacts.specFile}.\`;
@@ -2131,21 +2252,122 @@ function validateExpectedArtifacts() {
     if (!planHasSubtasks()) {
       return \`CLI finished without creating \${artifacts.implementationPlan} subtasks.\`;
     }
+    const metadataError = validatePlanningSchedulingMetadata();
+    if (metadataError) {
+      return metadataError;
+    }
   }
   if (phase === 'planning' && !planHasSubtasks()) {
     return \`CLI finished without creating \${artifacts.implementationPlan} subtasks.\`;
   }
+  if (phase === 'planning') {
+    const metadataError = validatePlanningSchedulingMetadata();
+    if (metadataError) {
+      return metadataError;
+    }
+  }
   return undefined;
 }
 
+async function deriveRuntimePlanFromStandardTasksIfNeeded() {
+  if ((phase !== 'spec' && phase !== 'planning') || isOpenSpecRunnerTask()) {
+    return undefined;
+  }
+
+  const tasksPath = join(specDir, artifacts.tasks || 'tasks.md');
+  if (!existsSync(tasksPath)) {
+    return \`CLI finished without creating \${artifacts.tasks || 'tasks.md'}.\`;
+  }
+  if (!workPackagesModulePath) {
+    return 'Unable to load Autocode work package builder.';
+  }
+
+  try {
+    const moduleUrl = pathToFileURL(workPackagesModulePath).href;
+    const workPackages = await import(moduleUrl);
+    const plan = workPackages.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
+      readFileSync(tasksPath, 'utf8'),
+      {
+        now: new Date().toISOString(),
+        language,
+        sourcePath: artifacts.tasks || 'tasks.md',
+      },
+    );
+    const existingPlanMetadata = readExistingPlanMachineMetadata();
+    if (existingPlanMetadata.tokenUsage) {
+      plan.tokenUsage = existingPlanMetadata.tokenUsage;
+    }
+    if (existingPlanMetadata.last_updated) {
+      plan.last_updated = existingPlanMetadata.last_updated;
+    }
+    const markdown = workPackages.stringifyAutocodeImplementationPlanMarkdown(plan);
+    writeFileSync(join(specDir, artifacts.implementationPlan), markdown, 'utf8');
+    appendTaskLogEntry(logPhase, 'info', 'Generated runtime work packages from tasks.md.');
+    return undefined;
+  } catch (error) {
+    return \`Failed to generate \${artifacts.implementationPlan} from \${artifacts.tasks || 'tasks.md'}: \${error instanceof Error ? error.message : String(error)}\`;
+  }
+}
+
+function readExistingPlanMachineMetadata() {
+  try {
+    return readPlanMachineMetadata(readFileSync(join(specDir, artifacts.implementationPlan), 'utf8'));
+  } catch {
+    return {};
+  }
+}
+
+function isOpenSpecRunnerTask() {
+  return String(taskMetadata?.sourceType || '').toLowerCase() === 'openspec';
+}
+
+function shouldValidatePlanningSchedulingMetadata() {
+  const mode = String(taskMetadata?.developmentMode || '').toLowerCase();
+  const sourceType = String(taskMetadata?.sourceType || '').toLowerCase();
+  return sourceType !== 'openspec' && (mode === 'standard' || runtimeConcurrency.mode === 'concurrent');
+}
+
+function validatePlanningSchedulingMetadata() {
+  if (!shouldValidatePlanningSchedulingMetadata()) {
+    return undefined;
+  }
+  const items = readPlanItems().filter((item) => item.isSubtask);
+  const errors = [];
+  for (const item of items) {
+    if (!item.hasDependencyMetadata) {
+      errors.push(item.id + ' missing _Depends on: ..._ metadata');
+    }
+    if (!item.hasFileMetadata) {
+      errors.push(item.id + ' missing _Files to create/modify: ..._ metadata');
+    }
+    if (!item.hasVerificationMetadata) {
+      errors.push(item.id + ' missing _Verification: ..._ metadata');
+    }
+  }
+  const dependencyIssues = collectRunnerDependencyIssues(items, getPlanItemStatusMap(items));
+  for (const issue of dependencyIssues) {
+    errors.push(issue.message);
+  }
+  if (errors.length === 0) {
+    return undefined;
+  }
+  const preview = errors.slice(0, 8).join('; ');
+  return \`\${artifacts.implementationPlan} missing scheduling metadata: \${preview}\${errors.length > 8 ? '; ...' : ''}\`;
+}
+
 function buildArtifactValidationRetryPrompt(validationError) {
+  const standardTasksMode = !isOpenSpecRunnerTask() && (phase === 'spec' || phase === 'planning');
   const requiredOutputs = phase === 'spec'
     ? [
         \`- Write or repair \${specDir}/\${artifacts.specFile}.\`,
-        \`- Write or repair \${specDir}/\${artifacts.implementationPlan}.\`,
+        standardTasksMode
+          ? \`- Write or repair \${specDir}/\${artifacts.tasks || 'tasks.md'}.\`
+          : \`- Write or repair \${specDir}/\${artifacts.implementationPlan}.\`,
       ]
     : [
-        \`- Write or repair \${specDir}/\${artifacts.implementationPlan}.\`,
+        standardTasksMode
+          ? \`- Write or repair \${specDir}/\${artifacts.tasks || 'tasks.md'}.\`
+          : \`- Write or repair \${specDir}/\${artifacts.implementationPlan}.\`,
       ];
 
   const retryIntro = [
@@ -2157,12 +2379,13 @@ function buildArtifactValidationRetryPrompt(validationError) {
   ];
 
   const planRules = [
-    '## implementation_plan.md Requirements',
+    standardTasksMode ? '## tasks.md Requirements' : '## implementation_plan.md Requirements',
     '',
-    '- Single OpenSpec-style Markdown checklist.',
-    '- Include at least one executable subtask numbered like 1.1, 1.2, or 2.1.',
+    '- Single Autocode Markdown checklist.',
+    '- Include at least one executable task numbered like 1.1, 1.2, or 2.1.',
     '- A top-level phase alone is not enough.',
-    '- Each subtask should be independently implementable and verifiable.',
+    '- Each task must include _Files to create/modify_, _Depends on_, and _Verification_.',
+    '- Use _Depends on: none_ only for root work. Use _Files to modify: none_ only for read-only validation.',
   ];
 
   return [
@@ -2179,7 +2402,7 @@ function buildArtifactValidationRetryPrompt(validationError) {
     ...planRules,
     '',
     '~~~md',
-    '# Implementation Plan',
+    standardTasksMode ? '# Tasks' : '# Implementation Plan',
     '',
     'Feature: <task title>',
     'Workflow: feature',
@@ -2190,6 +2413,7 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '  - [ ] 1.1 Implement the first concrete change',
     '    - Describe the implementation step.',
     '    - _Files to modify: path/to/file.ts_',
+    '    - _Depends on: none_',
     '    - _Verification: npm test_',
     '~~~',
   ].join('\\n');
@@ -2483,7 +2707,21 @@ function readJson(filePath) {
 }
 
 function writeJson(filePath, value) {
-  writeFileSync(filePath, \`\${JSON.stringify(value, null, 2)}\\n\`, 'utf8');
+  const tmpPath = filePath + '.tmp';
+  const serialized = \`\${JSON.stringify(value, null, 2)}\\n\`;
+  JSON.parse(serialized);
+  try {
+    writeFileSync(tmpPath, serialized, 'utf8');
+    JSON.parse(readFileSync(tmpPath, 'utf8'));
+    renameSync(tmpPath, filePath);
+  } catch (error) {
+    try {
+      unlinkSync(tmpPath);
+    } catch {
+      // Ignore cleanup failures and rethrow the original write failure.
+    }
+    throw error;
+  }
 }
 `;
 }

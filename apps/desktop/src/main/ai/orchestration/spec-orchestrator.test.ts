@@ -6,7 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   loadAutocodeImplementationPlan,
   loadAutocodeTaskRequirementsSync,
-  saveAutocodeImplementationPlan,
+  stringifyAutocodeImplementationPlanMarkdown,
 } from '@autocode/core';
 
 import {
@@ -17,6 +17,14 @@ import {
   type SpecPhaseResult,
 } from './spec-orchestrator';
 import { MMO_AGENT_PROFILE } from '../config/project-agent-profile';
+
+async function saveTasksSource(specDir: string, plan: Record<string, unknown>): Promise<void> {
+  await writeFile(
+    join(specDir, 'tasks.md'),
+    stringifyAutocodeImplementationPlanMarkdown(plan).replace(/^# Implementation Plan/m, '# Tasks'),
+    'utf-8',
+  );
+}
 
 describe('SpecOrchestrator Write tool retry helpers', () => {
   it('detects malformed Write tool JSON errors', () => {
@@ -36,17 +44,17 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
     expect(prompt).toContain('RETRY QUICK SPEC WRITES');
     expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/spec.md');
-    expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/implementation_plan.md');
+    expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/tasks.md');
     expect(prompt).toContain('Use the Write tool to create');
     expect(prompt).toContain('20-60 line');
     expect(prompt).not.toContain('\\');
   });
 
-  it('tells planner retries to write one Markdown implementation plan', () => {
+  it('tells planner retries to write one Markdown task list', () => {
     const prompt = buildWriteToolJsonRetryPrompt('planning', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('RETRY IMPLEMENTATION PLAN WRITE');
-    expect(prompt).toContain('implementation_plan.md');
+    expect(prompt).toContain('RETRY TASKS WRITE');
+    expect(prompt).toContain('tasks.md');
     expect(prompt).toContain('Write checklist Markdown, not JSON');
     expect(prompt).toContain('Write input shape');
   });
@@ -441,7 +449,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }
 
       if (config.specPhase === 'planning') {
-        await saveAutocodeImplementationPlan(specDir, {
+        await saveTasksSource(specDir, {
           feature: 'Refactor local task execution flow',
           workflow_type: 'refactor',
           phases: [{
@@ -501,7 +509,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
       if (config.specPhase === 'planning') {
-        await saveAutocodeImplementationPlan(specDir, {
+        await saveTasksSource(specDir, {
           feature: 'Refactor platform workflow',
           workflow_type: 'refactor',
           phases: Array.from({ length: 8 }, (_, phaseIndex) => ({
@@ -547,18 +555,29 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
       const result = await runPhase('planning', 1, 1);
       const plan = await loadAutocodeImplementationPlan(specDir) as unknown as {
-        phases: Array<{ subtasks?: unknown[] }>;
+        phases: Array<{ subtasks?: Array<{
+          id?: string;
+          work_package?: boolean;
+          upstream_task_ids?: string[];
+          depends_on?: string[];
+        }> }>;
       };
       const planContent = await readFile(join(specDir, 'implementation_plan.md'), 'utf-8');
+      const tasksContent = await readFile(join(specDir, 'tasks.md'), 'utf-8');
 
       expect(result.success).toBe(true);
       expect(Object.keys(plan as Record<string, unknown>)).toEqual(expect.not.arrayContaining([
         'split' + '_plan',
         'plan' + '_files',
       ]));
-      expect(plan.phases).toHaveLength(8);
-      expect(plan.phases[0].subtasks ?? []).toHaveLength(1);
-      expect(planContent).toContain('- [ ] 8. Phase 8');
+      expect(plan.phases).toHaveLength(1);
+      expect(plan.phases[0].subtasks ?? []).toHaveLength(8);
+      expect(plan.phases[0].subtasks?.every((subtask) => subtask.work_package)).toBe(true);
+      expect(plan.phases[0].subtasks?.[0]?.upstream_task_ids).toEqual(['1.1']);
+      expect(plan.phases[0].subtasks?.[7]?.upstream_task_ids).toEqual(['8.1']);
+      expect(plan.phases[0].subtasks?.[1]?.depends_on).toEqual(['wp-1']);
+      expect(planContent).toContain('- [ ] wp. Runtime work packages');
+      expect(tasksContent).toContain('- [ ] 8. Phase 8');
       const legacyShardPath = join(specDir, ['implementation_plan', 'phase-1', 'json'].join('.'));
       await expect(readFile(legacyShardPath, 'utf-8')).rejects.toThrow();
     } finally {
@@ -606,7 +625,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn(async () => {
       await writeFile(join(specDir, 'spec.md'), '# Quick Spec: Local Notes Tool\n', 'utf-8');
-      await saveAutocodeImplementationPlan(specDir, {
+      await saveTasksSource(specDir, {
         feature: 'Local Notes Tool',
         workflow_type: 'simple',
         phases: [
@@ -673,13 +692,17 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
           description: string;
           files_to_create?: string[];
           files_to_modify?: string[];
+          work_package?: boolean;
+          upstream_task_ids?: string[];
         }> }>;
       };
 
       expect(result.success).toBe(true);
       expect(plan.phases).toHaveLength(1);
       expect(plan.phases[0].subtasks).toHaveLength(1);
-      expect(plan.phases[0].subtasks[0].title).toBe('Implement complete task');
+      expect(plan.phases[0].subtasks[0].work_package).toBe(true);
+      expect(plan.phases[0].subtasks[0].upstream_task_ids).toEqual(['1.1', '1-2', '1-3']);
+      expect(plan.phases[0].subtasks[0].title).toContain('Add note model');
       expect(plan.phases[0].subtasks[0].description).toContain('Add note model');
       expect(plan.phases[0].subtasks[0].description).toContain('Add list state');
       expect(plan.phases[0].subtasks[0].description).toContain('Add controls');
@@ -729,6 +752,8 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
           title: string;
           description: string;
           pattern_files?: string[];
+          work_package?: boolean;
+          upstream_task_ids?: string[];
         }> }>;
       };
 
@@ -738,8 +763,10 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(spec).not.toContain('Project directory');
       expect(plan.feature).toBe(localizedTask);
       expect(plan.source_task?.constraint_terms).toEqual(expect.arrayContaining(['C++', 'Console']));
-      expect(plan.phases[0].name).toBe('\u5b9e\u73b0');
-      expect(plan.phases[0].subtasks[0].title).toBe('\u5b9e\u73b0\u5b8c\u6574\u4efb\u52a1');
+      expect(plan.phases[0].name).toBe('\u8fd0\u884c\u5de5\u4f5c\u5305');
+      expect(plan.phases[0].subtasks[0].work_package).toBe(true);
+      expect(plan.phases[0].subtasks[0].upstream_task_ids).toEqual(['1.1']);
+      expect(plan.phases[0].subtasks[0].title).toContain('\u5b9e\u73b0\u5b8c\u6574\u4efb\u52a1');
       expect(plan.phases[0].subtasks[0].description).toContain('C++');
       expect(plan.phases[0].subtasks[0].description).not.toContain('Spec directory');
       expect(plan.phases[0].subtasks[0].pattern_files).toContain('main.cpp');
@@ -788,7 +815,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       phases.push(config.specPhase);
       if (config.specPhase === 'quick_spec') {
         await writeFile(join(specDir, 'spec.md'), '# Quick Spec\n\nImplement the local app.\n', 'utf-8');
-        await saveAutocodeImplementationPlan(specDir, {
+        await saveTasksSource(specDir, {
           feature: 'Local app',
           workflow_type: 'simple',
           phases: [{
@@ -882,6 +909,8 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
           verification?: { run?: string };
           pattern_files?: string[];
           files_to_create?: string[];
+          work_package?: boolean;
+          upstream_task_ids?: string[];
         }> }>;
       };
 
@@ -901,9 +930,11 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(plan.phases[0].subtasks[0].description).toContain('doc_outline.json');
       expect(plan.phases[0].subtasks[0].description).toContain('evidence_index.json');
       expect(plan.phases).toHaveLength(1);
-      expect(plan.phases[0].name).toBe('文档分析');
+      expect(plan.phases[0].name).toBe('运行工作包');
       expect(plan.phases[0].subtasks).toHaveLength(1);
-      expect(plan.phases[0].subtasks[0].title).toBe('分析源码并生成文档');
+      expect(plan.phases[0].subtasks[0].work_package).toBe(true);
+      expect(plan.phases[0].subtasks[0].upstream_task_ids).toEqual(['1.1']);
+      expect(plan.phases[0].subtasks[0].title).toContain('分析源码并生成文档');
       expect(plan.phases[0].subtasks[0].description).toContain('不修改产品代码');
       expect(plan.phases[0].subtasks[0].verification?.run).toContain('不要为纯文档任务运行编译或 QA');
       expect(plan.phases[0].subtasks[0].pattern_files).toContain('engine.cpp');

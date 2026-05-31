@@ -699,6 +699,21 @@ export {
 } from './tasks/plan-store.js';
 
 export {
+  type AutocodeRuntimeTask,
+  type AutocodeRuntimeWorkPackage,
+  buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
+  buildAutocodeRuntimeWorkPackagePhaseName,
+  buildAutocodeRuntimeWorkPackagePhases,
+  buildAutocodeRuntimeWorkPackageTitle,
+  completeAutocodeRuntimeTaskDependencyGraph,
+  flattenAutocodeRuntimeTasks,
+  groupAutocodeRuntimeTasksIntoWorkPackages,
+  sanitizeAutocodeRuntimeTaskDescription,
+  stringifyAutocodeRuntimeVerification,
+  uniqueAutocodeRuntimeStrings,
+} from './tasks/work-packages.js';
+
+export {
   AUTOCODE_JSON_ERROR_PREFIX,
   AUTOCODE_JSON_ERROR_TITLE_SUFFIX,
   AUTOCODE_TASK_STATUS_PRIORITY,

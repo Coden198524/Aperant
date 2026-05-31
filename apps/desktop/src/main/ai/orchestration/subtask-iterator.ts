@@ -216,6 +216,9 @@ export async function iterateSubtasks(
             patternFiles: blocked.subtask.pattern_files,
             dependsOn: toStringArray(blocked.subtask.depends_on),
             verification: blocked.subtask.verification,
+            hasFileMetadata: hasDeclaredFileMetadata(blocked.subtask),
+            hasDependencyMetadata: hasDeclaredField(blocked.subtask, 'depends_on'),
+            hasVerificationMetadata: hasDeclaredField(blocked.subtask, 'verification'),
             workPackage: blocked.subtask.work_package === true,
             upstreamTaskIds: Array.isArray(blocked.subtask.upstream_task_ids) ? blocked.subtask.upstream_task_ids : [],
             upstreamSource: typeof blocked.subtask.upstream_source === 'string' ? blocked.subtask.upstream_source : undefined,
@@ -243,6 +246,9 @@ export async function iterateSubtasks(
       patternFiles: subtask.pattern_files,
       dependsOn: toStringArray(subtask.depends_on),
       verification: subtask.verification,
+      hasFileMetadata: hasDeclaredFileMetadata(subtask),
+      hasDependencyMetadata: hasDeclaredField(subtask, 'depends_on'),
+      hasVerificationMetadata: hasDeclaredField(subtask, 'verification'),
       workPackage: subtask.work_package === true,
       upstreamTaskIds: Array.isArray(subtask.upstream_task_ids) ? subtask.upstream_task_ids : [],
       upstreamSource: typeof subtask.upstream_source === 'string' ? subtask.upstream_source : undefined,
@@ -1021,6 +1027,16 @@ function getSubtaskStatusMap(plan: ImplementationPlan): Map<string, string> {
 
 function toStringArray(value: unknown): string[] {
   return normalizeAutocodeWorkDependencyIds(value);
+}
+
+function hasDeclaredField(value: object, field: string): boolean {
+  return  Object.hasOwn(value, field);
+}
+
+function hasDeclaredFileMetadata(subtask: PlanSubtask): boolean {
+  return hasDeclaredField(subtask, 'files_to_create') ||
+    hasDeclaredField(subtask, 'files_to_modify') ||
+    hasDeclaredField(subtask, 'pattern_files');
 }
 
 /**

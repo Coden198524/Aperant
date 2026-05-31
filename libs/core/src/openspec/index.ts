@@ -21,6 +21,19 @@ import {
   describeAutocodeWorkDependencyBlockers,
 } from '../runtime/work-dependencies.js';
 import {
+  assertAutocodeRuntimeTasksHaveValidDependencies,
+  buildAutocodeRuntimeWorkPackagePhaseName,
+  buildAutocodeRuntimeWorkPackageTitle,
+  completeAutocodeRuntimeTaskDependencyGraph,
+  flattenAutocodeRuntimeTasks,
+  groupAutocodeRuntimeTasksIntoWorkPackages,
+  sanitizeAutocodeRuntimeTaskDescription,
+  stringifyAutocodeRuntimeVerification,
+  uniqueAutocodeRuntimeStrings,
+  type AutocodeRuntimeTask as OpenSpecRuntimeTask,
+  type AutocodeRuntimeWorkPackage as OpenSpecRuntimeWorkPackage,
+} from '../tasks/work-packages.js';
+import {
   createAutocodeTask,
   getAutocodeSpecDir,
   listAutocodeTasks,
@@ -2524,30 +2537,6 @@ function buildOpenSpecRuntimeImplementationPlan(
   };
 }
 
-interface OpenSpecRuntimeTask {
-  id: string;
-  title: string;
-  description: string;
-  status: string;
-  phaseId: string;
-  phaseName: string;
-  filesToCreate: string[];
-  filesToModify: string[];
-  patternFiles: string[];
-  dependsOn: string[];
-  requirements: string[];
-  verification?: unknown;
-}
-
-interface OpenSpecRuntimeWorkPackage {
-  id: string;
-  title: string;
-  phaseId: string;
-  phaseName: string;
-  tasks: OpenSpecRuntimeTask[];
-  dependsOn: string[];
-}
-
 const OPENSPEC_WORK_PACKAGE_MAX_TASKS = 4;
 
 function buildOpenSpecRuntimeWorkPackagePhases(
@@ -2555,10 +2544,10 @@ function buildOpenSpecRuntimeWorkPackagePhases(
   parsedPhases: Array<Record<string, unknown>>,
   language?: string,
 ): MutableAutocodePlanPhase[] {
-  const runtimeTasks = completeOpenSpecRuntimeTaskDependencyGraph(
-    flattenOpenSpecRuntimeTasks(parsedPhases, language),
+  const runtimeTasks = completeAutocodeRuntimeTaskDependencyGraph(
+    flattenAutocodeRuntimeTasks(parsedPhases, language, 'OpenSpec'),
   );
-  assertOpenSpecRuntimeTasksHaveValidDependencies(runtimeTasks);
+  assertAutocodeRuntimeTasksHaveValidDependencies(runtimeTasks, 'OpenSpec task');
   if (runtimeTasks.length === 0) {
     return [
       {
@@ -2571,7 +2560,7 @@ function buildOpenSpecRuntimeWorkPackagePhases(
     ];
   }
 
-  const workPackages = groupOpenSpecTasksIntoWorkPackages(runtimeTasks, language);
+  const workPackages = groupAutocodeRuntimeTasksIntoWorkPackages(runtimeTasks, language);
   return [
     {
       id: 'wp',

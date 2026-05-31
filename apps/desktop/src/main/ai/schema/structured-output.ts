@@ -360,8 +360,9 @@ export const IMPLEMENTATION_PLAN_SCHEMA_HINT = `\`\`\`
           "title": "string (REQUIRED — short 3-10 word summary)",
           "description": "string (REQUIRED — detailed implementation instructions)",
           "status": "pending",
-          "files_to_modify": ["string (optional)"],
-          "files_to_create": ["string (optional)"],
+          "files_to_modify": ["string; use [] only for read-only validation"],
+          "files_to_create": ["string"],
+          "depends_on": ["string subtask id; [] only for root work"],
           "verification": { "type": "command|manual", "run": "string (optional)" }
         }
       ]
@@ -370,6 +371,6 @@ export const IMPLEMENTATION_PLAN_SCHEMA_HINT = `\`\`\`
 }
 \`\`\`
 
-Each subtask must be an object with at least "id", "title", and "status" fields.
+Each executable subtask must be an object with "id", "title", "description", "status", "depends_on", file intent metadata, and "verification".
 Subtasks cannot be plain strings.
 When the app language is Simplified Chinese (\`zh-CN\`), write \`feature\`, phase \`name\`, subtask \`title\`, and subtask \`description\` in Simplified Chinese. Keep file paths, commands, APIs, and code identifiers in their original language when needed.`;

@@ -307,6 +307,27 @@ async function main() {
     assert.equal(racePlan.phases[0].subtasks[0].status, 'completed');
     assert.equal(racePlan.phases[0].subtasks[1].status, 'completed');
 
+    const noneMetadataPlan = core.parseAutocodeImplementationPlanMarkdown([
+      '# Implementation Plan',
+      '',
+      '- [ ] 1. Implementation',
+      '',
+      '  - [ ] 1.1 Inspect without edits',
+      '    - _Files to modify: none_',
+      '    - _Depends on: none_',
+      '    - _Verification: manual check_',
+      '',
+    ].join('\n'));
+    const noneMetadataSubtask = noneMetadataPlan.phases[0].subtasks[0];
+    assert.deepEqual(noneMetadataSubtask.files_to_modify, []);
+    assert.deepEqual(noneMetadataSubtask.depends_on, []);
+    assert.equal(Object.prototype.hasOwnProperty.call(noneMetadataSubtask, 'files_to_modify'), true);
+    assert.equal(Object.prototype.hasOwnProperty.call(noneMetadataSubtask, 'depends_on'), true);
+    const noneMetadataMarkdown = core.stringifyAutocodeImplementationPlanMarkdown(noneMetadataPlan);
+    assert.match(noneMetadataMarkdown, /_Files to modify: none_/);
+    assert.match(noneMetadataMarkdown, /_Depends on: none_/);
+    assert.deepEqual(core.normalizeAutocodeWorkDependencyIds(['none', '无依赖', '1.1']), ['1.1']);
+
     const openSpecChangeDir = join(projectRoot, 'openspec', 'changes', 'share-runtime');
     mkdirSync(join(openSpecChangeDir, 'specs', 'agent-runtime'), { recursive: true });
     writeFileSync(join(openSpecChangeDir, 'proposal.md'), '# Share Runtime\n\nBridge upstream specs to downstream execution.\n');
@@ -444,6 +465,33 @@ async function main() {
       [['1.1', '1.2', '1.3'], ['2.1', '2.2'], ['3.1']],
     );
     assert.deepEqual(dependencyPackagePlan.phases[0].subtasks[2].depends_on, ['wp-1', 'wp-2']);
+
+    const balancedLinearPlan = core.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
+      [
+        '# Tasks',
+        '',
+        '- [ ] 1. Linear chain',
+        '  - [ ] 1.1 Step 1',
+        '    - _Depends on: none_',
+        '  - [ ] 1.2 Step 2',
+        '    - _Depends on: 1.1_',
+        '  - [ ] 1.3 Step 3',
+        '    - _Depends on: 1.2_',
+        '  - [ ] 1.4 Step 4',
+        '    - _Depends on: 1.3_',
+        '  - [ ] 1.5 Step 5',
+        '    - _Depends on: 1.4_',
+        '  - [ ] 1.6 Step 6',
+        '    - _Depends on: 1.5_',
+        '',
+      ].join('\n'),
+      { now: '2026-01-02T03:04:12.000Z', sourcePath: 'tasks.md' },
+    );
+    assert.deepEqual(
+      balancedLinearPlan.phases[0].subtasks.map((subtask) => subtask.upstream_task_ids),
+      [['1.1', '1.2', '1.3'], ['1.4', '1.5', '1.6']],
+    );
+    assert.deepEqual(balancedLinearPlan.phases[0].subtasks[1].depends_on, ['wp-1']);
 
     const fanOutPackageChangeDir = join(projectRoot, 'openspec', 'changes', 'fan-out-work-packages');
     mkdirSync(join(fanOutPackageChangeDir, 'specs', 'runtime'), { recursive: true });
@@ -617,6 +665,12 @@ async function main() {
     assert.equal(manualStandardTask.metadata.sourceType, 'manual');
     assert.equal(manualStandardTask.metadata.developmentMode, 'standard');
     assert.equal(manualStandardTask.metadata.workflowMode, 'balanced');
+    assert.deepEqual(manualStandardTask.metadata.runtimeConcurrency, {
+      mode: 'concurrent',
+      workers: 2,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
     assert.ok(existsSync(join(manualStandardTask.specsPath, 'spec.md')));
 
     const manualFastTask = core.createManualAutocodeTask({
@@ -1437,6 +1491,36 @@ async function main() {
       unit: 'work_item',
       conflictPolicy: 'lock-and-queue',
     });
+    assert.deepEqual(core.resolveAutocodeTaskRuntimeConcurrency({
+      developmentMode: 'standard',
+      workflowMode: 'balanced',
+      runtimeConcurrency: { mode: 'serial', workers: 1 },
+    }), {
+      mode: 'concurrent',
+      workers: 2,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
+    assert.deepEqual(core.resolveAutocodeTaskRuntimeConcurrency({
+      developmentMode: 'spec',
+      sourceType: 'openspec',
+      runtimeConcurrency: { mode: 'serial', workers: 1 },
+    }), {
+      mode: 'concurrent',
+      workers: 5,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
+    assert.deepEqual(core.resolveAutocodeTaskRuntimeConcurrency({
+      developmentMode: 'fast',
+      workflowMode: 'off',
+      runtimeConcurrency: { mode: 'concurrent', workers: 5 },
+    }), {
+      mode: 'serial',
+      workers: 1,
+      unit: 'work_item',
+      conflictPolicy: 'lock-and-queue',
+    });
     const claimManager = new core.AutocodeRuntimeWorkspaceClaimManager();
     const firstDirectClaim = claimManager.tryClaim({
       taskId: 'task-a',
@@ -1910,7 +1994,7 @@ async function main() {
       fakeSpecRuntime.request,
       core.createProcessAgentRuntimeAdapter({ process: createSmokeProcessAdapter() }),
     );
-    assert.equal(fakeSpecResult.status, 'completed');
+    assert.equal(fakeSpecResult.status, 'completed', JSON.stringify(fakeSpecResult));
     assert.equal(JSON.parse(readFileSync(join(fakeFlowTask.specsPath, 'autocode-run-result.json'), 'utf8')).phase, 'spec');
     assert.ok(readFileSync(join(fakeFlowTask.specsPath, 'spec.md'), 'utf8').includes('Fake Custom CLI Spec'));
     const fakePlannedTask = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' })
@@ -1918,8 +2002,8 @@ async function main() {
     assert.equal(fakePlannedTask.status, 'human_review');
     assert.equal(fakePlannedTask.reviewReason, 'plan_review');
     assert.equal(fakePlannedTask.executionPhase, 'planning');
-    assert.equal(fakePlannedTask.subtasks.length, 2);
-    assert.deepEqual(fakePlannedTask.subtasks.map((subtask) => subtask.status), ['pending', 'pending']);
+    assert.equal(fakePlannedTask.subtasks.length, 1);
+    assert.deepEqual(fakePlannedTask.subtasks.map((subtask) => subtask.status), ['pending']);
 
     const fakeCodingRuntime = core.createStartedAutocodeAgentRuntime({
       projectRoot,
@@ -1951,7 +2035,7 @@ async function main() {
     assert.equal(fakeImplementedTask.status, 'human_review');
     assert.equal(fakeImplementedTask.reviewReason, 'completed');
     assert.equal(fakeImplementedTask.executionPhase, 'complete');
-    assert.deepEqual(fakeImplementedTask.subtasks.map((subtask) => subtask.status), ['completed', 'completed']);
+    assert.deepEqual(fakeImplementedTask.subtasks.map((subtask) => subtask.status), ['completed']);
     const fakeCliCalls = readFileSync(join(fakeFlowTask.specsPath, 'fake-cli-calls.log'), 'utf8')
       .trim()
       .split(/\r?\n/)
@@ -1961,7 +2045,7 @@ async function main() {
       fakeCliCalls
         .filter((call) => call.mode === 'coding')
         .map((call) => call.currentSubtaskId),
-      ['1.1', '1.2'],
+      ['wp-1'],
     );
     const fakeLogs = core.readAutocodeTaskLogs({
       projectRoot,
@@ -1980,8 +2064,8 @@ async function main() {
         ...fakeLogs.phases.coding.entries,
       ].some((entry) => entry.type === 'text' && entry.content.includes('Fake custom CLI')),
     );
-    assert.ok(fakeLogText.includes('当前子任务：1.1'));
-    assert.equal(fakeLogText.includes(makeChineseMojibake('当前子任务：1.1')), false);
+    assert.ok(fakeLogText.includes('当前子任务：wp-1'));
+    assert.equal(fakeLogText.includes(makeChineseMojibake('当前子任务：wp-1')), false);
 
     const fakeDoneTask = core.markAutocodeTaskDone({
       projectRoot,
@@ -2023,7 +2107,7 @@ async function main() {
     assert.equal(retryPlannedTask.status, 'human_review');
     assert.equal(retryPlannedTask.reviewReason, 'plan_review');
     assert.equal(retryPlannedTask.subtasks.length, 1);
-    assert.equal(retryPlannedTask.subtasks[0].title, 'Repair plan on retry');
+    assert.equal(retryPlannedTask.subtasks[0].title, 'Work package: Repair plan on retry');
     const retryLogs = core.readAutocodeTaskLogs({
       projectRoot,
       dataDirName: '.autocode',
@@ -2031,7 +2115,7 @@ async function main() {
     });
     assert.ok(
       retryLogs.phases.planning.entries.some((entry) =>
-        entry.content.includes('CLI finished without creating implementation_plan.md subtasks') &&
+        entry.content.includes('CLI finished without creating tasks.md') &&
         entry.content.includes('Retrying 1/2'),
       ),
     );
@@ -2573,9 +2657,9 @@ if (!process.argv.includes('--json')) {
 }
 
 writeFileSync(
-  join(specDir, 'implementation_plan.md'),
+  join(specDir, 'tasks.md'),
   [
-    '# Implementation Plan',
+    '# Tasks',
     '',
     'Feature: Track Codex CLI usage',
     'Workflow: feature',
@@ -2586,13 +2670,14 @@ writeFileSync(
     '  - [ ] 1.1 Persist Codex usage',
     '    - Verify usage events update plan metadata and task logs.',
     '    - _Files: libs/core/src/tasks/cli-runner.ts_',
+    '    - _Depends on: none_',
     '    - _Verification: npm --workspace @autocode/core run smoke_',
     '',
   ].join('\\n'),
   'utf8',
 );
 
-emit({ type: 'agent_message', message: 'Fake Codex generated implementation plan.' });
+emit({ type: 'agent_message', message: 'Fake Codex generated tasks source.' });
 emit({
   msg: {
     type: 'usage',
@@ -2689,13 +2774,13 @@ if (prompt.includes('Create initial spec artifacts') || prompt.includes('Create 
     ].join('\\n'),
     'utf8',
   );
-  writePlan('pending');
+  writeTasks();
   process.exit(0);
 }
 
 if (prompt.includes('Create or repair the implementation plan')) {
-  console.log('Fake custom CLI: generating implementation plan.');
-  writePlan('pending');
+  console.log('Fake custom CLI: generating tasks source.');
+  writeTasks();
   process.exit(0);
 }
 
@@ -2706,7 +2791,6 @@ if (prompt.includes('Implement the task from the existing spec and runtime work 
   }
   console.log('Fake custom CLI: completing implementation plan for ' + currentSubtaskId + '.');
   console.error(mojibakeSubtaskLogPrefix + currentSubtaskId);
-  writePlan('completed');
   writeFileSync(
     join(specDir, 'direct_summary.md'),
     'Fake custom CLI completed the implementation.\\n',
@@ -2735,37 +2819,38 @@ function readPromptField(label) {
 }
 
 function readCurrentSubtaskId() {
-  const match = /^Subtask ID:\\s*(.+?)\\s*$/m.exec(prompt);
+  const match = /^(?:Subtask|Work Package) ID:\\s*(.+?)\\s*$/m.exec(prompt);
   return match ? match[1].trim() : '';
 }
 
-function writePlan(status) {
-  const completed = status === 'completed';
-  const marker = completed ? 'x' : ' ';
-  const completion = completed ? '\\n    - _Completion: Fake custom CLI marked this subtask complete._' : '';
+function writeTasks() {
   writeFileSync(
-    join(specDir, 'implementation_plan.md'),
+    join(specDir, 'tasks.md'),
     [
-      '# Implementation Plan',
+      '# Tasks',
       '',
       'Feature: ' + title,
       'Description: Fake custom CLI lifecycle task.',
       'Workflow: feature',
-      'Status: ' + (completed ? 'coding' : 'planning'),
+      'Status: planning',
       'Created: 2026-01-01T00:00:00.000Z',
       'Updated: 2026-01-01T00:00:00.000Z',
       '',
       '- [ ] 1. Implementation',
       '',
-      '  - [' + marker + '] 1.1 Complete fake lifecycle',
+      '  - [ ] 1.1 Complete fake lifecycle',
       '    - Prove the runner can pass a prompt to a custom CLI and validate returned artifacts.',
       '    - _Files: src/fake-flow.ts_',
-      '    - _Requirements: 1.1_' + completion,
+      '    - _Depends on: none_',
+      '    - _Requirements: 1.1_',
+      '    - _Verification: fake CLI smoke check_',
       '',
-      '  - [' + marker + '] 1.2 Verify fake lifecycle',
+      '  - [ ] 1.2 Verify fake lifecycle',
       '    - Prove the runner invokes the custom CLI once per subtask.',
       '    - _Files: src/fake-flow.test.ts_',
-      '    - _Requirements: 1.2_' + completion,
+      '    - _Depends on: 1.1_',
+      '    - _Requirements: 1.2_',
+      '    - _Verification: fake CLI smoke check_',
       '',
     ].join('\\n'),
     'utf8',
@@ -2794,29 +2879,15 @@ if (!prompt.includes('Create or repair the implementation plan')) {
 }
 
 if (!prompt.includes('Retry Required')) {
-  console.log('Retry smoke CLI: writing invalid top-level-only plan.');
-  writeFileSync(
-    join(specDir, 'implementation_plan.md'),
-    [
-      '# Implementation Plan',
-      '',
-      'Feature: Retry missing subtasks',
-      'Workflow: feature',
-      'Status: pending',
-      '',
-      '- [ ] 1. Implementation',
-      '',
-    ].join('\\n'),
-    'utf8',
-  );
+  console.log('Retry smoke CLI: leaving tasks.md missing.');
   process.exit(0);
 }
 
-console.log('Retry smoke CLI: repairing plan with executable subtask.');
+console.log('Retry smoke CLI: repairing tasks with executable subtask.');
 writeFileSync(
-  join(specDir, 'implementation_plan.md'),
+  join(specDir, 'tasks.md'),
   [
-    '# Implementation Plan',
+    '# Tasks',
     '',
     'Feature: Retry missing subtasks',
     'Workflow: feature',
@@ -2827,6 +2898,7 @@ writeFileSync(
     '  - [ ] 1.1 Repair plan on retry',
     '    - Replace the invalid top-level-only plan with an executable subtask.',
     '    - _Files to modify: implementation_plan.md_',
+    '    - _Depends on: none_',
     '    - _Verification: npm --workspace @autocode/core run smoke_',
     '',
   ].join('\\n'),

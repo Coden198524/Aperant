@@ -57,10 +57,17 @@ export function buildAutocodeDefaultSpecPrompt(input: BuildAutocodeSpecPromptInp
 }
 
 export function buildAutocodeDefaultPlannerPrompt(input: BuildAutocodeAgentPromptInput): string {
+  const parallelGuidance = [
+    'Every executable subtask must include exactly one _Depends on: ..._ line.',
+    'Use _Depends on: none_ only for work that can run without prior output; otherwise list prerequisite subtask IDs only.',
+    'File metadata is write intent, not context. List only files the subtask will create or modify, and use _Files to modify: none_ for read-only validation.',
+    'If two subtasks must modify the same file, merge them or add a real dependency.',
+    'Do not mark final verification as modifying all files unless it truly edits them.',
+  ].join(' ');
   if (input.projectType === 'game-mmo') {
-    return `Plan MMO spec ${input.specId} in ${input.projectRoot}. Write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete subtasks for only affected domains: engine, rendering, animation, assets, streaming, server authority, networking, tools, release, performance, and QA.`;
+    return `Plan MMO spec ${input.specId} in ${input.projectRoot}. Write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete subtasks for only affected domains: engine, rendering, animation, assets, streaming, server authority, networking, tools, release, performance, and QA. ${parallelGuidance}`;
   }
-  return `Plan spec ${input.specId} in ${input.projectRoot}. Read ${AUTOCODE_TASK_ARTIFACTS.specFile} and write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as a Markdown checklist with phases and subtasks.`;
+  return `Plan spec ${input.specId} in ${input.projectRoot}. Read ${AUTOCODE_TASK_ARTIFACTS.specFile} and write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as a Markdown checklist with phases and subtasks. ${parallelGuidance}`;
 }
 
 export function buildAutocodeDefaultQAPrompt(input: BuildAutocodeAgentPromptInput): string {
@@ -223,7 +230,7 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('```');
     parts.push('');
     if (input.forcePlanning) {
-      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated OpenSpec-style Markdown checklist. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. Do not code in this planning pass.`);
+      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated Autocode Markdown checklist. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. Do not code in this planning pass.`);
     } else {
       parts.push(`Resume pending or in-progress runtime work items. Leave completed work items alone. Mark each finished work item completed in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
     }

@@ -40,6 +40,7 @@ export function normalizeAutocodeWorkDependencyIds(value: unknown): string[] {
           if (typeof item === 'number' && Number.isFinite(item)) return String(item);
           return '';
         })
+        .filter((item) => item && !isNoneDependencyToken(item))
         .filter(Boolean),
     );
   }
@@ -49,11 +50,16 @@ export function normalizeAutocodeWorkDependencyIds(value: unknown): string[] {
       value
         .split(',')
         .map((item) => item.trim())
+        .filter((item) => item && !isNoneDependencyToken(item))
         .filter(Boolean),
     );
   }
 
   return [];
+}
+
+function isNoneDependencyToken(value: string): boolean {
+  return /^(none|no dependencies?|n\/a|na|nil|null|无|无依赖|没有|没有依赖)$/i.test(value.trim());
 }
 
 export function buildAutocodeWorkDependencyStatusMap(

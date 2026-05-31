@@ -62,6 +62,11 @@
       "import": "./dist/tasks/requirements-store.js",
       "default": "./dist/tasks/requirements-store.js"
     },
+    "./tasks/work-packages": {
+      "types": "./dist/tasks/work-packages.d.ts",
+      "import": "./dist/tasks/work-packages.js",
+      "default": "./dist/tasks/work-packages.js"
+    },
     "./tasks/worktree-paths": {
       "types": "./dist/tasks/worktree-paths.d.ts",
       "import": "./dist/tasks/worktree-paths.js",

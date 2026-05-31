@@ -180,6 +180,45 @@ function sanitizeThinkingLevels(metadata: TaskMetadata): void {
   }
 }
 
+const TASK_MODE_METADATA_KEYS = new Set([
+  'developmentMode',
+  'workflowMode',
+  'sourceType',
+  'runtimeConcurrency',
+  'openSpecGenerationMode',
+  'upstreamSpecSystem',
+  'downstreamExecutionSystem',
+]);
+
+function hasOwnMetadataKey(metadata: Partial<TaskMetadata>, key: string): boolean {
+  return  Object.hasOwn(metadata, key);
+}
+
+function isManagedTaskModeMetadata(metadata: TaskMetadata | undefined): boolean {
+  return (
+    metadata?.developmentMode === 'fast' ||
+    metadata?.developmentMode === 'standard' ||
+    metadata?.developmentMode === 'spec' ||
+    metadata?.sourceType === 'manual' ||
+    metadata?.sourceType === 'openspec'
+  );
+}
+
+function shouldNormalizeTaskModeMetadata(
+  currentMetadata: TaskMetadata | undefined,
+  metadataUpdates: Partial<TaskMetadata>,
+): boolean {
+  return (
+    isManagedTaskModeMetadata(currentMetadata) ||
+    [...TASK_MODE_METADATA_KEYS].some((key) => hasOwnMetadataKey(metadataUpdates, key))
+  );
+}
+
+function normalizeTaskModeMetadata(metadata: TaskMetadata): TaskMetadata {
+  const developmentMode = resolveAutocodeTaskDevelopmentMode(metadata as AutocodeTaskMetadata);
+  return buildAutocodeTaskModeMetadata(developmentMode, metadata as AutocodeTaskMetadata) as TaskMetadata;
+}
+
 /**
  * Generate a title from a description using AI, with Sentry breadcrumbs and fallback.
  * Shared between TASK_CREATE and TASK_UPDATE handlers.
@@ -187,6 +226,7 @@ function sanitizeThinkingLevels(metadata: TaskMetadata): void {
 async function generateTitleWithFallback(
   description: string,
   handler: string,
+  language?: string,
   taskId?: string,
 ): Promise<string> {
   const breadcrumbData = taskId ? { handler, taskId } : { handler };
@@ -196,12 +236,12 @@ async function generateTitleWithFallback(
     category: 'task-crud',
     message: 'Title generation invoked (empty title detected)',
     level: 'info',
-    data: { ...breadcrumbData, descriptionLength: description.length },
+    data: { ...breadcrumbData, descriptionLength: description.length, language },
   });
 
   try {
     const generatedTitle = await Promise.race<string | null>([
-      titleGenerator.generateTitle(description),
+      titleGenerator.generateTitle(description, { language }),
       new Promise<null>((resolve) => {
         setTimeout(() => resolve(null), TITLE_GENERATION_TIMEOUT_MS);
       }),
@@ -319,7 +359,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       let finalTitle = title;
       if (!title || !title.trim()) {
         console.warn('[TASK_CREATE] Title is empty, generating with configured AI provider...');
-        finalTitle = await generateTitleWithFallback(description, 'TASK_CREATE');
+        finalTitle = await generateTitleWithFallback(description, 'TASK_CREATE', resolveTaskLanguage(metadata));
       }
 
       const requestedMode = resolveAutocodeTaskDevelopmentMode(metadata as AutocodeTaskMetadata | undefined);
@@ -564,7 +604,12 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         if (updates.title !== undefined && !updates.title.trim()) {
           const descriptionToUse = updates.description ?? task.description;
           console.warn('[TASK_UPDATE] Title is empty, generating with configured AI provider...');
-          finalTitle = await generateTitleWithFallback(descriptionToUse, 'TASK_UPDATE', taskId);
+          finalTitle = await generateTitleWithFallback(
+            descriptionToUse,
+            'TASK_UPDATE',
+            resolveTaskLanguage({ ...task.metadata, ...updates.metadata }),
+            taskId,
+          );
         }
 
         // Update implementation_plan.md
@@ -677,6 +722,10 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
             }
 
             updatedMetadata.attachedImages = savedImages;
+          }
+
+          if (shouldNormalizeTaskModeMetadata(task.metadata, updates.metadata)) {
+            updatedMetadata = normalizeTaskModeMetadata(updatedMetadata);
           }
 
           // Sanitize thinking levels and update task_metadata.json

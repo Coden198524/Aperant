@@ -105,6 +105,50 @@ function makeOrchestrator(runSession = vi.fn().mockResolvedValue(makeSessionResu
   });
 }
 
+function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
+  const lines = [
+    '# Tasks',
+    '',
+    'Feature: Test task',
+    'Workflow: feature',
+    'Status: pending',
+    '',
+    '- [ ] 1. Implementation',
+    '',
+  ];
+  statuses.forEach((status, index) => {
+    const id = `1.${index + 1}`;
+    lines.push(`  - [${status === 'completed' ? 'x' : ' '}] ${id} Subtask ${index + 1}`);
+    lines.push(`    - Subtask ${index + 1}`);
+    if (withSchedulingMetadata) {
+      lines.push(`    - _Files to modify: src/file-${index + 1}.ts_`);
+      lines.push(`    - _Depends on: ${index === 0 ? 'none' : `1.${index}`}_`);
+      lines.push('    - _Verification: Run focused check_');
+    }
+    lines.push('');
+  });
+  return lines.join('\n');
+}
+
+function makePlanWithSchedulingMetadata(statuses: string[]): string {
+  return JSON.stringify({
+    phases: [
+      {
+        id: 'phase-1',
+        name: 'phase-1',
+        subtasks: statuses.map((status, index) => ({
+          id: `subtask-${index + 1}`,
+          description: `Subtask ${index + 1}`,
+          status,
+          files_to_modify: [`src/file-${index + 1}.ts`],
+          depends_on: [],
+          verification: { type: 'manual', run: 'Run focused check' },
+        })),
+      },
+    ],
+  });
+}
+
 function makeAggressiveOrchestrator(runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'))): BuildOrchestrator {
   return new BuildOrchestrator({
     specDir: '/spec',
@@ -268,6 +312,9 @@ describe('BuildOrchestrator QA recovery', () => {
     });
 
     mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(makeTasks(['pending']));
+      }
       if (path.endsWith('implementation_plan.md')) {
         if (plannerRuns === 0) {
           return Promise.resolve(JSON.stringify({ phases: [] }));
@@ -334,6 +381,9 @@ describe('BuildOrchestrator QA recovery', () => {
 
   it('force-runs planning against an existing executable plan and stops before coding', async () => {
     mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(makeTasks(['pending']));
+      }
       if (path.endsWith('implementation_plan.md')) {
         return Promise.resolve(makePlan(['pending']));
       }
@@ -372,6 +422,9 @@ describe('BuildOrchestrator QA recovery', () => {
     });
 
     mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(makeTasks(['pending']));
+      }
       if (path.endsWith('implementation_plan.md')) {
         if (plannerRuns === 0) {
           return Promise.resolve(JSON.stringify({ phases: [] }));
@@ -418,6 +471,9 @@ describe('BuildOrchestrator QA recovery', () => {
     });
 
     mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(plannerRuns <= 1 ? '# Tasks\n\n- [ ] 1. Empty\n' : makeTasks(['pending']));
+      }
       if (path.endsWith('implementation_plan.md')) {
         if (plannerRuns <= 1) {
           return Promise.resolve(JSON.stringify({ phases: [] }));
@@ -446,6 +502,71 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
   });
 
+  it('retries planning when a concurrent standard plan lacks scheduling metadata', async () => {
+    let plannerRuns = 0;
+    let codingRuns = 0;
+
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(plannerRuns <= 1
+          ? makeTasks(['pending'], false)
+          : makeTasks(['pending'], true));
+      }
+      if (path.endsWith('implementation_plan.md')) {
+        if (plannerRuns <= 1) {
+          return Promise.resolve(makePlan(['pending']));
+        }
+        return Promise.resolve(codingRuns > 0
+          ? makePlanWithSchedulingMetadata(['completed'])
+          : makePlanWithSchedulingMetadata(['pending']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve('Status: PASSED');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+    const logs: string[] = [];
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      forcePlanning: true,
+      runtimeConcurrency: {
+        mode: 'concurrent',
+        workers: 2,
+        unit: 'work_item',
+        conflictPolicy: 'lock-and-queue',
+      },
+      generatePrompt: vi.fn().mockResolvedValue('prompt'),
+      runSession,
+    });
+    orchestrator.on('log', (message) => logs.push(message));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(outcome.finalPhase).toBe('planning');
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(2);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+    expect(logs.some((log) => log.includes('missing _Depends on'))).toBe(true);
+  });
+
   it('uses MMO profile agents for planning and QA phases', async () => {
     let plannerRuns = 0;
     let codingRuns = 0;
@@ -461,6 +582,9 @@ describe('BuildOrchestrator QA recovery', () => {
     });
 
     mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(makeTasks(['pending']));
+      }
       if (path.endsWith('implementation_plan.md')) {
         if (plannerRuns === 0) {
           return Promise.resolve(JSON.stringify({ phases: [] }));

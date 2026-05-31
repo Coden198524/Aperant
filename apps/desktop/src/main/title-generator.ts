@@ -15,8 +15,12 @@ function debug(...args: unknown[]): void {
   }
 }
 
-const SYSTEM_PROMPT =
-  'Generate task titles in 3-7 words. Output only the title: no quotes, preamble, or explanation.';
+const BASE_SYSTEM_PROMPT =
+  'Generate concise task titles. Output only the title: no quotes, preamble, or explanation.';
+
+export interface GenerateTitleOptions {
+  language?: string;
+}
 
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
@@ -56,8 +60,9 @@ export class TitleGenerator extends EventEmitter {
    * @param description - The task description to generate a title from
    * @returns Promise resolving to the generated title or null on failure
    */
-  async generateTitle(description: string): Promise<string | null> {
-    const prompt = this.createTitlePrompt(description);
+  async generateTitle(description: string, options: GenerateTitleOptions = {}): Promise<string | null> {
+    const systemPrompt = this.createSystemPrompt(options.language);
+    const prompt = this.createTitlePrompt(description, options.language);
 
     debug('Generating title for description:', description.substring(0, 100) + '...');
 
@@ -65,7 +70,7 @@ export class TitleGenerator extends EventEmitter {
       category: 'title-generator',
       message: 'Generating title via Vercel AI SDK',
       level: 'info',
-      data: { descriptionLength: description.length },
+      data: { descriptionLength: description.length, language: options.language },
     });
 
     try {
@@ -76,7 +81,7 @@ export class TitleGenerator extends EventEmitter {
       debug('Using naming settings:', namingSettings.model, namingSettings.thinkingLevel);
 
       const client = await createSimpleClient({
-        systemPrompt: SYSTEM_PROMPT,
+        systemPrompt,
         modelShorthand: namingSettings.model,
         thinkingLevel: namingSettings.thinkingLevel as 'low' | 'medium' | 'high' | 'xhigh',
       });
@@ -165,13 +170,32 @@ export class TitleGenerator extends EventEmitter {
   /**
    * Create the prompt for title generation
    */
-  private createTitlePrompt(description: string): string {
-    return `Generate an action-oriented task title in 3-7 words.
+  private createSystemPrompt(language?: string): string {
+    return `${BASE_SYSTEM_PROMPT}\n${this.createLanguageInstruction(language)}`;
+  }
+
+  private createTitlePrompt(description: string, language?: string): string {
+    return `Generate an action-oriented task title.
+
+${this.createLanguageInstruction(language)}
 
 Description:
 ${description}
 
 Title:`;
+  }
+
+  private createLanguageInstruction(language?: string): string {
+    switch (language) {
+      case 'zh-CN':
+        return 'Output the title in Simplified Chinese. Use a concise Chinese phrase, usually 6-14 Chinese characters. Keep file paths, APIs, product names, and quoted identifiers unchanged.';
+      case 'fr':
+        return 'Output the title in French. Use a concise 3-7 word phrase. Keep file paths, APIs, product names, and quoted identifiers unchanged.';
+      case 'en':
+        return 'Output the title in English. Use a concise 3-7 word phrase. Keep file paths, APIs, product names, and quoted identifiers unchanged.';
+      default:
+        return 'Match the primary language of the task description. Keep file paths, APIs, product names, and quoted identifiers unchanged.';
+    }
   }
 
   /**
@@ -182,7 +206,7 @@ Title:`;
     let cleaned = title.replace(/^["']|["']$/g, '');
 
     // Remove any "Title:" or similar prefixes
-    cleaned = cleaned.replace(/^(title|task|feature)[:\s]*/i, '');
+    cleaned = cleaned.replace(/^(title|task|feature|标题|任务|功能)[:：\s]*/i, '');
 
     // Take first line only
     cleaned = cleaned.split('\n')[0]?.trim() ?? cleaned;

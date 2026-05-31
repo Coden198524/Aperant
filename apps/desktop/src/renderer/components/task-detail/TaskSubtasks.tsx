@@ -7,7 +7,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn, calculateProgress } from '../../lib/utils';
 import { resolveActiveSubtaskIndex } from '../../lib/subtask-progress';
 import { deleteSubtask } from '../../stores/task-store';
-import type { Task } from '../../../shared/types';
+import type { Task, TaskLogs as TaskLogsData } from '../../../shared/types';
 import {
   TaskRuntimeLogs,
   isWorkPackageSubtask,
@@ -594,6 +594,10 @@ interface ExecutionGraphNode {
   level: number;
   row: number;
   order: number;
+  durationMs?: number;
+  startedMs?: number;
+  completedMs?: number;
+  timingSource?: 'recorded' | 'logs';
 }
 
 interface ExecutionGraphEdge {
@@ -607,12 +611,35 @@ interface ExecutionGraphEdgeTone {
   markerClass: string;
 }
 
+interface ExecutionGraphPoint {
+  x: number;
+  y: number;
+}
+
+interface ExecutionGraphRect {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+}
+
+interface ExecutionGraphRouteBounds {
+  minX: number;
+  maxX: number;
+  minY: number;
+  maxY: number;
+}
+
 interface ExecutionGraphAnalysis {
   nodes: ExecutionGraphNode[];
   edges: ExecutionGraphEdge[];
   sequentialUnits: number;
   parallelUnits: number;
   savedUnits: number;
+  sequentialDurationMs?: number;
+  parallelDurationMs?: number;
+  savedDurationMs?: number;
+  timedNodeCount: number;
   maxParallel: number;
   hasCycle: boolean;
 }
@@ -629,6 +656,8 @@ const EXECUTION_GRAPH_DEFAULT_EDGE_TONE: ExecutionGraphEdgeTone = {
   strokeClass: 'stroke-border',
   markerClass: 'fill-border',
 };
+const EXECUTION_GRAPH_EDGE_CLEARANCE = 8;
+const EXECUTION_GRAPH_ROUTE_TURN_PENALTY = 4;
 
 function hashExecutionGraphId(value: string): number {
   let hash = 0;
@@ -646,22 +675,320 @@ function isExecutionGraphEdgeSelected(edge: ExecutionGraphEdge, selectedNodeId: 
   return selectedNodeId === edge.from || selectedNodeId === edge.to;
 }
 
+function normalizeExecutionGraphCoordinate(value: number): number {
+  return Math.round(value * 100) / 100;
+}
+
+function getExecutionGraphNodeRect({
+  node,
+  paddingX,
+  paddingY,
+  columnGap,
+  rowGap,
+  nodeWidth,
+  nodeHeight,
+}: {
+  node: ExecutionGraphNode;
+  paddingX: number;
+  paddingY: number;
+  columnGap: number;
+  rowGap: number;
+  nodeWidth: number;
+  nodeHeight: number;
+}): ExecutionGraphRect {
+  const left = paddingX + node.level * columnGap;
+  const top = paddingY + node.row * rowGap;
+
+  return {
+    left: left - EXECUTION_GRAPH_EDGE_CLEARANCE,
+    top: top - EXECUTION_GRAPH_EDGE_CLEARANCE,
+    right: left + nodeWidth + EXECUTION_GRAPH_EDGE_CLEARANCE,
+    bottom: top + nodeHeight + EXECUTION_GRAPH_EDGE_CLEARANCE,
+  };
+}
+
+function pointIntersectsExecutionGraphRect(point: ExecutionGraphPoint, rect: ExecutionGraphRect): boolean {
+  return point.x > rect.left && point.x < rect.right && point.y > rect.top && point.y < rect.bottom;
+}
+
+function segmentIntersectsExecutionGraphRect(
+  start: ExecutionGraphPoint,
+  end: ExecutionGraphPoint,
+  rect: ExecutionGraphRect,
+): boolean {
+  if (Math.abs(start.y - end.y) < 0.01) {
+    const y = start.y;
+    const minX = Math.min(start.x, end.x);
+    const maxX = Math.max(start.x, end.x);
+    return y > rect.top && y < rect.bottom && maxX > rect.left && minX < rect.right;
+  }
+
+  if (Math.abs(start.x - end.x) < 0.01) {
+    const x = start.x;
+    const minY = Math.min(start.y, end.y);
+    const maxY = Math.max(start.y, end.y);
+    return x > rect.left && x < rect.right && maxY > rect.top && minY < rect.bottom;
+  }
+
+  return true;
+}
+
+function segmentIntersectsExecutionGraphObstacles(
+  start: ExecutionGraphPoint,
+  end: ExecutionGraphPoint,
+  obstacles: ExecutionGraphRect[],
+): boolean {
+  return obstacles.some(rect => segmentIntersectsExecutionGraphRect(start, end, rect));
+}
+
+function clampExecutionGraphRouteCoordinate(value: number, min: number, max: number): number {
+  return normalizeExecutionGraphCoordinate(Math.max(min, Math.min(max, value)));
+}
+
+function getExecutionGraphRouteKey(point: ExecutionGraphPoint, direction: 'h' | 'v' | 'start'): string {
+  return `${point.x},${point.y},${direction}`;
+}
+
+function getExecutionGraphPointKey(point: ExecutionGraphPoint): string {
+  return `${point.x},${point.y}`;
+}
+
+function simplifyExecutionGraphRoute(points: ExecutionGraphPoint[]): ExecutionGraphPoint[] {
+  const withoutDuplicates = points.filter((point, index) => {
+    const previous = points[index - 1];
+    return !previous || previous.x !== point.x || previous.y !== point.y;
+  });
+  const simplified: ExecutionGraphPoint[] = [];
+
+  for (const point of withoutDuplicates) {
+    const previous = simplified[simplified.length - 1];
+    const beforePrevious = simplified[simplified.length - 2];
+    if (
+      previous &&
+      beforePrevious &&
+      ((beforePrevious.x === previous.x && previous.x === point.x) ||
+        (beforePrevious.y === previous.y && previous.y === point.y))
+    ) {
+      simplified[simplified.length - 1] = point;
+    } else {
+      simplified.push(point);
+    }
+  }
+
+  return simplified;
+}
+
+function routeExecutionGraphEdge(input: {
+  start: ExecutionGraphPoint;
+  end: ExecutionGraphPoint;
+  obstacles: ExecutionGraphRect[];
+  bounds: ExecutionGraphRouteBounds;
+}): ExecutionGraphPoint[] | null {
+  const { start, end, obstacles, bounds } = input;
+  const xCandidates = new Set<number>([
+    normalizeExecutionGraphCoordinate(start.x),
+    normalizeExecutionGraphCoordinate(end.x),
+  ]);
+  const yCandidates = new Set<number>([
+    normalizeExecutionGraphCoordinate(start.y),
+    normalizeExecutionGraphCoordinate(end.y),
+  ]);
+
+  for (const rect of obstacles) {
+    xCandidates.add(clampExecutionGraphRouteCoordinate(rect.left - EXECUTION_GRAPH_EDGE_CLEARANCE, bounds.minX, bounds.maxX));
+    xCandidates.add(clampExecutionGraphRouteCoordinate(rect.right + EXECUTION_GRAPH_EDGE_CLEARANCE, bounds.minX, bounds.maxX));
+    yCandidates.add(clampExecutionGraphRouteCoordinate(rect.top - EXECUTION_GRAPH_EDGE_CLEARANCE, bounds.minY, bounds.maxY));
+    yCandidates.add(clampExecutionGraphRouteCoordinate(rect.bottom + EXECUTION_GRAPH_EDGE_CLEARANCE, bounds.minY, bounds.maxY));
+  }
+
+  const xs = [...xCandidates].sort((left, right) => left - right);
+  const ys = [...yCandidates].sort((left, right) => left - right);
+  const xIndexByValue = new Map(xs.map((value, index) => [value, index]));
+  const yIndexByValue = new Map(ys.map((value, index) => [value, index]));
+  const startPoint = {
+    x: normalizeExecutionGraphCoordinate(start.x),
+    y: normalizeExecutionGraphCoordinate(start.y),
+  };
+  const endPoint = {
+    x: normalizeExecutionGraphCoordinate(end.x),
+    y: normalizeExecutionGraphCoordinate(end.y),
+  };
+  const endPointKey = getExecutionGraphPointKey(endPoint);
+  const isPointBlocked = (point: ExecutionGraphPoint): boolean =>
+    obstacles.some(rect => pointIntersectsExecutionGraphRect(point, rect));
+  const isSegmentBlocked = (from: ExecutionGraphPoint, to: ExecutionGraphPoint): boolean =>
+    segmentIntersectsExecutionGraphObstacles(from, to, obstacles);
+  const queue: Array<{ point: ExecutionGraphPoint; direction: 'h' | 'v' | 'start'; cost: number }> = [
+    { point: startPoint, direction: 'start', cost: 0 },
+  ];
+  const startKey = getExecutionGraphRouteKey(startPoint, 'start');
+  const distances = new Map<string, number>([[startKey, 0]]);
+  const previousByKey = new Map<string, string>();
+  const pointByKey = new Map<string, ExecutionGraphPoint>([[startKey, startPoint]]);
+  let finalKey: string | null = null;
+
+  while (queue.length > 0) {
+    queue.sort((left, right) => left.cost - right.cost);
+    const current = queue.shift();
+    if (!current) {
+      break;
+    }
+
+    const currentKey = getExecutionGraphRouteKey(current.point, current.direction);
+    if ((distances.get(currentKey) ?? Number.POSITIVE_INFINITY) < current.cost) {
+      continue;
+    }
+
+    if (getExecutionGraphPointKey(current.point) === endPointKey) {
+      finalKey = currentKey;
+      break;
+    }
+
+    const xIndex = xIndexByValue.get(current.point.x);
+    const yIndex = yIndexByValue.get(current.point.y);
+    if (xIndex === undefined || yIndex === undefined) {
+      continue;
+    }
+
+    const neighbors: Array<{ point: ExecutionGraphPoint; direction: 'h' | 'v' }> = [];
+    for (const nextX of [xs[xIndex - 1], xs[xIndex + 1]]) {
+      if (nextX !== undefined) {
+        neighbors.push({ point: { x: nextX, y: current.point.y }, direction: 'h' });
+      }
+    }
+    for (const nextY of [ys[yIndex - 1], ys[yIndex + 1]]) {
+      if (nextY !== undefined) {
+        neighbors.push({ point: { x: current.point.x, y: nextY }, direction: 'v' });
+      }
+    }
+
+    for (const neighbor of neighbors) {
+      if (
+        getExecutionGraphPointKey(neighbor.point) !== endPointKey &&
+        isPointBlocked(neighbor.point)
+      ) {
+        continue;
+      }
+      if (isSegmentBlocked(current.point, neighbor.point)) {
+        continue;
+      }
+
+      const distance = Math.abs(neighbor.point.x - current.point.x) + Math.abs(neighbor.point.y - current.point.y);
+      const turnPenalty = current.direction !== 'start' && current.direction !== neighbor.direction
+        ? EXECUTION_GRAPH_ROUTE_TURN_PENALTY
+        : 0;
+      const nextCost = current.cost + distance + turnPenalty;
+      const nextKey = getExecutionGraphRouteKey(neighbor.point, neighbor.direction);
+      if (nextCost >= (distances.get(nextKey) ?? Number.POSITIVE_INFINITY)) {
+        continue;
+      }
+
+      distances.set(nextKey, nextCost);
+      previousByKey.set(nextKey, currentKey);
+      pointByKey.set(nextKey, neighbor.point);
+      queue.push({ point: neighbor.point, direction: neighbor.direction, cost: nextCost });
+    }
+  }
+
+  if (!finalKey) {
+    return null;
+  }
+
+  const route: ExecutionGraphPoint[] = [];
+  let cursor: string | undefined = finalKey;
+  while (cursor) {
+    const point = pointByKey.get(cursor);
+    if (point) {
+      route.push(point);
+    }
+    cursor = previousByKey.get(cursor);
+  }
+
+  return simplifyExecutionGraphRoute(route.reverse());
+}
+
+function formatExecutionGraphPath(points: ExecutionGraphPoint[]): string {
+  const route = simplifyExecutionGraphRoute(points);
+  if (route.length === 0) {
+    return '';
+  }
+
+  const first = route[0];
+  if (!first) {
+    return '';
+  }
+
+  let path = `M ${first.x} ${first.y}`;
+  for (let index = 1; index < route.length; index += 1) {
+    const previous = route[index - 1];
+    const point = route[index];
+    if (!previous || !point) {
+      continue;
+    }
+    if (previous && Math.abs(previous.y - point.y) < 0.01) {
+      path = `${path} H ${point.x}`;
+      continue;
+    }
+    if (previous && Math.abs(previous.x - point.x) < 0.01) {
+      path = `${path} V ${point.y}`;
+      continue;
+    }
+    path = `${path} L ${point.x} ${point.y}`;
+  }
+
+  return path;
+}
+
 function getExecutionGraphEdgePath({
   x1,
   y1,
   x2,
   y2,
   edgeIndex,
+  obstacles = [],
+  bounds,
 }: {
   x1: number;
   y1: number;
   x2: number;
   y2: number;
   edgeIndex: number;
+  obstacles?: ExecutionGraphRect[];
+  bounds: ExecutionGraphRouteBounds;
 }): string {
   const endX = x2 - 8;
-  if (Math.abs(y1 - y2) < 1) {
+  const start = {
+    x: normalizeExecutionGraphCoordinate(x1),
+    y: normalizeExecutionGraphCoordinate(y1),
+  };
+  const end = {
+    x: normalizeExecutionGraphCoordinate(endX),
+    y: normalizeExecutionGraphCoordinate(y2),
+  };
+
+  if (
+    Math.abs(y1 - y2) < 1 &&
+    !segmentIntersectsExecutionGraphObstacles(start, end, obstacles)
+  ) {
     return `M ${x1} ${y1} H ${endX}`;
+  }
+
+  const routeStart = {
+    x: clampExecutionGraphRouteCoordinate(
+      x1 + (endX >= x1 ? EXECUTION_GRAPH_EDGE_CLEARANCE : -EXECUTION_GRAPH_EDGE_CLEARANCE),
+      bounds.minX,
+      bounds.maxX,
+    ),
+    y: normalizeExecutionGraphCoordinate(y1),
+  };
+  const routed = routeExecutionGraphEdge({
+    start: routeStart,
+    end,
+    obstacles,
+    bounds,
+  });
+  if (routed) {
+    return formatExecutionGraphPath([start, ...routed]);
   }
 
   const baseMidX = x1 + Math.max(16, (x2 - x1) / 2);
@@ -684,7 +1011,210 @@ function getSubtaskDependencies(subtask: Task['subtasks'][number]): string[] {
   return [...new Set(raw.map(String).map(value => value.trim()).filter(Boolean))];
 }
 
-function analyzeSubtaskExecutionGraph(subtasks: Task['subtasks']): ExecutionGraphAnalysis {
+function parseTimestampMs(value: unknown): number | undefined {
+  if (typeof value !== 'string' || !value.trim()) {
+    return undefined;
+  }
+
+  const timestamp = new Date(value).getTime();
+  return Number.isFinite(timestamp) ? timestamp : undefined;
+}
+
+function getSubtaskRecordedTiming(subtask: Task['subtasks'][number]): {
+  startedMs?: number;
+  completedMs?: number;
+  durationMs?: number;
+} {
+  const timedSubtask = subtask as Task['subtasks'][number] & {
+    startedAt?: unknown;
+    completedAt?: unknown;
+    started_at?: unknown;
+    completed_at?: unknown;
+    durationMs?: unknown;
+    duration_ms?: unknown;
+  };
+  const startedMs = parseTimestampMs(timedSubtask.startedAt ?? timedSubtask.started_at);
+  const completedMs = parseTimestampMs(timedSubtask.completedAt ?? timedSubtask.completed_at);
+  const rawDuration = typeof timedSubtask.durationMs === 'number'
+    ? timedSubtask.durationMs
+    : typeof timedSubtask.duration_ms === 'number'
+      ? timedSubtask.duration_ms
+      : undefined;
+  const durationMs = rawDuration !== undefined && rawDuration >= 0
+    ? rawDuration
+    : startedMs !== undefined && completedMs !== undefined && completedMs >= startedMs
+      ? completedMs - startedMs
+      : undefined;
+
+  return {
+    ...(startedMs !== undefined ? { startedMs } : {}),
+    ...(completedMs !== undefined ? { completedMs } : {}),
+    ...(durationMs !== undefined ? { durationMs } : {}),
+  };
+}
+
+function getLogInferredTimingBySubtaskId(logs: TaskLogsData | null | undefined): Map<string, {
+  startedMs: number;
+  completedMs: number;
+  durationMs: number;
+}> {
+  const timingById = new Map<string, { startedMs: number; completedMs: number; durationMs: number }>();
+  if (!logs) {
+    return timingById;
+  }
+
+  const entries = [
+    ...logs.phases.planning.entries,
+    ...logs.phases.coding.entries,
+    ...logs.phases.validation.entries,
+  ];
+
+  for (const entry of entries) {
+    if (!entry.subtask_id) {
+      continue;
+    }
+
+    const timestamp = parseTimestampMs(entry.timestamp);
+    if (timestamp === undefined) {
+      continue;
+    }
+
+    const previous = timingById.get(entry.subtask_id);
+    if (!previous) {
+      timingById.set(entry.subtask_id, {
+        startedMs: timestamp,
+        completedMs: timestamp,
+        durationMs: 0,
+      });
+      continue;
+    }
+
+    const startedMs = Math.min(previous.startedMs, timestamp);
+    const completedMs = Math.max(previous.completedMs, timestamp);
+    timingById.set(entry.subtask_id, {
+      startedMs,
+      completedMs,
+      durationMs: Math.max(0, completedMs - startedMs),
+    });
+  }
+
+  return timingById;
+}
+
+function resolveSubtaskTiming(
+  subtask: Task['subtasks'][number],
+  logTimingBySubtaskId: Map<string, { startedMs: number; completedMs: number; durationMs: number }>,
+): Pick<ExecutionGraphNode, 'startedMs' | 'completedMs' | 'durationMs' | 'timingSource'> {
+  const recorded = getSubtaskRecordedTiming(subtask);
+  if (recorded.durationMs !== undefined) {
+    return {
+      ...recorded,
+      timingSource: 'recorded',
+    };
+  }
+
+  const inferred = logTimingBySubtaskId.get(subtask.id);
+  if (inferred) {
+    return {
+      ...inferred,
+      timingSource: 'logs',
+    };
+  }
+
+  return {};
+}
+
+function formatExecutionDuration(ms: number): string {
+  if (ms <= 0) {
+    return '0s';
+  }
+
+  const totalSeconds = Math.max(1, Math.round(ms / 1000));
+  const hours = Math.floor(totalSeconds / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (hours > 0) {
+    return minutes > 0 ? `${hours}h ${minutes}m` : `${hours}h`;
+  }
+
+  if (minutes > 0) {
+    return seconds > 0 ? `${minutes}m ${seconds}s` : `${minutes}m`;
+  }
+
+  return `${seconds}s`;
+}
+
+function calculateParallelDurationFromTimedNodes(
+  nodes: ExecutionGraphNode[],
+  dependenciesById: Map<string, string[]>,
+  hasCycle: boolean,
+): number | undefined {
+  const timedNodes = nodes.filter(node => node.durationMs !== undefined);
+  if (timedNodes.length !== nodes.length || timedNodes.length === 0) {
+    return undefined;
+  }
+
+  const nodesWithWallClock = timedNodes.filter(node =>
+    node.startedMs !== undefined &&
+    node.completedMs !== undefined &&
+    node.completedMs >= node.startedMs
+  );
+  if (nodesWithWallClock.length === nodes.length) {
+    const minStart = Math.min(...nodesWithWallClock.map(node => node.startedMs ?? 0));
+    const maxCompleted = Math.max(...nodesWithWallClock.map(node => node.completedMs ?? 0));
+    return Math.max(0, maxCompleted - minStart);
+  }
+
+  if (hasCycle) {
+    return undefined;
+  }
+
+  const durationById = new Map(nodes.map(node => [node.id, node.durationMs ?? 0]));
+  const ordered = [...nodes].sort((left, right) => left.level - right.level || left.order - right.order);
+  const finishById = new Map<string, number>();
+  for (const node of ordered) {
+    const dependencyFinish = (dependenciesById.get(node.id) ?? [])
+      .reduce((maxFinish, dependencyId) => Math.max(maxFinish, finishById.get(dependencyId) ?? 0), 0);
+    finishById.set(node.id, dependencyFinish + (durationById.get(node.id) ?? 0));
+  }
+
+  return Math.max(...finishById.values());
+}
+
+function calculateMaxConcurrentTimedNodes(nodes: ExecutionGraphNode[]): number | undefined {
+  const events: Array<{ time: number; delta: number }> = [];
+  for (const node of nodes) {
+    if (
+      node.startedMs === undefined ||
+      node.completedMs === undefined ||
+      node.completedMs < node.startedMs
+    ) {
+      continue;
+    }
+    events.push({ time: node.startedMs, delta: 1 });
+    events.push({ time: node.completedMs, delta: -1 });
+  }
+
+  if (events.length === 0) {
+    return undefined;
+  }
+
+  events.sort((left, right) => left.time - right.time || left.delta - right.delta);
+  let active = 0;
+  let maxActive = 0;
+  for (const event of events) {
+    active += event.delta;
+    maxActive = Math.max(maxActive, active);
+  }
+  return maxActive;
+}
+
+function analyzeSubtaskExecutionGraph(
+  subtasks: Task['subtasks'],
+  logs?: TaskLogsData | null,
+): ExecutionGraphAnalysis {
+  const logTimingBySubtaskId = getLogInferredTimingBySubtaskId(logs);
   const ids = new Set(subtasks.map(subtask => subtask.id));
   const orderById = new Map(subtasks.map((subtask, index) => [subtask.id, index]));
   const dependenciesById = new Map<string, string[]>();
@@ -745,6 +1275,7 @@ function analyzeSubtaskExecutionGraph(subtasks: Task['subtasks']): ExecutionGrap
     const level = levelById.get(subtask.id) ?? 0;
     const row = rowCounters.get(level) ?? 0;
     rowCounters.set(level, row + 1);
+    const timing = resolveSubtaskTiming(subtask, logTimingBySubtaskId);
     return {
       id: subtask.id,
       title: subtask.title || subtask.id,
@@ -752,6 +1283,7 @@ function analyzeSubtaskExecutionGraph(subtasks: Task['subtasks']): ExecutionGrap
       level,
       row,
       order: index,
+      ...timing,
     };
   });
   const edges = [...dependenciesById.entries()]
@@ -762,6 +1294,17 @@ function analyzeSubtaskExecutionGraph(subtasks: Task['subtasks']): ExecutionGrap
   const maxParallel = rowCounters.size > 0
     ? Math.max(...rowCounters.values())
     : 0;
+  const timedNodeCount = nodes.filter(node => node.durationMs !== undefined).length;
+  const sequentialDurationMs = timedNodeCount === nodes.length && timedNodeCount > 0
+    ? nodes.reduce((total, node) => total + (node.durationMs ?? 0), 0)
+    : undefined;
+  const parallelDurationMs = sequentialDurationMs !== undefined
+    ? calculateParallelDurationFromTimedNodes(nodes, dependenciesById, hasCycle)
+    : undefined;
+  const savedDurationMs = sequentialDurationMs !== undefined && parallelDurationMs !== undefined
+    ? Math.max(0, sequentialDurationMs - parallelDurationMs)
+    : undefined;
+  const timedMaxParallel = calculateMaxConcurrentTimedNodes(nodes);
 
   return {
     nodes,
@@ -769,7 +1312,11 @@ function analyzeSubtaskExecutionGraph(subtasks: Task['subtasks']): ExecutionGrap
     sequentialUnits: nodes.length,
     parallelUnits: hasCycle ? nodes.length : parallelUnits,
     savedUnits: hasCycle ? 0 : Math.max(0, nodes.length - parallelUnits),
-    maxParallel,
+    ...(sequentialDurationMs !== undefined ? { sequentialDurationMs } : {}),
+    ...(parallelDurationMs !== undefined ? { parallelDurationMs } : {}),
+    ...(savedDurationMs !== undefined ? { savedDurationMs } : {}),
+    timedNodeCount,
+    maxParallel: timedMaxParallel ?? maxParallel,
     hasCycle,
   };
 }
@@ -789,19 +1336,21 @@ function getExecutionGraphNodeClass(status: string): string {
 
 function ExecutionGraphPanel({
   task,
+  modelLogs,
   selectedNodeId,
   onSelectNode,
   onClearSelection,
   heightPercent,
 }: {
   task: Task;
+  modelLogs?: TaskLogsData | null;
   selectedNodeId: string | null;
   onSelectNode: (nodeId: string) => void;
   onClearSelection: () => void;
   heightPercent: number;
 }) {
   const { t } = useTranslation(['tasks']);
-  const graph = useMemo(() => analyzeSubtaskExecutionGraph(task.subtasks), [task.subtasks]);
+  const graph = useMemo(() => analyzeSubtaskExecutionGraph(task.subtasks, modelLogs), [task.subtasks, modelLogs]);
 
   if (task.subtasks.length === 0) {
     return null;
@@ -816,9 +1365,22 @@ function ExecutionGraphPanel({
   const width = Math.max(420, paddingX * 2 + (Math.max(...graph.nodes.map(node => node.level), 0) * columnGap) + nodeWidth);
   const height = Math.max(118, paddingY * 2 + (Math.max(...graph.nodes.map(node => node.row), 0) * rowGap) + nodeHeight);
   const nodeById = new Map(graph.nodes.map(node => [node.id, node]));
+  const nodeRectById = new Map(graph.nodes.map(node => [
+    node.id,
+    getExecutionGraphNodeRect({ node, paddingX, paddingY, columnGap, rowGap, nodeWidth, nodeHeight }),
+  ]));
+  const routeBounds: ExecutionGraphRouteBounds = {
+    minX: EXECUTION_GRAPH_EDGE_CLEARANCE,
+    maxX: Math.max(EXECUTION_GRAPH_EDGE_CLEARANCE, width - EXECUTION_GRAPH_EDGE_CLEARANCE),
+    minY: EXECUTION_GRAPH_EDGE_CLEARANCE,
+    maxY: Math.max(EXECUTION_GRAPH_EDGE_CLEARANCE, height - EXECUTION_GRAPH_EDGE_CLEARANCE),
+  };
   const speedup = graph.parallelUnits > 0
-    ? (graph.sequentialUnits / graph.parallelUnits).toFixed(1)
+    ? ((graph.sequentialDurationMs !== undefined && graph.parallelDurationMs && graph.parallelDurationMs > 0)
+        ? graph.sequentialDurationMs / graph.parallelDurationMs
+        : graph.sequentialUnits / graph.parallelUnits).toFixed(1)
     : '1.0';
+  const hasDurationStats = graph.sequentialDurationMs !== undefined && graph.parallelDurationMs !== undefined;
   const graphEdges = [...graph.edges].sort((left, right) =>
     Number(isExecutionGraphEdgeSelected(left, selectedNodeId)) -
     Number(isExecutionGraphEdgeSelected(right, selectedNodeId))
@@ -839,26 +1401,41 @@ function ExecutionGraphPanel({
         </div>
         <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
           <span className="rounded-md border border-border bg-background px-1.5 py-0.5 tabular-nums">
-            {t('tasks:subtasks.sequentialTime', {
-              count: graph.sequentialUnits,
-              defaultValue: 'Sequential {{count}} rounds',
-            })}
+            {hasDurationStats
+              ? t('tasks:subtasks.sequentialDuration', {
+                  duration: formatExecutionDuration(graph.sequentialDurationMs ?? 0),
+                  defaultValue: 'Sequential {{duration}}',
+                })
+              : t('tasks:subtasks.sequentialTime', {
+                  count: graph.sequentialUnits,
+                  defaultValue: 'Sequential {{count}} rounds',
+                })}
           </span>
           <span className="rounded-md border border-border bg-background px-1.5 py-0.5 tabular-nums">
-            {t('tasks:subtasks.parallelTime', {
-              count: graph.parallelUnits,
-              defaultValue: 'Parallel {{count}} rounds',
-            })}
+            {hasDurationStats
+              ? t('tasks:subtasks.parallelDuration', {
+                  duration: formatExecutionDuration(graph.parallelDurationMs ?? 0),
+                  defaultValue: 'Parallel {{duration}}',
+                })
+              : t('tasks:subtasks.parallelTime', {
+                  count: graph.parallelUnits,
+                  defaultValue: 'Parallel {{count}} rounds',
+                })}
           </span>
         </div>
       </div>
 
       <div className="flex shrink-0 items-center gap-2 px-4 py-2 text-[11px] text-muted-foreground">
         <span>
-          {t('tasks:subtasks.savedTime', {
-            count: graph.savedUnits,
-            defaultValue: 'Saves {{count}} rounds',
-          })}
+          {hasDurationStats
+            ? t('tasks:subtasks.savedDuration', {
+                duration: formatExecutionDuration(graph.savedDurationMs ?? 0),
+                defaultValue: 'Saves {{duration}}',
+              })
+            : t('tasks:subtasks.savedTime', {
+                count: graph.savedUnits,
+                defaultValue: 'Saves {{count}} rounds',
+              })}
         </span>
         <span className="text-muted-foreground/40">/</span>
         <span>
@@ -874,6 +1451,18 @@ function ExecutionGraphPanel({
             defaultValue: '{{value}}x',
           })}
         </span>
+        {!hasDurationStats && graph.timedNodeCount > 0 && (
+          <>
+            <span className="text-muted-foreground/40">/</span>
+            <span>
+              {t('tasks:subtasks.timingPartial', {
+                count: graph.timedNodeCount,
+                total: graph.nodes.length,
+                defaultValue: 'Timed {{count}}/{{total}}',
+              })}
+            </span>
+          </>
+        )}
         {graph.hasCycle && (
           <span className="ml-auto rounded-md border border-destructive/30 bg-destructive/10 px-1.5 py-0.5 text-destructive">
             {t('tasks:subtasks.dependencyCycle', { defaultValue: 'Dependency cycle' })}
@@ -922,11 +1511,17 @@ function ExecutionGraphPanel({
               const y1 = paddingY + from.row * rowGap + nodeHeight / 2;
               const x2 = paddingX + to.level * columnGap;
               const y2 = paddingY + to.row * rowGap + nodeHeight / 2;
+              const obstacles = graph.nodes
+                .filter(node => node.id !== edge.from && node.id !== edge.to)
+                .map(node => nodeRectById.get(node.id))
+                .filter((rect): rect is ExecutionGraphRect => Boolean(rect));
               const visibleTone = isSelected ? tone : EXECUTION_GRAPH_DEFAULT_EDGE_TONE;
               return (
                 <path
                   key={`${edge.from}->${edge.to}`}
-                  d={getExecutionGraphEdgePath({ x1, y1, x2, y2, edgeIndex })}
+                  data-edge-from={edge.from}
+                  data-edge-to={edge.to}
+                  d={getExecutionGraphEdgePath({ x1, y1, x2, y2, edgeIndex, obstacles, bounds: routeBounds })}
                   className={cn(
                     'fill-none transition-opacity',
                     visibleTone.strokeClass,
@@ -972,16 +1567,32 @@ function ExecutionGraphPanel({
                   >
                     <div className="truncate text-[11px] font-semibold tabular-nums">{node.id}</div>
                     <div className="truncate text-[10px] opacity-80">
-                      {t('tasks:subtasks.graphTimeSlot', {
-                        count: node.level + 1,
-                        defaultValue: 'Round {{count}}',
-                      })}
+                      {node.durationMs !== undefined
+                        ? t('tasks:subtasks.graphNodeDuration', {
+                            duration: formatExecutionDuration(node.durationMs),
+                            defaultValue: '{{duration}}',
+                          })
+                        : t('tasks:subtasks.graphTimeSlot', {
+                            count: node.level + 1,
+                            defaultValue: 'Round {{count}}',
+                          })}
                     </div>
                   </button>
                 </TooltipTrigger>
                 <TooltipContent side="top" className="max-w-xs">
                   <div className="text-xs font-medium">{node.id}</div>
                   <div className="text-xs text-muted-foreground">{node.title}</div>
+                  {node.durationMs !== undefined && (
+                    <div className="mt-1 text-xs text-muted-foreground">
+                      {t('tasks:subtasks.graphNodeDurationTooltip', {
+                        duration: formatExecutionDuration(node.durationMs),
+                        source: node.timingSource === 'recorded'
+                          ? t('tasks:subtasks.timingSourceRecorded', { defaultValue: 'recorded' })
+                          : t('tasks:subtasks.timingSourceLogs', { defaultValue: 'from logs' }),
+                        defaultValue: 'Duration {{duration}} · {{source}}',
+                      })}
+                    </div>
+                  )}
                 </TooltipContent>
               </Tooltip>
             );
@@ -1379,6 +1990,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
       <div ref={rightPaneRef} className="flex min-h-0 min-w-[28rem] flex-1 flex-col bg-muted/10">
         <ExecutionGraphPanel
           task={task}
+          modelLogs={modelLogs}
           selectedNodeId={selectedGraphNodeId}
           onSelectNode={handleSelectGraphNode}
           onClearSelection={handleClearGraphSelection}

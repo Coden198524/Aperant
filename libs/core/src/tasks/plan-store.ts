@@ -34,7 +34,16 @@ interface ParsedPlanItem {
   dependsOn: string[];
   requirements: string[];
   verification?: string;
+  hasFilesField: boolean;
+  hasFilesToCreateField: boolean;
+  hasFilesToModifyField: boolean;
+  hasPatternFilesField: boolean;
+  hasDependsOnField: boolean;
+  hasRequirementsField: boolean;
+  hasVerificationField: boolean;
   completion?: string;
+  startedAt?: string;
+  completedAt?: string;
   updatedAt?: string;
 }
 
@@ -118,6 +127,13 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
         patternFiles: [],
         dependsOn: [],
         requirements: [],
+        hasFilesField: false,
+        hasFilesToCreateField: false,
+        hasFilesToModifyField: false,
+        hasPatternFilesField: false,
+        hasDependsOnField: false,
+        hasRequirementsField: false,
+        hasVerificationField: false,
       };
       items.push(current);
       continue;
@@ -205,9 +221,9 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
 
       addListField(lines, 'Files', subtask.files, '    ');
       addListField(lines, 'Files to create', subtask.files_to_create, '    ');
-      addListField(lines, 'Files to modify', subtask.files_to_modify, '    ');
+      addListField(lines, 'Files to modify', subtask.files_to_modify, '    ', { writeNoneWhenEmptyArray: true });
       addListField(lines, 'Pattern files', subtask.pattern_files, '    ');
-      addListField(lines, 'Depends on', subtask.depends_on, '    ');
+      addListField(lines, 'Depends on', subtask.depends_on, '    ', { writeNoneWhenEmptyArray: true });
       addListField(lines, 'Requirements', subtask.requirements, '    ');
 
       const verification = stringifyVerification(subtask.verification);
@@ -220,6 +236,16 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
       );
       if (completion && status === 'completed') {
         lines.push(`    - _Completion: ${compactInlineMarkdownField(completion)}_`);
+      }
+
+      const started = stringifyPlanValue(subtask.started_at);
+      if (started) {
+        lines.push(`    - _Started: ${compactInlineMarkdownField(started)}_`);
+      }
+
+      const completed = stringifyPlanValue(subtask.completed_at);
+      if (completed) {
+        lines.push(`    - _Completed: ${compactInlineMarkdownField(completed)}_`);
       }
 
       const updated = stringifyPlanValue(subtask.updated_at ?? subtask.completed_at);
@@ -553,29 +579,42 @@ function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: stri
   const value = rawValue.trim();
   switch (key) {
     case 'files':
+      item.hasFilesField = true;
       item.files = splitPlanList(value);
       break;
     case 'files to create':
+      item.hasFilesToCreateField = true;
       item.filesToCreate = splitPlanList(value);
       break;
     case 'files to modify':
+      item.hasFilesToModifyField = true;
       item.filesToModify = splitPlanList(value);
       break;
     case 'pattern files':
     case 'patterns from':
+      item.hasPatternFilesField = true;
       item.patternFiles = splitPlanList(value);
       break;
     case 'depends on':
+      item.hasDependsOnField = true;
       item.dependsOn = splitPlanList(value);
       break;
     case 'requirements':
+      item.hasRequirementsField = true;
       item.requirements = splitPlanList(value);
       break;
     case 'verification':
+      item.hasVerificationField = true;
       item.verification = value;
       break;
     case 'completion':
       item.completion = value;
+      break;
+    case 'started':
+      item.startedAt = value;
+      break;
+    case 'completed':
+      item.completedAt = value;
       break;
     case 'updated':
       item.updatedAt = value;
@@ -644,16 +683,20 @@ function planItemToSubtask(item: ParsedPlanItem): MutableAutocodePlanSubtask {
     description: item.details.join('\n') || item.title,
     status: item.status,
   };
-  if (item.filesToCreate.length > 0) subtask.files_to_create = item.filesToCreate;
-  if (filesToModify.length > 0) subtask.files_to_modify = filesToModify;
-  if (item.patternFiles.length > 0) subtask.pattern_files = item.patternFiles;
-  if (item.dependsOn.length > 0) subtask.depends_on = item.dependsOn;
-  if (item.requirements.length > 0) subtask.requirements = item.requirements;
+  if (item.filesToCreate.length > 0 || item.hasFilesToCreateField) subtask.files_to_create = item.filesToCreate;
+  if (filesToModify.length > 0 || item.hasFilesField || item.hasFilesToModifyField) {
+    subtask.files_to_modify = filesToModify;
+  }
+  if (item.patternFiles.length > 0 || item.hasPatternFilesField) subtask.pattern_files = item.patternFiles;
+  if (item.dependsOn.length > 0 || item.hasDependsOnField) subtask.depends_on = item.dependsOn;
+  if (item.requirements.length > 0 || item.hasRequirementsField) subtask.requirements = item.requirements;
   if (item.verification) subtask.verification = { type: 'manual', run: item.verification };
   if (item.completion) {
     subtask.completion_summary = item.completion;
     subtask.notes = item.completion;
   }
+  if (item.startedAt) subtask.started_at = item.startedAt;
+  if (item.completedAt) subtask.completed_at = item.completedAt;
   if (item.updatedAt) subtask.updated_at = item.updatedAt;
   return subtask;
 }
@@ -688,19 +731,30 @@ function addMetadataLine(lines: string[], label: string, value: unknown): void {
   }
 }
 
-function addListField(lines: string[], label: string, value: unknown, indent = '  '): void {
+function addListField(
+  lines: string[],
+  label: string,
+  value: unknown,
+  indent = '  ',
+  options: { writeNoneWhenEmptyArray?: boolean } = {},
+): void {
   const items = arrayFromUnknown(value);
   if (items.length > 0) {
     lines.push(`${indent}- _${label}: ${items.join(', ')}_`);
+  } else if (options.writeNoneWhenEmptyArray && Array.isArray(value)) {
+    lines.push(`${indent}- _${label}: none_`);
   }
 }
 
 function splitPlanList(value: string): string[] {
   const trimmed = value.trim();
-  if (!trimmed || /^none$/i.test(trimmed)) {
+  if (!trimmed || /^(none|no dependencies?|n\/a|na|nil|null|无|无依赖|没有|没有依赖)$/i.test(trimmed)) {
     return [];
   }
-  return trimmed.split(',').map((item) => item.trim()).filter(Boolean);
+  return trimmed
+    .split(',')
+    .map((item) => item.trim())
+    .filter((item) => item && !/^(none|no dependencies?|n\/a|na|nil|null|无|无依赖|没有|没有依赖)$/i.test(item));
 }
 
 function stringifyPlanValue(value: unknown): string {

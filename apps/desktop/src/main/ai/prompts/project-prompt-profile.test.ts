@@ -12,6 +12,7 @@ import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 
 import {
+  PROJECT_PROMPT_PROFILE_VERSION,
   buildProjectPromptProfileSection,
   generateProjectPromptProfile,
   initializeProjectPromptProfile,
@@ -86,13 +87,16 @@ describe('project prompt profile', () => {
     expect(existsSync(join(projectDir, '.autocode', 'prompts', 'spec_quick.md'))).toBe(true);
 
     const plannerOverride = loadProjectPromptOverride(projectDir, 'planner');
-    expect(plannerOverride?.content).toContain('OpenSpec-style checklist Markdown');
-    expect(plannerOverride?.content).toContain('Use the Write tool to create `implementation_plan.md`');
-    expect(plannerOverride?.content).toContain('PLAN SIZE LIMITS');
-    expect(plannerOverride?.content).toContain('about 24 subtasks or fewer');
-    expect(plannerOverride?.content).toContain('do not omit necessary subtasks');
-    expect(plannerOverride?.content).toContain('do not split the plan into phase files');
+    expect(plannerOverride?.content).toContain('Autocode Markdown checklist format');
+    expect(plannerOverride?.content).toContain('Use the Write tool to create `tasks.md`');
+    expect(plannerOverride?.content).toContain('TASK SIZE LIMITS');
+    expect(plannerOverride?.content).toContain('about 24 tasks or fewer');
+    expect(plannerOverride?.content).toContain('do not omit necessary tasks');
+    expect(plannerOverride?.content).toContain('do not split tasks.md into phase files');
     expect(plannerOverride?.content).toContain('Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`');
+    expect(plannerOverride?.content).toContain('PARALLEL EXECUTION PLANNING');
+    expect(plannerOverride?.content).toContain('Every executable subtask MUST include exactly one `_Depends on: ..._` line');
+    expect(plannerOverride?.content).toContain('File metadata is write intent');
   });
 
   it('builds an adaptation section for bundled prompts', () => {
@@ -154,7 +158,7 @@ describe('project prompt profile', () => {
 
     initializeProjectPromptProfile(projectDir, { overwrite: false });
 
-    expect(readFileSync(profilePath, 'utf-8')).toContain('"version": 10');
+    expect(readFileSync(profilePath, 'utf-8')).toContain(`"version": ${PROJECT_PROMPT_PROFILE_VERSION}`);
     expect(readFileSync(coderPath, 'utf-8')).toContain('Implement the next pending subtask');
     expect(readFileSync(coderPath, 'utf-8')).not.toContain('old generated prompt');
   });

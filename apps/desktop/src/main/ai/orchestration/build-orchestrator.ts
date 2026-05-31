@@ -23,12 +23,19 @@ import {
 } from '../../../shared/constants/phase-protocol';
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
-import { AUTOCODE_TASK_ARTIFACTS, type AutocodeTaskRuntimeConcurrencyResolved, type Phase } from '@autocode/core';
+import {
+  AUTOCODE_TASK_ARTIFACTS,
+  analyzeAutocodeWorkDependencies,
+  buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
+  loadAutocodeTaskRuntimeMetadataConfig,
+  normalizeAutocodeWorkDependencyIds,
+  type AutocodeTaskRuntimeConcurrencyResolved,
+  type Phase,
+} from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
 import {
   ImplementationPlanSchema,
   validateImplementationPlanLanguage,
-  IMPLEMENTATION_PLAN_SCHEMA_HINT,
   writeImplementationPlanFiles,
   loadImplementationPlanFromFiles,
   saveImplementationPlanToFiles,
@@ -69,6 +76,7 @@ function isWriteToolPlanOutputFailure(message: string): boolean {
   const lower = message.toLowerCase();
   return lower.includes("tool 'write'") &&
     (lower.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan) ||
+      lower.includes(AUTOCODE_TASK_ARTIFACTS.tasks) ||
       lower.includes('input json failed') ||
       lower.includes('json parsing failed') ||
       lower.includes('invalid input') ||
@@ -77,11 +85,70 @@ function isWriteToolPlanOutputFailure(message: string): boolean {
 
 function isImplementationPlanFileFailure(message: string): boolean {
   const lower = message.toLowerCase();
-  return lower.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+  return lower.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan) || lower.includes(AUTOCODE_TASK_ARTIFACTS.tasks);
 }
 
 function hasExecutableSubtasks(plan: ImplementationPlan | null): boolean {
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
+}
+
+function hasOwnField(value: object, field: string): boolean {
+  return  Object.hasOwn(value, field);
+}
+
+function shouldRequirePlanningSchedulingMetadata(config: BuildOrchestratorConfig): boolean {
+  const runtimeConcurrency = config.runtimeConcurrency ?? DEFAULT_RUNTIME_CONCURRENCY;
+  if (runtimeConcurrency.mode !== 'concurrent' || runtimeConcurrency.workers <= 1) {
+    return false;
+  }
+
+  const metadata = loadAutocodeTaskRuntimeMetadataConfig(config.specDir);
+  return metadata?.sourceType !== 'openspec';
+}
+
+function validatePlanningSchedulingMetadata(
+  plan: ImplementationPlan | null,
+  config: BuildOrchestratorConfig,
+): string[] {
+  if (!plan || !shouldRequirePlanningSchedulingMetadata(config)) {
+    return [];
+  }
+
+  const errors: string[] = [];
+  const items: Array<{ id: string; status: string; dependsOn: string[] }> = [];
+
+  for (const phase of plan.phases ?? []) {
+    for (const subtask of phase.subtasks ?? []) {
+      items.push({
+        id: subtask.id,
+        status: subtask.status,
+        dependsOn: normalizeAutocodeWorkDependencyIds(subtask.depends_on),
+      });
+
+      const hasDependencyMetadata = hasOwnField(subtask, 'depends_on');
+      const hasFileMetadata = hasOwnField(subtask, 'files_to_create') ||
+        hasOwnField(subtask, 'files_to_modify') ||
+        hasOwnField(subtask, 'pattern_files');
+      const hasVerificationMetadata = hasOwnField(subtask, 'verification') && subtask.verification !== undefined;
+
+      if (!hasDependencyMetadata) {
+        errors.push(`${subtask.id} missing _Depends on: ..._ metadata`);
+      }
+      if (!hasFileMetadata) {
+        errors.push(`${subtask.id} missing _Files to create/modify: ..._ metadata`);
+      }
+      if (!hasVerificationMetadata) {
+        errors.push(`${subtask.id} missing _Verification: ..._ metadata`);
+      }
+    }
+  }
+
+  const dependencyIssues = analyzeAutocodeWorkDependencies(items, {
+    statusById: new Map(items.map((item) => [item.id, 'completed'])),
+  }).issues;
+  errors.push(...dependencyIssues.map((issue) => issue.message));
+
+  return errors;
 }
 
 function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
@@ -99,37 +166,56 @@ function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
 
 function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string {
   return [
-    'RETRY IMPLEMENTATION PLAN WRITE',
+    'RETRY TASKS WRITE',
     '',
     `Previous Write call failed before execution: ${errorMessage}`,
     '',
-    `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with the Write tool.`,
+    `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.tasks} with the Write tool.`,
     'Write checklist Markdown, not JSON. Each Write input is one object with file_path and content.',
     'Use forward slashes in file_path.',
     'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" with _Files_, _Depends on_, _Requirements_, and _Verification_.',
-    'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
-    'For complex tasks, keep necessary subtasks concise in the single Markdown file.',
+    'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
+    'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
+    'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
+    'For complex tasks, keep necessary tasks concise in the single Markdown file.',
     'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   ].join('\n');
 }
 
 function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): string {
   return [
-    'REWRITE IMPLEMENTATION PLAN',
+    'REWRITE TASKS SOURCE',
     '',
-    'The previous implementation plan was missing or invalid.',
+    'The previous tasks.md could not be converted into a valid runtime plan.',
     '',
     'Errors:',
     ...errors.map((error) => `- ${error}`),
     '',
-    IMPLEMENTATION_PLAN_SCHEMA_HINT,
-    '',
-    'Retry with the Write tool; do not paste the full plan into the final response.',
+    'Retry with the Write tool; do not paste the full task list into the final response.',
     'Use forward slashes in file_path.',
-    `Rewrite ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
-    'Normal tasks should target 4 phases or fewer and about 24 subtasks or fewer.',
+    `Rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
+    'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
+    'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
+    'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
     'For complex tasks, keep descriptions concise instead of splitting files.',
     'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
+  ].join('\n');
+}
+
+function buildStandardTasksValidationRetryPrompt(errors: string[]): string {
+  return [
+    'REWRITE TASKS SOURCE',
+    '',
+    'The previous Standard planning output could not be converted into runtime work packages.',
+    '',
+    'Errors:',
+    ...errors.map((error) => `- ${error}`),
+    '',
+    `Retry with the Write tool and rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks}, not ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
+    'Use checklist Markdown with phase items such as "- [ ] 1. Phase" and task items such as "- [ ] 1.1 Task".',
+    'Every executable task must include _Files to create/modify_, _Depends on_, and _Verification_.',
+    'Use _Depends on: none_ only for root tasks. Add real dependencies for tasks that share files or consume prior outputs.',
+    'Keep independent tasks dependency-free when they can run safely in parallel.',
   ].join('\n');
 }
 
@@ -222,6 +308,9 @@ export interface SubtaskInfo {
   patternFiles?: string[];
   verification?: string;
   dependsOn?: string[];
+  hasFileMetadata?: boolean;
+  hasDependencyMetadata?: boolean;
+  hasVerificationMetadata?: boolean;
   workPackage?: boolean;
   upstreamTaskIds?: string[];
   upstreamSource?: string;
@@ -238,6 +327,9 @@ function workItemToSubtaskInfo(workItem: WorkItemInfo): SubtaskInfo {
     patternFiles: workItem.patternFiles,
     verification: workItem.verification,
     dependsOn: workItem.dependsOn,
+    hasFileMetadata: workItem.hasFileMetadata,
+    hasDependencyMetadata: workItem.hasDependencyMetadata,
+    hasVerificationMetadata: workItem.hasVerificationMetadata,
     workPackage: workItem.workPackage,
     upstreamTaskIds: workItem.upstreamTaskIds,
     upstreamSource: workItem.upstreamSource,
@@ -330,6 +422,9 @@ interface PlanSubtask {
   completed_at?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
+  pattern_files?: string[];
+  depends_on?: unknown;
+  verification?: unknown;
 }
 
 // =============================================================================
@@ -484,8 +579,37 @@ export class BuildOrchestrator extends EventEmitter {
   // Phase Runners
   // ===========================================================================
 
+  private shouldDeriveRuntimePlanFromStandardTasks(): boolean {
+    const metadata = loadAutocodeTaskRuntimeMetadataConfig(this.config.specDir);
+    return metadata?.sourceType !== 'openspec';
+  }
+
+  private async deriveRuntimePlanFromStandardTasks(): Promise<{ success: boolean; error?: string }> {
+    if (!this.shouldDeriveRuntimePlanFromStandardTasks()) {
+      return { success: true };
+    }
+
+    const tasksPath = join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
+    try {
+      const tasksMarkdown = await readFile(tasksPath, 'utf-8');
+      const now = new Date().toISOString();
+      const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
+        now,
+        language: this.config.language,
+        sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
+      });
+      await saveImplementationPlanToFiles(this.config.specDir, plan as never);
+      this.emitTyped('log', translateLogMessage('Generated runtime work packages from tasks.md', this.config.language));
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      return { success: false, error: message };
+    }
+  }
+
   /**
-   * Run the planning phase: invoke planner agent to create implementation_plan.md.
+   * Run the planning phase: invoke planner agent to create upstream tasks.md,
+   * then derive implementation_plan.md runtime work packages.
    */
   private async runPlanningPhase(): Promise<{ success: boolean; error?: string }> {
     this.transitionPhase('planning', translatePhaseMessage('planning', 'Creating implementation plan', this.config.language));
@@ -537,7 +661,7 @@ export class BuildOrchestrator extends EventEmitter {
         const errorMessage = result.error?.message ?? 'Planning session failed';
         if (attempt < maxPlanningRetries && (isWriteToolPlanOutputFailure(errorMessage) || isImplementationPlanFileFailure(errorMessage))) {
           planningRetryContext = buildPlanningStructuredOutputRetryPrompt(errorMessage);
-          this.emitTyped('log', 'Planning failed while writing implementation plan; retrying with Markdown guidance...');
+          this.emitTyped('log', 'Planning failed while writing tasks.md; retrying with Markdown guidance...');
           continue;
         }
         return { success: false, error: errorMessage };
@@ -545,7 +669,7 @@ export class BuildOrchestrator extends EventEmitter {
 
       // If the provider returned structured output via constrained decoding,
       // write it to the plan file — this is guaranteed to match the schema.
-      if (result.structuredOutput) {
+      if (result.structuredOutput && !this.shouldDeriveRuntimePlanFromStandardTasks()) {
         try {
           const writeResult = await writeImplementationPlanFiles(this.config.specDir, result.structuredOutput);
           const splitNote = writeResult?.split
@@ -555,6 +679,21 @@ export class BuildOrchestrator extends EventEmitter {
         } catch {
           // Non-fatal — fall through to file-based validation
         }
+      }
+
+      const derivedPlan = await this.deriveRuntimePlanFromStandardTasks();
+      if (!derivedPlan.success) {
+        const validationErrors = [`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing or invalid: ${derivedPlan.error}`];
+        validationFailures++;
+        this.emitTyped('log', `Standard planning validation failed (attempt ${validationFailures}): ${validationErrors.join(', ')}`);
+        if (validationFailures >= maxPlanningRetries) {
+          return {
+            success: false,
+            error: `Standard task planning failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
+          };
+        }
+        planningRetryContext = buildStandardTasksValidationRetryPrompt(validationErrors);
+        continue;
       }
 
       // Validate + normalize the implementation plan using Zod schema.
@@ -580,9 +719,13 @@ export class BuildOrchestrator extends EventEmitter {
       const executionErrors = validation.valid && !hasExecutableSubtasks(normalizedPlan)
         ? ['Implementation plan has no executable subtasks.']
         : [];
+      const schedulingErrors = validation.valid
+        ? validatePlanningSchedulingMetadata(normalizedPlan, this.config)
+        : [];
       const validationErrors = validation.valid
         ? [
             ...executionErrors,
+            ...schedulingErrors,
             ...languageErrors,
           ]
         : [...validation.errors, ...languageErrors];
@@ -1084,7 +1227,21 @@ export class BuildOrchestrator extends EventEmitter {
         return true;
       }
 
-      return !plan.phases.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0);
+      const hasSubtasks = plan.phases.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0);
+      if (!hasSubtasks) {
+        return true;
+      }
+
+      const validation = ImplementationPlanSchema.safeParse(plan);
+      if (validation.success) {
+        const schedulingErrors = validatePlanningSchedulingMetadata(validation.data as ImplementationPlan, this.config);
+        if (schedulingErrors.length > 0) {
+          this.emitTyped('log', `Existing plan is missing scheduling metadata; regenerating plan: ${schedulingErrors.slice(0, 4).join(', ')}`);
+          return true;
+        }
+      }
+
+      return false;
     } catch {
       return true;
     }

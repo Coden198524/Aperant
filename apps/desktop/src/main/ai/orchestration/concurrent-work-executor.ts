@@ -138,17 +138,28 @@ export async function executeConcurrentWorkItems(
       };
     }
 
-    const { independent, sequential } = detectFileConflicts(runnableItems);
-    const independentItems = independent.flat();
-    const conflictGroups = groupConflictingWorkItems(sequential);
-    log(
-      `[ConcurrentWorkExecutor] Conflict analysis: ${independentItems.length} independent, ${sequential.length} conflict-locked`,
-    );
-
-    const groups: Array<{ mode: 'concurrent' | 'serial'; items: WorkItemInfo[] }> = [
-      ...(independentItems.length > 0 ? [{ mode: 'concurrent' as const, items: independentItems }] : []),
-      ...conflictGroups.map((items) => ({ mode: 'serial' as const, items })),
-    ];
+    const missingSchedulingMetadata = runnableItems.filter((item) => !hasSafeConcurrentSchedulingMetadata(item));
+    const groups: Array<{ mode: 'concurrent' | 'serial'; items: WorkItemInfo[] }> = [];
+    if (missingSchedulingMetadata.length > 0) {
+      log(
+        `[ConcurrentWorkExecutor] Scheduling metadata missing for ${missingSchedulingMetadata
+          .slice(0, 8)
+          .map((item) => item.id)
+          .join(', ')}; running this round serially`,
+      );
+      groups.push({ mode: 'serial', items: runnableItems });
+    } else {
+      const { independent, sequential } = detectFileConflicts(runnableItems);
+      const independentItems = independent.flat();
+      const conflictGroups = groupConflictingWorkItems(sequential);
+      log(
+        `[ConcurrentWorkExecutor] Conflict analysis: ${independentItems.length} independent, ${sequential.length} conflict-locked`,
+      );
+      groups.push(
+        ...(independentItems.length > 0 ? [{ mode: 'concurrent' as const, items: independentItems }] : []),
+        ...conflictGroups.map((items) => ({ mode: 'serial' as const, items })),
+      );
+    }
     log(`[ConcurrentWorkExecutor] Prepared ${groups.length} work group(s), workers=${workers}`);
 
     let roundCompleted = 0;
@@ -392,6 +403,9 @@ async function fallbackToSerial(
       patternFiles: subtask.patternFiles,
       dependsOn: subtask.dependsOn,
       verification: subtask.verification,
+      hasFileMetadata: subtask.hasFileMetadata,
+      hasDependencyMetadata: subtask.hasDependencyMetadata,
+      hasVerificationMetadata: subtask.hasVerificationMetadata,
       workPackage: subtask.workPackage,
       upstreamTaskIds: subtask.upstreamTaskIds,
       upstreamSource: subtask.upstreamSource,
@@ -669,6 +683,9 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
           patternFiles: subtask.pattern_files,
           dependsOn: normalizeAutocodeWorkDependencyIds(subtask.depends_on),
           verification: stringifyVerification(subtask.verification),
+          hasFileMetadata: hasDeclaredFileMetadata(subtask),
+          hasDependencyMetadata: hasDeclaredField(subtask, 'depends_on'),
+          hasVerificationMetadata: hasDeclaredField(subtask, 'verification'),
           workPackage: subtask.work_package === true,
           upstreamTaskIds: Array.isArray(subtask.upstream_task_ids)
             ? subtask.upstream_task_ids.filter((value): value is string => typeof value === 'string')
@@ -681,6 +698,20 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
   }
 
   return items;
+}
+
+function hasSafeConcurrentSchedulingMetadata(item: WorkItemInfo): boolean {
+  return item.hasFileMetadata === true && item.hasDependencyMetadata === true;
+}
+
+function hasDeclaredField(value: object, field: string): boolean {
+  return  Object.hasOwn(value, field);
+}
+
+function hasDeclaredFileMetadata(subtask: PlanSubtask): boolean {
+  return hasDeclaredField(subtask, 'files_to_create') ||
+    hasDeclaredField(subtask, 'files_to_modify') ||
+    hasDeclaredField(subtask, 'pattern_files');
 }
 
 function getWorkItemStatusMap(plan: ImplementationPlan): Map<string, string> {

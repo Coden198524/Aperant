@@ -129,6 +129,180 @@ function createFanOutWorkPackageTask(): Task {
   };
 }
 
+function createSkipLevelWorkPackageTask(): Task {
+  return {
+    ...createTask(),
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Create shared base',
+        description: 'Create shared base',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+      },
+      {
+        id: 'wp-2',
+        title: 'Build intermediate layer',
+        description: 'Build intermediate layer',
+        status: 'pending',
+        files: [],
+        dependsOn: ['wp-1'],
+        workPackage: true,
+      },
+      {
+        id: 'wp-3',
+        title: 'Build final layer',
+        description: 'Build final layer',
+        status: 'pending',
+        files: [],
+        dependsOn: ['wp-1', 'wp-2'],
+        workPackage: true,
+      },
+    ],
+  };
+}
+
+function createTimedFanOutWorkPackageTask(): Task {
+  const task = createFanOutWorkPackageTask();
+  const timings: Record<string, { startedAt: string; completedAt: string }> = {
+    'wp-1': {
+      startedAt: '2026-01-01T00:00:00.000Z',
+      completedAt: '2026-01-01T00:00:02.000Z',
+    },
+    'wp-2': {
+      startedAt: '2026-01-01T00:00:02.000Z',
+      completedAt: '2026-01-01T00:00:05.000Z',
+    },
+    'wp-3': {
+      startedAt: '2026-01-01T00:00:02.000Z',
+      completedAt: '2026-01-01T00:00:06.000Z',
+    },
+    'wp-4': {
+      startedAt: '2026-01-01T00:00:02.000Z',
+      completedAt: '2026-01-01T00:00:07.000Z',
+    },
+    'wp-5': {
+      startedAt: '2026-01-01T00:00:07.000Z',
+      completedAt: '2026-01-01T00:00:10.000Z',
+    },
+  };
+
+  return {
+    ...task,
+    subtasks: task.subtasks.map(subtask => ({
+      ...subtask,
+      ...timings[subtask.id],
+    })),
+  };
+}
+
+function createTimedSerialWorkPackageTask(): Task {
+  return {
+    ...createTask(),
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Prepare contract',
+        description: 'Prepare contract',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        completedAt: '2026-01-01T00:00:01.000Z',
+      },
+      {
+        id: 'wp-2',
+        title: 'Implement contract',
+        description: 'Implement contract',
+        status: 'completed',
+        files: [],
+        dependsOn: ['wp-1'],
+        workPackage: true,
+        startedAt: '2026-01-01T00:00:01.000Z',
+        completedAt: '2026-01-01T00:00:03.000Z',
+      },
+    ],
+  };
+}
+
+function createTimedFanOutWorkPackageLogs(): TaskLogs {
+  const logs = createConcurrentWorkPackageLogs();
+  logs.phases.coding.entries = [
+    {
+      timestamp: '2026-01-01T00:00:00.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Start wp-1.',
+      subtask_id: 'wp-1',
+    },
+    {
+      timestamp: '2026-01-01T00:00:02.000Z',
+      type: 'success',
+      phase: 'coding',
+      content: 'Done wp-1.',
+      subtask_id: 'wp-1',
+    },
+    {
+      timestamp: '2026-01-01T00:00:02.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Start wp-2.',
+      subtask_id: 'wp-2',
+    },
+    {
+      timestamp: '2026-01-01T00:00:05.000Z',
+      type: 'success',
+      phase: 'coding',
+      content: 'Done wp-2.',
+      subtask_id: 'wp-2',
+    },
+    {
+      timestamp: '2026-01-01T00:00:02.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Start wp-3.',
+      subtask_id: 'wp-3',
+    },
+    {
+      timestamp: '2026-01-01T00:00:06.000Z',
+      type: 'success',
+      phase: 'coding',
+      content: 'Done wp-3.',
+      subtask_id: 'wp-3',
+    },
+    {
+      timestamp: '2026-01-01T00:00:02.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Start wp-4.',
+      subtask_id: 'wp-4',
+    },
+    {
+      timestamp: '2026-01-01T00:00:07.000Z',
+      type: 'success',
+      phase: 'coding',
+      content: 'Done wp-4.',
+      subtask_id: 'wp-4',
+    },
+    {
+      timestamp: '2026-01-01T00:00:07.000Z',
+      type: 'info',
+      phase: 'coding',
+      content: 'Start wp-5.',
+      subtask_id: 'wp-5',
+    },
+    {
+      timestamp: '2026-01-01T00:00:10.000Z',
+      type: 'success',
+      phase: 'coding',
+      content: 'Done wp-5.',
+      subtask_id: 'wp-5',
+    },
+  ];
+  return logs;
+}
+
 function createConcurrentWorkPackageLogs(): TaskLogs {
   return {
     spec_id: 'spec-1',
@@ -184,6 +358,12 @@ function createConcurrentWorkPackageLogs(): TaskLogs {
 function getExecutionGraphEdgePaths(container: HTMLElement): SVGPathElement[] {
   return Array.from(container.querySelectorAll('svg path'))
     .filter(path => (path.getAttribute('d') ?? '').startsWith('M ')) as SVGPathElement[];
+}
+
+function getExecutionGraphEdgePath(container: HTMLElement, from: string, to: string): string {
+  return container
+    .querySelector<SVGPathElement>(`svg path[data-edge-from="${from}"][data-edge-to="${to}"]`)
+    ?.getAttribute('d') ?? '';
 }
 
 describe('TaskSubtasks', () => {
@@ -307,6 +487,21 @@ describe('TaskSubtasks', () => {
     expect(edgePaths.every(path => path.includes(' H ') && !path.includes(' C '))).toBe(true);
   });
 
+  it('routes skip-level execution graph edges around intermediate nodes', () => {
+    const { container } = render(
+      <TooltipProvider>
+        <TaskSubtasks task={createSkipLevelWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    const skipEdgePath = getExecutionGraphEdgePath(container, 'wp-1', 'wp-3');
+
+    expect(skipEdgePath).toContain(' H ');
+    expect(skipEdgePath).toContain(' V ');
+    expect((skipEdgePath.match(/ V /g) ?? []).length).toBeGreaterThanOrEqual(2);
+    expect(skipEdgePath).not.toBe('M 136 37 H 306');
+  });
+
   it('keeps execution graph edges gray until a connected node is selected', () => {
     const { container } = render(
       <TooltipProvider>
@@ -326,6 +521,48 @@ describe('TaskSubtasks', () => {
     expect(selectedEdges.some(path => path.getAttribute('class')?.includes('stroke-border'))).toBe(true);
     expect(selectedEdges.some(path => path.getAttribute('marker-end') !== 'url(#subtask-graph-arrow-default)')).toBe(true);
     expect(selectedEdges.some(path => path.getAttribute('marker-end') === 'url(#subtask-graph-arrow-default)')).toBe(true);
+  });
+
+  it('uses recorded work package timings for execution graph totals', () => {
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createTimedFanOutWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Sequential 17s')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 10s')).toBeInTheDocument();
+    expect(screen.getByText('Saves 7s')).toBeInTheDocument();
+    expect(screen.getByText('Max parallel 3')).toBeInTheDocument();
+  });
+
+  it('shows zero saved duration when recorded timings have no parallel savings', () => {
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createTimedSerialWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Sequential 3s')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 3s')).toBeInTheDocument();
+    expect(screen.getByText('Saves 0s')).toBeInTheDocument();
+  });
+
+  it('falls back to scoped task logs when recorded work package timings are absent', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({
+      success: true,
+      data: createTimedFanOutWorkPackageLogs(),
+    })) as typeof window.electronAPI.getTaskLogs;
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createFanOutWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(await screen.findByText('Sequential 17s')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 10s')).toBeInTheDocument();
+    expect(screen.getByText('Saves 7s')).toBeInTheDocument();
   });
 
   it('shows selected work package model output in the shared model log panel', async () => {

@@ -510,6 +510,8 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                 title,
                 description,
                 completionSummary: getPlanSubtaskCompletionSummary(subtask),
+                ...(subtask.started_at ? { startedAt: subtask.started_at } : {}),
+                ...(subtask.completed_at ? { completedAt: subtask.completed_at } : {}),
                 status,
                 files: [
                   ...(subtask.files_to_create ?? []),

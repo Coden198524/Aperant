@@ -10,6 +10,9 @@ export interface WorkItemInfo {
   patternFiles?: string[];
   verification?: string;
   dependsOn?: string[];
+  hasFileMetadata?: boolean;
+  hasDependencyMetadata?: boolean;
+  hasVerificationMetadata?: boolean;
   workPackage?: boolean;
   upstreamTaskIds?: string[];
   upstreamSource?: string;

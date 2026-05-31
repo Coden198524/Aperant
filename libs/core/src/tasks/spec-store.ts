@@ -105,6 +105,8 @@ export interface AutocodePlanSubtask {
   description: string;
   status: AutocodeSubtaskStatus;
   completionSummary?: string;
+  startedAt?: string;
+  completedAt?: string;
   files: string[];
   dependsOn?: string[];
   workPackage?: boolean;
@@ -205,6 +207,8 @@ interface RawPlanSubtask {
   completionSummary?: unknown;
   notes?: unknown;
   actual_output?: unknown;
+  started_at?: unknown;
+  completed_at?: unknown;
   status?: unknown;
   files_to_create?: unknown;
   files_to_modify?: unknown;
@@ -490,10 +494,11 @@ function readAutocodeTask(input: AutocodeTaskPathsInput & { specId: string }): A
   const specDir = getAutocodeSpecDir(input);
   const plan = loadAutocodeImplementationPlanSync(specDir) as ImplementationPlanFile | null;
   const requirements = loadAutocodeTaskRequirementsSync(specDir);
-  const metadata = readJson<AutocodeTaskMetadata>(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata)) ?? undefined;
+  const storedMetadata = readJson<AutocodeTaskMetadata>(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata)) ?? undefined;
+  const metadata = storedMetadata ? withResolvedRuntimeConcurrency(storedMetadata) : undefined;
   const specTitle = readSpecTitle(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile));
 
-  if (!plan && !requirements && !metadata && !specTitle) {
+  if (!plan && !requirements && !storedMetadata && !specTitle) {
     return null;
   }
 
@@ -545,6 +550,8 @@ function extractSubtasks(plan: ImplementationPlanFile | null): AutocodePlanSubta
         description,
         status: normalizeSubtaskStatus(subtask.status),
         ...(completionSummary ? { completionSummary } : {}),
+        ...(optionalStringFrom(subtask.started_at) ? { startedAt: optionalStringFrom(subtask.started_at) } : {}),
+        ...(optionalStringFrom(subtask.completed_at) ? { completedAt: optionalStringFrom(subtask.completed_at) } : {}),
         files: [
           ...toStringArray(subtask.files_to_create),
           ...toStringArray(subtask.files_to_modify),

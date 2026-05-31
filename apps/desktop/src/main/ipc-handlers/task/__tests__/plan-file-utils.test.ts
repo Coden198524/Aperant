@@ -83,4 +83,31 @@ describe('plan-file-utils token usage persistence', () => {
     expect(plan.phases?.[0].subtasks).toHaveLength(1);
     expect(projectStore.invalidateTasksCache).not.toHaveBeenCalled();
   });
+
+  it('round-trips subtask execution timing metadata through markdown plans', () => {
+    saveAutocodeImplementationPlanSync(planPath, {
+      phases: [
+        {
+          phase: 1,
+          name: 'Implementation',
+          subtasks: [
+            {
+              id: '1.1',
+              title: 'Implement',
+              description: 'Do work',
+              status: 'completed',
+              started_at: '2026-01-01T00:00:00.000Z',
+              completed_at: '2026-01-01T00:00:03.000Z',
+            },
+          ],
+        },
+      ],
+    });
+
+    const plan = loadAutocodeImplementationPlanSync(planPath)!;
+    const subtask = plan.phases?.[0]?.subtasks?.[0];
+
+    expect(subtask?.started_at).toBe('2026-01-01T00:00:00.000Z');
+    expect(subtask?.completed_at).toBe('2026-01-01T00:00:03.000Z');
+  });
 });

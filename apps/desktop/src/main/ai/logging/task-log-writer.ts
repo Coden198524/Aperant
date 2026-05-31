@@ -21,6 +21,7 @@ import type { TaskLogs, TaskLogPhase, TaskLogPhaseStatus, TaskLogEntry, TaskLogE
 import type { StreamEvent } from '../session/types';
 import {
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  repairAutocodeChineseMojibakeText,
   withAutocodeRuntimeFileWriteLockSync,
   type AutocodeRuntimeFileWriteLockScope,
   type Phase,
@@ -65,7 +66,7 @@ function normalizeLogText(value: unknown): string {
       ? ''
       : String(value);
 
-  return text
+  return repairAutocodeChineseMojibakeText(text)
     .replace(/\r\n/g, '\n')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
 }
