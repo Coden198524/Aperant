@@ -317,11 +317,12 @@ describe('executeConcurrentWorkItems', () => {
     }
   });
 
-  it('runs a round serially when dependency scheduling metadata is missing', async () => {
+  it('runs work items concurrently when dependency scheduling metadata is missing', async () => {
     const plan = createPlan(['a.ts', 'b.ts']);
     for (const subtask of plan.phases[0].subtasks) {
       delete (subtask as { files_to_modify?: string[] }).files_to_modify;
       delete (subtask as { files_to_create?: string[] }).files_to_create;
+      delete (subtask as { pattern_files?: string[] }).pattern_files;
       delete (subtask as { depends_on?: string[] }).depends_on;
     }
     setupPlanStates({ '/spec': plan });
@@ -344,8 +345,8 @@ describe('executeConcurrentWorkItems', () => {
 
     expect(result.success).toBe(true);
     expect(result.totalCompleted).toBe(2);
-    expect(maxActive).toBe(1);
-    expect(logs.some((message) => message.includes('Dependency scheduling metadata missing'))).toBe(true);
+    expect(maxActive).toBe(2);
+    expect(logs.some((message) => message.includes('Dependency scheduling metadata missing'))).toBe(false);
   });
 
   it('marks failed work items as failed after retries are exhausted', async () => {

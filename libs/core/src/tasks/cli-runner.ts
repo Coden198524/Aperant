@@ -511,7 +511,6 @@ const activeCodingSubtaskIds = new Set();
 const completedCodingSubtaskIds = new Set();
 const failedCodingSubtaskIds = new Set();
 const codingFailures = [];
-let schedulingMetadataWarningLogged = false;
 let nextCodingWorkerId = 0;
 const MODEL_OUTPUT_FLUSH_MS = 750;
 const MODEL_OUTPUT_MAX_CHARS = 3500;
@@ -1223,7 +1222,6 @@ function startCodingWorkQueue() {
 
   const workerCount = Math.min(codingWorkerLimit, Math.max(1, progress.total));
   appendTaskLogEntry('coding', 'info', 'Starting ' + workerCount + ' coding worker(s).');
-  warnIfPlanSchedulingMetadataIsIncomplete();
   fillCodingWorkers();
 }
 
@@ -1449,13 +1447,6 @@ function conflictsWithActiveCodingWork(candidate) {
 
   const activeItems = readPlanItems()
     .filter((item) => item.isSubtask && activeCodingSubtaskIds.has(item.id));
-  if (
-    activeItems.length > 0 &&
-    (!hasSafeConcurrentDependencyMetadata(candidate) ||
-      activeItems.some((active) => !hasSafeConcurrentDependencyMetadata(active)))
-  ) {
-    return true;
-  }
   for (const active of activeItems) {
     const activeFiles = getWorkItemFiles(active);
     if (candidateFiles.length === 0 || activeFiles.length === 0) {
@@ -1466,29 +1457,6 @@ function conflictsWithActiveCodingWork(candidate) {
     }
   }
   return false;
-}
-
-function warnIfPlanSchedulingMetadataIsIncomplete() {
-  if (schedulingMetadataWarningLogged || codingWorkerLimit <= 1) {
-    return;
-  }
-  const missing = readPlanItems()
-    .filter((item) => item.isSubtask && !hasSafeConcurrentDependencyMetadata(item));
-  if (missing.length === 0) {
-    return;
-  }
-  schedulingMetadataWarningLogged = true;
-  appendTaskLogEntry(
-    'coding',
-    'info',
-    'Some work items are missing dependency scheduling metadata; affected items will run serially to avoid unsafe parallel edits: ' +
-      missing.slice(0, 8).map((item) => item.id).join(', ') +
-      (missing.length > 8 ? ', ...' : ''),
-  );
-}
-
-function hasSafeConcurrentDependencyMetadata(item) {
-  return Boolean(item?.hasDependencyMetadata);
 }
 
 function getPlanItemStatusMap(items) {

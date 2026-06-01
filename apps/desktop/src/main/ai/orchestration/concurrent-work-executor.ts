@@ -141,28 +141,17 @@ export async function executeConcurrentWorkItems(
       };
     }
 
-    const missingDependencySchedulingMetadata = runnableItems.filter((item) => !hasSafeConcurrentDependencyMetadata(item));
     const groups: Array<{ mode: 'concurrent' | 'serial'; items: WorkItemInfo[] }> = [];
-    if (missingDependencySchedulingMetadata.length > 0) {
-      log(
-        `[ConcurrentWorkExecutor] Dependency scheduling metadata missing for ${missingDependencySchedulingMetadata
-          .slice(0, 8)
-          .map((item) => item.id)
-          .join(', ')}; running this round serially`,
-      );
-      groups.push({ mode: 'serial', items: runnableItems });
-    } else {
-      const { independent, sequential } = detectFileConflicts(runnableItems);
-      const independentItems = independent.flat();
-      const conflictGroups = groupConflictingWorkItems(sequential);
-      log(
-        `[ConcurrentWorkExecutor] Conflict analysis: ${independentItems.length} independent, ${sequential.length} conflict-locked`,
-      );
-      groups.push(
-        ...(independentItems.length > 0 ? [{ mode: 'concurrent' as const, items: independentItems }] : []),
-        ...conflictGroups.map((items) => ({ mode: 'serial' as const, items })),
-      );
-    }
+    const { independent, sequential } = detectFileConflicts(runnableItems);
+    const independentItems = independent.flat();
+    const conflictGroups = groupConflictingWorkItems(sequential);
+    log(
+      `[ConcurrentWorkExecutor] Conflict analysis: ${independentItems.length} independent, ${sequential.length} conflict-locked`,
+    );
+    groups.push(
+      ...(independentItems.length > 0 ? [{ mode: 'concurrent' as const, items: independentItems }] : []),
+      ...conflictGroups.map((items) => ({ mode: 'serial' as const, items })),
+    );
     log(`[ConcurrentWorkExecutor] Prepared ${groups.length} work group(s), workers=${workers}`);
 
     let roundCompleted = 0;
@@ -866,10 +855,6 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
   }
 
   return items;
-}
-
-function hasSafeConcurrentDependencyMetadata(item: WorkItemInfo): boolean {
-  return item.hasDependencyMetadata === true;
 }
 
 function hasDeclaredField(value: object, field: string): boolean {
