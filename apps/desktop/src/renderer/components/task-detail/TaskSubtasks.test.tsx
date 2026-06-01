@@ -607,6 +607,23 @@ describe('TaskSubtasks', () => {
     expect(screen.getByText('Saves 7s')).toBeInTheDocument();
   });
 
+  it('does not infer graph durations from non-terminal work package logs', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({
+      success: true,
+      data: createConcurrentWorkPackageLogs(),
+    })) as typeof window.electronAPI.getTaskLogs;
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createConcurrentWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(await screen.findByText('Sequential 2 rounds')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 1 rounds')).toBeInTheDocument();
+    expect(screen.queryByText('Sequential 1s')).not.toBeInTheDocument();
+  });
+
   it('shows selected work package model output in the shared model log panel', async () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({
       success: true,

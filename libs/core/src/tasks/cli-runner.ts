@@ -1854,12 +1854,17 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
     const now = new Date().toISOString();
     const lines = content.replace(/\\r\\n/g, '\\n').split('\\n');
     let updated = false;
+    let matchedSubtask = false;
+    let completionValue = null;
+    let startedValue = null;
+    let completedValue = null;
     for (let index = 0; index < lines.length; index += 1) {
       const pattern = /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+?)\\s*$/;
       const match = pattern.exec(lines[index]);
       if (!match || match[4] !== subtaskId) {
         continue;
       }
+      matchedSubtask = true;
 
       if (match[2] !== marker) {
         lines[index] = match[1] + marker + match[3] + match[4] + match[5] + match[6];
@@ -1877,25 +1882,31 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
         }
         if (/^\\s*-\\s+_Completion:/i.test(lines[insertAt])) {
           hasCompletion = true;
+          completionValue = extractPlanInlineFieldValue(lines[insertAt], 'Completion');
           if (status !== 'completed') {
             lines.splice(insertAt, 1);
             updated = true;
+            completionValue = null;
             continue;
           }
         }
         if (/^\\s*-\\s+_Started:/i.test(lines[insertAt])) {
           hasStarted = true;
+          startedValue = extractPlanInlineFieldValue(lines[insertAt], 'Started');
           if (status === 'pending') {
             lines.splice(insertAt, 1);
             updated = true;
+            startedValue = null;
             continue;
           }
         }
         if (/^\\s*-\\s+_Completed:/i.test(lines[insertAt])) {
           hasCompleted = true;
+          completedValue = extractPlanInlineFieldValue(lines[insertAt], 'Completed');
           if (status === 'pending' || status === 'in_progress') {
             lines.splice(insertAt, 1);
             updated = true;
+            completedValue = null;
             continue;
           }
         }
@@ -1903,16 +1914,19 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
         insertAt += 1;
       }
       if (status === 'completed' && note && !hasCompletion) {
-        lines.splice(insertAt, 0, detailIndent + '- _Completion: ' + compactPlanField(note) + '_');
+        completionValue = compactPlanField(note);
+        lines.splice(insertAt, 0, detailIndent + '- _Completion: ' + completionValue + '_');
         insertAt += 1;
         updated = true;
       }
       if (status !== 'pending' && !hasStarted) {
+        startedValue = now;
         lines.splice(insertAt, 0, detailIndent + '- _Started: ' + now + '_');
         insertAt += 1;
         updated = true;
       }
       if ((status === 'completed' || status === 'failed' || status === 'blocked') && !hasCompleted) {
+        completedValue = now;
         lines.splice(insertAt, 0, detailIndent + '- _Completed: ' + now + '_');
         insertAt += 1;
         updated = true;
@@ -1923,13 +1937,97 @@ function markPlanSubtaskStatus(subtaskId, status, note) {
       break;
     }
 
+    if (!matchedSubtask) {
+      return false;
+    }
+
+    content = lines.join('\\n');
+    const contentWithSubtaskMetadata = upsertPlanSubtaskMachineMetadata(content, subtaskId, buildSubtaskStatusMetadataUpdates(status, {
+      completionValue,
+      startedValue,
+      completedValue,
+    }));
+    if (contentWithSubtaskMetadata !== content) {
+      content = contentWithSubtaskMetadata;
+      updated = true;
+    }
+
     if (!updated) {
       return false;
     }
-    content = lines.join('\\n');
     content = upsertPlanMetadata(content, 'Updated', now);
     writeFileSync(planPath, content.endsWith('\\n') ? content : content + '\\n', 'utf8');
     return true;
+  });
+}
+
+function extractPlanInlineFieldValue(line, fieldName) {
+  const match = new RegExp('^\\\\s*-\\\\s+_' + fieldName + ':\\\\s*(.*?)_\\\\s*$', 'i').exec(line);
+  return match ? match[1].trim() : '';
+}
+
+function buildSubtaskStatusMetadataUpdates(status, values) {
+  if (status === 'pending') {
+    return {
+      completion_summary: null,
+      notes: null,
+      completed_at: null,
+      started_at: null,
+    };
+  }
+
+  const updates = {
+    started_at: values.startedValue || null,
+  };
+
+  if (status === 'in_progress') {
+    updates.completed_at = null;
+  } else if (status === 'completed' || status === 'failed' || status === 'blocked') {
+    updates.completed_at = values.completedValue || null;
+  }
+
+  if (status === 'completed' && values.completionValue) {
+    updates.completion_summary = values.completionValue;
+    updates.notes = values.completionValue;
+  } else if (status !== 'completed') {
+    updates.completion_summary = null;
+  }
+
+  return updates;
+}
+
+function upsertPlanSubtaskMachineMetadata(content, subtaskId, updates) {
+  const existingMetadata = parsePlanMachineMetadata(content);
+  const existingSubtaskMetadata = existingMetadata &&
+    existingMetadata.subtaskMetadata &&
+    typeof existingMetadata.subtaskMetadata === 'object' &&
+    !Array.isArray(existingMetadata.subtaskMetadata)
+    ? existingMetadata.subtaskMetadata
+    : {};
+  const subtaskMetadata = { ...existingSubtaskMetadata };
+  const existingFields = subtaskMetadata[subtaskId] &&
+    typeof subtaskMetadata[subtaskId] === 'object' &&
+    !Array.isArray(subtaskMetadata[subtaskId])
+    ? subtaskMetadata[subtaskId]
+    : {};
+  const nextFields = { ...existingFields };
+
+  for (const [key, value] of Object.entries(updates)) {
+    if (value === undefined || value === null || value === '') {
+      delete nextFields[key];
+    } else {
+      nextFields[key] = value;
+    }
+  }
+
+  if (Object.keys(nextFields).length === 0) {
+    delete subtaskMetadata[subtaskId];
+  } else {
+    subtaskMetadata[subtaskId] = nextFields;
+  }
+
+  return upsertPlanMachineMetadata(content, {
+    subtaskMetadata: Object.keys(subtaskMetadata).length > 0 ? subtaskMetadata : null,
   });
 }
 

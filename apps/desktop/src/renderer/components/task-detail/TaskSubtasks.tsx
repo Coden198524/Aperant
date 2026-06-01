@@ -1059,6 +1059,7 @@ function getLogInferredTimingBySubtaskId(logs: TaskLogsData | null | undefined):
   durationMs: number;
 }> {
   const timingById = new Map<string, { startedMs: number; completedMs: number; durationMs: number }>();
+  const terminalSubtaskIds = new Set<string>();
   if (!logs) {
     return timingById;
   }
@@ -1077,6 +1078,10 @@ function getLogInferredTimingBySubtaskId(logs: TaskLogsData | null | undefined):
     const timestamp = parseTimestampMs(entry.timestamp);
     if (timestamp === undefined) {
       continue;
+    }
+
+    if (isTerminalSubtaskLogEntry(entry)) {
+      terminalSubtaskIds.add(entry.subtask_id);
     }
 
     const previous = timingById.get(entry.subtask_id);
@@ -1098,7 +1103,20 @@ function getLogInferredTimingBySubtaskId(logs: TaskLogsData | null | undefined):
     });
   }
 
-  return timingById;
+  return new Map(
+    [...timingById.entries()].filter(([subtaskId]) => terminalSubtaskIds.has(subtaskId))
+  );
+}
+
+function isTerminalSubtaskLogEntry(entry: { type?: string; content?: string }): boolean {
+  const type = String(entry.type || '').toLowerCase();
+  if (type === 'success') {
+    return true;
+  }
+  if (type !== 'error') {
+    return false;
+  }
+  return /\b(work item|subtask)\b.+\b(failed|blocked|cancelled|completed)\b/i.test(String(entry.content || ''));
 }
 
 function resolveSubtaskTiming(
