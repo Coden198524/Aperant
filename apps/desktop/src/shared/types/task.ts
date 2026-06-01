@@ -43,6 +43,7 @@ export interface Subtask {
   completionSummary?: string;
   startedAt?: string;
   completedAt?: string;
+  durationMs?: number;
   status: SubtaskStatus;
   files: string[];
   dependsOn?: string[];
@@ -399,6 +400,8 @@ export interface PlanSubtask {
   completion_summary?: string;
   started_at?: string;
   completed_at?: string;
+  duration_ms?: number;
+  durationMs?: number;
   notes?: string;
   status: SubtaskStatus;
   files_to_create?: string[];

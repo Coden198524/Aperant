@@ -115,6 +115,7 @@ interface PlanSubtask {
   completion_summary?: string;
   completed_at?: string;
   started_at?: string;
+  duration_ms?: number;
   updated_at?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
@@ -132,11 +133,10 @@ type ProtectedSubtaskField =
   | 'completion_summary'
   | 'completed_at'
   | 'started_at'
+  | 'duration_ms'
   | 'updated_at';
 
-type ProtectedSubtaskState = Partial<Pick<PlanSubtask, ProtectedSubtaskField>> & {
-  status: string;
-};
+type ProtectedSubtaskState = { status: string } & Partial<Record<ProtectedSubtaskField, string | number>>;
 
 type DependencyBlockedSubtask = {
   subtask: PlanSubtask;
@@ -150,6 +150,7 @@ const PROTECTED_SUBTASK_FIELDS: ProtectedSubtaskField[] = [
   'completion_summary',
   'completed_at',
   'started_at',
+  'duration_ms',
   'updated_at',
 ];
 
@@ -331,6 +332,7 @@ export async function iterateSubtasks(
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
     lastResults.set(subtask.id, result);
     await restoreProtectedSubtaskStates(config.specDir, subtask.id, protectedSubtaskStates);
+    await recordSubtaskSessionDuration(config, subtask.id, result);
 
     const subtaskCompletedByTool = result.completedSubtaskIds?.includes(subtask.id) === true;
     if (subtaskCompletedByTool) {
@@ -568,6 +570,59 @@ async function learnFromFailedSubtask(
   } catch (error) {
     console.error('Failed to learn from failed subtask:', error);
   }
+}
+
+async function recordSubtaskSessionDuration(
+  config: SubtaskIteratorConfig,
+  subtaskId: string,
+  result: SessionResult,
+): Promise<void> {
+  const durationMs = getSessionDurationMs(result);
+  if (durationMs <= 0) {
+    return;
+  }
+
+  try {
+    const plan = await loadImplementationPlan(config.specDir);
+    if (!plan) {
+      return;
+    }
+
+    let updated = false;
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        const id = getSubtaskId(subtask);
+        if (id !== subtaskId) {
+          continue;
+        }
+        subtask.duration_ms = getExistingDurationMs(subtask) + durationMs;
+        subtask.updated_at = new Date().toISOString();
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      await saveImplementationPlanToFiles(config.specDir, plan as never);
+      if (config.sourceSpecDir) {
+        await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+      }
+    }
+  } catch {
+    // Non-fatal: duration is only used for reporting and should not block execution.
+  }
+}
+
+function getSessionDurationMs(result: SessionResult): number {
+  return typeof result.durationMs === 'number' && Number.isFinite(result.durationMs) && result.durationMs > 0
+    ? Math.round(result.durationMs)
+    : 0;
+}
+
+function getExistingDurationMs(subtask: PlanSubtask): number {
+  const value = subtask.duration_ms;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : 0;
 }
 
 /**
@@ -938,18 +993,19 @@ async function restoreProtectedSubtaskStates(
         if (!protectedState) {
           continue;
         }
+        const mutableSubtask = subtask as unknown as Record<string, string | number | undefined>;
 
         for (const field of PROTECTED_SUBTASK_FIELDS) {
           const nextValue = protectedState[field];
           if (nextValue === undefined) {
-            if (subtask[field] !== undefined) {
-              delete subtask[field];
+            if (mutableSubtask[field] !== undefined) {
+              delete mutableSubtask[field];
               updated = true;
             }
             continue;
           }
-          if (subtask[field] !== nextValue) {
-            subtask[field] = nextValue;
+          if (mutableSubtask[field] !== nextValue) {
+            mutableSubtask[field] = nextValue;
             updated = true;
           }
         }
@@ -968,9 +1024,10 @@ function pickProtectedSubtaskState(subtask: PlanSubtask): ProtectedSubtaskState 
   const state: ProtectedSubtaskState = {
     status: subtask.status,
   };
+  const values = subtask as unknown as Record<string, string | number | undefined>;
   for (const field of PROTECTED_SUBTASK_FIELDS) {
-    if (field !== 'status' && subtask[field] !== undefined) {
-      state[field] = subtask[field];
+    if (field !== 'status' && values[field] !== undefined) {
+      state[field] = values[field];
     }
   }
   return state;

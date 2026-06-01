@@ -17,6 +17,7 @@ export interface MutableAutocodePlanSubtask extends Record<string, unknown> {
   status?: string;
   started_at?: string | null;
   completed_at?: string | null;
+  duration_ms?: number | null;
 }
 
 export interface MutableAutocodePlanPhase extends Record<string, unknown> {

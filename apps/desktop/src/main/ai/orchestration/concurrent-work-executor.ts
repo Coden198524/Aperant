@@ -80,6 +80,7 @@ interface PlanSubtask {
   completion_summary?: string;
   completed_at?: string;
   started_at?: string;
+  duration_ms?: number;
   updated_at?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
@@ -327,6 +328,13 @@ async function executeWorkItemWithRetries(
       typeof sessionNumber === 'number' ? sessionNumber : undefined,
     );
     config.onWorkItemSessionComplete?.(item, sessionResult);
+    try {
+      await planWriter(() => recordWorkItemSessionDuration(config, item.id, sessionResult));
+    } catch (error) {
+      log(
+        `[ConcurrentWorkExecutor] Failed to record active duration for ${item.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
     lastResult = sessionResult;
 
     if (sessionResult.outcome === 'cancelled') {
@@ -511,11 +519,13 @@ async function executeWorkItemSession(
   sessionNumber?: number,
 ): Promise<SessionResult> {
   const log = (message: string) => config.onLog?.(message);
+  let accumulatedDurationMs = 0;
 
   while (true) {
     const sessionResult = await runWorkItemSessionSafely(config, item, attempt, sessionNumber);
 
     if (sessionResult.outcome === 'rate_limited') {
+      accumulatedDurationMs += getSessionDurationMs(sessionResult);
       log(`[ConcurrentWorkExecutor] Work item ${item.id} rate limited, waiting for reset...`);
       const errorMessage = sessionResult.error?.message ?? 'Rate limit exceeded';
       writeRateLimitPauseFile(config.specDir, errorMessage, null);
@@ -528,12 +538,13 @@ async function executeWorkItemSession(
       );
 
       if (config.abortSignal?.aborted) {
-        return { outcome: 'cancelled' } as SessionResult;
+        return createCancelledSessionResult(accumulatedDurationMs);
       }
       continue;
     }
 
     if (sessionResult.outcome === 'auth_failure') {
+      accumulatedDurationMs += getSessionDurationMs(sessionResult);
       log(`[ConcurrentWorkExecutor] Work item ${item.id} auth failure, waiting for re-auth...`);
       const errorMessage = sessionResult.error?.message ?? 'Authentication failed';
       writeAuthPauseFile(config.specDir, errorMessage);
@@ -541,12 +552,19 @@ async function executeWorkItemSession(
       await waitForAuthResume(config.specDir, config.sourceSpecDir, config.abortSignal);
 
       if (config.abortSignal?.aborted) {
-        return { outcome: 'cancelled' } as SessionResult;
+        return createCancelledSessionResult(accumulatedDurationMs);
       }
       continue;
     }
 
-    return sessionResult;
+    if (accumulatedDurationMs <= 0) {
+      return sessionResult;
+    }
+
+    return {
+      ...sessionResult,
+      durationMs: accumulatedDurationMs + getSessionDurationMs(sessionResult),
+    };
   }
 }
 
@@ -597,6 +615,59 @@ function createBlockedSessionResult(reason: string): SessionResult {
       retryable: false,
     },
   };
+}
+
+function createCancelledSessionResult(durationMs = 0): SessionResult {
+  return {
+    outcome: 'cancelled',
+    stepsExecuted: 0,
+    usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+    messages: [],
+    durationMs,
+    toolCallCount: 0,
+  };
+}
+
+async function recordWorkItemSessionDuration(
+  config: ConcurrentWorkExecutorConfig,
+  workItemId: string,
+  result: SessionResult,
+): Promise<void> {
+  const durationMs = getSessionDurationMs(result);
+  if (durationMs <= 0) {
+    return;
+  }
+
+  let updated = false;
+  await updateImplementationPlanInFiles(config.specDir, (plan) => {
+    for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (subtask.id !== workItemId) {
+          continue;
+        }
+        subtask.duration_ms = getExistingDurationMs(subtask) + durationMs;
+        subtask.updated_at = new Date().toISOString();
+        updated = true;
+      }
+    }
+    return updated ? plan : false;
+  });
+  if (updated) {
+    await syncWorkItemPlanToSource(config);
+  }
+}
+
+function getSessionDurationMs(result: SessionResult): number {
+  return typeof result.durationMs === 'number' && Number.isFinite(result.durationMs) && result.durationMs > 0
+    ? Math.round(result.durationMs)
+    : 0;
+}
+
+function getExistingDurationMs(subtask: PlanSubtask): number {
+  const value = subtask.duration_ms;
+  return typeof value === 'number' && Number.isFinite(value) && value > 0
+    ? Math.round(value)
+    : 0;
 }
 
 function classifyThrownSessionOutcome(message: string): SessionResult['outcome'] {

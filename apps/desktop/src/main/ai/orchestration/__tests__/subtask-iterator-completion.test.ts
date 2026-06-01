@@ -1,5 +1,5 @@
 ﻿import { describe, it, expect, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, readdir, readFile } from 'node:fs/promises';
+import { mkdtemp, rm, readdir, readFile, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -9,15 +9,16 @@ import {
 } from '@autocode/core';
 
 import { iterateSubtasks } from '../subtask-iterator';
+import { RESUME_FILE } from '../pause-handler';
 import type { SessionResult } from '../../session/types';
 
-function makeResult(outcome: SessionResult['outcome']): SessionResult {
+function makeResult(outcome: SessionResult['outcome'], durationMs = 1): SessionResult {
   return {
     outcome,
     stepsExecuted: 1,
     usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
     messages: [],
-    durationMs: 1,
+    durationMs,
     toolCallCount: 0,
   };
 }
@@ -103,6 +104,44 @@ describe('iterateSubtasks completion gating', () => {
     expect(result.completedSubtasks).toBe(1);
     expect(result.stuckSubtasks).toEqual([]);
     expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+  });
+
+  it('records active session duration across a rate-limit pause without counting wait time', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+
+    let runs = 0;
+    await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 2,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => {
+        runs++;
+        if (runs === 1) {
+          await writeFile(join(specDir, RESUME_FILE), '', 'utf-8');
+          return makeResult('rate_limited', 1000);
+        }
+        return makeResult('completed', 2000);
+      },
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ status: string; duration_ms?: number }> }>;
+    }>(specDir);
+
+    expect(runs).toBe(2);
+    expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+    expect(updatedPlan.phases[0].subtasks[0].duration_ms).toBe(3000);
   });
 
   it('writes session memory when active memory learning is enabled', async () => {

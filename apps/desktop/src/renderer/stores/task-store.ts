@@ -504,6 +504,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
               const title = subtask.title;
               const description = subtask.description;
               const status = (subtask.status as SubtaskStatus) || 'pending';
+              const durationMs = subtask.duration_ms ?? subtask.durationMs;
 
               return {
                 id,
@@ -512,6 +513,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
                 completionSummary: getPlanSubtaskCompletionSummary(subtask),
                 ...(subtask.started_at ? { startedAt: subtask.started_at } : {}),
                 ...(subtask.completed_at ? { completedAt: subtask.completed_at } : {}),
+                ...(typeof durationMs === 'number' ? { durationMs } : {}),
                 status,
                 files: [
                   ...(subtask.files_to_create ?? []),

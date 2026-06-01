@@ -1,7 +1,11 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { executeConcurrentWorkItems } from '../concurrent-work-executor';
 import type { ConcurrentWorkExecutorConfig } from '../concurrent-work-executor';
 import type { SessionResult } from '../../session/types';
+import { RESUME_FILE } from '../pause-handler';
 
 const mockLoadImplementationPlanFromFiles = vi.fn();
 const mockSaveImplementationPlanToFiles = vi.fn();
@@ -18,13 +22,13 @@ vi.mock('../quality-integration', () => ({
   learnFromSession: (...args: unknown[]) => mockLearnFromSession(...args),
 }));
 
-function makeSessionResult(outcome: SessionResult['outcome'] = 'completed'): SessionResult {
+function makeSessionResult(outcome: SessionResult['outcome'] = 'completed', durationMs = 1000): SessionResult {
   return {
     outcome,
     stepsExecuted: 1,
     usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
     messages: [],
-    durationMs: 1000,
+    durationMs,
     toolCallCount: 5,
   };
 }
@@ -287,6 +291,30 @@ describe('executeConcurrentWorkItems', () => {
     expect(result.totalCompleted).toBe(2);
     expect(maxActive).toBe(2);
     expect(logs.some((message) => message.includes('Dependency scheduling metadata missing'))).toBe(false);
+  });
+
+  it('records active work item duration across rate-limit pause without counting wait time', async () => {
+    const specDir = mkdtempSync(join(tmpdir(), 'concurrent-work-duration-'));
+    try {
+      const { getPlanState } = setupPlanState(['a.ts']);
+      let runs = 0;
+      const runWorkItemSession = vi.fn().mockImplementation(async () => {
+        runs++;
+        if (runs === 1) {
+          writeFileSync(join(specDir, RESUME_FILE), '', 'utf8');
+          return makeSessionResult('rate_limited', 1000);
+        }
+        return makeSessionResult('completed', 2000);
+      });
+
+      const result = await executeConcurrentWorkItems(createConfig({ specDir, runWorkItemSession }));
+
+      expect(result.success).toBe(true);
+      expect(runs).toBe(2);
+      expect((getPlanState().phases[0].subtasks[0] as { duration_ms?: number }).duration_ms).toBe(3000);
+    } finally {
+      rmSync(specDir, { recursive: true, force: true });
+    }
   });
 
   it('runs a round serially when dependency scheduling metadata is missing', async () => {

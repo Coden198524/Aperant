@@ -108,6 +108,7 @@ export interface AutocodePlanSubtask {
   completionSummary?: string;
   startedAt?: string;
   completedAt?: string;
+  durationMs?: number;
   files: string[];
   dependsOn?: string[];
   workPackage?: boolean;
@@ -210,6 +211,8 @@ interface RawPlanSubtask {
   actual_output?: unknown;
   started_at?: unknown;
   completed_at?: unknown;
+  duration_ms?: unknown;
+  durationMs?: unknown;
   status?: unknown;
   files_to_create?: unknown;
   files_to_modify?: unknown;
@@ -549,6 +552,7 @@ function extractSubtasks(plan: ImplementationPlanFile | null): AutocodePlanSubta
         subtask.notes,
         subtask.actual_output,
       );
+      const durationMs = optionalNumberFrom(subtask.duration_ms, subtask.durationMs);
       return {
         id,
         title,
@@ -557,6 +561,7 @@ function extractSubtasks(plan: ImplementationPlanFile | null): AutocodePlanSubta
         ...(completionSummary ? { completionSummary } : {}),
         ...(optionalStringFrom(subtask.started_at) ? { startedAt: optionalStringFrom(subtask.started_at) } : {}),
         ...(optionalStringFrom(subtask.completed_at) ? { completedAt: optionalStringFrom(subtask.completed_at) } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
         files: [
           ...toStringArray(subtask.files_to_create),
           ...toStringArray(subtask.files_to_modify),
@@ -600,6 +605,21 @@ function mapPlanStatus(
 
 function normalizeSubtaskStatus(value: unknown): AutocodeSubtaskStatus {
   return value === 'in_progress' || value === 'completed' || value === 'failed' ? value : 'pending';
+}
+
+function optionalNumberFrom(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
 }
 
 function nextSpecNumber(specsDir: string): number {

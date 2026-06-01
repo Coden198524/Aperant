@@ -1160,7 +1160,11 @@ function calculateParallelDurationFromTimedNodes(
     node.completedMs !== undefined &&
     node.completedMs >= node.startedMs
   );
-  if (nodesWithWallClock.length === nodes.length) {
+  const wallClockMatchesRecordedDurations = nodesWithWallClock.every(node =>
+    node.durationMs === undefined ||
+    Math.abs((node.completedMs ?? 0) - (node.startedMs ?? 0) - node.durationMs) < 1000
+  );
+  if (nodesWithWallClock.length === nodes.length && wallClockMatchesRecordedDurations) {
     const minStart = Math.min(...nodesWithWallClock.map(node => node.startedMs ?? 0));
     const maxCompleted = Math.max(...nodesWithWallClock.map(node => node.completedMs ?? 0));
     return Math.max(0, maxCompleted - minStart);

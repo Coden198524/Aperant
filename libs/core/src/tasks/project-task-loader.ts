@@ -110,6 +110,8 @@ interface RawProjectPlanSubtask {
   actual_output?: unknown;
   started_at?: unknown;
   completed_at?: unknown;
+  duration_ms?: unknown;
+  durationMs?: unknown;
   files_to_create?: unknown;
   files_to_modify?: unknown;
   pattern_files?: unknown;
@@ -541,6 +543,7 @@ function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): Autoco
             subtask.actual_output,
           )
         : '';
+      const durationMs = numberFrom(subtask.duration_ms, subtask.durationMs);
       return {
         id: stringFrom(subtask.id, `subtask-${phaseIndex + 1}-${subtaskIndex + 1}`),
         title,
@@ -548,6 +551,7 @@ function extractProjectPlanSubtasks(plan: ImplementationPlanFile | null): Autoco
         ...(completionSummary ? { completionSummary } : {}),
         ...(stringFrom(subtask.started_at) ? { startedAt: stringFrom(subtask.started_at) } : {}),
         ...(stringFrom(subtask.completed_at) ? { completedAt: stringFrom(subtask.completed_at) } : {}),
+        ...(durationMs !== undefined ? { durationMs } : {}),
         status: normalizeSubtaskStatus(subtask.status),
         files: [
           ...toStringArray(subtask.files_to_create),
@@ -723,6 +727,21 @@ function readJsonFile<T>(filePath: string): T | null {
 
 function normalizeSubtaskStatus(value: unknown): AutocodeSubtaskStatus {
   return value === 'in_progress' || value === 'completed' || value === 'failed' ? value : 'pending';
+}
+
+function numberFrom(...values: unknown[]): number | undefined {
+  for (const value of values) {
+    if (typeof value === 'number' && Number.isFinite(value) && value >= 0) {
+      return value;
+    }
+    if (typeof value === 'string' && value.trim()) {
+      const parsed = Number(value);
+      if (Number.isFinite(parsed) && parsed >= 0) {
+        return parsed;
+      }
+    }
+  }
+  return undefined;
 }
 
 function toStringArray(value: unknown): string[] {

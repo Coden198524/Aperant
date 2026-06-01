@@ -44,6 +44,7 @@ interface ParsedPlanItem {
   completion?: string;
   startedAt?: string;
   completedAt?: string;
+  durationMs?: number;
   updatedAt?: string;
 }
 
@@ -511,6 +512,7 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         'notes',
         'completed_at',
         'started_at',
+        'duration_ms',
         'work_package',
         'upstream_task_ids',
         'upstream_source',
@@ -555,6 +557,7 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
         'notes',
         'completed_at',
         'started_at',
+        'duration_ms',
         'work_package',
         'upstream_task_ids',
         'upstream_source',
@@ -615,6 +618,14 @@ function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: stri
       break;
     case 'completed':
       item.completedAt = value;
+      break;
+    case 'duration':
+      {
+        const durationMs = parseDurationMs(value);
+        if (durationMs !== undefined) {
+          item.durationMs = durationMs;
+        }
+      }
       break;
     case 'updated':
       item.updatedAt = value;
@@ -697,6 +708,7 @@ function planItemToSubtask(item: ParsedPlanItem): MutableAutocodePlanSubtask {
   }
   if (item.startedAt) subtask.started_at = item.startedAt;
   if (item.completedAt) subtask.completed_at = item.completedAt;
+  if (item.durationMs !== undefined) subtask.duration_ms = item.durationMs;
   if (item.updatedAt) subtask.updated_at = item.updatedAt;
   return subtask;
 }
@@ -761,6 +773,30 @@ function stringifyPlanValue(value: unknown): string {
   if (typeof value === 'string') return value.trim();
   if (typeof value === 'number' && Number.isFinite(value)) return String(value);
   return '';
+}
+
+function parseDurationMs(value: string): number | undefined {
+  const trimmed = value.trim().toLowerCase();
+  if (!trimmed) {
+    return undefined;
+  }
+  const match = /^(\d+(?:\.\d+)?)\s*(ms|s|sec|secs|second|seconds|m|min|mins|minute|minutes|h|hr|hrs|hour|hours)?$/.exec(trimmed);
+  if (!match) {
+    return undefined;
+  }
+  const numeric = Number(match[1]);
+  if (!Number.isFinite(numeric) || numeric < 0) {
+    return undefined;
+  }
+  const unit = match[2] ?? 'ms';
+  const multiplier = unit === 'h' || unit === 'hr' || unit === 'hrs' || unit === 'hour' || unit === 'hours'
+    ? 3_600_000
+    : unit === 'm' || unit === 'min' || unit === 'mins' || unit === 'minute' || unit === 'minutes'
+      ? 60_000
+      : unit === 's' || unit === 'sec' || unit === 'secs' || unit === 'second' || unit === 'seconds'
+        ? 1000
+        : 1;
+  return Math.round(numeric * multiplier);
 }
 
 function stringifyVerification(value: unknown): string {

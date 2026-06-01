@@ -226,6 +226,36 @@ function createTimedSerialWorkPackageTask(): Task {
   };
 }
 
+function createPausedTimedWorkPackageTask(): Task {
+  return {
+    ...createTask(),
+    subtasks: [
+      {
+        id: 'wp-1',
+        title: 'Build paused package',
+        description: 'Build paused package',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        completedAt: '2026-01-01T00:10:00.000Z',
+        durationMs: 60_000,
+      },
+      {
+        id: 'wp-2',
+        title: 'Build active package',
+        description: 'Build active package',
+        status: 'completed',
+        files: [],
+        workPackage: true,
+        startedAt: '2026-01-01T00:00:00.000Z',
+        completedAt: '2026-01-01T00:10:00.000Z',
+        durationMs: 120_000,
+      },
+    ],
+  };
+}
+
 function createTimedFanOutWorkPackageLogs(): TaskLogs {
   const logs = createConcurrentWorkPackageLogs();
   logs.phases.coding.entries = [
@@ -546,6 +576,18 @@ describe('TaskSubtasks', () => {
     expect(screen.getByText('Sequential 3s')).toBeInTheDocument();
     expect(screen.getByText('Parallel 3s')).toBeInTheDocument();
     expect(screen.getByText('Saves 0s')).toBeInTheDocument();
+  });
+
+  it('excludes paused wall-clock time from recorded duration statistics', () => {
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createPausedTimedWorkPackageTask()} />
+      </TooltipProvider>
+    );
+
+    expect(screen.getByText('Sequential 3m')).toBeInTheDocument();
+    expect(screen.getByText('Parallel 2m')).toBeInTheDocument();
+    expect(screen.getByText('Saves 1m')).toBeInTheDocument();
   });
 
   it('falls back to scoped task logs when recorded work package timings are absent', async () => {
