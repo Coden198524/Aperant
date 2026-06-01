@@ -248,7 +248,7 @@ function buildTaskRunPrompt(input: {
       `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if the current task description needs structured requirements.`,
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as an Autocode Markdown checklist with concrete phases and tasks.`,
       `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
-      '- Use [ ] for pending subtasks and concise metadata bullets: _Files to create/modify_, _Depends on_, _Requirements_, and _Verification_.',
+      '- Use [ ] for pending subtasks and concise metadata bullets: _Depends on_, _Requirements_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
     ].join('\n')}`;
   }
 
@@ -278,7 +278,7 @@ function buildTaskRunPrompt(input: {
             `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
           ]),
       '- Keep tasks independently implementable and verifiable.',
-      '- Every executable task must include _Files to create/modify_, _Depends on_, and _Verification_. Use _Depends on: none_ only for root work.',
+      '- Every executable task must include _Depends on_ and _Verification_. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
       '- Set new task checkboxes to [ ].',
     ].join('\n')}`;
   }
@@ -1451,8 +1451,8 @@ function conflictsWithActiveCodingWork(candidate) {
     .filter((item) => item.isSubtask && activeCodingSubtaskIds.has(item.id));
   if (
     activeItems.length > 0 &&
-    (!hasSafeConcurrentSchedulingMetadata(candidate) ||
-      activeItems.some((active) => !hasSafeConcurrentSchedulingMetadata(active)))
+    (!hasSafeConcurrentDependencyMetadata(candidate) ||
+      activeItems.some((active) => !hasSafeConcurrentDependencyMetadata(active)))
   ) {
     return true;
   }
@@ -1473,7 +1473,7 @@ function warnIfPlanSchedulingMetadataIsIncomplete() {
     return;
   }
   const missing = readPlanItems()
-    .filter((item) => item.isSubtask && (!hasSafeConcurrentSchedulingMetadata(item) || !item.hasVerificationMetadata));
+    .filter((item) => item.isSubtask && !hasSafeConcurrentDependencyMetadata(item));
   if (missing.length === 0) {
     return;
   }
@@ -1481,14 +1481,14 @@ function warnIfPlanSchedulingMetadataIsIncomplete() {
   appendTaskLogEntry(
     'coding',
     'info',
-    'Some work items are missing scheduling metadata; affected items will run serially to avoid unsafe parallel edits: ' +
+    'Some work items are missing dependency scheduling metadata; affected items will run serially to avoid unsafe parallel edits: ' +
       missing.slice(0, 8).map((item) => item.id).join(', ') +
       (missing.length > 8 ? ', ...' : ''),
   );
 }
 
-function hasSafeConcurrentSchedulingMetadata(item) {
-  return Boolean(item?.hasFileMetadata && item?.hasDependencyMetadata);
+function hasSafeConcurrentDependencyMetadata(item) {
+  return Boolean(item?.hasDependencyMetadata);
 }
 
 function getPlanItemStatusMap(items) {
@@ -2820,9 +2820,6 @@ function validatePlanningSchedulingMetadata() {
     if (!item.hasDependencyMetadata) {
       errors.push(item.id + ' missing _Depends on: ..._ metadata');
     }
-    if (!item.hasFileMetadata) {
-      errors.push(item.id + ' missing _Files to create/modify: ..._ metadata');
-    }
     if (!item.hasVerificationMetadata) {
       errors.push(item.id + ' missing _Verification: ..._ metadata');
     }
@@ -2867,7 +2864,7 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- Single Autocode Markdown checklist.',
     '- Include at least one executable task numbered like 1.1, 1.2, or 2.1.',
     '- A top-level phase alone is not enough.',
-    '- Each task must include _Files to create/modify_, _Depends on_, and _Verification_.',
+    '- Each task must include _Depends on_ and _Verification_. Include _Files to create/modify_ when write intent is known.',
     '- Use _Depends on: none_ only for root work. Use _Files to modify: none_ only for read-only validation.',
   ];
 

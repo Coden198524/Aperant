@@ -574,8 +574,10 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(plan.phases[0].subtasks ?? []).toHaveLength(8);
       expect(plan.phases[0].subtasks?.every((subtask) => subtask.work_package)).toBe(true);
       expect(plan.phases[0].subtasks?.[0]?.upstream_task_ids).toEqual(['1.1']);
+      expect(plan.phases[0].subtasks?.[0]?.depends_on).toEqual([]);
       expect(plan.phases[0].subtasks?.[7]?.upstream_task_ids).toEqual(['8.1']);
       expect(plan.phases[0].subtasks?.[1]?.depends_on).toEqual(['wp-1']);
+      expect(planContent).toContain('_Depends on: none_');
       expect(planContent).toContain('- [ ] wp. Runtime work packages');
       expect(tasksContent).toContain('- [ ] 8. Phase 8');
       const legacyShardPath = join(specDir, ['implementation_plan', 'phase-1', 'json'].join('.'));

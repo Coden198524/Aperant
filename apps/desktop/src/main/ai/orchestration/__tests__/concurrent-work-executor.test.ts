@@ -258,7 +258,38 @@ describe('executeConcurrentWorkItems', () => {
     expect(maxActive).toBe(2);
   });
 
-  it('runs a round serially when scheduling metadata is missing', async () => {
+  it('runs work items concurrently when file metadata is missing but dependencies are declared', async () => {
+    const plan = createPlan(['a.ts', 'b.ts']);
+    for (const subtask of plan.phases[0].subtasks) {
+      delete (subtask as { files_to_modify?: string[] }).files_to_modify;
+      delete (subtask as { files_to_create?: string[] }).files_to_create;
+      delete (subtask as { pattern_files?: string[] }).pattern_files;
+    }
+    setupPlanStates({ '/spec': plan });
+    const logs: string[] = [];
+    let active = 0;
+    let maxActive = 0;
+    const runWorkItemSession = vi.fn().mockImplementation(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return makeSessionResult();
+    });
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      workers: 2,
+      runWorkItemSession,
+      onLog: (message) => logs.push(message),
+    }));
+
+    expect(result.success).toBe(true);
+    expect(result.totalCompleted).toBe(2);
+    expect(maxActive).toBe(2);
+    expect(logs.some((message) => message.includes('Dependency scheduling metadata missing'))).toBe(false);
+  });
+
+  it('runs a round serially when dependency scheduling metadata is missing', async () => {
     const plan = createPlan(['a.ts', 'b.ts']);
     for (const subtask of plan.phases[0].subtasks) {
       delete (subtask as { files_to_modify?: string[] }).files_to_modify;
@@ -286,7 +317,7 @@ describe('executeConcurrentWorkItems', () => {
     expect(result.success).toBe(true);
     expect(result.totalCompleted).toBe(2);
     expect(maxActive).toBe(1);
-    expect(logs.some((message) => message.includes('Scheduling metadata missing'))).toBe(true);
+    expect(logs.some((message) => message.includes('Dependency scheduling metadata missing'))).toBe(true);
   });
 
   it('marks failed work items as failed after retries are exhausted', async () => {

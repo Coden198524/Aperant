@@ -126,16 +126,10 @@ function validatePlanningSchedulingMetadata(
       });
 
       const hasDependencyMetadata = hasOwnField(subtask, 'depends_on');
-      const hasFileMetadata = hasOwnField(subtask, 'files_to_create') ||
-        hasOwnField(subtask, 'files_to_modify') ||
-        hasOwnField(subtask, 'pattern_files');
       const hasVerificationMetadata = hasOwnField(subtask, 'verification') && subtask.verification !== undefined;
 
       if (!hasDependencyMetadata) {
         errors.push(`${subtask.id} missing _Depends on: ..._ metadata`);
-      }
-      if (!hasFileMetadata) {
-        errors.push(`${subtask.id} missing _Files to create/modify: ..._ metadata`);
       }
       if (!hasVerificationMetadata) {
         errors.push(`${subtask.id} missing _Verification: ..._ metadata`);
@@ -213,7 +207,7 @@ function buildStandardTasksValidationRetryPrompt(errors: string[]): string {
     '',
     `Retry with the Write tool and rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks}, not ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
     'Use checklist Markdown with phase items such as "- [ ] 1. Phase" and task items such as "- [ ] 1.1 Task".',
-    'Every executable task must include _Files to create/modify_, _Depends on_, and _Verification_.',
+    'Every executable task must include _Depends on_ and _Verification_. Include _Files to create/modify_ when write intent is known.',
     'Use _Depends on: none_ only for root tasks. Add real dependencies for tasks that share files or consume prior outputs.',
     'Keep independent tasks dependency-free when they can run safely in parallel.',
   ].join('\n');

@@ -140,11 +140,11 @@ export async function executeConcurrentWorkItems(
       };
     }
 
-    const missingSchedulingMetadata = runnableItems.filter((item) => !hasSafeConcurrentSchedulingMetadata(item));
+    const missingDependencySchedulingMetadata = runnableItems.filter((item) => !hasSafeConcurrentDependencyMetadata(item));
     const groups: Array<{ mode: 'concurrent' | 'serial'; items: WorkItemInfo[] }> = [];
-    if (missingSchedulingMetadata.length > 0) {
+    if (missingDependencySchedulingMetadata.length > 0) {
       log(
-        `[ConcurrentWorkExecutor] Scheduling metadata missing for ${missingSchedulingMetadata
+        `[ConcurrentWorkExecutor] Dependency scheduling metadata missing for ${missingDependencySchedulingMetadata
           .slice(0, 8)
           .map((item) => item.id)
           .join(', ')}; running this round serially`,
@@ -797,8 +797,8 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
   return items;
 }
 
-function hasSafeConcurrentSchedulingMetadata(item: WorkItemInfo): boolean {
-  return item.hasFileMetadata === true && item.hasDependencyMetadata === true;
+function hasSafeConcurrentDependencyMetadata(item: WorkItemInfo): boolean {
+  return item.hasDependencyMetadata === true;
 }
 
 function hasDeclaredField(value: object, field: string): boolean {

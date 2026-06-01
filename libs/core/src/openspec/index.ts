@@ -2972,7 +2972,7 @@ function buildOpenSpecWorkPackageSubtask(
     ...(filesToCreate.length > 0 ? { files_to_create: filesToCreate } : {}),
     ...(filesToModify.length > 0 ? { files_to_modify: filesToModify } : {}),
     ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
-    ...(workPackage.dependsOn.length > 0 ? { depends_on: workPackage.dependsOn } : {}),
+    depends_on: workPackage.dependsOn,
     ...(requirements.length > 0 ? { requirements } : {}),
     verification: {
       type: 'manual',
@@ -2999,6 +2999,7 @@ function buildOpenSpecFallbackWorkPackage(change: OpenSpecChangeSource, language
       ].join('\n'),
       status: 'pending',
       pattern_files: listOpenSpecSourcePaths(change),
+      depends_on: [],
       verification: {
         type: 'manual',
         run: '确认实现满足 OpenSpec 变更，并记录验证证据。',
@@ -3022,6 +3023,7 @@ function buildOpenSpecFallbackWorkPackage(change: OpenSpecChangeSource, language
     ].join('\n'),
     status: 'pending',
     pattern_files: listOpenSpecSourcePaths(change),
+    depends_on: [],
     verification: {
       type: 'manual',
       run: 'Confirm the implementation satisfies the OpenSpec change and record verification evidence.',
