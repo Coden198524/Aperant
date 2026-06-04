@@ -34,6 +34,7 @@ import { MemoryObserver } from '../memory/observer';
 import { StepInjectionDecider } from '../memory/injection';
 import type { MemoryIpcRequest, MemoryCandidate, SessionOutcome, SessionType } from '../memory/types';
 import type { MemoryToolIpcRequest, MemoryIpcMessage } from '../memory/ipc/worker-observer-proxy';
+import { debugLog } from '../../../shared/utils/debug-logger';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -232,13 +233,13 @@ export class WorkerBridge extends EventEmitter {
         this.progressTracker.processEvent(message.data);
         this.emitProgressFromTracker(message.taskId, message.projectId);
         if (message.data.type === 'usage-update') {
-          console.log('[worker-bridge] Received usage-update, before merge:', {
+          debugLog('[worker-bridge] Received usage-update, before merge:', {
             lastTokenUsage: this.lastTokenUsage,
             historicalTokenUsage: this.historicalTokenUsage,
             incomingUsage: message.data.usage,
           });
           this.lastTokenUsage = this.mergeIncomingTokenUsage(message.data.usage);
-          console.log('[worker-bridge] After merge:', this.lastTokenUsage);
+          debugLog('[worker-bridge] After merge:', this.lastTokenUsage);
           this.emitTyped('task-token-usage', message.taskId, this.lastTokenUsage, message.projectId);
         }
         break;
@@ -248,13 +249,13 @@ export class WorkerBridge extends EventEmitter {
         break;
 
       case 'task-token-usage':
-        console.log('[worker-bridge] Received task-token-usage, before merge:', {
+        debugLog('[worker-bridge] Received task-token-usage, before merge:', {
           lastTokenUsage: this.lastTokenUsage,
           historicalTokenUsage: this.historicalTokenUsage,
           incomingUsage: message.data,
         });
         this.lastTokenUsage = this.mergeIncomingTokenUsage(message.data);
-        console.log('[worker-bridge] After merge:', this.lastTokenUsage);
+        debugLog('[worker-bridge] After merge:', this.lastTokenUsage);
         this.emitTyped('task-token-usage', message.taskId, this.lastTokenUsage, message.projectId);
         break;
 

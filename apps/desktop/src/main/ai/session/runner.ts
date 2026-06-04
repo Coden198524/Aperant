@@ -40,6 +40,7 @@ import type {
   SessionMessage,
 } from './types';
 import type { QueueResolvedAuth } from '../auth/types';
+import { debugLog } from '../../../shared/utils/debug-logger';
 
 // =============================================================================
 // Constants
@@ -507,7 +508,7 @@ export async function runAgentSession(
 
         const newAuth = await onAccountSwitch(activeAccountId, sessionError);
         if (newAuth) {
-          console.log(`[SessionRunner] Switching to account ${newAuth.accountId} with model ${newAuth.resolvedModelId}`);
+          debugLog(`[SessionRunner] Switching to account ${newAuth.accountId} with model ${newAuth.resolvedModelId}`);
 
           // Switch to new account - dynamic import to avoid circular deps
           const { createProvider } = await import('../providers/factory');
@@ -729,7 +730,7 @@ async function executeStream(
       const usagePct = contextWindowLimit > 0
         ? ((lastPromptTokens / contextWindowLimit) * 100).toFixed(1)
         : 'N/A';
-      console.log(`[SessionRunner] Context Window: ${lastPromptTokens.toLocaleString()} / ${contextWindowLimit.toLocaleString()} tokens (${usagePct}%)`);
+      debugLog(`[SessionRunner] Context Window: ${lastPromptTokens.toLocaleString()} / ${contextWindowLimit.toLocaleString()} tokens (${usagePct}%)`);
     }
     // Forward to external listener
     onEvent?.(event);
@@ -769,9 +770,9 @@ async function executeStream(
     : undefined;
 
   if (promptCachingMetadata) {
-    console.log(`[SessionRunner] Prompt Caching: ENABLED (${config.provider} ephemeral cache)`);
+    debugLog(`[SessionRunner] Prompt Caching: ENABLED (${config.provider} ephemeral cache)`);
   } else {
-    console.log('[SessionRunner] Prompt Caching: DISABLED (model does not support caching)');
+    debugLog('[SessionRunner] Prompt Caching: DISABLED (model does not support caching)');
   }
 
   // Execute streamText - prepareStep is only added when memory context exists
@@ -1160,7 +1161,7 @@ async function executeStream(
   const cacheCreationTokens = (totalUsage as any)?.cacheCreationTokens ?? 0;
   const hasCacheData = cacheReadTokens > 0 || cacheCreationTokens > 0;
 
-  console.log('[SessionRunner] Token Usage:', {
+  debugLog('[SessionRunner] Token Usage:', {
     prompt: usage.promptTokens.toLocaleString(),
     completion: usage.completionTokens.toLocaleString(),
     total: usage.totalTokens.toLocaleString(),
@@ -1173,7 +1174,7 @@ async function executeStream(
 
   // Log only when usage is missing or zero (potential issue)
   if (usage.totalTokens === 0) {
-    console.log('[SessionRunner] Warning: Zero token usage detected', {
+    debugLog('[SessionRunner] Warning: Zero token usage detected', {
       totalUsage,
       summaryUsage: summary.usage,
     });

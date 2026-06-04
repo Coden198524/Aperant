@@ -5,9 +5,12 @@
 
 export const isDebugEnabled = (): boolean => {
   if (typeof process !== 'undefined' && process.env) {
-    return process.env.DEBUG === 'true';
+    if (process.env.DEBUG === 'true' || process.env.DEBUG === '1') {
+      return true;
+    }
   }
-  return false;
+
+  return typeof window !== 'undefined' && window.DEBUG === true;
 };
 
 function safeConsoleWarn(...args: unknown[]): void {

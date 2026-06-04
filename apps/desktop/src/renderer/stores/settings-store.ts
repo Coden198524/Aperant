@@ -4,9 +4,48 @@ import type { APIProfile, ProfileFormData, TestConnectionResult, ModelInfo } fro
 import type { BuiltinProvider, ProviderAccount } from '@shared/types/provider-account';
 import type { IPCResult } from '@shared/types/common';
 import { DEFAULT_APP_SETTINGS } from '../../shared/constants';
+import { debugLog } from '../../shared/utils/debug-logger';
 import i18n from '../../shared/i18n';
 import { toast } from '../hooks/use-toast';
 import { markSettingsLoaded } from '../lib/sentry';
+
+const MAX_DISCOVERED_MODEL_CACHE_ENTRIES = 20;
+
+function normalizeModelDiscoveryBaseUrl(baseUrl: string): string {
+  return baseUrl.trim().replace(/\/+$/, '');
+}
+
+function hashForCache(value: string): string {
+  let hash = 0x811c9dc5;
+  for (let i = 0; i < value.length; i += 1) {
+    hash ^= value.charCodeAt(i);
+    hash = Math.imul(hash, 0x01000193);
+  }
+  return (hash >>> 0).toString(16).padStart(8, '0');
+}
+
+function createModelDiscoveryCacheKey(baseUrl: string, apiKey: string): string {
+  const normalizedBaseUrl = normalizeModelDiscoveryBaseUrl(baseUrl);
+  return `${normalizedBaseUrl}::key-${apiKey.length}-${hashForCache(apiKey)}`;
+}
+
+function withDiscoveredModelsCacheEntry(
+  cache: Map<string, ModelInfo[]>,
+  cacheKey: string,
+  models: ModelInfo[]
+): Map<string, ModelInfo[]> {
+  const next = new Map(cache);
+  next.delete(cacheKey);
+  next.set(cacheKey, models);
+
+  while (next.size > MAX_DISCOVERED_MODEL_CACHE_ENTRIES) {
+    const oldestKey = next.keys().next().value;
+    if (!oldestKey) break;
+    next.delete(oldestKey);
+  }
+
+  return next;
+}
 
 interface SettingsState {
   settings: AppSettings;
@@ -281,30 +320,48 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   },
 
   discoverModels: async (baseUrl: string, apiKey: string, signal?: AbortSignal): Promise<ModelInfo[] | null> => {
-    console.log('[settings-store] discoverModels called with:', { baseUrl, apiKey: `${apiKey.slice(-4)}` });
-    // Generate cache key from baseUrl and apiKey (last 4 chars)
-    const cacheKey = `${baseUrl}::${apiKey.slice(-4)}`;
+    const normalizedBaseUrl = normalizeModelDiscoveryBaseUrl(baseUrl);
+    const cacheKey = createModelDiscoveryCacheKey(baseUrl, apiKey);
+    debugLog('[settings-store] discoverModels called', {
+      baseUrl: normalizedBaseUrl,
+      apiKeyLength: apiKey.length,
+      cacheKey
+    });
 
     // Check cache first
     const state = useSettingsStore.getState();
     const cached = state.discoveredModels.get(cacheKey);
     if (cached) {
-      console.log('[settings-store] Returning cached models');
+      debugLog('[settings-store] Returning cached models', {
+        baseUrl: normalizedBaseUrl,
+        modelCount: cached.length
+      });
+      set((state) => ({
+        discoveredModels: withDiscoveredModelsCacheEntry(state.discoveredModels, cacheKey, cached),
+        modelsLoading: false,
+        modelsError: null
+      }));
       return cached;
     }
 
     // Fetch from API
     set({ modelsLoading: true, modelsError: null });
     try {
-      console.log('[settings-store] Calling window.electronAPI.discoverModels...');
+      debugLog('[settings-store] Calling window.electronAPI.discoverModels', {
+        baseUrl: normalizedBaseUrl
+      });
       const result = await window.electronAPI.discoverModels(baseUrl, apiKey, signal);
-      console.log('[settings-store] discoverModels result:', result);
+      debugLog('[settings-store] discoverModels result', {
+        success: result.success,
+        modelCount: result.success ? result.data?.models.length ?? 0 : 0,
+        error: result.success ? undefined : result.error
+      });
 
       if (result.success && result.data) {
         const models = result.data.models;
         // Cache the results
         set((state) => ({
-          discoveredModels: new Map(state.discoveredModels).set(cacheKey, models),
+          discoveredModels: withDiscoveredModelsCacheEntry(state.discoveredModels, cacheKey, models),
           modelsLoading: false
         }));
         return models;

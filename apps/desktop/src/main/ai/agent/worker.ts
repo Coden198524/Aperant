@@ -1138,7 +1138,9 @@ async function run(): Promise<void> {
     // Log file cache statistics
     const cacheStats = fileCache.getStats();
     if (cacheStats.hits > 0 || cacheStats.misses > 0) {
-      postLog(`[FileCache] Session Stats: ${cacheStats.hits} hits, ${cacheStats.misses} misses, ${(cacheStats.hitRate * 100).toFixed(1)}% hit rate, ${cacheStats.size} files cached`);
+      const cachedMiB = (cacheStats.bytes / (1024 * 1024)).toFixed(1);
+      const maxMiB = (cacheStats.maxBytes / (1024 * 1024)).toFixed(0);
+      postLog(`[FileCache] Session Stats: ${cacheStats.hits} hits, ${cacheStats.misses} misses, ${(cacheStats.hitRate * 100).toFixed(1)}% hit rate, ${cacheStats.size}/${cacheStats.maxEntries} files cached, ${cachedMiB}/${maxMiB} MiB`);
     }
 
     // Cleanup MCP clients

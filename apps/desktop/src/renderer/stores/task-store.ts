@@ -479,7 +479,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) {
-        console.log('[updateTaskFromPlan] Task not found:', taskId);
+        debugLog('[updateTaskFromPlan] Task not found:', taskId);
         return state;
       }
 
@@ -543,7 +543,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
           // Helps trace whether real-time plan updates reach the store correctly.
           const completedCount = subtasks.filter(s => s.status === 'completed').length;
           if (completedCount > 0) {
-            console.warn(`[updateTaskFromPlan] Task ${taskId}: ${completedCount}/${subtasks.length} subtasks completed`);
+            debugWarn(`[updateTaskFromPlan] Task ${taskId}: ${completedCount}/${subtasks.length} subtasks completed`);
           }
 
           // NOTE: We do NOT update status or title from plan anymore.
@@ -634,19 +634,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
   updateTaskTokenUsage: (taskId, usage) => {
     recordTaskActivity(taskId);
 
-    console.log(`[TaskStore.updateTaskTokenUsage] Called for ${taskId}:`, usage);
+    debugLog(`[TaskStore.updateTaskTokenUsage] Called for ${taskId}:`, usage);
 
     set((state) => {
       const index = findTaskIndex(state.tasks, taskId);
       if (index === -1) {
-        console.warn(`[TaskStore.updateTaskTokenUsage] Task not found: ${taskId}`);
+        debugWarn(`[TaskStore.updateTaskTokenUsage] Task not found: ${taskId}`);
         return state;
       }
 
       const previousUsage = state.tasks[index].tokenUsage;
       const mergedUsage = mergeTokenUsageForTask(previousUsage, usage);
 
-      console.log(`[TaskStore.updateTaskTokenUsage] Merging for ${taskId}:`, {
+      debugLog(`[TaskStore.updateTaskTokenUsage] Merging for ${taskId}:`, {
         previous: previousUsage,
         incoming: usage,
         merged: mergedUsage
@@ -1046,7 +1046,7 @@ export async function persistTaskStatus(
     if (!result.success) {
       // Check if this is a worktree exists case
       if (result.worktreeExists) {
-        console.log('[persistTaskStatus] Worktree exists, confirmation needed');
+        debugLog('[persistTaskStatus] Worktree exists, confirmation needed');
         return {
           success: false,
           worktreeExists: true,

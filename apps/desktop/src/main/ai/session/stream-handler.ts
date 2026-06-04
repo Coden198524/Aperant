@@ -21,6 +21,7 @@ import type {
   TokenUsage,
 } from './types';
 import { classifyError, classifyToolError } from './error-classifier';
+import { debugLog } from '../../../shared/utils/debug-logger';
 
 // =============================================================================
 // Types
@@ -276,7 +277,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
   function processPart(part: FullStreamPart): void {
     // Only log important part types
     if (part.type === 'finish-step' || part.type === 'finish' || part.type === 'error') {
-      console.log(`[StreamHandler] ${part.type}:`, part);
+      debugLog(`[StreamHandler] ${part.type}:`, part);
     }
 
     switch (part.type) {
@@ -309,9 +310,9 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
         break;
       case 'finish':
         // Handle final 'finish' event which might contain usage
-        console.log('[StreamHandler] Got finish event:', part);
+        debugLog('[StreamHandler] Got finish event:', part);
         if ((part as any).usage) {
-          console.log('[StreamHandler] Found usage in finish event!', (part as any).usage);
+          debugLog('[StreamHandler] Found usage in finish event!', (part as any).usage);
           // Accumulate usage from finish event
           const usage = (part as any).usage;
           const promptTokens = usage.prompt_tokens ?? usage.inputTokens ?? usage.promptTokens ?? 0;
@@ -320,7 +321,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
             state.cumulativeUsage.promptTokens += promptTokens;
             state.cumulativeUsage.completionTokens += completionTokens;
             state.cumulativeUsage.totalTokens += (promptTokens + completionTokens);
-            console.log('[StreamHandler] Updated cumulative usage from finish event:', state.cumulativeUsage);
+            debugLog('[StreamHandler] Updated cumulative usage from finish event:', state.cumulativeUsage);
           }
         }
         break;
@@ -389,7 +390,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
     // Debug: Log tool call input for Write tool to diagnose JSON truncation
     if (part.toolName === 'Write' && part.input) {
       const input = part.input;
-      console.log('[StreamHandler] Write tool call:', {
+      debugLog('[StreamHandler] Write tool call:', {
         toolCallId,
         inputType: typeof input,
         isObject: typeof input === 'object' && input !== null,
@@ -521,7 +522,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
     // Check if response has any usage-related fields we might have missed
     if (promptTokens === 0 && completionTokens === 0 && part.response) {
       const resp = part.response as any;
-      console.log('[StreamHandler] No usage found, checking response object:', {
+      debugLog('[StreamHandler] No usage found, checking response object:', {
         hasUsage: !!resp.usage,
         responseKeys: Object.keys(resp),
         headers: resp.headers ? Object.keys(resp.headers) : 'none'
@@ -532,7 +533,7 @@ export function createStreamHandler(onEvent: SessionEventCallback, sessionId?: s
 
     // Only log if we got non-zero usage or if usage data is completely missing
     if (totalTokens > 0 || (!part.usage && !part.response?.usage)) {
-      console.log(`[StreamHandler] finish-step usage:`, {
+      debugLog(`[StreamHandler] finish-step usage:`, {
         step: state.stepNumber,
         prompt: promptTokens,
         completion: completionTokens,
