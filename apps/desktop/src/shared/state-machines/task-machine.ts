@@ -23,6 +23,12 @@ export type TaskEvent =
   | { type: 'QA_FAILED'; iteration: number; issueCount: number; issues: string[] }
   | { type: 'QA_FIXING_STARTED'; iteration: number }
   | { type: 'QA_FIXING_COMPLETE'; iteration: number }
+  | {
+      type: 'DIRECT_COMPLETED';
+      outcome: string;
+      filesChanged?: number;
+      quality?: Record<string, unknown>;
+    }
   | { type: 'PLANNING_FAILED'; error: string; recoverable: boolean }
   | { type: 'CODING_FAILED'; subtaskId: string; error: string; attemptCount: number }
   | { type: 'QA_MAX_ITERATIONS'; iteration: number; maxIterations: number }
@@ -52,6 +58,7 @@ export const taskMachine = createMachine(
           PLANNING_STARTED: 'planning',
           // Fallback: if coding starts from backlog (e.g., resumed task), go to coding
           CODING_STARTED: 'coding',
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           USER_STOPPED: 'backlog'
         }
       },
@@ -73,6 +80,7 @@ export const taskMachine = createMachine(
           QA_STARTED: 'qa_review',
           // Fallback: if QA_PASSED arrives while in planning (entire build completed), go to human_review
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           PLANNING_FAILED: { target: 'error', actions: ['setReviewReasonErrors', 'setError'] },
           // Older workers may still emit CODING_FAILED for pre-coding failures.
           CODING_FAILED: { target: 'error', actions: ['setReviewReasonErrors', 'setError'] },
@@ -99,6 +107,7 @@ export const taskMachine = createMachine(
           ALL_SUBTASKS_DONE: 'qa_review',
           // Fallback: if QA_PASSED arrives while still in coding (missed QA_STARTED), go to human_review
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           CODING_FAILED: { target: 'error', actions: ['setReviewReasonErrors', 'setError'] },
           // Fallback: if QA fails while XState is still in coding (missed QA_STARTED), handle gracefully
           QA_MAX_ITERATIONS: { target: 'error', actions: 'setReviewReasonErrors' },
@@ -112,6 +121,7 @@ export const taskMachine = createMachine(
           CODING_STARTED: { target: 'coding', actions: 'clearReviewReason' },
           QA_FAILED: 'qa_fixing',
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           QA_MAX_ITERATIONS: { target: 'error', actions: 'setReviewReasonErrors' },
           QA_AGENT_ERROR: { target: 'error', actions: 'setReviewReasonErrors' },
           USER_STOPPED: { target: 'human_review', actions: 'setReviewReasonStopped' },
@@ -124,6 +134,7 @@ export const taskMachine = createMachine(
           QA_FIXING_COMPLETE: 'qa_review',
           QA_FAILED: { target: 'human_review', actions: 'setReviewReasonQaRejected' },
           QA_PASSED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
+          DIRECT_COMPLETED: { target: 'human_review', actions: 'setReviewReasonCompleted' },
           QA_MAX_ITERATIONS: { target: 'error', actions: 'setReviewReasonErrors' },
           QA_AGENT_ERROR: { target: 'error', actions: 'setReviewReasonErrors' },
           USER_STOPPED: { target: 'human_review', actions: 'setReviewReasonStopped' },

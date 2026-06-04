@@ -3,9 +3,6 @@
  *
  * Allows agents to explicitly record a memory during a session.
  * Posts to the main thread's MemoryService via IPC.
- *
- * Replaces the old file-based `record_gotcha` tool for the new memory system.
- * Sessions without memory support get a no-op stub.
  */
 
 import { tool } from 'ai';
@@ -13,10 +10,6 @@ import { z } from 'zod/v3';
 import type { Tool as AITool } from 'ai';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { MemoryType, MemoryRecordEntry } from '../types';
-
-// ============================================================
-// INPUT SCHEMA
-// ============================================================
 
 const recordMemorySchema = z.object({
   type: z
@@ -38,7 +31,7 @@ const recordMemorySchema = z.object({
     .min(10)
     .max(500)
     .describe(
-      'The memory content. Be specific and actionable. Example: "Always call refreshToken() before making API calls in auth.ts — the token expires after 15 minutes of inactivity"',
+      'The memory content. Be specific and actionable. Example: "Always call refreshToken() before making API calls in auth.ts; the token expires after 15 minutes of inactivity"',
     ),
   relatedFiles: z
     .array(z.string())
@@ -59,17 +52,6 @@ const recordMemorySchema = z.object({
 
 type RecordMemoryInput = z.infer<typeof recordMemorySchema>;
 
-// ============================================================
-// FACTORY
-// ============================================================
-
-/**
- * Create a `record_memory` AI SDK tool bound to a WorkerObserverProxy.
- *
- * @param proxy - The worker-side memory IPC proxy
- * @param projectId - Project identifier for scoping
- * @param sessionId - Current session ID for provenance tracking
- */
 export function createRecordMemoryTool(
   proxy: WorkerObserverProxy,
   projectId: string,
@@ -77,7 +59,7 @@ export function createRecordMemoryTool(
 ): AITool<RecordMemoryInput, string> {
   return tool({
     description:
-      'Record a memory for future sessions. Use this when you discover something non-obvious that will help future agents working on this codebase: gotchas, architectural decisions, recurring errors, file couplings, or failed approaches. Be specific and actionable.',
+      'Record a concise persistent memory for future sessions. Use this only for non-obvious, reusable gotchas, decisions, recurring errors, file couplings, or failed approaches.',
     inputSchema: recordMemorySchema,
     execute: async (input: RecordMemoryInput): Promise<string> => {
       const entry: MemoryRecordEntry = {
@@ -96,24 +78,20 @@ export function createRecordMemoryTool(
       const id = await proxy.recordMemory(entry);
 
       if (!id) {
-        // Graceful degradation — memory system unavailable
-        return `Memory noted (could not persist): ${input.content}`;
+        return 'Memory noted locally, but could not be persisted.';
       }
 
-      return `Memory recorded (id: ${id.slice(0, 8)}): ${input.content}`;
+      return `Memory recorded (id: ${id.slice(0, 8)}).`;
     },
   });
 }
 
-/**
- * Create a no-op stub `record_memory` tool for sessions without memory support.
- */
 export function createRecordMemoryStub(): AITool<RecordMemoryInput, string> {
   return tool({
     description: 'Record a memory (memory not available in this session).',
     inputSchema: recordMemorySchema,
-    execute: async (input: RecordMemoryInput): Promise<string> => {
-      return `Memory noted (not persisted — memory system unavailable): ${input.content}`;
+    execute: async (_input: RecordMemoryInput): Promise<string> => {
+      return 'Memory noted locally, but memory persistence is unavailable in this session.';
     },
   });
 }

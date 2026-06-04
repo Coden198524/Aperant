@@ -13,6 +13,7 @@ import { afterEach, describe, expect, it } from 'vitest';
 
 import {
   PROJECT_PROMPT_PROFILE_VERSION,
+  buildCompactProjectPromptProfileSection,
   buildProjectPromptProfileSection,
   generateProjectPromptProfile,
   initializeProjectPromptProfile,
@@ -110,6 +111,18 @@ describe('project prompt profile', () => {
     expect(section).toContain('PROJECT PROMPT ADAPTATION');
     expect(section).toContain('Apply web domain checks only when they are relevant');
     expect(section).toContain('Typecheck: npm run typecheck');
+  });
+
+  it('builds a compact adaptation section for Direct mode prompts', () => {
+    const projectDir = makeProject();
+    const profile = generateProjectPromptProfile(projectDir);
+
+    const section = buildCompactProjectPromptProfileSection(profile);
+
+    expect(section).toContain('PROJECT PROFILE');
+    expect(section).toContain('typecheck: npm run typecheck');
+    expect(section).not.toContain('PROJECT PROMPT ADAPTATION');
+    expect(section.length).toBeLessThan(700);
   });
 
   it('does not overwrite existing project prompt overrides unless requested', () => {

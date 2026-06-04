@@ -583,13 +583,13 @@ export async function runAgentSession(
  * Number of initial steps to skip before starting memory injection.
  * The agent needs time to process the initial context before injections are useful.
  */
-const MEMORY_INJECTION_WARMUP_STEPS = 5;
+const MEMORY_INJECTION_WARMUP_STEPS = 6;
 
 /** Minimum gap between memory injections. Keeps repeated reminders from bloating context. */
-const MEMORY_INJECTION_INTERVAL_STEPS = 4;
+const MEMORY_INJECTION_INTERVAL_STEPS = 6;
 
 /** Stop active memory injection once the context window is moderately full. */
-const MEMORY_INJECTION_CONTEXT_THRESHOLD = 0.65;
+const MEMORY_INJECTION_CONTEXT_THRESHOLD = 0.55;
 
 /** Default output token limits by phase. */
 const DEFAULT_MAX_OUTPUT_TOKENS = 12_000;

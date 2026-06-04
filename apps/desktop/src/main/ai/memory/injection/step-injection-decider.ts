@@ -21,6 +21,12 @@ import type { AcuteCandidate } from '../types';
 export type RecentToolCallContext = AutocodeMemoryRuntimeRecentToolCallContext;
 export type StepInjection = AutocodeMemoryRuntimeStepInjection;
 
+const MAX_GOTCHA_INJECTION_MEMORIES = 2;
+const MAX_MEMORY_ALERT_CHARS = 260;
+const MAX_SCRATCHPAD_REFLECTIONS = 3;
+const MAX_SCRATCHPAD_TEXT_CHARS = 140;
+const MAX_SHORT_CIRCUIT_CHARS = 260;
+
 // ============================================================
 // STEP INJECTION DECIDER
 // ============================================================
@@ -54,8 +60,8 @@ export class StepInjectionDecider {
       if (recentReads.length > 0) {
         const freshGotchas = await this.memoryService.search({
           types: ['gotcha', 'error_pattern', 'dead_end'],
-          relatedFiles: recentReads,
-          limit: 4,
+          relatedFiles: [...new Set(recentReads)],
+          limit: MAX_GOTCHA_INJECTION_MEMORIES,
           minConfidence: 0.65,
           projectId: this.projectId,
           filter: (m) => !recentContext.injectedMemoryIds.has(m.id),
@@ -92,7 +98,7 @@ export class StepInjectionDecider {
         const known = await this.memoryService.searchByPattern(pattern);
         if (known && !recentContext.injectedMemoryIds.has(known.id)) {
           return {
-            content: `MEMORY CONTEXT: ${known.content}`,
+            content: `MEMORY CONTEXT: ${truncateText(known.content, MAX_SHORT_CIRCUIT_CHARS)}`,
             type: 'search_short_circuit',
             memoryIds: [known.id],
           };
@@ -122,7 +128,7 @@ export class StepInjectionDecider {
           m.relatedFiles.length > 0
             ? ` (${m.relatedFiles.map((f) => f.split('/').pop()).join(', ')})`
             : '';
-        return `- [${m.type}]${fileContext}: ${m.content}`;
+        return `- [${m.type}]${fileContext}: ${truncateText(m.content, MAX_MEMORY_ALERT_CHARS)}`;
       })
       .join('\n');
 
@@ -131,13 +137,25 @@ export class StepInjectionDecider {
 
   private formatScratchpadEntries(entries: AcuteCandidate[]): string {
     const lines = entries
+      .slice(0, MAX_SCRATCHPAD_REFLECTIONS)
       .map((e) => {
         const rawData = e.rawData as Record<string, unknown>;
-        const text = String(rawData.triggeringText ?? rawData.matchedText ?? '').slice(0, 200);
+        const text = truncateText(
+          String(rawData.triggeringText ?? rawData.matchedText ?? ''),
+          MAX_SCRATCHPAD_TEXT_CHARS,
+        );
         return `- [step ${e.stepNumber}] ${e.signalType}: ${text}`;
       })
       .join('\n');
 
     return `MEMORY REFLECTION — New observations recorded this step:\n${lines}`;
   }
+}
+
+function truncateText(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
 }

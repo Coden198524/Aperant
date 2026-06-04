@@ -917,3 +917,20 @@ When a bundled template asks for heavier process than this project profile requi
 
 ---`;
 }
+
+export function buildCompactProjectPromptProfileSection(profile: ProjectPromptProfile): string {
+  const commands = [
+    ...profile.commands.typecheck.map((command) => `typecheck: ${command}`),
+    ...profile.commands.lint.map((command) => `lint: ${command}`),
+    ...profile.commands.test.map((command) => `test: ${command}`),
+    ...profile.commands.build.map((command) => `build: ${command}`),
+  ].slice(0, 4);
+
+  return `## PROJECT PROFILE
+
+- Stack: ${formatList([...profile.project.languages, ...profile.project.frameworks])}
+- Context: ${profile.workflow.contextGuidance}
+- Validation: ${profile.workflow.validationGuidance}
+- Commands: ${commands.length > 0 ? commands.join('; ') : 'use the smallest reliable project-specific verification'}
+`;
+}

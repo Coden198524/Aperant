@@ -150,14 +150,26 @@ export function registerAgenteventsHandlers(
         if (checkTask && checkProject) {
           if (code === 0) {
             // Clean exit (code 0) means the task completed successfully but the terminal
-            // event (e.g., QA_PASSED) was lost in transit. Treat as completed, not stopped.
+            // event was lost in transit. Treat as completed, not stopped.
+            const directModeFallback = checkTask.metadata?.workflowMode === 'off' ||
+              checkTask.metadata?.developmentMode === 'direct' ||
+              checkTask.metadata?.developmentMode === 'fast';
             console.warn(
               `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
-              `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing QA_PASSED`
+              `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing ${directModeFallback ? 'DIRECT_COMPLETED' : 'QA_PASSED'}`
             );
-            taskStateManager.handleUiEvent(taskId, {
-              type: 'QA_PASSED', iteration: 0, testsRun: {}
-            }, checkTask, checkProject);
+            if (directModeFallback) {
+              taskStateManager.handleUiEvent(taskId, {
+                type: 'DIRECT_COMPLETED',
+                outcome: 'completed',
+                filesChanged: 0,
+                quality: { fallback: true },
+              }, checkTask, checkProject);
+            } else {
+              taskStateManager.handleUiEvent(taskId, {
+                type: 'QA_PASSED', iteration: 0, testsRun: {}
+              }, checkTask, checkProject);
+            }
           } else {
             // Non-zero exit code 鈥?task was stopped or crashed
             const hasPlan = hasPlanWithSubtasks(checkProject, checkTask);

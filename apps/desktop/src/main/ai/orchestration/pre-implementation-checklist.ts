@@ -518,6 +518,34 @@ export function formatChecklistForPrompt(checklist: PreImplementationChecklist):
   return lines.join('\n');
 }
 
+export function formatCompactChecklistForPrompt(
+  checklist: PreImplementationChecklist,
+  maxItems = 5,
+): string {
+  const importantItems = checklist.items
+    .filter((item) => item.priority === 'critical' || item.priority === 'high')
+    .slice(0, maxItems);
+  const reviewFiles = checklist.filesToReview.slice(0, 3);
+  const lines: string[] = [
+    '## Pre-Implementation Risk Check',
+    `- Risk: ${checklist.riskLevel}`,
+  ];
+
+  if (importantItems.length > 0) {
+    lines.push('- Before editing, prevent:');
+    for (const item of importantItems) {
+      lines.push(`  - ${item.issue}: ${item.prevention}`);
+    }
+  }
+
+  if (reviewFiles.length > 0) {
+    lines.push(`- Review first: ${reviewFiles.join(', ')}`);
+  }
+
+  lines.push('- Keep this checklist in mind; do not restate it in the final answer.');
+  return lines.join('\n');
+}
+
 /**
  * Format checklist summary for logging.
  */

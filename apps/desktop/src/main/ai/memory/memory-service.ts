@@ -96,6 +96,12 @@ export class MemoryServiceImpl implements MemoryService {
    * Returns the generated memory ID.
    */
   async store(entry: MemoryRecordEntry): Promise<string> {
+    const existingId = await this.findExistingMemoryId(entry);
+    if (existingId) {
+      await this.updateAccessCount(existingId);
+      return existingId;
+    }
+
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
@@ -240,6 +246,8 @@ export class MemoryServiceImpl implements MemoryService {
         // Direct SQL query using structural filters
         memories = await this.directSearch(filters);
       }
+
+      memories = this.applyStructuralPostFilters(memories, filters);
 
       // Post-filter by minConfidence
       if (filters.minConfidence !== undefined) {
@@ -461,4 +469,55 @@ export class MemoryServiceImpl implements MemoryService {
     const result = await this.db.execute({ sql, args });
     return result.rows.map((r) => rowToMemory(r as Record<string, unknown>));
   }
+
+  private applyStructuralPostFilters(
+    memories: Memory[],
+    filters: MemorySearchFilters,
+  ): Memory[] {
+    return memories.filter((memory) => {
+      if (filters.types?.length && !filters.types.includes(memory.type)) {
+        return false;
+      }
+      if (filters.sources?.length && !filters.sources.includes(memory.source)) {
+        return false;
+      }
+      if (filters.scope && memory.scope !== filters.scope) {
+        return false;
+      }
+      if (filters.relatedFiles?.length && !hasOverlap(memory.relatedFiles, filters.relatedFiles)) {
+        return false;
+      }
+      if (filters.relatedModules?.length && !hasOverlap(memory.relatedModules, filters.relatedModules)) {
+        return false;
+      }
+      return true;
+    });
+  }
+
+  private async findExistingMemoryId(entry: MemoryRecordEntry): Promise<string | null> {
+    try {
+      const result = await this.db.execute({
+        sql: `SELECT id FROM memories
+              WHERE project_id = ?
+                AND type = ?
+                AND content = ?
+                AND deprecated = 0
+              LIMIT 1`,
+        args: [entry.projectId, entry.type, entry.content],
+      });
+      const row = result.rows[0] as Record<string, unknown> | undefined;
+      return typeof row?.id === 'string' ? row.id : null;
+    } catch {
+      return null;
+    }
+  }
+}
+
+function hasOverlap(values: string[], expected: string[]): boolean {
+  const normalized = new Set(values.map(normalizeFilterValue));
+  return expected.some((value) => normalized.has(normalizeFilterValue(value)));
+}
+
+function normalizeFilterValue(value: string): string {
+  return value.replace(/\\/g, '/').toLowerCase();
 }

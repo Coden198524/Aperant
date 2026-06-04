@@ -22,6 +22,11 @@ export interface PrefetchPlan {
   maxFiles: number;
 }
 
+const DEFAULT_PREFETCH_TOKEN_BUDGET = 8192;
+const DEFAULT_PREFETCH_MAX_FILES = 6;
+const MAX_ALWAYS_READ_FILES = 6;
+const MAX_FREQUENTLY_READ_FILES = 4;
+
 // ============================================================
 // PUBLIC API
 // ============================================================
@@ -67,18 +72,18 @@ export async function buildPrefetchPlan(
     }
 
     return {
-      alwaysReadFiles: [...new Set(alwaysReadFiles)].slice(0, 12),
-      frequentlyReadFiles: [...new Set(frequentlyReadFiles)].slice(0, 12),
-      totalTokenBudget: 32768,
-      maxFiles: 12,
+      alwaysReadFiles: [...new Set(alwaysReadFiles)].slice(0, MAX_ALWAYS_READ_FILES),
+      frequentlyReadFiles: [...new Set(frequentlyReadFiles)].slice(0, MAX_FREQUENTLY_READ_FILES),
+      totalTokenBudget: DEFAULT_PREFETCH_TOKEN_BUDGET,
+      maxFiles: DEFAULT_PREFETCH_MAX_FILES,
     };
   } catch {
     // Return empty plan on any failure
     return {
       alwaysReadFiles: [],
       frequentlyReadFiles: [],
-      totalTokenBudget: 32768,
-      maxFiles: 12,
+      totalTokenBudget: DEFAULT_PREFETCH_TOKEN_BUDGET,
+      maxFiles: DEFAULT_PREFETCH_MAX_FILES,
     };
   }
 }

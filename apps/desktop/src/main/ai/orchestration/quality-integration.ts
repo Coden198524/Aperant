@@ -19,7 +19,7 @@ import { loadAutocodeImplementationPlanSync } from '@autocode/core';
 import { runPreQASmokeTests, formatSmokeTestResults } from './pre-qa-smoke-tests';
 import { runIncrementalValidation, formatValidationResults } from './incremental-validation';
 import { enhanceCoderPrompt, shouldInjectPatterns, formatInjectionSummary } from './pattern-injection';
-import { generatePreImplementationChecklist, formatChecklistForPrompt, formatChecklistSummary } from './pre-implementation-checklist';
+import { generatePreImplementationChecklist, formatCompactChecklistForPrompt, formatChecklistSummary } from './pre-implementation-checklist';
 import { runSelfCritique, formatCritiqueSummary } from './self-critique';
 import { analyzeFailureAndRecover, formatFailureAnalysis, formatRecoverySummary, type FailureRecord } from './context-aware-recovery';
 import { extractAndStoreKnowledge, formatKnowledgeSummary } from './active-memory-learning';
@@ -56,17 +56,17 @@ export interface QualityConfig {
   projectId?: string;
 }
 
-// Default configuration - balanced optimization (core features only)
+// Default configuration - Standard/Spec balanced optimization with lightweight quality gates.
 // This aligns with the BALANCED_PRESET from workflow-config.ts
 const DEFAULT_CONFIG: Required<Omit<QualityConfig, 'memoryService' | 'projectId' | 'projectType'>> = {
   enablePreQASmokeTests: false, // Disabled for balanced optimization
   enableIncrementalValidation: true, // Core feature - keep enabled
   enablePatternInjection: false, // Disabled for balanced optimization
-  enablePreImplementationChecklist: false, // Disabled for balanced optimization
-  enableSelfCritique: false, // Disabled - redundant with QA review
+  enablePreImplementationChecklist: true,
+  enableSelfCritique: true,
   enableContextAwareRecovery: true, // Core feature - keep enabled
   enableActiveMemoryLearning: true, // Core feature - keep enabled
-  enableTieredQualityStandards: false, // Disabled for balanced optimization
+  enableTieredQualityStandards: true,
   enableDocumentationQualityGate: true,
 };
 
@@ -112,7 +112,7 @@ export async function enhancePromptWithQuality(
       memoryService: config.memoryService,
     });
     console.log(formatChecklistSummary(checklist));
-    enhancedPrompt = enhancedPrompt + '\n\n' + formatChecklistForPrompt(checklist);
+    enhancedPrompt = enhancedPrompt + '\n\n' + formatCompactChecklistForPrompt(checklist);
   }
 
   // 3. Add context-aware recovery (if enabled and has failures)
@@ -163,9 +163,15 @@ export async function validateSubtaskQuality(
   config: QualityConfig,
   projectDir: string,
   specDir: string,
-): Promise<{ passed: boolean; issues: string[] }> {
+  changedFiles?: string[],
+): Promise<{
+  passed: boolean;
+  issues: string[];
+  incrementalValidation?: import('./incremental-validation').IncrementalValidationResult;
+}> {
   const appliedConfig = { ...DEFAULT_CONFIG, ...config };
   const issues: string[] = [];
+  let incrementalValidation: import('./incremental-validation').IncrementalValidationResult | undefined;
 
   // Only validate if session completed successfully
   if (sessionResult.outcome !== 'completed') {
@@ -176,11 +182,14 @@ export async function validateSubtaskQuality(
   if (appliedConfig.enableIncrementalValidation) {
     const validationResult = await runIncrementalValidation({
       subtaskId: subtask.id,
-      filesModified: subtask.filesToModify || [],
+      filesModified: changedFiles && changedFiles.length > 0
+        ? changedFiles
+        : subtask.filesToModify || [],
       patternFiles: subtask.patternFiles,
       projectDir,
       specDir,
     });
+    incrementalValidation = validationResult;
 
     console.log(formatValidationResults(validationResult));
 
@@ -200,6 +209,7 @@ export async function validateSubtaskQuality(
   return {
     passed: issues.length === 0,
     issues,
+    incrementalValidation,
   };
 }
 

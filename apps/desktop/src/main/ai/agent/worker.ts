@@ -57,6 +57,7 @@ import { getPhaseThinking } from '../config/phase-config';
 import { TaskLogWriter } from '../logging/task-log-writer';
 import { loadProjectInstructions, injectContext } from '../prompts/prompt-loader';
 import {
+  buildCompactProjectPromptProfileSection,
   buildProjectPromptProfileSection,
   initializeProjectPromptProfile,
   loadProjectPromptOverride,
@@ -80,6 +81,12 @@ import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 import { resolveProjectAgentProfile } from '../config/project-agent-profile';
 import { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
 import { createRecordMemoryTool, createSearchMemoryTool } from '../memory/tools';
+import {
+  collectFilesChangedSinceBaseline,
+  collectGitChangedFileSnapshot,
+  loadGeneratedFilesForCritique,
+  type ChangedFileSnapshot,
+} from '../orchestration/changed-files';
 import type {
   Memory,
   MemoryRecordEntry,
@@ -144,15 +151,16 @@ function getQualityConfigFromWorkflowConfig(
 
   const qualityChecks = workflowConfig.qualityChecks ?? {};
   const conservativeMode = workflowConfig.optimizationLevel === 'conservative';
+  const standardQualityMode = workflowConfig.optimizationLevel === 'balanced' || conservativeMode;
   const gameMmoMode = projectType === 'game-mmo';
 
   return {
     enablePreQASmokeTests: qualityChecks.enableSmokeTests ?? false,
-    enableIncrementalValidation: conservativeMode || gameMmoMode,
+    enableIncrementalValidation: standardQualityMode || gameMmoMode,
     enablePatternInjection: qualityChecks.enablePatternInjection ?? gameMmoMode,
     enablePreImplementationChecklist: qualityChecks.enablePreImplementationChecklist ?? gameMmoMode,
     enableSelfCritique: qualityChecks.enableSelfCritique ?? false,
-    enableContextAwareRecovery: conservativeMode || gameMmoMode,
+    enableContextAwareRecovery: standardQualityMode || gameMmoMode,
     enableActiveMemoryLearning: true,
     enableTieredQualityStandards: qualityChecks.enableTieredQualityStandards ?? gameMmoMode,
     enableDocumentationQualityGate: true,
@@ -776,7 +784,7 @@ function getPromptProfileProjectDir(session: SerializableSessionConfig): string 
 }
 
 function shouldUseProjectPromptProfile(session: SerializableSessionConfig, promptName: string): boolean {
-  return !isDirectTaskSession(session) && promptName !== 'direct_task';
+  return promptName !== 'direct_task' || isDirectTaskSession(session);
 }
 
 function resolvePromptNameForAgent(agentType: AgentType): string {
@@ -876,7 +884,10 @@ async function assemblePrompt(
     });
 
   if (projectPromptProfile && !projectOverride) {
-    promptWithContext += `\n\n${buildProjectPromptProfileSection(projectPromptProfile)}`;
+    const profileSection = promptName === 'direct_task'
+      ? buildCompactProjectPromptProfileSection(projectPromptProfile)
+      : buildProjectPromptProfileSection(projectPromptProfile);
+    promptWithContext += `\n\n${profileSection}`;
   }
 
   let promptWithLanguage = appendLanguageRequirement(promptWithContext, session.language);
@@ -1256,6 +1267,219 @@ function getDirectSummaryLabels(language: SerializableSessionConfig['language'])
   };
 }
 
+interface DirectCodingQualityMetrics {
+  mode: 'direct';
+  outcome: string;
+  changedFiles: string[];
+  filesChanged: number;
+  stepsExecuted: number;
+  toolCallCount: number;
+  durationMs: number;
+  recordedAt: string;
+  selfCritique?: {
+    status: 'passed' | 'failed' | 'skipped';
+    score?: number;
+    filesReviewed: number;
+    improvements: string[];
+  };
+  validation: {
+    status: 'not_run';
+    reason: string;
+  };
+}
+
+function buildDirectCompletionSummaryV2(
+  session: SerializableSessionConfig,
+  result: SessionResult | undefined,
+  streamedText: string,
+  quality?: DirectCodingQualityMetrics,
+): string {
+  const finalText = getFinalAssistantText(result, streamedText);
+  const qualityAppendix = formatDirectQualityAppendix(session.language, quality);
+  if (finalText) {
+    return `${finalText}\n\n${qualityAppendix}`.trim();
+  }
+
+  const outcome = result?.outcome ?? 'unknown';
+  const error = result?.error?.message;
+  const labels = getDirectSummaryLabelsV2(session.language);
+  const reviewNote = isSuccessfulDirectOutcome(result)
+    ? localizeDirectSummaryText(
+        session.language,
+        'Direct mode skipped staged spec, implementation planning, and QA. Review the completion summary, runtime log, and git changes manually before approval.',
+        'Direct 模式已跳过阶段化规格、实现计划和 QA。人工确认前请检查完成总结、运行日志和 Git 变更。',
+        'Le mode direct a ignore la specification par etapes, le plan de mise en oeuvre et la QA. Relisez le resume, les journaux et les changements Git avant approbation.',
+      )
+    : localizeDirectSummaryText(
+        session.language,
+        `Direct mode ended with outcome "${outcome}".${error ? ` Error: ${error}` : ''}`,
+        `Direct 模式结束，结果为 "${outcome}"。${error ? `错误：${error}` : ''}`,
+        `Le mode direct s'est termine avec le resultat "${outcome}".${error ? ` Erreur : ${error}` : ''}`,
+      );
+
+  return [
+    `| ${labels.item} | ${labels.details} |`,
+    '| --- | --- |',
+    `| ${labels.whatChanged} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Direct model session finished for ${basename(session.specDir)}.`, `Direct 模式已完成：${basename(session.specDir)}。`, `Session en mode direct terminee pour ${basename(session.specDir)}.`))} |`,
+    `| ${labels.changedFiles} | ${escapeTableCell(formatChangedFilesForSummary(quality?.changedFiles ?? []))} |`,
+    `| ${labels.verification} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Session outcome: ${outcome}. Steps: ${result?.stepsExecuted ?? 0}. Tools: ${result?.toolCallCount ?? 0}.`, `会话结果：${outcome}。步骤：${result?.stepsExecuted ?? 0}。工具调用：${result?.toolCallCount ?? 0}。`, `Resultat de session : ${outcome}. Etapes : ${result?.stepsExecuted ?? 0}. Outils : ${result?.toolCallCount ?? 0}.`))} |`,
+    `| ${labels.quality} | ${escapeTableCell(formatDirectQualityLine(session.language, quality))} |`,
+    `| ${labels.reviewNotes} | ${escapeTableCell(reviewNote)} |`,
+  ].join('\n');
+}
+
+async function evaluateDirectCodingQuality(
+  session: SerializableSessionConfig,
+  result: SessionResult | undefined,
+  changedFiles: string[],
+): Promise<DirectCodingQualityMetrics> {
+  const metrics: DirectCodingQualityMetrics = {
+    mode: 'direct',
+    outcome: result?.outcome ?? 'unknown',
+    changedFiles,
+    filesChanged: changedFiles.length,
+    stepsExecuted: result?.stepsExecuted ?? 0,
+    toolCallCount: result?.toolCallCount ?? 0,
+    durationMs: result?.durationMs ?? 0,
+    recordedAt: new Date().toISOString(),
+    validation: {
+      status: 'not_run',
+      reason: 'Direct mode does not run staged QA; rely on model-reported verification and manual review.',
+    },
+  };
+
+  if (!isSuccessfulDirectOutcome(result) || changedFiles.length === 0) {
+    metrics.selfCritique = {
+      status: 'skipped',
+      filesReviewed: 0,
+      improvements: [],
+    };
+    return metrics;
+  }
+
+  try {
+    const generatedFiles = await loadGeneratedFilesForCritique(session.projectDir, changedFiles);
+    if (generatedFiles.length === 0) {
+      metrics.selfCritique = {
+        status: 'skipped',
+        filesReviewed: 0,
+        improvements: [],
+      };
+      return metrics;
+    }
+
+    const { runSelfCritique } = await import('../orchestration/self-critique');
+    const critique = await runSelfCritique({
+      generatedFiles,
+      subtask: {
+        id: 'direct-implementation',
+        description: extractDirectTaskDescription(session),
+        filesToModify: changedFiles,
+      },
+      projectDir: session.projectDir,
+      specDir: session.specDir,
+      minScore: 0.75,
+    });
+
+    metrics.selfCritique = {
+      status: critique.passed ? 'passed' : 'failed',
+      score: critique.score,
+      filesReviewed: generatedFiles.length,
+      improvements: critique.improvements.slice(0, 10),
+    };
+  } catch (error) {
+    metrics.selfCritique = {
+      status: 'skipped',
+      filesReviewed: 0,
+      improvements: [`Self-critique unavailable: ${error instanceof Error ? error.message : String(error)}`],
+    };
+  }
+
+  return metrics;
+}
+
+function formatDirectQualityAppendix(
+  language: SerializableSessionConfig['language'],
+  quality?: DirectCodingQualityMetrics,
+): string {
+  const labels = getDirectSummaryLabelsV2(language);
+  return [
+    `| ${labels.item} | ${labels.details} |`,
+    '| --- | --- |',
+    `| ${labels.changedFiles} | ${escapeTableCell(formatChangedFilesForSummary(quality?.changedFiles ?? []))} |`,
+    `| ${labels.quality} | ${escapeTableCell(formatDirectQualityLine(language, quality))} |`,
+    `| ${labels.reviewNotes} | ${escapeTableCell(localizeDirectSummaryText(language, 'Direct mode has no staged QA pass; review the git diff before approval.', 'Direct 模式没有阶段化 QA 通过结论；批准前请检查 Git diff。', 'Le mode direct n a pas de validation QA par etapes ; relisez le diff Git avant approbation.'))} |`,
+  ].join('\n');
+}
+
+function formatChangedFilesForSummary(files: string[]): string {
+  if (files.length === 0) {
+    return 'No changed files detected.';
+  }
+  const preview = files.slice(0, 12).join('<br>');
+  return files.length > 12 ? `${preview}<br>...and ${files.length - 12} more` : preview;
+}
+
+function formatDirectQualityLine(
+  language: SerializableSessionConfig['language'],
+  quality?: DirectCodingQualityMetrics,
+): string {
+  if (!quality) {
+    return localizeDirectSummaryText(language, 'Quality metrics unavailable.', '质量指标不可用。', 'Metriques qualite indisponibles.');
+  }
+  const selfCritique = quality.selfCritique
+    ? `${quality.selfCritique.status}${typeof quality.selfCritique.score === 'number' ? ` (${Math.round(quality.selfCritique.score * 100)}%)` : ''}, files reviewed: ${quality.selfCritique.filesReviewed}`
+    : 'not run';
+  return localizeDirectSummaryText(
+    language,
+    `Files changed: ${quality.filesChanged}. Self-critique: ${selfCritique}. Validation: ${quality.validation.status} (${quality.validation.reason}).`,
+    `变更文件：${quality.filesChanged}。自检：${selfCritique}。验证：${quality.validation.status}（${quality.validation.reason}）。`,
+    `Fichiers modifies : ${quality.filesChanged}. Auto-critique : ${selfCritique}. Validation : ${quality.validation.status} (${quality.validation.reason}).`,
+  );
+}
+
+function getDirectSummaryLabelsV2(language: SerializableSessionConfig['language']): {
+  item: string;
+  details: string;
+  whatChanged: string;
+  verification: string;
+  reviewNotes: string;
+  changedFiles: string;
+  quality: string;
+} {
+  if (language === 'zh-CN') {
+    return {
+      item: '项目',
+      details: '内容',
+      whatChanged: '修改内容',
+      verification: '验证结果',
+      reviewNotes: '审核要点',
+      changedFiles: '变更文件',
+      quality: 'AI 编码质量',
+    };
+  }
+  if (language === 'fr') {
+    return {
+      item: 'Element',
+      details: 'Details',
+      whatChanged: 'Changements',
+      verification: 'Verification',
+      reviewNotes: 'Notes de revue',
+      changedFiles: 'Fichiers modifies',
+      quality: 'Qualite du codage IA',
+    };
+  }
+  return {
+    item: 'Item',
+    details: 'Details',
+    whatChanged: 'What changed',
+    verification: 'Verification',
+    reviewNotes: 'Review notes',
+    changedFiles: 'Changed files',
+    quality: 'AI coding quality',
+  };
+}
+
 function extractDirectTaskDescription(session: SerializableSessionConfig): string {
   const initialMessage = session.initialMessages?.[0]?.content?.trim();
   if (initialMessage) {
@@ -1288,9 +1512,10 @@ function persistDirectTaskCompletion(
   result: SessionResult | undefined,
   streamedText: string,
   modifiedFiles: string[] = [],
+  quality?: DirectCodingQualityMetrics,
 ): void {
   const success = isSuccessfulDirectOutcome(result);
-  const summary = buildDirectCompletionSummary(session, result, streamedText);
+  const summary = buildDirectCompletionSummaryV2(session, result, streamedText, quality);
   const now = new Date().toISOString();
   const specDirs = Array.from(new Set([
     session.specDir,
@@ -1322,6 +1547,7 @@ function persistDirectTaskCompletion(
         outcome: result?.outcome ?? 'unknown',
         completed_at: now,
         summary_file: 'direct_summary.md',
+        ai_coding_quality: quality,
       };
       plan.updated_at = now;
       if (!plan.created_at) {
@@ -1461,7 +1687,11 @@ async function runDefaultSession(
   let result: SessionResult | undefined;
   let streamedText = '';
   const directModifiedFiles = new Set<string>();
+  let directChangedFileBaseline: ChangedFileSnapshot | null = null;
   try {
+    if (isDirectTaskSession(session)) {
+      directChangedFileBaseline = await collectGitChangedFileSnapshot(session.projectDir);
+    }
     const runnerOptions = {
       tools,
       memoryContext: memoryProxy ? { proxy: memoryProxy } : undefined,
@@ -1549,11 +1779,18 @@ async function runDefaultSession(
   }
 
   if (isDirectTaskSession(session)) {
-    const modifiedFiles = [...directModifiedFiles];
-    persistDirectTaskCompletion(session, result, streamedText, modifiedFiles);
+    const modifiedFiles = directChangedFileBaseline
+      ? await collectFilesChangedSinceBaseline(session.projectDir, directChangedFileBaseline, [...directModifiedFiles])
+      : [...directModifiedFiles];
+    const directQuality = await evaluateDirectCodingQuality(session, result, modifiedFiles);
+    persistDirectTaskCompletion(session, result, streamedText, modifiedFiles, directQuality);
     await learnFromDirectTaskSession(session, result, modifiedFiles);
     if (isSuccessfulDirectOutcome(result)) {
-      postTaskEvent('QA_PASSED', { iteration: 0, testsRun: { workflowMode: 'off' } });
+      postTaskEvent('DIRECT_COMPLETED', {
+        outcome: result?.outcome ?? 'unknown',
+        filesChanged: modifiedFiles.length,
+        quality: directQuality,
+      });
     } else {
       postTaskEvent('CODING_FAILED', {
         subtaskId: 'direct-implementation',

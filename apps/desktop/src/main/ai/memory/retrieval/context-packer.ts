@@ -21,7 +21,7 @@ export interface ContextPackingConfig {
 
 export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig> = {
   define: {
-    totalBudget: 1200,
+    totalBudget: 800,
     allocation: {
       workflow_recipe: 0.30,
       requirement: 0.20,
@@ -31,7 +31,7 @@ export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig
     },
   },
   implement: {
-    totalBudget: 1500,
+    totalBudget: 900,
     allocation: {
       gotcha: 0.30,
       error_pattern: 0.25,
@@ -41,7 +41,7 @@ export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig
     },
   },
   validate: {
-    totalBudget: 1200,
+    totalBudget: 800,
     allocation: {
       error_pattern: 0.30,
       requirement: 0.25,
@@ -50,7 +50,7 @@ export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig
     },
   },
   refine: {
-    totalBudget: 1000,
+    totalBudget: 700,
     allocation: {
       error_pattern: 0.35,
       gotcha: 0.25,
@@ -59,7 +59,7 @@ export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig
     },
   },
   explore: {
-    totalBudget: 1000,
+    totalBudget: 700,
     allocation: {
       module_insight: 0.40,
       decision: 0.25,
@@ -68,7 +68,7 @@ export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig
     },
   },
   reflect: {
-    totalBudget: 800,
+    totalBudget: 500,
     allocation: {
       work_unit_outcome: 0.40,
       task_calibration: 0.35,
@@ -76,6 +76,8 @@ export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig
     },
   },
 };
+
+const MAX_PACKED_MEMORY_CONTENT_CHARS = 700;
 
 // ============================================================
 // MAIN EXPORT
@@ -225,11 +227,19 @@ function formatMemory(memory: Memory, memoryType: MemoryType): string {
 
   return [
     `**${typeLabel}**${fileContext}${confidence}`,
-    memory.content,
+    truncateText(memory.content, MAX_PACKED_MEMORY_CONTENT_CHARS),
     citation,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function truncateText(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
 }
 
 function formatTypeLabel(type: MemoryType): string {

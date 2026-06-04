@@ -91,10 +91,10 @@ const MAX_SECRET_SCAN_FILES = 1000;
 const SMOKE_CHECKS: SmokeCheck[] = [
   // 1. Syntax checks (fastest, most critical)
   {
-    name: 'eslint',
+    name: 'lint',
     type: 'syntax',
     severity: 'critical',
-    command: 'npm run lint -- --max-warnings 0',
+    command: 'npm run lint',
     timeout: 15000,
     required: true,
     isApplicable: async (projectDir) => await hasScript(projectDir, 'lint'),
@@ -103,10 +103,10 @@ const SMOKE_CHECKS: SmokeCheck[] = [
     name: 'biome',
     type: 'syntax',
     severity: 'critical',
-    command: 'npm run lint',
+    command: 'npx biome check .',
     timeout: 10000,
     required: true,
-    isApplicable: async (projectDir) => await hasBiomeConfig(projectDir),
+    isApplicable: async (projectDir) => !(await hasScript(projectDir, 'lint')) && await hasBiomeConfig(projectDir),
   },
 
   // 2. Type checks
@@ -133,12 +133,12 @@ const SMOKE_CHECKS: SmokeCheck[] = [
 
   // 4. Unit tests (changed files only)
   {
-    name: 'unit_tests_changed',
+    name: 'unit_tests_project',
     type: 'test',
     severity: 'critical',
-    command: 'npm test -- --changed --passWithNoTests',
     timeout: 60000,
     required: true,
+    run: runProjectTestCheck,
     isApplicable: async (projectDir) => await hasScript(projectDir, 'test'),
   },
 
@@ -327,6 +327,60 @@ async function runCheck(check: SmokeCheck, projectDir: string): Promise<CheckRes
       exitCode: error.code || 1,
     };
   }
+}
+
+async function runProjectTestCheck(projectDir: string): Promise<CheckResult> {
+  const startTime = Date.now();
+  const testArgs = await resolveProjectTestArgs(projectDir);
+
+  try {
+    const { stdout, stderr } = await execAsync(testArgs, {
+      cwd: projectDir,
+      timeout: 60000,
+      maxBuffer: 10 * 1024 * 1024,
+    });
+
+    return {
+      name: 'unit_tests_project',
+      passed: true,
+      durationMs: Date.now() - startTime,
+      stdout,
+      stderr,
+      exitCode: 0,
+    };
+  } catch (error: any) {
+    return {
+      name: 'unit_tests_project',
+      passed: false,
+      durationMs: Date.now() - startTime,
+      stdout: error.stdout || '',
+      stderr: error.stderr || error.message || '',
+      exitCode: error.code || 1,
+    };
+  }
+}
+
+async function resolveProjectTestArgs(projectDir: string): Promise<string> {
+  try {
+    const packageJsonPath = join(projectDir, 'package.json');
+    const content = await readFile(packageJsonPath, 'utf-8');
+    const packageJson = JSON.parse(content);
+    const script = typeof packageJson.scripts?.test === 'string' ? packageJson.scripts.test : '';
+
+    if (/\bvitest\s+run\b/i.test(script)) {
+      return 'npm test';
+    }
+    if (/\bvitest\b/i.test(script)) {
+      return 'npm test -- --run';
+    }
+    if (/\bjest\b/i.test(script)) {
+      return 'npm test -- --passWithNoTests';
+    }
+  } catch {
+    // Fall back to the project test script without framework-specific flags.
+  }
+
+  return 'npm test';
 }
 
 /**

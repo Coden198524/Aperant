@@ -104,6 +104,28 @@ describe('StepInjectionDecider', () => {
       );
     });
 
+    it('limits gotcha search and truncates long injected content', async () => {
+      const longContent = 'Long gotcha content '.repeat(80);
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({ id: 'long-gotcha', content: longContent }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Read', args: { file_path: '/src/auth.ts' } },
+          { toolName: 'Read', args: { file_path: '/src/auth.ts' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
+        relatedFiles: ['/src/auth.ts'],
+        limit: 2,
+      }));
+      expect(result?.content.length).toBeLessThan(longContent.length);
+      expect(result?.content).toContain('...');
+    });
+
     it('skips already-injected memory IDs', async () => {
       const gotcha = makeMemory({ id: 'gotcha-already-seen' });
       vi.mocked(memoryService.search).mockImplementation(async (filters) => {

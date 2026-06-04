@@ -203,6 +203,24 @@ describe('MemoryServiceImpl', () => {
       expect(memoriesArgs).toContain(JSON.stringify(['a.ts', 'b.ts']));
     });
 
+    it('reuses an exact active duplicate without embedding or inserting again', async () => {
+      mockExecute
+        .mockResolvedValueOnce({ rows: [{ id: 'existing-memory-id' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const id = await service.store({
+        type: 'gotcha',
+        content: 'Avoid duplicate embeddings for the same memory',
+        projectId: 'proj-001',
+      });
+
+      expect(id).toBe('existing-memory-id');
+      expect(mockEmbed).not.toHaveBeenCalled();
+      expect(mockBatch).not.toHaveBeenCalled();
+      expect(mockExecute).toHaveBeenCalledTimes(2);
+      expect(mockExecute.mock.calls[1][0].sql).toContain('access_count = access_count + 1');
+    });
+
     it('throws if db.batch fails', async () => {
       mockBatch.mockRejectedValueOnce(new Error('DB error'));
 
@@ -304,6 +322,41 @@ describe('MemoryServiceImpl', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].type).toBe('gotcha');
+    });
+
+    it('applies structural filters after query-based retrieval', async () => {
+      const matching = makeMemoryResult({
+        id: 'matching',
+        type: 'gotcha',
+        relatedFiles: ['src/auth/token.ts'],
+        relatedModules: ['auth'],
+      });
+      const wrongType = makeMemoryResult({
+        id: 'wrong-type',
+        type: 'decision',
+        relatedFiles: ['src/auth/token.ts'],
+        relatedModules: ['auth'],
+      });
+      const wrongFile = makeMemoryResult({
+        id: 'wrong-file',
+        type: 'gotcha',
+        relatedFiles: ['src/billing.ts'],
+        relatedModules: ['billing'],
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [matching, wrongType, wrongFile],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'token gotcha',
+        projectId: 'proj-001',
+        types: ['gotcha'],
+        relatedFiles: ['src/auth/token.ts'],
+        relatedModules: ['auth'],
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['matching']);
     });
   });
 

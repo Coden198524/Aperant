@@ -1,26 +1,14 @@
 /**
  * Planner Memory Context Builder
  *
- * Builds a formatted memory context block to inject into planner agent sessions
- * before they start, drawing from historical calibrations, dead-ends, causal
- * dependencies, outcomes, and workflow recipes.
+ * Builds a compact memory context block for planner agent sessions.
  */
 
 import type { Memory, MemoryService } from '../types';
 
-// ============================================================
-// PUBLIC API
-// ============================================================
+const MAX_PLANNER_MEMORY_ITEM_CHARS = 320;
+const MAX_PLANNER_MEMORY_CONTEXT_CHARS = 2400;
 
-/**
- * Build a formatted memory context string for a planner agent session.
- *
- * @param taskDescription - The high-level task description (used to match workflow recipes)
- * @param relevantModules - Module names relevant to the current task
- * @param memoryService - Memory service instance
- * @param projectId - Project identifier
- * @returns Formatted context string, or empty string if no memories found
- */
 export async function buildPlannerMemoryContext(
   taskDescription: string,
   relevantModules: string[],
@@ -32,41 +20,36 @@ export async function buildPlannerMemoryContext(
       memoryService.search({
         types: ['task_calibration'],
         relatedModules: relevantModules,
-        limit: 5,
+        limit: 3,
         projectId,
       }),
       memoryService.search({
         types: ['dead_end'],
         relatedModules: relevantModules,
-        limit: 8,
+        limit: 3,
         projectId,
       }),
       memoryService.search({
         types: ['causal_dependency'],
         relatedModules: relevantModules,
-        limit: 10,
+        limit: 4,
         projectId,
       }),
       memoryService.search({
         types: ['work_unit_outcome'],
         relatedModules: relevantModules,
-        limit: 5,
+        limit: 3,
         sort: 'recency',
         projectId,
       }),
-      memoryService.searchWorkflowRecipe(taskDescription, { limit: 2 }),
+      memoryService.searchWorkflowRecipe(taskDescription, { limit: 1 }),
     ]);
 
     return formatPlannerSections({ calibrations, deadEnds, causalDeps, outcomes, recipes });
   } catch {
-    // Gracefully return empty string on any failure
     return '';
   }
 }
-
-// ============================================================
-// PRIVATE FORMATTING
-// ============================================================
 
 interface PlannerSections {
   calibrations: Memory[];
@@ -80,8 +63,8 @@ function formatPlannerSections(sections: PlannerSections): string {
   const parts: string[] = [];
 
   if (sections.recipes.length > 0) {
-    const items = sections.recipes.map((m) => `- ${m.content}`).join('\n');
-    parts.push(`WORKFLOW RECIPES — Proven approaches for similar tasks:\n${items}`);
+    const items = sections.recipes.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+    parts.push(`WORKFLOW RECIPES - Proven approaches for similar tasks:\n${items}`);
   }
 
   if (sections.calibrations.length > 0) {
@@ -90,33 +73,48 @@ function formatPlannerSections(sections: PlannerSections): string {
         try {
           const data = JSON.parse(m.content) as { ratio?: number; module?: string };
           const ratio = data.ratio != null ? ` (step ratio: ${data.ratio.toFixed(2)}x)` : '';
-          return `- ${data.module ?? m.content}${ratio}`;
+          return `- ${data.module ?? formatMemoryContent(m)}${ratio}`;
         } catch {
-          return `- ${m.content}`;
+          return `- ${formatMemoryContent(m)}`;
         }
       })
       .join('\n');
-    parts.push(`TASK CALIBRATIONS — Historical step count data:\n${items}`);
+    parts.push(`TASK CALIBRATIONS - Historical step count data:\n${items}`);
   }
 
   if (sections.deadEnds.length > 0) {
-    const items = sections.deadEnds.map((m) => `- ${m.content}`).join('\n');
-    parts.push(`DEAD ENDS — Approaches that have failed before:\n${items}`);
+    const items = sections.deadEnds.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+    parts.push(`DEAD ENDS - Approaches that failed before:\n${items}`);
   }
 
   if (sections.causalDeps.length > 0) {
-    const items = sections.causalDeps.map((m) => `- ${m.content}`).join('\n');
-    parts.push(`CAUSAL DEPENDENCIES — Known ordering constraints:\n${items}`);
+    const items = sections.causalDeps.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+    parts.push(`CAUSAL DEPENDENCIES - Known ordering constraints:\n${items}`);
   }
 
   if (sections.outcomes.length > 0) {
-    const items = sections.outcomes.map((m) => `- ${m.content}`).join('\n');
-    parts.push(`RECENT OUTCOMES — What happened in similar past work:\n${items}`);
+    const items = sections.outcomes.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+    parts.push(`RECENT OUTCOMES - Similar past work:\n${items}`);
   }
 
   if (parts.length === 0) {
     return '';
   }
 
-  return `=== MEMORY CONTEXT FOR PLANNER ===\n${parts.join('\n\n')}\n=== END MEMORY CONTEXT ===`;
+  return truncateText(
+    `=== MEMORY CONTEXT FOR PLANNER ===\n${parts.join('\n\n')}\n=== END MEMORY CONTEXT ===`,
+    MAX_PLANNER_MEMORY_CONTEXT_CHARS,
+  );
+}
+
+function formatMemoryContent(memory: Memory): string {
+  return truncateText(memory.content, MAX_PLANNER_MEMORY_ITEM_CHARS);
+}
+
+function truncateText(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
 }

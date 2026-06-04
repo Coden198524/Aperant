@@ -12,12 +12,12 @@
  * - Fixes are easier when the code is still in working memory
  */
 
-import { exec } from 'node:child_process';
+import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 
-const execAsync = promisify(exec);
+const execFileAsync = promisify(execFile);
 
 // =============================================================================
 // Types
@@ -73,6 +73,12 @@ export interface SubtaskValidationConfig {
   projectDir: string;
   /** Spec directory */
   specDir: string;
+}
+
+interface CommandSpec {
+  command: string;
+  args: string[];
+  acceptsFileArgs: boolean;
 }
 
 // =============================================================================
@@ -170,10 +176,13 @@ async function checkSyntax(config: SubtaskValidationConfig): Promise<ValidationC
     }
 
     // Lint only modified files
-    const filePaths = config.filesModified.join(' ');
-    const { stdout, stderr } = await execAsync(`${lintCommand} ${filePaths}`, {
+    const args = lintCommand.acceptsFileArgs
+      ? [...lintCommand.args, ...config.filesModified]
+      : lintCommand.args;
+    await execFileAsync(lintCommand.command, args, {
       cwd: config.projectDir,
       timeout: 10000,
+      maxBuffer: 5 * 1024 * 1024,
     });
 
     return {
@@ -222,9 +231,11 @@ async function checkTypes(config: SubtaskValidationConfig): Promise<ValidationCh
       };
     }
 
-    const { stdout, stderr } = await execAsync('npx tsc --noEmit', {
+    const typeCommand = await detectTypecheckCommand(config.projectDir);
+    await execFileAsync(typeCommand.command, typeCommand.args, {
       cwd: config.projectDir,
       timeout: 20000,
+      maxBuffer: 5 * 1024 * 1024,
     });
 
     return {
@@ -429,9 +440,13 @@ async function checkRelatedTests(config: SubtaskValidationConfig): Promise<Valid
       };
     }
 
-    const { stdout, stderr } = await execAsync(`${testCommand} ${testFiles.join(' ')}`, {
+    const args = testCommand.acceptsFileArgs
+      ? [...testCommand.args, ...testFiles]
+      : testCommand.args;
+    await execFileAsync(testCommand.command, args, {
       cwd: config.projectDir,
       timeout: 30000,
+      maxBuffer: 5 * 1024 * 1024,
     });
 
     return {
@@ -455,20 +470,20 @@ async function checkRelatedTests(config: SubtaskValidationConfig): Promise<Valid
 // Helper Functions
 // =============================================================================
 
-async function detectLintCommand(projectDir: string): Promise<string | null> {
+async function detectLintCommand(projectDir: string): Promise<CommandSpec | null> {
   const packageJsonPath = join(projectDir, 'package.json');
   try {
     const content = await readFile(packageJsonPath, 'utf-8');
     const packageJson = JSON.parse(content);
 
     if (packageJson.scripts?.lint) {
-      return 'npm run lint --';
+      return { command: 'npm', args: ['run', 'lint'], acceptsFileArgs: false };
     }
     if (packageJson.devDependencies?.eslint || packageJson.dependencies?.eslint) {
-      return 'npx eslint';
+      return { command: 'npx', args: ['eslint'], acceptsFileArgs: true };
     }
     if (packageJson.devDependencies?.['@biomejs/biome']) {
-      return 'npx biome check';
+      return { command: 'npx', args: ['biome', 'check'], acceptsFileArgs: true };
     }
   } catch {
     // Ignore
@@ -476,14 +491,29 @@ async function detectLintCommand(projectDir: string): Promise<string | null> {
   return null;
 }
 
-async function detectTestCommand(projectDir: string): Promise<string | null> {
+async function detectTypecheckCommand(projectDir: string): Promise<CommandSpec> {
+  const packageJsonPath = join(projectDir, 'package.json');
+  try {
+    const content = await readFile(packageJsonPath, 'utf-8');
+    const packageJson = JSON.parse(content);
+
+    if (packageJson.scripts?.typecheck) {
+      return { command: 'npm', args: ['run', 'typecheck'], acceptsFileArgs: false };
+    }
+  } catch {
+    // Ignore
+  }
+  return { command: 'npx', args: ['tsc', '--noEmit'], acceptsFileArgs: false };
+}
+
+async function detectTestCommand(projectDir: string): Promise<CommandSpec | null> {
   const packageJsonPath = join(projectDir, 'package.json');
   try {
     const content = await readFile(packageJsonPath, 'utf-8');
     const packageJson = JSON.parse(content);
 
     if (packageJson.scripts?.test) {
-      return 'npm test --';
+      return { command: 'npm', args: ['test', '--'], acceptsFileArgs: true };
     }
   } catch {
     // Ignore

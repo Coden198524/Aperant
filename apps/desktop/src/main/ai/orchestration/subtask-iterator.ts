@@ -27,6 +27,14 @@ import {
   waitForAuthResume,
   waitForRateLimitResume,
 } from './pause-handler';
+import {
+  collectFilesChangedSinceBaseline,
+  collectGitChangedFileSnapshot,
+  loadGeneratedFilesForCritique,
+  type ChangedFileSnapshot,
+} from './changed-files';
+import type { CritiqueResult } from './self-critique';
+import type { IncrementalValidationResult } from './incremental-validation';
 
 // =============================================================================
 // Types
@@ -125,6 +133,30 @@ interface PlanSubtask {
   work_package?: boolean;
   upstream_task_ids?: string[];
   upstream_source?: string;
+  ai_coding_quality?: SubtaskQualityMetrics;
+}
+
+interface SubtaskQualityMetrics {
+  outcome: string;
+  attempt: number;
+  changed_files: string[];
+  files_changed: number;
+  steps_executed: number;
+  tool_call_count: number;
+  duration_ms: number;
+  recorded_at: string;
+  self_critique?: {
+    status: 'passed' | 'failed' | 'skipped';
+    score?: number;
+    files_reviewed: number;
+    improvements: string[];
+  };
+  incremental_validation?: {
+    status: 'passed' | 'failed' | 'skipped';
+    duration_ms?: number;
+    checks_run?: number;
+    failures: string[];
+  };
 }
 
 type ProtectedSubtaskField =
@@ -309,34 +341,101 @@ export async function iterateSubtasks(
       await syncExecutionStateToMain(config.specDir, config.sourceSpecDir);
     }
     const protectedSubtaskStates = await snapshotProtectedSubtaskStates(config.specDir, subtask.id);
+    const changedFileBaseline = await collectGitChangedFileSnapshot(config.projectDir);
 
     // Notify start
     config.onSubtaskStart?.(subtaskInfo, currentAttempt);
-
-    // Run optional pre-implementation checks only when the workflow explicitly enables them.
-    if (config.qualityConfig?.enablePreImplementationChecklist === true) {
-      const { generatePreImplementationChecklist } = await import('./pre-implementation-checklist');
-      const checklistResult = await generatePreImplementationChecklist({
-        subtask: subtaskInfo,
-        projectDir: config.projectDir,
-        specDir: config.specDir,
-        memoryService: config.qualityConfig?.memoryService,
-      });
-
-      if (checklistResult.riskLevel === 'critical') {
-        console.log(`Pre-implementation checklist shows critical risk for ${subtask.id}`);
-      }
-    }
 
     // Run the session
     const result = await config.runSubtaskSession(subtaskInfo, currentAttempt);
     lastResults.set(subtask.id, result);
     await restoreProtectedSubtaskStates(config.specDir, subtask.id, protectedSubtaskStates);
     await recordSubtaskSessionDuration(config, subtask.id, result);
+    const changedFilesForQuality = await collectSubtaskChangedFiles(
+      config.projectDir,
+      changedFileBaseline,
+      subtaskInfo,
+    );
+
+    let selfCritiqueResult: CritiqueResult | null = null;
+    let incrementalValidationResult: IncrementalValidationResult | null = null;
+
+    if (result.outcome === 'completed' && config.qualityConfig?.enableSelfCritique === true) {
+      const generatedFiles = await loadGeneratedFilesForCritique(config.projectDir, changedFilesForQuality);
+      if (generatedFiles.length > 0) {
+        const { runSelfCritique, formatCritiqueSummary } = await import('./self-critique');
+        selfCritiqueResult = await runSelfCritique({
+          generatedFiles,
+          subtask: subtaskInfo,
+          projectDir: config.projectDir,
+          specDir: config.specDir,
+        });
+        console.log(formatCritiqueSummary(selfCritiqueResult));
+
+        if (!selfCritiqueResult.passed) {
+          const reason = `Self-critique failed: ${selfCritiqueResult.improvements.slice(0, 3).join('; ') || 'quality score below threshold'}`;
+          await recordSubtaskQualityMetrics(config, subtask.id, buildSubtaskQualityMetrics(
+            result,
+            currentAttempt,
+            changedFilesForQuality,
+            selfCritiqueResult,
+            null,
+          ));
+          await markSubtaskNeedsRetry(config.specDir, subtask.id, reason);
+          if (config.sourceSpecDir) {
+            await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+          }
+          await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
+          continue;
+        }
+      }
+    }
+
+    if (result.outcome === 'completed' && config.qualityConfig) {
+      const { validateSubtaskQuality } = await import('./quality-integration');
+      const validationResult = await validateSubtaskQuality(
+        subtaskInfo,
+        result,
+        config.qualityConfig,
+        config.projectDir,
+        config.specDir,
+        changedFilesForQuality,
+      );
+      incrementalValidationResult = validationResult.incrementalValidation ?? null;
+
+      if (!validationResult.passed) {
+        const errorSummary = validationResult.issues.join('; ');
+        console.log(`Quality validation failed for ${subtask.id}: ${errorSummary}`);
+        await recordSubtaskQualityMetrics(config, subtask.id, buildSubtaskQualityMetrics(
+          result,
+          currentAttempt,
+          changedFilesForQuality,
+          selfCritiqueResult,
+          incrementalValidationResult,
+        ));
+        await markSubtaskNeedsRetry(config.specDir, subtask.id, `Quality validation failed: ${errorSummary}`);
+        if (config.sourceSpecDir) {
+          await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+        }
+        await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
+        continue;
+      }
+
+      // Learning runs from finalizeAcceptedSubtask() so both normal completion
+      // and tool-updated completion follow the same path.
+    }
+
+    await recordSubtaskQualityMetrics(config, subtask.id, buildSubtaskQualityMetrics(
+      result,
+      currentAttempt,
+      changedFilesForQuality,
+      selfCritiqueResult,
+      incrementalValidationResult,
+    ));
 
     const subtaskCompletedByTool = result.completedSubtaskIds?.includes(subtask.id) === true;
     if (subtaskCompletedByTool) {
-      await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts);
+      await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts, changedFilesForQuality);
       config.onSubtaskComplete?.(subtaskInfo, result);
 
       if (result.outcome === 'cancelled') {
@@ -347,55 +446,6 @@ export async function iterateSubtasks(
         await delay(config.autoContinueDelayMs, config.abortSignal);
       }
       continue;
-    }
-
-    // Run self-critique after session completes (before validation)
-    if (result.outcome === 'completed' && config.qualityConfig?.enableSelfCritique === true) {
-      const { runSelfCritique } = await import('./self-critique');
-      const critiqueResult = await runSelfCritique({
-        generatedFiles: [], // TODO: extract from session result
-        subtask: subtaskInfo,
-        projectDir: config.projectDir,
-        specDir: config.specDir,
-      });
-
-      // If self-critique found critical issues, retry the subtask
-      if (!critiqueResult.passed) {
-        console.log(`Self-critique failed for ${subtask.id}:`);
-        for (const improvement of critiqueResult.improvements) {
-          console.log(`  - ${improvement}`);
-        }
-        // Mark as needing retry
-        await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
-        continue;
-      }
-    }
-
-    // Run quality validation and learning after session completes
-    if (result.outcome === 'completed' && config.qualityConfig) {
-      const { validateSubtaskQuality } = await import('./quality-integration');
-
-      // Validate subtask quality (includes incremental validation)
-      const validationResult = await validateSubtaskQuality(
-        subtaskInfo,
-        result,
-        config.qualityConfig || {},
-        config.projectDir,
-        config.specDir,
-      );
-
-      // If validation failed, mark subtask as needing retry
-      if (!validationResult.passed) {
-        const errorSummary = validationResult.issues.join('; ');
-        console.log(`Quality validation failed for ${subtask.id}: ${errorSummary}`);
-
-        // Continue to next iteration (will retry this subtask)
-        await new Promise((resolve) => setTimeout(resolve, config.autoContinueDelayMs));
-        continue;
-      }
-
-      // Learning runs from finalizeAcceptedSubtask() so both normal completion
-      // and tool-updated completion follow the same path.
     }
 
     // Notify complete
@@ -454,7 +504,7 @@ export async function iterateSubtasks(
 
     const subtaskCompletedInPlan = await isSubtaskCompleted(config.specDir, subtask.id);
     if (result.outcome === 'completed' || subtaskCompletedInPlan) {
-      await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts);
+      await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts, changedFilesForQuality);
     }
 
     // For errors, the subtask will be retried on next loop iteration
@@ -493,12 +543,102 @@ export async function iterateSubtasks(
 // Post-Session Processing
 // =============================================================================
 
+async function collectSubtaskChangedFiles(
+  projectDir: string,
+  baseline: ChangedFileSnapshot,
+  subtask: SubtaskInfo,
+): Promise<string[]> {
+  return collectFilesChangedSinceBaseline(projectDir, baseline, [
+    ...(subtask.filesToCreate ?? []),
+    ...(subtask.filesToModify ?? []),
+  ]);
+}
+
+function buildSubtaskQualityMetrics(
+  result: SessionResult,
+  attempt: number,
+  changedFiles: string[],
+  selfCritique: CritiqueResult | null,
+  incrementalValidation: IncrementalValidationResult | null,
+): SubtaskQualityMetrics {
+  return {
+    outcome: result.outcome,
+    attempt,
+    changed_files: changedFiles,
+    files_changed: changedFiles.length,
+    steps_executed: result.stepsExecuted ?? 0,
+    tool_call_count: result.toolCallCount ?? 0,
+    duration_ms: result.durationMs ?? 0,
+    recorded_at: new Date().toISOString(),
+    self_critique: selfCritique
+      ? {
+          status: selfCritique.passed ? 'passed' : 'failed',
+          score: selfCritique.score,
+          files_reviewed: selfCritique.checks.length > 0 ? changedFiles.length : 0,
+          improvements: selfCritique.improvements.slice(0, 10),
+        }
+      : {
+          status: 'skipped',
+          files_reviewed: 0,
+          improvements: [],
+        },
+    incremental_validation: incrementalValidation
+      ? {
+          status: incrementalValidation.passed ? 'passed' : 'failed',
+          duration_ms: incrementalValidation.durationMs,
+          checks_run: incrementalValidation.checks.length,
+          failures: incrementalValidation.failures
+            .slice(0, 10)
+            .map((failure) => `${failure.type}: ${failure.message}`),
+        }
+      : {
+          status: 'skipped',
+          failures: [],
+        },
+  };
+}
+
+async function recordSubtaskQualityMetrics(
+  config: SubtaskIteratorConfig,
+  subtaskId: string,
+  metrics: SubtaskQualityMetrics,
+): Promise<void> {
+  try {
+    const plan = await loadImplementationPlan(config.specDir);
+    if (!plan) {
+      return;
+    }
+
+    let updated = false;
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        if (getSubtaskId(subtask) !== subtaskId) {
+          continue;
+        }
+        subtask.ai_coding_quality = metrics;
+        subtask.updated_at = metrics.recorded_at;
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      await saveImplementationPlanToFiles(config.specDir, plan as never);
+      if (config.sourceSpecDir) {
+        await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+      }
+    }
+  } catch {
+    // Non-fatal: quality metrics are diagnostic and should not block retries.
+  }
+}
+
 async function finalizeAcceptedSubtask(
   config: SubtaskIteratorConfig,
   subtask: PlanSubtask,
   subtaskInfo: SubtaskInfo,
   result: SessionResult,
   attemptCounts: Map<string, number>,
+  changedFiles: string[] = [],
 ): Promise<void> {
   await ensureSubtaskMarkedCompleted(config.specDir, subtask.id, result);
 
@@ -520,7 +660,7 @@ async function finalizeAcceptedSubtask(
 
   // Extract insights from the session (opt-in, never blocks the build)
   if (config.extractInsights) {
-    extractInsightsAfterSession(config, subtask, result).then((insights) => {
+    extractInsightsAfterSession(config, subtask, result, changedFiles).then((insights) => {
       if (insights) config.onInsightsExtracted?.(subtask.id, insights);
     }).catch(() => { /* insight extraction is non-blocking */ });
   }
@@ -847,6 +987,46 @@ async function markSubtaskInProgress(
     }
   } catch {
     // Non-fatal: the session can still run even if progress persistence fails
+  }
+}
+
+async function markSubtaskNeedsRetry(
+  specDir: string,
+  subtaskId: string,
+  reason: string,
+): Promise<void> {
+  try {
+    const plan = await loadImplementationPlan(specDir);
+    if (!plan) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    let updated = false;
+
+    for (const phase of plan.phases) {
+      for (const subtask of phase.subtasks) {
+        const id = getSubtaskId(subtask);
+        if (id !== subtaskId) {
+          continue;
+        }
+
+        subtask.status = 'in_progress';
+        delete subtask.completed_at;
+        delete subtask.completion_summary;
+        subtask.notes = [reason, subtask.notes]
+          .filter((value): value is string => Boolean(value && value.trim()))
+          .join('\n\n');
+        subtask.updated_at = now;
+        updated = true;
+      }
+    }
+
+    if (updated) {
+      await saveImplementationPlanToFiles(specDir, plan as never);
+    }
+  } catch {
+    // Non-fatal: the iterator will retry or eventually mark the task stuck.
   }
 }
 
@@ -1333,6 +1513,7 @@ async function extractInsightsAfterSession(
   config: SubtaskIteratorConfig,
   subtask: PlanSubtask,
   result: SessionResult,
+  changedFiles: string[] = [],
 ): Promise<ExtractedInsights | null> {
   try {
     const insightConfig: InsightExtractionConfig = {
@@ -1341,7 +1522,7 @@ async function extractInsightsAfterSession(
       sessionNum: 1,
       success: result.outcome === 'completed',
       diff: '',           // Diff gathering requires git; left empty for now
-      changedFiles: [],   // Populated by future git integration
+      changedFiles,
       commitMessages: '',
       attemptHistory: [],
     };

@@ -144,6 +144,17 @@ describe('packContext', () => {
     expect(contentOccurrences).toBe(1);
   });
 
+  it('truncates very long memory content before packing', () => {
+    const longContent = `start ${'very long detail '.repeat(100)} end`;
+    const result = packContext([
+      makeMemory({ id: 'long-memory', content: longContent, type: 'gotcha' }),
+    ], 'implement');
+
+    expect(result).toContain('start');
+    expect(result).toContain('...');
+    expect(result).not.toContain(' end');
+  });
+
   it('includes memories from types in allocation map first', () => {
     const gotcha = makeMemory({ id: 'gotcha-1', type: 'gotcha', content: 'gotcha content' });
     const preference = makeMemory({ id: 'pref-1', type: 'preference', content: 'preference content' });

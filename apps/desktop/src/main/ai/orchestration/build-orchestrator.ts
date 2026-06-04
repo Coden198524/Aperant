@@ -793,15 +793,19 @@ export class BuildOrchestrator extends EventEmitter {
       attempt: number,
       sessionNumber = this.iteration,
     ): Promise<SessionResult> => {
-      // Run pre-implementation checklist if enabled
+      let preImplementationChecklist = '';
       if (this.config.qualityConfig?.enablePreImplementationChecklist) {
-        const { generatePreImplementationChecklist } = await import('./pre-implementation-checklist');
+        const {
+          generatePreImplementationChecklist,
+          formatCompactChecklistForPrompt,
+        } = await import('./pre-implementation-checklist');
         const checklistResult = await generatePreImplementationChecklist({
           subtask,
           projectDir: this.config.projectDir,
           specDir: this.config.specDir,
           memoryService: this.config.qualityConfig?.memoryService,
         });
+        preImplementationChecklist = formatCompactChecklistForPrompt(checklistResult);
 
         if (checklistResult.riskLevel === 'critical') {
           this.emitTyped('log', `Pre-implementation checklist shows critical risk for ${subtask.id}`);
@@ -813,6 +817,9 @@ export class BuildOrchestrator extends EventEmitter {
         subtask,
         attemptCount: attempt,
       });
+      if (preImplementationChecklist) {
+        prompt = `${prompt}\n\n${preImplementationChecklist}`;
+      }
 
       // Determine quality tier and add standards
       if (this.config.qualityConfig?.enableTieredQualityStandards !== false) {

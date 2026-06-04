@@ -15,6 +15,11 @@ import type { Tool as AITool } from 'ai';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { MemoryType, MemorySearchFilters } from '../types';
 
+const DEFAULT_SEARCH_LIMIT = 3;
+const MAX_SEARCH_LIMIT = 8;
+const MAX_MEMORY_RESULT_CHARS = 360;
+const MAX_SEARCH_OUTPUT_CHARS = 1800;
+
 // ============================================================
 // INPUT SCHEMA
 // ============================================================
@@ -56,10 +61,10 @@ const searchMemorySchema = z.object({
     .number()
     .int()
     .min(1)
-    .max(20)
+    .max(MAX_SEARCH_LIMIT)
     .optional()
-    .default(5)
-    .describe('Maximum number of results to return (default 5, max 20)'),
+    .default(DEFAULT_SEARCH_LIMIT)
+    .describe('Maximum number of results to return (default 3, max 8)'),
 });
 
 type SearchMemoryInput = z.infer<typeof searchMemorySchema>;
@@ -87,12 +92,12 @@ export function createSearchMemoryTool(
         query: input.query,
         types: input.types as MemoryType[] | undefined,
         relatedFiles: input.relatedFiles,
-        limit: input.limit ?? 5,
+        limit: Math.min(input.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT),
         projectId,
         excludeDeprecated: true,
       };
 
-      const memories = await proxy.searchMemory(filters);
+      const memories = dedupeMemories(await proxy.searchMemory(filters));
 
       if (memories.length === 0) {
         return 'No relevant memories found for this query.';
@@ -104,10 +109,13 @@ export function createSearchMemoryTool(
             ? ` [${m.relatedFiles.map((f) => f.split('/').pop()).join(', ')}]`
             : '';
         const confidence = `(confidence: ${(m.confidence * 100).toFixed(0)}%)`;
-        return `${i + 1}. [${m.type}]${fileRef} ${confidence}\n   ${m.content}`;
+        return `${i + 1}. [${m.type}]${fileRef} ${confidence}\n   ${truncateText(m.content, MAX_MEMORY_RESULT_CHARS)}`;
       });
 
-      return `Memory search results for "${input.query}":\n\n${lines.join('\n\n')}`;
+      return truncateText(
+        `Memory search results for "${input.query}":\n\n${lines.join('\n\n')}`,
+        MAX_SEARCH_OUTPUT_CHARS,
+      );
     },
   });
 }
@@ -123,4 +131,30 @@ export function createSearchMemoryStub(): AITool<SearchMemoryInput, string> {
       return 'Memory system not available in this session.';
     },
   });
+}
+
+function dedupeMemories<T extends { content: string }>(memories: T[]): T[] {
+  const seen = new Set<string>();
+  const result: T[] = [];
+  for (const memory of memories) {
+    const key = normalizeContent(memory.content);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    result.push(memory);
+  }
+  return result;
+}
+
+function normalizeContent(content: string): string {
+  return content.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function truncateText(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
 }

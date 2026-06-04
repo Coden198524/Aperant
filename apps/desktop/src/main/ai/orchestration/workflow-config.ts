@@ -106,9 +106,9 @@ const BALANCED_PRESET: Required<WorkflowConfig> = {
   qualityChecks: {
     enableSmokeTests: false,
     enablePatternInjection: false,
-    enableSelfCritique: false,
-    enablePreImplementationChecklist: false,
-    enableTieredQualityStandards: false,
+    enableSelfCritique: true,
+    enablePreImplementationChecklist: true,
+    enableTieredQualityStandards: true,
   },
   specCreationMode: 'auto',
 };

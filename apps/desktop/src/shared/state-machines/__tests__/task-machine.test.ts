@@ -70,6 +70,27 @@ describe('taskMachine', () => {
     });
   });
 
+  describe('direct mode completion', () => {
+    it('should move direct completion from backlog to human review without QA_PASSED', () => {
+      const snapshot = runEvents([
+        { type: 'DIRECT_COMPLETED', outcome: 'completed', filesChanged: 2, quality: {} },
+      ]);
+
+      expect(snapshot.value).toBe('human_review');
+      expect(snapshot.context.reviewReason).toBe('completed');
+    });
+
+    it('should move direct completion from coding to human review without QA_PASSED', () => {
+      const snapshot = runEvents([
+        { type: 'CODING_STARTED', subtaskId: 'direct-implementation', subtaskDescription: 'Direct task' },
+        { type: 'DIRECT_COMPLETED', outcome: 'completed', filesChanged: 1, quality: {} },
+      ]);
+
+      expect(snapshot.value).toBe('human_review');
+      expect(snapshot.context.reviewReason).toBe('completed');
+    });
+  });
+
   describe('plan_review flow (requireReviewBeforeCoding: true)', () => {
     it('should go to plan_review when requireReviewBeforeCoding is true', () => {
       const events: TaskEvent[] = [
