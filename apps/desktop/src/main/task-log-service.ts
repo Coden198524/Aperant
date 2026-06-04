@@ -33,7 +33,8 @@ function findWorktreeSpecDir(projectPath: string, specId: string, specsRelPath: 
  * watches both locations and merges logs from both sources.
  */
 export class TaskLogService extends EventEmitter {
-  private logCache: Map<string, TaskLogs> = new Map();
+  private rawLogCache: Map<string, TaskLogs> = new Map();
+  private mergedLogCache: Map<string, TaskLogs> = new Map();
   private fileWatchers: Map<string, FSWatcher> = new Map();
   private pollIntervals: Map<string, NodeJS.Timeout> = new Map();
   // Store paths being watched for each specId (main + worktree)
@@ -63,7 +64,7 @@ export class TaskLogService extends EventEmitter {
     const logs = readAutocodeTaskLogsFromSpecDir(specDir) as TaskLogs | null;
     if (!logs) {
       debugWarn('[TaskLogService.loadLogsFromPath] Core log reader returned no logs:', { specDir, logFile });
-      return this.logCache.get(specDir) ?? null;
+      return this.rawLogCache.get(specDir) ?? null;
     }
 
     debugLog('[TaskLogService.loadLogsFromPath] Successfully loaded logs:', {
@@ -77,7 +78,7 @@ export class TaskLogService extends EventEmitter {
       }
     });
 
-    this.logCache.set(specDir, logs);
+    this.rawLogCache.set(specDir, logs);
     return logs;
   }
 
@@ -114,7 +115,7 @@ export class TaskLogService extends EventEmitter {
     });
 
     if (mergedLogs) {
-      this.logCache.set(specDir, mergedLogs);
+      this.mergedLogCache.set(specDir, mergedLogs);
     }
     return mergedLogs;
   }
@@ -141,14 +142,16 @@ export class TaskLogService extends EventEmitter {
     const mainLogs = this.loadLogsFromPath(specDir);
 
     // Check if we have worktree paths registered for this spec
-    const watchedInfo = Array.from(this.watchedPaths.entries()).find(
-      ([_, info]) => info.mainSpecDir === specDir
-    );
+    const watchedInfo = specId
+      ? this.watchedPaths.get(specId)
+      : Array.from(this.watchedPaths.values()).find(
+        (info) => info.mainSpecDir === specDir
+      );
 
     let worktreeSpecDir: string | null = null;
 
-    if (watchedInfo?.[1].worktreeSpecDir) {
-      worktreeSpecDir = watchedInfo[1].worktreeSpecDir;
+    if (watchedInfo?.worktreeSpecDir) {
+      worktreeSpecDir = watchedInfo.worktreeSpecDir;
       debugLog('[TaskLogService.loadLogs] Found worktree from watched paths:', worktreeSpecDir);
     } else if (projectPath && specsRelPath && specId) {
       // Calculate worktree path from provided params
@@ -165,7 +168,7 @@ export class TaskLogService extends EventEmitter {
       // No worktree info available
       debugLog('[TaskLogService.loadLogs] No worktree found, using main logs only');
       if (mainLogs) {
-        this.logCache.set(specDir, mainLogs);
+        this.mergedLogCache.set(specDir, mainLogs);
       }
       return mainLogs;
     }
@@ -255,7 +258,6 @@ export class TaskLogService extends EventEmitter {
           validation: initialLogs.phases.validation?.entries?.length || 0
         }
       });
-      this.logCache.set(specDir, initialLogs);
     } else {
       debugLog('[TaskLogService.startWatching] No initial logs found');
     }
@@ -335,8 +337,8 @@ export class TaskLogService extends EventEmitter {
       changedPath
     });
 
-    const previousLogs = this.logCache.get(specDir);
-    const logs = this.loadLogs(specDir);
+    const previousLogs = this.mergedLogCache.get(specDir);
+    const logs = this.loadLogs(specDir, undefined, undefined, specId);
 
     if (logs) {
       debugLog('[TaskLogService] Emitting logs-changed event:', {
@@ -459,14 +461,22 @@ export class TaskLogService extends EventEmitter {
    * Get cached logs without re-reading from disk
    */
   getCachedLogs(specDir: string): TaskLogs | null {
-    return this.logCache.get(specDir) || null;
+    return this.mergedLogCache.get(specDir) || null;
   }
 
   /**
    * Clear the log cache for a spec
    */
   clearCache(specDir: string): void {
-    this.logCache.delete(specDir);
+    this.rawLogCache.delete(specDir);
+    this.mergedLogCache.delete(specDir);
+
+    const watchedInfo = Array.from(this.watchedPaths.values()).find(
+      (info) => info.mainSpecDir === specDir
+    );
+    if (watchedInfo?.worktreeSpecDir) {
+      this.rawLogCache.delete(watchedInfo.worktreeSpecDir);
+    }
   }
 
   /**
