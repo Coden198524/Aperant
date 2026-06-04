@@ -1,5 +1,6 @@
 import path from 'path';
-import { existsSync, readFileSync } from 'fs';
+import chokidar, { type FSWatcher } from 'chokidar';
+import { existsSync } from 'fs';
 import { EventEmitter } from 'events';
 import {
   AUTOCODE_TASK_ARTIFACTS,
@@ -33,12 +34,13 @@ function findWorktreeSpecDir(projectPath: string, specId: string, specsRelPath: 
  */
 export class TaskLogService extends EventEmitter {
   private logCache: Map<string, TaskLogs> = new Map();
+  private fileWatchers: Map<string, FSWatcher> = new Map();
   private pollIntervals: Map<string, NodeJS.Timeout> = new Map();
   // Store paths being watched for each specId (main + worktree)
   private watchedPaths: Map<string, { mainSpecDir: string; worktreeSpecDir: string | null; specsRelPath: string }> = new Map();
 
-  // Poll interval for watching log changes (more reliable than fs.watch on some systems)
-  private readonly POLL_INTERVAL_MS = 1000;
+  // Worktree discovery is the only polling left; file changes are event-driven.
+  private readonly WORKTREE_DISCOVERY_INTERVAL_MS = 5000;
 
   /**
    * Load task logs from a single spec directory
@@ -241,30 +243,6 @@ export class TaskLogService extends EventEmitter {
       specsRelPath: specsRelPath || ''
     });
 
-    let lastMainContent = '';
-    let lastWorktreeContent = '';
-
-    // Initial load from main spec dir
-    if (existsSync(mainLogFile)) {
-      try {
-        lastMainContent = readFileSync(mainLogFile, 'utf-8');
-      } catch (_e) {
-        // Ignore parse errors on initial load
-      }
-    }
-
-    // Initial load from worktree spec dir
-    if (worktreeSpecDir) {
-      const worktreeLogFile = path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
-      if (existsSync(worktreeLogFile)) {
-        try {
-          lastWorktreeContent = readFileSync(worktreeLogFile, 'utf-8');
-        } catch (_e) {
-          // Ignore parse errors on initial load
-        }
-      }
-    }
-
     // Do initial merged load
     debugLog('[TaskLogService.startWatching] Loading initial logs');
     const initialLogs = this.loadLogs(specDir);
@@ -282,123 +260,133 @@ export class TaskLogService extends EventEmitter {
       debugLog('[TaskLogService.startWatching] No initial logs found');
     }
 
-    // Poll for changes in both locations
-    // Note: worktreeSpecDir may be null initially if worktree doesn't exist yet.
-    // We need to dynamically re-discover it during polling.
-    const pollInterval = setInterval(() => {
-      let mainChanged = false;
-      let worktreeChanged = false;
+    const watchFiles = [mainLogFile];
+    if (worktreeSpecDir) {
+      watchFiles.push(path.join(worktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.taskLogs));
+    }
 
-      // Dynamically re-discover worktree if not found yet
-      // This handles the case where user opens logs before worktree is created
-      const watchedInfo = this.watchedPaths.get(specId);
-      let currentWorktreeSpecDir = watchedInfo?.worktreeSpecDir || null;
+    const watcher = chokidar.watch(watchFiles, {
+      persistent: true,
+      ignoreInitial: true,
+      awaitWriteFinish: {
+        stabilityThreshold: 300,
+        pollInterval: 100
+      }
+    });
+    watcher.on('add', (changedPath) => this.handleLogFileChanged(specId, specDir, changedPath));
+    watcher.on('change', (changedPath) => this.handleLogFileChanged(specId, specDir, changedPath));
+    watcher.on('error', (error) => {
+      debugWarn('[TaskLogService] Watcher error:', {
+        specId,
+        error: error instanceof Error ? error.message : String(error)
+      });
+    });
+    this.fileWatchers.set(specId, watcher);
 
-      if (!currentWorktreeSpecDir && projectPath && specsRelPath) {
+    if (!worktreeSpecDir && projectPath && specsRelPath) {
+      const discoveryInterval = setInterval(() => {
+        const watchedInfo = this.watchedPaths.get(specId);
+        if (watchedInfo?.worktreeSpecDir) {
+          clearInterval(discoveryInterval);
+          this.pollIntervals.delete(specId);
+          return;
+        }
+
         const discoveredWorktree = findWorktreeSpecDir(projectPath, specId, specsRelPath);
-        if (discoveredWorktree) {
-          currentWorktreeSpecDir = discoveredWorktree;
-          // Update stored paths so future iterations don't need to re-discover
-          this.watchedPaths.set(specId, {
-            mainSpecDir: specDir,
-            worktreeSpecDir: discoveredWorktree,
-            specsRelPath: specsRelPath
-          });
-          debugLog('[TaskLogService] Discovered worktree for spec:', {
-            specId,
-            worktreeSpecDir: discoveredWorktree
-          });
+        if (!discoveredWorktree) {
+          return;
         }
-      }
 
-      // Check main spec dir
-      if (existsSync(mainLogFile)) {
-        try {
-          const currentContent = readFileSync(mainLogFile, 'utf-8');
-          if (currentContent !== lastMainContent) {
-            lastMainContent = currentContent;
-            mainChanged = true;
-          }
-        } catch (_error) {
-          // Ignore read/parse errors
-        }
-      }
+        clearInterval(discoveryInterval);
+        this.pollIntervals.delete(specId);
 
-      // Check worktree spec dir
-      if (currentWorktreeSpecDir) {
-        const worktreeLogFile = path.join(currentWorktreeSpecDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
-        if (existsSync(worktreeLogFile)) {
-          try {
-            const currentContent = readFileSync(worktreeLogFile, 'utf-8');
-            if (currentContent !== lastWorktreeContent) {
-              lastWorktreeContent = currentContent;
-              worktreeChanged = true;
-            }
-          } catch (_error) {
-            // Ignore read/parse errors
-          }
-        }
-      }
-
-      // If either file changed, reload and emit
-      if (mainChanged || worktreeChanged) {
-        debugLog('[TaskLogService] Log file changed:', {
-          specId,
-          mainChanged,
-          worktreeChanged
+        this.watchedPaths.set(specId, {
+          mainSpecDir: specDir,
+          worktreeSpecDir: discoveredWorktree,
+          specsRelPath
         });
-
-        const previousLogs = this.logCache.get(specDir);
-        const logs = this.loadLogs(specDir);
-
-        if (logs) {
-          debugLog('[TaskLogService] Emitting logs-changed event:', {
-            specId,
-            entryCounts: {
-              planning: logs.phases.planning?.entries?.length || 0,
-              coding: logs.phases.coding?.entries?.length || 0,
-              validation: logs.phases.validation?.entries?.length || 0
-            }
-          });
-
-          // Emit change event with the merged logs
-          this.emit('logs-changed', specId, logs);
-
-          // Calculate and emit streaming updates for new entries
-          this.emitNewEntries(specId, previousLogs, logs);
-        } else {
-          debugWarn('[TaskLogService] No logs loaded after file change:', specId);
+        const worktreeLogFile = path.join(discoveredWorktree, AUTOCODE_TASK_ARTIFACTS.taskLogs);
+        watcher.add(worktreeLogFile);
+        debugLog('[TaskLogService] Discovered worktree for spec:', {
+          specId,
+          worktreeSpecDir: discoveredWorktree
+        });
+        if (existsSync(worktreeLogFile)) {
+          this.handleLogFileChanged(specId, specDir, worktreeLogFile);
         }
-      }
-    }, this.POLL_INTERVAL_MS);
+      }, this.WORKTREE_DISCOVERY_INTERVAL_MS);
 
-    this.pollIntervals.set(specId, pollInterval);
+      this.pollIntervals.set(specId, discoveryInterval);
+    }
+
     debugLog('[TaskLogService] Started watching spec:', {
       specId,
       mainSpecDir: specDir,
       worktreeSpecDir: worktreeSpecDir || 'none',
-      pollIntervalMs: this.POLL_INTERVAL_MS
+      worktreeDiscoveryIntervalMs: !worktreeSpecDir && projectPath && specsRelPath
+        ? this.WORKTREE_DISCOVERY_INTERVAL_MS
+        : 0
     });
+  }
+
+  private handleLogFileChanged(specId: string, specDir: string, changedPath: string): void {
+    debugLog('[TaskLogService] Log file changed:', {
+      specId,
+      changedPath
+    });
+
+    const previousLogs = this.logCache.get(specDir);
+    const logs = this.loadLogs(specDir);
+
+    if (logs) {
+      debugLog('[TaskLogService] Emitting logs-changed event:', {
+        specId,
+        entryCounts: {
+          planning: logs.phases.planning?.entries?.length || 0,
+          coding: logs.phases.coding?.entries?.length || 0,
+          validation: logs.phases.validation?.entries?.length || 0
+        }
+      });
+
+      this.emit('logs-changed', specId, logs);
+      this.emitNewEntries(specId, previousLogs, logs);
+    } else {
+      debugWarn('[TaskLogService] No logs loaded after file change:', specId);
+    }
   }
 
   /**
    * Stop watching a spec directory
    */
   stopWatching(specId: string): void {
+    const watcher = this.fileWatchers.get(specId);
+    if (watcher) {
+      debugLog('[TaskLogService.stopWatching] Closing file watcher for spec:', specId);
+      this.fileWatchers.delete(specId);
+      void watcher.close().catch((error: unknown) => {
+        debugWarn('[TaskLogService.stopWatching] Failed to close file watcher:', {
+          specId,
+          error: error instanceof Error ? error.message : String(error)
+        });
+      });
+    }
+
     const interval = this.pollIntervals.get(specId);
     if (interval) {
-      debugLog('[TaskLogService.stopWatching] Stopping watch for spec:', specId);
+      debugLog('[TaskLogService.stopWatching] Stopping worktree discovery for spec:', specId);
       clearInterval(interval);
       this.pollIntervals.delete(specId);
-      this.watchedPaths.delete(specId);
     }
+
+    this.watchedPaths.delete(specId);
   }
 
   /**
    * Stop all watches
    */
   stopAllWatching(): void {
-    for (const specId of this.pollIntervals.keys()) {
+    const specIds = new Set([...this.fileWatchers.keys(), ...this.pollIntervals.keys()]);
+    for (const specId of specIds) {
       this.stopWatching(specId);
     }
   }

@@ -161,7 +161,7 @@ function resolveTask(projectRoot: string, dataDirName: string, taskId: string): 
 }
 
 function resolveRunPhase(specDir: string, task: AutocodeTask): AutocodeTaskRunPhase {
-  if (resolveAutocodeTaskDevelopmentMode(task.metadata) === 'fast' || task.metadata?.workflowMode === 'off') {
+  if (resolveAutocodeTaskDevelopmentMode(task.metadata) === 'direct' || task.metadata?.workflowMode === 'off') {
     return 'direct';
   }
 
@@ -300,6 +300,9 @@ function buildTaskRunPrompt(input: {
     '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes during coding; the runner owns status updates after this invocation.',
     '- Put completion details in your final response or the implementation summary, not by editing plan status.',
     '- Run the most relevant validation command for the project.',
+    '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
+    '- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.',
+    '- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.',
     '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
     '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
     buildCliMemoryNotesInstruction(),
@@ -1392,6 +1395,9 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- Keep other work package checkboxes unchanged.',
         '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes; this runner updates work package ' + subtask.id + ' after the CLI exits.',
         '- Return a concise completion summary for this work package.',
+        '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
+        '- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.',
+        '- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.',
         '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
         '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless this work package explicitly changes state-machine code.',
       ]
@@ -1401,6 +1407,9 @@ function buildFocusedSubtaskPrompt(subtask) {
         '- Keep other subtask checkboxes unchanged.',
         '- Do not edit implementation_plan.md status checkboxes; this runner updates subtask ' + subtask.id + ' after the CLI exits.',
         '- Return a concise completion summary for this subtask.',
+        '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
+        '- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.',
+        '- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.',
         '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
         '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless this subtask explicitly changes state-machine code.',
       ];

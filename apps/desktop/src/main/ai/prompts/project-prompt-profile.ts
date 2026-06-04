@@ -701,6 +701,9 @@ ${formatCommands(profile.commands.typecheck)}
 - Follow the design pattern decision in the plan or the nearest existing code; do not add unplanned named patterns unless clearly necessary.
 - Preserve user changes unrelated to the subtask.
 - All new file names and paths must use ASCII characters.
+- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread only the surrounding lines once before retrying.
+- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.
+- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.
 - On Node 24+, do not mix \`require(...)\` with top-level \`await\` in \`node -e\`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM \`import\` with \`node --input-type=module\`.
 - Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the subtask explicitly changes state-machine code.
 `;

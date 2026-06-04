@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, memo, useMemo } from 'react';
+import { useState, useEffect, memo, useMemo } from 'react';
 import { useTranslation } from 'react-i18next';
 import { buildAutocodeTaskCardViewModel } from '@autocode/core/frontend/task-view-model';
 import { Play, Square, Clock, Zap, Target, Shield, Gauge, Palette, FileCode, Bug, Wrench, Loader2, AlertTriangle, RotateCcw, Archive, GitPullRequest, MoreVertical, Trash2 } from 'lucide-react';
@@ -38,8 +38,9 @@ import {
   JSON_ERROR_PREFIX,
   JSON_ERROR_TITLE_SUFFIX
 } from '../../shared/constants';
-import { stopTask, checkTaskRunning, recoverStuckTask, isIncompleteHumanReview, archiveTasks, hasRecentActivity, startTaskOrQueue, deleteTask } from '../stores/task-store';
+import { stopTask, recoverStuckTask, isIncompleteHumanReview, archiveTasks, startTaskOrQueue, deleteTask } from '../stores/task-store';
 import { useToast } from '../hooks/use-toast';
+import { subscribeStuckTask } from '../lib/stuck-task-monitor';
 import type { Task, TaskCategory, ReviewReason, TaskStatus } from '../../shared/types';
 import {
   getTaskCategoryLabel,
@@ -63,12 +64,6 @@ const CategoryIcon: Record<TaskCategory, typeof Zap> = {
   testing: FileCode
 };
 
-// Catastrophic stuck detection interval (ms).
-// XState handles all normal process-exit transitions via PROCESS_EXITED events.
-// This is a last-resort safety net: if XState somehow fails to transition the task
-// out of in_progress after the process dies, flag it as stuck after 60 seconds.
-const STUCK_CHECK_INTERVAL_MS = 60_000;
-
 interface TaskCardProps {
   task: Task;
   onClick: () => void;
@@ -79,12 +74,12 @@ interface TaskCardProps {
   onToggleSelect?: () => void;
 }
 
-function resolveCardDevelopmentMode(task: Task): 'fast' | 'standard' | 'spec' {
-  if (task.metadata?.developmentMode === 'fast' || task.metadata?.developmentMode === 'standard' || task.metadata?.developmentMode === 'spec') {
+function resolveCardDevelopmentMode(task: Task): 'direct' | 'standard' | 'spec' {
+  if (task.metadata?.developmentMode === 'direct' || task.metadata?.developmentMode === 'standard' || task.metadata?.developmentMode === 'spec') {
     return task.metadata.developmentMode;
   }
-  if (task.metadata?.workflowMode === 'off') {
-    return 'fast';
+  if (task.metadata?.developmentMode === 'fast' || task.metadata?.workflowMode === 'off') {
+    return 'direct';
   }
   return task.metadata?.sourceType === 'openspec' || task.metadata?.upstreamSpecSystem === 'openspec'
     ? 'spec'
@@ -177,7 +172,6 @@ export const TaskCard = memo(function TaskCard({
   const [deleteError, setDeleteError] = useState<string | null>(null);
   const [worktreeChangesInfo, setWorktreeChangesInfo] = useState<{ hasChanges: boolean; worktreePath?: string; changedFileCount?: number } | null>(null);
   const [isCheckingChanges, setIsCheckingChanges] = useState(false);
-  const stuckIntervalRef = useRef<NodeJS.Timeout | null>(null);
   const taskView = useMemo(
     () => buildAutocodeTaskCardViewModel(task, null, { descriptionMaxLength: 120 }),
     [task]
@@ -322,36 +316,10 @@ export const TaskCard = memo(function TaskCard({
   useEffect(() => {
     if (!isRunning) {
       setIsStuck(false);
-      if (stuckIntervalRef.current) {
-        clearInterval(stuckIntervalRef.current);
-        stuckIntervalRef.current = null;
-      }
-      return;
+      return undefined;
     }
 
-    stuckIntervalRef.current = setInterval(() => {
-      // If any activity (status, progress, logs) was recorded recently, task is alive
-      if (hasRecentActivity(task.id)) {
-        setIsStuck(false);
-        return;
-      }
-
-      // No activity for 60s — verify process is actually gone
-      checkTaskRunning(task.id).then((actuallyRunning) => {
-        // Re-check activity in case something arrived while the IPC was in flight
-        if (hasRecentActivity(task.id)) {
-          setIsStuck(false);
-        } else {
-          setIsStuck(!actuallyRunning);
-        }
-      });
-    }, STUCK_CHECK_INTERVAL_MS);
-
-    return () => {
-      if (stuckIntervalRef.current) {
-        clearInterval(stuckIntervalRef.current);
-      }
-    };
+    return subscribeStuckTask(task.id, setIsStuck);
   }, [task.id, isRunning]);
 
   useEffect(() => {
@@ -627,13 +595,13 @@ export const TaskCard = memo(function TaskCard({
                 variant="outline"
                 className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
               >
-                {developmentMode === 'fast' ? (
+                {developmentMode === 'direct' ? (
                   <Zap className="h-2.5 w-2.5" />
                 ) : (
                   <FileCode className="h-2.5 w-2.5" />
                 )}
                 {t(`metadata.developmentMode.${developmentMode}`, {
-                  defaultValue: developmentMode === 'fast' ? 'Fast' : 'Spec',
+                  defaultValue: developmentMode === 'direct' ? 'Direct' : 'Spec',
                 })}
               </Badge>
             )}

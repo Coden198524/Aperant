@@ -266,7 +266,7 @@ describe('AgentManager worktree execution', () => {
       filePath.endsWith('task_metadata.json')
     );
     (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation(() =>
-      JSON.stringify({ workflowMode: 'off', model: 'sonnet' })
+      JSON.stringify({ workflowMode: 'off', model: 'sonnet', thinkingLevel: 'high' })
     );
     const { AgentManager } = await import('./agent-manager');
     const manager = new AgentManager();
@@ -280,7 +280,7 @@ describe('AgentManager worktree execution', () => {
     expect(executorConfig.session.workflowMode).toBe('off');
     expect(executorConfig.session.phase).toBe('coding');
     expect(executorConfig.session.maxSteps).toBe(60);
-    expect(executorConfig.session.thinkingLevel).toBe('xhigh');
+    expect(executorConfig.session.thinkingLevel).toBe('high');
     expect(executorConfig.session.responsePersistence).toBe(false);
     expect(executorConfig.session.mcpOptions).toMatchObject({
       context7Enabled: false,

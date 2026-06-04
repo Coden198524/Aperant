@@ -47,14 +47,14 @@ interface TaskCreationWizardProps {
 const PROJECT_DEFAULT_BRANCH = AUTOCODE_PROJECT_DEFAULT_BRANCH_MARKER;
 
 function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflowMode {
-  return mode === 'fast' ? 'off' : 'balanced';
+  return mode === 'direct' ? 'off' : 'balanced';
 }
 
 function resolveDraftDevelopmentMode(draft: TaskDraft): TaskDevelopmentMode {
-  if (draft.developmentMode === 'fast' || draft.developmentMode === 'standard' || draft.developmentMode === 'spec') {
+  if (draft.developmentMode === 'direct' || draft.developmentMode === 'standard' || draft.developmentMode === 'spec') {
     return draft.developmentMode;
   }
-  return draft.workflowMode === 'off' ? 'fast' : 'standard';
+  return draft.developmentMode === 'fast' || draft.workflowMode === 'off' ? 'direct' : 'standard';
 }
 
 export function TaskCreationWizard({
@@ -517,7 +517,7 @@ export function TaskCreationWizard({
   const handleDevelopmentModeChange = useCallback((mode: TaskDevelopmentMode) => {
     setDevelopmentMode(mode);
     setWorkflowMode(workflowModeForDevelopmentMode(mode));
-    if (mode === 'fast') {
+    if (mode === 'direct') {
       setRequireReviewBeforeCoding(false);
     }
   }, []);
@@ -578,7 +578,7 @@ export function TaskCreationWizard({
 
       if (images.length > 0) metadata.attachedImages = images;
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
-      if (requireReviewBeforeCoding && developmentMode !== 'fast') metadata.requireReviewBeforeCoding = true;
+      if (requireReviewBeforeCoding && developmentMode !== 'direct') metadata.requireReviewBeforeCoding = true;
       metadata.workflowMode = workflowModeForDevelopmentMode(developmentMode);
       if (developmentMode === 'spec') {
         metadata.openSpecGenerationMode = 'deferred';

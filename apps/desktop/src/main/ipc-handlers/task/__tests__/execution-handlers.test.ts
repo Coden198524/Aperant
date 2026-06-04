@@ -703,6 +703,62 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
+  it('restarts planning for Standard completed review feedback that needs new subtasks', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { existsSync, writeFileSync } = await import('fs');
+    const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
+
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-standard-review',
+        specId: '001-standard-review',
+        projectId: 'project-fast',
+        title: 'Standard review task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'completed',
+        subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'completed', files: [] }],
+        logs: [],
+        metadata: { developmentMode: 'standard', workflowMode: 'balanced' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler({}, '001-standard-review', false, 'Add another tuning pass with separate verification.');
+
+    expect(result).toEqual({ success: true });
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('update tasks.md with new pending subtasks'),
+      'utf-8'
+    );
+    expect(writeFileAtomicSync).not.toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-standard-review',
+      { type: 'PLANNING_STARTED' },
+      expect.any(Object),
+      expect.any(Object)
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
+      '001-standard-review',
+      'E:/Work/FastProject',
+      '001-standard-review',
+      expect.objectContaining({ forcePlanning: true }),
+      'project-fast',
+    );
+    expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
   it('restarts coding for completed review feedback that contains build failures', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
@@ -720,7 +776,7 @@ describe('registerTaskExecutionHandlers', () => {
         reviewReason: 'completed',
         subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'completed', files: [] }],
         logs: [],
-        metadata: {},
+        metadata: { developmentMode: 'standard', workflowMode: 'balanced' },
       },
       project: {
         id: 'project-fast',

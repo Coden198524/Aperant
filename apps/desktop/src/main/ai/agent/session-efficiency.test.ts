@@ -83,6 +83,8 @@ describe('session-efficiency', () => {
     expect(message).toContain('do not keep rewriting commands');
     expect(message).toContain('Do not re-plan completed work');
     expect(message).toContain('few grouped Edits');
+    expect(message).toContain('read the current narrow context');
+    expect(message).toContain('legacy or non-UTF-8 files as encoding-sensitive');
     expect(message).toContain('do not reread the whole file');
     expect(message).toContain('do not read it back unless verification fails');
     expect(message).toContain('avoid python/node one-liners with non-ASCII quoting');

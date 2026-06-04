@@ -22,7 +22,7 @@ const RUNTIME_BOUNDARY_PATTERNS = [
   /Worker thread online:/g,
   /Starting agent session:/g,
   /Starting SpecOrchestrator pipeline/g,
-  /Fast workflow enabled:/g,
+  /Aggressive workflow enabled:/g,
   /Generating project index\.\.\./g,
   /Project index generated/g,
   /Project index generation failed/g,
@@ -235,7 +235,7 @@ function looksStructuredRuntimeLog(content: string): boolean {
     /^Worker thread online:/i.test(trimmed) ||
     /^Starting agent session:/i.test(trimmed) ||
     /^Starting SpecOrchestrator pipeline/i.test(trimmed) ||
-    /^Fast workflow enabled:/i.test(trimmed) ||
+    /^Aggressive workflow enabled:/i.test(trimmed) ||
     /^Generating project index/i.test(trimmed) ||
     /^Project index generated/i.test(trimmed) ||
     /^Project index generation failed/i.test(trimmed) ||
@@ -348,7 +348,7 @@ function splitRuntimeLogBlocks(content: string): string[] {
       /^Worker thread online:/i.test(trimmed) ||
       /^Starting agent session:/i.test(trimmed) ||
       /^Starting SpecOrchestrator pipeline/i.test(trimmed) ||
-      /^Fast workflow enabled:/i.test(trimmed) ||
+      /^Aggressive workflow enabled:/i.test(trimmed) ||
       /^Generating project index/i.test(trimmed) ||
       /^Project index generated/i.test(trimmed) ||
       /^Project index generation failed/i.test(trimmed) ||

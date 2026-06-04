@@ -206,7 +206,13 @@
     "baseBranchUpdateFailed": "Impossible d'enregistrer la branche de base pour le moment.",
     "editBaseBranch": "Modifier",
     "saveBaseBranch": "Enregistrer",
-    "fastMode": "Rapide",
+    "fastMode": "Direct",
+    "developmentMode": {
+      "direct": "Direct",
+      "fast": "Direct",
+      "standard": "Standard",
+      "spec": "Spec"
+    },
     "severity": "sévérité",
     "pullRequest": "Pull Request",
     "showMore": "Afficher plus",
@@ -297,14 +303,39 @@
     "classificationOptional": "Classification (optionnel)",
     "requireReviewLabel": "Exiger une révision humaine avant le codage",
     "requireReviewDescription": "Lorsque activé, vous serez invité à réviser la spécification et le plan d'implémentation avant le début de la phase de codage. Cela vous permet d'approuver, de demander des modifications ou de fournir des commentaires.",
+    "developmentMode": {
+      "label": "Mode de developpement",
+      "description": "Choisissez le niveau de planification en amont pour cette tache.",
+      "recommended": "Recommande",
+      "direct": {
+        "title": "Direct",
+        "description": "Une seule session de codage connectee directement au modele selectionne. Ignore OpenSpec, la planification par etapes et la QA.",
+        "performance": "Au plus proche de l'utilisation directe du modele; ideal pour les petits changements clairs."
+      },
+      "fast": {
+        "title": "Direct",
+        "description": "Une seule session de codage connectee directement au modele selectionne. Ignore OpenSpec, la planification par etapes et la QA.",
+        "performance": "Au plus proche de l'utilisation directe du modele; ideal pour les petits changements clairs."
+      },
+      "standard": {
+        "title": "Standard",
+        "description": "Specification Autocode legere et plan d'implementation. Aucun document OpenSpec en amont.",
+        "performance": "Bon equilibre entre vitesse et structure pour la plupart des travaux."
+      },
+      "spec": {
+        "title": "Spec",
+        "description": "Genere proposition, design, taches et deltas OpenSpec avant l'execution.",
+        "performance": "Chemin le plus tracable pour les changements complexes, risques ou orientes produit."
+      }
+    },
     "workflowOptimization": {
       "label": "Optimisation du flux de travail",
       "description": "Choisissez comment cette tâche doit être exécutée. Le mode direct ignore la planification par étapes et la QA; les autres modes utilisent le flux normal avec différents contrôles qualité.",
       "recommended": "Recommandé",
       "off": {
-        "title": "Mode désactivé",
+        "title": "Mode direct",
         "description": "Envoie la tâche directement au modèle dans une seule session de codage, sans spécification, planification ni QA.",
-        "performance": "Chemin le plus rapide; enregistre un résumé final pour la revue humaine."
+        "performance": "Chemin direct vers le modèle; enregistre un résumé final pour la revue humaine."
       },
       "conservative": {
         "title": "Conservateur",

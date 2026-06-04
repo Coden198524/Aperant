@@ -159,6 +159,12 @@ function isDirectWorkflowTask(task: Task): boolean {
   return task.metadata?.workflowMode === 'off';
 }
 
+function isStandardWorkflowTask(task: Task): boolean {
+  return !isDirectWorkflowTask(task)
+    && task.metadata?.sourceType !== 'openspec'
+    && task.metadata?.developmentMode === 'standard';
+}
+
 function getTaskBaseBranch(task: Task, project: Project): string | undefined {
   return task.metadata?.baseBranch || project.settings?.mainBranch;
 }
@@ -224,6 +230,10 @@ function feedbackRequiresImplementationRestart(feedback: string): boolean {
   return IMPLEMENTATION_FAILURE_FEEDBACK_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
+function shouldRegenerateStandardPlanForFeedback(task: Task, feedback: string): boolean {
+  return isStandardWorkflowTask(task) && !feedbackRequiresImplementationRestart(feedback);
+}
+
 function buildHumanInputContent(
   feedback: string,
   imageReferences: string,
@@ -237,6 +247,7 @@ function buildHumanInputContent(
       `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
       `## Instructions\n\n` +
       `- If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first.\n` +
+      `- For Standard tasks, update tasks.md with new pending subtasks that implement this feedback.\n` +
       `- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback.\n` +
       `- Do not implement code in this planning pass.\n`
     );
@@ -926,10 +937,16 @@ export function registerTaskExecutionHandlers(
         }
 
         if (needsImplementationRestart) {
-          if (!feedbackRequiresImplementationRestart(feedback || '')) {
+          const reviewFeedback = feedback || '';
+          const regenerateStandardPlan = shouldRegenerateStandardPlanForFeedback(task, reviewFeedback);
+          if (!regenerateStandardPlan && !feedbackRequiresImplementationRestart(reviewFeedback)) {
             console.warn('[TASK_REVIEW] Human review rejected - creating follow-up coding subtask.');
           }
-          const humanInputContent = buildHumanInputContent(feedback || 'No feedback provided', imageReferences);
+          const humanInputContent = buildHumanInputContent(
+            reviewFeedback || 'No feedback provided',
+            imageReferences,
+            regenerateStandardPlan ? 'planning' : 'implementation',
+          );
           const humanInputPaths = new Set<string>([
             path.join(targetSpecDir, 'HUMAN_INPUT.md'),
             path.join(specDir, 'HUMAN_INPUT.md'),
@@ -944,15 +961,41 @@ export function registerTaskExecutionHandlers(
             }
           }
 
+          if (regenerateStandardPlan) {
+            console.warn('[TASK_REVIEW] Standard review feedback requires new subtasks - restarting planning.');
+            taskStateManager.prepareForRestart(taskId);
+            taskStateManager.handleUiEvent(
+              taskId,
+              { type: 'PLANNING_STARTED' },
+              task,
+              project
+            );
+            projectStore.invalidateTasksCache(project.id);
+
+            try {
+              await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]', {
+                forcePlanning: true,
+              });
+            } catch (error) {
+              console.error('[TASK_REVIEW] Failed to restart planning after Standard review feedback:', error);
+              return {
+                success: false,
+                error: error instanceof Error ? error.message : 'Failed to restart task execution'
+              };
+            }
+
+            return { success: true };
+          }
+
           const reopenedWorktreePlan = reopenCompletedPlanForFollowupFix(
             path.join(targetSpecDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
-            feedback || 'Address the reported human review issues.'
+            reviewFeedback || 'Address the reported human review issues.'
           );
           let reopenedSourcePlan = false;
           if (targetSpecDir !== specDir) {
             reopenedSourcePlan = reopenCompletedPlanForFollowupFix(
               path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan),
-              feedback || 'Address the reported human review issues.'
+              reviewFeedback || 'Address the reported human review issues.'
             );
           }
           const reopenedAnyPlan = reopenedWorktreePlan || reopenedSourcePlan;

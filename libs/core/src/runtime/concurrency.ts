@@ -83,7 +83,7 @@ function getDefaultRuntimeWorkers(
 function isDirectRuntimeMode(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
 ): boolean {
-  return metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
+  return metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
 }
 
 function shouldUseDefaultRuntimeConcurrency(

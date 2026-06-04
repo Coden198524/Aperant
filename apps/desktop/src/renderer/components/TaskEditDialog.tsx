@@ -40,8 +40,6 @@ import {
   DEFAULT_AGENT_PROFILES,
   DEFAULT_PHASE_MODELS,
   DEFAULT_PHASE_THINKING,
-  FAST_MODE_MODELS,
-  PHASE_KEYS,
   getProviderPreset,
 } from '../../shared/constants';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
@@ -63,15 +61,15 @@ interface TaskEditDialogProps {
 }
 
 function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflowMode {
-  return mode === 'fast' ? 'off' : 'balanced';
+  return mode === 'direct' ? 'off' : 'balanced';
 }
 
 function resolveTaskDevelopmentMode(metadata: TaskMetadata | undefined): TaskDevelopmentMode {
-  if (metadata?.developmentMode === 'fast' || metadata?.developmentMode === 'standard' || metadata?.developmentMode === 'spec') {
+  if (metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'standard' || metadata?.developmentMode === 'spec') {
     return metadata.developmentMode;
   }
   if (metadata?.workflowMode === 'off') {
-    return 'fast';
+    return 'direct';
   }
   return metadata?.sourceType === 'openspec' || metadata?.upstreamSpecSystem === 'openspec'
     ? 'spec'
@@ -82,7 +80,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
   const { t } = useTranslation(['tasks', 'common']);
   // Get selected agent profile from settings for defaults
   const { settings } = useSettingsStore();
-  const { isAnthropic, provider: activeProvider } = useActiveProvider();
+  const { provider: activeProvider } = useActiveProvider();
 
   // Resolve per-provider settings (same chain as AgentProfileSettings)
   const providerConfig = activeProvider ? settings.providerAgentConfig?.[activeProvider] : undefined;
@@ -218,7 +216,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
 
   const handleDevelopmentModeChange = useCallback((mode: TaskDevelopmentMode) => {
     setDevelopmentMode(mode);
-    if (mode === 'fast') {
+    if (mode === 'direct') {
       setRequireReviewBeforeCoding(false);
     }
   }, []);
@@ -271,7 +269,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     }
     // Always set attachedImages to persist removal when all images are deleted
     metadataUpdates.attachedImages = images.length > 0 ? images : [];
-    metadataUpdates.requireReviewBeforeCoding = developmentMode !== 'fast' && requireReviewBeforeCoding;
+    metadataUpdates.requireReviewBeforeCoding = developmentMode !== 'direct' && requireReviewBeforeCoding;
     metadataUpdates.developmentMode = developmentMode;
     metadataUpdates.workflowMode = workflowModeForDevelopmentMode(developmentMode);
     metadataUpdates.sourceType = developmentMode === 'spec' ? 'openspec' : 'manual';

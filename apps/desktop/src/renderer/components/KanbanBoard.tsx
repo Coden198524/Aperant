@@ -54,6 +54,8 @@ function isValidDropColumn(id: string): id is typeof TASK_STATUS_COLUMNS[number]
   return VALID_DROP_COLUMNS.has(id);
 }
 
+const TASK_ORDER_SAVE_DEBOUNCE_MS = 250;
+
 /**
  * Get the visual column for a task status.
  * pr_created tasks are displayed in the 'done' column, so we map them accordingly.
@@ -636,6 +638,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   const resizeStartWidth = useRef<number>(0);
   // Capture projectId at resize start to avoid stale closure if project changes during resize
   const resizeProjectIdRef = useRef<string | null>(null);
+  const taskOrderSaveTimerRef = useRef<number | null>(null);
+  const pendingTaskOrderProjectIdRef = useRef<string | null>(null);
 
   // Get projectId from first task
   const projectId = tasks[0]?.projectId;
@@ -1154,6 +1158,39 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     return success;
   }, [saveTaskOrderToStorage, toast, t]);
 
+  const scheduleTaskOrderSave = useCallback((projectIdToSave: string) => {
+    pendingTaskOrderProjectIdRef.current = projectIdToSave;
+
+    if (taskOrderSaveTimerRef.current) {
+      window.clearTimeout(taskOrderSaveTimerRef.current);
+    }
+
+    taskOrderSaveTimerRef.current = window.setTimeout(() => {
+      const pendingProjectId = pendingTaskOrderProjectIdRef.current;
+      taskOrderSaveTimerRef.current = null;
+      pendingTaskOrderProjectIdRef.current = null;
+
+      if (pendingProjectId) {
+        saveTaskOrder(pendingProjectId);
+      }
+    }, TASK_ORDER_SAVE_DEBOUNCE_MS);
+  }, [saveTaskOrder]);
+
+  useEffect(() => {
+    return () => {
+      if (taskOrderSaveTimerRef.current) {
+        window.clearTimeout(taskOrderSaveTimerRef.current);
+        taskOrderSaveTimerRef.current = null;
+      }
+
+      const pendingProjectId = pendingTaskOrderProjectIdRef.current;
+      pendingTaskOrderProjectIdRef.current = null;
+      if (pendingProjectId) {
+        saveTaskOrder(pendingProjectId);
+      }
+    };
+  }, [saveTaskOrder]);
+
   // Load task order on mount and when project changes
   useEffect(() => {
     if (projectId) {
@@ -1319,9 +1356,9 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     // If stale IDs were found, update the order and persist
     if (hasStaleIds) {
       setTaskOrder(cleanedOrder);
-      saveTaskOrder(projectId);
+      scheduleTaskOrderSave(projectId);
     }
-  }, [tasks, taskOrder, projectId, setTaskOrder, saveTaskOrder]);
+  }, [tasks, taskOrder, projectId, setTaskOrder, scheduleTaskOrderSave]);
 
   const handleDragEnd = async (event: DragEndEvent) => {
     const { active, over } = event;
@@ -1378,7 +1415,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
           reorderTasksInColumn(taskVisualColumn, activeTaskId, overId);
 
           if (projectId) {
-            saveTaskOrder(projectId);
+            scheduleTaskOrderSave(projectId);
           }
           return;
         }
@@ -1390,7 +1427,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
 
         // Persist task order
         if (projectId) {
-          saveTaskOrder(projectId);
+          scheduleTaskOrderSave(projectId);
         }
       }
     }

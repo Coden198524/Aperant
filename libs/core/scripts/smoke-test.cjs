@@ -272,6 +272,26 @@ async function main() {
     ]);
     const taskMetadata = JSON.parse(readFileSync(join(task.specsPath, 'task_metadata.json'), 'utf8'));
     assert.equal(taskMetadata.taskTitle, 'Add provider settings');
+    assert.equal(core.resolveAutocodeTaskDevelopmentMode({ developmentMode: 'fast' }), 'direct');
+    assert.equal(core.resolveAutocodeTaskDevelopmentMode({ workflowMode: 'off' }), 'direct');
+    const directTask = core.createManualAutocodeTask({
+      projectRoot,
+      dataDirName: '.autocode',
+      title: 'Small direct fix',
+      description: 'Change one obvious string.',
+      metadata: { developmentMode: 'direct' },
+      now: '2026-01-02T03:09:00.000Z',
+    });
+    assert.equal(directTask.metadata.developmentMode, 'direct');
+    assert.equal(directTask.metadata.workflowMode, 'off');
+    assert.equal(core.createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName: '.autocode',
+      taskId: directTask.id,
+      cli: 'custom',
+      customCommand: 'node fake-agent.js',
+    }).phase, 'direct');
+    assert.equal(existsSync(join(directTask.specsPath, 'spec.md')), false);
     const titleRewritePlan = core.loadAutocodeImplementationPlanSync(task.specsPath);
     titleRewritePlan.feature = 'Agent regenerated implementation feature';
     core.saveAutocodeImplementationPlanSync(task.specsPath, titleRewritePlan);
@@ -2033,6 +2053,8 @@ async function main() {
     assert.ok(fakeCodingRunnerScript.includes('patternFiles'));
     assert.ok(fakeCodingRunnerScript.includes('workItemPathsOverlap'));
     assert.ok(fakeCodingRunnerScript.includes('Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes'));
+    assert.ok(fakeCodingRunnerScript.includes('read the current narrow context'));
+    assert.ok(fakeCodingRunnerScript.includes('legacy or non-UTF-8 files as encoding-sensitive'));
     assert.equal(fakeCodingRunnerScript.includes('When done, mark only work package'), false);
     const fakeCodingResult = await core.startAutocodeAgentRuntime(
       fakeCodingRuntime.request,
@@ -2188,7 +2210,7 @@ async function main() {
       ),
     );
 
-    const directTask = core.createAutocodeTask({
+    const directCleanupTask = core.createAutocodeTask({
       projectRoot,
       dataDirName: '.autocode',
       title: 'Run direct cleanup',
@@ -2198,14 +2220,14 @@ async function main() {
     const directRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
       projectRoot,
       dataDirName: '.autocode',
-      taskId: directTask.id,
+      taskId: directCleanupTask.id,
     });
     assert.equal(directRuntimePlan.mode, 'direct');
     assert.equal(directRuntimePlan.processType, 'task-execution');
     const directStartedRuntime = core.createStartedAutocodeAgentRuntime({
       projectRoot,
       dataDirName: '.autocode',
-      taskId: directTask.id,
+      taskId: directCleanupTask.id,
       cli: 'codex',
       model: 'gpt-5.5',
     });
@@ -2214,7 +2236,7 @@ async function main() {
     assert.ok(readFileSync(directStartedRuntime.taskRunPlan.promptFilePath, 'utf8').includes('directly'));
     assert.deepEqual(
       core.resolveAutocodeTaskStartEvent({
-        task: directTask,
+        task: directCleanupTask,
         currentState: null,
         planHasSubtasks: false,
       }),

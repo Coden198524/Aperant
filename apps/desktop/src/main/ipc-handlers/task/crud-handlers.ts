@@ -196,6 +196,7 @@ function hasOwnMetadataKey(metadata: Partial<TaskMetadata>, key: string): boolea
 
 function isManagedTaskModeMetadata(metadata: TaskMetadata | undefined): boolean {
   return (
+    metadata?.developmentMode === 'direct' ||
     metadata?.developmentMode === 'fast' ||
     metadata?.developmentMode === 'standard' ||
     metadata?.developmentMode === 'spec' ||

@@ -115,7 +115,7 @@ function resolvePhaseStepBudget(
   return typeof budget === 'number' ? budget : fallback;
 }
 
-function isFastWorkflow(
+function isAggressiveWorkflow(
   session: SerializableSessionConfig,
 ): session is SerializableSessionConfig & { workflowMode: TaskWorkflowMode } {
   return session.workflowMode === 'aggressive';
@@ -822,7 +822,7 @@ async function assemblePrompt(
   promptName: string,
   session: SerializableSessionConfig,
 ): Promise<string> {
-  const useCompactAggressiveCoderPrompt = promptName === 'coder' && isFastWorkflow(session);
+  const useCompactAggressiveCoderPrompt = promptName === 'coder' && isAggressiveWorkflow(session);
   const profileProjectDir = getPromptProfileProjectDir(session);
   const projectPromptProfile = !useCompactAggressiveCoderPrompt && shouldUseProjectPromptProfile(session, promptName)
     ? getProjectPromptProfile(session)
@@ -889,7 +889,7 @@ async function assemblePrompt(
       promptWithLanguage += `\n\n${buildPlanReviewRegenerationDirective(session)}`;
     }
   }
-  if (promptName === 'spec_quick' && isFastWorkflow(session)) {
+  if (promptName === 'spec_quick' && isAggressiveWorkflow(session)) {
     promptWithLanguage += [
       '',
       '## AGGRESSIVE WORKFLOW PLAN LIMIT',
@@ -900,7 +900,7 @@ async function assemblePrompt(
       '- Do not split by component, file, test, cleanup, or other internal implementation area for a single-deliverable task.',
     ].join('\n');
   }
-  if (promptName === 'coder' && isFastWorkflow(session)) {
+  if (promptName === 'coder' && isAggressiveWorkflow(session)) {
     promptWithLanguage += [
       '',
       '## AGGRESSIVE WORKFLOW CODING LIMITS',
@@ -1599,7 +1599,7 @@ async function runBuildOrchestrator(
     specDir: session.specDir,
     projectDir: session.projectDir,
     sourceSpecDir: session.sourceSpecDir,
-    maxIterations: isFastWorkflow(session) ? 1 : undefined,
+    maxIterations: isAggressiveWorkflow(session) ? 1 : undefined,
     language: session.language,
     forcePlanning: session.forcePlanning === true,
     abortSignal: abortController.signal,
@@ -1831,7 +1831,7 @@ async function runQALoop(
   const qaLoop = new QALoop({
     specDir: session.specDir,
     projectDir: session.projectDir,
-    maxIterations: isFastWorkflow(session) ? 1 : undefined,
+    maxIterations: isAggressiveWorkflow(session) ? 1 : undefined,
     abortSignal: abortController.signal,
     agentProfile: resolveProjectAgentProfile(session.projectType),
 
@@ -1930,8 +1930,8 @@ async function runSpecOrchestrator(
 
   // Generate project index BEFORE any agent runs – gives all phases project context
   let projectIndexContent: string | undefined;
-  if (isFastWorkflow(session)) {
-    postLog('Fast workflow enabled: skipping project index generation');
+  if (isAggressiveWorkflow(session)) {
+    postLog('Aggressive workflow enabled: skipping project index generation');
   } else {
     try {
       const indexOutputPath = join(session.specDir, AUTOCODE_PROJECT_INDEX_FILE_NAME);
@@ -1948,8 +1948,8 @@ async function runSpecOrchestrator(
     specDir: session.specDir,
     projectDir: session.projectDir,
     taskDescription,
-    complexityOverride: isFastWorkflow(session) ? 'simple' : undefined,
-    useAiAssessment: !isFastWorkflow(session),
+    complexityOverride: isAggressiveWorkflow(session) ? 'simple' : undefined,
+    useAiAssessment: !isAggressiveWorkflow(session),
     workflowConfig: getWorkflowConfigFromMode(session.workflowMode),
     projectIndex: projectIndexContent,
     language: session.language,

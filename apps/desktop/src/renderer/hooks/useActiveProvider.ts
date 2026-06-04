@@ -13,7 +13,7 @@ export interface ActiveProviderInfo {
   account: ProviderAccount | null;
   /** Shorthand for account.provider */
   provider: BuiltinProvider | null;
-  /** True when the active account is Anthropic (useful for Fast Mode gating) */
+  /** True when the active account is Anthropic (useful for Anthropic-specific routing gates) */
   isAnthropic: boolean;
   /** Unique set of providers across all connected accounts */
   connectedProviders: BuiltinProvider[];

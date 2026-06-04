@@ -416,6 +416,9 @@ export function buildFocusedCoderKickoffMessageFromContext(
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');
   lines.push(`- Prefer the smallest code change that satisfies the ${workLabel}.`);
   lines.push('- Prefer one broad Write for new files or a few grouped Edits for existing files. Do not perform many tiny adjacent Edit calls when one replacement can cover the block.');
+  lines.push('- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread only the surrounding lines once before retrying.');
+  lines.push('- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.');
+  lines.push('- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.');
   lines.push('- After reading a file once, do not reread the whole file. If an edit misses, read only the narrow surrounding lines needed to repair that edit.');
   lines.push('- If a listed file was just written successfully, do not read it back unless verification fails or the next edit needs exact local context.');
   lines.push('- Run at most one listed verification before finishing.');

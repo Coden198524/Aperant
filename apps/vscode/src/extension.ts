@@ -300,9 +300,9 @@ async function createTaskFromInput(sidebarProvider?: AutocodeSidebarProvider): P
         mode: 'standard' as AutocodeTaskDevelopmentMode,
       },
       {
-        label: 'Fast',
-        description: 'Direct one-session coding',
-        mode: 'fast' as AutocodeTaskDevelopmentMode,
+        label: 'Direct',
+        description: 'One coding session connected straight to the selected model',
+        mode: 'direct' as AutocodeTaskDevelopmentMode,
       },
       {
         label: 'Spec',

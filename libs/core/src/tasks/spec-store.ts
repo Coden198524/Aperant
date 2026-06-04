@@ -48,7 +48,9 @@ export type AutocodeTaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 
 export type AutocodeTaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type AutocodeTaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type AutocodeTaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
-export type AutocodeTaskDevelopmentMode = 'fast' | 'standard' | 'spec';
+export type AutocodeTaskDevelopmentMode = 'direct' | 'standard' | 'spec';
+export type LegacyAutocodeTaskDevelopmentMode = 'fast';
+export type AutocodeTaskDevelopmentModeMetadata = AutocodeTaskDevelopmentMode | LegacyAutocodeTaskDevelopmentMode;
 export type AutocodeSubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 export type AutocodeExecutionPhase =
   | 'idle'
@@ -65,7 +67,7 @@ export type AutocodeExecutionPhase =
 export interface AutocodeTaskMetadata {
   sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
   taskTitle?: string;
-  developmentMode?: AutocodeTaskDevelopmentMode;
+  developmentMode?: AutocodeTaskDevelopmentModeMetadata;
   category?: AutocodeTaskCategory;
   complexity?: AutocodeTaskComplexity;
   impact?: AutocodeTaskImpact;
@@ -356,18 +358,36 @@ export function buildAutocodeTaskRequirements(
 }
 
 export function isAutocodeTaskDevelopmentMode(value: unknown): value is AutocodeTaskDevelopmentMode {
-  return value === 'fast' || value === 'standard' || value === 'spec';
+  return value === 'direct' || value === 'standard' || value === 'spec';
+}
+
+export function isLegacyAutocodeTaskDevelopmentMode(value: unknown): value is LegacyAutocodeTaskDevelopmentMode {
+  return value === 'fast';
+}
+
+export function normalizeAutocodeTaskDevelopmentMode(
+  value: unknown,
+): AutocodeTaskDevelopmentMode | null {
+  if (value === 'fast') {
+    return 'direct';
+  }
+  return isAutocodeTaskDevelopmentMode(value) ? value : null;
+}
+
+export function isDirectAutocodeTaskDevelopmentMode(value: unknown): boolean {
+  return normalizeAutocodeTaskDevelopmentMode(value) === 'direct';
 }
 
 export function resolveAutocodeTaskDevelopmentMode(
   metadata: AutocodeTaskMetadata | null | undefined,
   defaultMode: AutocodeTaskDevelopmentMode = 'standard',
 ): AutocodeTaskDevelopmentMode {
-  if (isAutocodeTaskDevelopmentMode(metadata?.developmentMode)) {
-    return metadata.developmentMode;
+  const normalizedMode = normalizeAutocodeTaskDevelopmentMode(metadata?.developmentMode);
+  if (normalizedMode) {
+    return normalizedMode;
   }
   if (metadata?.workflowMode === 'off') {
-    return 'fast';
+    return 'direct';
   }
   if (metadata?.sourceType === 'openspec' || metadata?.upstreamSpecSystem === 'openspec') {
     return 'spec';
@@ -379,15 +399,15 @@ export function buildAutocodeTaskModeMetadata(
   developmentMode: AutocodeTaskDevelopmentMode,
   metadata: AutocodeTaskMetadata = {},
 ): AutocodeTaskMetadata {
-  if (developmentMode === 'fast') {
+  if (developmentMode === 'direct') {
     return {
       ...stripOpenSpecTaskMetadata(metadata),
       sourceType: 'manual',
-      developmentMode: 'fast',
+      developmentMode: 'direct',
       workflowMode: 'off',
       runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency({
         ...metadata,
-        developmentMode: 'fast',
+        developmentMode: 'direct',
         workflowMode: 'off',
       }),
     };

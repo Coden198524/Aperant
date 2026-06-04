@@ -473,10 +473,13 @@ function resolveCli(value: string): AutocodeCli {
 
 function getDevelopmentModeOption(parsed: ParsedAutocodeCommandArgs): AutocodeTaskDevelopmentMode {
   const mode = getStringOption(parsed, 'mode') ?? getStringOption(parsed, 'development-mode') ?? 'standard';
+  if (mode === 'fast') {
+    return 'direct';
+  }
   if (isAutocodeTaskDevelopmentMode(mode)) {
     return mode;
   }
-  throw new Error(`Unsupported task mode "${mode}". Supported values: fast, standard, spec.`);
+  throw new Error(`Unsupported task mode "${mode}". Supported values: direct, standard, spec.`);
 }
 
 function getStringOption(parsed: ParsedAutocodeCommandArgs, key: string): string | undefined {
@@ -536,7 +539,7 @@ function printHelp(): void {
 Usage:
   autocode info [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
   autocode tasks [--cwd <path>] [--data-dir ${DEFAULT_DATA_DIR}] [--json]
-  autocode create --title <title> --description <text> [--mode fast|standard|spec]
+  autocode create --title <title> --description <text> [--mode direct|standard|spec]
   autocode docs generate [--type full|product|architecture|technical]
   autocode openspec list
   autocode openspec import <change-id>
@@ -551,7 +554,7 @@ Usage:
 Commands:
   info       Print workspace and shared core information.
   tasks      List shared Autocode task files.
-  create     Create an Autocode task. Default mode is standard; use --mode spec for OpenSpec.
+  create     Create an Autocode task. Default mode is standard; use --mode direct for direct LLM execution.
   docs       Create a project documentation task used as context by future spec and coding phases.
   openspec   Import an OpenSpec change as a downstream Autocode execution task.
   run        Write a task prompt and runner using @autocode/core.

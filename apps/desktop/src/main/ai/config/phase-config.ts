@@ -304,7 +304,7 @@ export function getSpecPhaseThinkingBudget(phaseName: string): number {
 }
 
 /**
- * Check if Fast Mode is enabled for this task.
+ * Check if provider Fast API routing is enabled for this task.
  */
 export async function getFastMode(specDir: string): Promise<boolean> {
   const metadata = await loadTaskMetadata(specDir);

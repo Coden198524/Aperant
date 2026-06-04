@@ -80,6 +80,8 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('PROJECT-SPECIFIC PROMPT');
     expect(coderOverride?.content).toContain('Implement the next pending subtask');
     expect(coderOverride?.content).toContain('design pattern decision');
+    expect(coderOverride?.content).toContain('read the current narrow context');
+    expect(coderOverride?.content).toContain('legacy or non-UTF-8 files as encoding-sensitive');
     expect(coderOverride?.content).toContain('TOOL CALL JSON SAFETY');
     expect(coderOverride?.content).toContain('forward slashes');
     expect(coderOverride?.content).toContain('both keys');

@@ -187,7 +187,7 @@ export interface TaskDraft {
   images: ImageAttachment[];
   referencedFiles: ReferencedFile[];
   requireReviewBeforeCoding?: boolean;
-  developmentMode?: TaskDevelopmentMode;
+  developmentMode?: TaskDevelopmentModeMetadata;
   workflowMode?: TaskWorkflowMode;
   runtimeConcurrency?: TaskRuntimeConcurrency;
   useWorktree?: boolean;
@@ -200,7 +200,9 @@ export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
-export type TaskDevelopmentMode = 'fast' | 'standard' | 'spec';
+export type TaskDevelopmentMode = 'direct' | 'standard' | 'spec';
+export type LegacyTaskDevelopmentMode = 'fast';
+export type TaskDevelopmentModeMetadata = TaskDevelopmentMode | LegacyTaskDevelopmentMode;
 export type ProjectDocumentType = 'full' | 'product' | 'architecture' | 'technical';
 export type TaskRuntimeConcurrencyMode = 'serial' | 'concurrent';
 export type TaskRuntimeConcurrencyUnit = 'work_item';
@@ -231,7 +233,7 @@ export interface TaskMetadata {
   // Origin tracking
   sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
   taskTitle?: string;  // Stable user-facing task title; implementation plans must not overwrite it
-  developmentMode?: TaskDevelopmentMode;
+  developmentMode?: TaskDevelopmentModeMetadata;
   ideationType?: string;  // e.g., 'code_improvements', 'security_hardening'
   ideaId?: string;  // Reference to original idea if converted
   featureId?: string;  // Reference to roadmap feature if from roadmap

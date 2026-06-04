@@ -343,5 +343,5 @@ function createAutocodeAgentRuntimeMessages(
 }
 
 function isDirectAutocodeWorkflow(metadata: AutocodeAgentRuntimeMetadata | undefined): boolean {
-  return metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
+  return metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
 }

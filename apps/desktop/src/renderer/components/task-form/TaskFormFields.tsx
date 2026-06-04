@@ -564,7 +564,7 @@ export function TaskFormFields({
             id={`${prefix}require-review`}
             checked={requireReviewBeforeCoding}
             onCheckedChange={(checked) => onRequireReviewChange(checked === true)}
-            disabled={disabled || developmentMode === 'fast'}
+            disabled={disabled || developmentMode === 'direct'}
             className="mt-0.5"
           />
           <div className="flex-1 space-y-1">
@@ -590,7 +590,7 @@ export function TaskFormFields({
             </p>
             <div className="grid grid-cols-1 gap-2 mt-3">
               {([
-                { mode: 'fast' as const, icon: Zap },
+                { mode: 'direct' as const, icon: Zap },
                 { mode: 'standard' as const, icon: ListChecks },
                 { mode: 'spec' as const, icon: FileText },
               ]).map(({ mode, icon: Icon }) => (

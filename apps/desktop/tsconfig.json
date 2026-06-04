@@ -20,7 +20,9 @@
       "@features/*": ["src/renderer/features/*"],
       "@components/*": ["src/renderer/shared/components/*"],
       "@hooks/*": ["src/renderer/shared/hooks/*"],
-      "@lib/*": ["src/renderer/shared/lib/*"]
+      "@lib/*": ["src/renderer/shared/lib/*"],
+      "@autocode/core": ["../../libs/core/src/index.ts"],
+      "@autocode/core/*": ["../../libs/core/src/*"]
     }
   },
   "include": ["src/**/*"],

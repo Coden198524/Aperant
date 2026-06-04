@@ -26,6 +26,8 @@ describe('buildAggressiveCoderPrompt', () => {
     expect(prompt).toContain('Run at most one targeted verification');
     expect(prompt).toContain('do not try multiple equivalent checks');
     expect(prompt).toContain('single existence/key-content check is enough');
+    expect(prompt).toContain('read the current narrow context');
+    expect(prompt).toContain('legacy or non-UTF-8 files as encoding-sensitive');
     expect(prompt).toContain('avoid nested cmd/powershell quoting');
     expect(prompt).toContain('Never use Bash here-documents');
     expect(prompt).toContain('Avoid Python -c or Node -e checks containing non-ASCII text');

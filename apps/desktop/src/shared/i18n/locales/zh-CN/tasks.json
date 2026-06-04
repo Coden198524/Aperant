@@ -231,11 +231,12 @@
     "editBaseBranch": "编辑",
     "saveBaseBranch": "保存",
     "developmentMode": {
-      "fast": "快速",
+      "direct": "直连",
+      "fast": "直连",
       "standard": "标准",
       "spec": "Spec"
     },
-    "fastMode": "快速",
+    "fastMode": "直连",
     "severity": "严重程度",
     "pullRequest": "拉取请求",
     "showMore": "显示更多",
@@ -398,10 +399,15 @@
       "label": "开发模式",
       "description": "选择这个任务需要多少上游规划。",
       "recommended": "推荐",
+      "direct": {
+        "title": "Direct 直连模式",
+        "description": "单次直连所选大模型编码，跳过 OpenSpec、分阶段规划和 QA。",
+        "performance": "最接近直接使用大模型本身，适合小改动或目标明确的任务。"
+      },
       "fast": {
-        "title": "Fast 快速模式",
-        "description": "单次直接编码，跳过 OpenSpec、分阶段规划和 QA。",
-        "performance": "最接近直接使用大模型，适合小改动或目标明确的任务。"
+        "title": "Direct 直连模式",
+        "description": "单次直连所选大模型编码，跳过 OpenSpec、分阶段规划和 QA。",
+        "performance": "最接近直接使用大模型本身，适合小改动或目标明确的任务。"
       },
       "standard": {
         "title": "Standard 标准模式",
@@ -419,9 +425,9 @@
       "description": "选择此任务的执行方式。关闭模式会跳过阶段化规划和 QA，其它模式会按常规流程执行并使用不同质量检查。",
       "recommended": "推荐",
       "off": {
-        "title": "关闭模式",
+        "title": "Direct 直连模式",
         "description": "直接把任务交给大模型，在一个编码会话中完成，不生成规范、计划和 QA 阶段。",
-        "performance": "最快路径；任务结束后记录最终总结供人工审核。"
+        "performance": "直连大模型路径；任务结束后记录最终总结供人工审核。"
       },
       "conservative": {
         "title": "保守模式",

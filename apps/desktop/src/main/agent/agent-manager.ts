@@ -6,6 +6,7 @@ import {
   AUTOCODE_COMMON_BASE_BRANCHES,
   AUTOCODE_DEFAULT_BASE_BRANCH,
   AUTOCODE_TASK_ARTIFACTS,
+  DEFAULT_PHASE_THINKING,
   buildAutocodeDefaultDirectTaskPrompt,
   buildAutocodeDefaultPlannerPrompt,
   buildAutocodeDefaultQAPrompt,
@@ -1003,6 +1004,7 @@ export class AgentManager extends EventEmitter {
 
     const modelId = await this.resolveTaskModelId(specDir, 'coding');
     const preferredProvider = this.resolveTaskPhaseProvider(specDir, 'coding');
+    const thinkingLevel = this.resolveTaskThinkingLevel(specDir, 'coding');
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, 'direct_task');
     const systemPrompt = this.loadPrompt('direct_task') ?? buildAutocodeDefaultDirectTaskPrompt({
       specId,
@@ -1113,7 +1115,7 @@ export class AgentManager extends EventEmitter {
       phase: 'coding',
       provider: resolved.provider,
       modelId: resolved.modelId,
-      thinkingLevel: 'xhigh',
+      thinkingLevel,
       apiKey: resolved.auth?.apiKey,
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
@@ -1617,6 +1619,17 @@ export class AgentManager extends EventEmitter {
       phase,
       { inferPinnedProvider: inferPinnedProviderFromModel },
     );
+  }
+
+  private resolveTaskThinkingLevel(
+    specDir: string,
+    phase: 'planning' | 'coding' | 'qa' | 'spec',
+  ): SerializableSessionConfig['thinkingLevel'] {
+    const metadata = loadAutocodeTaskRuntimeMetadataConfig(specDir) as TaskMetadata | null;
+    if (metadata?.isAutoProfile && metadata.phaseThinking?.[phase]) {
+      return metadata.phaseThinking[phase];
+    }
+    return metadata?.thinkingLevel || DEFAULT_PHASE_THINKING[phase];
   }
 
   private resolveTaskWorkflowMode(specDir: string): TaskWorkflowMode {

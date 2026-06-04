@@ -164,7 +164,7 @@ export function createManualAutocodeTask(input: CreateManualAutocodeTaskInput): 
     requirements: input.requirements,
     now: input.now,
     prepareSpecArtifacts: (context) => {
-      if (developmentMode !== 'fast') {
+      if (developmentMode !== 'direct') {
         writeFileSync(
           join(context.specDir, AUTOCODE_TASK_ARTIFACTS.specFile),
           `${buildManualAutocodeExecutionSpecMarkdown({
@@ -270,16 +270,16 @@ function buildManualAutocodeExecutionSpecMarkdown(input: {
     `# ${input.title}`,
     '',
     '## Type',
-    input.developmentMode === 'fast'
-      ? 'Fast mode task'
+    input.developmentMode === 'direct'
+      ? 'Direct mode task'
       : 'Standard mode task',
     '',
     '## Request',
     input.description,
     '',
     '## Execution',
-    input.developmentMode === 'fast'
-      ? 'Run one direct coding session. Do not generate OpenSpec artifacts or staged plans.'
+    input.developmentMode === 'direct'
+      ? 'Run one direct coding session against the selected model. Do not generate OpenSpec artifacts or staged plans.'
       : 'Use lightweight Autocode specification and implementation planning. Do not generate upstream OpenSpec artifacts.',
     '',
     '## Done',
@@ -298,16 +298,16 @@ function buildChineseManualAutocodeExecutionSpecMarkdown(input: {
     `# ${input.title}`,
     '',
     '## 类型',
-    input.developmentMode === 'fast'
-      ? 'Fast 快速模式任务'
+    input.developmentMode === 'direct'
+      ? 'Direct 直连模式任务'
       : 'Standard 标准模式任务',
     '',
     '## 请求',
     input.description,
     '',
     '## 执行方式',
-    input.developmentMode === 'fast'
-      ? '直接进入单次编码会话，不生成 OpenSpec 文档，不做分阶段规划。'
+    input.developmentMode === 'direct'
+      ? '直连所选大模型进入单次编码会话，不生成 OpenSpec 文档，不做分阶段规划。'
       : '使用 Autocode 轻量规格和实现计划执行，不生成 OpenSpec 上游文档。',
     '',
     '## 完成标准',

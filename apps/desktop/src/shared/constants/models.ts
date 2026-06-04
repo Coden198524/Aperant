@@ -471,7 +471,7 @@ export function getProviderDefaultFeatureThinking(provider?: BuiltinProvider): F
   return DEFAULT_FEATURE_THINKING;
 }
 
-// Models that support Fast Mode (same model, faster API routing, higher cost)
+// Models that support provider Fast API routing (same model, faster route, higher cost)
 export const FAST_MODE_MODELS: readonly string[] = ['opus', 'opus-1m'] as const;
 
 // Models that use adaptive thinking (Opus dynamically decides how much to think within the budget cap)

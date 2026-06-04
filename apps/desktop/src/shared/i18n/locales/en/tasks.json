@@ -199,7 +199,7 @@
     "filesChanged": "{{count}} file(s) changed"
   },
   "metadata": {
-    "fastMode": "Fast",
+    "fastMode": "Direct",
     "baseBranch": "Base Branch",
     "baseBranchUnknown": "Unknown",
     "baseBranchProjectDefault": "Use project default",
@@ -213,7 +213,8 @@
     "editBaseBranch": "Edit",
     "saveBaseBranch": "Save",
     "developmentMode": {
-      "fast": "Fast",
+      "direct": "Direct",
+      "fast": "Direct",
       "standard": "Standard",
       "spec": "Spec"
     },
@@ -315,10 +316,15 @@
       "label": "Development Mode",
       "description": "Choose the amount of upstream planning for this task.",
       "recommended": "Recommended",
+      "direct": {
+        "title": "Direct",
+        "description": "One coding session connected straight to the selected model. Skips OpenSpec, staged planning, and QA.",
+        "performance": "Closest to using the model itself; best for small or obvious changes."
+      },
       "fast": {
-        "title": "Fast",
-        "description": "One direct coding session. Skips OpenSpec, staged planning, and QA.",
-        "performance": "Closest to using the model directly; best for small or obvious changes."
+        "title": "Direct",
+        "description": "One coding session connected straight to the selected model. Skips OpenSpec, staged planning, and QA.",
+        "performance": "Closest to using the model itself; best for small or obvious changes."
       },
       "standard": {
         "title": "Standard",
@@ -336,9 +342,9 @@
       "description": "Choose how this task should be executed. Direct mode skips staged planning and QA; other modes run the normal workflow with different quality checks.",
       "recommended": "Recommended",
       "off": {
-        "title": "Off Mode",
+        "title": "Direct Mode",
         "description": "Send the task directly to the model in one coding session without spec, planning, or QA phases.",
-        "performance": "Fastest path; records a final summary for manual review."
+        "performance": "Direct model path; records a final summary for manual review."
       },
       "conservative": {
         "title": "Conservative",
