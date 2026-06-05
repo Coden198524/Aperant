@@ -34,3 +34,20 @@ export type {
   TriageProgressUpdate,
   TriageResult,
 } from './triage.js';
+
+export {
+  extractGitHubRateLimitInfo,
+  normalizeGitHubRepoReference,
+} from './api-utils.js';
+export type {
+  GitHubRateLimitHeadersLike,
+  GitHubRateLimitInfo,
+} from './api-utils.js';
+
+export {
+  buildGitHubInvestigationTask,
+  buildGitHubIssueContext,
+} from './issue-context.js';
+export type {
+  GitHubIssueContextComment,
+} from './issue-context.js';

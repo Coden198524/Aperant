@@ -6,6 +6,11 @@ import { existsSync, readFileSync } from 'fs';
 import { execFileSync, execFile } from 'child_process';
 import { promisify } from 'util';
 import { getAutocodeProjectEnvPath } from '@autocode/core';
+import {
+  extractGitHubRateLimitInfo,
+  normalizeGitHubRepoReference,
+  type GitHubRateLimitInfo,
+} from '@autocode/core/integrations/github';
 import type { Project } from '../../../shared/types';
 import { parseEnvFile } from '../utils';
 import type { GitHubConfig } from './types';
@@ -33,11 +38,7 @@ export interface ETagCache {
 /**
  * Rate limit information extracted from GitHub API response headers
  */
-export interface RateLimitInfo {
-  remaining: number;
-  reset: Date;
-  limit: number;
-}
+export type RateLimitInfo = GitHubRateLimitInfo;
 
 /**
  * Response from githubFetchWithETag including cache status and rate limit info
@@ -134,19 +135,7 @@ function evictStaleCacheEntries(): void {
  * Extract rate limit information from GitHub API response headers
  */
 export function extractRateLimitInfo(response: Response): RateLimitInfo | null {
-  const remaining = response.headers.get('X-RateLimit-Remaining');
-  const reset = response.headers.get('X-RateLimit-Reset');
-  const limit = response.headers.get('X-RateLimit-Limit');
-
-  if (remaining === null || reset === null) {
-    return null;
-  }
-
-  return {
-    remaining: parseInt(remaining, 10),
-    reset: new Date(parseInt(reset, 10) * 1000),
-    limit: limit ? parseInt(limit, 10) : 5000
-  };
+  return extractGitHubRateLimitInfo(response);
 }
 
 /**
@@ -231,21 +220,7 @@ export function getGitHubConfig(project: Project): GitHubConfig | null {
  * - git@github.com:owner/repo.git
  */
 export function normalizeRepoReference(repo: string): string {
-  if (!repo) return '';
-
-  // Remove trailing .git if present
-  let normalized = repo.replace(/\.git$/, '');
-
-  // Handle full GitHub URLs
-  if (normalized.startsWith('https://github.com/')) {
-    normalized = normalized.replace('https://github.com/', '');
-  } else if (normalized.startsWith('http://github.com/')) {
-    normalized = normalized.replace('http://github.com/', '');
-  } else if (normalized.startsWith('git@github.com:')) {
-    normalized = normalized.replace('git@github.com:', '');
-  }
-
-  return normalized.trim();
+  return normalizeGitHubRepoReference(repo);
 }
 
 /**

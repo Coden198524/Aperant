@@ -10,9 +10,10 @@ import {
   createImportedAutocodeTask,
   getAutocodeSpecsDir,
 } from '@autocode/core';
+import { buildGitLabIssueContext } from '@autocode/core/integrations/gitlab';
+import { determineAutocodeTaskCategoryFromLabels } from '@autocode/core/integrations/common';
 import type { Project } from '../../../shared/types';
 import type { GitLabAPIIssue, GitLabAPINoteBasic, GitLabConfig } from './types';
-import { labelMatchesWholeWord } from '../shared/label-utils';
 import { sanitizeText, sanitizeStringArray } from '../shared/sanitize';
 
 /**
@@ -72,40 +73,7 @@ function debugLog(message: string, data?: unknown): void {
  * Maps to TaskCategory type from shared/types/task.ts
  */
 function determineCategoryFromLabels(labels: string[]): 'feature' | 'bug_fix' | 'refactoring' | 'documentation' | 'security' | 'performance' | 'ui_ux' | 'infrastructure' | 'testing' {
-  const lowerLabels = labels.map(l => l.toLowerCase());
-
-  if (lowerLabels.some(l => l.includes('bug') || l.includes('defect') || l.includes('error') || l.includes('fix'))) {
-    return 'bug_fix';
-  }
-  if (lowerLabels.some(l => l.includes('security') || l.includes('vulnerability') || l.includes('cve'))) {
-    return 'security';
-  }
-  if (lowerLabels.some(l => l.includes('performance') || l.includes('optimization') || l.includes('speed'))) {
-    return 'performance';
-  }
-  if (lowerLabels.some(l => l.includes('ui') || l.includes('ux') || l.includes('design') || l.includes('styling'))) {
-    return 'ui_ux';
-  }
-  // Use whole-word matching for 'ci' and 'cd' to avoid false positives like 'acid' or 'decide'
-  if (lowerLabels.some(l =>
-    l.includes('infrastructure') ||
-    l.includes('devops') ||
-    l.includes('deployment') ||
-    labelMatchesWholeWord(l, 'ci') ||
-    labelMatchesWholeWord(l, 'cd')
-  )) {
-    return 'infrastructure';
-  }
-  if (lowerLabels.some(l => l.includes('test') || l.includes('testing') || l.includes('qa'))) {
-    return 'testing';
-  }
-  if (lowerLabels.some(l => l.includes('refactor') || l.includes('cleanup') || l.includes('maintenance') || l.includes('chore') || l.includes('tech-debt') || l.includes('technical debt'))) {
-    return 'refactoring';
-  }
-  if (lowerLabels.some(l => l.includes('documentation') || l.includes('docs'))) {
-    return 'documentation';
-  }
-  return 'feature';
+  return determineAutocodeTaskCategoryFromLabels(labels);
 }
 
 function sanitizeIssueNumber(value: unknown): number {
@@ -219,49 +187,7 @@ export function buildIssueContext(
   instanceUrl: string,
   notes?: GitLabAPINoteBasic[]
 ): string {
-  const lines: string[] = [];
-  const safeProjectPath = sanitizeText(projectPath, 200);
-  const safeIssue = sanitizeIssueForSpec(issue, instanceUrl);
-
-  lines.push(`# GitLab Issue #${safeIssue.iid}: ${safeIssue.title}`);
-  lines.push('');
-  lines.push(`**Project:** ${safeProjectPath}`);
-  lines.push(`**State:** ${safeIssue.state}`);
-  lines.push(`**Created:** ${new Date(safeIssue.created_at).toLocaleDateString('en-US', { year: 'numeric', month: 'short', day: 'numeric' })}`);
-
-  if (safeIssue.labels.length > 0) {
-    lines.push(`**Labels:** ${safeIssue.labels.join(', ')}`);
-  }
-
-  if (safeIssue.assignees.length > 0) {
-    lines.push(`**Assignees:** ${safeIssue.assignees.map(a => a.username).join(', ')}`);
-  }
-
-  if (safeIssue.milestone) {
-    lines.push(`**Milestone:** ${safeIssue.milestone.title}`);
-  }
-
-  lines.push('');
-  lines.push('## Description');
-  lines.push('');
-  lines.push(safeIssue.description || '_No description provided_');
-  lines.push('');
-  lines.push(`**Web URL:** ${safeIssue.web_url}`);
-
-  // Add notes section if notes are provided
-  if (notes && notes.length > 0) {
-    lines.push('');
-    lines.push(`## Notes (${notes.length})`);
-    lines.push('');
-    for (const note of notes) {
-      const safeAuthor = sanitizeText(note.author?.username || 'unknown', 100);
-      const safeBody = sanitizeText(note.body, 20000, true);
-      lines.push(`**${safeAuthor}:** ${safeBody}`);
-      lines.push('');
-    }
-  }
-
-  return lines.join('\n');
+  return buildGitLabIssueContext(issue, projectPath, instanceUrl, notes);
 }
 
 /**

@@ -47,6 +47,16 @@
       "import": "./dist/tasks/task-state-utils.js",
       "default": "./dist/tasks/task-state-utils.js"
     },
+    "./tasks/pr-review-state-utils": {
+      "types": "./dist/tasks/pr-review-state-utils.d.ts",
+      "import": "./dist/tasks/pr-review-state-utils.js",
+      "default": "./dist/tasks/pr-review-state-utils.js"
+    },
+    "./tasks/roadmap-state-utils": {
+      "types": "./dist/tasks/roadmap-state-utils.d.ts",
+      "import": "./dist/tasks/roadmap-state-utils.js",
+      "default": "./dist/tasks/roadmap-state-utils.js"
+    },
     "./tasks/task-status": {
       "types": "./dist/tasks/task-status.d.ts",
       "import": "./dist/tasks/task-status.js",
@@ -72,10 +82,30 @@
       "import": "./dist/tasks/worktree-paths.js",
       "default": "./dist/tasks/worktree-paths.js"
     },
+    "./tasks/json-repair": {
+      "types": "./dist/tasks/json-repair.d.ts",
+      "import": "./dist/tasks/json-repair.js",
+      "default": "./dist/tasks/json-repair.js"
+    },
     "./text/encoding": {
       "types": "./dist/text/encoding.d.ts",
       "import": "./dist/text/encoding.js",
       "default": "./dist/text/encoding.js"
+    },
+    "./text/ansi": {
+      "types": "./dist/text/ansi.d.ts",
+      "import": "./dist/text/ansi.js",
+      "default": "./dist/text/ansi.js"
+    },
+    "./config/model-catalog": {
+      "types": "./dist/config/model-catalog.d.ts",
+      "import": "./dist/config/model-catalog.js",
+      "default": "./dist/config/model-catalog.js"
+    },
+    "./providers/detection": {
+      "types": "./dist/providers/detection.d.ts",
+      "import": "./dist/providers/detection.js",
+      "default": "./dist/providers/detection.js"
     },
     "./project/data-paths": {
       "types": "./dist/project/data-paths.d.ts",
@@ -101,6 +131,16 @@
       "types": "./dist/runtime/agent-runtime.d.ts",
       "import": "./dist/runtime/agent-runtime.js",
       "default": "./dist/runtime/agent-runtime.js"
+    },
+    "./runtime/cli-output-parser": {
+      "types": "./dist/runtime/cli-output-parser.d.ts",
+      "import": "./dist/runtime/cli-output-parser.js",
+      "default": "./dist/runtime/cli-output-parser.js"
+    },
+    "./runtime/deepseek-history": {
+      "types": "./dist/runtime/deepseek-history.d.ts",
+      "import": "./dist/runtime/deepseek-history.js",
+      "default": "./dist/runtime/deepseek-history.js"
     },
     "./runtime/agent-runtime-adapters": {
       "types": "./dist/runtime/agent-runtime-adapters.d.ts",
@@ -362,6 +402,26 @@
       "import": "./dist/tools/mcp-registry.js",
       "default": "./dist/tools/mcp-registry.js"
     },
+    "./tools/shell": {
+      "types": "./dist/tools/shell.d.ts",
+      "import": "./dist/tools/shell.js",
+      "default": "./dist/tools/shell.js"
+    },
+    "./security/sanitize": {
+      "types": "./dist/security/sanitize.d.ts",
+      "import": "./dist/security/sanitize.js",
+      "default": "./dist/security/sanitize.js"
+    },
+    "./security/sentry-privacy": {
+      "types": "./dist/security/sentry-privacy.d.ts",
+      "import": "./dist/security/sentry-privacy.js",
+      "default": "./dist/security/sentry-privacy.js"
+    },
+    "./security/config-path-validator": {
+      "types": "./dist/security/config-path-validator.d.ts",
+      "import": "./dist/security/config-path-validator.js",
+      "default": "./dist/security/config-path-validator.js"
+    },
     "./memory": {
       "types": "./dist/memory/index.d.ts",
       "import": "./dist/memory/index.js",
@@ -396,6 +456,31 @@
       "types": "./dist/integrations/github/index.d.ts",
       "import": "./dist/integrations/github/index.js",
       "default": "./dist/integrations/github/index.js"
+    },
+    "./integrations/common": {
+      "types": "./dist/integrations/common/index.d.ts",
+      "import": "./dist/integrations/common/index.js",
+      "default": "./dist/integrations/common/index.js"
+    },
+    "./integrations/git": {
+      "types": "./dist/integrations/git/remote-provider.d.ts",
+      "import": "./dist/integrations/git/remote-provider.js",
+      "default": "./dist/integrations/git/remote-provider.js"
+    },
+    "./integrations/git/remote-provider": {
+      "types": "./dist/integrations/git/remote-provider.d.ts",
+      "import": "./dist/integrations/git/remote-provider.js",
+      "default": "./dist/integrations/git/remote-provider.js"
+    },
+    "./integrations/gitlab": {
+      "types": "./dist/integrations/gitlab/index.d.ts",
+      "import": "./dist/integrations/gitlab/index.js",
+      "default": "./dist/integrations/gitlab/index.js"
+    },
+    "./integrations/yunxiao": {
+      "types": "./dist/integrations/yunxiao/index.d.ts",
+      "import": "./dist/integrations/yunxiao/index.js",
+      "default": "./dist/integrations/yunxiao/index.js"
     },
     "./integrations/gitblit": {
       "types": "./dist/integrations/gitblit/index.d.ts",

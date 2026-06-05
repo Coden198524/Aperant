@@ -5,13 +5,18 @@
 import { readFile, access } from 'fs/promises';
 import { execFileSync } from 'child_process';
 import { getAutocodeProjectEnvPath } from '@autocode/core';
+import {
+  DEFAULT_GITLAB_URL,
+  encodeGitLabProjectPath,
+  normalizeGitLabInstanceUrl,
+  normalizeGitLabProjectReference,
+  parseGitLabInstanceUrl,
+} from '@autocode/core/integrations/gitlab';
 import type { Project } from '../../../shared/types';
 import { parseEnvFile } from '../utils';
 import type { GitLabConfig } from './types';
 import { getAugmentedEnv } from '../../env-utils';
 import { getIsolatedGitEnv } from '../../utils/git-isolation';
-
-const DEFAULT_GITLAB_URL = 'https://gitlab.com';
 
 /**
  * Custom error class for GitLab API errors with structured status code
@@ -27,28 +32,11 @@ export class GitLabAPIError extends Error {
 }
 
 function parseInstanceUrl(value: string): string | null {
-  const candidate = value.trim();
-  if (!candidate) return null;
-  try {
-    const parsed = new URL(candidate);
-    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
-      return null;
-    }
-    if (parsed.username || parsed.password) {
-      return null;
-    }
-    if (!parsed.hostname) {
-      return null;
-    }
-    return parsed.origin;
-  } catch {
-    return null;
-  }
+  return parseGitLabInstanceUrl(value);
 }
 
 function normalizeInstanceUrl(value: string | undefined): string | null {
-  const candidate = value || DEFAULT_GITLAB_URL;
-  return parseInstanceUrl(candidate);
+  return normalizeGitLabInstanceUrl(value);
 }
 
 function sanitizeToken(value: string | undefined): string | null {
@@ -187,36 +175,7 @@ export async function getGitLabConfig(project: Project): Promise<GitLabConfig | 
  * - Numeric project ID (returns as-is)
  */
 export function normalizeProjectReference(project: string, instanceUrl: string = DEFAULT_GITLAB_URL): string {
-  if (!project) return '';
-
-  // If it's a numeric ID, return as-is
-  if (/^\d+$/.test(project)) {
-    return project;
-  }
-
-  // Remove trailing .git if present
-  let normalized = project.replace(/\.git$/, '');
-
-  // Extract hostname for comparison
-  let gitlabHostname: string;
-  try {
-    gitlabHostname = new URL(instanceUrl).hostname;
-  } catch {
-    gitlabHostname = 'gitlab.com';
-  }
-
-  // Escape special regex characters in hostname to prevent ReDoS
-  const escapedHostname = gitlabHostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
-
-  // Handle full GitLab URLs
-  const httpsPattern = new RegExp(`^https?://${escapedHostname}/`);
-  if (httpsPattern.test(normalized)) {
-    normalized = normalized.replace(httpsPattern, '');
-  } else if (normalized.startsWith(`git@${gitlabHostname}:`)) {
-    normalized = normalized.replace(`git@${gitlabHostname}:`, '');
-  }
-
-  return normalized.trim();
+  return normalizeGitLabProjectReference(project, instanceUrl);
 }
 
 /**
@@ -224,11 +183,7 @@ export function normalizeProjectReference(project: string, instanceUrl: string =
  * GitLab API requires project paths to be URL-encoded (e.g., group%2Fproject)
  */
 export function encodeProjectPath(projectPath: string): string {
-  // If it's a numeric ID, return as-is
-  if (/^\d+$/.test(projectPath)) {
-    return projectPath;
-  }
-  return encodeURIComponent(projectPath);
+  return encodeGitLabProjectPath(projectPath);
 }
 
 // Default timeout for GitLab API requests (30 seconds)

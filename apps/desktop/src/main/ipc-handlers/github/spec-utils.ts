@@ -11,10 +11,14 @@ import {
   loadAutocodeImplementationPlanSync,
   saveAutocodeImplementationPlanSync,
 } from '@autocode/core';
+import {
+  buildGitHubInvestigationTask,
+  buildGitHubIssueContext,
+} from '@autocode/core/integrations/github';
+import { determineAutocodeTaskCategoryFromLabels } from '@autocode/core/integrations/common';
 import type { Project, TaskMetadata } from '../../../shared/types';
 import { withSpecNumberLock } from '../../utils/spec-number-lock';
 import { debugLog } from './utils/logger';
-import { labelMatchesWholeWord } from '../shared/label-utils';
 import { sanitizeText, sanitizeStringArray, sanitizeUrl } from '../shared/sanitize';
 
 export interface SpecCreationData {
@@ -29,58 +33,7 @@ export interface SpecCreationData {
  * Maps to TaskCategory type from shared/types/task.ts
  */
 function determineCategoryFromLabels(labels: string[]): 'feature' | 'bug_fix' | 'refactoring' | 'documentation' | 'security' | 'performance' | 'ui_ux' | 'infrastructure' | 'testing' {
-  const lowerLabels = labels.map(l => l.toLowerCase());
-
-  // Check for bug labels
-  if (lowerLabels.some(l => l.includes('bug') || l.includes('defect') || l.includes('error') || l.includes('fix'))) {
-    return 'bug_fix';
-  }
-
-  // Check for security labels
-  if (lowerLabels.some(l => l.includes('security') || l.includes('vulnerability') || l.includes('cve'))) {
-    return 'security';
-  }
-
-  // Check for performance labels
-  if (lowerLabels.some(l => l.includes('performance') || l.includes('optimization') || l.includes('speed'))) {
-    return 'performance';
-  }
-
-  // Check for UI/UX labels
-  if (lowerLabels.some(l => l.includes('ui') || l.includes('ux') || l.includes('design') || l.includes('styling'))) {
-    return 'ui_ux';
-  }
-
-  // Check for infrastructure labels
-  // Use whole-word matching for 'ci' and 'cd' to avoid false positives like 'acid' or 'decide'
-  if (lowerLabels.some(l =>
-    l.includes('infrastructure') ||
-    l.includes('devops') ||
-    l.includes('deployment') ||
-    labelMatchesWholeWord(l, 'ci') ||
-    labelMatchesWholeWord(l, 'cd')
-  )) {
-    return 'infrastructure';
-  }
-
-  // Check for testing labels
-  if (lowerLabels.some(l => l.includes('test') || l.includes('testing') || l.includes('qa'))) {
-    return 'testing';
-  }
-
-  // Check for refactoring labels
-  if (lowerLabels.some(l => l.includes('refactor') || l.includes('cleanup') || l.includes('maintenance') || l.includes('chore') || l.includes('tech-debt') || l.includes('technical debt'))) {
-    return 'refactoring';
-  }
-
-  // Check for documentation labels
-  if (lowerLabels.some(l => l.includes('documentation') || l.includes('docs'))) {
-    return 'documentation';
-  }
-
-  // Check for enhancement/feature labels (default)
-  // This catches 'enhancement', 'feature', 'improvement', or any unlabeled issues
-  return 'feature';
+  return determineAutocodeTaskCategoryFromLabels(labels);
 }
 
 /**
@@ -153,17 +106,7 @@ export function buildIssueContext(
   htmlUrl: string,
   comments: Array<{ body: string; user: { login: string } }>
 ): string {
-  return `
-# GitHub Issue #${issueNumber}: ${issueTitle}
-
-${issueBody || 'No description provided.'}
-
-${comments.length > 0 ? `## Comments (${comments.length}):
-${comments.map(c => `**${c.user.login}:** ${c.body}`).join('\n\n')}` : ''}
-
-**Labels:** ${labels.join(', ') || 'None'}
-**URL:** ${htmlUrl}
-`;
+  return buildGitHubIssueContext(issueNumber, issueTitle, issueBody, labels, htmlUrl, comments);
 }
 
 /**
@@ -174,16 +117,7 @@ export function buildInvestigationTask(
   issueTitle: string,
   issueContext: string
 ): string {
-  return `Investigate GitHub Issue #${issueNumber}: ${issueTitle}
-
-${issueContext}
-
-Please analyze this issue and provide:
-1. A brief summary of what the issue is about
-2. A proposed solution approach
-3. The files that would likely need to be modified
-4. Estimated complexity (simple/standard/complex)
-5. Acceptance criteria for resolving this issue`;
+  return buildGitHubInvestigationTask(issueNumber, issueTitle, issueContext);
 }
 
 /**
