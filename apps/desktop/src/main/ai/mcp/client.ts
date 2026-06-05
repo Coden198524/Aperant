@@ -13,10 +13,10 @@
 
 import { createMCPClient, type MCPTransport } from '@ai-sdk/mcp';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { buildAutocodeAgentMcpServerPlan } from '@autocode/core';
 import type { McpClientResult, McpServerConfig, StdioTransportConfig, StreamableHttpTransportConfig } from './types';
 import { type McpRegistryOptions, resolveMcpServers } from './registry';
 import type { AgentType } from '../config/agent-configs';
-import { getRequiredMcpServers } from '../config/agent-configs';
 import type { McpServerResolveOptions } from '../config/agent-configs';
 import { isWindows } from '../../platform';
 import { HiddenWindowsStdioTransport } from './hidden-stdio-transport';
@@ -122,7 +122,7 @@ export async function createMcpClientsForAgent(
   );
 
   // Determine which servers this agent needs
-  const serverIds = getRequiredMcpServers(agentType, {
+  const serverIds = buildAutocodeAgentMcpServerPlan(agentType, {
     ...resolveOptions,
     customServerIds,
   });

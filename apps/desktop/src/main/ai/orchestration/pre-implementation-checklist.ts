@@ -15,6 +15,12 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MemoryService } from '@autocode/core';
+import {
+  calculateAutocodeChecklistRiskLevel,
+  formatAutocodeChecklistForPrompt,
+  formatAutocodeChecklistSummary,
+  formatAutocodeCompactChecklistForPrompt,
+} from '@autocode/core/runtime/agent-quality-guidance';
 
 // =============================================================================
 // Types
@@ -433,20 +439,7 @@ function identifyRelatedFiles(filesToModify: string[], projectDir: string): stri
  * Calculate overall risk level based on checklist items.
  */
 function calculateRiskLevel(items: ChecklistItem[]): 'low' | 'medium' | 'high' | 'critical' {
-  const criticalCount = items.filter((i) => i.priority === 'critical').length;
-  const highCount = items.filter((i) => i.priority === 'high').length;
-  const avgLikelihood = items.reduce((sum, i) => sum + i.likelihood, 0) / (items.length || 1);
-
-  if (criticalCount >= 2 || avgLikelihood > 0.7) {
-    return 'critical';
-  }
-  if (criticalCount >= 1 || highCount >= 3 || avgLikelihood > 0.5) {
-    return 'high';
-  }
-  if (highCount >= 1 || avgLikelihood > 0.3) {
-    return 'medium';
-  }
-  return 'low';
+  return calculateAutocodeChecklistRiskLevel(items);
 }
 
 // =============================================================================
@@ -457,102 +450,19 @@ function calculateRiskLevel(items: ChecklistItem[]): 'low' | 'medium' | 'high' |
  * Format checklist for display in prompt.
  */
 export function formatChecklistForPrompt(checklist: PreImplementationChecklist): string {
-  const lines: string[] = [];
-
-  lines.push('## Pre-Implementation Checklist\n');
-  lines.push(`**Subtask**: ${checklist.subtaskId}`);
-  lines.push(`**Risk Level**: ${checklist.riskLevel.toUpperCase()}`);
-  lines.push(`**Generated**: ${new Date(checklist.generatedAt).toLocaleString()}\n`);
-
-  if (checklist.items.length === 0) {
-    lines.push('No specific risks identified. Follow general best practices.\n');
-    return lines.join('\n');
-  }
-
-  lines.push('Review these predicted issues before implementing:\n');
-
-  // Group by priority
-  const critical = checklist.items.filter((i) => i.priority === 'critical');
-  const high = checklist.items.filter((i) => i.priority === 'high');
-  const medium = checklist.items.filter((i) => i.priority === 'medium');
-
-  if (critical.length > 0) {
-    lines.push('### Critical Issues\n');
-    for (const item of critical) {
-      lines.push(`**${item.issue}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
-      lines.push(`- Prevention: ${item.prevention}`);
-      if (item.references) {
-        lines.push(`- References: ${item.references.join(', ')}`);
-      }
-      lines.push('');
-    }
-  }
-
-  if (high.length > 0) {
-    lines.push('### High Priority Issues\n');
-    for (const item of high) {
-      lines.push(`**${item.issue}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
-      lines.push(`- Prevention: ${item.prevention}`);
-      lines.push('');
-    }
-  }
-
-  if (medium.length > 0 && medium.length <= 3) {
-    lines.push('### 💡 Medium Priority Issues:\n');
-    for (const item of medium) {
-      lines.push(`- ${item.issue}: ${item.prevention}`);
-    }
-    lines.push('');
-  }
-
-  if (checklist.filesToReview.length > 0) {
-    lines.push('### 📚 Files to Review Before Implementing:\n');
-    for (const file of checklist.filesToReview.slice(0, 5)) {
-      lines.push(`- ${file}`);
-    }
-    lines.push('');
-  }
-
-  lines.push('**Acknowledgment Required**: Confirm you have reviewed this checklist before proceeding.\n');
-
-  return lines.join('\n');
+  return formatAutocodeChecklistForPrompt(checklist);
 }
 
 export function formatCompactChecklistForPrompt(
   checklist: PreImplementationChecklist,
   maxItems = 5,
 ): string {
-  const importantItems = checklist.items
-    .filter((item) => item.priority === 'critical' || item.priority === 'high')
-    .slice(0, maxItems);
-  const reviewFiles = checklist.filesToReview.slice(0, 3);
-  const lines: string[] = [
-    '## Pre-Implementation Risk Check',
-    `- Risk: ${checklist.riskLevel}`,
-  ];
-
-  if (importantItems.length > 0) {
-    lines.push('- Before editing, prevent:');
-    for (const item of importantItems) {
-      lines.push(`  - ${item.issue}: ${item.prevention}`);
-    }
-  }
-
-  if (reviewFiles.length > 0) {
-    lines.push(`- Review first: ${reviewFiles.join(', ')}`);
-  }
-
-  lines.push('- Keep this checklist in mind; do not restate it in the final answer.');
-  return lines.join('\n');
+  return formatAutocodeCompactChecklistForPrompt(checklist, maxItems);
 }
 
 /**
  * Format checklist summary for logging.
  */
 export function formatChecklistSummary(checklist: PreImplementationChecklist): string {
-  const critical = checklist.items.filter((i) => i.priority === 'critical').length;
-  const high = checklist.items.filter((i) => i.priority === 'high').length;
-  const medium = checklist.items.filter((i) => i.priority === 'medium').length;
-
-  return `Pre-Implementation Checklist: ${checklist.items.length} items (${critical} critical, ${high} high, ${medium} medium) - Risk: ${checklist.riskLevel}`;
+  return formatAutocodeChecklistSummary(checklist);
 }

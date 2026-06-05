@@ -1,33 +1,16 @@
-import { z } from 'zod';
+import type {
+  AutocodeParseResult,
+  AutocodeTaskEventPayload,
+  AutocodeValidationError,
+  AutocodeValidationResult,
+} from '@autocode/core/runtime/agent-events';
 
-export const TaskEventSchema = z.object({
-  type: z.string(),
-  taskId: z.string(),
-  specId: z.string(),
-  projectId: z.string(),
-  timestamp: z.string(),
-  eventId: z.string(),
-  sequence: z.number().int().min(0)
-}).passthrough();
+export {
+  AutocodeTaskEventSchema as TaskEventSchema,
+  validateAutocodeTaskEvent as validateTaskEvent,
+} from '@autocode/core/runtime/agent-events';
 
-export type TaskEventPayload = z.infer<typeof TaskEventSchema>;
-
-export interface ValidationResult {
-  success: true;
-  data: TaskEventPayload;
-}
-
-export interface ValidationError {
-  success: false;
-  error: z.ZodError;
-}
-
-export type ParseResult = ValidationResult | ValidationError;
-
-export function validateTaskEvent(data: unknown): ParseResult {
-  const result = TaskEventSchema.safeParse(data);
-  if (result.success) {
-    return { success: true, data: result.data as TaskEventPayload };
-  }
-  return { success: false, error: result.error };
-}
+export type TaskEventPayload = AutocodeTaskEventPayload;
+export type ValidationResult = AutocodeValidationResult<AutocodeTaskEventPayload>;
+export type ValidationError = AutocodeValidationError;
+export type ParseResult = AutocodeParseResult<AutocodeTaskEventPayload>;

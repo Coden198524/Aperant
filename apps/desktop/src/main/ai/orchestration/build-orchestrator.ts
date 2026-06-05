@@ -24,11 +24,18 @@ import {
 import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import {
+  AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
   AUTOCODE_TASK_ARTIFACTS,
-  analyzeAutocodeWorkDependencies,
+  buildAutocodePlanningStructuredOutputRetryPrompt,
+  buildAutocodePlanningStructuredOutputValidationRetryPrompt,
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
+  buildAutocodeStandardTasksValidationRetryPrompt,
+  formatAutocodeCodingRecoveryHints,
+  isAutocodeImplementationPlanFileFailure,
+  isAutocodeWriteToolPlanOutputFailure,
   loadAutocodeTaskRuntimeMetadataConfig,
-  normalizeAutocodeWorkDependencyIds,
+  summarizeAutocodeCodingAttemptFailure,
+  validateAutocodePlanningSchedulingMetadata,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type Phase,
 } from '@autocode/core';
@@ -56,93 +63,19 @@ import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
 /** Delay between iterations when auto-continuing (ms) */
 const AUTO_CONTINUE_DELAY_MS = 500;
 
-/** Maximum planning validation retries before failing (configurable via WorkflowConfig) */
-const MAX_PLANNING_VALIDATION_RETRIES = 2; // Reduced from 3 to 2
-
-/** Maximum retries for a single subtask before marking stuck (configurable via WorkflowConfig) */
-const MAX_SUBTASK_RETRIES = 2; // Reduced from 3 to 2
-
-/** Delay before retrying after an error (ms) */
-const ERROR_RETRY_DELAY_MS = 5_000;
-
-const DEFAULT_RUNTIME_CONCURRENCY: AutocodeTaskRuntimeConcurrencyResolved = {
-  mode: 'serial',
-  workers: 1,
-  unit: 'work_item',
-  conflictPolicy: 'lock-and-queue',
-};
-
-function isWriteToolPlanOutputFailure(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes("tool 'write'") &&
-    (lower.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan) ||
-      lower.includes(AUTOCODE_TASK_ARTIFACTS.tasks) ||
-      lower.includes('input json failed') ||
-      lower.includes('json parsing failed') ||
-      lower.includes('invalid input') ||
-      lower.includes('received invalid input type'));
-}
-
-function isImplementationPlanFileFailure(message: string): boolean {
-  const lower = message.toLowerCase();
-  return lower.includes(AUTOCODE_TASK_ARTIFACTS.implementationPlan) || lower.includes(AUTOCODE_TASK_ARTIFACTS.tasks);
-}
-
 function hasExecutableSubtasks(plan: ImplementationPlan | null): boolean {
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
-}
-
-function hasOwnField(value: object, field: string): boolean {
-  return  Object.hasOwn(value, field);
-}
-
-function shouldRequirePlanningSchedulingMetadata(config: BuildOrchestratorConfig): boolean {
-  const runtimeConcurrency = config.runtimeConcurrency ?? DEFAULT_RUNTIME_CONCURRENCY;
-  if (runtimeConcurrency.mode !== 'concurrent' || runtimeConcurrency.workers <= 1) {
-    return false;
-  }
-
-  const metadata = loadAutocodeTaskRuntimeMetadataConfig(config.specDir);
-  return metadata?.sourceType !== 'openspec';
 }
 
 function validatePlanningSchedulingMetadata(
   plan: ImplementationPlan | null,
   config: BuildOrchestratorConfig,
 ): string[] {
-  if (!plan || !shouldRequirePlanningSchedulingMetadata(config)) {
-    return [];
-  }
-
-  const errors: string[] = [];
-  const items: Array<{ id: string; status: string; dependsOn: string[] }> = [];
-
-  for (const phase of plan.phases ?? []) {
-    for (const subtask of phase.subtasks ?? []) {
-      items.push({
-        id: subtask.id,
-        status: subtask.status,
-        dependsOn: normalizeAutocodeWorkDependencyIds(subtask.depends_on),
-      });
-
-      const hasDependencyMetadata = hasOwnField(subtask, 'depends_on');
-      const hasVerificationMetadata = hasOwnField(subtask, 'verification') && subtask.verification !== undefined;
-
-      if (!hasDependencyMetadata) {
-        errors.push(`${subtask.id} missing _Depends on: ..._ metadata`);
-      }
-      if (!hasVerificationMetadata) {
-        errors.push(`${subtask.id} missing _Verification: ..._ metadata`);
-      }
-    }
-  }
-
-  const dependencyIssues = analyzeAutocodeWorkDependencies(items, {
-    statusById: new Map(items.map((item) => [item.id, 'completed'])),
-  }).issues;
-  errors.push(...dependencyIssues.map((issue) => issue.message));
-
-  return errors;
+  const metadata = loadAutocodeTaskRuntimeMetadataConfig(config.specDir);
+  return validateAutocodePlanningSchedulingMetadata(plan, {
+    runtimeConcurrency: config.runtimeConcurrency ?? AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
+    sourceType: metadata?.sourceType,
+  });
 }
 
 function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
@@ -158,61 +91,6 @@ function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
     subtask.completion_summary.trim().length > 0;
 }
 
-function buildPlanningStructuredOutputRetryPrompt(errorMessage: string): string {
-  return [
-    'RETRY TASKS WRITE',
-    '',
-    `Previous Write call failed before execution: ${errorMessage}`,
-    '',
-    `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.tasks} with the Write tool.`,
-    'Write checklist Markdown, not JSON. Each Write input is one object with file_path and content.',
-    'Use forward slashes in file_path.',
-    'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" with _Files_, _Depends on_, _Requirements_, and _Verification_.',
-    'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
-    'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
-    'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
-    'For complex tasks, keep necessary tasks concise in the single Markdown file.',
-    'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
-  ].join('\n');
-}
-
-function buildPlanningStructuredOutputValidationRetryPrompt(errors: string[]): string {
-  return [
-    'REWRITE TASKS SOURCE',
-    '',
-    'The previous tasks.md could not be converted into a valid runtime plan.',
-    '',
-    'Errors:',
-    ...errors.map((error) => `- ${error}`),
-    '',
-    'Retry with the Write tool; do not paste the full task list into the final response.',
-    'Use forward slashes in file_path.',
-    `Rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
-    'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
-    'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
-    'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
-    'For complex tasks, keep descriptions concise instead of splitting files.',
-    'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
-  ].join('\n');
-}
-
-function buildStandardTasksValidationRetryPrompt(errors: string[]): string {
-  return [
-    'REWRITE TASKS SOURCE',
-    '',
-    'The previous Standard planning output could not be converted into runtime work packages.',
-    '',
-    'Errors:',
-    ...errors.map((error) => `- ${error}`),
-    '',
-    `Retry with the Write tool and rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks}, not ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
-    'Use checklist Markdown with phase items such as "- [ ] 1. Phase" and task items such as "- [ ] 1.1 Task".',
-    'Every executable task must include _Depends on_ and _Verification_. Include _Files to create/modify_ when write intent is known.',
-    'Use _Depends on: none_ only for root tasks. Add real dependencies for tasks that share files or consume prior outputs.',
-    'Keep independent tasks dependency-free when they can run safely in parallel.',
-  ].join('\n');
-}
-
 // =============================================================================
 // Types
 // =============================================================================
@@ -226,14 +104,6 @@ const PHASE_AGENT_MAP: Record<BuildPhase, AgentType> = {
   coding: 'coder',
   qa_review: 'qa_reviewer',
   qa_fixing: 'qa_fixer',
-} as const;
-
-/** Maps build phases to config phase keys */
-const PHASE_CONFIG_MAP: Record<BuildPhase, Phase> = {
-  planning: 'planning',
-  coding: 'coding',
-  qa_review: 'qa',
-  qa_fixing: 'qa',
 } as const;
 
 /** Configuration for the build orchestrator */
@@ -439,6 +309,7 @@ export class BuildOrchestrator extends EventEmitter {
   private aborted = false;
   private qaReturnToCodingCount = 0; // Track QA -> coding returns to prevent infinite loops
   private readonly MAX_QA_RETURNS = 2; // Maximum times we can return from QA to coding
+  private readonly codingRecoveryHints = new Map<string, string[]>();
 
   constructor(config: BuildOrchestratorConfig) {
     super();
@@ -454,6 +325,33 @@ export class BuildOrchestrator extends EventEmitter {
     config.abortSignal?.addEventListener('abort', () => {
       this.aborted = true;
     });
+  }
+
+  private getCodingRecoveryHints(subtask: SubtaskInfo, attempt: number): string[] {
+    if (attempt <= 1) {
+      return [];
+    }
+
+    return this.codingRecoveryHints.get(subtask.id)?.slice(-3) ?? [];
+  }
+
+  private recordCodingAttemptResult(
+    subtask: SubtaskInfo,
+    result: SessionResult,
+    attempt: number,
+  ): void {
+    if (result.outcome === 'completed') {
+      this.codingRecoveryHints.delete(subtask.id);
+      return;
+    }
+
+    if (result.outcome === 'cancelled') {
+      return;
+    }
+
+    const hints = this.codingRecoveryHints.get(subtask.id) ?? [];
+    hints.push(summarizeAutocodeCodingAttemptFailure(subtask, result, attempt));
+    this.codingRecoveryHints.set(subtask.id, hints.slice(-3));
   }
 
   /**
@@ -633,7 +531,7 @@ export class BuildOrchestrator extends EventEmitter {
     let validationFailures = 0;
 
     // Get retry limit from workflow config
-    const retryLimits = getRetryLimits(this.config.workflowConfig!);
+    const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
     const maxPlanningRetries = retryLimits.planning;
 
     for (let attempt = 0; attempt < maxPlanningRetries + 1; attempt++) {
@@ -674,8 +572,12 @@ export class BuildOrchestrator extends EventEmitter {
 
       if (result.outcome === 'error') {
         const errorMessage = result.error?.message ?? 'Planning session failed';
-        if (attempt < maxPlanningRetries && (isWriteToolPlanOutputFailure(errorMessage) || isImplementationPlanFileFailure(errorMessage))) {
-          planningRetryContext = buildPlanningStructuredOutputRetryPrompt(errorMessage);
+        if (
+          attempt < maxPlanningRetries &&
+          (isAutocodeWriteToolPlanOutputFailure(errorMessage) ||
+            isAutocodeImplementationPlanFileFailure(errorMessage))
+        ) {
+          planningRetryContext = buildAutocodePlanningStructuredOutputRetryPrompt(errorMessage);
           this.emitTyped('log', 'Planning failed while writing tasks.md; retrying with Markdown guidance...');
           continue;
         }
@@ -707,7 +609,7 @@ export class BuildOrchestrator extends EventEmitter {
             error: `Standard task planning failed after ${validationFailures} attempts: ${validationErrors.join(', ')}`,
           };
         }
-        planningRetryContext = buildStandardTasksValidationRetryPrompt(validationErrors);
+        planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt(validationErrors);
         continue;
       }
 
@@ -768,7 +670,7 @@ export class BuildOrchestrator extends EventEmitter {
       }
 
       // Build retry context for the full re-plan (last resort)
-      planningRetryContext = buildPlanningStructuredOutputValidationRetryPrompt(validationErrors);
+      planningRetryContext = buildAutocodePlanningStructuredOutputValidationRetryPrompt(validationErrors);
 
       this.emitTyped('log', `Falling back to full re-plan (attempt ${validationFailures + 1})...`);
     }
@@ -784,7 +686,7 @@ export class BuildOrchestrator extends EventEmitter {
     const agentType = this.getAgentForPhase('coding');
 
     // Get retry limit from workflow config
-    const retryLimits = getRetryLimits(this.config.workflowConfig!);
+    const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
     const maxSubtaskRetries = retryLimits.subtask;
 
     // Build common session runner for both serial and concurrent work item execution.
@@ -812,11 +714,16 @@ export class BuildOrchestrator extends EventEmitter {
         }
       }
 
+      const recoveryHints = this.getCodingRecoveryHints(subtask, attempt);
       let prompt = await this.config.generatePrompt(agentType, 'coding', {
         iteration: sessionNumber,
         subtask,
         attemptCount: attempt,
+        recoveryHints: recoveryHints.join('\n'),
       });
+      if (recoveryHints.length > 0) {
+        prompt = `${prompt}\n\n${formatAutocodeCodingRecoveryHints(subtask.id, recoveryHints)}`;
+      }
       if (preImplementationChecklist) {
         prompt = `${prompt}\n\n${preImplementationChecklist}`;
       }
@@ -841,7 +748,7 @@ export class BuildOrchestrator extends EventEmitter {
         prompt = injectionResult.enhancedPrompt;
       }
 
-      return this.config.runSession({
+      const result = await this.config.runSession({
         agentType,
         phase: 'coding',
         systemPrompt: prompt,
@@ -853,9 +760,11 @@ export class BuildOrchestrator extends EventEmitter {
         cliModel: this.config.cliModel,
         cliThinking: this.config.cliThinking,
       });
+      this.recordCodingAttemptResult(subtask, result, attempt);
+      return result;
     };
 
-    const runtimeConcurrency = this.config.runtimeConcurrency ?? DEFAULT_RUNTIME_CONCURRENCY;
+    const runtimeConcurrency = this.config.runtimeConcurrency ?? AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY;
 
     if (runtimeConcurrency.mode === 'concurrent' && runtimeConcurrency.workers > 1) {
       const workConfig: ConcurrentWorkExecutorConfig = {
@@ -919,7 +828,7 @@ export class BuildOrchestrator extends EventEmitter {
           this.emitTyped('log', `Working on ${subtask.id}: ${subtask.description} (attempt ${attempt})`);
         },
         runSubtaskSession,
-        onSubtaskComplete: (subtask, result) => {
+        onSubtaskComplete: (_subtask, result) => {
           this.emitTyped('session-complete', result, 'coding');
         },
         onSubtaskStuck: (subtask, reason) => {
@@ -985,7 +894,7 @@ export class BuildOrchestrator extends EventEmitter {
     const fixAgentType = this.getAgentForPhase('qa_fixing');
 
     // Get QA cycle limit from workflow config
-    const retryLimits = getRetryLimits(this.config.workflowConfig!);
+    const retryLimits = getRetryLimits(this.config.workflowConfig ?? DEFAULT_WORKFLOW_CONFIG);
     const maxQACycles = this.config.maxIterations ?? retryLimits.qa;
     this.emitTyped('log', `Starting QA review loop (max ${maxQACycles} cycles)`);
 

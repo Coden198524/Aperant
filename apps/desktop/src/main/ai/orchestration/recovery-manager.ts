@@ -14,6 +14,11 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 
+import {
+  classifyAutocodeBuildFailure,
+  createAutocodeSimpleHash,
+  parseAutocodeBuildCheckpoint,
+} from '@autocode/core/runtime/agent-quality-guidance';
 import { safeParseJson } from '../../utils/json-repair';
 
 // =============================================================================
@@ -136,44 +141,8 @@ export class RecoveryManager {
    * Classify the type of failure from an error message.
    */
   classifyFailure(error: string, subtaskId: string): FailureType {
-    const lower = error.toLowerCase();
-
-    // Build errors
-    const buildErrors = [
-      'syntax error', 'compilation error', 'module not found',
-      'import error', 'cannot find module', 'unexpected token',
-      'indentation error', 'parse error',
-    ];
-    if (buildErrors.some((e) => lower.includes(e))) {
-      return 'broken_build';
-    }
-
-    // Verification failures
-    const verificationErrors = [
-      'verification failed', 'expected', 'assertion',
-      'test failed', 'status code',
-    ];
-    if (verificationErrors.some((e) => lower.includes(e))) {
-      return 'verification_failed';
-    }
-
-    // Context exhaustion
-    if (lower.includes('context') || lower.includes('token limit') || lower.includes('maximum length')) {
-      return 'context_exhausted';
-    }
-
-    // Rate limiting
-    if (lower.includes('429') || lower.includes('rate limit') || lower.includes('too many requests')) {
-      return 'rate_limited';
-    }
-
-    // Auth failure
-    if (lower.includes('401') || lower.includes('unauthorized') || lower.includes('auth')) {
-      return 'auth_failure';
-    }
-
-    // Check for circular fixes asynchronously — caller should use isCircularFix() separately
-    return 'unknown';
+    void subtaskId;
+    return classifyAutocodeBuildFailure(error);
   }
 
   // ===========================================================================
@@ -416,41 +385,12 @@ export class RecoveryManager {
  * Not cryptographic — just for deduplication.
  */
 function simpleHash(str: string): string {
-  let hash = 0;
-  const normalized = str.toLowerCase().trim();
-  for (let i = 0; i < normalized.length; i++) {
-    const char = normalized.charCodeAt(i);
-    hash = ((hash << 5) - hash + char) | 0;
-  }
-  return hash.toString(36);
+  return createAutocodeSimpleHash(str);
 }
 
 /**
  * Parse a build-progress.txt checkpoint file.
  */
 function parseCheckpoint(content: string): BuildCheckpoint | null {
-  const getValue = (key: string): string | undefined => {
-    const match = content.match(new RegExp(`^${key}:\\s*(.+)$`, 'm'));
-    return match?.[1]?.trim();
-  };
-
-  const specId = getValue('spec_id');
-  const phase = getValue('phase');
-  if (!specId || !phase) {
-    return null;
-  }
-
-  const lastCompleted = getValue('last_completed_subtask');
-  const stuckRaw = getValue('stuck_subtasks');
-
-  return {
-    specId,
-    phase,
-    lastCompletedSubtaskId: lastCompleted === 'none' ? null : (lastCompleted ?? null),
-    totalSubtasks: Number.parseInt(getValue('total_subtasks') ?? '0', 10),
-    completedSubtasks: Number.parseInt(getValue('completed_subtasks') ?? '0', 10),
-    stuckSubtasks: stuckRaw && stuckRaw !== 'none' ? stuckRaw.split(',').map((s) => s.trim()) : [],
-    timestamp: new Date().toISOString(),
-    isComplete: getValue('is_complete') === 'true',
-  };
+  return parseAutocodeBuildCheckpoint(content);
 }

@@ -42,6 +42,16 @@ import {
   type AutocodeRuntimeWorkspaceMode,
   type OpenSpecArtifactProgress,
 } from '@autocode/core';
+import {
+  estimateAutocodeOpenSpecGenerationProgress,
+  estimateAutocodeOpenSpecOverallProgress,
+  formatAutocodeDuration,
+  formatAutocodeOpenSpecArtifactName,
+  formatAutocodeOpenSpecArtifactPosition,
+  formatAutocodeOpenSpecArtifactProgressMessage,
+  formatAutocodeOpenSpecGenerationLifecycleMessage,
+  isAutocodeChineseLanguageName,
+} from '@autocode/core/runtime/openspec-progress';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
@@ -2003,149 +2013,38 @@ function formatOpenSpecGenerationLifecycleMessage(
   language?: string,
   detail?: string,
 ): string {
-  if (isChineseLanguageName(language)) {
-    switch (status) {
-      case 'starting':
-        return '正在生成 OpenSpec 文档...';
-      case 'updating':
-        return '正在根据审核反馈更新 OpenSpec 文档...';
-      case 'completed':
-        return 'OpenSpec 文档已生成，继续生成下游实现计划。';
-      case 'updated':
-        return 'OpenSpec 文档已根据审核反馈更新，继续重新生成下游计划。';
-      case 'failed':
-        return `OpenSpec 文档生成失败：${detail ?? '未知错误'}`;
-    }
-  }
-
-  switch (status) {
-    case 'starting':
-      return 'Generating OpenSpec artifacts...';
-    case 'updating':
-      return 'Updating OpenSpec artifacts from review feedback...';
-    case 'completed':
-      return 'OpenSpec artifacts generated. Continuing downstream implementation planning.';
-    case 'updated':
-      return 'OpenSpec artifacts updated from review feedback. Regenerating downstream plan.';
-    case 'failed':
-      return `OpenSpec artifact generation failed: ${detail ?? 'Unknown error'}`;
-  }
+  return formatAutocodeOpenSpecGenerationLifecycleMessage(status, language, detail);
 }
 
 function formatOpenSpecArtifactProgressMessage(
   event: OpenSpecArtifactProgress,
   language?: string,
 ): string {
-  const artifact = formatOpenSpecArtifactName(event);
-  const position = formatOpenSpecArtifactPosition(event);
-  const elapsed = formatDuration(event.elapsedMs);
-  const chars = event.generatedChars ?? 0;
-  const model = event.modelId ? ` ${event.modelId}` : '';
-
-  if (isChineseLanguageName(language)) {
-    switch (event.stage) {
-      case 'artifact_start':
-        return `[OpenSpec] 开始生成 ${artifact}${position}。`;
-      case 'artifact_model_start':
-        return `[OpenSpec] 已请求模型${model}生成 ${artifact}${position}。`;
-      case 'artifact_model_delta':
-        return `[OpenSpec] ${artifact} 正在输出，耗时 ${elapsed}。`;
-      case 'artifact_heartbeat':
-        return chars > 0
-          ? `[OpenSpec] ${artifact} 仍在生成，耗时 ${elapsed}。`
-          : `[OpenSpec] ${artifact} 生成中，模型仍在思考，耗时 ${elapsed}。`;
-      case 'artifact_model_complete':
-        return `[OpenSpec] ${artifact} 模型输出完成，正在校验并写入文件。`;
-      case 'artifact_complete':
-        return `[OpenSpec] ${artifact} 已写入 ${event.outputPath}，耗时 ${elapsed}。`;
-      case 'artifact_retry':
-        return `[OpenSpec] ${artifact} 校验未通过，正在重试：${event.error ?? '未知错误'}`;
-      case 'artifact_failed':
-        return `[OpenSpec] ${artifact} 生成失败：${event.error ?? '未知错误'}`;
-    }
-  }
-
-  switch (event.stage) {
-    case 'artifact_start':
-      return `[OpenSpec] Generating ${artifact}${position}.`;
-    case 'artifact_model_start':
-      return `[OpenSpec] Requested model${model} for ${artifact}${position}.`;
-    case 'artifact_model_delta':
-      return `[OpenSpec] ${artifact} is streaming, elapsed ${elapsed}.`;
-    case 'artifact_heartbeat':
-      return chars > 0
-        ? `[OpenSpec] ${artifact} is still generating, elapsed ${elapsed}.`
-        : `[OpenSpec] ${artifact} is still generating; waiting for model output, elapsed ${elapsed}.`;
-    case 'artifact_model_complete':
-      return `[OpenSpec] ${artifact} model output finished. Validating and writing the file.`;
-    case 'artifact_complete':
-      return `[OpenSpec] Wrote ${artifact} to ${event.outputPath}, elapsed ${elapsed}.`;
-    case 'artifact_retry':
-      return `[OpenSpec] ${artifact} failed validation; retrying: ${event.error ?? 'Unknown error'}`;
-    case 'artifact_failed':
-      return `[OpenSpec] ${artifact} failed: ${event.error ?? 'Unknown error'}`;
-  }
+  return formatAutocodeOpenSpecArtifactProgressMessage(event, language);
 }
 
 function estimateOpenSpecGenerationProgress(event: OpenSpecArtifactProgress): number {
-  const total = Math.max(1, event.totalArtifacts ?? 4);
-  const artifactIndex = Math.min(Math.max(event.artifactIndex ?? 1, 1), total);
-  const stageWeight = (() => {
-    switch (event.stage) {
-      case 'artifact_start':
-        return 0.05;
-      case 'artifact_model_start':
-        return 0.15;
-      case 'artifact_model_delta':
-      case 'artifact_heartbeat':
-        return 0.55;
-      case 'artifact_model_complete':
-        return 0.85;
-      case 'artifact_complete':
-        return 1;
-      case 'artifact_retry':
-      case 'artifact_failed':
-        return 0.3;
-    }
-  })();
-
-  return Math.round(5 + ((artifactIndex - 1 + stageWeight) / total) * 30);
+  return estimateAutocodeOpenSpecGenerationProgress(event);
 }
 
 function estimateOpenSpecOverallProgress(phaseProgress: number): number {
-  const normalized = Math.max(5, Math.min(35, phaseProgress));
-  return Math.round(5 + ((normalized - 5) / 30) * 10);
+  return estimateAutocodeOpenSpecOverallProgress(phaseProgress);
 }
 
 function formatOpenSpecArtifactName(event: OpenSpecArtifactProgress): string {
-  if (event.artifactId === 'proposal') return 'proposal.md';
-  if (event.artifactId === 'design') return 'design.md';
-  if (event.artifactId === 'tasks') return 'tasks.md';
-  if (event.artifactId === 'specs') return event.outputPath || `specs/${event.capability}/spec.md`;
-  return event.outputPath || event.artifactId;
+  return formatAutocodeOpenSpecArtifactName(event);
 }
 
 function formatOpenSpecArtifactPosition(event: OpenSpecArtifactProgress): string {
-  if (!event.artifactIndex || !event.totalArtifacts) {
-    return '';
-  }
-  return ` (${event.artifactIndex}/${event.totalArtifacts})`;
+  return formatAutocodeOpenSpecArtifactPosition(event);
 }
 
 function formatDuration(elapsedMs: number | undefined): string {
-  if (!elapsedMs || elapsedMs <= 0) {
-    return '0s';
-  }
-  const seconds = Math.max(1, Math.round(elapsedMs / 1000));
-  if (seconds < 60) {
-    return `${seconds}s`;
-  }
-  return `${Math.floor(seconds / 60)}m ${seconds % 60}s`;
+  return formatAutocodeDuration(elapsedMs);
 }
 
 function isChineseLanguageName(language: unknown): boolean {
-  const normalized = typeof language === 'string' ? language.toLowerCase().replace(/_/g, '-') : '';
-  return normalized === 'zh' || normalized.startsWith('zh-') || normalized.includes('chinese');
+  return isAutocodeChineseLanguageName(language);
 }
 
 function readPlanReviewHumanInput(specDir: string): string {

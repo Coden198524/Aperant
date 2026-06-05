@@ -112,6 +112,226 @@
       "import": "./dist/runtime/agent-messages.js",
       "default": "./dist/runtime/agent-messages.js"
     },
+    "./runtime/agent-state": {
+      "types": "./dist/runtime/agent-state.d.ts",
+      "import": "./dist/runtime/agent-state.js",
+      "default": "./dist/runtime/agent-state.js"
+    },
+    "./runtime/agent-env": {
+      "types": "./dist/runtime/agent-env.d.ts",
+      "import": "./dist/runtime/agent-env.js",
+      "default": "./dist/runtime/agent-env.js"
+    },
+    "./runtime/direct-task-summary": {
+      "types": "./dist/runtime/direct-task-summary.d.ts",
+      "import": "./dist/runtime/direct-task-summary.js",
+      "default": "./dist/runtime/direct-task-summary.js"
+    },
+    "./runtime/work-executor-strategy": {
+      "types": "./dist/runtime/work-executor-strategy.d.ts",
+      "import": "./dist/runtime/work-executor-strategy.js",
+      "default": "./dist/runtime/work-executor-strategy.js"
+    },
+    "./runtime/spec-orchestrator-strategy": {
+      "types": "./dist/runtime/spec-orchestrator-strategy.d.ts",
+      "import": "./dist/runtime/spec-orchestrator-strategy.js",
+      "default": "./dist/runtime/spec-orchestrator-strategy.js"
+    },
+    "./runtime/agent-quality-guidance": {
+      "types": "./dist/runtime/agent-quality-guidance.d.ts",
+      "import": "./dist/runtime/agent-quality-guidance.js",
+      "default": "./dist/runtime/agent-quality-guidance.js"
+    },
+    "./runtime/agent-context-recovery": {
+      "types": "./dist/runtime/agent-context-recovery.d.ts",
+      "import": "./dist/runtime/agent-context-recovery.js",
+      "default": "./dist/runtime/agent-context-recovery.js"
+    },
+    "./runtime/agent-log-messages": {
+      "types": "./dist/runtime/agent-log-messages.d.ts",
+      "import": "./dist/runtime/agent-log-messages.js",
+      "default": "./dist/runtime/agent-log-messages.js"
+    },
+    "./runtime/agent-phase-parsers": {
+      "types": "./dist/runtime/agent-phase-parsers.d.ts",
+      "import": "./dist/runtime/agent-phase-parsers.js",
+      "default": "./dist/runtime/agent-phase-parsers.js"
+    },
+    "./runtime/agent-qa-reports": {
+      "types": "./dist/runtime/agent-qa-reports.d.ts",
+      "import": "./dist/runtime/agent-qa-reports.js",
+      "default": "./dist/runtime/agent-qa-reports.js"
+    },
+    "./runtime/agent-memory-learning": {
+      "types": "./dist/runtime/agent-memory-learning.d.ts",
+      "import": "./dist/runtime/agent-memory-learning.js",
+      "default": "./dist/runtime/agent-memory-learning.js"
+    },
+    "./runtime/agent-self-critique": {
+      "types": "./dist/runtime/agent-self-critique.d.ts",
+      "import": "./dist/runtime/agent-self-critique.js",
+      "default": "./dist/runtime/agent-self-critique.js"
+    },
+    "./runtime/agent-validation-feedback": {
+      "types": "./dist/runtime/agent-validation-feedback.d.ts",
+      "import": "./dist/runtime/agent-validation-feedback.js",
+      "default": "./dist/runtime/agent-validation-feedback.js"
+    },
+    "./runtime/agent-subtask-prompts": {
+      "types": "./dist/runtime/agent-subtask-prompts.d.ts",
+      "import": "./dist/runtime/agent-subtask-prompts.js",
+      "default": "./dist/runtime/agent-subtask-prompts.js"
+    },
+    "./runtime/agent-quality-integration": {
+      "types": "./dist/runtime/agent-quality-integration.d.ts",
+      "import": "./dist/runtime/agent-quality-integration.js",
+      "default": "./dist/runtime/agent-quality-integration.js"
+    },
+    "./runtime/agent-provider-errors": {
+      "types": "./dist/runtime/agent-provider-errors.d.ts",
+      "import": "./dist/runtime/agent-provider-errors.js",
+      "default": "./dist/runtime/agent-provider-errors.js"
+    },
+    "./runtime/workflow-metrics": {
+      "types": "./dist/runtime/workflow-metrics.d.ts",
+      "import": "./dist/runtime/workflow-metrics.js",
+      "default": "./dist/runtime/workflow-metrics.js"
+    },
+    "./runtime/openspec-progress": {
+      "types": "./dist/runtime/openspec-progress.d.ts",
+      "import": "./dist/runtime/openspec-progress.js",
+      "default": "./dist/runtime/openspec-progress.js"
+    },
+    "./runtime/agent-recovery": {
+      "types": "./dist/runtime/agent-recovery.d.ts",
+      "import": "./dist/runtime/agent-recovery.js",
+      "default": "./dist/runtime/agent-recovery.js"
+    },
+    "./runtime/agent-planning": {
+      "types": "./dist/runtime/agent-planning.d.ts",
+      "import": "./dist/runtime/agent-planning.js",
+      "default": "./dist/runtime/agent-planning.js"
+    },
+    "./runtime/agent-session-types": {
+      "types": "./dist/runtime/agent-session-types.d.ts",
+      "import": "./dist/runtime/agent-session-types.js",
+      "default": "./dist/runtime/agent-session-types.js"
+    },
+    "./runtime/agent-error-classifier": {
+      "types": "./dist/runtime/agent-error-classifier.d.ts",
+      "import": "./dist/runtime/agent-error-classifier.js",
+      "default": "./dist/runtime/agent-error-classifier.js"
+    },
+    "./runtime/agent-events": {
+      "types": "./dist/runtime/agent-events.d.ts",
+      "import": "./dist/runtime/agent-events.js",
+      "default": "./dist/runtime/agent-events.js"
+    },
+    "./runtime/agent-progress-tracker": {
+      "types": "./dist/runtime/agent-progress-tracker.d.ts",
+      "import": "./dist/runtime/agent-progress-tracker.js",
+      "default": "./dist/runtime/agent-progress-tracker.js"
+    },
+    "./runtime/agent-session-policies": {
+      "types": "./dist/runtime/agent-session-policies.d.ts",
+      "import": "./dist/runtime/agent-session-policies.js",
+      "default": "./dist/runtime/agent-session-policies.js"
+    },
+    "./runtime/agent-stream-handler": {
+      "types": "./dist/runtime/agent-stream-handler.d.ts",
+      "import": "./dist/runtime/agent-stream-handler.js",
+      "default": "./dist/runtime/agent-stream-handler.js"
+    },
+    "./runtime/agent-session-runner": {
+      "types": "./dist/runtime/agent-session-runner.d.ts",
+      "import": "./dist/runtime/agent-session-runner.js",
+      "default": "./dist/runtime/agent-session-runner.js"
+    },
+    "./runtime/agent-task-controller": {
+      "types": "./dist/runtime/agent-task-controller.d.ts",
+      "import": "./dist/runtime/agent-task-controller.js",
+      "default": "./dist/runtime/agent-task-controller.js"
+    },
+    "./runtime/agent-process-plan": {
+      "types": "./dist/runtime/agent-process-plan.d.ts",
+      "import": "./dist/runtime/agent-process-plan.js",
+      "default": "./dist/runtime/agent-process-plan.js"
+    },
+    "./runtime/agent-coder-kickoff": {
+      "types": "./dist/runtime/agent-coder-kickoff.d.ts",
+      "import": "./dist/runtime/agent-coder-kickoff.js",
+      "default": "./dist/runtime/agent-coder-kickoff.js"
+    },
+    "./runtime/agent-coder-prompts": {
+      "types": "./dist/runtime/agent-coder-prompts.d.ts",
+      "import": "./dist/runtime/agent-coder-prompts.js",
+      "default": "./dist/runtime/agent-coder-prompts.js"
+    },
+    "./runtime/agent-spec-prompts": {
+      "types": "./dist/runtime/agent-spec-prompts.d.ts",
+      "import": "./dist/runtime/agent-spec-prompts.js",
+      "default": "./dist/runtime/agent-spec-prompts.js"
+    },
+    "./runtime/agent-language": {
+      "types": "./dist/runtime/agent-language.d.ts",
+      "import": "./dist/runtime/agent-language.js",
+      "default": "./dist/runtime/agent-language.js"
+    },
+    "./runtime/agent-kickoff": {
+      "types": "./dist/runtime/agent-kickoff.d.ts",
+      "import": "./dist/runtime/agent-kickoff.js",
+      "default": "./dist/runtime/agent-kickoff.js"
+    },
+    "./runtime/agent-execution-plan": {
+      "types": "./dist/runtime/agent-execution-plan.d.ts",
+      "import": "./dist/runtime/agent-execution-plan.js",
+      "default": "./dist/runtime/agent-execution-plan.js"
+    },
+    "./runtime/project-agent-profile": {
+      "types": "./dist/runtime/project-agent-profile.d.ts",
+      "import": "./dist/runtime/project-agent-profile.js",
+      "default": "./dist/runtime/project-agent-profile.js"
+    },
+    "./runtime/agent-phase-config": {
+      "types": "./dist/runtime/agent-phase-config.d.ts",
+      "import": "./dist/runtime/agent-phase-config.js",
+      "default": "./dist/runtime/agent-phase-config.js"
+    },
+    "./runtime/subagent-plan": {
+      "types": "./dist/runtime/subagent-plan.d.ts",
+      "import": "./dist/runtime/subagent-plan.js",
+      "default": "./dist/runtime/subagent-plan.js"
+    },
+    "./runtime/prompt-context": {
+      "types": "./dist/runtime/prompt-context.d.ts",
+      "import": "./dist/runtime/prompt-context.js",
+      "default": "./dist/runtime/prompt-context.js"
+    },
+    "./runtime/project-prompt-profile": {
+      "types": "./dist/runtime/project-prompt-profile.d.ts",
+      "import": "./dist/runtime/project-prompt-profile.js",
+      "default": "./dist/runtime/project-prompt-profile.js"
+    },
+    "./runtime/subtask-plan-state": {
+      "types": "./dist/runtime/subtask-plan-state.d.ts",
+      "import": "./dist/runtime/subtask-plan-state.js",
+      "default": "./dist/runtime/subtask-plan-state.js"
+    },
+    "./runtime/quality-tier": {
+      "types": "./dist/runtime/quality-tier.d.ts",
+      "import": "./dist/runtime/quality-tier.js",
+      "default": "./dist/runtime/quality-tier.js"
+    },
+    "./runtime/agent-continuation": {
+      "types": "./dist/runtime/agent-continuation.d.ts",
+      "import": "./dist/runtime/agent-continuation.js",
+      "default": "./dist/runtime/agent-continuation.js"
+    },
+    "./runtime/workflow-config": {
+      "types": "./dist/runtime/workflow-config.d.ts",
+      "import": "./dist/runtime/workflow-config.js",
+      "default": "./dist/runtime/workflow-config.js"
+    },
     "./runtime/workspace-claims": {
       "types": "./dist/runtime/workspace-claims.d.ts",
       "import": "./dist/runtime/workspace-claims.js",
@@ -122,6 +342,11 @@
       "import": "./dist/runtime/work-dependencies.js",
       "default": "./dist/runtime/work-dependencies.js"
     },
+    "./runtime/work-conflicts": {
+      "types": "./dist/runtime/work-conflicts.d.ts",
+      "import": "./dist/runtime/work-conflicts.js",
+      "default": "./dist/runtime/work-conflicts.js"
+    },
     "./runtime/task-runtime-config": {
       "types": "./dist/runtime/task-runtime-config.d.ts",
       "import": "./dist/runtime/task-runtime-config.js",
@@ -131,6 +356,11 @@
       "types": "./dist/runtime/session-runtime-options.d.ts",
       "import": "./dist/runtime/session-runtime-options.js",
       "default": "./dist/runtime/session-runtime-options.js"
+    },
+    "./tools/mcp-registry": {
+      "types": "./dist/tools/mcp-registry.d.ts",
+      "import": "./dist/tools/mcp-registry.js",
+      "default": "./dist/tools/mcp-registry.js"
     },
     "./memory": {
       "types": "./dist/memory/index.d.ts",

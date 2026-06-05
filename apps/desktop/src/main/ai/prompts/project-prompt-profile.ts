@@ -28,6 +28,11 @@ import {
 } from 'node:path';
 
 import {
+  buildAutocodeCompactProjectPromptProfileSection,
+  buildAutocodeProjectPromptProfileSection,
+  generateAutocodeProjectPromptOverrides,
+} from '@autocode/core/runtime/project-prompt-profile';
+import {
   getAutocodeProjectDataDir,
   getAutocodeProjectPromptProfilePath,
   getAutocodeProjectPromptProfileRelativePath,
@@ -795,13 +800,7 @@ ${formatCommands(profile.commands.typecheck)}
 }
 
 export function generateProjectPromptOverrides(profile: ProjectPromptProfile): Record<string, string> {
-  return {
-    spec_quick: buildSpecQuickPrompt(profile),
-    planner: buildPlannerPrompt(profile),
-    coder: buildCoderPrompt(profile),
-    qa_reviewer: buildQaReviewerPrompt(profile),
-    qa_fixer: buildQaFixerPrompt(profile),
-  };
+  return generateAutocodeProjectPromptOverrides(profile);
 }
 
 export function loadProjectPromptProfile(projectPath: string): ProjectPromptProfile | null {
@@ -885,52 +884,9 @@ export function loadProjectPromptOverride(
 }
 
 export function buildProjectPromptProfileSection(profile: ProjectPromptProfile): string {
-  const commandLines = [
-    ...profile.commands.typecheck.map((command) => `- Typecheck: ${command}`),
-    ...profile.commands.lint.map((command) => `- Lint: ${command}`),
-    ...profile.commands.test.map((command) => `- Test: ${command}`),
-    ...profile.commands.build.map((command) => `- Build: ${command}`),
-  ];
-
-  const domainOverride = profile.project.domain === 'general'
-    ? '- Apply general software-development quality checks.'
-    : `- Apply ${profile.project.domain} domain checks only when they are relevant to the task.`;
-
-  return `## PROJECT PROMPT ADAPTATION
-
-This project has an initialization-time prompt profile. Use it to right-size the bundled generic template.
-
-- Project size: ${profile.project.size} (${profile.project.sourceFileCount} source files)
-- Domain: ${profile.project.domain}
-- Stack: ${formatList([...profile.project.languages, ...profile.project.frameworks])}
-- Prompt intensity: ${profile.workflow.promptIntensity}
-- Spec style: ${profile.workflow.specStyle}
-- Context rule: ${profile.workflow.contextGuidance}
-- Planning rule: ${profile.workflow.planningGuidance}
-- Validation rule: ${profile.workflow.validationGuidance}
-${domainOverride}
-
-Preferred project commands:
-${commandLines.length > 0 ? commandLines.slice(0, 8).join('\n') : '- None detected; choose the smallest reliable project-specific verification.'}
-
-When a bundled template asks for heavier process than this project profile requires, follow the project profile unless the current task is high-risk or cross-cutting.
-
----`;
+  return buildAutocodeProjectPromptProfileSection(profile);
 }
 
 export function buildCompactProjectPromptProfileSection(profile: ProjectPromptProfile): string {
-  const commands = [
-    ...profile.commands.typecheck.map((command) => `typecheck: ${command}`),
-    ...profile.commands.lint.map((command) => `lint: ${command}`),
-    ...profile.commands.test.map((command) => `test: ${command}`),
-    ...profile.commands.build.map((command) => `build: ${command}`),
-  ].slice(0, 4);
-
-  return `## PROJECT PROFILE
-
-- Stack: ${formatList([...profile.project.languages, ...profile.project.frameworks])}
-- Context: ${profile.workflow.contextGuidance}
-- Validation: ${profile.workflow.validationGuidance}
-- Commands: ${commands.length > 0 ? commands.join('; ') : 'use the smallest reliable project-specific verification'}
-`;
+  return buildAutocodeCompactProjectPromptProfileSection(profile);
 }

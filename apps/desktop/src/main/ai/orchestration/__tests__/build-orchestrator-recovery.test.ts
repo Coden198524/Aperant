@@ -236,6 +236,77 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.finalPhase).toBe('complete');
   });
 
+  it('injects compact coding recovery hints into retry prompts', async () => {
+    let codingDone = false;
+    const subtask = {
+      id: 'subtask-1',
+      description: 'Fix retry-aware coder behavior',
+      status: 'pending' as const,
+      filesToModify: ['src/retry.ts'],
+    };
+
+    mockIterateSubtasks.mockImplementation(async (iteratorConfig: {
+      runSubtaskSession: (subtaskInfo: typeof subtask, attempt: number) => Promise<SessionResult>;
+    }) => {
+      await iteratorConfig.runSubtaskSession(subtask, 1);
+      await iteratorConfig.runSubtaskSession(subtask, 2);
+      codingDone = true;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.md')) {
+        return Promise.resolve(codingDone ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve('Status: PASSED');
+      }
+      return Promise.reject(new Error('ENOENT'));
+    });
+
+    const generatePrompt = vi.fn().mockResolvedValue('base coder prompt');
+    const runSession = vi.fn().mockImplementation(async (config: { phase: string; subtaskId?: string }) => {
+      if (config.phase === 'coding' && config.subtaskId === 'subtask-1' && runSession.mock.calls.length === 1) {
+        return {
+          ...makeSessionResult('error'),
+          stepsExecuted: 4,
+          toolCallCount: 2,
+          error: {
+            code: 'tool_execution_error',
+            message: 'Tool edit failed because target line no longer matched',
+            retryable: true,
+          },
+        };
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = new BuildOrchestrator({
+      specDir: '/spec',
+      projectDir: '/project',
+      generatePrompt,
+      runSession,
+    });
+
+    const outcome = await orchestrator.run();
+    const codingCalls = runSession.mock.calls
+      .map(([config]) => config)
+      .filter((config) => config.phase === 'coding');
+    const retryPrompt = codingCalls[1]?.systemPrompt as string;
+    const retryContext = generatePrompt.mock.calls[1]?.[2] as { recoveryHints?: string };
+
+    expect(outcome.success).toBe(true);
+    expect(retryContext.recoveryHints).toContain('Attempt 1 failed');
+    expect(retryPrompt).toContain('## Previous Attempt Recovery');
+    expect(retryPrompt).toContain('Tool edit failed because target line no longer matched');
+    expect(retryPrompt).toContain('avoid the failing tool pattern');
+  });
+
   it('runs QA when an existing plan is complete but no passed QA report exists', async () => {
     let reviewerRuns = 0;
 

@@ -11,58 +11,25 @@ import { spawn } from 'child_process';
 import { appLog } from '../app-logger';
 import { isWindows } from '../platform';
 import { getWhereExePath } from '../utils/windows-paths';
-
-/**
- * Defense-in-depth: Frontend-side command validation
- * Mirrors the backend SAFE_COMMANDS allowlist to prevent arbitrary command execution
- * even if malicious configs somehow bypass backend validation
- */
-const SAFE_COMMANDS = new Set(['npx', 'npm', 'node', 'python', 'python3', 'uv', 'uvx']);
-
-/**
- * Defense-in-depth: Dangerous interpreter flags that allow code execution
- * Mirrors backend DANGEROUS_FLAGS to prevent args-based code injection
- */
-const DANGEROUS_FLAGS = new Set([
-  '--eval', '-e', '-c', '--exec',
-  '-m', '-p', '--print',
-  '--input-type=module', '--experimental-loader',
-  '--require', '-r'
-]);
-
-/**
- * Defense-in-depth: Shell metacharacters that could enable command injection
- * when shell: true is used on Windows
- */
-const SHELL_METACHARACTERS = ['&', '|', '>', '<', '^', '%', ';', '$', '`', '\n', '\r'];
+import {
+  areAutocodeCustomMcpArgsSafe,
+  isAutocodeCustomMcpCommandSafe,
+} from '@autocode/core/tools/mcp-registry';
 
 /**
  * Validate that a command is in the safe allowlist
  */
 function isCommandSafe(command: string | undefined): boolean {
-  if (!command) return false;
-  // Reject commands with paths (defense against path traversal)
-  if (command.includes('/') || command.includes('\\')) return false;
-  return SAFE_COMMANDS.has(command);
+  return isAutocodeCustomMcpCommandSafe(command);
 }
 
 /**
  * Validate that args don't contain dangerous interpreter flags or shell metacharacters
  */
 function areArgsSafe(args: string[] | undefined): boolean {
-  if (!args || args.length === 0) return true;
-
-  // Check for dangerous interpreter flags
-  if (args.some(arg => DANGEROUS_FLAGS.has(arg))) return false;
-
-  // On Windows with shell: true, check for shell metacharacters that could enable injection
-  if (isWindows()) {
-    if (args.some(arg => SHELL_METACHARACTERS.some(char => arg.includes(char)))) {
-      return false;
-    }
-  }
-
-  return true;
+  return areAutocodeCustomMcpArgsSafe(args, {
+    rejectShellMetacharacters: isWindows(),
+  });
 }
 
 /**

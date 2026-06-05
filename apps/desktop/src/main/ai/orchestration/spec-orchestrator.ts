@@ -50,6 +50,13 @@ import type { ZodSchema } from 'zod';
 import type { SessionResult } from '../session/types';
 import type { WorkflowConfig } from './workflow-config';
 import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
+import {
+  inferAutocodeSpecComplexityFallback,
+  parseAutocodeProjectIndexSummary,
+  selectAutocodeSpecPhases,
+  shouldForceSplitAutocodeImplementationPlan,
+  shouldRunAutocodeSpecResearchPhase,
+} from '@autocode/core/runtime/spec-orchestrator-strategy';
 
 // =============================================================================
 // Constants
@@ -1735,19 +1742,7 @@ function shouldRunResearchPhase(
   taskDescription?: string,
   projectIndex?: string,
 ): boolean {
-  if (assessment?.needs_research === true) {
-    return true;
-  }
-  if (assessment?.needs_research === false) {
-    return false;
-  }
-
-  const taskText = (taskDescription ?? '').toLowerCase();
-  if (hasTaskExternalResearchSignal(taskText)) {
-    return true;
-  }
-
-  return hasProjectExternalResearchSignal((projectIndex ?? '').toLowerCase());
+  return shouldRunAutocodeSpecResearchPhase(assessment, taskDescription, projectIndex);
 }
 
 function isInvestigationTaskDescription(text: string): boolean {
@@ -1826,106 +1821,11 @@ function inferComplexityFallback(
   projectIndex: string | undefined,
   workflowConfig: WorkflowConfig,
 ): FallbackComplexityAssessment {
-  const taskText = normalizeTaskDescription(taskDescription).toLowerCase();
-  const projectText = (projectIndex ?? '').toLowerCase();
-  const parsedIndex = parseProjectIndexSummary(projectIndex);
-  const signals: string[] = [];
-
-  const hasBroadChangeIntent = /(\bmigrate|\bmigration|\bport\b|\bremove\b|\bdelete\b|\breplace\b|\brewrite\b|\brefactor\b|\brework\b|\bredesign\b|\brestructure\b|\bswitch\b|\bconvert\b|\bdeprecate\b|\bdrop\b|\bphase[-\s]?out\b|迁移|移植|移除|删除|替换|重写|重构|改造|重新设计|切换|转换|废弃|下线)/i.test(taskText);
-  if (hasBroadChangeIntent) {
-    signals.push('broad change intent');
-  }
-
-  const affectedAreas = [
-    /\bruntime\b|运行时/,
-    /\beditor\b|\badmin\b|\bdashboard\b|\bui\b|\binterface\b|编辑器|后台|界面/,
-    /\bbuild\b|\bcompile\b|\bpackag(e|ing)\b|\bbundle\b|\btoolchain\b|\bgenerator\b|\bmakefile\b|\bcmake\b|\bgradle\b|\bmaven\b|构建|编译|打包|工具链|项目生成/,
-    /\bci\b|\bworkflow\b|\bpipeline\b|\bdeploy\b|\brelease\b|\bpublish\b|流水线|发布|部署/,
-    /\basset\b|\bresource\b|\btemplate\b|\bexample\b|\bdocumentation\b|\bdocs\b|资产|资源|模板|示例|文档/,
-    /\bapi\b|\bsdk\b|\bplugin\b|\bextension\b|\bmodule\b|\babi\b|接口|插件|扩展|模块/,
-    /\bseriali[sz]ation\b|\bschema\b|\bmetadata\b|\breflection\b|\bcompatib/i,
-    /序列化|元数据|反射|兼容|回滚|迁移工具/,
-    /\bplatform\b|\bwindows\b|\blinux\b|\bmacos\b|\bandroid\b|\bios\b|\bcross[-\s]?platform\b|平台|跨平台/,
-    /\bsecurity\b|\bauth\b|\bpermission\b|\brole\b|安全|认证|权限|角色/,
-  ];
-  const affectedAreaCount = affectedAreas.reduce((count, pattern) => {
-    return count + (pattern.test(taskText) || pattern.test(projectText) ? 1 : 0);
-  }, 0);
-  if (affectedAreaCount >= 3) {
-    signals.push(`${affectedAreaCount} affected areas`);
-  }
-
-  if (parsedIndex.serviceCount >= 3) {
-    signals.push(`${parsedIndex.serviceCount} services`);
-  }
-  if (parsedIndex.languageCount >= 3) {
-    signals.push(`${parsedIndex.languageCount} languages`);
-  }
-  if (parsedIndex.infrastructureCount >= 2) {
-    signals.push(`${parsedIndex.infrastructureCount} infrastructure signals`);
-  }
-  if (parsedIndex.hasLargeProjectSignal) {
-    signals.push('large project profile');
-  }
-
-  const isConservative = workflowConfig.optimizationLevel === 'conservative' ||
-    workflowConfig.specCreationMode === 'phased' ||
-    workflowConfig.qualityChecks?.enableSelfCritique === true;
-  const hasLargeProjectContext = parsedIndex.hasLargeProjectSignal ||
-    parsedIndex.serviceCount >= 3 ||
-    parsedIndex.languageCount >= 3 ||
-    parsedIndex.infrastructureCount >= 2 ||
-    /\bmonorepo\b|大型|多模块|多服务|多平台/.test(projectText);
-  const hasComplexTaskShape = hasBroadChangeIntent && affectedAreaCount >= 3;
-  const hasLargeMultiSubsystemProject = parsedIndex.hasLargeProjectSignal &&
-    (parsedIndex.languageCount >= 3 || parsedIndex.infrastructureCount >= 2 || parsedIndex.serviceCount >= 2);
-  const hasEngineOrPlatformSurface = /(\bengine\b|\brenderer\b|\bcompiler\b|\bshader\b|\bruntime\b|\bkernel\b|\bplatform\b|\bframework\b|\bsdk\b|\bplugin\b|\bcross[-\s]?platform\b)/i.test(taskText) ||
-    /(\bengine\b|\brenderer\b|\bcompiler\b|\bshader\b|\bruntime\b|\bkernel\b|\bplatform\b|\bframework\b|\bsdk\b|\bplugin\b|\bcross[-\s]?platform\b)/i.test(projectText);
-
-  if (
-    isConservative &&
-    hasBroadChangeIntent &&
-    hasLargeMultiSubsystemProject &&
-    (affectedAreaCount >= 2 || hasEngineOrPlatformSurface)
-  ) {
-    return {
-      complexity: 'complex',
-      confidence: 0.78,
-      reasoning: `local fallback detected conservative broad change in large multi-subsystem project (${signals.join(', ')})`,
-      needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
-      needs_self_critique: true,
-    };
-  }
-
-  if ((hasComplexTaskShape && hasLargeProjectContext) || (isConservative && hasComplexTaskShape && affectedAreaCount >= 4)) {
-    return {
-      complexity: 'complex',
-      confidence: 0.75,
-      reasoning: `local fallback detected ${signals.join(', ')}`,
-      needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
-      needs_self_critique: true,
-    };
-  }
-
-  if (hasComplexTaskShape || (hasBroadChangeIntent && hasLargeProjectContext)) {
-    return {
-      complexity: 'standard',
-      confidence: 0.65,
-      reasoning: `local fallback detected ${signals.join(', ') || 'moderate scope'}`,
-      needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
-      needs_self_critique: isConservative,
-    };
-  }
-
-  return {
-    complexity: 'standard',
-    confidence: 0.5,
-    reasoning: signals.length > 0
-      ? `local fallback detected ${signals.join(', ')}`
-      : 'local fallback did not find enough signal for complex routing',
-    needs_research: shouldRunResearchPhase(null, taskDescription, projectIndex),
-    needs_self_critique: false,
-  };
+  return inferAutocodeSpecComplexityFallback({
+    taskDescription,
+    projectIndex,
+    workflowConfig,
+  });
 }
 
 function parseProjectIndexSummary(projectIndex: string | undefined): {
@@ -1934,53 +1834,7 @@ function parseProjectIndexSummary(projectIndex: string | undefined): {
   infrastructureCount: number;
   hasLargeProjectSignal: boolean;
 } {
-  const summary = {
-    serviceCount: 0,
-    languageCount: 0,
-    infrastructureCount: 0,
-    hasLargeProjectSignal: false,
-  };
-
-  if (!projectIndex?.trim()) {
-    return summary;
-  }
-
-  try {
-    const parsed = JSON.parse(projectIndex) as Record<string, unknown>;
-    const services = isRecord(parsed.services) ? parsed.services : {};
-    summary.serviceCount = Object.keys(services).length;
-
-    const languages = new Set<string>();
-    for (const service of Object.values(services)) {
-      if (isRecord(service)) {
-        stringArrayFrom(service.languages, service.language).forEach((language) => languages.add(language.toLowerCase()));
-        stringArrayFrom(service.frameworks, service.framework).forEach((framework) => languages.add(framework.toLowerCase()));
-      }
-    }
-
-    const project = isRecord(parsed.project) ? parsed.project : {};
-    const sourceSummary = isRecord(parsed.source_summary) ? parsed.source_summary : {};
-    stringArrayFrom(project.languages).forEach((language) => languages.add(language.toLowerCase()));
-    stringArrayFrom(sourceSummary.languages).forEach((language) => languages.add(language.toLowerCase()));
-    summary.languageCount = languages.size;
-
-    const infrastructure = isRecord(parsed.infrastructure) ? parsed.infrastructure : {};
-    summary.infrastructureCount = Object.values(infrastructure)
-      .filter((value) => Array.isArray(value) ? value.length > 0 : Boolean(value))
-      .length;
-    summary.infrastructureCount += stringArrayFrom(sourceSummary.build_files).length > 0 ? 1 : 0;
-    summary.infrastructureCount += stringArrayFrom(sourceSummary.project_files).length > 0 ? 1 : 0;
-
-    const sourceCount = Number(project.sourceFileCount ?? project.source_file_count ?? sourceSummary.source_file_count ?? parsed.sourceFileCount ?? parsed.source_file_count ?? 0);
-    const totalCount = Number(project.totalFileCount ?? project.total_file_count ?? sourceSummary.total_file_count ?? parsed.totalFileCount ?? parsed.total_file_count ?? 0);
-    summary.hasLargeProjectSignal = project.size === 'large' || sourceCount >= 250 || totalCount >= 1500;
-  } catch {
-    const text = projectIndex.toLowerCase();
-    summary.hasLargeProjectSignal = /"size"\s*:\s*"large"|sourcefilecount"\s*:\s*[3-9]\d\d|source_file_count"\s*:\s*[3-9]\d\d|totalfilecount"\s*:\s*[2-9]\d{3,}|total_file_count"\s*:\s*[2-9]\d{3,}/.test(text);
-    summary.infrastructureCount = (text.match(/ci_workflows|docker|workflow|pipeline|deployment/g) ?? []).length;
-  }
-
-  return summary;
+  return parseAutocodeProjectIndexSummary(projectIndex);
 }
 
 function selectSpecPhases(
@@ -1990,45 +1844,20 @@ function selectSpecPhases(
   projectIndex: string | undefined,
   workflowConfig: WorkflowConfig,
 ): SpecPhase[] {
-  const phases = workflowConfig.optimizationLevel === 'aggressive' && complexity === 'simple'
-    ? [...AGGRESSIVE_SIMPLE_PHASES]
-    : [...COMPLEXITY_PHASES[complexity]];
-  if (complexity === 'simple' && isSourceDocumentationTask(taskDescription)) {
-    return ['quick_spec'];
-  }
-  const needsResearch = shouldRunResearchPhase(assessment, taskDescription, projectIndex);
-  const researchIndex = phases.indexOf('research');
-
-  if (needsResearch && researchIndex === -1) {
-    const insertBefore = phases.indexOf('context') !== -1
-      ? phases.indexOf('context')
-      : phases.indexOf('spec_writing');
-    if (insertBefore !== -1) {
-      phases.splice(insertBefore, 0, 'research');
-    }
-  } else if (!needsResearch && researchIndex !== -1) {
-    phases.splice(researchIndex, 1);
-  }
-
-  if (assessment?.needs_self_critique && !phases.includes('self_critique')) {
-    const planningIdx = phases.indexOf('planning');
-    if (planningIdx !== -1) {
-      phases.splice(planningIdx, 0, 'self_critique');
-    }
-  }
-
-  return phases;
+  return selectAutocodeSpecPhases({
+    complexity,
+    assessment,
+    taskDescription,
+    projectIndex,
+    workflowConfig,
+  }) as SpecPhase[];
 }
 
 function shouldForceSplitImplementationPlan(
   complexity: ComplexityTier | undefined,
   workflowConfig: WorkflowConfig | undefined,
 ): boolean {
-  if (complexity !== 'complex') {
-    return false;
-  }
-  return workflowConfig?.optimizationLevel === 'conservative' ||
-    workflowConfig?.specCreationMode === 'phased';
+  return shouldForceSplitAutocodeImplementationPlan(complexity, workflowConfig);
 }
 
 function buildPlanStructuredOutputValidationRetryPrompt(

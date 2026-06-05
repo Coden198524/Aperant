@@ -14,6 +14,11 @@
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import type { MemoryService } from '@autocode/core';
+import {
+  formatAutocodeCategory,
+  formatAutocodePatternInjectionSummary,
+  shouldInjectAutocodePatterns,
+} from '@autocode/core/runtime/agent-quality-guidance';
 
 // =============================================================================
 // Types
@@ -388,10 +393,7 @@ function injectIntoPrompt(basePrompt: string, injectionBlock: string): string {
  * Format category name for display.
  */
 function formatCategory(category: string): string {
-  return category
-    .split('_')
-    .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
-    .join(' ');
+  return formatAutocodeCategory(category);
 }
 
 // =============================================================================
@@ -402,31 +404,12 @@ function formatCategory(category: string): string {
  * Check if pattern injection should be enabled for a subtask.
  */
 export function shouldInjectPatterns(subtask: { patternFiles?: string[] }): boolean {
-  return !!(subtask.patternFiles && subtask.patternFiles.length > 0);
+  return shouldInjectAutocodePatterns(subtask);
 }
 
 /**
  * Format pattern injection summary for logging.
  */
 export function formatInjectionSummary(result: EnhancedPromptResult): string {
-  const lines: string[] = [];
-
-  lines.push('=== Pattern Injection Summary ===');
-  lines.push(`Patterns injected: ${result.patterns.length}`);
-
-  if (result.patterns.length > 0) {
-    for (const pattern of result.patterns) {
-      lines.push(`  - ${formatCategory(pattern.category)} (from ${pattern.file})`);
-    }
-  }
-
-  lines.push(`Success cases injected: ${result.successCases.length}`);
-
-  if (result.successCases.length > 0) {
-    for (const successCase of result.successCases) {
-      lines.push(`  - ${successCase.description} (${(successCase.similarity * 100).toFixed(0)}% similar)`);
-    }
-  }
-
-  return lines.join('\n');
+  return formatAutocodePatternInjectionSummary(result);
 }

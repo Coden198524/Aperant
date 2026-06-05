@@ -17,7 +17,9 @@ import {
   AUTOCODE_COMMON_BASE_BRANCHES,
   AUTOCODE_DEFAULT_BASE_BRANCH,
   AUTOCODE_TASK_ARTIFACTS,
+  detectAutocodeProjectCapabilities,
   getAutocodeProjectIndexPath,
+  injectAutocodePromptContext,
   isAutocodeGitBranchName,
   normalizeAutocodeBaseBranch,
 } from '@autocode/core';
@@ -266,57 +268,9 @@ export async function loadAgentsMd(projectDir: string): Promise<string | null> {
  * @returns Assembled prompt with all context prepended
  */
 export function injectContext(promptTemplate: string, context: PromptContext): string {
-  const sections: string[] = [];
-
-  // 1. Spec location header
-  const specContext = buildSpecLocationHeader(context);
-  if (specContext) {
-    sections.push(specContext);
-  }
-
-  // 2. Recovery context (before human input)
-  if (context.recoveryContext) {
-    sections.push(context.recoveryContext);
-  }
-
-  // 3. Human input
-  if (context.humanInput) {
-    sections.push(
-      `## HUMAN INPUT (READ THIS FIRST!)\n\n` +
-      `The human has left you instructions. READ AND FOLLOW THESE CAREFULLY:\n\n` +
-      `${context.humanInput}\n\n` +
-      `After addressing this input, you may delete or clear the HUMAN_INPUT.md file.\n\n` +
-      `---\n\n`
-    );
-  }
-
-  // 4. Project instructions (AGENTS.md or CLAUDE.md fallback)
-  if (context.projectInstructions) {
-    sections.push(
-      `## PROJECT INSTRUCTIONS\n\n` +
-      `${context.projectInstructions}\n\n` +
-      `---\n\n`
-    );
-  }
-
-  // 5. General software-development guidance
-  const domainGuidance = buildDomainGuidanceHeader();
-  if (domainGuidance) {
-    sections.push(domainGuidance);
-  }
-
-  // 6. Git push policy (based on branch detection)
-  if (context.autoPushToRemote !== undefined) {
-    const gitPushPolicy = buildGitPushPolicyHeader(context.autoPushToRemote);
-    if (gitPushPolicy) {
-      sections.push(gitPushPolicy);
-    }
-  }
-
-  // 7. Base prompt
-  sections.push(promptTemplate);
-
-  return sections.join('');
+  return injectAutocodePromptContext(promptTemplate, context, {
+    domain: process.env.AUTOCODE_AGENT_DOMAIN ?? 'general',
+  });
 }
 
 /**
@@ -530,93 +484,7 @@ export function loadProjectIndex(projectDir: string, dataDirName?: string): Reco
  * Mirrors detect_project_capabilities() from Python.
  */
 export function detectProjectCapabilities(projectIndex: Record<string, unknown>): ProjectCapabilities {
-  const capabilities: ProjectCapabilities = {
-    is_electron: false,
-    is_tauri: false,
-    is_expo: false,
-    is_react_native: false,
-    is_web_frontend: false,
-    is_nextjs: false,
-    is_nuxt: false,
-    has_api: false,
-    has_database: false,
-  };
-
-  const services = projectIndex.services;
-  let serviceList: unknown[] = [];
-
-  if (typeof services === 'object' && services !== null) {
-    if (Array.isArray(services)) {
-      serviceList = services;
-    } else {
-      serviceList = Object.values(services as Record<string, unknown>);
-    }
-  }
-
-  for (const svc of serviceList) {
-    if (!svc || typeof svc !== 'object') continue;
-    const service = svc as Record<string, unknown>;
-
-    // Collect all dependencies
-    const deps = new Set<string>();
-    for (const dep of ((service.dependencies as string[]) ?? [])) {
-      if (typeof dep === 'string') deps.add(dep.toLowerCase());
-    }
-    for (const dep of ((service.dev_dependencies as string[]) ?? [])) {
-      if (typeof dep === 'string') deps.add(dep.toLowerCase());
-    }
-
-    const framework = String(service.framework ?? '').toLowerCase();
-
-    // Desktop
-    if (deps.has('electron') || [...deps].some((d) => d.startsWith('@electron'))) {
-      capabilities.is_electron = true;
-    }
-    if (deps.has('@tauri-apps/api') || deps.has('tauri')) {
-      capabilities.is_tauri = true;
-    }
-
-    // Mobile
-    if (deps.has('expo')) capabilities.is_expo = true;
-    if (deps.has('react-native')) capabilities.is_react_native = true;
-
-    // Web frontend
-    const webFrameworks = new Set(['react', 'vue', 'svelte', 'angular', 'solid']);
-    if (webFrameworks.has(framework)) capabilities.is_web_frontend = true;
-
-    if (['nextjs', 'next.js', 'next'].includes(framework) || deps.has('next')) {
-      capabilities.is_nextjs = true;
-      capabilities.is_web_frontend = true;
-    }
-    if (['nuxt', 'nuxt.js'].includes(framework) || deps.has('nuxt')) {
-      capabilities.is_nuxt = true;
-      capabilities.is_web_frontend = true;
-    }
-    if (deps.has('vite') && !capabilities.is_electron) {
-      capabilities.is_web_frontend = true;
-    }
-
-    // API
-    const apiInfo = service.api as { routes?: unknown } | null | undefined;
-    if (apiInfo && typeof apiInfo === 'object' && apiInfo.routes) {
-      capabilities.has_api = true;
-    }
-
-    // Database
-    if (service.database) capabilities.has_database = true;
-    const dbDeps = new Set([
-      'prisma', 'drizzle-orm', 'typeorm', 'sequelize', 'mongoose',
-      'sqlalchemy', 'alembic', 'django', 'peewee',
-    ]);
-    for (const dep of deps) {
-      if (dbDeps.has(dep)) {
-        capabilities.has_database = true;
-        break;
-      }
-    }
-  }
-
-  return capabilities;
+  return detectAutocodeProjectCapabilities(projectIndex);
 }
 
 // =============================================================================

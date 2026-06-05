@@ -8,6 +8,7 @@ Fix spec-pipeline validation errors.
 - Do not modify project source, config, or git state.
 - Use Read before editing.
 - Use Edit for existing files whenever possible.
+- Use Edit for the smallest affected section; do NOT rewrite the whole file with Write.
 - Keep fixes minimal and schema-focused.
 - Do not rewrite large `spec.md` or `implementation_plan.md` files.
 
@@ -66,7 +67,7 @@ Allowed plan markers:
 
 ## Final Response
 
-Return a short summary:
+Return a single concise Markdown checklist:
 
 - file fixed
 - error fixed

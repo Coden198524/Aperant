@@ -31,6 +31,37 @@ import {
   type Phase,
   type SupportedProvider,
 } from '@autocode/core';
+import {
+  appendAutocodeLanguageRequirement,
+  appendAutocodeLanguageRequirementToMessages,
+  getAutocodeImplementationPlanLanguageRequirement,
+} from '@autocode/core/runtime/agent-language';
+import {
+  buildAutocodeAgentKickoffMessage,
+  buildAutocodeFallbackPrompt,
+  buildAutocodeSpecKickoffMessage,
+  formatAutocodePathForPrompt,
+  resolveAutocodePromptNameForAgent,
+} from '@autocode/core/runtime/agent-kickoff';
+import {
+  isAutocodeDirectTaskExecution,
+  isAutocodeSuccessfulAgentSessionOutcome,
+  resolveAutocodeAgentExecutionPlan,
+} from '@autocode/core/runtime/agent-execution-plan';
+import {
+  buildAutocodeDirectCompletionSummary,
+  buildAutocodeDirectCompletionSummaryV2,
+  extractAutocodeDirectFilePathFromToolArgs,
+  extractAutocodeDirectTaskDescription,
+  formatAutocodeDirectQualityAppendix,
+  getAutocodeFinalAssistantText,
+  shouldTrackAutocodeDirectModifiedFile,
+} from '@autocode/core/runtime/direct-task-summary';
+import {
+  buildAutocodeSessionQualityConfig,
+  getWorkflowConfigFromMode as getCoreWorkflowConfigFromMode,
+  type WorkflowConfig,
+} from '@autocode/core/runtime/workflow-config';
 import { getModelContextWindow } from '../../../shared/constants/models';
 import { refreshOAuthTokenReactive } from '../auth/resolver';
 import { buildToolRegistry } from '../tools/build-registry';
@@ -51,6 +82,7 @@ import { BuildOrchestrator, type BuildOutcome } from '../orchestration/build-orc
 import { QALoop } from '../orchestration/qa-loop';
 import { SpecOrchestrator } from '../orchestration/spec-orchestrator';
 import type { SpecPhase } from '../orchestration/spec-orchestrator';
+import type { QualityConfig } from '../orchestration/quality-integration';
 import type { AgentType } from '../config/agent-configs';
 import type { ExecutionPhase } from '../../../shared/constants/phase-protocol';
 import { getPhaseThinking } from '../config/phase-config';
@@ -71,7 +103,6 @@ import type { ProjectType, TaskLogPhase, TaskWorkflowMode } from '../../../share
 import { FileContentCache } from '../tools/cache/file-cache';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
 import { specPhaseToPromptName } from './spec-phase-prompts';
-import { OPTIMIZATION_PRESETS, type WorkflowConfig } from '../orchestration/workflow-config';
 import {
   loadImplementationPlanFromFilesSync,
   saveImplementationPlanToFilesSync,
@@ -129,43 +160,21 @@ function isAggressiveWorkflow(
 }
 
 function formatPathForPrompt(filePath: string): string {
-  return filePath.replace(/\\/g, '/');
+  return formatAutocodePathForPrompt(filePath);
 }
 
 /**
  * Map task workflowMode to WorkflowConfig preset
  */
 function getWorkflowConfigFromMode(mode?: TaskWorkflowMode): WorkflowConfig | undefined {
-  if (!mode) return undefined;
-  if (mode === 'off') return undefined;
-  return OPTIMIZATION_PRESETS[mode];
+  return getCoreWorkflowConfigFromMode(mode);
 }
 
 function getQualityConfigFromWorkflowConfig(
   workflowConfig?: WorkflowConfig,
   projectType?: ProjectType,
-): import('../orchestration/quality-integration').QualityConfig | undefined {
-  if (!workflowConfig) {
-    return undefined;
-  }
-
-  const qualityChecks = workflowConfig.qualityChecks ?? {};
-  const conservativeMode = workflowConfig.optimizationLevel === 'conservative';
-  const standardQualityMode = workflowConfig.optimizationLevel === 'balanced' || conservativeMode;
-  const gameMmoMode = projectType === 'game-mmo';
-
-  return {
-    enablePreQASmokeTests: qualityChecks.enableSmokeTests ?? false,
-    enableIncrementalValidation: standardQualityMode || gameMmoMode,
-    enablePatternInjection: qualityChecks.enablePatternInjection ?? gameMmoMode,
-    enablePreImplementationChecklist: qualityChecks.enablePreImplementationChecklist ?? gameMmoMode,
-    enableSelfCritique: qualityChecks.enableSelfCritique ?? false,
-    enableContextAwareRecovery: standardQualityMode || gameMmoMode,
-    enableActiveMemoryLearning: true,
-    enableTieredQualityStandards: qualityChecks.enableTieredQualityStandards ?? gameMmoMode,
-    enableDocumentationQualityGate: true,
-    projectType,
-  };
+): QualityConfig | undefined {
+  return buildAutocodeSessionQualityConfig(workflowConfig, projectType) as QualityConfig | undefined;
 }
 
 // =============================================================================
@@ -578,80 +587,24 @@ let cachedProjectPromptProfile: ProjectPromptProfile | null | undefined;
 let cachedProjectPromptProfileDir: string | null = null;
 const loggedProjectPromptOverrides = new Set<string>();
 
-function getLanguageRequirement(language: SerializableSessionConfig['language']): string | null {
-  switch (language) {
-    case 'zh-CN':
-      return 'Use Simplified Chinese for all user-facing prose. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
-    case 'fr':
-      return 'Use French for all user-facing prose. Keep code, paths, commands, logs, schema keys, and technical identifiers in their required form.';
-    default:
-      return null;
-  }
-}
-
 function getImplementationPlanLanguageRequirement(
   language: SerializableSessionConfig['language'],
 ): string | null {
-  switch (language) {
-    case 'zh-CN':
-      return 'Write all user-facing planning text in Simplified Chinese. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
-    case 'fr':
-      return 'Write all user-facing planning text in French. Keep paths, commands, APIs, class names, and code identifiers unchanged.';
-    default:
-      return null;
-  }
-}
-
-function getStrictLanguageRequirement(language: SerializableSessionConfig['language']): string | null {
-  switch (language) {
-    case 'zh-CN':
-      return [
-        'Use Simplified Chinese for all user-facing prose: progress updates, summaries, plans, QA reports, markdown, and errors.',
-        'Keep source code, paths, commands, compiler output, schema keys, API names, class/function names, and required status tokens unchanged.',
-        'If the user explicitly requests another language, follow the user.',
-      ].join('\n');
-    case 'fr':
-      return [
-        'Use French for all user-facing prose: progress updates, summaries, plans, QA reports, markdown, and errors.',
-        'Keep source code, paths, commands, compiler output, schema keys, API names, class/function names, and required status tokens unchanged.',
-        'If the user explicitly requests another language, follow the user.',
-      ].join('\n');
-    default:
-      return null;
-  }
+  return getAutocodeImplementationPlanLanguageRequirement(language);
 }
 
 function appendLanguageRequirement(
   content: string,
   language: SerializableSessionConfig['language'],
 ): string {
-  const requirement = getStrictLanguageRequirement(language) ?? getLanguageRequirement(language);
-  if (!requirement || content.includes('## OUTPUT LANGUAGE REQUIREMENT')) {
-    return content;
-  }
-  return `${content}\n\n## OUTPUT LANGUAGE REQUIREMENT\n${requirement}`;
+  return appendAutocodeLanguageRequirement(content, language);
 }
 
 function appendLanguageRequirementToMessages(
   messages: SessionConfig['initialMessages'],
   language: SerializableSessionConfig['language'],
 ): SessionConfig['initialMessages'] {
-  const requirement = getStrictLanguageRequirement(language) ?? getLanguageRequirement(language);
-  if (!requirement || messages.length === 0) {
-    return messages;
-  }
-
-  let updated = false;
-  return messages.map((message) => {
-    if (updated || message.role !== 'user' || typeof message.content !== 'string') {
-      return message;
-    }
-    updated = true;
-    return {
-      ...message,
-      content: appendLanguageRequirement(message.content, language),
-    };
-  });
+  return appendAutocodeLanguageRequirementToMessages(messages, language);
 }
 
 function appendSearchDiscipline(content: string): string {
@@ -788,10 +741,7 @@ function shouldUseProjectPromptProfile(session: SerializableSessionConfig, promp
 }
 
 function resolvePromptNameForAgent(agentType: AgentType): string {
-  if (agentType.startsWith('mmo_')) {
-    return agentType;
-  }
-  return agentType === 'coder' ? 'coder' : agentType;
+  return resolveAutocodePromptNameForAgent(agentType);
 }
 
 function getProjectPromptProfile(session: SerializableSessionConfig): ProjectPromptProfile | null {
@@ -1118,30 +1068,29 @@ async function run(): Promise<void> {
       postLog(`MCP init failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
     }
 
-    // Route to orchestrator for build_orchestrator agent types
-    if (session.agentType === 'build_orchestrator' || session.agentType === 'mmo_build_orchestrator') {
-      await runBuildOrchestrator(session, toolContext, registry);
-      return;
-    }
+    const executionPlan = resolveAutocodeAgentExecutionPlan({
+      agentType: session.agentType,
+      workflowMode: session.workflowMode,
+      useAgenticOrchestration: session.useAgenticOrchestration,
+    });
 
-    // Route to QA loop for qa_reviewer agent types
-    if (session.agentType === 'qa_reviewer' || session.agentType === 'mmo_qa_reviewer') {
-      await runQALoop(session, toolContext, registry);
-      return;
-    }
-
-    // Route to spec orchestrator for spec_orchestrator agent types
-    if (session.agentType === 'spec_orchestrator' || session.agentType === 'mmo_spec_orchestrator') {
-      if (session.useAgenticOrchestration) {
+    switch (executionPlan.kind) {
+      case 'build-orchestrator':
+        await runBuildOrchestrator(session, toolContext, registry);
+        return;
+      case 'qa-loop':
+        await runQALoop(session, toolContext, registry);
+        return;
+      case 'spec-orchestrator-agentic':
         await runAgenticSpecOrchestrator(session, toolContext, registry);
-      } else {
+        return;
+      case 'spec-orchestrator':
         await runSpecOrchestrator(session, toolContext, registry);
-      }
-      return;
+        return;
+      case 'default-session':
+        await runDefaultSession(session, toolContext, registry);
+        return;
     }
-
-    // Default: single session for all other agent types
-    await runDefaultSession(session, toolContext, registry);
   } catch (error: unknown) {
     const message = error instanceof Error ? error.message : String(error);
     postError(`Agent session failed: ${message}`);
@@ -1162,21 +1111,15 @@ async function run(): Promise<void> {
 }
 
 function isDirectTaskSession(session: SerializableSessionConfig): boolean {
-  return session.agentType === 'direct_task' || session.workflowMode === 'off';
+  return isAutocodeDirectTaskExecution(session);
 }
 
 function isSuccessfulDirectOutcome(result: SessionResult | undefined): boolean {
-  return result?.outcome === 'completed'
-    || result?.outcome === 'max_steps'
-    || result?.outcome === 'context_window';
+  return isAutocodeSuccessfulAgentSessionOutcome(result?.outcome);
 }
 
 function getFinalAssistantText(result: SessionResult | undefined, streamedText: string): string {
-  const finalAssistant = result?.messages
-    ?.slice()
-    .reverse()
-    .find((message) => message.role === 'assistant' && message.content.trim());
-  return (finalAssistant?.content ?? streamedText).trim();
+  return getAutocodeFinalAssistantText(result, streamedText);
 }
 
 function escapeTableCell(value: string): string {
@@ -1191,35 +1134,12 @@ function buildDirectCompletionSummary(
   result: SessionResult | undefined,
   streamedText: string,
 ): string {
-  const finalText = getFinalAssistantText(result, streamedText);
-  if (finalText) {
-    return finalText;
-  }
-
-  const outcome = result?.outcome ?? 'unknown';
-  const error = result?.error?.message;
-  const reviewNote = isSuccessfulDirectOutcome(result)
-    ? localizeDirectSummaryText(
-        session.language,
-        'Direct mode skipped staged spec, implementation planning, and QA. Review the git changes manually before approval.',
-        '关闭模式已跳过阶段化规格、实现计划和 QA。人工审核前请检查完成总结、运行日志和 Git 变更。',
-        'Le mode direct a ignoré la spécification par étapes, le plan de mise en oeuvre et la QA. Relisez les changements Git avant approbation.',
-      )
-    : localizeDirectSummaryText(
-        session.language,
-        `Direct mode ended with outcome "${outcome}".${error ? ` Error: ${error}` : ''}`,
-        `关闭模式结束，结果为 "${outcome}"。${error ? `错误：${error}` : ''}`,
-        `Le mode direct s'est terminé avec le résultat "${outcome}".${error ? ` Erreur : ${error}` : ''}`,
-      );
-  const labels = getDirectSummaryLabels(session.language);
-
-  return [
-    `| ${labels.item} | ${labels.details} |`,
-    '| --- | --- |',
-    `| ${labels.whatChanged} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Direct model session finished for ${basename(session.specDir)}.`, `关闭模式已完成：${basename(session.specDir)}。`, `Session en mode direct terminee pour ${basename(session.specDir)}.`))} |`,
-    `| ${labels.verification} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Session outcome: ${outcome}. Steps: ${result?.stepsExecuted ?? 0}. Tools: ${result?.toolCallCount ?? 0}.`, `会话结果：${outcome}。步骤：${result?.stepsExecuted ?? 0}。工具调用：${result?.toolCallCount ?? 0}。`, `Resultat de session : ${outcome}. Etapes : ${result?.stepsExecuted ?? 0}. Outils : ${result?.toolCallCount ?? 0}.`))} |`,
-    `| ${labels.reviewNotes} | ${escapeTableCell(reviewNote)} |`,
-  ].join('\n');
+  return buildAutocodeDirectCompletionSummary({
+    specDir: session.specDir,
+    language: session.language,
+    result,
+    streamedText,
+  });
 }
 
 function localizeDirectSummaryText(
@@ -1294,38 +1214,13 @@ function buildDirectCompletionSummaryV2(
   streamedText: string,
   quality?: DirectCodingQualityMetrics,
 ): string {
-  const finalText = getFinalAssistantText(result, streamedText);
-  const qualityAppendix = formatDirectQualityAppendix(session.language, quality);
-  if (finalText) {
-    return `${finalText}\n\n${qualityAppendix}`.trim();
-  }
-
-  const outcome = result?.outcome ?? 'unknown';
-  const error = result?.error?.message;
-  const labels = getDirectSummaryLabelsV2(session.language);
-  const reviewNote = isSuccessfulDirectOutcome(result)
-    ? localizeDirectSummaryText(
-        session.language,
-        'Direct mode skipped staged spec, implementation planning, and QA. Review the completion summary, runtime log, and git changes manually before approval.',
-        'Direct 模式已跳过阶段化规格、实现计划和 QA。人工确认前请检查完成总结、运行日志和 Git 变更。',
-        'Le mode direct a ignore la specification par etapes, le plan de mise en oeuvre et la QA. Relisez le resume, les journaux et les changements Git avant approbation.',
-      )
-    : localizeDirectSummaryText(
-        session.language,
-        `Direct mode ended with outcome "${outcome}".${error ? ` Error: ${error}` : ''}`,
-        `Direct 模式结束，结果为 "${outcome}"。${error ? `错误：${error}` : ''}`,
-        `Le mode direct s'est termine avec le resultat "${outcome}".${error ? ` Erreur : ${error}` : ''}`,
-      );
-
-  return [
-    `| ${labels.item} | ${labels.details} |`,
-    '| --- | --- |',
-    `| ${labels.whatChanged} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Direct model session finished for ${basename(session.specDir)}.`, `Direct 模式已完成：${basename(session.specDir)}。`, `Session en mode direct terminee pour ${basename(session.specDir)}.`))} |`,
-    `| ${labels.changedFiles} | ${escapeTableCell(formatChangedFilesForSummary(quality?.changedFiles ?? []))} |`,
-    `| ${labels.verification} | ${escapeTableCell(localizeDirectSummaryText(session.language, `Session outcome: ${outcome}. Steps: ${result?.stepsExecuted ?? 0}. Tools: ${result?.toolCallCount ?? 0}.`, `会话结果：${outcome}。步骤：${result?.stepsExecuted ?? 0}。工具调用：${result?.toolCallCount ?? 0}。`, `Resultat de session : ${outcome}. Etapes : ${result?.stepsExecuted ?? 0}. Outils : ${result?.toolCallCount ?? 0}.`))} |`,
-    `| ${labels.quality} | ${escapeTableCell(formatDirectQualityLine(session.language, quality))} |`,
-    `| ${labels.reviewNotes} | ${escapeTableCell(reviewNote)} |`,
-  ].join('\n');
+  return buildAutocodeDirectCompletionSummaryV2({
+    specDir: session.specDir,
+    language: session.language,
+    result,
+    streamedText,
+    quality,
+  });
 }
 
 async function evaluateDirectCodingQuality(
@@ -1402,14 +1297,7 @@ function formatDirectQualityAppendix(
   language: SerializableSessionConfig['language'],
   quality?: DirectCodingQualityMetrics,
 ): string {
-  const labels = getDirectSummaryLabelsV2(language);
-  return [
-    `| ${labels.item} | ${labels.details} |`,
-    '| --- | --- |',
-    `| ${labels.changedFiles} | ${escapeTableCell(formatChangedFilesForSummary(quality?.changedFiles ?? []))} |`,
-    `| ${labels.quality} | ${escapeTableCell(formatDirectQualityLine(language, quality))} |`,
-    `| ${labels.reviewNotes} | ${escapeTableCell(localizeDirectSummaryText(language, 'Direct mode has no staged QA pass; review the git diff before approval.', 'Direct 模式没有阶段化 QA 通过结论；批准前请检查 Git diff。', 'Le mode direct n a pas de validation QA par etapes ; relisez le diff Git avant approbation.'))} |`,
-  ].join('\n');
+  return formatAutocodeDirectQualityAppendix(language, quality);
 }
 
 function formatChangedFilesForSummary(files: string[]): string {
@@ -1481,30 +1369,18 @@ function getDirectSummaryLabelsV2(language: SerializableSessionConfig['language'
 }
 
 function extractDirectTaskDescription(session: SerializableSessionConfig): string {
-  const initialMessage = session.initialMessages?.[0]?.content?.trim();
-  if (initialMessage) {
-    return initialMessage.length > 2000 ? `${initialMessage.slice(0, 2000)}...` : initialMessage;
-  }
-  return `Direct model execution for ${basename(session.specDir)}`;
+  return extractAutocodeDirectTaskDescription({
+    initialMessages: session.initialMessages,
+    specDir: session.specDir,
+  });
 }
 
 function extractFilePathFromToolArgs(args: Record<string, unknown>): string | null {
-  const candidates = [
-    args.file_path,
-    args.filePath,
-    args.path,
-    args.target_file,
-  ];
-  for (const candidate of candidates) {
-    if (typeof candidate === 'string' && candidate.trim()) {
-      return candidate.trim();
-    }
-  }
-  return null;
+  return extractAutocodeDirectFilePathFromToolArgs(args);
 }
 
 function shouldTrackDirectModifiedFile(toolName: string): boolean {
-  return ['Edit', 'Write', 'MultiEdit', 'create_file', 'replace_file', 'write_file'].includes(toolName);
+  return shouldTrackAutocodeDirectModifiedFile(toolName);
 }
 
 function persistDirectTaskCompletion(
@@ -2490,151 +2366,16 @@ function buildSpecKickoffMessage(
   specPhase?: string,
   language?: SerializableSessionConfig['language'],
 ): string {
-  const promptSpecDir = formatPathForPrompt(specDir);
-  const promptProjectDir = formatPathForPrompt(projectDir);
-
-  // Build the base task-specific message
-  let baseMessage: string;
-
-  // Spec phase takes priority over agentType for kickoff routing
-  // (e.g., complexity_assessment uses spec_gatherer agentType but needs a different kickoff)
-  if (specPhase === 'complexity_assessment') {
-    baseMessage = `Assess task complexity and return the complete complexity_assessment.json object for ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Classify as SIMPLE, STANDARD, or COMPLEX from task scope and project structure only. This is the first spec phase; spec.md and later spec files do not exist yet.`;
-  } else switch (agentType) {
-    case 'spec_discovery':
-      baseMessage = `Analyze ${promptProjectDir} for architecture, stack, and conventions relevant to: ${taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use the project index first, run at most two narrow discovery tools, and omit transcripts, copied source, long analysis, and large optional sections.`;
-      break;
-    case 'spec_gatherer':
-      baseMessage = `Gather requirements for: ${taskDescription}. Project root: ${promptProjectDir}. Return one compact JSON object for requirements.md; the orchestrator writes ${promptSpecDir}/requirements.md. spec.md does not exist yet. Prefer the task and provided context; keep requirements, acceptance criteria, and constraints short. No prose or markdown fence outside the JSON.`;
-      break;
-    case 'spec_researcher':
-      baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${taskDescription}. Use task context, prior outputs, and project index first; read code in ${promptProjectDir} only when needed. If no research is needed, return research.json with empty integrations_researched and unverified_claims plus concise recommendations. The orchestrator writes ${promptSpecDir}/research.json. Final response: one valid JSON object only.`;
-      break;
-    case 'spec_writer':
-      baseMessage = `Write a compact spec.md for: ${taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep overview, touched files, behavior, and acceptance checks.`;
-      break;
-    case 'planner':
-      baseMessage = `Create ${promptSpecDir}/tasks.md for: ${taskDescription}. Use provided phase context first; read only relevant spec.md sections if needed. Output concrete Autocode Markdown checklist tasks. Do not write implementation_plan.md; the runtime derives it. Project root: ${promptProjectDir}.`;
-      break;
-    case 'spec_critic':
-      baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
-      break;
-    case 'spec_context':
-      baseMessage = `Gather project context for: ${taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use narrow reads and omit transcripts, copied source, and long analysis.`;
-      break;
-    case 'spec_validation':
-      baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.md are complete, consistent, and ready for implementation. Use targeted reads with limits; do not read entire large files unless required. Fix only blocking issues. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
-      break;
-    default:
-      baseMessage = `Complete the spec creation task described in your system prompt. Task: ${taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
-  }
-
-  // Inject accumulated context from prior phases
-  const contextSections: string[] = [baseMessage];
-
-  if (projectIndex) {
-    contextSections.push(`\n\n## PROJECT INDEX (pre-generated)\n\nThe following project structure analysis has been pre-generated for you. Use this as your starting point instead of scanning the entire project:\n\n\`\`\`json\n${projectIndex}\n\`\`\``);
-  }
-
-  const planLanguageRequirement = (agentType === 'planner' || specPhase === 'quick_spec')
-    ? getImplementationPlanLanguageRequirement(language)
-    : null;
-  if (planLanguageRequirement) {
-    contextSections.push(`\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n\n${planLanguageRequirement}`);
-  }
-
-  if (priorPhaseOutputs && Object.keys(priorPhaseOutputs).length > 0) {
-    contextSections.push('\n\n## CONTEXT FROM PRIOR PHASES\n\nThe following outputs from earlier spec phases are provided to avoid re-reading files:');
-    for (const [fileName, content] of Object.entries(priorPhaseOutputs)) {
-      const ext = fileName.endsWith('.json') ? 'json' : 'markdown';
-      contextSections.push(`\n### ${fileName}\n\n\`\`\`${ext}\n${content}\n\`\`\``);
-    }
-    contextSections.push('\nUse these outputs as your primary source of context. Only read additional project files if you need specific code patterns not covered above.');
-  }
-
-  return appendLanguageRequirement(contextSections.join(''), language);
-}
-
-function buildMmoAgentRole(agentType: AgentType): string | null {
-  switch (agentType) {
-    case 'mmo_spec_orchestrator':
-      return 'MMO spec orchestrator: translate product intent into shippable requirements, architecture notes, implementation phases, QA gates, rollout risks, and specialist handoffs for a large online game.';
-    case 'mmo_build_orchestrator':
-      return 'MMO build orchestrator: coordinate system design, engine implementation, online gameplay, QA, performance, security, tools, and release work for a large online game task.';
-    case 'mmo_system_designer':
-      return 'MMO systems designer: define gameplay systems, progression, economy, quests, content loops, constraints, and acceptance criteria that scale to a live online world.';
-    case 'mmo_engine_architect':
-      return 'MMO engine architect: design runtime boundaries, core engine integration, threading, memory, platform abstractions, data flow, and long-term maintainability.';
-    case 'mmo_engine_programmer':
-      return 'MMO engine programmer: implement core engine and runtime code with attention to determinism, memory ownership, threading, platform constraints, and integration boundaries.';
-    case 'mmo_rendering_engineer':
-      return 'MMO rendering engineer: implement rendering, shaders, lighting, visibility, GPU resource, and frame-time sensitive changes.';
-    case 'mmo_animation_engineer':
-      return 'MMO animation engineer: implement animation graphs, character state, movement, blending, replication hooks, and runtime animation performance work.';
-    case 'mmo_asset_pipeline_engineer':
-      return 'MMO asset pipeline engineer: implement import, validation, cooking, dependency tracking, compression, versioning, and content production workflows.';
-    case 'mmo_world_streaming_engineer':
-      return 'MMO world streaming engineer: implement world partitioning, streaming, loading, terrain, scene handoff, shard/zone boundaries, and memory budgets.';
-    case 'mmo_tools_engineer':
-      return 'MMO tools engineer: implement editor, content authoring, GM, debugging, build farm, and production support tools.';
-    case 'mmo_build_release_engineer':
-      return 'MMO build and release engineer: implement build, packaging, patching, deployment, rollback, compatibility, and release automation.';
-    case 'mmo_engine_performance_engineer':
-      return 'MMO engine performance engineer: diagnose and fix CPU, GPU, memory, IO, threading, loading, and network performance issues with measurable budgets.';
-    case 'mmo_server_authority_engineer':
-      return 'MMO server authority engineer: implement authoritative simulation, combat validation, anti-exploit rules, persistence boundaries, and server-side correctness.';
-    case 'mmo_network_sync_engineer':
-      return 'MMO network sync engineer: implement replication, prediction, reconciliation, interest management, protocol compatibility, bandwidth budgets, and latency tolerance.';
-    case 'mmo_client_gameplay_engineer':
-      return 'MMO client gameplay engineer: implement client gameplay, UI, combat feel, quest flow, presentation, and integration with authoritative server behavior.';
-    case 'mmo_data_persistence_engineer':
-      return 'MMO data persistence engineer: implement schema, migrations, save/load, economy/account/inventory data, consistency, and recovery behavior.';
-    case 'mmo_security_anticheat_engineer':
-      return 'MMO security and anti-cheat engineer: evaluate trust boundaries, exploit paths, validation gaps, abuse resistance, telemetry, and secure operational controls.';
-    case 'mmo_liveops_engineer':
-      return 'MMO live operations engineer: implement telemetry, feature flags, events, operational dashboards, staged rollout, observability, and incident-ready controls.';
-    case 'mmo_qa_reviewer':
-      return 'MMO QA reviewer: validate correctness, server authority, client/server sync, performance budgets, streaming, content pipeline, tools, data safety, security, and release risks.';
-    case 'mmo_qa_fixer':
-      return 'MMO QA fixer: fix QA findings while preserving game correctness, server authority, performance budgets, data safety, and release stability.';
-    default:
-      return null;
-  }
-}
-
-function buildMmoSpecialistList(): string {
-  return [
-    'Use MMO specialists when the work touches their domain:',
-    '- mmo_engine_architect for engine boundaries and runtime architecture.',
-    '- mmo_engine_programmer for core engine/runtime implementation.',
-    '- mmo_rendering_engineer for renderer, shaders, lighting, visibility, and GPU budgets.',
-    '- mmo_animation_engineer for animation, movement state, and character runtime.',
-    '- mmo_asset_pipeline_engineer for import, cooking, validation, and content pipeline.',
-    '- mmo_world_streaming_engineer for streaming, terrain, zones, shards, and loading.',
-    '- mmo_tools_engineer for editor, content, GM, and debugging tools.',
-    '- mmo_build_release_engineer for build, patching, deployment, and rollback.',
-    '- mmo_engine_performance_engineer for CPU, GPU, memory, IO, loading, and network budgets.',
-    '- mmo_server_authority_engineer for authoritative gameplay and server validation.',
-    '- mmo_network_sync_engineer for replication, prediction, reconciliation, and interest management.',
-    '- mmo_client_gameplay_engineer for client gameplay, combat feel, quests, and UI integration.',
-    '- mmo_data_persistence_engineer for database, save, migration, economy, and account data.',
-    '- mmo_security_anticheat_engineer for exploits, trust boundaries, abuse prevention, and anti-cheat.',
-    '- mmo_liveops_engineer for telemetry, feature flags, events, observability, and rollout safety.',
-  ].join('\n');
-}
-
-function buildMmoCodingQualityChecklist(): string {
-  return [
-    'MMO coding quality checklist:',
-    '- Identify the touched domain before editing: client-only, server-authoritative, network/protocol, persistence/economy, engine/runtime, content pipeline/tools, performance, security, or liveops.',
-    '- Preserve runtime owner boundaries, authoritative-side decisions, trust boundaries, data/config sources, protocol/save/tooling contracts, and patch compatibility.',
-    '- For gameplay state, irreversible rewards, economy, inventory, progression, combat, movement, or account data, treat the server as authoritative and the client as intent only.',
-    '- For networked changes, consider replication, prediction, reconciliation, interest management, ordering, bandwidth, protocol versioning, and latency tolerance.',
-    '- For engine/runtime changes, protect initialization order, update/teardown behavior, memory ownership, threading, frame-time, IO, streaming, and platform/build configuration.',
-    '- For data or content changes, preserve schema/content compatibility, migration/rollback behavior, validation, cooking/import paths, GM/editor workflows, and recovery paths.',
-    '- For live-player impact, preserve observability, telemetry, feature flags, staged rollout, rollback, and operational diagnostics.',
-    '- In completion summaries, explicitly state verification run and residual MMO risks for server authority, network sync, persistence/data, performance, security, tools/content pipeline, and liveops/release when relevant.',
-  ].join('\n');
+  return buildAutocodeSpecKickoffMessage({
+    agentType,
+    specDir,
+    projectDir,
+    taskDescription,
+    priorPhaseOutputs,
+    projectIndex,
+    specPhase,
+    language,
+  });
 }
 
 /**
@@ -2651,133 +2392,24 @@ function buildKickoffMessage(
 ): string {
   const promptSpecDir = formatPathForPrompt(specDir);
   const promptProjectDir = formatPathForPrompt(projectDir);
-  const mmoRole = buildMmoAgentRole(agentType);
-  let baseMessage: string;
-  if (mmoRole) {
-    if (agentType === 'mmo_system_designer') {
-      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
-    } else if (agentType === 'mmo_qa_reviewer') {
-      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, then run one focused project-appropriate verification when available. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
-    } else if (agentType === 'mmo_qa_fixer') {
-      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, and update ${promptSpecDir}/qa_report.md or implementation_plan.md to show fixes have been applied.`;
-    } else if (subtaskId) {
-      baseMessage = [
-        mmoRole,
-        '',
-        buildFocusedCoderKickoffMessage(
-          promptSpecDir,
-          promptProjectDir,
-          subtaskId,
-        ),
-        '',
-        'Preserve MMO runtime correctness, cross-end boundaries, performance budgets, security assumptions, and live operations safety.',
-        '',
-        buildMmoCodingQualityChecklist(),
-      ].join('\n');
-    } else {
-      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/implementation_plan.md and implement the next pending subtask in ${promptProjectDir}. Mark its checkbox as completed when done.`;
-    }
-  } else switch (agentType) {
-    case 'planner':
-      baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed Autocode Markdown checklist task list at ${promptSpecDir}/tasks.md. Do not write implementation_plan.md; the runtime derives it as work packages. Project root: ${promptProjectDir}`;
-      break;
-    case 'coder':
-      if (subtaskId) {
-        baseMessage = buildFocusedCoderKickoffMessage(
-          promptSpecDir,
-          promptProjectDir,
-          subtaskId,
-        );
-      } else {
-        baseMessage = `Read ${promptSpecDir}/implementation_plan.md and implement the next pending subtask. Project root: ${promptProjectDir}. After completing the subtask, mark its checkbox as [x] and add a _Completion_ note in implementation_plan.md.`;
-      }
-      break;
-    case 'direct_task':
-      baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. End with a short markdown review table.`;
-      break;
-    case 'qa_reviewer':
-      baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, and file hints. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Read source only when the check fails or the plan lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read spec.md, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
-      break;
-    case 'qa_fixer':
-      baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/qa_report.md to indicate fixes have been applied.`;
-      break;
-    default:
-      baseMessage = `Complete the task described in your system prompt. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
-      break;
-  }
-
-  let kickoffMessage = appendLanguageRequirement(baseMessage, language);
-  if (agentType === 'planner' || agentType === 'mmo_system_designer') {
-    const planLanguageRequirement = getImplementationPlanLanguageRequirement(language);
-    if (planLanguageRequirement) {
-      kickoffMessage += `\n\n## IMPLEMENTATION PLAN LANGUAGE REQUIREMENT\n${planLanguageRequirement}`;
-    }
-    if (forcePlanning === true) {
-      kickoffMessage += [
-        '',
-        '## PLAN REVIEW REGENERATION',
-        `Read ${promptSpecDir}/HUMAN_INPUT.md and address the reviewer feedback.`,
-        `If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first, then let the runtime regenerate ${promptSpecDir}/implementation_plan.md from those upstream artifacts.`,
-        `If this task is not backed by OpenSpec, rewrite ${promptSpecDir}/tasks.md directly; do not edit implementation_plan.md.`,
-        'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
-      ].join('\n');
-    }
-  }
-
-  return kickoffMessage;
+  return buildAutocodeAgentKickoffMessage({
+    agentType,
+    specDir,
+    projectDir,
+    subtaskId,
+    language,
+    forcePlanning,
+    focusedCoderKickoff: subtaskId
+      ? buildFocusedCoderKickoffMessage(promptSpecDir, promptProjectDir, subtaskId)
+      : undefined,
+  });
 }
 
 /**
  * Build a minimal fallback prompt when the prompts directory is not found.
  */
 function buildFallbackPrompt(agentType: AgentType, specDir: string, projectDir: string): string {
-  const promptSpecDir = formatPathForPrompt(specDir);
-  const promptProjectDir = formatPathForPrompt(projectDir);
-  const mmoRole = buildMmoAgentRole(agentType);
-  if (mmoRole) {
-    const shared = [
-      mmoRole,
-      '',
-      `Spec directory: ${promptSpecDir}`,
-      `Project root: ${promptProjectDir}`,
-      '',
-      'MMO quality bar:',
-      '- Preserve authoritative server behavior and explicit trust boundaries.',
-      '- Consider client/server sync, rollback/reconciliation, latency, bandwidth, and determinism when relevant.',
-      '- Respect frame-time, memory, IO, streaming, and build/release budgets.',
-      '- Protect content pipeline, migration, save data, live operations, and rollout safety.',
-      '- Prefer narrow reads and focused edits. Validate with targeted project checks when available.',
-      '',
-      buildMmoCodingQualityChecklist(),
-    ];
-    if (agentType === 'mmo_spec_orchestrator' || agentType === 'mmo_build_orchestrator') {
-      shared.push('', buildMmoSpecialistList(), '', 'Use this roster as a coverage checklist for focused MMO review; work directly with the tools available in this session.');
-    }
-    if (agentType === 'mmo_system_designer') {
-      shared.push('', 'Create tasks.md as an Autocode Markdown checklist with executable tasks. Do not write implementation_plan.md. Use [ ] for pending tasks and concise metadata bullets for files, dependencies, requirements, and verification.');
-    }
-    if (agentType === 'mmo_qa_reviewer') {
-      shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`);
-    }
-    if (agentType === 'mmo_qa_fixer') {
-      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Update qa_report.md or implementation_plan.md after fixes.`);
-    }
-    return shared.join('\n');
-  }
-  switch (agentType) {
-    case 'planner':
-      return `Read ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist. Do not write implementation_plan.md; the runtime derives it as work packages. Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.`;
-    case 'coder':
-      return `Implement the current pending subtask from ${promptSpecDir}/implementation_plan.md in ${promptProjectDir}. Mark it [x] and add a _Completion_ note when done.`;
-    case 'direct_task':
-      return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. End with a markdown table: What changed, Verification, Review notes.`;
-    case 'qa_reviewer':
-      return `Review with minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
-    case 'qa_fixer':
-      return `Read ${promptSpecDir}/qa_report.md, fix reported issues in ${promptProjectDir}, and update ${promptSpecDir}/implementation_plan.md to show fixes were applied.`;
-    default:
-      return `Complete the task in ${promptSpecDir}/spec.md for ${promptProjectDir}.`;
-  }
+  return buildAutocodeFallbackPrompt({ agentType, specDir, projectDir });
 }
 
 // Start execution

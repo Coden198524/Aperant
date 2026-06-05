@@ -271,10 +271,15 @@ export {
   AUTOCODE_TOOL_REGISTRATION_ORDER,
   LOCAL_TOOL_REGISTRATION_ORDER,
   SPAWN_SUBAGENT_TOOL_NAME,
+  buildAutocodeAgentMcpServerPlan,
+  buildAutocodeAgentMcpServerPlanFromConfig,
+  buildAutocodeAgentToolSessionPlan,
   buildToolRegistrationPlan,
   getAllowedToolNamesForAgent,
   selectRegisteredToolNamesForAgent,
   shouldExposeRegisteredTool,
+  type AutocodeAgentToolSessionPlan,
+  type AutocodeAgentToolSessionPlanOptions,
   type ToolRegistrationPlanOptions,
   type ToolSelectionOptions,
 } from './tools/registry.js';
@@ -437,6 +442,525 @@ export {
 } from './runtime/agent-messages.js';
 
 export {
+  AutocodeAgentState,
+  type AutocodeTaskProfileAssignment,
+  type AutocodeTaskProfileAssignmentReason,
+} from './runtime/agent-state.js';
+
+export {
+  getAutocodeOAuthModeClearVars,
+  mergeAutocodePythonEnvPath,
+  normalizeAutocodeEnvPathKey,
+} from './runtime/agent-env.js';
+
+export {
+  buildAutocodeDirectCompletionSummary,
+  buildAutocodeDirectCompletionSummaryV2,
+  escapeAutocodeMarkdownTableCell,
+  extractAutocodeDirectFilePathFromToolArgs,
+  extractAutocodeDirectTaskDescription,
+  formatAutocodeChangedFilesForSummary,
+  formatAutocodeDirectQualityAppendix,
+  formatAutocodeDirectQualityLine,
+  getAutocodeDirectSummaryLabels,
+  getAutocodeFinalAssistantText,
+  isAutocodeSuccessfulDirectOutcome,
+  localizeAutocodeDirectSummaryText,
+  shouldTrackAutocodeDirectModifiedFile,
+  type AutocodeDirectCodingQualityMetrics,
+  type AutocodeDirectSummaryLanguage,
+  type BuildAutocodeDirectCompletionSummaryInput,
+} from './runtime/direct-task-summary.js';
+
+export {
+  createAutocodeAdaptiveConcurrency,
+  partitionAutocodeHighRiskUnscopedWorkItems,
+  shouldSerializeAutocodeHighRiskUnscopedWorkItem,
+  summarizeAutocodeWorkItemResults,
+  type AutocodeWorkExecutorItem,
+  type AutocodeWorkExecutorResult,
+} from './runtime/work-executor-strategy.js';
+
+export {
+  AUTOCODE_AGGRESSIVE_SIMPLE_SPEC_PHASES,
+  AUTOCODE_SPEC_COMPLEXITY_PHASES,
+  hasAutocodeProjectExternalResearchSignal,
+  hasAutocodeTaskExternalResearchSignal,
+  inferAutocodeSpecComplexityFallback,
+  isAutocodeSourceDocumentationTask,
+  normalizeAutocodeSpecTaskDescription,
+  parseAutocodeProjectIndexSummary,
+  selectAutocodeSpecPhases,
+  shouldForceSplitAutocodeImplementationPlan,
+  shouldRunAutocodeSpecResearchPhase,
+  type AutocodeComplexityAssessmentLike,
+  type AutocodeFallbackComplexityAssessment,
+  type AutocodeSpecComplexityTier,
+  type AutocodeSpecWorkflowConfigLike,
+} from './runtime/spec-orchestrator-strategy.js';
+
+export {
+  calculateAutocodeChecklistRiskLevel,
+  classifyAutocodeBuildFailure,
+  createAutocodeSimpleHash,
+  formatAutocodeCategory,
+  formatAutocodeChecklistForPrompt,
+  formatAutocodeChecklistSummary,
+  formatAutocodeCompactChecklistForPrompt,
+  formatAutocodePatternInjectionSummary,
+  parseAutocodeBuildCheckpoint,
+  shouldInjectAutocodePatterns,
+  type AutocodeBuildCheckpoint,
+  type AutocodeBuildFailureType,
+  type AutocodeChecklistItem,
+  type AutocodePatternInjectionResult,
+  type AutocodePreImplementationChecklist,
+} from './runtime/agent-quality-guidance.js';
+
+export {
+  analyzeAutocodeFailureAndRecover,
+  analyzeAutocodeFailureRootCause,
+  detectAutocodeFailurePattern,
+  expandAutocodeContextStrategy,
+  fixAutocodeVerificationStrategy,
+  formatAutocodeFailureAnalysis,
+  formatAutocodeRecoverySummary,
+  generateAutocodeAlternativeRecoveryStrategies,
+  revalidateAutocodeDependenciesStrategy,
+  seekAutocodeHelpStrategy,
+  selectAutocodeRecoveryStrategy,
+  simplifyAutocodeScopeStrategy,
+  templateAutocodeModeStrategy,
+  type AutocodeFailureAnalysis,
+  type AutocodeFailurePattern,
+  type AutocodeFailureRecord,
+  type AutocodeRecoveryStrategy,
+  type AutocodeRecoveryStrategyType,
+  type AutocodeRecoverySubtask,
+} from './runtime/agent-context-recovery.js';
+
+export {
+  AUTOCODE_LOG_MESSAGES,
+  translateAutocodeLogMessage,
+  translateAutocodePhaseMessage,
+  type AutocodeKnownLogLanguage,
+  type AutocodeLogLanguage,
+  type AutocodeLogTranslationSet,
+} from './runtime/agent-log-messages.js';
+
+export {
+  AUTOCODE_IDEATION_PHASES,
+  AUTOCODE_IDEATION_TERMINAL_PHASES,
+  AUTOCODE_ROADMAP_PHASES,
+  AUTOCODE_ROADMAP_TERMINAL_PHASES,
+  AutocodeBasePhaseParser,
+  AutocodeExecutionPhaseParser,
+  AutocodeIdeationPhaseParser,
+  AutocodeRoadmapPhaseParser,
+  type AutocodeExecutionParserContext,
+  type AutocodeIdeationParseResult,
+  type AutocodeIdeationParserContext,
+  type AutocodeIdeationPhase,
+  type AutocodePhaseParserContext,
+  type AutocodePhaseParseResult,
+  type AutocodeRoadmapParseResult,
+  type AutocodeRoadmapPhase,
+} from './runtime/agent-phase-parsers.js';
+
+export {
+  AUTOCODE_QA_ISSUE_SIMILARITY_THRESHOLD,
+  AUTOCODE_QA_MAX_ITERATIONS,
+  AUTOCODE_QA_RECURRING_ISSUE_THRESHOLD,
+  autocodeQaIssuesSimilar,
+  extractAutocodeAcceptanceCriteria,
+  generateAutocodeManualTestPlan,
+  generateAutocodeQAEscalationReport,
+  generateAutocodeQAReport,
+  type AutocodeManualTestPlanInput,
+  type AutocodeQAFinalStatus,
+  type AutocodeQAIterationRecord,
+  type AutocodeQAIssue,
+} from './runtime/agent-qa-reports.js';
+
+export {
+  analyzeAutocodeApproach,
+  analyzeAutocodeFailureLearningRootCause,
+  analyzeAutocodeWhyItWorked,
+  createAutocodeExtractedKnowledge,
+  extractAutocodeCodePatternsFromContent,
+  extractAutocodeFailurePatterns,
+  extractAutocodeInsights,
+  extractAutocodeKeyDecisions,
+  extractAutocodeSuccessPatterns,
+  extractAutocodeToolCallSequence,
+  formatAutocodeKnowledgeSummary,
+  generateAutocodeFailurePreventionAdvice,
+  generateAutocodeLearningSessionId,
+  identifyAutocodeEffectiveTools,
+  identifyAutocodeKeyFiles,
+  mapAutocodeSessionOutcome,
+  summarizeAutocodeSessionForMemory,
+  type AutocodeCodePattern,
+  type AutocodeCreateExtractedKnowledgeInput,
+  type AutocodeExtractedKnowledge,
+  type AutocodeFailureLearningPattern,
+  type AutocodeLearningAnalysisInput,
+  type AutocodeLearningSubtask,
+  type AutocodeSuccessPattern,
+} from './runtime/agent-memory-learning.js';
+
+export * from './runtime/agent-self-critique.js';
+export * from './runtime/agent-validation-feedback.js';
+export * from './runtime/agent-subtask-prompts.js';
+export * from './runtime/agent-quality-integration.js';
+export * from './runtime/agent-provider-errors.js';
+export * from './runtime/workflow-metrics.js';
+export * from './runtime/openspec-progress.js';
+
+export {
+  type AutocodeCodingRecoverySessionResult,
+  type AutocodeCodingRecoverySubtask,
+  compactAutocodeAgentRecoveryText,
+  formatAutocodeCodingRecoveryHints,
+  getAutocodeCodingRecoveryAction,
+  summarizeAutocodeCodingAttemptFailure,
+} from './runtime/agent-recovery.js';
+
+export {
+  AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
+  type AutocodePlanningSchedulePhase,
+  type AutocodePlanningSchedulePlan,
+  type AutocodePlanningScheduleSubtask,
+  type AutocodePlanningSchedulingValidationOptions,
+  buildAutocodePlanningStructuredOutputRetryPrompt,
+  buildAutocodePlanningStructuredOutputValidationRetryPrompt,
+  buildAutocodeStandardTasksValidationRetryPrompt,
+  isAutocodeImplementationPlanFileFailure,
+  isAutocodeWriteToolPlanOutputFailure,
+  shouldRequireAutocodePlanningSchedulingMetadata,
+  validateAutocodePlanningSchedulingMetadata,
+} from './runtime/agent-planning.js';
+
+export {
+  type AutocodeErrorEvent,
+  type AutocodeProgressState,
+  type AutocodeSessionError,
+  type AutocodeSessionEventCallback,
+  type AutocodeSessionMessage,
+  type AutocodeSessionMessageRole,
+  type AutocodeSessionOutcome as AutocodeAgentSessionOutcome,
+  type AutocodeSessionResult,
+  type AutocodeStepFinishEvent,
+  type AutocodeStreamEvent,
+  type AutocodeTextDeltaEvent,
+  type AutocodeThinkingDeltaEvent,
+  type AutocodeTokenUsage as AutocodeSessionTokenUsage,
+  type AutocodeToolCallEvent,
+  type AutocodeToolResultEvent,
+  type AutocodeUsageUpdateEvent,
+} from './runtime/agent-session-types.js';
+
+export {
+  AutocodeSessionErrorCode,
+  classifyAutocodeSessionError,
+  classifyAutocodeToolError,
+  isAutocodeAbortError,
+  isAutocodeAuthenticationError,
+  isAutocodeBillingError,
+  isAutocodeModelNotFoundError,
+  isAutocodeRateLimitError,
+  isAutocodeToolConcurrencyError,
+  type AutocodeClassifiedSessionError,
+  type AutocodeSessionErrorCode as AutocodeSessionErrorCodeType,
+} from './runtime/agent-error-classifier.js';
+
+export {
+  AUTOCODE_TASK_EVENT_PREFIX,
+  AutocodePhaseEventSchema,
+  AutocodeTaskEventSchema,
+  PHASE_MARKER_PREFIX as AUTOCODE_PHASE_MARKER_PREFIX,
+  extractAutocodeJsonObject,
+  hasAutocodePhaseMarker,
+  hasAutocodeTaskMarker,
+  isValidAutocodePhasePayload,
+  parseAutocodePhaseEvent,
+  parseAutocodeTaskEvent,
+  validateAutocodePhaseEvent,
+  validateAutocodeTaskEvent,
+  type AutocodeAgentEventParserOptions,
+  type AutocodeParseResult,
+  type AutocodePhaseEventPayload,
+  type AutocodeTaskEventPayload,
+  type AutocodeValidationError,
+  type AutocodeValidationResult,
+} from './runtime/agent-events.js';
+
+export {
+  AutocodeProgressTracker,
+  type AutocodePhaseDetection,
+  type AutocodeProgressTrackerState,
+} from './runtime/agent-progress-tracker.js';
+
+export {
+  AUTOCODE_TOKEN_ESTIMATE_CHARS_PER_TOKEN,
+  AUTOCODE_WRITE_TOOL_INPUT_ERROR_PATTERNS,
+  MAX_AUTOCODE_WRITE_TOOL_INPUT_FAILURES_PER_SESSION,
+  buildAutocodeWriteToolInputCorrectionPrompt,
+  estimateAutocodeStreamPartSize,
+  estimateAutocodeTokenUsageFromSession,
+  extractAutocodeCompletedSubtaskIdFromEvent,
+  extractAutocodeCompletedSubtaskIdFromToolResult,
+  extractAutocodeMalformedWritePath,
+  getAutocodeWriteToolInputFailure,
+  isAutocodeCompletionStreamPart,
+  isAutocodeOpenAIResponsesTransport,
+  isAutocodeWriteToolInputErrorMessage,
+  normalizeAutocodeTokenUsage,
+  repairAutocodeWriteToolInput,
+  type AutocodeStreamPartLike,
+  type AutocodeWriteToolInputFailure,
+} from './runtime/agent-session-policies.js';
+
+export {
+  type AutocodeCoderKickoffSubtaskContext,
+  type BuildAutocodeFocusedCoderKickoffMessageInput,
+  buildAutocodeFocusedCoderKickoffMessageFromContext,
+  findAutocodeSubtaskKickoffContext,
+} from './runtime/agent-coder-kickoff.js';
+
+export {
+  buildAutocodeAggressiveCoderPrompt,
+} from './runtime/agent-coder-prompts.js';
+
+export {
+  specPhaseToAutocodePromptName,
+  type AutocodeSpecPhase,
+} from './runtime/agent-spec-prompts.js';
+
+export {
+  appendAutocodeLanguageRequirement,
+  appendAutocodeLanguageRequirementToMessages,
+  getAutocodeImplementationPlanLanguageRequirement,
+  getAutocodeLanguageRequirement,
+  getAutocodeStrictLanguageRequirement,
+  type AutocodeOutputLanguage,
+} from './runtime/agent-language.js';
+
+export {
+  buildAutocodeAgentKickoffMessage,
+  buildAutocodeAgenticSpecOrchestratorKickoffMessage,
+  buildAutocodeFallbackPrompt,
+  buildAutocodeMmoAgentRole,
+  buildAutocodeMmoCodingQualityChecklist,
+  buildAutocodeMmoSpecialistList,
+  buildAutocodeSpecKickoffMessage,
+  formatAutocodePathForPrompt,
+  resolveAutocodePromptNameForAgent,
+  type BuildAutocodeAgentKickoffMessageInput,
+  type BuildAutocodeFallbackPromptInput,
+  type BuildAutocodeSpecKickoffMessageInput,
+} from './runtime/agent-kickoff.js';
+
+export {
+  isAutocodeDirectTaskExecution,
+  isAutocodeSuccessfulAgentSessionOutcome,
+  resolveAutocodeAgentExecutionPlan,
+  type AutocodeAgentExecutionKind,
+  type AutocodeAgentExecutionPlan,
+  type AutocodeAgentExecutionPlanInput,
+} from './runtime/agent-execution-plan.js';
+
+export {
+  AUTOCODE_GENERAL_AGENT_PROFILE,
+  AUTOCODE_MMO_AGENT_PROFILE,
+  normalizeAutocodeProjectType,
+  resolveAutocodeProjectAgentProfile,
+  type AutocodeProjectAgentProfile,
+  type AutocodeProjectType,
+} from './runtime/project-agent-profile.js';
+
+export {
+  AUTOCODE_SPEC_PHASE_THINKING_LEVELS,
+  getAutocodeModelBetas,
+  getAutocodePhaseModelEnvVar,
+  getAutocodeSpecPhaseThinkingBudget,
+  getAutocodeThinkingBudget,
+  getAutocodeThinkingKwargsForModel,
+  isAutocodeAdaptiveModel,
+  resolveAutocodePhaseConfig,
+  resolveAutocodePhaseModel,
+  resolveAutocodePhaseModelBetas,
+  resolveAutocodePhaseModelId,
+  resolveAutocodePhaseThinking,
+  type AutocodeEnvLookup,
+  type AutocodeTaskPhaseMetadataConfig,
+  type AutocodeThinkingKwargs,
+} from './runtime/agent-phase-config.js';
+
+export {
+  AUTOCODE_SPAWN_SUBAGENT_TOOL_DESCRIPTION,
+  AUTOCODE_SPAWN_SUBAGENT_UNAVAILABLE_MESSAGE,
+  AUTOCODE_STRUCTURED_OUTPUT_SUBAGENT_TYPES,
+  AUTOCODE_SUBAGENT_AGENT_TYPE_MAP,
+  AUTOCODE_SUBAGENT_MAX_STEPS,
+  AUTOCODE_SUBAGENT_PROMPT_NAME_MAP,
+  AUTOCODE_SUBAGENT_TYPES,
+  buildAutocodeSubagentUserMessage,
+  formatAutocodeSubagentToolResult,
+  resolveAutocodeSubagentAgentType,
+  resolveAutocodeSubagentPromptName,
+  shouldAutocodeSubagentUseStructuredOutput,
+  type AutocodeSubagentType,
+} from './runtime/subagent-plan.js';
+
+export {
+  buildAutocodeDomainGuidanceHeader,
+  buildAutocodeGitPushPolicyHeader,
+  buildAutocodeSpecLocationHeader,
+  detectAutocodeProjectCapabilities,
+  injectAutocodePromptContext,
+  type AutocodeProjectCapabilities,
+  type AutocodePromptContext,
+} from './runtime/prompt-context.js';
+
+export {
+  buildAutocodeCoderPrompt,
+  buildAutocodeCompactProjectPromptProfileSection,
+  buildAutocodePlannerPrompt,
+  buildAutocodeProjectPromptProfileSection,
+  buildAutocodeQaFixerPrompt,
+  buildAutocodeQaReviewerPrompt,
+  buildAutocodeSpecQuickPrompt,
+  generateAutocodeProjectPromptOverrides,
+  type AutocodeProjectDomain,
+  type AutocodeProjectPromptProfile,
+  type AutocodeProjectSize,
+  type AutocodePromptIntensity,
+} from './runtime/project-prompt-profile.js';
+
+export {
+  countAutocodeCompletedSubtaskPlanSubtasks,
+  countAutocodeSubtaskPlanSubtasks,
+  createAutocodeBlockedSessionResult,
+  extractAutocodeCompletionSummaryTable,
+  getAutocodeDependencyBlockedSubtasks,
+  getAutocodeNextPendingSubtask,
+  getAutocodeSubtaskId,
+  getAutocodeSubtaskStatusMap,
+  hasAutocodeDeclaredField,
+  hasAutocodeDeclaredFileMetadata,
+  hasAutocodeSubtaskCompletionEvidence,
+  summarizeAutocodeFailureResult,
+  summarizeAutocodeSessionResult,
+  toAutocodeStringArray,
+  type AutocodeDependencyBlockedSubtask,
+  type AutocodePlanSubtask as AutocodeSubtaskPlanStateSubtask,
+  type AutocodeSubtaskPlan,
+  type AutocodeSubtaskPlanPhase,
+} from './runtime/subtask-plan-state.js';
+
+export {
+  QualityTier,
+  checkTierUpgrade,
+  compareTiers,
+  determineQualityTier,
+  formatTierClassification,
+  formatTierSummary,
+  formatValidationResult,
+  getMinReviewScore,
+  getMinTestCoverage,
+  getQAChecksForTier,
+  getTierColor,
+  getTierConfig,
+  getTierDisplayName,
+  getTierIcon,
+  requiresManualReview,
+  validateTierRequirements,
+  type QACheck,
+  type TierClassification,
+  type TierConfig,
+} from './runtime/quality-tier.js';
+
+export {
+  AUTOCODE_DEFAULT_MAX_CONTINUATIONS,
+  AUTOCODE_MAX_SUMMARY_INPUT_CHARS,
+  AUTOCODE_RAW_TRUNCATION_CHARS,
+  AUTOCODE_SUMMARIZER_SYSTEM_PROMPT,
+  AUTOCODE_SUMMARY_TARGET_WORDS,
+  addAutocodeContinuationUsage,
+  buildAutocodeContinuationPrompt,
+  buildAutocodeSummaryPrompt,
+  limitAutocodeSummaryInput,
+  rawTruncateAutocodeSessionMessages,
+  runAutocodeContinuableSession,
+  serializeAutocodeSessionMessages,
+  type AutocodeContinuableSessionConfig,
+  type AutocodeContinuationConfig,
+  type AutocodeContinuationContext,
+  type AutocodeContinuationResult,
+  type AutocodeContinuationRunner,
+} from './runtime/agent-continuation.js';
+
+export {
+  DEFAULT_WORKFLOW_CONFIG,
+  OPTIMIZATION_PRESETS,
+  buildAutocodeSessionQualityConfig,
+  estimatePerformanceImprovement,
+  getOptimizationLevelDescription,
+  getRetryLimits,
+  getWorkflowConfig,
+  getWorkflowConfigFromMode,
+  isOptimizationLevel,
+  isQualityCheckEnabled,
+  type AutocodeSessionQualityConfig,
+  type OptimizationLevel,
+  type QualityCheckConfig,
+  type SpecCreationMode,
+  type WorkflowConfig,
+} from './runtime/workflow-config.js';
+
+export {
+  type AutocodeErrorPart,
+  type AutocodeFinishStepPart,
+  type AutocodeFullStreamPart,
+  type AutocodeReasoningDeltaPart,
+  type AutocodeStreamHandler,
+  type AutocodeStreamHandlerLogger,
+  type AutocodeStreamHandlerOptions,
+  type AutocodeTextDeltaPart,
+  type AutocodeToolCallPart,
+  type AutocodeToolErrorPart,
+  type AutocodeToolResultPart,
+  createAutocodeStreamHandler,
+} from './runtime/agent-stream-handler.js';
+
+export {
+  type AutocodeAgentSessionRunner,
+  type AutocodeAgentSessionRunnerFunction,
+  type AutocodeAgentSessionRunnerOptions,
+  createAutocodeAgentSessionRunner,
+  runAutocodeAgentSessionWithRunner,
+} from './runtime/agent-session-runner.js';
+
+export {
+  AutocodeAgentTaskController,
+  createAutocodeAgentTaskController,
+  type AutocodeAgentTaskControllerDecision,
+  type AutocodeAgentTaskControllerDecisionInput,
+} from './runtime/agent-task-controller.js';
+
+export {
+  AUTOCODE_TASK_TOKEN_USAGE_PREFIX,
+  createAutocodeAgentWorkerProcessStartPlan,
+  getAutocodeInitialPhaseForProcess,
+  parseAutocodeTaskTokenUsage,
+  type AutocodeAgentProcessInitialPhase,
+  type AutocodeAgentProcessType,
+  type AutocodeAgentWorkerProcessStartPlan,
+  type AutocodeAgentWorkerProcessStartPlanInput,
+} from './runtime/agent-process-plan.js';
+
+export {
   type AutocodeTaskRuntimeConcurrencyMetadata,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type AutocodeProviderModelEquivalent,
@@ -473,6 +997,13 @@ export {
 } from './runtime/work-dependencies.js';
 
 export {
+  type AutocodeWorkConflictGraph,
+  type AutocodeWorkConflictItem,
+  detectAutocodeWorkConflicts,
+  groupAutocodeConflictingWorkItems,
+} from './runtime/work-conflicts.js';
+
+export {
   AUTOCODE_AGGRESSIVE_WORKFLOW_PHASE_STEP_BUDGETS,
   AUTOCODE_DEFAULT_SESSION_MAX_STEPS,
   AUTOCODE_DEFAULT_WORKFLOW_PHASE_STEP_BUDGETS,
@@ -486,6 +1017,23 @@ export {
   parseAutocodeBooleanEnv,
   parseAutocodeCustomMcpServers,
 } from './runtime/session-runtime-options.js';
+
+export {
+  AUTOCODE_BUILTIN_MCP_SERVER_IDS,
+  AUTOCODE_DANGEROUS_CUSTOM_MCP_FLAGS,
+  AUTOCODE_DEFAULT_YUNXIAO_MCP_ARGS,
+  AUTOCODE_SAFE_CUSTOM_MCP_COMMANDS,
+  AUTOCODE_SHELL_METACHARACTERS,
+  areAutocodeCustomMcpArgsSafe,
+  isAutocodeBuiltinMcpServerId,
+  isAutocodeCustomMcpCommandSafe,
+  normalizeAutocodeCustomMcpServer,
+  parseAutocodeYunxiaoMcpArgs,
+  type AutocodeBuiltinMcpServerId,
+  type AutocodeCustomMcpServerDefinition,
+  type AutocodeMcpArgSafetyOptions,
+  type AutocodeNormalizedCustomMcpServer,
+} from './tools/mcp-registry.js';
 
 export {
   type AutocodeAgentRuntimeMode,

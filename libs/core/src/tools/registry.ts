@@ -5,8 +5,12 @@ import {
   TOOL_RECORD_GOTCHA,
   TOOL_UPDATE_QA_STATUS,
   TOOL_UPDATE_SUBTASK_STATUS,
+  getRequiredMcpServers,
+  getRequiredMcpServersFromConfig,
   getAgentConfig,
   type AgentType,
+  type McpConfigResolveOptions,
+  type McpServerResolveOptions,
 } from '../config/agent-configs.js';
 
 export const SPAWN_SUBAGENT_TOOL_NAME = 'SpawnSubagent';
@@ -36,6 +40,18 @@ export interface ToolRegistrationPlanOptions {
 
 export interface ToolSelectionOptions {
   hasSubagentExecutor?: boolean;
+}
+
+export interface AutocodeAgentToolSessionPlanOptions extends ToolSelectionOptions {
+  agentType: AgentType;
+  registeredToolNames: Iterable<string>;
+  mcp?: McpServerResolveOptions;
+}
+
+export interface AutocodeAgentToolSessionPlan {
+  agentType: AgentType;
+  toolNames: string[];
+  mcpServerIds: string[];
 }
 
 export function buildToolRegistrationPlan(
@@ -74,4 +90,32 @@ export function selectRegisteredToolNamesForAgent(
   return Array.from(registeredNames).filter((name) =>
     shouldExposeRegisteredTool(name, allowedNames, options),
   );
+}
+
+export function buildAutocodeAgentToolSessionPlan(
+  options: AutocodeAgentToolSessionPlanOptions,
+): AutocodeAgentToolSessionPlan {
+  return {
+    agentType: options.agentType,
+    toolNames: selectRegisteredToolNamesForAgent(
+      options.agentType,
+      options.registeredToolNames,
+      { hasSubagentExecutor: options.hasSubagentExecutor },
+    ),
+    mcpServerIds: buildAutocodeAgentMcpServerPlan(options.agentType, options.mcp),
+  };
+}
+
+export function buildAutocodeAgentMcpServerPlan(
+  agentType: AgentType,
+  options: McpServerResolveOptions = {},
+): string[] {
+  return getRequiredMcpServers(agentType, options);
+}
+
+export function buildAutocodeAgentMcpServerPlanFromConfig(
+  agentType: AgentType,
+  options: McpConfigResolveOptions = {},
+): string[] {
+  return getRequiredMcpServersFromConfig(agentType, options);
 }

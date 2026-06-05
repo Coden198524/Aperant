@@ -15,107 +15,19 @@
 
 import { generateText, Output, stepCountIs } from 'ai';
 import type { LanguageModel, Tool as AITool } from 'ai';
-import type { ZodSchema } from 'zod';
 
 import type { SubagentExecutor, SubagentSpawnParams, SubagentResult } from '../tools/builtin/spawn-subagent';
 import type { ToolContext } from '../tools/types';
 import type { ToolRegistry } from '../tools/registry';
-import type { AgentType } from '../config/agent-configs';
 import { getAgentConfig } from '../config/agent-configs';
 import { ComplexityAssessmentOutputSchema } from '../schema/output/complexity-assessment.output';
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-/** Maximum number of tool-use steps for a subagent */
-const SUBAGENT_MAX_STEPS = 100;
-
-// ---------------------------------------------------------------------------
-// Agent type resolution helpers
-// ---------------------------------------------------------------------------
-
-/**
- * Map subagent type strings to the AgentType union.
- * Some subagent types map directly, others need translation.
- */
-function resolveAgentType(subagentType: string): AgentType {
-  const directMap: Record<string, AgentType> = {
-    complexity_assessor: 'spec_gatherer', // Uses spec_gatherer tools + complexity assessor prompt
-    spec_discovery: 'spec_discovery',
-    spec_gatherer: 'spec_gatherer',
-    spec_researcher: 'spec_researcher',
-    spec_writer: 'spec_writer',
-    spec_critic: 'spec_critic',
-    spec_validation: 'spec_validation',
-    planner: 'planner',
-    coder: 'coder',
-    qa_reviewer: 'qa_reviewer',
-    qa_fixer: 'qa_fixer',
-    mmo_system_designer: 'mmo_system_designer',
-    mmo_engine_architect: 'mmo_engine_architect',
-    mmo_engine_programmer: 'mmo_engine_programmer',
-    mmo_rendering_engineer: 'mmo_rendering_engineer',
-    mmo_animation_engineer: 'mmo_animation_engineer',
-    mmo_asset_pipeline_engineer: 'mmo_asset_pipeline_engineer',
-    mmo_world_streaming_engineer: 'mmo_world_streaming_engineer',
-    mmo_tools_engineer: 'mmo_tools_engineer',
-    mmo_build_release_engineer: 'mmo_build_release_engineer',
-    mmo_engine_performance_engineer: 'mmo_engine_performance_engineer',
-    mmo_server_authority_engineer: 'mmo_server_authority_engineer',
-    mmo_network_sync_engineer: 'mmo_network_sync_engineer',
-    mmo_client_gameplay_engineer: 'mmo_client_gameplay_engineer',
-    mmo_data_persistence_engineer: 'mmo_data_persistence_engineer',
-    mmo_security_anticheat_engineer: 'mmo_security_anticheat_engineer',
-    mmo_liveops_engineer: 'mmo_liveops_engineer',
-    mmo_qa_reviewer: 'mmo_qa_reviewer',
-    mmo_qa_fixer: 'mmo_qa_fixer',
-  };
-  return directMap[subagentType] ?? 'spec_gatherer';
-}
-
-/**
- * Map subagent type to the prompt file name.
- */
-function resolvePromptName(subagentType: string): string {
-  const promptMap: Record<string, string> = {
-    complexity_assessor: 'complexity_assessor',
-    spec_discovery: 'spec_gatherer',
-    spec_gatherer: 'spec_gatherer',
-    spec_researcher: 'spec_researcher',
-    spec_writer: 'spec_writer',
-    spec_critic: 'spec_critic',
-    spec_validation: 'spec_writer',
-    planner: 'planner',
-    coder: 'coder',
-    qa_reviewer: 'qa_reviewer',
-    qa_fixer: 'qa_fixer',
-    mmo_system_designer: 'mmo_system_designer',
-    mmo_engine_architect: 'mmo_engine_architect',
-    mmo_engine_programmer: 'mmo_engine_programmer',
-    mmo_rendering_engineer: 'mmo_rendering_engineer',
-    mmo_animation_engineer: 'mmo_animation_engineer',
-    mmo_asset_pipeline_engineer: 'mmo_asset_pipeline_engineer',
-    mmo_world_streaming_engineer: 'mmo_world_streaming_engineer',
-    mmo_tools_engineer: 'mmo_tools_engineer',
-    mmo_build_release_engineer: 'mmo_build_release_engineer',
-    mmo_engine_performance_engineer: 'mmo_engine_performance_engineer',
-    mmo_server_authority_engineer: 'mmo_server_authority_engineer',
-    mmo_network_sync_engineer: 'mmo_network_sync_engineer',
-    mmo_client_gameplay_engineer: 'mmo_client_gameplay_engineer',
-    mmo_data_persistence_engineer: 'mmo_data_persistence_engineer',
-    mmo_security_anticheat_engineer: 'mmo_security_anticheat_engineer',
-    mmo_liveops_engineer: 'mmo_liveops_engineer',
-    mmo_qa_reviewer: 'mmo_qa_reviewer',
-    mmo_qa_fixer: 'mmo_qa_fixer',
-  };
-  return promptMap[subagentType] ?? 'spec_writer';
-}
-
-/** Agent types that use Output.object() for structured output */
-const STRUCTURED_OUTPUT_AGENTS: Partial<Record<string, ZodSchema>> = {
-  complexity_assessor: ComplexityAssessmentOutputSchema,
-};
+import {
+  AUTOCODE_SUBAGENT_MAX_STEPS,
+  buildAutocodeSubagentUserMessage,
+  resolveAutocodeSubagentAgentType,
+  resolveAutocodeSubagentPromptName,
+  shouldAutocodeSubagentUseStructuredOutput,
+} from '@autocode/core/runtime/subagent-plan';
 
 // ---------------------------------------------------------------------------
 // SubagentExecutorConfig
@@ -152,8 +64,8 @@ export class SubagentExecutorImpl implements SubagentExecutor {
 
   async spawn(params: SubagentSpawnParams): Promise<SubagentResult> {
     const startTime = Date.now();
-    const agentType = resolveAgentType(params.agentType);
-    const promptName = resolvePromptName(params.agentType);
+    const agentType = resolveAutocodeSubagentAgentType(params.agentType);
+    const promptName = resolveAutocodeSubagentPromptName(params.agentType);
 
     this.config.onSubagentEvent?.(params.agentType, 'spawning');
 
@@ -178,14 +90,15 @@ export class SubagentExecutorImpl implements SubagentExecutor {
       }
 
       // 3. Build the user message with task + context
-      let userMessage = `Your task: ${params.task}`;
-      if (params.context) {
-        userMessage += `\n\nContext:\n${params.context}`;
-      }
+      const userMessage = buildAutocodeSubagentUserMessage({
+        task: params.task,
+        context: params.context,
+      });
 
       // 4. Determine if we should use structured output
-      const outputSchema = params.expectStructuredOutput
-        ? STRUCTURED_OUTPUT_AGENTS[params.agentType]
+      const outputSchema = params.expectStructuredOutput &&
+        shouldAutocodeSubagentUseStructuredOutput(params.agentType)
+        ? ComplexityAssessmentOutputSchema
         : undefined;
 
       // 5. Run generateText() with the subagent configuration
@@ -195,7 +108,7 @@ export class SubagentExecutorImpl implements SubagentExecutor {
         system: systemPrompt,
         messages: [{ role: 'user' as const, content: userMessage }],
         tools,
-        stopWhen: stepCountIs(SUBAGENT_MAX_STEPS),
+        stopWhen: stepCountIs(AUTOCODE_SUBAGENT_MAX_STEPS),
         abortSignal: this.config.abortSignal,
         ...(outputSchema
           ? { output: Output.object({ schema: outputSchema }) }

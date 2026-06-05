@@ -14,6 +14,19 @@ import type { ProjectType } from '../../../shared/types';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { loadAutocodeImplementationPlanSync } from '@autocode/core';
+import {
+  AUTOCODE_DEFAULT_QUALITY_CONFIG,
+  createAutocodeQualityConfig,
+  getAutocodeDocumentationOutputs,
+  getAutocodeEnabledQualityFeatures,
+  getDefaultAutocodeQualityConfig,
+  hasAutocodeQualityFeaturesEnabled,
+  isAutocodeGameMmoDocumentationPlan,
+  validateAutocodeDocumentationMarkdown,
+  validateAutocodeGameMmoCodingSummary,
+  validateAutocodeGameMmoDocumentationSupportContent,
+  validateAutocodeJsonDocumentObject,
+} from '@autocode/core/runtime/agent-quality-integration';
 
 // Import all quality improvement modules
 import { runPreQASmokeTests, formatSmokeTestResults } from './pre-qa-smoke-tests';
@@ -59,15 +72,7 @@ export interface QualityConfig {
 // Default configuration - Standard/Spec balanced optimization with lightweight quality gates.
 // This aligns with the BALANCED_PRESET from workflow-config.ts
 const DEFAULT_CONFIG: Required<Omit<QualityConfig, 'memoryService' | 'projectId' | 'projectType'>> = {
-  enablePreQASmokeTests: false, // Disabled for balanced optimization
-  enableIncrementalValidation: true, // Core feature - keep enabled
-  enablePatternInjection: false, // Disabled for balanced optimization
-  enablePreImplementationChecklist: true,
-  enableSelfCritique: true,
-  enableContextAwareRecovery: true, // Core feature - keep enabled
-  enableActiveMemoryLearning: true, // Core feature - keep enabled
-  enableTieredQualityStandards: true,
-  enableDocumentationQualityGate: true,
+  ...AUTOCODE_DEFAULT_QUALITY_CONFIG,
 };
 
 // =============================================================================
@@ -203,7 +208,10 @@ export async function validateSubtaskQuality(
   // Note: This would require access to generated files, which we don't have here
   // Self-critique should be run within the agent session itself
   if (appliedConfig.projectType === 'game-mmo') {
-    issues.push(...validateGameMmoCodingSummary(subtask, sessionResult));
+    const summary = sessionResult.messages.map((message) => (
+      typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
+    )).join('\n');
+    issues.push(...validateAutocodeGameMmoCodingSummary(subtask, summary));
   }
 
   return {
@@ -502,46 +510,29 @@ function runDocumentationQualityGate(
     return { isDocumentationWorkflow: false, issues: [] };
   }
 
-  const outputs = getDocumentationOutputs(plan);
+  const outputs = getAutocodeDocumentationOutputs(plan);
   const issues: string[] = [];
-  const isGameMmoDocumentation = projectType === 'game-mmo' || isGameMmoDocumentationPlan(plan);
+  const isGameMmoDocumentation = projectType === 'game-mmo' || isAutocodeGameMmoDocumentationPlan(plan);
   const outputBaseDir = outputs.base === 'project' ? projectDir : specDir;
   const outlinePath = join(outputBaseDir, outputs.outline);
   const evidencePath = join(outputBaseDir, outputs.evidenceIndex);
   const markdownPath = join(outputBaseDir, outputs.finalMarkdown);
+  const outline = readJsonFile(outlinePath);
+  const evidence = readJsonFile(evidencePath);
 
-  issues.push(...validateJsonDocument(outlinePath, ['document_type', 'audience', 'sections']));
-  issues.push(...validateJsonDocument(evidencePath, ['files_read', 'evidence_backed_claims', 'open_questions']));
+  issues.push(...validateAutocodeJsonDocumentObject(outline, outlinePath, ['document_type', 'audience', 'sections']));
+  issues.push(...validateAutocodeJsonDocumentObject(evidence, evidencePath, ['files_read', 'evidence_backed_claims', 'open_questions']));
   if (isGameMmoDocumentation) {
-    issues.push(...validateGameMmoDocumentationSupportFiles(outlinePath, evidencePath, outputs.finalMarkdown));
+    issues.push(...validateAutocodeGameMmoDocumentationSupportContent(outline, evidence, outputs.finalMarkdown));
   }
 
   if (!existsSync(markdownPath)) {
     issues.push(`documentation: ${outputs.finalMarkdown} is missing`);
   } else {
     const markdown = readFileSync(markdownPath, 'utf-8');
-    const hasHeadings = /^##\s+/m.test(markdown);
-    const hasEvidence = /evidence|source|file|来源|证据|文件/i.test(markdown);
-    const hasFlow = /flow|data flow|state|sequence|mermaid|流程|数据流|状态|时序/i.test(markdown);
-    const hasRisksOrOpenQuestions = /risk|open question|unknown|unverified|风险|未确认|未知|待确认/i.test(markdown);
-    if (markdown.trim().length < 800) {
-      issues.push(`documentation: ${outputs.finalMarkdown} is too short for deep source documentation`);
-    }
-    if (!hasHeadings) {
-      issues.push(`documentation: ${outputs.finalMarkdown} needs structured section headings`);
-    }
-    if (!hasEvidence) {
-      issues.push(`documentation: ${outputs.finalMarkdown} must cite source/evidence files`);
-    }
-    if (!hasFlow) {
-      issues.push(`documentation: ${outputs.finalMarkdown} should describe core flow, data flow, state flow, or sequence`);
-    }
-    if (!hasRisksOrOpenQuestions) {
-      issues.push(`documentation: ${outputs.finalMarkdown} should include risks or open questions`);
-    }
-    if (isGameMmoDocumentation) {
-      issues.push(...validateGameMmoDocumentation(markdown, outputs.finalMarkdown));
-    }
+    issues.push(...validateAutocodeDocumentationMarkdown(markdown, outputs.finalMarkdown, {
+      isGameMmoDocumentation,
+    }));
   }
 
   return { isDocumentationWorkflow: true, issues };
@@ -592,38 +583,26 @@ export async function learnFromSession(
  * Get default quality configuration.
  */
 export function getDefaultQualityConfig(): QualityConfig {
-  return { ...DEFAULT_CONFIG };
+  return getDefaultAutocodeQualityConfig() as QualityConfig;
 }
 
 /**
  * Create quality configuration with specific features enabled.
  */
 export function createQualityConfig(overrides: Partial<QualityConfig>): QualityConfig {
-  return { ...DEFAULT_CONFIG, ...overrides };
+  return createAutocodeQualityConfig(overrides) as QualityConfig;
 }
 
 /**
  * Check if any quality features are enabled.
  */
 export function hasQualityFeaturesEnabled(config: QualityConfig): boolean {
-  return Object.values(config).some(v => v === true);
+  return hasAutocodeQualityFeaturesEnabled(config);
 }
 
 /**
  * Get list of enabled quality features.
  */
 export function getEnabledFeatures(config: QualityConfig): string[] {
-  const features: string[] = [];
-  const appliedConfig = { ...DEFAULT_CONFIG, ...config };
-
-  if (appliedConfig.enablePreQASmokeTests) features.push('Pre-QA Smoke Tests');
-  if (appliedConfig.enableIncrementalValidation) features.push('Incremental Validation');
-  if (appliedConfig.enablePatternInjection) features.push('Pattern Injection');
-  if (appliedConfig.enablePreImplementationChecklist) features.push('Pre-Implementation Checklist');
-  if (appliedConfig.enableSelfCritique) features.push('Self-Critique');
-  if (appliedConfig.enableContextAwareRecovery) features.push('Context-Aware Recovery');
-  if (appliedConfig.enableActiveMemoryLearning) features.push('Active Memory Learning');
-  if (appliedConfig.enableTieredQualityStandards) features.push('Tiered Quality Standards');
-
-  return features;
+  return getAutocodeEnabledQualityFeatures(config);
 }

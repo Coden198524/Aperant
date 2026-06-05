@@ -29,11 +29,13 @@ export default defineConfig({
     setupFiles: ['src/__tests__/setup.ts']
   },
   resolve: {
-    alias: {
-      '@': resolve(__dirname, 'src'),
-      '@main': resolve(__dirname, 'src/main'),
-      '@renderer': resolve(__dirname, 'src/renderer'),
-      '@shared': resolve(__dirname, 'src/shared')
-    }
+    alias: [
+      { find: /^@autocode\/core$/, replacement: resolve(__dirname, '../../libs/core/src/index.ts') },
+      { find: /^@autocode\/core\/(.+)$/, replacement: `${resolve(__dirname, '../../libs/core/src')}/$1` },
+      { find: '@', replacement: resolve(__dirname, 'src') },
+      { find: '@main', replacement: resolve(__dirname, 'src/main') },
+      { find: '@renderer', replacement: resolve(__dirname, 'src/renderer') },
+      { find: '@shared', replacement: resolve(__dirname, 'src/shared') }
+    ]
   }
 });

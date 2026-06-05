@@ -7,7 +7,7 @@
  */
 
 import type { Tool as AITool } from 'ai';
-import { selectRegisteredToolNamesForAgent } from '@autocode/core';
+import { buildAutocodeAgentToolSessionPlan } from '@autocode/core';
 
 import {
   type AgentConfig,
@@ -111,13 +111,13 @@ export class ToolRegistry {
       (context as ToolContext & { subagentExecutor?: unknown }).subagentExecutor,
     );
     const result: Record<string, AITool> = {};
-    const selectedNames = selectRegisteredToolNamesForAgent(
+    const toolSessionPlan = buildAutocodeAgentToolSessionPlan({
       agentType,
-      this.tools.keys(),
-      { hasSubagentExecutor },
-    );
+      registeredToolNames: this.tools.keys(),
+      hasSubagentExecutor,
+    });
 
-    for (const name of selectedNames) {
+    for (const name of toolSessionPlan.toolNames) {
       const definedTool = this.tools.get(name);
       if (definedTool) {
         result[name] = definedTool.bind(context);

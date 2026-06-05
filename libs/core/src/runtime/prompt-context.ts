@@ -1,0 +1,225 @@
+export interface AutocodePromptContext {
+  specDir: string;
+  projectDir: string;
+  projectInstructions?: string | null;
+  baseBranch?: string;
+  humanInput?: string | null;
+  recoveryContext?: string | null;
+  autoPushToRemote?: boolean;
+}
+
+export interface AutocodeProjectCapabilities {
+  is_electron: boolean;
+  is_tauri: boolean;
+  is_expo: boolean;
+  is_react_native: boolean;
+  is_web_frontend: boolean;
+  is_nextjs: boolean;
+  is_nuxt: boolean;
+  has_api: boolean;
+  has_database: boolean;
+}
+
+function formatAutocodePromptPath(filePath: string | undefined): string | undefined {
+  return filePath?.replace(/\\/g, '/');
+}
+
+export function buildAutocodeSpecLocationHeader(context: AutocodePromptContext): string {
+  if (!context.specDir) return '';
+
+  const specDir = formatAutocodePromptPath(context.specDir);
+  const projectDir = formatAutocodePromptPath(context.projectDir);
+
+  return (
+    `## SPEC LOCATION\n\n` +
+    `Your spec and progress files are located at:\n` +
+    `- Spec: \`${specDir}/spec.md\`\n` +
+    `- Implementation plan: \`${specDir}/implementation_plan.md\`\n` +
+    `- Progress notes: \`${specDir}/build-progress.txt\`\n` +
+    `- QA report output: \`${specDir}/qa_report.md\`\n` +
+    `- Fix request output: \`${specDir}/QA_FIX_REQUEST.md\`\n\n` +
+    `The project root is: \`${projectDir}\`\n\n` +
+    `---\n\n`
+  );
+}
+
+export function buildAutocodeDomainGuidanceHeader(domain = 'general'): string {
+  const normalizedDomain = domain.trim().toLowerCase();
+  if (!normalizedDomain || normalizedDomain === 'none') return '';
+
+  return (
+    `## DOMAIN FOCUS: GENERAL SOFTWARE DEVELOPMENT\n\n` +
+    `Treat this as a general software-development project unless the task, project instructions, or project profile indicate a more specific domain.\n\n` +
+    `Prioritize:\n` +
+    `- Correctness against requirements and acceptance criteria\n` +
+    `- Fit with existing architecture, module boundaries, and local conventions\n` +
+    `- Security, privacy, permissions, and data integrity where relevant\n` +
+    `- Maintainability, readability, and minimizing unnecessary churn\n` +
+    `- Performance and resource usage appropriate to the affected paths\n` +
+    `- Reliability, error handling, observability, and safe rollback for production changes\n` +
+    `- Accessibility and usability for user-facing UI changes\n` +
+    `- Compatibility with supported runtimes, platforms, browsers, and dependency versions\n\n` +
+    `When proposing plans or verification, include concrete project-specific checks such as targeted tests, typecheck, lint, build, smoke tests, or manual verification.\n\n` +
+    `---\n\n`
+  );
+}
+
+export function buildAutocodeGitPushPolicyHeader(autoPushToRemote: boolean): string {
+  if (autoPushToRemote) {
+    return (
+      `## GIT PUSH POLICY\n\n` +
+      `After committing changes, run \`git push\` to push your commits to the remote repository.\n\n` +
+      `---\n\n`
+    );
+  }
+
+  return (
+    `## GIT PUSH POLICY\n\n` +
+    `Keep work local; do not run \`git push\` until the user reviews and approves.\n` +
+    `The user will push to remote after reviewing your changes.\n\n` +
+    `---\n\n`
+  );
+}
+
+export function injectAutocodePromptContext(
+  promptTemplate: string,
+  context: AutocodePromptContext,
+  options: { domain?: string } = {},
+): string {
+  const sections: string[] = [];
+
+  const specContext = buildAutocodeSpecLocationHeader(context);
+  if (specContext) {
+    sections.push(specContext);
+  }
+
+  if (context.recoveryContext) {
+    sections.push(context.recoveryContext);
+  }
+
+  if (context.humanInput) {
+    sections.push(
+      `## HUMAN INPUT (READ THIS FIRST!)\n\n` +
+      `The human has left you instructions. READ AND FOLLOW THESE CAREFULLY:\n\n` +
+      `${context.humanInput}\n\n` +
+      `After addressing this input, you may delete or clear the HUMAN_INPUT.md file.\n\n` +
+      `---\n\n`,
+    );
+  }
+
+  if (context.projectInstructions) {
+    sections.push(
+      `## PROJECT INSTRUCTIONS\n\n` +
+      `${context.projectInstructions}\n\n` +
+      `---\n\n`,
+    );
+  }
+
+  const domainGuidance = buildAutocodeDomainGuidanceHeader(options.domain ?? 'general');
+  if (domainGuidance) {
+    sections.push(domainGuidance);
+  }
+
+  if (context.autoPushToRemote !== undefined) {
+    const gitPushPolicy = buildAutocodeGitPushPolicyHeader(context.autoPushToRemote);
+    if (gitPushPolicy) {
+      sections.push(gitPushPolicy);
+    }
+  }
+
+  sections.push(promptTemplate);
+  return sections.join('');
+}
+
+export function detectAutocodeProjectCapabilities(
+  projectIndex: Record<string, unknown>,
+): AutocodeProjectCapabilities {
+  const capabilities: AutocodeProjectCapabilities = {
+    is_electron: false,
+    is_tauri: false,
+    is_expo: false,
+    is_react_native: false,
+    is_web_frontend: false,
+    is_nextjs: false,
+    is_nuxt: false,
+    has_api: false,
+    has_database: false,
+  };
+
+  const services = projectIndex.services;
+  let serviceList: unknown[] = [];
+
+  if (typeof services === 'object' && services !== null) {
+    if (Array.isArray(services)) {
+      serviceList = services;
+    } else {
+      serviceList = Object.values(services as Record<string, unknown>);
+    }
+  }
+
+  for (const svc of serviceList) {
+    if (!svc || typeof svc !== 'object') continue;
+    const service = svc as Record<string, unknown>;
+
+    const deps = new Set<string>();
+    for (const dep of ((service.dependencies as string[]) ?? [])) {
+      if (typeof dep === 'string') deps.add(dep.toLowerCase());
+    }
+    for (const dep of ((service.dev_dependencies as string[]) ?? [])) {
+      if (typeof dep === 'string') deps.add(dep.toLowerCase());
+    }
+
+    const framework = String(service.framework ?? '').toLowerCase();
+
+    if (deps.has('electron') || [...deps].some((dep) => dep.startsWith('@electron'))) {
+      capabilities.is_electron = true;
+    }
+    if (deps.has('@tauri-apps/api') || deps.has('tauri')) {
+      capabilities.is_tauri = true;
+    }
+
+    if (deps.has('expo')) capabilities.is_expo = true;
+    if (deps.has('react-native')) capabilities.is_react_native = true;
+
+    const webFrameworks = new Set(['react', 'vue', 'svelte', 'angular', 'solid']);
+    if (webFrameworks.has(framework)) capabilities.is_web_frontend = true;
+
+    if (['nextjs', 'next.js', 'next'].includes(framework) || deps.has('next')) {
+      capabilities.is_nextjs = true;
+      capabilities.is_web_frontend = true;
+    }
+    if (['nuxt', 'nuxt.js'].includes(framework) || deps.has('nuxt')) {
+      capabilities.is_nuxt = true;
+      capabilities.is_web_frontend = true;
+    }
+    if (deps.has('vite') && !capabilities.is_electron) {
+      capabilities.is_web_frontend = true;
+    }
+
+    const apiInfo = service.api as { routes?: unknown } | null | undefined;
+    if (apiInfo && typeof apiInfo === 'object' && apiInfo.routes) {
+      capabilities.has_api = true;
+    }
+
+    if (service.database) capabilities.has_database = true;
+    const dbDeps = new Set([
+      'prisma',
+      'drizzle-orm',
+      'typeorm',
+      'sequelize',
+      'mongoose',
+      'sqlalchemy',
+      'alembic',
+      'django',
+      'peewee',
+    ]);
+    for (const dep of deps) {
+      if (dbDeps.has(dep)) {
+        capabilities.has_database = true;
+        break;
+      }
+    }
+  }
+
+  return capabilities;
+}

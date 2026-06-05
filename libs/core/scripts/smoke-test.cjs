@@ -35,6 +35,302 @@ async function main() {
     ]);
     assert.equal(duplicateDependencyAnalysis.runnable.length, 0);
     assert.ok(duplicateDependencyAnalysis.issues.every((issue) => issue.type === 'duplicate'));
+    const conflictGraph = core.detectAutocodeWorkConflicts([
+      { id: '1', filesToModify: ['src/App.tsx'] },
+      { id: '2', filesToCreate: ['src\\App.tsx'] },
+      { id: '3', filesToModify: ['docs/readme.md'] },
+    ]);
+    assert.deepEqual(conflictGraph.independent.map((group) => group.map((item) => item.id)), [['3']]);
+    assert.deepEqual(conflictGraph.sequential.map((item) => item.id), ['1', '2']);
+    assert.deepEqual(
+      core.groupAutocodeConflictingWorkItems([
+        { id: '1', filesToModify: ['src/App.tsx'] },
+        { id: '2', filesToModify: ['src/*'] },
+        { id: '3', filesToModify: ['docs/readme.md'] },
+      ]).map((group) => group.map((item) => item.id)),
+      [['1', '2'], ['3']],
+    );
+    assert.match(
+      core.formatAutocodeCodingRecoveryHints('1.1', ['Attempt 1 failed.']),
+      /Previous Attempt Recovery/,
+    );
+    assert.match(
+      core.summarizeAutocodeCodingAttemptFailure(
+        { id: '1.1', filesToModify: ['src/App.tsx'] },
+        { outcome: 'failed', error: { code: 'tool_error', message: 'Edit failed' }, stepsExecuted: 3 },
+        1,
+      ),
+      /Next: avoid the failing tool pattern/,
+    );
+    assert.equal(core.isAutocodeWriteToolPlanOutputFailure("Tool 'Write' received invalid input type"), true);
+    assert.equal(core.isAutocodeImplementationPlanFileFailure('implementation_plan.md is missing'), true);
+    assert.deepEqual(
+      core.validateAutocodePlanningSchedulingMetadata({
+        phases: [{
+          subtasks: [
+            { id: '1.1', status: 'pending', depends_on: [], verification: 'npm test' },
+            { id: '1.2', status: 'pending' },
+          ],
+        }],
+      }, {
+        runtimeConcurrency: {
+          mode: 'concurrent',
+          workers: 2,
+          unit: 'work_item',
+          conflictPolicy: 'lock-and-queue',
+        },
+        sourceType: 'manual',
+      }),
+      ['1.2 missing _Depends on: ..._ metadata', '1.2 missing _Verification: ..._ metadata'],
+    );
+    assert.match(
+      core.buildAutocodePlanningStructuredOutputValidationRetryPrompt(['bad tasks.md']),
+      /REWRITE TASKS SOURCE/,
+    );
+    assert.equal(core.classifyAutocodeSessionError(new Error('429 rate limit')).outcome, 'rate_limited');
+    assert.equal(
+      core.classifyAutocodeToolError('Write', 'call-1', 'bad input').code,
+      core.AutocodeSessionErrorCode.TOOL_ERROR,
+    );
+    assert.deepEqual(
+      core.parseAutocodeTaskEvent(
+        `log ${core.AUTOCODE_TASK_EVENT_PREFIX}${JSON.stringify({
+          type: 'task_started',
+          taskId: 'task-1',
+          specId: 'spec-1',
+          projectId: 'project-1',
+          timestamp: '2026-01-02T03:04:00.000Z',
+          eventId: 'event-1',
+          sequence: 1,
+        })} trailing`,
+      ),
+      {
+        type: 'task_started',
+        taskId: 'task-1',
+        specId: 'spec-1',
+        projectId: 'project-1',
+        timestamp: '2026-01-02T03:04:00.000Z',
+        eventId: 'event-1',
+        sequence: 1,
+      },
+    );
+    assert.deepEqual(
+      core.parseAutocodePhaseEvent(`${core.AUTOCODE_PHASE_MARKER_PREFIX}{"phase":"coding","message":"go"}`),
+      { phase: 'coding', message: 'go' },
+    );
+    const progressTracker = new core.AutocodeProgressTracker();
+    assert.equal(
+      progressTracker.processEvent({
+        type: 'tool-call',
+        toolName: 'Write',
+        toolCallId: 'call-1',
+        args: { file_path: 'implementation_plan.md' },
+      }).phase,
+      'planning',
+    );
+    assert.equal(core.isAutocodeOpenAIResponsesTransport('openai', 'gpt-5'), true);
+    assert.equal(core.isAutocodeOpenAIResponsesTransport('openai-chat', 'gpt-5'), false);
+    assert.equal(
+      core.repairAutocodeWriteToolInput(JSON.stringify(JSON.stringify({ file_path: 'src\\main.ts', content: 'ok' }))),
+      '{"file_path":"src/main.ts","content":"ok"}',
+    );
+    assert.match(
+      core.buildAutocodeWriteToolInputCorrectionPrompt({ message: 'expected object', filePath: 'src/main.ts' }),
+      /WRITE TOOL INPUT CORRECTION/,
+    );
+    const pendingCompletedSubtasks = new Map();
+    assert.equal(
+      core.extractAutocodeCompletedSubtaskIdFromEvent({
+        type: 'tool-call',
+        toolName: 'update_subtask_status',
+        toolCallId: 'call-2',
+        args: { subtask_id: '1.1', status: 'completed' },
+      }, pendingCompletedSubtasks),
+      null,
+    );
+    assert.equal(
+      core.extractAutocodeCompletedSubtaskIdFromEvent({
+        type: 'tool-result',
+        toolName: 'update_subtask_status',
+        toolCallId: 'call-2',
+        result: { ok: true },
+        durationMs: 1,
+        isError: false,
+      }, pendingCompletedSubtasks),
+      '1.1',
+    );
+    assert.deepEqual(
+      core.normalizeAutocodeTokenUsage({ inputTokens: 3, outputTokens: 4 }),
+      { promptTokens: 3, completionTokens: 4, totalTokens: 7 },
+    );
+    assert.equal(core.estimateAutocodeStreamPartSize({ type: 'text-delta', text: 'hello' }), 5);
+    const kickoffContext = core.findAutocodeSubtaskKickoffContext({
+      workflow_type: 'feature',
+      phases: [{
+        name: 'Implementation',
+        subtasks: [{
+          id: '1.1',
+          title: 'Add UI',
+          description: 'Render one component.',
+          files_to_modify: ['src/App.tsx'],
+          verification: { run: 'npm run typecheck' },
+        }],
+      }],
+    }, '1.1');
+    assert.equal(kickoffContext.title, 'Add UI');
+    assert.match(
+      core.buildAutocodeFocusedCoderKickoffMessageFromContext({
+        specDir: '/specs/001',
+        projectDir: 'E:/Work/App',
+        subtaskId: '1.1',
+        context: kickoffContext,
+        openSpecContext: 'Compact upstream context.',
+      }),
+      /Do not read spec\.md or implementation_plan\.md before implementation/,
+    );
+    assert.match(core.buildAutocodeAggressiveCoderPrompt(), /immediately call update_subtask_status/);
+    assert.equal(core.specPhaseToAutocodePromptName('validation'), 'validation_fixer');
+    assert.equal(core.formatAutocodePathForPrompt('C:\\Work\\App'), 'C:/Work/App');
+    assert.match(
+      core.buildAutocodeAgentKickoffMessage({
+        agentType: 'direct_task',
+        specDir: 'C:/Work/App/.autocode/specs/1',
+        projectDir: 'C:/Work/App',
+        language: 'zh-CN',
+      }),
+      /OUTPUT LANGUAGE REQUIREMENT/,
+    );
+    assert.equal(
+      core.resolveAutocodeAgentExecutionPlan({
+        agentType: 'spec_orchestrator',
+        useAgenticOrchestration: true,
+      }).kind,
+      'spec-orchestrator-agentic',
+    );
+    assert.equal(core.isAutocodeDirectTaskExecution({ agentType: 'coder', workflowMode: 'off' }), true);
+    assert.equal(core.isAutocodeSuccessfulAgentSessionOutcome('context_window'), true);
+    assert.match(core.buildAutocodeContinuationPrompt('Summary.', 2), /Session Continuation \(2\)/);
+    assert.equal(core.getWorkflowConfigFromMode('aggressive').skipAIQAReview, true);
+    assert.equal(
+      core.buildAutocodeSessionQualityConfig(core.getWorkflowConfigFromMode('balanced')).enableSelfCritique,
+      true,
+    );
+    assert.equal(core.isAutocodeCustomMcpCommandSafe('node'), true);
+    assert.equal(core.isAutocodeCustomMcpCommandSafe('C:\\node.exe'), false);
+    assert.equal(core.areAutocodeCustomMcpArgsSafe(['--eval']), false);
+    assert.equal(
+      core.areAutocodeCustomMcpArgsSafe(['pkg&bad'], { rejectShellMetacharacters: true }),
+      false,
+    );
+    assert.deepEqual(core.parseAutocodeYunxiaoMcpArgs('["-y","pkg"]'), ['-y', 'pkg']);
+    assert.equal(
+      core.normalizeAutocodeCustomMcpServer({
+        id: 'context7',
+        name: 'Shadow',
+        type: 'command',
+        command: 'node',
+      }),
+      null,
+    );
+    const streamEvents = [];
+    const streamHandler = core.createAutocodeStreamHandler(
+      (event) => streamEvents.push(event),
+      'session-smoke',
+      { now: () => 1000 },
+    );
+    streamHandler.processPart({ type: 'text-delta', text: 'hello' });
+    streamHandler.processPart({
+      type: 'tool-call',
+      toolCallId: 'call-1',
+      toolName: 'Read',
+      input: { file_path: 'src/main.ts' },
+    });
+    streamHandler.processPart({
+      type: 'tool-result',
+      toolCallId: 'call-1',
+      toolName: 'Read',
+      input: {},
+      output: 'ok',
+    });
+    streamHandler.processPart({
+      type: 'finish-step',
+      usage: { inputTokens: 3, outputTokens: 4 },
+    });
+    assert.equal(streamHandler.getSummary().usage.totalTokens, 7);
+    assert.deepEqual(streamEvents.map((event) => event.type), [
+      'text-delta',
+      'tool-call',
+      'tool-result',
+      'step-finish',
+      'usage-update',
+    ]);
+    const sessionRunner = core.createAutocodeAgentSessionRunner(async () => ({
+      outcome: 'completed',
+      stepsExecuted: 1,
+      usage: { promptTokens: 1, completionTokens: 2, totalTokens: 3 },
+      messages: [],
+      durationMs: 1,
+      toolCallCount: 0,
+    }));
+    assert.equal((await core.runAutocodeAgentSessionWithRunner(sessionRunner, {})).outcome, 'completed');
+    const runtimePlan = core.createAutocodeAgentRuntimePlan({
+      projectRoot,
+      dataDirName: '.autocode',
+      task: {
+        id: 'task-1',
+        specId: 'spec-1',
+        title: 'Build it',
+        description: 'Build it directly.',
+        status: 'queue',
+        metadata: { developmentMode: 'direct' },
+      },
+      specDir: join(projectRoot, '.autocode', 'specs', 'spec-1'),
+      hasSpec: true,
+      planHasSubtasks: false,
+    });
+    const taskController = core.createAutocodeAgentTaskController();
+    const taskDecision = taskController.createDecision({
+      plan: runtimePlan,
+      task: {
+        status: 'queue',
+        metadata: { developmentMode: 'direct' },
+      },
+      planHasSubtasks: false,
+    });
+    assert.equal(taskDecision.startEvent.type, 'CODING_STARTED');
+    assert.equal(
+      (await taskController.startDecision(taskDecision, {
+        startRuntime: (request) => ({
+          runtimeId: request.runtimeId,
+          status: 'started',
+          message: request.messages.started,
+        }),
+      })).status,
+      'started',
+    );
+    const toolSessionPlan = core.buildAutocodeAgentToolSessionPlan({
+      agentType: 'coder',
+      registeredToolNames: ['Read', 'Write', 'SpawnSubagent'],
+      hasSubagentExecutor: false,
+      mcp: { memoryEnabled: true },
+    });
+    assert.ok(toolSessionPlan.toolNames.includes('Read'));
+    assert.equal(toolSessionPlan.toolNames.includes('SpawnSubagent'), false);
+    assert.ok(Array.isArray(toolSessionPlan.mcpServerIds));
+    assert.equal(core.getAutocodeInitialPhaseForProcess('qa-process'), 'qa_review');
+    assert.deepEqual(
+      core.parseAutocodeTaskTokenUsage(
+        `${core.AUTOCODE_TASK_TOKEN_USAGE_PREFIX}{"promptTokens":5,"completionTokens":7,"totalTokens":12,"sessionId":" s1 "}`,
+      ),
+      { promptTokens: 5, completionTokens: 7, totalTokens: 12, sessionId: 's1' },
+    );
+    assert.equal(
+      core.createAutocodeAgentWorkerProcessStartPlan({
+        taskId: 'task-1',
+        processType: 'task-execution',
+      }).initialPhase,
+      'coding',
+    );
 
     writeFileSync(
       join(projectRoot, 'package.json'),
@@ -704,7 +1000,7 @@ async function main() {
     });
     assert.ok(existsSync(join(manualStandardTask.specsPath, 'spec.md')));
 
-    const manualFastTask = core.createManualAutocodeTask({
+    const legacyFastTask = core.createManualAutocodeTask({
       projectRoot,
       dataDirName: '.autocode-manual-fast',
       title: 'Add fast task',
@@ -714,10 +1010,10 @@ async function main() {
       },
       now: '2026-01-02T03:03:45.000Z',
     });
-    assert.equal(manualFastTask.metadata.sourceType, 'manual');
-    assert.equal(manualFastTask.metadata.developmentMode, 'fast');
-    assert.equal(manualFastTask.metadata.workflowMode, 'off');
-    assert.deepEqual(manualFastTask.metadata.runtimeConcurrency, {
+    assert.equal(legacyFastTask.metadata.sourceType, 'manual');
+    assert.equal(legacyFastTask.metadata.developmentMode, 'direct');
+    assert.equal(legacyFastTask.metadata.workflowMode, 'off');
+    assert.deepEqual(legacyFastTask.metadata.runtimeConcurrency, {
       mode: 'serial',
       workers: 1,
       unit: 'work_item',
@@ -727,7 +1023,7 @@ async function main() {
       core.createAutocodeTaskRunPlan({
         projectRoot,
         dataDirName: '.autocode-manual-fast',
-        taskId: manualFastTask.id,
+        taskId: legacyFastTask.id,
         cli: 'custom',
         customCommand: 'node fake-agent.js',
       }).phase,
@@ -1271,14 +1567,17 @@ async function main() {
 
     const workspaceState = core.buildAutocodeWorkspaceState({ projectRoot, dataDirName: '.autocode' });
     assert.equal(workspaceState.projectRoot, projectRoot);
-    assert.equal(workspaceState.tasks.length, 1);
+    assert.equal(workspaceState.tasks.length, 2);
+    assert.ok(workspaceState.tasks.some((candidate) => candidate.id === task.id));
+    assert.ok(workspaceState.tasks.some((candidate) => candidate.id === directTask.id));
     assert.equal(workspaceState.summary.name, 'sample-project');
     assert.equal(workspaceState.projectIndex.project_type, 'single');
 
     const tasks = core.listAutocodeTasks({ projectRoot, dataDirName: '.autocode' });
-    assert.equal(tasks.length, 1);
-    assert.equal(tasks[0].id, task.id);
-    assert.equal(tasks[0].description, 'Create provider account settings shared by desktop and VS Code.');
+    assert.equal(tasks.length, 2);
+    const listedProviderTask = tasks.find((candidate) => candidate.id === task.id);
+    assert.ok(listedProviderTask);
+    assert.equal(listedProviderTask.description, 'Create provider account settings shared by desktop and VS Code.');
 
     const importedTask = core.createImportedAutocodeTask({
       projectRoot,
@@ -1295,7 +1594,7 @@ async function main() {
         workflow_type: 'bug_fix',
       },
     });
-    assert.match(importedTask.specId, /^002-investigate-imported-github-issue/);
+    assert.match(importedTask.specId, /^003-investigate-imported-github-issue/);
     assert.equal(importedTask.metadata.sourceType, 'github');
     assert.equal(
       core.loadAutocodeTaskRequirementsSync(importedTask.specsPath).workflow_type,
@@ -1318,7 +1617,7 @@ async function main() {
       documentType: 'full',
       now: '2026-01-01T00:00:00.000Z',
     });
-    assert.match(projectDocsResult.task.specId, /^003-/);
+    assert.match(projectDocsResult.task.specId, /^004-/);
     assert.equal(projectDocsResult.task.metadata.sourceType, 'project_docs');
     assert.equal(projectDocsResult.task.metadata.projectDocumentType, 'full');
     assert.equal(projectDocsResult.plan.requirements.workflow_type, 'documentation');

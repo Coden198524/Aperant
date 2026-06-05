@@ -16,10 +16,15 @@ import { extractSessionInsights } from '../runners/insight-extractor';
 import type { SessionResult } from '../session/types';
 import type { SubtaskInfo } from './build-orchestrator';
 import {
-  analyzeAutocodeWorkDependencies,
-  buildAutocodeWorkDependencyStatusMap,
-  describeAutocodeWorkDependencyBlocker,
-  normalizeAutocodeWorkDependencyIds,
+  countAutocodeCompletedSubtaskPlanSubtasks,
+  countAutocodeSubtaskPlanSubtasks,
+  getAutocodeDependencyBlockedSubtasks,
+  getAutocodeNextPendingSubtask,
+  getAutocodeSubtaskId,
+  hasAutocodeDeclaredField,
+  hasAutocodeDeclaredFileMetadata,
+  hasAutocodeSubtaskCompletionEvidence,
+  toAutocodeStringArray,
 } from '@autocode/core';
 import {
   writeAuthPauseFile,
@@ -1214,8 +1219,7 @@ function pickProtectedSubtaskState(subtask: PlanSubtask): ProtectedSubtaskState 
 }
 
 function getSubtaskId(subtask: PlanSubtask): string | undefined {
-  const withLegacyId = subtask as PlanSubtask & { subtask_id?: string };
-  return subtask.id ?? withLegacyId.subtask_id;
+  return getAutocodeSubtaskId(subtask);
 }
 
 /**
@@ -1330,139 +1334,44 @@ function getNextPendingSubtask(
   plan: ImplementationPlan,
   stuckSubtaskIds: string[],
 ): { subtask: PlanSubtask; phaseName: string } | null {
-  const statusById = getSubtaskStatusMap(plan);
-  const candidates: Array<{
-    id: string;
-    status: string;
-    dependsOn: string[];
-    subtask: PlanSubtask;
-    phaseName: string;
-  }> = [];
-
-  for (const phase of plan.phases) {
-    for (const subtask of phase.subtasks) {
-      if (hasSubtaskCompletionEvidence(subtask)) {
-        continue;
-      }
-      if (
-        (subtask.status === 'pending' || subtask.status === 'in_progress') &&
-        !stuckSubtaskIds.includes(subtask.id)
-      ) {
-        candidates.push({
-          id: subtask.id,
-          status: subtask.status,
-          dependsOn: toStringArray(subtask.depends_on),
-          subtask,
-          phaseName: phase.name,
-        });
-      }
-    }
-  }
-
-  const next = analyzeAutocodeWorkDependencies(candidates, { statusById }).runnable[0];
-  return next ? { subtask: next.subtask, phaseName: next.phaseName } : null;
+  return getAutocodeNextPendingSubtask(plan, stuckSubtaskIds);
 }
 
 function getDependencyBlockedSubtasks(
   plan: ImplementationPlan,
   stuckSubtaskIds: string[],
 ): DependencyBlockedSubtask[] {
-  const statusById = getSubtaskStatusMap(plan);
-  const candidates: Array<{
-    id: string;
-    status: string;
-    dependsOn: string[];
-    subtask: PlanSubtask;
-    phaseName: string;
-  }> = [];
-
-  for (const phase of plan.phases) {
-    for (const subtask of phase.subtasks) {
-      if (hasSubtaskCompletionEvidence(subtask) || stuckSubtaskIds.includes(subtask.id)) {
-        continue;
-      }
-      if (subtask.status === 'pending' || subtask.status === 'in_progress') {
-        candidates.push({
-          id: subtask.id,
-          status: subtask.status,
-          dependsOn: toStringArray(subtask.depends_on),
-          subtask,
-          phaseName: phase.name,
-        });
-      }
-    }
-  }
-
-  return analyzeAutocodeWorkDependencies(candidates, { statusById }).blocked
-    .filter((blocked) => blocked.item.dependsOn.length > 0 || blocked.issues.length > 0)
-    .map((blocked) => ({
-      subtask: blocked.item.subtask,
-      phaseName: blocked.item.phaseName,
-      reason: describeAutocodeWorkDependencyBlocker(blocked, statusById),
-    }));
-}
-
-function getSubtaskStatusMap(plan: ImplementationPlan): Map<string, string> {
-  return buildAutocodeWorkDependencyStatusMap(
-    plan.phases.flatMap((phase) => phase.subtasks.map((subtask) => ({
-      id: subtask.id,
-      status: subtask.status,
-      dependsOn: toStringArray(subtask.depends_on),
-    }))),
-  );
+  return getAutocodeDependencyBlockedSubtasks(plan, stuckSubtaskIds);
 }
 
 function toStringArray(value: unknown): string[] {
-  return normalizeAutocodeWorkDependencyIds(value);
+  return toAutocodeStringArray(value);
 }
 
 function hasDeclaredField(value: object, field: string): boolean {
-  return  Object.hasOwn(value, field);
+  return hasAutocodeDeclaredField(value, field);
 }
 
 function hasDeclaredFileMetadata(subtask: PlanSubtask): boolean {
-  return hasDeclaredField(subtask, 'files_to_create') ||
-    hasDeclaredField(subtask, 'files_to_modify') ||
-    hasDeclaredField(subtask, 'pattern_files');
+  return hasAutocodeDeclaredFileMetadata(subtask);
 }
 
 /**
  * Count total subtasks across all phases.
  */
 function countTotalSubtasks(plan: ImplementationPlan): number {
-  let count = 0;
-  for (const phase of plan.phases) {
-    count += phase.subtasks.length;
-  }
-  return count;
+  return countAutocodeSubtaskPlanSubtasks(plan);
 }
 
 /**
  * Count completed subtasks across all phases.
  */
 function countCompletedSubtasks(plan: ImplementationPlan): number {
-  let count = 0;
-  for (const phase of plan.phases) {
-    for (const subtask of phase.subtasks) {
-      if (hasSubtaskCompletionEvidence(subtask)) {
-        count++;
-      }
-    }
-  }
-  return count;
+  return countAutocodeCompletedSubtaskPlanSubtasks(plan);
 }
 
 function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
-  if (subtask.status === 'completed') {
-    return true;
-  }
-
-  if (typeof subtask.completed_at === 'string' && subtask.completed_at.trim().length > 0) {
-    return true;
-  }
-
-  return typeof subtask.completion_summary === 'string' &&
-    subtask.completion_summary.trim().length > 0;
+  return hasAutocodeSubtaskCompletionEvidence(subtask);
 }
 
 async function normalizeCompletedSubtasks(

@@ -16,6 +16,17 @@ import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { readFile } from 'node:fs/promises';
 import { join } from 'node:path';
+import {
+  checkAutocodePatternComplianceContent,
+  detectAutocodeLintCommandFromPackageJson,
+  detectAutocodeTestCommandFromPackageJson,
+  detectAutocodeTypecheckCommandFromPackageJson,
+  formatAutocodeValidationResults,
+  parseAutocodeSecurityIssues,
+  parseAutocodeSyntaxErrors,
+  parseAutocodeTypeErrors,
+  scanAutocodeSecurityIssuesInContent,
+} from '@autocode/core/runtime/agent-validation-feedback';
 
 const execFileAsync = promisify(execFile);
 
@@ -102,21 +113,21 @@ export async function runIncrementalValidation(
   const syntaxCheck = await checkSyntax(config);
   checks.push(syntaxCheck);
   if (!syntaxCheck.passed) {
-    failures.push(...parseSyntaxErrors(syntaxCheck.output || ''));
+    failures.push(...parseAutocodeSyntaxErrors(syntaxCheck.output || ''));
   }
 
   // 2. Type check (if TypeScript/typed language)
   const typeCheck = await checkTypes(config);
   checks.push(typeCheck);
   if (!typeCheck.passed) {
-    failures.push(...parseTypeErrors(typeCheck.output || ''));
+    failures.push(...parseAutocodeTypeErrors(typeCheck.output || ''));
   }
 
   // 3. Security check (hardcoded secrets, SQL injection patterns)
   const securityCheck = await checkSecurity(config);
   checks.push(securityCheck);
   if (!securityCheck.passed) {
-    failures.push(...parseSecurityIssues(securityCheck.output || ''));
+    failures.push(...parseAutocodeSecurityIssues(securityCheck.output || ''));
   }
 
   // 4. Pattern compliance (if pattern files provided)
@@ -269,35 +280,7 @@ async function checkSecurity(config: SubtaskValidationConfig): Promise<Validatio
       const filePath = join(config.projectDir, file);
       try {
         const content = await readFile(filePath, 'utf-8');
-
-        // Check for hardcoded secrets
-        const secretPatterns = [
-          /api[_-]?key\s*=\s*['"][^'"]{8,}['"]/i,
-          /secret\s*=\s*['"][^'"]{8,}['"]/i,
-          /password\s*=\s*['"][^'"]{8,}['"]/i,
-          /token\s*=\s*['"][^'"]{8,}['"]/i,
-        ];
-
-        for (const pattern of secretPatterns) {
-          if (pattern.test(content)) {
-            issues.push(`${file}: Potential hardcoded secret detected`);
-          }
-        }
-
-        // Check for SQL injection vulnerabilities
-        if (/\$\{.*\}/.test(content) && /SELECT|INSERT|UPDATE|DELETE/i.test(content)) {
-          issues.push(`${file}: Potential SQL injection vulnerability (string interpolation in SQL)`);
-        }
-
-        // Check for eval usage
-        if (/\beval\s*\(/.test(content)) {
-          issues.push(`${file}: Dangerous eval() usage detected`);
-        }
-
-        // Check for dangerouslySetInnerHTML
-        if (/dangerouslySetInnerHTML/.test(content)) {
-          issues.push(`${file}: XSS risk - dangerouslySetInnerHTML usage`);
-        }
+        issues.push(...scanAutocodeSecurityIssuesInContent(file, content));
       } catch {
         // Skip files that can't be read
       }
@@ -350,19 +333,11 @@ async function checkPatternCompliance(config: SubtaskValidationConfig): Promise<
         if (config.patternFiles && config.patternFiles.length > 0) {
           const patternPath = join(config.projectDir, config.patternFiles[0]);
           const patternContent = await readFile(patternPath, 'utf-8');
-
-          // Check import style
-          const patternImportStyle = /^import .* from ['"]/.test(patternContent) ? 'es6' : 'commonjs';
-          const modifiedImportStyle = /^import .* from ['"]/.test(modifiedContent) ? 'es6' : 'commonjs';
-
-          if (patternImportStyle !== modifiedImportStyle) {
-            issues.push(`${modifiedFile}: Import style doesn't match pattern (expected ${patternImportStyle})`);
-          }
-
-          // Check error handling pattern
-          if (/try\s*\{/.test(patternContent) && !/try\s*\{/.test(modifiedContent)) {
-            issues.push(`${modifiedFile}: Missing try-catch error handling (pattern uses it)`);
-          }
+          issues.push(...checkAutocodePatternComplianceContent(
+            modifiedFile,
+            modifiedContent,
+            patternContent,
+          ));
         }
       } catch {
         // Skip files that can't be read
@@ -476,15 +451,7 @@ async function detectLintCommand(projectDir: string): Promise<CommandSpec | null
     const content = await readFile(packageJsonPath, 'utf-8');
     const packageJson = JSON.parse(content);
 
-    if (packageJson.scripts?.lint) {
-      return { command: 'npm', args: ['run', 'lint'], acceptsFileArgs: false };
-    }
-    if (packageJson.devDependencies?.eslint || packageJson.dependencies?.eslint) {
-      return { command: 'npx', args: ['eslint'], acceptsFileArgs: true };
-    }
-    if (packageJson.devDependencies?.['@biomejs/biome']) {
-      return { command: 'npx', args: ['biome', 'check'], acceptsFileArgs: true };
-    }
+    return detectAutocodeLintCommandFromPackageJson(packageJson);
   } catch {
     // Ignore
   }
@@ -497,9 +464,7 @@ async function detectTypecheckCommand(projectDir: string): Promise<CommandSpec> 
     const content = await readFile(packageJsonPath, 'utf-8');
     const packageJson = JSON.parse(content);
 
-    if (packageJson.scripts?.typecheck) {
-      return { command: 'npm', args: ['run', 'typecheck'], acceptsFileArgs: false };
-    }
+    return detectAutocodeTypecheckCommandFromPackageJson(packageJson);
   } catch {
     // Ignore
   }
@@ -512,9 +477,7 @@ async function detectTestCommand(projectDir: string): Promise<CommandSpec | null
     const content = await readFile(packageJsonPath, 'utf-8');
     const packageJson = JSON.parse(content);
 
-    if (packageJson.scripts?.test) {
-      return { command: 'npm', args: ['test', '--'], acceptsFileArgs: true };
-    }
+    return detectAutocodeTestCommandFromPackageJson(packageJson);
   } catch {
     // Ignore
   }
@@ -530,111 +493,9 @@ async function fileExists(path: string): Promise<boolean> {
   }
 }
 
-function parseSyntaxErrors(output: string): ValidationFailure[] {
-  const failures: ValidationFailure[] = [];
-  const lines = output.split('\n');
-
-  for (const line of lines) {
-    // Parse ESLint/Biome output format
-    const match = line.match(/^(.+?):(\d+):(\d+):\s*(error|warning)\s+(.+)$/);
-    if (match) {
-      failures.push({
-        type: 'syntax',
-        severity: match[4] === 'error' ? 'error' : 'warning',
-        message: match[5],
-        file: match[1],
-        line: parseInt(match[2], 10),
-        suggestion: 'Fix syntax error or run auto-fix if available',
-      });
-    }
-  }
-
-  if (failures.length === 0 && output.trim()) {
-    failures.push({
-      type: 'syntax',
-      severity: 'error',
-      message: output.split('\n')[0],
-      suggestion: 'Review linter output and fix issues',
-    });
-  }
-
-  return failures;
-}
-
-function parseTypeErrors(output: string): ValidationFailure[] {
-  const failures: ValidationFailure[] = [];
-  const lines = output.split('\n');
-
-  for (const line of lines) {
-    // Parse TypeScript error format
-    const match = line.match(/^(.+?)\((\d+),(\d+)\):\s*error\s+TS\d+:\s*(.+)$/);
-    if (match) {
-      failures.push({
-        type: 'type',
-        severity: 'error',
-        message: match[4],
-        file: match[1],
-        line: parseInt(match[2], 10),
-        suggestion: 'Fix type error or add proper type annotations',
-      });
-    }
-  }
-
-  if (failures.length === 0 && output.trim()) {
-    failures.push({
-      type: 'type',
-      severity: 'error',
-      message: output.split('\n')[0],
-      suggestion: 'Review TypeScript errors and fix type issues',
-    });
-  }
-
-  return failures;
-}
-
-function parseSecurityIssues(output: string): ValidationFailure[] {
-  const failures: ValidationFailure[] = [];
-  const lines = output.split('\n');
-
-  for (const line of lines) {
-    if (line.includes(':')) {
-      const [file, message] = line.split(':', 2);
-      failures.push({
-        type: 'security',
-        severity: 'error',
-        message: message.trim(),
-        file: file.trim(),
-        suggestion: 'Move secrets to environment variables or fix security vulnerability',
-      });
-    }
-  }
-
-  return failures;
-}
-
 /**
  * Format validation results for display.
  */
 export function formatValidationResults(result: IncrementalValidationResult): string {
-  const lines: string[] = [];
-
-  lines.push('=== Incremental Validation ===\n');
-  lines.push(`Status: ${result.passed ? '✓ PASSED' : '✗ FAILED'}`);
-  lines.push(`Duration: ${(result.durationMs / 1000).toFixed(1)}s`);
-  lines.push(`Checks: ${result.checks.filter((c) => c.passed).length}/${result.checks.length} passed\n`);
-
-  if (result.failures.length > 0) {
-    lines.push('Issues found:\n');
-    for (const failure of result.failures) {
-      const icon = failure.severity === 'error' ? '✗' : '⚠';
-      const location = failure.file ? ` (${failure.file}${failure.line ? `:${failure.line}` : ''})` : '';
-      lines.push(`${icon} [${failure.type}] ${failure.message}${location}`);
-      if (failure.suggestion) {
-        lines.push(`  💡 ${failure.suggestion}`);
-      }
-      lines.push('');
-    }
-  }
-
-  return lines.join('\n');
+  return formatAutocodeValidationResults(result);
 }

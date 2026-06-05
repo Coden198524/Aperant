@@ -11,98 +11,50 @@
 
 import type { CustomMcpServer } from '../../../shared/types/project';
 import type { McpServerConfig, McpServerId } from './types';
+import {
+  isAutocodeBuiltinMcpServerId,
+  normalizeAutocodeCustomMcpServer,
+  parseAutocodeYunxiaoMcpArgs,
+} from '@autocode/core/tools/mcp-registry';
 import path from 'path';
 
-// =============================================================================
-// Custom Server Validation
-// =============================================================================
-
-/**
- * Defense-in-depth: command allowlist for command-based custom MCP servers.
- * Mirrors the MCP health-check allowlist.
- */
-const SAFE_COMMANDS = new Set(['npx', 'npm', 'node', 'python', 'python3', 'uv', 'uvx']);
-
-/**
- * Defense-in-depth: dangerous interpreter flags that can execute arbitrary code.
- * Mirrors the MCP health-check denylist.
- */
-const DANGEROUS_FLAGS = new Set([
-  '--eval', '-e', '-c', '--exec',
-  '-m', '-p', '--print',
-  '--input-type=module', '--experimental-loader',
-  '--require', '-r',
-]);
-
 function isBuiltinServerId(serverId: string): serverId is McpServerId {
-  return (
-    serverId === 'context7'
-    || serverId === 'linear'
-    || serverId === 'yunxiao'
-    || serverId === 'memory'
-    || serverId === 'electron'
-    || serverId === 'puppeteer'
-    || serverId === 'autocode'
-  );
-}
-
-function isCommandSafe(command: string | undefined): boolean {
-  if (!command) return false;
-  // Reject path-like commands as defense-in-depth.
-  if (command.includes('/') || command.includes('\\')) return false;
-  return SAFE_COMMANDS.has(command);
-}
-
-function areArgsSafe(args: string[] | undefined): boolean {
-  if (!args || args.length === 0) return true;
-  return !args.some((arg) => DANGEROUS_FLAGS.has(arg));
+  return isAutocodeBuiltinMcpServerId(serverId);
 }
 
 function createCustomServer(
   server: CustomMcpServer,
   env?: Record<string, string>,
 ): McpServerConfig | null {
-  const id = server.id?.trim();
-  if (!id) return null;
+  const normalized = normalizeAutocodeCustomMcpServer(server);
+  if (!normalized) {
+    return null;
+  }
 
-  // Never allow custom configs to shadow built-ins.
-  if (isBuiltinServerId(id)) return null;
-
-  const name = server.name?.trim() || id;
-
-  if (server.type === 'command') {
-    const command = server.command?.trim();
-    const args = server.args ?? [];
-    if (!command || !isCommandSafe(command) || !areArgsSafe(args)) {
-      return null;
-    }
-
+  if (normalized.transport.type === 'stdio') {
     return {
-      id,
-      name,
-      description: server.description,
+      id: normalized.id,
+      name: normalized.name,
+      description: normalized.description,
       enabledByDefault: false,
       transport: {
         type: 'stdio',
-        command,
-        args,
+        command: normalized.transport.command,
+        args: normalized.transport.args,
         env: env && Object.keys(env).length > 0 ? env : undefined,
       },
     };
   }
 
-  const url = server.url?.trim();
-  if (!url) return null;
-
   return {
-    id,
-    name,
-    description: server.description,
+    id: normalized.id,
+    name: normalized.name,
+    description: normalized.description,
     enabledByDefault: false,
     transport: {
       type: 'streamable-http',
-      url,
-      headers: server.headers,
+      url: normalized.transport.url,
+      headers: normalized.transport.headers,
     },
   };
 }
@@ -160,28 +112,6 @@ const YUNXIAO_SERVER: McpServerConfig = {
     args: ['-y', 'alibabacloud-devops-mcp-server'],
   },
 };
-
-const DEFAULT_YUNXIAO_MCP_ARGS = ['-y', 'alibabacloud-devops-mcp-server'];
-
-function parseYunxiaoMcpArgs(raw?: string): string[] {
-  const trimmed = raw?.trim();
-  if (!trimmed) return [...DEFAULT_YUNXIAO_MCP_ARGS];
-
-  if (trimmed.startsWith('[')) {
-    try {
-      const parsed = JSON.parse(trimmed);
-      if (Array.isArray(parsed)) {
-        const args = parsed.map(item => String(item).trim()).filter(Boolean);
-        if (args.length > 0) return args;
-      }
-    } catch {
-      // Fallback to whitespace splitting.
-    }
-  }
-
-  const args = trimmed.split(/\s+/).filter(Boolean);
-  return args.length > 0 ? args : [...DEFAULT_YUNXIAO_MCP_ARGS];
-}
 
 /**
  * Memory MCP server - knowledge graph memory.
@@ -317,7 +247,7 @@ export function getMcpServerConfig(
       if (accessToken && server.transport.type === 'stdio') {
         const command = options.env?.YUNXIAO_MCP_COMMAND?.trim()
           || server.transport.command;
-        const args = parseYunxiaoMcpArgs(options.env?.YUNXIAO_MCP_ARGS);
+        const args = parseAutocodeYunxiaoMcpArgs(options.env?.YUNXIAO_MCP_ARGS);
         const npmCache = options.env?.YUNXIAO_MCP_NPM_CACHE
           || path.join(process.env.LOCALAPPDATA || process.env.TEMP || process.cwd(), 'Autocode', 'mcp-cache', 'yunxiao-npm');
 

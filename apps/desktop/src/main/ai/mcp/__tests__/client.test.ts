@@ -38,18 +38,18 @@ vi.mock('../registry', () => ({
   resolveMcpServers: vi.fn(),
 }));
 
-// Mock agent-configs to control required servers
-vi.mock('../../config/agent-configs', () => ({
-  getRequiredMcpServers: vi.fn().mockReturnValue([]),
+// Mock core MCP planning to control required servers
+vi.mock('@autocode/core', () => ({
+  buildAutocodeAgentMcpServerPlan: vi.fn().mockReturnValue([]),
 }));
 
 import { createMCPClient } from '@ai-sdk/mcp';
 import type { MCPClient } from '@ai-sdk/mcp';
 import { StdioClientTransport } from '@modelcontextprotocol/sdk/client/stdio.js';
+import { buildAutocodeAgentMcpServerPlan } from '@autocode/core';
 import { isWindows } from '../../../platform';
 import { HiddenWindowsStdioTransport } from '../hidden-stdio-transport';
 import { resolveMcpServers } from '../registry';
-import { getRequiredMcpServers } from '../../config/agent-configs';
 import type { McpServerResolveOptions } from '../../config/agent-configs';
 import {
   createMcpClient,
@@ -64,7 +64,7 @@ const mockStdioClientTransport = vi.mocked(StdioClientTransport);
 const mockHiddenWindowsStdioTransport = vi.mocked(HiddenWindowsStdioTransport);
 const mockIsWindows = vi.mocked(isWindows);
 const mockResolveMcpServers = vi.mocked(resolveMcpServers);
-const mockGetRequiredMcpServers = vi.mocked(getRequiredMcpServers);
+const mockBuildMcpServerPlan = vi.mocked(buildAutocodeAgentMcpServerPlan);
 
 // Sentinel: what StdioClientTransport instances look like after construction
 const FAKE_STDIO_TRANSPORT_PROPS = { __kind: 'stdio-transport' };
@@ -118,7 +118,7 @@ beforeEach(() => {
   } as unknown as typeof HiddenWindowsStdioTransport);
   // Default: createMCPClient returns a standard mock instance
   mockCreateMCPClient.mockResolvedValue(makeMockMcpInstance() as unknown as MCPClient);
-  mockGetRequiredMcpServers.mockReturnValue([]);
+  mockBuildMcpServerPlan.mockReturnValue([]);
   mockResolveMcpServers.mockReturnValue([]);
 });
 
@@ -226,7 +226,7 @@ describe('createMcpClient', () => {
 
 describe('createMcpClientsForAgent', () => {
   it('returns empty array when agent requires no MCP servers', async () => {
-    mockGetRequiredMcpServers.mockReturnValueOnce([]);
+    mockBuildMcpServerPlan.mockReturnValueOnce([]);
     mockResolveMcpServers.mockReturnValueOnce([]);
 
     const clients = await createMcpClientsForAgent('commit_message');
@@ -235,7 +235,7 @@ describe('createMcpClientsForAgent', () => {
   });
 
   it('creates clients for each resolved server config', async () => {
-    mockGetRequiredMcpServers.mockReturnValueOnce(['context7', 'autocode']);
+    mockBuildMcpServerPlan.mockReturnValueOnce(['context7', 'autocode']);
     mockResolveMcpServers.mockReturnValueOnce([
       { ...stdioConfig, id: 'context7' },
       { ...stdioConfig, id: 'autocode' },
@@ -253,7 +253,7 @@ describe('createMcpClientsForAgent', () => {
   });
 
   it('skips failed connections without throwing', async () => {
-    mockGetRequiredMcpServers.mockReturnValueOnce(['context7', 'broken-server']);
+    mockBuildMcpServerPlan.mockReturnValueOnce(['context7', 'broken-server']);
     mockResolveMcpServers.mockReturnValueOnce([
       { ...stdioConfig, id: 'context7' },
       { ...stdioConfig, id: 'broken-server' },
@@ -271,21 +271,21 @@ describe('createMcpClientsForAgent', () => {
     expect(clients[0].serverId).toBe('context7');
   });
 
-  it('passes resolveOptions to getRequiredMcpServers', async () => {
-    mockGetRequiredMcpServers.mockReturnValueOnce([]);
+  it('passes resolveOptions to buildAutocodeAgentMcpServerPlan', async () => {
+    mockBuildMcpServerPlan.mockReturnValueOnce([]);
     mockResolveMcpServers.mockReturnValueOnce([]);
 
     const resolveOptions = { electronMcpEnabled: true };
     await createMcpClientsForAgent('qa_reviewer', resolveOptions as unknown as McpServerResolveOptions);
 
-    expect(mockGetRequiredMcpServers).toHaveBeenCalledWith(
+    expect(mockBuildMcpServerPlan).toHaveBeenCalledWith(
       'qa_reviewer',
       expect.objectContaining(resolveOptions),
     );
   });
 
   it('derives customServerIds from registryOptions.customServers', async () => {
-    mockGetRequiredMcpServers.mockReturnValueOnce(['custom-yunxiao']);
+    mockBuildMcpServerPlan.mockReturnValueOnce(['custom-yunxiao']);
     mockResolveMcpServers.mockReturnValueOnce([{ ...stdioConfig, id: 'custom-yunxiao' }]);
     mockCreateMCPClient.mockResolvedValueOnce(makeMockMcpInstance() as unknown as MCPClient);
 
@@ -305,7 +305,7 @@ describe('createMcpClientsForAgent', () => {
       },
     );
 
-    expect(mockGetRequiredMcpServers).toHaveBeenCalledWith('coder', expect.objectContaining({
+    expect(mockBuildMcpServerPlan).toHaveBeenCalledWith('coder', expect.objectContaining({
       customServerIds: ['custom-yunxiao'],
     }));
   });

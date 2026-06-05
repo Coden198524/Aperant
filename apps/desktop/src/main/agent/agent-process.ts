@@ -7,10 +7,13 @@ import {
   AUTOCODE_PROJECT_ENV_FILE_NAME,
   autocodeRuntimeWorkspaceClaims,
   collectAutocodeRuntimeFileIntentsFromPlan,
+  createAutocodeAgentWorkerProcessStartPlan,
   decodeAutocodeCliOutputChunk,
+  getAutocodeInitialPhaseForProcess,
   getAutocodeProjectEnvPath,
   loadAutocodeImplementationPlanSync,
   normalizeAutocodeRuntimePath,
+  parseAutocodeTaskTokenUsage,
   type AutocodeRuntimeWorkspaceClaim,
   type AutocodeRuntimeWorkspaceClaimInput,
   type AutocodeRuntimeWorkspaceConflict,
@@ -44,65 +47,6 @@ import { readSettingsFile } from '../settings-utils';
  * Type for supported CLI tools
  */
 type CliTool = 'claude' | 'gh' | 'glab';
-
-function getInitialPhaseForProcess(processType: ProcessType): ExecutionProgressData['phase'] {
-  switch (processType) {
-    case 'spec-creation':
-      return 'planning';
-    case 'qa-process':
-      return 'qa_review';
-    case 'task-execution':
-    default:
-      return 'coding';
-  }
-}
-
-function parseTaskTokenUsage(line: string): TokenUsage | null {
-  const marker = '__TASK_TOKEN_USAGE__:';
-  const markerIndex = line.indexOf(marker);
-  if (markerIndex < 0) {
-    return null;
-  }
-
-  const jsonText = line.slice(markerIndex + marker.length).trim();
-  if (!jsonText) {
-    return null;
-  }
-
-  try {
-    const parsed = JSON.parse(jsonText) as Partial<TokenUsage>;
-    const promptTokens = readPositiveNumber(parsed.promptTokens);
-    const completionTokens = readPositiveNumber(parsed.completionTokens);
-    const totalTokens = readPositiveNumber(parsed.totalTokens);
-    if (!promptTokens && !completionTokens && !totalTokens) {
-      return null;
-    }
-
-    return {
-      promptTokens,
-      completionTokens,
-      totalTokens,
-      ...(readOptionalPositiveNumber(parsed.thinkingTokens) ? { thinkingTokens: readOptionalPositiveNumber(parsed.thinkingTokens) } : {}),
-      ...(readOptionalPositiveNumber(parsed.cacheReadTokens) ? { cacheReadTokens: readOptionalPositiveNumber(parsed.cacheReadTokens) } : {}),
-      ...(readOptionalPositiveNumber(parsed.cacheCreationTokens) ? { cacheCreationTokens: readOptionalPositiveNumber(parsed.cacheCreationTokens) } : {}),
-      ...(readOptionalPositiveNumber(parsed.stepsExecuted) ? { stepsExecuted: readOptionalPositiveNumber(parsed.stepsExecuted) } : {}),
-      ...(parsed.estimated === true ? { estimated: true } : {}),
-      ...(typeof parsed.sessionId === 'string' && parsed.sessionId.trim() ? { sessionId: parsed.sessionId.trim() } : {}),
-    };
-  } catch {
-    return null;
-  }
-}
-
-function readPositiveNumber(value: unknown): number {
-  const number = typeof value === 'number' ? value : typeof value === 'string' ? Number(value) : 0;
-  return Number.isFinite(number) && number > 0 ? number : 0;
-}
-
-function readOptionalPositiveNumber(value: unknown): number | undefined {
-  const number = readPositiveNumber(value);
-  return number > 0 ? number : undefined;
-}
 
 function waitForWorkspaceClaimRetry(delayMs: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, delayMs));
@@ -235,7 +179,7 @@ export class AgentProcessManager {
       this.state.updateProcess(taskId, { workspaceClaimStatus: 'pending' });
       if (!conflictNoticeEmitted) {
         this.emitter.emit('execution-progress', taskId, {
-          phase: getInitialPhaseForProcess(processType),
+          phase: getAutocodeInitialPhaseForProcess(processType),
           phaseProgress: 0,
           overallProgress: 0,
           message: this.formatWorkspaceConflictMessage(result.conflict),
@@ -863,7 +807,7 @@ export class AgentProcessManager {
       return; // Do not proceed with this spawn
     }
 
-    let currentPhase: ExecutionProgressData['phase'] = getInitialPhaseForProcess(processType);
+    let currentPhase: ExecutionProgressData['phase'] = getAutocodeInitialPhaseForProcess(processType);
     let phaseProgress = 0;
     let currentSubtask: string | undefined;
     let lastMessage: string | undefined;
@@ -909,7 +853,7 @@ export class AgentProcessManager {
         this.emitter.emit('task-event', taskId, taskEvent, projectId);
       }
 
-      const tokenUsage = parseTaskTokenUsage(line);
+      const tokenUsage = parseAutocodeTaskTokenUsage(line);
       if (tokenUsage) {
         this.emitter.emit('task-token-usage', taskId, tokenUsage, projectId);
       }
@@ -1107,8 +1051,14 @@ export class AgentProcessManager {
     });
 
     const workspaceClaim = this.buildWorkerWorkspaceClaimInput(taskId, executorConfig, processType);
-    const claim = await this.waitForRuntimeWorkspaceClaim(taskId, workspaceClaim, spawnId, processType, projectId);
-    if (workspaceClaim && !claim) {
+    const pendingStartPlan = createAutocodeAgentWorkerProcessStartPlan({
+      taskId,
+      processType,
+      projectId,
+      workspaceClaim,
+    });
+    const claim = await this.waitForRuntimeWorkspaceClaim(taskId, pendingStartPlan.workspaceClaim, spawnId, processType, projectId);
+    if (pendingStartPlan.workspaceClaim && !claim) {
       this.deleteTrackedProcess(taskId);
       this.state.clearKilledSpawn(spawnId);
       return;
@@ -1205,7 +1155,15 @@ export class AgentProcessManager {
         console.warn('[AgentProcess] Could not load historical token usage:', err);
       }
 
-      bridge.spawn(executorConfig, initialTokenUsage);
+      const startPlan = createAutocodeAgentWorkerProcessStartPlan({
+        taskId,
+        processType,
+        projectId,
+        workspaceClaim,
+        initialTokenUsage,
+      });
+
+      bridge.spawn(executorConfig, startPlan.initialTokenUsage);
       console.log('[AgentProcess] Worker thread spawned for task:', {
         taskId,
         processType,
@@ -1229,7 +1187,12 @@ export class AgentProcessManager {
     }
 
     // Emit initial progress
-    const initialPhase = getInitialPhaseForProcess(processType);
+    const initialPhase = createAutocodeAgentWorkerProcessStartPlan({
+      taskId,
+      processType,
+      projectId,
+      workspaceClaim,
+    }).initialPhase;
     this.emitter.emit('execution-progress', taskId, {
       phase: initialPhase,
       phaseProgress: 0,

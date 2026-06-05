@@ -21,17 +21,29 @@ import {
   type AutocodeWorkDependencyBlockedItem,
 } from '@autocode/core';
 import {
+  createAutocodeAdaptiveConcurrency,
+  partitionAutocodeHighRiskUnscopedWorkItems,
+  shouldSerializeAutocodeHighRiskUnscopedWorkItem,
+  summarizeAutocodeWorkItemResults,
+} from '@autocode/core/runtime/work-executor-strategy';
+import {
   detectFileConflicts,
   groupConflictingWorkItems,
 } from './conflict-detector';
+import {
+  collectFilesChangedSinceBaseline,
+  collectGitChangedFileSnapshot,
+  loadGeneratedFilesForCritique,
+  type ChangedFileSnapshot,
+} from './changed-files';
+import type { CritiqueResult } from './self-critique';
+import type { IncrementalValidationResult } from './incremental-validation';
 import {
   writeAuthPauseFile,
   writeRateLimitPauseFile,
   waitForAuthResume,
   waitForRateLimitResume,
 } from './pause-handler';
-import { iterateSubtasks } from './subtask-iterator';
-import type { SubtaskIteratorConfig } from './subtask-iterator';
 import {
   loadImplementationPlanFromFiles,
   updateImplementationPlanInFiles,
@@ -39,6 +51,7 @@ import {
 
 const MAX_RATE_LIMIT_WAIT_MS = 30 * 60 * 1000;
 const FALLBACK_FAILURE_THRESHOLD = 3;
+const HIGH_RISK_UNSCOPED_WORK_PATTERN = /\b(refactor|restructure|architecture|migration|global|cross-cutting|shared|config|schema|security|auth|permission|database|persistence|routing|build|pipeline|concurrent|parallel|framework)\b|重构|架构|迁移|全局|共享|配置|模式|安全|认证|权限|数据库|持久化|路由|构建|管线|并发/iu;
 
 export interface ConcurrentWorkExecutorConfig {
   specDir: string;
@@ -48,7 +61,7 @@ export interface ConcurrentWorkExecutorConfig {
   workers: number;
   abortSignal?: AbortSignal;
   onGroupStart?: (items: WorkItemInfo[], groupNum: number, totalGroups: number, mode: 'concurrent' | 'serial') => void;
-  onWorkItemStart?: (item: WorkItemInfo, attempt: number) => number | void;
+  onWorkItemStart?: (item: WorkItemInfo, attempt: number) => number | undefined;
   runWorkItemSession: (item: WorkItemInfo, attempt: number, sessionNumber?: number) => Promise<SessionResult>;
   onWorkItemSessionComplete?: (item: WorkItemInfo, result: SessionResult) => void;
   onGroupComplete?: (items: WorkItemInfo[], result: WorkItemResult) => void;
@@ -90,16 +103,70 @@ interface PlanSubtask {
   work_package?: boolean;
   upstream_task_ids?: unknown;
   upstream_source?: unknown;
+  ai_coding_quality?: WorkItemQualityMetrics;
 }
 
 type PlanWrite<T> = () => Promise<T>;
+
+interface WorkItemQualityMetrics {
+  outcome: string;
+  attempt: number;
+  changed_files: string[];
+  files_changed: number;
+  steps_executed: number;
+  tool_call_count: number;
+  duration_ms: number;
+  recorded_at: string;
+  self_critique?: {
+    status: 'passed' | 'failed' | 'skipped';
+    score?: number;
+    files_reviewed: number;
+    improvements: string[];
+  };
+  incremental_validation?: {
+    status: 'passed' | 'failed' | 'skipped';
+    duration_ms?: number;
+    checks_run?: number;
+    failures: string[];
+  };
+}
+
+interface ExecutionRuntime {
+  sourceSync: SourceSyncCoordinator;
+  pauseCoordinator: PauseCoordinator;
+}
+
+interface SourceSyncCoordinator {
+  request(): Promise<void>;
+  flush(): Promise<void>;
+}
+
+interface PauseCoordinator {
+  waitForRateLimit(errorMessage: string): Promise<void>;
+  waitForAuth(errorMessage: string): Promise<void>;
+  consumePressure(): 'rate_limited' | 'auth_failure' | null;
+}
+
+interface WorkItemQualityResult {
+  passed: boolean;
+  issues: string[];
+  changedFiles: string[];
+  selfCritique: CritiqueResult | null;
+  incrementalValidation: IncrementalValidationResult | null;
+}
 
 export async function executeConcurrentWorkItems(
   config: ConcurrentWorkExecutorConfig,
 ): Promise<WorkExecutorResult> {
   const log = (message: string) => config.onLog?.(message);
   const planWriter = createPlanWriter();
-  const workers = Math.max(1, Math.floor(config.workers || 1));
+  const sourceSync = createSourceSyncCoordinator(config);
+  const runtime: ExecutionRuntime = {
+    sourceSync,
+    pauseCoordinator: createPauseCoordinator(config),
+  };
+  const adaptiveConcurrency = createAdaptiveConcurrency(Math.max(1, Math.floor(config.workers || 1)), log);
+  const terminalFailedWorkItemIds = new Set<string>();
   let totalCompleted = 0;
   let totalFailed = 0;
   let roundNumber = 0;
@@ -117,9 +184,13 @@ export async function executeConcurrentWorkItems(
       };
     }
 
-    await planWriter(() => resetRoundInProgressWorkItems(config, log));
+    if (hasInProgressWorkItems(plan)) {
+      await planWriter(() => resetRoundInProgressWorkItems(config, runtime, log));
+      await sourceSync.flush();
+    }
 
-    const pendingItems = getPendingWorkItems(plan);
+    const pendingItems = getPendingWorkItems(plan)
+      .filter((item) => !terminalFailedWorkItemIds.has(item.id));
     if (pendingItems.length === 0) {
       log('[ConcurrentWorkExecutor] No more pending work items');
       break;
@@ -130,7 +201,8 @@ export async function executeConcurrentWorkItems(
     const runnableItems = dependencyAnalysis.runnable;
     if (runnableItems.length === 0) {
       const blockedSummary = describeAutocodeWorkDependencyBlockers(dependencyAnalysis.blocked, statusById);
-      await planWriter(() => markDependencyBlockedWorkItems(config, dependencyAnalysis.blocked, statusById));
+      await planWriter(() => markDependencyBlockedWorkItems(config, dependencyAnalysis.blocked, statusById, runtime));
+      await sourceSync.flush();
       await learnFromBlockedWorkItems(config, dependencyAnalysis.blocked, statusById);
       log(`[ConcurrentWorkExecutor] No runnable work items because dependencies are unresolved: ${blockedSummary}`);
       return {
@@ -141,38 +213,45 @@ export async function executeConcurrentWorkItems(
       };
     }
 
+    const { scopedItems, highRiskUnscopedItems } = partitionHighRiskUnscopedWorkItems(runnableItems);
     const groups: Array<{ mode: 'concurrent' | 'serial'; items: WorkItemInfo[] }> = [];
-    const { independent, sequential } = detectFileConflicts(runnableItems);
+    const { independent, sequential } = detectFileConflicts(scopedItems);
     const independentItems = independent.flat();
     const conflictGroups = groupConflictingWorkItems(sequential);
     log(
-      `[ConcurrentWorkExecutor] Conflict analysis: ${independentItems.length} independent, ${sequential.length} conflict-locked`,
+      `[ConcurrentWorkExecutor] Conflict analysis: ${independentItems.length} independent, ${sequential.length} conflict-locked, ${highRiskUnscopedItems.length} metadata-limited`,
     );
     groups.push(
       ...(independentItems.length > 0 ? [{ mode: 'concurrent' as const, items: independentItems }] : []),
       ...conflictGroups.map((items) => ({ mode: 'serial' as const, items })),
+      ...highRiskUnscopedItems.map((item) => ({ mode: 'serial' as const, items: [item] })),
     );
-    log(`[ConcurrentWorkExecutor] Prepared ${groups.length} work group(s), workers=${workers}`);
+    log(`[ConcurrentWorkExecutor] Prepared ${groups.length} work group(s), workers=${adaptiveConcurrency.current()}`);
 
     let roundCompleted = 0;
     let roundFailed = 0;
     let consecutiveFailures = 0;
+    let forceSerialForRound = false;
 
     for (let i = 0; i < groups.length; i++) {
       if (config.abortSignal?.aborted) {
+        await sourceSync.flush();
         return { success: false, totalCompleted: totalCompleted + roundCompleted, cancelled: true };
       }
 
       const group = groups[i];
-      config.onGroupStart?.(group.items, i + 1, groups.length, group.mode);
+      const groupMode = forceSerialForRound ? 'serial' : group.mode;
+      config.onGroupStart?.(group.items, i + 1, groups.length, groupMode);
 
-      const result = group.mode === 'serial'
-        ? await executeSerialGroup(group.items, config, planWriter)
-        : await executeConcurrentGroup(group.items, workers, config, planWriter);
+      const result = groupMode === 'serial'
+        ? await executeSerialGroup(group.items, config, planWriter, runtime)
+        : await executeConcurrentGroup(group.items, adaptiveConcurrency.current(), config, planWriter, runtime);
+      await sourceSync.flush();
 
       config.onGroupComplete?.(group.items, result);
 
       if (config.abortSignal?.aborted || result.sessionResult.outcome === 'cancelled') {
+        await sourceSync.flush();
         return {
           success: false,
           totalCompleted: totalCompleted + roundCompleted + result.completed.length,
@@ -182,6 +261,10 @@ export async function executeConcurrentWorkItems(
 
       roundCompleted += result.completed.length;
       roundFailed += result.failed.length;
+      for (const failedId of result.failed) {
+        terminalFailedWorkItemIds.add(failedId);
+      }
+      adaptiveConcurrency.recordGroupResult(result, groupMode, runtime.pauseCoordinator.consumePressure());
 
       if (result.failed.length > 0) {
         consecutiveFailures++;
@@ -189,8 +272,9 @@ export async function executeConcurrentWorkItems(
           `[ConcurrentWorkExecutor] Work group ${i + 1} had ${result.failed.length} failure(s) (consecutive: ${consecutiveFailures})`,
         );
         if (consecutiveFailures >= FALLBACK_FAILURE_THRESHOLD) {
-          log('[ConcurrentWorkExecutor] Failure threshold reached, switching to serial iterator');
-          return fallbackToSerial(config);
+          forceSerialForRound = true;
+          consecutiveFailures = 0;
+          log('[ConcurrentWorkExecutor] Failure threshold reached, running remaining round groups serially');
         }
       } else {
         consecutiveFailures = 0;
@@ -205,8 +289,7 @@ export async function executeConcurrentWorkItems(
     );
 
     if (roundFailed > 0) {
-      log('[ConcurrentWorkExecutor] Stopping due to failures');
-      break;
+      log('[ConcurrentWorkExecutor] Continuing with unrelated runnable work after isolating failed item(s)');
     }
   }
 
@@ -215,6 +298,7 @@ export async function executeConcurrentWorkItems(
     `[ConcurrentWorkExecutor] All rounds completed: ${totalCompleted} total completed, ${totalFailed} total failed`,
   );
 
+  await sourceSync.flush();
   return { success, totalCompleted, totalFailed };
 }
 
@@ -223,14 +307,21 @@ async function executeConcurrentGroup(
   workers: number,
   config: ConcurrentWorkExecutorConfig,
   planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+  runtime: ExecutionRuntime,
 ): Promise<WorkItemResult> {
   let cancelled = false;
+  const prestartedIds = new Set(items.slice(0, Math.max(1, workers)).map((item) => item.id));
+  await planWriter(() => markWorkItemsInProgress(config, [...prestartedIds], runtime));
+  await runtime.sourceSync.flush();
+
   const results = await runWithConcurrency(
     items,
     workers,
     async (item) => {
-      await planWriter(() => markWorkItemsInProgress(config, [item.id]));
-      const result = await executeWorkItemIsolated(item, config, planWriter);
+      if (!prestartedIds.has(item.id)) {
+        await planWriter(() => markWorkItemsInProgress(config, [item.id], runtime));
+      }
+      const result = await executeWorkItemIsolated(item, config, planWriter, runtime);
       if (result.sessionResult.outcome === 'cancelled') {
         cancelled = true;
       }
@@ -246,6 +337,7 @@ async function executeSerialGroup(
   items: WorkItemInfo[],
   config: ConcurrentWorkExecutorConfig,
   planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+  runtime: ExecutionRuntime,
 ): Promise<WorkItemResult> {
   const results: WorkItemResult[] = [];
   for (const item of items) {
@@ -257,8 +349,9 @@ async function executeSerialGroup(
         sessionResult: { outcome: 'cancelled' } as SessionResult,
       };
     }
-    await planWriter(() => markWorkItemsInProgress(config, [item.id]));
-    results.push(await executeWorkItemIsolated(item, config, planWriter));
+    await planWriter(() => markWorkItemsInProgress(config, [item.id], runtime));
+    await runtime.sourceSync.flush();
+    results.push(await executeWorkItemIsolated(item, config, planWriter, runtime));
   }
   return summarizeWorkItemResults(results);
 }
@@ -267,9 +360,10 @@ async function executeWorkItemIsolated(
   item: WorkItemInfo,
   config: ConcurrentWorkExecutorConfig,
   planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+  runtime: ExecutionRuntime,
 ): Promise<WorkItemResult> {
   try {
-    return await executeWorkItemWithRetries(item, config, planWriter);
+    return await executeWorkItemWithRetries(item, config, planWriter, runtime);
   } catch (error) {
     const sessionResult = createErrorSessionResult(error, Date.now());
     config.onLog?.(
@@ -277,7 +371,7 @@ async function executeWorkItemIsolated(
     );
 
     await learnFromTerminalWorkItem(config, item, sessionResult, 'stuck');
-    await tryPersistFailedWorkItemStatus(config, item, sessionResult, planWriter);
+    await tryPersistFailedWorkItemStatus(config, item, sessionResult, planWriter, runtime);
 
     return {
       completed: [],
@@ -292,6 +386,7 @@ async function executeWorkItemWithRetries(
   item: WorkItemInfo,
   config: ConcurrentWorkExecutorConfig,
   planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+  runtime: ExecutionRuntime,
 ): Promise<WorkItemResult> {
   const log = (message: string) => config.onLog?.(message);
   let lastResult: SessionResult = { outcome: 'error' } as SessionResult;
@@ -309,42 +404,69 @@ async function executeWorkItemWithRetries(
     const attemptNumber = attempt + 1;
     const sessionNumber = config.onWorkItemStart?.(item, attemptNumber);
     log(`[ConcurrentWorkExecutor] Working on ${item.id} (attempt ${attemptNumber})`);
+    const changedFileBaseline = await collectChangedFileBaseline(config.projectDir);
 
     const sessionResult = await executeWorkItemSession(
       item,
       config,
       attemptNumber,
       typeof sessionNumber === 'number' ? sessionNumber : undefined,
+      runtime,
     );
     config.onWorkItemSessionComplete?.(item, sessionResult);
     try {
-      await planWriter(() => recordWorkItemSessionDuration(config, item.id, sessionResult));
+      await planWriter(() => recordWorkItemSessionDuration(config, item.id, sessionResult, runtime));
     } catch (error) {
       log(
         `[ConcurrentWorkExecutor] Failed to record active duration for ${item.id}: ${error instanceof Error ? error.message : String(error)}`,
       );
     }
-    lastResult = sessionResult;
 
-    if (sessionResult.outcome === 'cancelled') {
+    const qualityResult = await evaluateCompletedWorkItemQuality(
+      config,
+      item,
+      sessionResult,
+      attemptNumber,
+      changedFileBaseline,
+    );
+    await recordWorkItemQualityMetricsSafely(
+      config,
+      item.id,
+      buildWorkItemQualityMetrics(
+        sessionResult,
+        attemptNumber,
+        qualityResult.changedFiles,
+        qualityResult.selfCritique,
+        qualityResult.incrementalValidation,
+      ),
+      planWriter,
+      runtime,
+    );
+
+    const effectiveSessionResult = qualityResult.passed
+      ? sessionResult
+      : createQualityFailureSessionResult(qualityResult.issues, sessionResult);
+    lastResult = effectiveSessionResult;
+
+    if (effectiveSessionResult.outcome === 'cancelled') {
       return {
         completed: [],
         failed: [item.id],
         blocked: [],
-        sessionResult,
+        sessionResult: effectiveSessionResult,
       };
     }
 
-    if (sessionResult.outcome === 'completed') {
+    if (effectiveSessionResult.outcome === 'completed') {
       await planWriter(() => updateWorkItemStatuses(config, [
-        { id: item.id, summary: summarizeSessionResult(sessionResult) },
-      ], 'completed'));
-      await learnFromCompletedWorkItem(config, item, sessionResult);
+        { id: item.id, summary: summarizeSessionResult(effectiveSessionResult) },
+      ], 'completed', runtime));
+      await learnFromCompletedWorkItem(config, item, effectiveSessionResult);
       return {
         completed: [item.id],
         failed: [],
         blocked: [],
-        sessionResult,
+        sessionResult: effectiveSessionResult,
       };
     }
 
@@ -358,12 +480,12 @@ async function executeWorkItemWithRetries(
     }
 
     if (attempt < config.maxRetries) {
-      log(`[ConcurrentWorkExecutor] Retrying ${item.id} after outcome ${sessionResult.outcome}`);
+      log(`[ConcurrentWorkExecutor] Retrying ${item.id} after outcome ${effectiveSessionResult.outcome}`);
     }
   }
 
   await learnFromTerminalWorkItem(config, item, lastResult, 'stuck');
-  await tryPersistFailedWorkItemStatus(config, item, lastResult, planWriter);
+  await tryPersistFailedWorkItemStatus(config, item, lastResult, planWriter, runtime);
 
   return {
     completed: [],
@@ -378,59 +500,17 @@ async function tryPersistFailedWorkItemStatus(
   item: WorkItemInfo,
   result: SessionResult,
   planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+  runtime: ExecutionRuntime,
 ): Promise<void> {
   try {
     await planWriter(() => updateWorkItemStatuses(config, [
       { id: item.id, summary: summarizeFailureResult(result) },
-    ], 'failed'));
+    ], 'failed', runtime));
   } catch (statusError) {
     config.onLog?.(
       `[ConcurrentWorkExecutor] Failed to persist failure for ${item.id}: ${statusError instanceof Error ? statusError.message : String(statusError)}`,
     );
   }
-}
-
-async function fallbackToSerial(
-  config: ConcurrentWorkExecutorConfig,
-): Promise<WorkExecutorResult> {
-  const log = (message: string) => config.onLog?.(message);
-  log('[ConcurrentWorkExecutor] Falling back to serial mode');
-
-  const serialConfig: SubtaskIteratorConfig = {
-    specDir: config.specDir,
-    projectDir: config.projectDir,
-    sourceSpecDir: config.sourceSpecDir,
-    maxRetries: config.maxRetries,
-    autoContinueDelayMs: 500,
-    abortSignal: config.abortSignal,
-    qualityConfig: config.qualityConfig,
-    runSubtaskSession: async (subtask, attempt) => config.runWorkItemSession({
-      id: subtask.id,
-      phaseId: subtask.phaseName,
-      description: subtask.description,
-      filesToCreate: subtask.filesToCreate,
-      filesToModify: subtask.filesToModify,
-      patternFiles: subtask.patternFiles,
-      dependsOn: subtask.dependsOn,
-      verification: subtask.verification,
-      hasFileMetadata: subtask.hasFileMetadata,
-      hasDependencyMetadata: subtask.hasDependencyMetadata,
-      hasVerificationMetadata: subtask.hasVerificationMetadata,
-      workPackage: subtask.workPackage,
-      upstreamTaskIds: subtask.upstreamTaskIds,
-      upstreamSource: subtask.upstreamSource,
-      status: 'in_progress',
-    }, attempt),
-  };
-
-  const result = await iterateSubtasks(serialConfig);
-
-  return {
-    success: result.completedSubtasks === result.totalSubtasks,
-    totalCompleted: result.completedSubtasks,
-    totalFailed: result.totalSubtasks - result.completedSubtasks,
-    cancelled: result.cancelled,
-  };
 }
 
 async function learnFromCompletedWorkItem(
@@ -506,6 +586,7 @@ async function executeWorkItemSession(
   config: ConcurrentWorkExecutorConfig,
   attempt: number,
   sessionNumber?: number,
+  runtime?: ExecutionRuntime,
 ): Promise<SessionResult> {
   const log = (message: string) => config.onLog?.(message);
   let accumulatedDurationMs = 0;
@@ -517,14 +598,7 @@ async function executeWorkItemSession(
       accumulatedDurationMs += getSessionDurationMs(sessionResult);
       log(`[ConcurrentWorkExecutor] Work item ${item.id} rate limited, waiting for reset...`);
       const errorMessage = sessionResult.error?.message ?? 'Rate limit exceeded';
-      writeRateLimitPauseFile(config.specDir, errorMessage, null);
-
-      await waitForRateLimitResume(
-        config.specDir,
-        MAX_RATE_LIMIT_WAIT_MS,
-        config.sourceSpecDir,
-        config.abortSignal,
-      );
+      await (runtime?.pauseCoordinator.waitForRateLimit(errorMessage) ?? waitForRateLimitResumeDirect(config, errorMessage));
 
       if (config.abortSignal?.aborted) {
         return createCancelledSessionResult(accumulatedDurationMs);
@@ -536,9 +610,7 @@ async function executeWorkItemSession(
       accumulatedDurationMs += getSessionDurationMs(sessionResult);
       log(`[ConcurrentWorkExecutor] Work item ${item.id} auth failure, waiting for re-auth...`);
       const errorMessage = sessionResult.error?.message ?? 'Authentication failed';
-      writeAuthPauseFile(config.specDir, errorMessage);
-
-      await waitForAuthResume(config.specDir, config.sourceSpecDir, config.abortSignal);
+      await (runtime?.pauseCoordinator.waitForAuth(errorMessage) ?? waitForAuthResumeDirect(config, errorMessage));
 
       if (config.abortSignal?.aborted) {
         return createCancelledSessionResult(accumulatedDurationMs);
@@ -617,10 +689,226 @@ function createCancelledSessionResult(durationMs = 0): SessionResult {
   };
 }
 
+async function collectChangedFileBaseline(projectDir: string): Promise<ChangedFileSnapshot> {
+  try {
+    return await collectGitChangedFileSnapshot(projectDir);
+  } catch {
+    return { files: new Set() };
+  }
+}
+
+async function evaluateCompletedWorkItemQuality(
+  config: ConcurrentWorkExecutorConfig,
+  item: WorkItemInfo,
+  result: SessionResult,
+  attempt: number,
+  baseline: ChangedFileSnapshot,
+): Promise<WorkItemQualityResult> {
+  const changedFiles = await collectWorkItemChangedFiles(config.projectDir, baseline, item);
+  if (result.outcome !== 'completed') {
+    return {
+      passed: true,
+      issues: [],
+      changedFiles,
+      selfCritique: null,
+      incrementalValidation: null,
+    };
+  }
+
+  const issues: string[] = [];
+  let selfCritique: CritiqueResult | null = null;
+  let incrementalValidation: IncrementalValidationResult | null = null;
+
+  if (config.qualityConfig?.enableSelfCritique === true) {
+    try {
+      const generatedFiles = await loadGeneratedFilesForCritique(config.projectDir, changedFiles);
+      if (generatedFiles.length > 0) {
+        const { runSelfCritique, formatCritiqueSummary } = await import('./self-critique');
+        selfCritique = await runSelfCritique({
+          generatedFiles,
+          subtask: item,
+          projectDir: config.projectDir,
+          specDir: config.specDir,
+        });
+        config.onLog?.(formatCritiqueSummary(selfCritique));
+        if (!selfCritique.passed) {
+          issues.push(`Self-critique failed: ${selfCritique.improvements.slice(0, 3).join('; ') || 'quality score below threshold'}`);
+        }
+      }
+    } catch (error) {
+      config.onLog?.(
+        `[ConcurrentWorkExecutor] Self-critique failed for ${item.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  if (config.qualityConfig?.enableIncrementalValidation === true) {
+    try {
+      const { validateSubtaskQuality } = await import('./quality-integration');
+      const validationResult = await validateSubtaskQuality(
+        item,
+        result,
+        config.qualityConfig,
+        config.projectDir,
+        config.specDir,
+        changedFiles,
+      );
+      incrementalValidation = validationResult.incrementalValidation ?? null;
+      if (!validationResult.passed) {
+        issues.push(...validationResult.issues);
+      }
+    } catch (error) {
+      config.onLog?.(
+        `[ConcurrentWorkExecutor] Incremental validation failed for ${item.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
+  if (issues.length > 0) {
+    config.onLog?.(
+      `[ConcurrentWorkExecutor] Quality gate requested retry for ${item.id} attempt ${attempt}: ${issues.join('; ')}`,
+    );
+  }
+
+  return {
+    passed: issues.length === 0,
+    issues,
+    changedFiles,
+    selfCritique,
+    incrementalValidation,
+  };
+}
+
+async function collectWorkItemChangedFiles(
+  projectDir: string,
+  baseline: ChangedFileSnapshot,
+  item: WorkItemInfo,
+): Promise<string[]> {
+  try {
+    return await collectFilesChangedSinceBaseline(projectDir, baseline, [
+      ...(item.filesToCreate ?? []),
+      ...(item.filesToModify ?? []),
+    ]);
+  } catch {
+    return [
+      ...(item.filesToCreate ?? []),
+      ...(item.filesToModify ?? []),
+    ];
+  }
+}
+
+function createQualityFailureSessionResult(issues: string[], previous: SessionResult): SessionResult {
+  const message = issues.join('; ') || 'Quality validation failed';
+  return {
+    ...previous,
+    outcome: 'error',
+    error: {
+      code: 'quality_validation_failed',
+      message,
+      retryable: true,
+      cause: previous.error?.cause,
+    },
+    messages: [
+      ...(previous.messages ?? []),
+      { role: 'assistant', content: `Quality validation failed: ${message}` },
+    ],
+  };
+}
+
+function buildWorkItemQualityMetrics(
+  result: SessionResult,
+  attempt: number,
+  changedFiles: string[],
+  selfCritique: CritiqueResult | null,
+  incrementalValidation: IncrementalValidationResult | null,
+): WorkItemQualityMetrics {
+  return {
+    outcome: result.outcome,
+    attempt,
+    changed_files: changedFiles,
+    files_changed: changedFiles.length,
+    steps_executed: result.stepsExecuted ?? 0,
+    tool_call_count: result.toolCallCount ?? 0,
+    duration_ms: getSessionDurationMs(result),
+    recorded_at: new Date().toISOString(),
+    self_critique: selfCritique
+      ? {
+          status: selfCritique.passed ? 'passed' : 'failed',
+          score: selfCritique.score,
+          files_reviewed: selfCritique.checks.length > 0 ? changedFiles.length : 0,
+          improvements: selfCritique.improvements.slice(0, 10),
+        }
+      : {
+          status: 'skipped',
+          files_reviewed: 0,
+          improvements: [],
+        },
+    incremental_validation: incrementalValidation
+      ? {
+          status: incrementalValidation.passed ? 'passed' : 'failed',
+          duration_ms: incrementalValidation.durationMs,
+          checks_run: incrementalValidation.checks.length,
+          failures: incrementalValidation.failures
+            .slice(0, 10)
+            .map((failure) => `${failure.type}: ${failure.message}`),
+        }
+      : {
+          status: 'skipped',
+          failures: [],
+        },
+  };
+}
+
+async function recordWorkItemQualityMetricsSafely(
+  config: ConcurrentWorkExecutorConfig,
+  workItemId: string,
+  metrics: WorkItemQualityMetrics,
+  planWriter: <T>(write: PlanWrite<T>) => Promise<T>,
+  runtime: ExecutionRuntime,
+): Promise<void> {
+  if (!config.qualityConfig) {
+    return;
+  }
+
+  try {
+    await planWriter(() => recordWorkItemQualityMetrics(config, workItemId, metrics, runtime));
+  } catch (error) {
+    config.onLog?.(
+      `[ConcurrentWorkExecutor] Failed to record quality metrics for ${workItemId}: ${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+}
+
+async function recordWorkItemQualityMetrics(
+  config: ConcurrentWorkExecutorConfig,
+  workItemId: string,
+  metrics: WorkItemQualityMetrics,
+  runtime: ExecutionRuntime,
+): Promise<void> {
+  let updated = false;
+  await updateImplementationPlanInFiles(config.specDir, (plan) => {
+    for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (subtask.id !== workItemId) {
+          continue;
+        }
+        subtask.ai_coding_quality = metrics;
+        subtask.updated_at = metrics.recorded_at;
+        updated = true;
+      }
+    }
+    return updated ? plan : false;
+  });
+  if (updated) {
+    await runtime.sourceSync.request();
+  }
+}
+
 async function recordWorkItemSessionDuration(
   config: ConcurrentWorkExecutorConfig,
   workItemId: string,
   result: SessionResult,
+  runtime: ExecutionRuntime,
 ): Promise<void> {
   const durationMs = getSessionDurationMs(result);
   if (durationMs <= 0) {
@@ -642,7 +930,7 @@ async function recordWorkItemSessionDuration(
     return updated ? plan : false;
   });
   if (updated) {
-    await syncWorkItemPlanToSource(config);
+    await runtime.sourceSync.request();
   }
 }
 
@@ -683,8 +971,103 @@ function createPlanWriter(): <T>(write: PlanWrite<T>) => Promise<T> {
   };
 }
 
+function createSourceSyncCoordinator(config: ConcurrentWorkExecutorConfig): SourceSyncCoordinator {
+  let dirty = false;
+  let flushing: Promise<void> | null = null;
+
+  return {
+    async request() {
+      if (!config.sourceSpecDir || config.sourceSpecDir === config.specDir) {
+        return;
+      }
+      dirty = true;
+    },
+    async flush() {
+      if (!dirty || flushing) {
+        await flushing;
+        return;
+      }
+
+      dirty = false;
+      flushing = syncWorkItemPlanToSourceNow(config).finally(() => {
+        flushing = null;
+      });
+      await flushing;
+    },
+  };
+}
+
+function createPauseCoordinator(config: ConcurrentWorkExecutorConfig): PauseCoordinator {
+  let rateLimitWait: Promise<void> | null = null;
+  let authWait: Promise<void> | null = null;
+  let pressure: 'rate_limited' | 'auth_failure' | null = null;
+
+  return {
+    async waitForRateLimit(errorMessage: string) {
+      pressure = 'rate_limited';
+      if (!rateLimitWait) {
+        rateLimitWait = waitForRateLimitResumeDirect(config, errorMessage).finally(() => {
+          rateLimitWait = null;
+        });
+      }
+      await rateLimitWait;
+    },
+    async waitForAuth(errorMessage: string) {
+      pressure = 'auth_failure';
+      if (!authWait) {
+        authWait = waitForAuthResumeDirect(config, errorMessage).finally(() => {
+          authWait = null;
+        });
+      }
+      await authWait;
+    },
+    consumePressure() {
+      const value = pressure;
+      pressure = null;
+      return value;
+    },
+  };
+}
+
+async function waitForRateLimitResumeDirect(
+  config: ConcurrentWorkExecutorConfig,
+  errorMessage: string,
+): Promise<void> {
+  writeRateLimitPauseFile(config.specDir, errorMessage, null);
+  await waitForRateLimitResume(
+    config.specDir,
+    MAX_RATE_LIMIT_WAIT_MS,
+    config.sourceSpecDir,
+    config.abortSignal,
+  );
+}
+
+async function waitForAuthResumeDirect(
+  config: ConcurrentWorkExecutorConfig,
+  errorMessage: string,
+): Promise<void> {
+  writeAuthPauseFile(config.specDir, errorMessage);
+  await waitForAuthResume(config.specDir, config.sourceSpecDir, config.abortSignal);
+}
+
+function createAdaptiveConcurrency(maxWorkers: number, log: (message: string) => void) {
+  return createAutocodeAdaptiveConcurrency<SessionResult>(maxWorkers, log);
+}
+
+function partitionHighRiskUnscopedWorkItems(workItems: WorkItemInfo[]): {
+  scopedItems: WorkItemInfo[];
+  highRiskUnscopedItems: WorkItemInfo[];
+} {
+  return partitionAutocodeHighRiskUnscopedWorkItems(workItems);
+}
+
+function shouldSerializeHighRiskUnscopedWorkItem(workItem: WorkItemInfo): boolean {
+  return shouldSerializeAutocodeHighRiskUnscopedWorkItem(workItem);
+}
+
 async function resetRoundInProgressWorkItems(
   config: ConcurrentWorkExecutorConfig,
+  runtime: ExecutionRuntime,
   log?: (message: string) => void,
 ): Promise<void> {
   let updated = false;
@@ -700,7 +1083,7 @@ async function resetRoundInProgressWorkItems(
     return updated ? plan : false;
   });
   if (updated) {
-    await syncWorkItemPlanToSource(config);
+    await runtime.sourceSync.request();
     log?.('[ConcurrentWorkExecutor] Reset stale in_progress work items to pending before scheduling');
   }
 }
@@ -708,6 +1091,7 @@ async function resetRoundInProgressWorkItems(
 async function markWorkItemsInProgress(
   config: ConcurrentWorkExecutorConfig,
   workItemIds: string[],
+  runtime: ExecutionRuntime,
 ): Promise<void> {
   if (workItemIds.length === 0) {
     return;
@@ -730,11 +1114,11 @@ async function markWorkItemsInProgress(
     return updated ? plan : false;
   });
   if (updated) {
-    await syncWorkItemPlanToSource(config);
+    await runtime.sourceSync.request();
   }
 }
 
-async function syncWorkItemPlanToSource(config: ConcurrentWorkExecutorConfig): Promise<void> {
+async function syncWorkItemPlanToSourceNow(config: ConcurrentWorkExecutorConfig): Promise<void> {
   if (!config.sourceSpecDir || config.sourceSpecDir === config.specDir) {
     return;
   }
@@ -765,6 +1149,7 @@ async function updateWorkItemStatuses(
   config: ConcurrentWorkExecutorConfig,
   updates: Array<{ id: string; summary?: string }>,
   status: 'completed' | 'failed' | 'blocked',
+  runtime: ExecutionRuntime,
 ): Promise<void> {
   if (updates.length === 0) {
     return;
@@ -805,7 +1190,7 @@ async function updateWorkItemStatuses(
     return updated ? plan : false;
   });
   if (updated) {
-    await syncWorkItemPlanToSource(config);
+    await runtime.sourceSync.request();
   }
 }
 
@@ -813,6 +1198,7 @@ async function markDependencyBlockedWorkItems(
   config: ConcurrentWorkExecutorConfig,
   blockedItems: Array<AutocodeWorkDependencyBlockedItem<WorkItemInfo>>,
   statusById: ReadonlyMap<string, string>,
+  runtime: ExecutionRuntime,
 ): Promise<void> {
   await updateWorkItemStatuses(
     config,
@@ -821,6 +1207,7 @@ async function markDependencyBlockedWorkItems(
       summary: describeAutocodeWorkDependencyBlocker(blocked, statusById),
     })),
     'blocked',
+    runtime,
   );
 }
 
@@ -855,6 +1242,12 @@ function getPendingWorkItems(plan: ImplementationPlan): WorkItemInfo[] {
   }
 
   return items;
+}
+
+function hasInProgressWorkItems(plan: ImplementationPlan): boolean {
+  return plan.phases.some((phase) =>
+    phase.subtasks.some((subtask) => subtask.status === 'in_progress'),
+  );
 }
 
 function hasDeclaredField(value: object, field: string): boolean {
@@ -909,14 +1302,7 @@ async function runWithConcurrency<T>(
 }
 
 function summarizeWorkItemResults(results: WorkItemResult[]): WorkItemResult {
-  const completed = results.flatMap((result) => result.completed);
-  const failed = results.flatMap((result) => result.failed);
-  const blocked = results.flatMap((result) => result.blocked);
-  const sessionResult = results.find((result) => result.sessionResult.outcome !== 'completed')?.sessionResult
-    ?? results[0]?.sessionResult
-    ?? ({ outcome: 'completed' } as SessionResult);
-
-  return { completed, failed, blocked, sessionResult };
+  return summarizeAutocodeWorkItemResults(results, { outcome: 'completed' } as SessionResult);
 }
 
 function summarizeSessionResult(result: SessionResult): string | undefined {

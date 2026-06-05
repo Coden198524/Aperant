@@ -19,6 +19,12 @@ import {
   isAutocodeProjectDataPath,
   shouldSkipAutocodeWorkspaceDir,
 } from '@autocode/core/workspace/ignore-rules';
+import {
+  formatAutocodeSmokeTestResults,
+  generateAutocodeSmokeSuggestion,
+  resolveAutocodeProjectTestCommand,
+  shouldAutocodeReturnToCoding,
+} from '@autocode/core/runtime/agent-validation-feedback';
 import { scanFiles } from '../security/secret-scanner';
 
 const execAsync = promisify(exec);
@@ -202,7 +208,7 @@ export async function runPreQASmokeTests(
           check: check.name,
           severity: check.severity,
           output: result.value.stderr || result.value.stdout || 'Check failed',
-          suggestion: generateSuggestion(check, result.value),
+          suggestion: generateAutocodeSmokeSuggestion(check, result.value),
         });
       }
     } else {
@@ -244,7 +250,7 @@ export async function runPreQASmokeTests(
           check: check.name,
           severity: check.severity,
           output: result.stderr || result.stdout || 'Check failed',
-          suggestion: generateSuggestion(check, result),
+          suggestion: generateAutocodeSmokeSuggestion(check, result),
         });
       }
     } catch (error) {
@@ -265,9 +271,7 @@ export async function runPreQASmokeTests(
   }
 
   // Determine if we should return to coding
-  const shouldReturnToCoding = issues.some(
-    (issue) => issue.severity === 'critical' && applicableChecks.find((c) => c.name === issue.check)?.required,
-  );
+  const shouldReturnToCoding = shouldAutocodeReturnToCoding(issues, applicableChecks);
 
   return {
     passed: issues.length === 0,
@@ -367,15 +371,7 @@ async function resolveProjectTestArgs(projectDir: string): Promise<string> {
     const packageJson = JSON.parse(content);
     const script = typeof packageJson.scripts?.test === 'string' ? packageJson.scripts.test : '';
 
-    if (/\bvitest\s+run\b/i.test(script)) {
-      return 'npm test';
-    }
-    if (/\bvitest\b/i.test(script)) {
-      return 'npm test -- --run';
-    }
-    if (/\bjest\b/i.test(script)) {
-      return 'npm test -- --passWithNoTests';
-    }
+    return resolveAutocodeProjectTestCommand(script);
   } catch {
     // Fall back to the project test script without framework-specific flags.
   }
@@ -563,72 +559,8 @@ async function hasBiomeConfig(projectDir: string): Promise<boolean> {
 }
 
 /**
- * Generate a helpful suggestion based on the check failure.
- */
-function generateSuggestion(check: SmokeCheck, result: CheckResult): string | undefined {
-  switch (check.type) {
-    case 'syntax':
-      if (result.stderr?.includes('Parsing error')) {
-        return 'Fix syntax errors before proceeding. Run `npm run lint:fix` to auto-fix.';
-      }
-      return 'Run `npm run lint:fix` to automatically fix linting issues.';
-
-    case 'type':
-      if (result.stderr?.includes('TS2304')) {
-        return 'Missing type definitions. Check imports and installed @types packages.';
-      }
-      if (result.stderr?.includes('TS2345')) {
-        return 'Type mismatch detected. Review function signatures and arguments.';
-      }
-      return 'Fix TypeScript errors. Review the error output for specific issues.';
-
-    case 'security':
-      return 'Potential secrets detected in code. Move sensitive values to environment variables.';
-
-    case 'test':
-      if (result.stderr?.includes('FAIL')) {
-        return 'Unit tests failing. Fix test failures before QA review.';
-      }
-      return 'Tests not passing. Review test output and fix failures.';
-
-    case 'build':
-      if (result.stderr?.includes('Module not found')) {
-        return 'Missing dependencies. Run `npm install` to install missing packages.';
-      }
-      return 'Build failed. Review build output for specific errors.';
-
-    default:
-      return undefined;
-  }
-}
-
-/**
  * Format smoke test results for display.
  */
 export function formatSmokeTestResults(result: SmokeTestResult): string {
-  const lines: string[] = [];
-
-  lines.push('=== Pre-QA Smoke Tests ===\n');
-  lines.push(`Status: ${result.passed ? '✓ PASSED' : '✗ FAILED'}`);
-  lines.push(`Duration: ${(result.durationMs / 1000).toFixed(1)}s`);
-  lines.push(`Checks run: ${result.checks.length}\n`);
-
-  if (result.issues.length > 0) {
-    lines.push('Issues found:\n');
-    for (const issue of result.issues) {
-      const icon = issue.severity === 'critical' ? '✗' : '⚠';
-      lines.push(`${icon} [${issue.type}] ${issue.check}`);
-      lines.push(`  ${issue.output.split('\n')[0]}`);
-      if (issue.suggestion) {
-        lines.push(`  💡 ${issue.suggestion}`);
-      }
-      lines.push('');
-    }
-  }
-
-  if (result.shouldReturnToCoding) {
-    lines.push('⚠ Critical issues found - returning to coding phase for fixes.\n');
-  }
-
-  return lines.join('\n');
+  return formatAutocodeSmokeTestResults(result);
 }

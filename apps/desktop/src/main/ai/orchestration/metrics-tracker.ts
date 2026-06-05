@@ -8,79 +8,19 @@
 import { readFile, writeFile, mkdir } from 'node:fs/promises';
 import { join } from 'node:path';
 import { app } from 'electron';
-import type { OptimizationLevel } from './workflow-config';
+import {
+  aggregateAutocodeWorkflowMetrics,
+  compareAutocodeOptimizationLevels,
+  type AutocodeAggregatedMetrics,
+  type AutocodeTaskExecutionRecord,
+} from '@autocode/core/runtime/workflow-metrics';
 
 // =============================================================================
 // Types
 // =============================================================================
 
-/** Single task execution record */
-interface TaskExecutionRecord {
-  /** Task ID */
-  taskId: string;
-
-  /** Optimization level used */
-  optimizationLevel: OptimizationLevel;
-
-  /** Start timestamp */
-  startTime: number;
-
-  /** End timestamp */
-  endTime: number;
-
-  /** Duration in milliseconds */
-  durationMs: number;
-
-  /** Total tokens used */
-  tokensUsed: number;
-
-  /** Whether task succeeded */
-  success: boolean;
-
-  /** Task complexity tier */
-  complexity?: 'simple' | 'standard' | 'complex';
-
-  /** Number of phases executed */
-  phasesExecuted: number;
-
-  /** Number of retries */
-  totalRetries: number;
-}
-
-/** Aggregated metrics */
-interface AggregatedMetrics {
-  /** Total tasks tracked */
-  totalTasks: number;
-
-  /** Average completion time (ms) */
-  avgCompletionTime: number;
-
-  /** Average token usage */
-  avgTokenUsage: number;
-
-  /** Success rate (0-1) */
-  successRate: number;
-
-  /** Metrics by optimization level */
-  byLevel: {
-    [K in OptimizationLevel]: {
-      count: number;
-      avgTime: number;
-      avgTokens: number;
-      successRate: number;
-    };
-  };
-
-  /** Metrics by complexity */
-  byComplexity: {
-    simple: { count: number; avgTime: number; avgTokens: number };
-    standard: { count: number; avgTime: number; avgTokens: number };
-    complex: { count: number; avgTime: number; avgTokens: number };
-  };
-
-  /** Last updated timestamp */
-  lastUpdated: number;
-}
+type TaskExecutionRecord = AutocodeTaskExecutionRecord;
+type AggregatedMetrics = AutocodeAggregatedMetrics;
 
 // =============================================================================
 // Metrics Tracker
@@ -155,23 +95,7 @@ export class WorkflowMetricsTracker {
   } | null {
     if (!this.aggregated) return null;
 
-    return {
-      conservative: {
-        avgTime: this.aggregated.byLevel.conservative.avgTime,
-        avgTokens: this.aggregated.byLevel.conservative.avgTokens,
-        successRate: this.aggregated.byLevel.conservative.successRate,
-      },
-      balanced: {
-        avgTime: this.aggregated.byLevel.balanced.avgTime,
-        avgTokens: this.aggregated.byLevel.balanced.avgTokens,
-        successRate: this.aggregated.byLevel.balanced.successRate,
-      },
-      aggressive: {
-        avgTime: this.aggregated.byLevel.aggressive.avgTime,
-        avgTokens: this.aggregated.byLevel.aggressive.avgTokens,
-        successRate: this.aggregated.byLevel.aggressive.successRate,
-      },
-    };
+    return compareAutocodeOptimizationLevels(this.aggregated);
   }
 
   /**
@@ -214,44 +138,7 @@ export class WorkflowMetricsTracker {
   }
 
   private async updateAggregatedMetrics(): Promise<void> {
-    if (this.records.length === 0) {
-      this.aggregated = null;
-      return;
-    }
-
-    const totalTasks = this.records.length;
-    const successfulTasks = this.records.filter((r) => r.success).length;
-
-    // Overall metrics
-    const avgCompletionTime =
-      this.records.reduce((sum, r) => sum + r.durationMs, 0) / totalTasks;
-    const avgTokenUsage =
-      this.records.reduce((sum, r) => sum + r.tokensUsed, 0) / totalTasks;
-    const successRate = successfulTasks / totalTasks;
-
-    // By optimization level
-    const byLevel = {
-      conservative: this.aggregateByLevel('conservative'),
-      balanced: this.aggregateByLevel('balanced'),
-      aggressive: this.aggregateByLevel('aggressive'),
-    };
-
-    // By complexity
-    const byComplexity = {
-      simple: this.aggregateByComplexity('simple'),
-      standard: this.aggregateByComplexity('standard'),
-      complex: this.aggregateByComplexity('complex'),
-    };
-
-    this.aggregated = {
-      totalTasks,
-      avgCompletionTime,
-      avgTokenUsage,
-      successRate,
-      byLevel,
-      byComplexity,
-      lastUpdated: Date.now(),
-    };
+    this.aggregated = aggregateAutocodeWorkflowMetrics(this.records);
 
     // Save to disk
     try {
@@ -261,32 +148,6 @@ export class WorkflowMetricsTracker {
     }
   }
 
-  private aggregateByLevel(level: OptimizationLevel) {
-    const levelRecords = this.records.filter((r) => r.optimizationLevel === level);
-    if (levelRecords.length === 0) {
-      return { count: 0, avgTime: 0, avgTokens: 0, successRate: 0 };
-    }
-
-    const count = levelRecords.length;
-    const avgTime = levelRecords.reduce((sum, r) => sum + r.durationMs, 0) / count;
-    const avgTokens = levelRecords.reduce((sum, r) => sum + r.tokensUsed, 0) / count;
-    const successRate = levelRecords.filter((r) => r.success).length / count;
-
-    return { count, avgTime, avgTokens, successRate };
-  }
-
-  private aggregateByComplexity(complexity: 'simple' | 'standard' | 'complex') {
-    const complexityRecords = this.records.filter((r) => r.complexity === complexity);
-    if (complexityRecords.length === 0) {
-      return { count: 0, avgTime: 0, avgTokens: 0 };
-    }
-
-    const count = complexityRecords.length;
-    const avgTime = complexityRecords.reduce((sum, r) => sum + r.durationMs, 0) / count;
-    const avgTokens = complexityRecords.reduce((sum, r) => sum + r.tokensUsed, 0) / count;
-
-    return { count, avgTime, avgTokens };
-  }
 }
 
 // Singleton instance

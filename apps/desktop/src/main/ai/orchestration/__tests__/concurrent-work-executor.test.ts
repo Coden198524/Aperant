@@ -349,6 +349,32 @@ describe('executeConcurrentWorkItems', () => {
     expect(logs.some((message) => message.includes('Dependency scheduling metadata missing'))).toBe(false);
   });
 
+  it('serializes high-risk work items when file metadata is missing', async () => {
+    const plan = createPlan(['a.ts', 'b.ts']);
+    for (const subtask of plan.phases[0].subtasks) {
+      subtask.description = 'Global architecture refactor without scoped file metadata';
+      delete (subtask as { files_to_modify?: string[] }).files_to_modify;
+      delete (subtask as { files_to_create?: string[] }).files_to_create;
+      delete (subtask as { pattern_files?: string[] }).pattern_files;
+    }
+    setupPlanStates({ '/spec': plan });
+    let active = 0;
+    let maxActive = 0;
+    const runWorkItemSession = vi.fn().mockImplementation(async () => {
+      active++;
+      maxActive = Math.max(maxActive, active);
+      await new Promise((resolve) => setTimeout(resolve, 5));
+      active--;
+      return makeSessionResult();
+    });
+
+    const result = await executeConcurrentWorkItems(createConfig({ workers: 2, runWorkItemSession }));
+
+    expect(result.success).toBe(true);
+    expect(result.totalCompleted).toBe(2);
+    expect(maxActive).toBe(1);
+  });
+
   it('marks failed work items as failed after retries are exhausted', async () => {
     const { getPlanState } = setupPlanState(['a.ts']);
     const runWorkItemSession = vi.fn().mockResolvedValue({
@@ -424,6 +450,39 @@ describe('executeConcurrentWorkItems', () => {
     expect((getPlanState().phases[0].subtasks[0] as { notes?: string }).notes).toContain('session crashed');
   });
 
+  it('continues unrelated dependent work after isolating a failed work item', async () => {
+    const plan = createPlan(['a.ts', 'b.ts', 'c.ts']);
+    plan.phases[0].subtasks[2].depends_on = ['work-2'];
+    const { getPlanState } = setupPlanStates({ '/spec': plan });
+    const started: string[] = [];
+    const runWorkItemSession = vi.fn().mockImplementation(async (item) => {
+      started.push(item.id);
+      if (item.id === 'work-1') {
+        return {
+          ...makeSessionResult('error'),
+          error: { message: 'isolated failure' },
+        };
+      }
+      return makeSessionResult();
+    });
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      maxRetries: 0,
+      workers: 2,
+      runWorkItemSession,
+    }));
+
+    expect(result.success).toBe(false);
+    expect(result.totalCompleted).toBe(2);
+    expect(result.totalFailed).toBe(1);
+    expect(started).toEqual(['work-1', 'work-2', 'work-3']);
+    expect(getPlanState('/spec')?.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
+      'failed',
+      'completed',
+      'completed',
+    ]);
+  });
+
   it('isolates plan status write failures without rejecting the whole executor', async () => {
     setupPlanState(['a.ts']);
     let updateCalls = 0;
@@ -461,6 +520,35 @@ describe('executeConcurrentWorkItems', () => {
 
     expect(result.success).toBe(true);
     expect(getPlanState('/source-spec')?.phases[0].subtasks[0].status).toBe('completed');
+  });
+
+  it('records concurrent work item quality metrics when quality config is enabled', async () => {
+    const { getPlanState } = setupPlanState(['src/a.ts']);
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      runWorkItemSession: vi.fn().mockResolvedValue(makeSessionResult()),
+      qualityConfig: {
+        enableActiveMemoryLearning: true,
+      } as NonNullable<ConcurrentWorkExecutorConfig['qualityConfig']>,
+    }));
+
+    const metrics = (getPlanState().phases[0].subtasks[0] as {
+      ai_coding_quality?: {
+        outcome: string;
+        attempt: number;
+        changed_files: string[];
+        files_changed: number;
+        tool_call_count: number;
+      };
+    }).ai_coding_quality;
+    expect(result.success).toBe(true);
+    expect(metrics).toMatchObject({
+      outcome: 'completed',
+      attempt: 1,
+      changed_files: ['src/a.ts'],
+      files_changed: 1,
+      tool_call_count: 5,
+    });
   });
 
   it('waits for declared dependencies before scheduling dependent work items', async () => {

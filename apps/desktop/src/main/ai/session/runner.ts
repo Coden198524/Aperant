@@ -24,7 +24,26 @@ import type { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
 import { StepMemoryState } from '../memory/injection/step-memory-state';
 import { buildMemoryAwareStopCondition } from '../memory/injection/memory-stop-condition';
 
-import { buildThinkingProviderOptions } from '@autocode/core';
+import {
+  MAX_AUTOCODE_WRITE_TOOL_INPUT_FAILURES_PER_SESSION as MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION,
+  buildAutocodeWriteToolInputCorrectionPrompt as buildWriteToolInputCorrectionPrompt,
+  buildThinkingProviderOptions,
+  estimateAutocodeStreamPartSize as estimateStreamPartSize,
+  estimateAutocodeTokenUsageFromSession as estimateTokenUsageFromSession,
+  extractAutocodeCompletedSubtaskIdFromEvent as extractCompletedSubtaskIdFromEvent,
+  extractAutocodeCompletedSubtaskIdFromToolResult as extractCompletedSubtaskIdFromToolResult,
+  getAutocodeWriteToolInputFailure as getWriteToolInputFailure,
+  isAutocodeCompletionStreamPart as isCompletionStreamPart,
+  isAutocodeOpenAIResponsesTransport as isOpenAIResponsesTransport,
+  isResponsesApiModel,
+  normalizeAutocodeTokenUsage as normalizeTokenUsage,
+  repairAutocodeWriteToolInput as repairWriteToolInput,
+  type AutocodeStreamPartLike,
+} from '@autocode/core';
+import {
+  createAutocodeAgentSessionRunner,
+  type AutocodeAgentSessionRunner,
+} from '@autocode/core/runtime/agent-session-runner';
 import { createStreamHandler } from './stream-handler';
 import type { FullStreamPart } from './stream-handler';
 import { classifyError, isAuthenticationError, isRateLimitError, isModelNotFoundError } from './error-classifier';
@@ -81,306 +100,6 @@ const POST_STREAM_TIMEOUT_MS = 10_000;
  *  Protects against providers that accept the request but never send data
  *  (observed with OpenAI Codex via chatgpt.com/backend-api/codex/responses). */
 const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes - increased for complex planning tasks
-
-const WRITE_TOOL_INPUT_ERROR_PATTERNS = [
-  'json parsing failed',
-  'received invalid input type',
-  'expected object',
-  'invalid input for tool write',
-  'missing required parameter',
-  'parameter \'content\' must be a string',
-] as const;
-
-const MAX_WRITE_TOOL_INPUT_FAILURES_PER_SESSION = 2;
-
-const TOKEN_ESTIMATE_CHARS_PER_TOKEN = 4;
-
-function isResponsesApiModel(modelId: string | undefined): boolean {
-  if (!modelId) return false;
-  return (
-    modelId.startsWith('gpt-5') ||
-    modelId.includes('codex') ||
-    modelId === 'o3' ||
-    modelId.startsWith('o3-') ||
-    modelId === 'o4-mini' ||
-    modelId.startsWith('o4-')
-  );
-}
-
-function isOpenAIResponsesTransport(
-  modelProviderId: string | undefined,
-  modelId: string | undefined,
-): boolean {
-  if (modelProviderId) {
-    const normalizedProviderId = modelProviderId.toLowerCase();
-    const isResponsesProvider = normalizedProviderId === 'openai-responses' ||
-      normalizedProviderId.endsWith('.responses') ||
-      normalizedProviderId.endsWith('-responses');
-    if (isResponsesProvider) return true;
-
-    const isChatProvider = normalizedProviderId === 'openai-chat' ||
-      normalizedProviderId.endsWith('.chat') ||
-      normalizedProviderId.endsWith('-chat') ||
-      normalizedProviderId.includes('chatmodel');
-    if (isChatProvider) return false;
-
-    // Some OpenAI-compatible gateways expose responses models with a generic
-    // provider id (e.g. "openai"), so fall back to model-id based detection
-    // when the provider is not explicitly marked as chat transport.
-    return isResponsesApiModel(modelId);
-  }
-
-  // Fallback for tests or provider implementations that only expose model IDs.
-  return isResponsesApiModel(modelId);
-}
-
-function getErrorText(error: unknown): string {
-  if (error instanceof Error) return error.message;
-  if (typeof error === 'string') return error;
-  if (error && typeof error === 'object') {
-    try {
-      return JSON.stringify(error);
-    } catch {
-      return String(error);
-    }
-  }
-  return String(error);
-}
-
-function isWriteToolInputErrorMessage(message: string): boolean {
-  const lower = message.toLowerCase();
-  return WRITE_TOOL_INPUT_ERROR_PATTERNS.some((pattern) => lower.includes(pattern));
-}
-
-interface WriteToolInputFailure {
-  message: string;
-  toolCallId?: string;
-  filePath?: string;
-}
-
-function extractMalformedWritePath(input: unknown): string | undefined {
-  if (typeof input !== 'string') return undefined;
-  const match = input.match(/"file_path"\s*:\s*"([^"]+)"/);
-  return match?.[1]?.replace(/\\/g, '/');
-}
-
-function getWriteToolInputFailure(part: FullStreamPart): WriteToolInputFailure | null {
-  const toolName = typeof (part as { toolName?: unknown }).toolName === 'string'
-    ? (part as { toolName: string }).toolName
-    : undefined;
-
-  if (part.type === 'tool-call' && toolName === 'Write') {
-    const input = (part as { input?: unknown }).input;
-    const toolCallId = typeof (part as { toolCallId?: unknown }).toolCallId === 'string'
-      ? (part as { toolCallId: string }).toolCallId
-      : undefined;
-    if (typeof input !== 'object' || input === null || Array.isArray(input)) {
-      return {
-        message: `received invalid input type ${typeof input}; expected object with file_path and content`,
-        toolCallId,
-        filePath: extractMalformedWritePath(input),
-      };
-    }
-
-    const params = input as Record<string, unknown>;
-    if (typeof params.file_path !== 'string' || typeof params.content !== 'string') {
-      return {
-        message: 'expected object with string file_path and string content',
-        toolCallId,
-        filePath: typeof params.file_path === 'string' ? params.file_path.replace(/\\/g, '/') : undefined,
-      };
-    }
-  }
-
-  if (part.type !== 'tool-error' || toolName !== 'Write') {
-    return null;
-  }
-
-  const message = getErrorText((part as { error?: unknown }).error);
-  if (!isWriteToolInputErrorMessage(message)) {
-    return null;
-  }
-
-  return {
-    message,
-    toolCallId: typeof (part as { toolCallId?: unknown }).toolCallId === 'string'
-      ? (part as { toolCallId: string }).toolCallId
-      : undefined,
-    filePath: extractMalformedWritePath((part as { input?: unknown }).input),
-  };
-}
-
-function buildWriteToolInputCorrectionPrompt(failure: WriteToolInputFailure): string {
-  const target = failure.filePath ?? 'the required output file';
-  return [
-    'WRITE TOOL INPUT CORRECTION',
-    '',
-    `The previous Write call failed before execution: ${failure.message}`,
-    '',
-    'Next action: call Write with one JSON object, not a quoted string or markdown text.',
-    '',
-    'Required shape:',
-    `{"file_path":"${target}","content":"# ...\\n..."}`,
-    '',
-    'Rules:',
-    '- Include both file_path and content.',
-    '- Use forward slashes in file_path.',
-    '- Keep content compact enough for valid tool JSON.',
-    '- Use Edit for small changes to existing files.',
-    '- For spec.md, use Edit for targeted fixes; use Write only to create a missing short spec.',
-  ].join('\n');
-}
-
-function tryParseJson(text: string): unknown {
-  try {
-    return JSON.parse(text);
-  } catch {
-    return undefined;
-  }
-}
-
-function repairWriteToolInput(rawInput: string): string | null {
-  const parsed = tryParseJson(rawInput);
-  const candidate = typeof parsed === 'string' ? tryParseJson(parsed) : parsed;
-  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) {
-    return null;
-  }
-
-  const input = candidate as Record<string, unknown>;
-  if (typeof input.file_path !== 'string' || typeof input.content !== 'string') {
-    return null;
-  }
-
-  return JSON.stringify({
-    file_path: input.file_path.replace(/\\/g, '/'),
-    content: input.content,
-  });
-}
-
-function stringifyToolValue(value: unknown): string {
-  if (typeof value === 'string') {
-    return value;
-  }
-  if (value === undefined || value === null) {
-    return '';
-  }
-  try {
-    return JSON.stringify(value);
-  } catch {
-    return String(value);
-  }
-}
-
-function getToolName(value: unknown): string | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-  const record = value as Record<string, unknown>;
-  return typeof record.toolName === 'string'
-    ? record.toolName
-    : typeof record.tool_name === 'string'
-      ? record.tool_name
-      : null;
-}
-
-function isUpdateSubtaskStatusTool(toolName: string | null): boolean {
-  return toolName?.endsWith('update_subtask_status') === true;
-}
-
-function getToolCallId(value: unknown): string | undefined {
-  if (!value || typeof value !== 'object') {
-    return undefined;
-  }
-  const record = value as Record<string, unknown>;
-  return typeof record.toolCallId === 'string'
-    ? record.toolCallId
-    : typeof record.id === 'string'
-      ? record.id
-      : undefined;
-}
-
-function getRecordValue(record: Record<string, unknown>, names: string[]): unknown {
-  for (const name of names) {
-    if (name in record) {
-      return record[name];
-    }
-  }
-  return undefined;
-}
-
-function extractCompletedStatusText(text: string): string | null {
-  const lower = text.toLowerCase();
-  if (
-    !lower.includes('completed') &&
-    !text.includes("to status 'completed'") &&
-    !text.includes('"status":"completed"') &&
-    !text.includes('"status": "completed"')
-  ) {
-    return null;
-  }
-  return text.match(/subtask ['"]([^'"]+)['"]/i)?.[1] ??
-    text.match(/subtask_id["']?\s*[:=]\s*["']([^"']+)["']/i)?.[1] ??
-    text.match(/"subtask_id"\s*:\s*"([^"]+)"/i)?.[1] ??
-    null;
-}
-
-function extractCompletedStatusInput(input: unknown): { subtaskId?: string; completed: boolean } {
-  if (!input || typeof input !== 'object' || Array.isArray(input)) {
-    return { completed: false };
-  }
-  const record = input as Record<string, unknown>;
-  const status = getRecordValue(record, ['status']);
-  const subtaskId = getRecordValue(record, ['subtask_id', 'subtaskId', 'id']);
-  return {
-    completed: status === 'completed',
-    subtaskId: typeof subtaskId === 'string' ? subtaskId : undefined,
-  };
-}
-
-function extractCompletedSubtaskIdFromToolResult(part: FullStreamPart): string | null {
-  if (part.type !== 'tool-result' || !isUpdateSubtaskStatusTool(getToolName(part))) {
-    return null;
-  }
-
-  const record = part as Record<string, unknown>;
-  const output = getRecordValue(record, ['output', 'result', 'content', 'text']);
-  const text = stringifyToolValue(output);
-  const idFromOutput = extractCompletedStatusText(text);
-  if (idFromOutput) {
-    return idFromOutput;
-  }
-
-  const inputCompletion = extractCompletedStatusInput(record.input);
-  return inputCompletion.completed ? inputCompletion.subtaskId ?? null : null;
-}
-
-function extractCompletedSubtaskIdFromEvent(
-  event: StreamEvent,
-  pendingCompletions: Map<string, string>,
-): string | null {
-  if (event.type === 'tool-call' && isUpdateSubtaskStatusTool(event.toolName)) {
-    const completion = extractCompletedStatusInput(event.args);
-    if (completion.completed && completion.subtaskId) {
-      pendingCompletions.set(event.toolCallId, completion.subtaskId);
-    }
-    return null;
-  }
-
-  if (event.type !== 'tool-result' || !isUpdateSubtaskStatusTool(event.toolName)) {
-    return null;
-  }
-
-  if (event.isError) {
-    pendingCompletions.delete(event.toolCallId);
-    return null;
-  }
-
-  const text = stringifyToolValue(event.result);
-  const idFromOutput = extractCompletedStatusText(text);
-  const idFromInput = pendingCompletions.get(event.toolCallId);
-  pendingCompletions.delete(event.toolCallId);
-  return idFromOutput ?? idFromInput ?? null;
-}
 
 async function repairMalformedToolCall(options: {
   toolCall: LanguageModelV3ToolCall;
@@ -945,15 +664,16 @@ async function executeStream(
     for await (const part of result.fullStream) {
       resetStreamInactivityTimer(); // Reset on each part
       streamHandler.processPart(part as FullStreamPart);
-      const estimatedPartSize = estimateStreamPartSize(part as FullStreamPart);
-      if (isCompletionStreamPart(part as FullStreamPart)) {
+      const policyPart = part as unknown as AutocodeStreamPartLike;
+      const estimatedPartSize = estimateStreamPartSize(policyPart);
+      if (isCompletionStreamPart(policyPart)) {
         streamedCompletionChars += estimatedPartSize;
       } else {
         streamedContextChars += estimatedPartSize;
       }
 
-      const writeToolInputFailure = getWriteToolInputFailure(part as FullStreamPart);
-      const completedSubtaskId = extractCompletedSubtaskIdFromToolResult(part as FullStreamPart);
+      const writeToolInputFailure = getWriteToolInputFailure(policyPart);
+      const completedSubtaskId = extractCompletedSubtaskIdFromToolResult(policyPart);
       if (completedSubtaskId) {
         completedSubtaskIds.add(completedSubtaskId);
       }
@@ -1191,120 +911,10 @@ async function executeStream(
   };
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
+export type DesktopAgentSessionRunner = AutocodeAgentSessionRunner<SessionConfig, RunnerOptions>;
 
-function readNumberField(source: Record<string, unknown>, names: string[]): number | undefined {
-  for (const name of names) {
-    const value = source[name];
-    if (typeof value === 'number' && Number.isFinite(value)) {
-      return value;
-    }
-  }
-  return undefined;
-}
-
-function normalizeTokenUsage(value: unknown): TokenUsage | null {
-  if (!value || typeof value !== 'object') {
-    return null;
-  }
-
-  const record = value as Record<string, unknown>;
-  const promptTokens = readNumberField(record, [
-    'inputTokens',
-    'promptTokens',
-    'prompt_tokens',
-    'input_tokens',
-  ]) ?? 0;
-  const completionTokens = readNumberField(record, [
-    'outputTokens',
-    'completionTokens',
-    'completion_tokens',
-    'output_tokens',
-  ]) ?? 0;
-  const explicitTotal = readNumberField(record, [
-    'totalTokens',
-    'total_tokens',
-  ]);
-  const totalTokens = explicitTotal ?? promptTokens + completionTokens;
-
-  if (promptTokens === 0 && completionTokens === 0 && totalTokens === 0) {
-    return null;
-  }
-
-  return {
-    promptTokens,
-    completionTokens,
-    totalTokens,
-  };
-}
-
-function estimateTokensFromChars(chars: number): number {
-  return Math.max(1, Math.ceil(chars / TOKEN_ESTIMATE_CHARS_PER_TOKEN));
-}
-
-function safeJsonLength(value: unknown): number {
-  try {
-    return JSON.stringify(value)?.length ?? 0;
-  } catch {
-    return String(value ?? '').length;
-  }
-}
-
-function estimateStreamPartSize(part: FullStreamPart): number {
-  const record = part as Record<string, unknown>;
-  const type = typeof record.type === 'string' ? record.type : '';
-
-  if (type === 'text-delta') {
-    return typeof record.delta === 'string'
-      ? record.delta.length
-      : typeof record.text === 'string'
-        ? record.text.length
-        : 0;
-  }
-  if (type === 'reasoning-delta' || type === 'reasoning') {
-    return typeof record.delta === 'string'
-      ? record.delta.length
-      : typeof record.text === 'string'
-        ? record.text.length
-        : 0;
-  }
-  if (type === 'tool-call') {
-    return safeJsonLength(record.input ?? record.args ?? record);
-  }
-  if (type === 'tool-result') {
-    return safeJsonLength(record.output ?? record.result ?? record);
-  }
-
-  return 0;
-}
-
-function isCompletionStreamPart(part: FullStreamPart): boolean {
-  const type = (part as { type?: unknown }).type;
-  return type === 'text-delta' || type === 'reasoning-delta' || type === 'reasoning';
-}
-
-function estimateTokenUsageFromSession(input: {
-  systemPrompt: string;
-  messages: SessionMessage[];
-  streamedCompletionChars: number;
-  streamedContextChars: number;
-}): TokenUsage {
-  const promptChars = input.systemPrompt.length
-    + input.messages.reduce((total, message) => total + message.content.length, 0)
-    + input.streamedContextChars;
-  const completionChars = input.streamedCompletionChars;
-  const promptTokens = estimateTokensFromChars(promptChars);
-  const completionTokens = estimateTokensFromChars(completionChars);
-
-  return {
-    promptTokens,
-    completionTokens,
-    totalTokens: promptTokens + completionTokens,
-    estimated: true,
-  };
-}
+export const desktopAgentSessionRunner: DesktopAgentSessionRunner =
+  createAutocodeAgentSessionRunner(runAgentSession);
 
 /**
  * Build an error SessionResult.
