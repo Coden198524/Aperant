@@ -13,6 +13,13 @@ export {
 } from './plan-language.js';
 
 export {
+  PLAN_COMPACTION_LIMITS,
+  compactImplementationPlan,
+  type PlanCompactionOptions,
+  type PlanCompactionResult,
+} from './plan-compaction.js';
+
+export {
   ComplexityAssessmentSchema,
   type ValidatedComplexityAssessment,
 } from './complexity-assessment.js';

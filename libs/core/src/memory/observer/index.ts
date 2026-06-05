@@ -1,4 +1,14 @@
 export {
+  DEAD_END_LANGUAGE_PATTERNS,
+  detectDeadEnd,
+  type DeadEndDetectionResult,
+} from './dead-end-detector.js';
+
+export {
+  applyTrustGate,
+} from './trust-gate.js';
+
+export {
   SIGNAL_VALUES,
   SELF_CORRECTION_PATTERNS,
   type BacktrackSignal,
@@ -21,4 +31,22 @@ export {
   type TestOrderSignal,
   type TimeAnomalySignal,
   type ToolSequenceSignal,
-} from '@autocode/core/memory/observer';
+} from './signals.js';
+
+export {
+  EARLY_TRIGGERS,
+  PromotionPipeline,
+  SESSION_TYPE_PROMOTION_LIMITS,
+  type EarlyTrigger,
+} from './promotion.js';
+
+export {
+  ParallelScratchpadMerger,
+  type MergedScratchpad,
+  type MergedScratchpadEntry,
+} from './scratchpad-merger.js';
+
+export type {
+  ScratchpadAnalytics,
+  ScratchpadLike,
+} from './types.js';

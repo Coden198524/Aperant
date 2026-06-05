@@ -59,12 +59,33 @@ export const AUTOCODE_SESSION_TYPES = [
   'pr_review',
 ] as const;
 
+export const AUTOCODE_OBSERVER_SIGNAL_TYPES = [
+  'file_access',
+  'co_access',
+  'error_retry',
+  'backtrack',
+  'read_abandon',
+  'repeated_grep',
+  'tool_sequence',
+  'time_anomaly',
+  'self_correction',
+  'external_reference',
+  'glob_ignore',
+  'import_chase',
+  'test_order',
+  'config_touch',
+  'step_overrun',
+  'parallel_conflict',
+  'context_token_spike',
+] as const;
+
 export type AutocodeMemoryType = (typeof AUTOCODE_MEMORY_TYPES)[number];
 export type AutocodeMemorySource = (typeof AUTOCODE_MEMORY_SOURCES)[number];
 export type AutocodeMemoryScope = (typeof AUTOCODE_MEMORY_SCOPES)[number];
 export type AutocodeUniversalPhase = (typeof AUTOCODE_MEMORY_PHASES)[number];
 export type AutocodeSessionOutcome = (typeof AUTOCODE_SESSION_OUTCOMES)[number];
 export type AutocodeSessionType = (typeof AUTOCODE_SESSION_TYPES)[number];
+export type AutocodeObserverSignalType = (typeof AUTOCODE_OBSERVER_SIGNAL_TYPES)[number];
 
 export type MemoryType = AutocodeMemoryType;
 export type MemorySource = AutocodeMemorySource;
@@ -72,6 +93,7 @@ export type MemoryScope = AutocodeMemoryScope;
 export type UniversalPhase = AutocodeUniversalPhase;
 export type SessionOutcome = AutocodeSessionOutcome;
 export type SessionType = AutocodeSessionType;
+export type SignalType = AutocodeObserverSignalType;
 
 export interface WorkUnitRef {
   methodology: string;
@@ -163,6 +185,30 @@ export interface MemoryRecordEntry {
   chunkEndLine?: number;
   contextPrefix?: string;
   trustLevelScope?: string;
+}
+
+export interface MemoryCandidate {
+  signalType: SignalType;
+  proposedType: MemoryType;
+  content: string;
+  relatedFiles: string[];
+  relatedModules: string[];
+  confidence: number;
+  priority: number;
+  originatingStep: number;
+  needsReview?: boolean;
+  trustFlags?: {
+    contaminated: boolean;
+    contaminationSource: string;
+  };
+}
+
+export interface AcuteCandidate {
+  signalType: SignalType;
+  rawData: unknown;
+  priority: number;
+  capturedAt: number;
+  stepNumber: number;
 }
 
 export interface MemoryService {

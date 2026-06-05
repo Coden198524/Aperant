@@ -367,6 +367,41 @@
       "import": "./dist/memory/index.js",
       "default": "./dist/memory/index.js"
     },
+    "./memory/retrieval": {
+      "types": "./dist/memory/retrieval/index.d.ts",
+      "import": "./dist/memory/retrieval/index.js",
+      "default": "./dist/memory/retrieval/index.js"
+    },
+    "./memory/observer": {
+      "types": "./dist/memory/observer/index.d.ts",
+      "import": "./dist/memory/observer/index.js",
+      "default": "./dist/memory/observer/index.js"
+    },
+    "./context": {
+      "types": "./dist/context/index.d.ts",
+      "import": "./dist/context/index.js",
+      "default": "./dist/context/index.js"
+    },
+    "./merge": {
+      "types": "./dist/merge/index.d.ts",
+      "import": "./dist/merge/index.js",
+      "default": "./dist/merge/index.js"
+    },
+    "./schema/plan-compaction": {
+      "types": "./dist/schema/plan-compaction.d.ts",
+      "import": "./dist/schema/plan-compaction.js",
+      "default": "./dist/schema/plan-compaction.js"
+    },
+    "./integrations/github": {
+      "types": "./dist/integrations/github/index.d.ts",
+      "import": "./dist/integrations/github/index.js",
+      "default": "./dist/integrations/github/index.js"
+    },
+    "./integrations/gitblit": {
+      "types": "./dist/integrations/gitblit/index.d.ts",
+      "import": "./dist/integrations/gitblit/index.js",
+      "default": "./dist/integrations/gitblit/index.js"
+    },
     "./openspec": {
       "types": "./dist/openspec/index.d.ts",
       "import": "./dist/openspec/index.js",
