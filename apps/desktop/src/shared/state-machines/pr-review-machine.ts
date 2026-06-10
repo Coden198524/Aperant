@@ -1,4 +1,5 @@
 import { assign, createMachine } from 'xstate';
+import { createAutocodePrReviewInitialContext } from '@autocode/core/tasks/state-machine-rules';
 import type { PRReviewProgress, PRReviewResult } from '../../preload/api/modules/github-api';
 
 export interface PRReviewContext {
@@ -23,17 +24,8 @@ export type PRReviewEvent =
   | { type: 'DETECT_EXTERNAL_REVIEW' }
   | { type: 'CLEAR_REVIEW' };
 
-const initialContext: PRReviewContext = {
-  prNumber: null,
-  projectId: null,
-  startedAt: null,
-  isFollowup: false,
-  progress: null,
-  result: null,
-  previousResult: null,
-  error: null,
-  isExternalReview: false,
-};
+const initialContext: PRReviewContext =
+  createAutocodePrReviewInitialContext<PRReviewProgress, PRReviewResult>();
 
 export const prReviewMachine = createMachine(
   {

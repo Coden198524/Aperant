@@ -7,8 +7,16 @@ import { execFileSync, execFile } from 'child_process';
 import { promisify } from 'util';
 import { getAutocodeProjectEnvPath } from '@autocode/core';
 import {
+  GITHUB_ETAG_CACHE_MAX_SIZE,
+  GITHUB_ETAG_CACHE_TTL_MS,
+  GITHUB_ETAG_EVICTION_INTERVAL,
+  clearGitHubETagCache,
+  clearGitHubETagCacheForProject,
+  evictGitHubETagCacheEntries,
   extractGitHubRateLimitInfo,
   normalizeGitHubRepoReference,
+  type GitHubETagCache,
+  type GitHubETagCacheEntry,
   type GitHubRateLimitInfo,
 } from '@autocode/core/integrations/github';
 import type { Project } from '../../../shared/types';
@@ -22,18 +30,12 @@ const execFileAsync = promisify(execFile);
 /**
  * ETag cache entry for conditional requests
  */
-export interface ETagCacheEntry {
-  etag: string;
-  data: unknown;
-  lastUpdated: Date;
-}
+export type ETagCacheEntry = GitHubETagCacheEntry;
 
 /**
  * ETag cache for storing conditional request data
  */
-export interface ETagCache {
-  [url: string]: ETagCacheEntry;
-}
+export type ETagCache = GitHubETagCache;
 
 /**
  * Rate limit information extracted from GitHub API response headers
@@ -52,17 +54,17 @@ export interface GitHubFetchWithETagResult {
 /**
  * Maximum age for cache entries (30 minutes)
  */
-const ETAG_CACHE_TTL_MS = 30 * 60 * 1000;
+const ETAG_CACHE_TTL_MS = GITHUB_ETAG_CACHE_TTL_MS;
 
 /**
  * Maximum number of cache entries before evicting oldest
  */
-const ETAG_CACHE_MAX_SIZE = 200;
+const ETAG_CACHE_MAX_SIZE = GITHUB_ETAG_CACHE_MAX_SIZE;
 
 /**
  * Run eviction every N cache writes to amortize cost
  */
-const ETAG_EVICTION_INTERVAL = 10;
+const ETAG_EVICTION_INTERVAL = GITHUB_ETAG_EVICTION_INTERVAL;
 
 /**
  * Counter for cache writes since last eviction
@@ -85,9 +87,7 @@ export function getETagCache(): ETagCache {
  * Clear all ETag cache entries (for testing)
  */
 export function clearETagCache(): void {
-  for (const key of Object.keys(etagCache)) {
-    delete etagCache[key];
-  }
+  clearGitHubETagCache(etagCache);
   evictionWriteCounter = 0;
 }
 
@@ -96,39 +96,19 @@ export function clearETagCache(): void {
  * Used when stopping polling for a specific project so other projects' caches remain valid.
  */
 export function clearETagCacheForProject(ownerRepo: string): void {
-  const prefix = `https://api.github.com/repos/${ownerRepo}`;
-  for (const key of Object.keys(etagCache)) {
-    if (key.startsWith(prefix)) {
-      delete etagCache[key];
-    }
-  }
+  clearGitHubETagCacheForProject(etagCache, ownerRepo);
 }
 
 /**
  * Evict stale entries (older than TTL) and enforce max size by removing oldest entries.
  */
 function evictStaleCacheEntries(): void {
-  const now = Date.now();
-  const keys = Object.keys(etagCache);
-
-  // Remove expired entries
-  for (const key of keys) {
-    if (now - etagCache[key].lastUpdated.getTime() > ETAG_CACHE_TTL_MS) {
-      delete etagCache[key];
-    }
-  }
-
-  // Enforce max size by removing oldest entries
-  const remainingKeys = Object.keys(etagCache);
-  if (remainingKeys.length > ETAG_CACHE_MAX_SIZE) {
-    const sorted = remainingKeys.sort(
-      (a, b) => etagCache[a].lastUpdated.getTime() - etagCache[b].lastUpdated.getTime()
-    );
-    const toRemove = sorted.slice(0, sorted.length - ETAG_CACHE_MAX_SIZE);
-    for (const key of toRemove) {
-      delete etagCache[key];
-    }
-  }
+  evictGitHubETagCacheEntries(
+    etagCache,
+    Date.now(),
+    ETAG_CACHE_TTL_MS,
+    ETAG_CACHE_MAX_SIZE
+  );
 }
 
 /**

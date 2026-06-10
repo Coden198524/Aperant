@@ -413,19 +413,28 @@ export type MemoryIpcResponse =
 export type GraphNodeType =
   | 'file'
   | 'function'
+  | 'method'
   | 'class'
   | 'interface'
+  | 'type'
   | 'type_alias'
   | 'variable'
   | 'enum'
-  | 'module';
+  | 'module'
+  | 'test'
+  | 'import'
+  | 'export';
 
 export type GraphEdgeType =
   | 'imports'
   | 'imports_symbol'
   | 'calls'
+  | 'inherits'
   | 'extends'
   | 'implements'
+  | 'contains'
+  | 'tests'
+  | 'references'
   | 'exports'
   | 'defined_in';
 

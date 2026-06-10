@@ -14,21 +14,37 @@
  * @see https://specifications.freedesktop.org/basedir-spec/basedir-spec-latest.html
  */
 
-import * as path from 'path';
 import * as os from 'os';
 import { existsSync } from 'fs';
 import { AUTOCODE_PROJECT_DATA_DIR_NAME } from '@autocode/core/tasks/artifacts';
+import {
+  getAutocodeAppCacheDir,
+  getAutocodeAppConfigDir,
+  getAutocodeAppDataDir,
+  getAutocodeAppPath,
+  getAutocodeMemoriesDir,
+  getAutocodeXdgCacheHome,
+  getAutocodeXdgConfigHome,
+  getAutocodeXdgDataHome,
+  isAutocodeImmutableEnvironment,
+} from '@autocode/core/platform/app-paths';
 import { isLinux } from './platform';
 
-const APP_NAME = 'autocode';
-const LEGACY_HOME_APP_NAMES = ['.auto-claude', '.aperant'];
+function getAppPathEnvironment() {
+  return {
+    env: process.env,
+    homeDir: os.homedir(),
+    isLinux: isLinux(),
+    legacyPathExists: existsSync,
+  };
+}
 
 /**
  * Get the XDG config home directory
  * Uses $XDG_CONFIG_HOME if set, otherwise defaults to ~/.config
  */
 export function getXdgConfigHome(): string {
-  return process.env.XDG_CONFIG_HOME || path.join(os.homedir(), '.config');
+  return getAutocodeXdgConfigHome(getAppPathEnvironment());
 }
 
 /**
@@ -36,7 +52,7 @@ export function getXdgConfigHome(): string {
  * Uses $XDG_DATA_HOME if set, otherwise defaults to ~/.local/share
  */
 export function getXdgDataHome(): string {
-  return process.env.XDG_DATA_HOME || path.join(os.homedir(), '.local', 'share');
+  return getAutocodeXdgDataHome(getAppPathEnvironment());
 }
 
 /**
@@ -44,7 +60,7 @@ export function getXdgDataHome(): string {
  * Uses $XDG_CACHE_HOME if set, otherwise defaults to ~/.cache
  */
 export function getXdgCacheHome(): string {
-  return process.env.XDG_CACHE_HOME || path.join(os.homedir(), '.cache');
+  return getAutocodeXdgCacheHome(getAppPathEnvironment());
 }
 
 /**
@@ -52,7 +68,7 @@ export function getXdgCacheHome(): string {
  * Returns the XDG-compliant path for storing configuration files
  */
 export function getAppConfigDir(): string {
-  return path.join(getXdgConfigHome(), APP_NAME);
+  return getAutocodeAppConfigDir(getAppPathEnvironment());
 }
 
 /**
@@ -60,7 +76,7 @@ export function getAppConfigDir(): string {
  * Returns the XDG-compliant path for storing application data
  */
 export function getAppDataDir(): string {
-  return path.join(getXdgDataHome(), APP_NAME);
+  return getAutocodeAppDataDir(getAppPathEnvironment());
 }
 
 /**
@@ -68,7 +84,7 @@ export function getAppDataDir(): string {
  * Returns the XDG-compliant path for storing cache files
  */
 export function getAppCacheDir(): string {
-  return path.join(getXdgCacheHome(), APP_NAME);
+  return getAutocodeAppCacheDir(getAppPathEnvironment());
 }
 
 /**
@@ -76,17 +92,7 @@ export function getAppCacheDir(): string {
  * This is where graph databases are stored.
  */
 export function getMemoriesDir(): string {
-  const defaultPath = path.join(os.homedir(), AUTOCODE_PROJECT_DATA_DIR_NAME, 'memories');
-  const legacyPath = LEGACY_HOME_APP_NAMES
-    .map((name) => path.join(os.homedir(), name, 'memories'))
-    .find((candidate) => existsSync(candidate));
-
-  // On Linux with XDG variables set (AppImage, Flatpak, Snap), use XDG path
-  if (isLinux() && (process.env.XDG_DATA_HOME || process.env.APPIMAGE || process.env.SNAP || process.env.FLATPAK_ID)) {
-    return path.join(getXdgDataHome(), APP_NAME, 'memories');
-  }
-
-  return legacyPath || defaultPath;
+  return getAutocodeMemoriesDir(getAppPathEnvironment(), AUTOCODE_PROJECT_DATA_DIR_NAME);
 }
 
 /**
@@ -101,11 +107,7 @@ export function getGraphsDir(): string {
  * (AppImage, Flatpak, Snap, etc.)
  */
 export function isImmutableEnvironment(): boolean {
-  return !!(
-    process.env.APPIMAGE ||
-    process.env.SNAP ||
-    process.env.FLATPAK_ID
-  );
+  return isAutocodeImmutableEnvironment(process.env);
 }
 
 /**
@@ -116,16 +118,5 @@ export function isImmutableEnvironment(): boolean {
  * @returns The appropriate path for the current environment
  */
 export function getAppPath(type: 'config' | 'data' | 'cache' | 'memories'): string {
-  switch (type) {
-    case 'config':
-      return getAppConfigDir();
-    case 'data':
-      return getAppDataDir();
-    case 'cache':
-      return getAppCacheDir();
-    case 'memories':
-      return getMemoriesDir();
-    default:
-      return getAppDataDir();
-  }
+  return getAutocodeAppPath(type, getAppPathEnvironment(), AUTOCODE_PROJECT_DATA_DIR_NAME);
 }

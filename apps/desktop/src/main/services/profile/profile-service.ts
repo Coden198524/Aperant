@@ -12,6 +12,10 @@ import Anthropic, {
   APIConnectionError,
   APIConnectionTimeoutError
 } from '@anthropic-ai/sdk';
+import {
+  validateAutocodeApiKey,
+  validateAutocodeBaseUrl,
+} from '@autocode/core/auth/profile-validation';
 
 import { loadProfilesFile, generateProfileId, atomicModifyProfiles } from './profile-manager';
 import type { APIProfile, TestConnectionResult, ModelInfo, DiscoverModelsResult } from '@shared/types/profile';
@@ -31,17 +35,7 @@ export type UpdateProfileInput = Pick<APIProfile, 'id'> & CreateProfileInput;
  * Accepts HTTP(S) URLs with valid endpoints
  */
 export function validateBaseUrl(baseUrl: string): boolean {
-  if (!baseUrl || baseUrl.trim() === '') {
-    return false;
-  }
-
-  try {
-    const url = new URL(baseUrl);
-    // Only allow http and https protocols
-    return url.protocol === 'http:' || url.protocol === 'https:';
-  } catch {
-    return false;
-  }
+  return validateAutocodeBaseUrl(baseUrl);
 }
 
 /**
@@ -49,24 +43,7 @@ export function validateBaseUrl(baseUrl: string): boolean {
  * Accepts various API key formats (Anthropic, OpenAI, custom)
  */
 export function validateApiKey(apiKey: string): boolean {
-  if (!apiKey || apiKey.trim() === '') {
-    return false;
-  }
-
-  const trimmed = apiKey.trim();
-
-  // Too short to be a real API key
-  if (trimmed.length < 12) {
-    return false;
-  }
-
-  // Accept common API key formats
-  // Anthropic: sk-ant-...
-  // OpenAI: sk-proj-... or sk-...
-  // Custom: any reasonable length key with alphanumeric chars
-  const hasValidChars = /^[a-zA-Z0-9\-_+.]+$/.test(trimmed);
-
-  return hasValidChars;
+  return validateAutocodeApiKey(apiKey);
 }
 
 /**

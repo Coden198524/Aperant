@@ -782,7 +782,7 @@ async function assemblePrompt(
 ): Promise<string> {
   const useCompactAggressiveCoderPrompt = promptName === 'coder' && isAggressiveWorkflow(session);
   const profileProjectDir = getPromptProfileProjectDir(session);
-  const projectPromptProfile = !useCompactAggressiveCoderPrompt && shouldUseProjectPromptProfile(session, promptName)
+  const projectPromptProfile = shouldUseProjectPromptProfile(session, promptName)
     ? getProjectPromptProfile(session)
     : null;
   const projectOverride = useCompactAggressiveCoderPrompt
@@ -834,7 +834,7 @@ async function assemblePrompt(
     });
 
   if (projectPromptProfile && !projectOverride) {
-    const profileSection = promptName === 'direct_task'
+    const profileSection = promptName === 'direct_task' || useCompactAggressiveCoderPrompt
       ? buildCompactProjectPromptProfileSection(projectPromptProfile)
       : buildProjectPromptProfileSection(projectPromptProfile);
     promptWithContext += `\n\n${profileSection}`;

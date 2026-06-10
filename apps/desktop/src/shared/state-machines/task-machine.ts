@@ -1,4 +1,5 @@
 import { assign, createMachine } from 'xstate';
+import { AUTOCODE_TASK_MACHINE_INITIAL_CONTEXT } from '@autocode/core/tasks/state-machine-rules';
 import type { ReviewReason } from '../types';
 
 export interface TaskContext {
@@ -48,10 +49,7 @@ export const taskMachine = createMachine(
       context: TaskContext;
       events: TaskEvent;
     },
-    context: {
-      reviewReason: undefined,
-      error: undefined
-    },
+    context: { ...AUTOCODE_TASK_MACHINE_INITIAL_CONTEXT } as TaskContext,
     states: {
       backlog: {
         on: {

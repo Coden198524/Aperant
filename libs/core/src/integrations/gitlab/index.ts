@@ -1,9 +1,12 @@
 export {
   DEFAULT_GITLAB_URL,
+  GITLAB_MAX_PROJECT_REF_LENGTH,
   encodeGitLabProjectPath,
   normalizeGitLabInstanceUrl,
   normalizeGitLabProjectReference,
   parseGitLabInstanceUrl,
+  sanitizeGitLabProjectRef,
+  sanitizeGitLabToken,
 } from './api-utils.js';
 
 export {

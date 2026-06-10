@@ -410,6 +410,123 @@ export {
   type ResolvedAuth,
 } from './auth/index.js';
 
+export {
+  API_ID_PREFIX,
+  AUTOCODE_API_ID_PREFIX,
+  AUTOCODE_OAUTH_ID_PREFIX,
+  OAUTH_ID_PREFIX,
+  apiProfileToAutocodeUnified,
+  calculateAutocodeProfileFallbackScore,
+  checkAutocodeProfileAvailability,
+  claudeProfileToAutocodeUnified,
+  extractAutocodeProfileId,
+  getAutocodeProfilesSortedByAvailability,
+  getBestAvailableAutocodeProfile,
+  getBestAvailableAutocodeUnifiedAccount,
+  isAutocodeAPIAccountId,
+  isAutocodeOAuthAccountId,
+  scoreAutocodeProviderAccount,
+  scoreAutocodeUnifiedAccount,
+  shouldAutocodeProactivelySwitch,
+  toAutocodeAPIUnifiedId,
+  toAutocodeOAuthUnifiedId,
+  type AutocodeAccountSelectionOptions,
+  type AutocodeApiProfileLike,
+  type AutocodeAutoSwitchSettingsLike,
+  type AutocodeClaudeProfileLike,
+  type AutocodeProviderAccountLike,
+  type AutocodeUnifiedAccount,
+  type AutocodeUnifiedAccountType,
+  type ScoredAutocodeUnifiedAccount,
+} from './auth/account-selection.js';
+
+export {
+  classifyAutocodeRateLimitType,
+  clearAutocodeRateLimitEvents,
+  isAutocodeProfileRateLimited,
+  parseAutocodeResetTime,
+  parseAutocodeUsageOutput,
+  recordAutocodeRateLimitEvent,
+  type AutocodeClaudeUsageData,
+  type AutocodeRateLimitEventLike,
+  type AutocodeRateLimitType,
+  type AutocodeRateLimitedProfileLike,
+} from './auth/usage.js';
+
+export {
+  getAutocodeApiBaseUrlSuggestions,
+  maskAutocodeSecret,
+  normalizeAutocodeApiBaseUrl,
+  validateAutocodeApiKey,
+  validateAutocodeBaseUrl,
+} from './auth/profile-validation.js';
+
+export * from './auth/profile-store.js';
+
+export {
+  AtomicFileError,
+  readFileWithRetry,
+  writeFileAtomic,
+  writeFileAtomicSync,
+  writeFileWithRetry,
+  writeJsonAtomic,
+  writeJsonWithRetry,
+} from './io/atomic-file.js';
+
+export { withFileLock } from './io/file-lock.js';
+export { isNodeError } from './io/type-guards.js';
+
+export {
+  findExecutable,
+  getBinaryDirectories,
+  getClaudeExecutablePath,
+  getCurrentOS,
+  getEnvVar,
+  getExecutableExtension,
+  getGitExecutablePath,
+  getHomebrewPath,
+  getNodeExecutablePath,
+  getNpmCommand,
+  getNpxCommand,
+  getOllamaExecutablePaths,
+  getOllamaInstallCommand,
+  getPathConfig,
+  getPathDelimiter,
+  getPlatformDescription,
+  getPythonCommands,
+  getPythonPaths,
+  getShellConfig,
+  getTaskkillExePath,
+  getWhereExePath,
+  getWhichCommand,
+  getWindowsShellPaths,
+  getWindowsToolPath,
+  isLinux,
+  isMacOS,
+  isSecurePath,
+  isUnix,
+  isWindows,
+  joinPaths,
+  normalizePath,
+  requiresShell,
+  withExecutableExtension,
+} from './platform/os.js';
+
+export {
+  OS,
+  ShellType,
+  type BinaryDirectories,
+  type ExecutableConfig,
+  type PathConfig,
+  type ShellConfig,
+  type ToolDetectionResult,
+} from './platform/types.js';
+
+export * from './platform/app-paths.js';
+export * from './platform/env-paths.js';
+export * from './platform/path-helpers.js';
+export * from './platform/tool-detection.js';
+
 export type {
   GitAdapter,
   NotificationAdapter,
@@ -423,6 +540,16 @@ export type {
   TerminalAdapter,
   WorkspaceAdapter,
 } from './platform/interfaces/index.js';
+
+export * from './config/claude-code-settings.js';
+export * from './changelog/index.js';
+export * from './frontend/time-format.js';
+export * from './memory/config.js';
+export * from './runtime/claude-session-paths.js';
+export * from './runtime/terminal-session.js';
+export * from './tasks/ideation-transformers.js';
+export * from './tasks/roadmap-transformers.js';
+export * from './utils/debounce.js';
 
 export {
   type AutocodeAgentLanguage,
@@ -1363,6 +1490,22 @@ export {
 } from './frontend/command-line.js';
 
 export {
+  AUTOCODE_CLI_LABELS,
+  AUTOCODE_QUICK_CLI_OPTIONS,
+  getAutocodeCliLabel,
+} from './frontend/cli-display.js';
+
+export {
+  getAutocodeProviderModelLabel,
+} from './frontend/model-display.js';
+
+export {
+  resolveAutocodeActiveSubtaskIndex,
+  type AutocodeSubtaskProgressItem,
+  type ResolveAutocodeActiveSubtaskOptions,
+} from './frontend/subtask-progress.js';
+
+export {
   type AutocodeDisplayRow,
   type AutocodeTaskCardViewModel,
   type AutocodeTaskDisplayInput,
@@ -1443,6 +1586,8 @@ export {
   isCompletedTask,
 } from './tasks/task-status.js';
 
+export * from './graph/index.js';
+
 export {
   TASK_STATE_NAMES,
   XSTATE_ACTIVE_STATES,
@@ -1451,6 +1596,24 @@ export {
   mapStateToLegacy,
   type TaskStateName,
 } from './tasks/task-state-utils.js';
+
+export {
+  AUTOCODE_PR_REVIEW_INITIAL_CONTEXT,
+  AUTOCODE_ROADMAP_FEATURE_INITIAL_CONTEXT,
+  AUTOCODE_ROADMAP_GENERATION_INITIAL_CONTEXT,
+  AUTOCODE_TASK_MACHINE_INITIAL_CONTEXT,
+  AUTOCODE_TERMINAL_MACHINE_INITIAL_CONTEXT,
+  AUTOCODE_TERMINAL_SWAP_PHASES,
+  clampAutocodeProgress,
+  createAutocodePrReviewInitialContext,
+  isAutocodeTerminalSwapPhase,
+  type AutocodePrReviewContext,
+  type AutocodeRoadmapFeatureContext,
+  type AutocodeRoadmapGenerationContext,
+  type AutocodeTaskMachineContext,
+  type AutocodeTerminalMachineContext,
+  type AutocodeTerminalSwapPhase,
+} from './tasks/state-machine-rules.js';
 
 export {
   ALL_PATTERNS,
@@ -1782,3 +1945,13 @@ export {
   getAutocodeToolOutputDir,
   getAutocodeYunxiaoDir,
 } from './project/data-paths.js';
+
+export * from './auth/api-profile-provider-account-sync.js';
+export * from './frontend/display-format.js';
+export * from './frontend/error-localizers.js';
+export * from './frontend/terminal-font-settings.js';
+export * from './graph/language-registry.js';
+export * from './integrations/git/isolation.js';
+export * from './integrations/yunxiao/issue-record.js';
+export * from './memory/injection/index.js';
+export * from './platform/version.js';

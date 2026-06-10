@@ -15,6 +15,13 @@ import * as fs from 'fs';
 import { promises as fsPromises } from 'fs';
 import { execFileSync, execFile } from 'child_process';
 import { promisify } from 'util';
+import {
+  AUTOCODE_COMMON_BIN_PATHS,
+  buildAutocodePathsToAdd,
+  expandAutocodePlatformPaths,
+  getAutocodeEssentialSystemPaths,
+  getAutocodeWindowsNpmFallbackPath,
+} from '@autocode/core/platform/env-paths';
 import { getSentryEnvForSubprocess } from './sentry';
 import { isWindows, isUnix, getPathDelimiter, getNpmCommand } from './platform';
 
@@ -31,8 +38,7 @@ const execFileAsync = promisify(execFile);
  * falling back to the default home directory location.
  */
 const WINDOWS_NPM_FALLBACK_PATH = (): string => {
-  const appDataPath = process.env.APPDATA || path.join(os.homedir(), 'AppData', 'Roaming');
-  return path.join(appDataPath, 'npm');
+  return getAutocodeWindowsNpmFallbackPath(os.homedir(), process.env.APPDATA);
 };
 
 /**
@@ -113,49 +119,7 @@ function getNpmGlobalPrefix(): string | null {
  * Common binary directories that should be in PATH
  * These are locations where commonly used tools are installed
  */
-export const COMMON_BIN_PATHS: Record<string, string[]> = {
-  darwin: [
-    '/opt/homebrew/bin',      // Apple Silicon Homebrew
-    '/usr/local/bin',         // Intel Homebrew / system
-    '/usr/local/share/dotnet', // .NET SDK
-    '/opt/homebrew/sbin',     // Apple Silicon Homebrew sbin
-    '/usr/local/sbin',        // Intel Homebrew sbin
-    '~/.local/bin',           // User-local binaries (Claude CLI)
-    '~/.dotnet/tools',        // .NET global tools
-  ],
-  linux: [
-    '/usr/local/bin',
-    '/usr/bin',               // System binaries (Python, etc.)
-    '/snap/bin',              // Snap packages
-    '~/.local/bin',           // User-local binaries
-    '~/.dotnet/tools',        // .NET global tools
-    '/usr/sbin',              // System admin binaries
-  ],
-  win32: [
-    // Windows usually handles PATH better, but we can add common locations
-    'C:\\Program Files\\Git\\cmd',
-    'C:\\Program Files\\GitHub CLI',
-    // Node.js and npm paths - critical for packaged Electron apps that don't inherit full PATH
-    'C:\\Program Files\\nodejs',                  // Standard Node.js installer (64-bit)
-    'C:\\Program Files (x86)\\nodejs',            // 32-bit Node.js on 64-bit Windows
-    '~\\AppData\\Local\\Programs\\nodejs',        // NVM for Windows / user install
-    '~\\AppData\\Roaming\\npm',                   // npm global scripts (claude.cmd lives here)
-    '~\\scoop\\apps\\nodejs\\current',            // Scoop package manager
-    'C:\\ProgramData\\chocolatey\\bin',           // Chocolatey package manager
-  ],
-};
-
-/**
- * Essential system directories that must always be in PATH
- * Required for core system functionality (e.g., /usr/bin/security for Keychain access on macOS,
- * System32 for where.exe/taskkill.exe on Windows)
- */
-const ESSENTIAL_SYSTEM_PATHS: Record<string, string[]> = {
-  unix: ['/usr/bin', '/bin', '/usr/sbin', '/sbin'],
-  win32: [
-    `${process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows'}\\System32`,
-  ],
-};
+export const COMMON_BIN_PATHS: Record<string, string[]> = AUTOCODE_COMMON_BIN_PATHS;
 
 /**
  * Get expanded platform paths for PATH augmentation
@@ -167,24 +131,11 @@ const ESSENTIAL_SYSTEM_PATHS: Record<string, string[]> = {
  * @returns Array of expanded paths (without existence checking)
  */
 function getExpandedPlatformPaths(additionalPaths?: string[]): string[] {
-  const platform = process.platform as 'darwin' | 'linux' | 'win32';
-  const homeDir = os.homedir();
-
-  // Get platform-specific paths and expand home directory
-  const platformPaths = COMMON_BIN_PATHS[platform] || [];
-  const expandedPaths = platformPaths.map(p =>
-    p.startsWith('~') ? p.replace('~', homeDir) : p
-  );
-
-  // Add user-requested additional paths (expanded)
-  if (additionalPaths) {
-    for (const p of additionalPaths) {
-      const expanded = p.startsWith('~') ? p.replace('~', homeDir) : p;
-      expandedPaths.push(expanded);
-    }
-  }
-
-  return expandedPaths;
+  return expandAutocodePlatformPaths({
+    platform: process.platform,
+    homeDir: os.homedir(),
+    additionalPaths,
+  });
 }
 
 /**
@@ -205,21 +156,12 @@ function buildPathsToAdd(
   existingPaths: Set<string>,
   npmPrefix: string | null
 ): string[] {
-  const pathsToAdd: string[] = [];
-
-  // Add platform-specific paths that exist
-  for (const p of candidatePaths) {
-    if (!currentPathSet.has(p) && existingPaths.has(p)) {
-      pathsToAdd.push(p);
-    }
-  }
-
-  // Add npm global prefix if it exists
-  if (npmPrefix && !currentPathSet.has(npmPrefix) && existingPaths.has(npmPrefix)) {
-    pathsToAdd.push(npmPrefix);
-  }
-
-  return pathsToAdd;
+  return buildAutocodePathsToAdd({
+    candidatePaths,
+    currentPathSet,
+    existingPaths,
+    npmPrefix,
+  });
 }
 
 /**
@@ -246,7 +188,10 @@ export function getAugmentedEnv(additionalPaths?: string[]): Record<string, stri
 
   // Ensure basic system paths are always present
   {
-    const essentialPaths = isUnix() ? ESSENTIAL_SYSTEM_PATHS.unix : ESSENTIAL_SYSTEM_PATHS.win32;
+    const essentialPaths = getAutocodeEssentialSystemPaths(
+      isUnix() ? 'linux' : 'win32',
+      process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows'
+    );
     const pathSetForEssentials = new Set(currentPath.split(pathSeparator).filter(Boolean));
     const missingEssentials = essentialPaths.filter(p => !pathSetForEssentials.has(p));
 
@@ -418,7 +363,10 @@ export async function getAugmentedEnvAsync(additionalPaths?: string[]): Promise<
   let currentPath = env.PATH || '';
 
   {
-    const essentialPaths = isUnix() ? ESSENTIAL_SYSTEM_PATHS.unix : ESSENTIAL_SYSTEM_PATHS.win32;
+    const essentialPaths = getAutocodeEssentialSystemPaths(
+      isUnix() ? 'linux' : 'win32',
+      process.env.SystemRoot || process.env.SYSTEMROOT || 'C:\\Windows'
+    );
     const pathSetForEssentials = new Set(currentPath.split(pathSeparator).filter(Boolean));
     const missingEssentials = essentialPaths.filter(p => !pathSetForEssentials.has(p));
 

@@ -1,4 +1,8 @@
 import { assign, createMachine } from 'xstate';
+import {
+  AUTOCODE_ROADMAP_GENERATION_INITIAL_CONTEXT,
+  clampAutocodeProgress,
+} from '@autocode/core/tasks/state-machine-rules';
 
 export interface RoadmapGenerationContext {
   progress: number;
@@ -27,14 +31,7 @@ export const roadmapGenerationMachine = createMachine(
       context: RoadmapGenerationContext;
       events: RoadmapGenerationEvent;
     },
-    context: {
-      progress: 0,
-      message: undefined,
-      error: undefined,
-      startedAt: undefined,
-      completedAt: undefined,
-      lastActivityAt: undefined,
-    },
+    context: { ...AUTOCODE_ROADMAP_GENERATION_INITIAL_CONTEXT },
     states: {
       idle: {
         on: {
@@ -89,7 +86,7 @@ export const roadmapGenerationMachine = createMachine(
       }),
       updateProgress: assign({
         progress: ({ event }) =>
-          event.type === 'PROGRESS_UPDATE' ? Math.min(100, Math.max(0, event.progress)) : 0,
+          event.type === 'PROGRESS_UPDATE' ? clampAutocodeProgress(event.progress) : 0,
         message: ({ event }) =>
           event.type === 'PROGRESS_UPDATE' ? event.message : undefined,
         lastActivityAt: () => Date.now(),

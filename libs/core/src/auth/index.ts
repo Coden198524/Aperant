@@ -33,3 +33,72 @@ export {
   type QueueResolvedAuth,
   type ResolvedAuth,
 } from './types.js';
+
+export {
+  API_ID_PREFIX,
+  AUTOCODE_API_ID_PREFIX,
+  AUTOCODE_OAUTH_ID_PREFIX,
+  OAUTH_ID_PREFIX,
+  apiProfileToAutocodeUnified,
+  calculateAutocodeProfileFallbackScore,
+  checkAutocodeProfileAvailability,
+  claudeProfileToAutocodeUnified,
+  extractAutocodeProfileId,
+  getAutocodeProfilesSortedByAvailability,
+  getBestAvailableAutocodeProfile,
+  getBestAvailableAutocodeUnifiedAccount,
+  isAutocodeAPIAccountId,
+  isAutocodeOAuthAccountId,
+  scoreAutocodeProviderAccount,
+  scoreAutocodeUnifiedAccount,
+  shouldAutocodeProactivelySwitch,
+  toAutocodeAPIUnifiedId,
+  toAutocodeOAuthUnifiedId,
+  type AutocodeAccountSelectionOptions,
+  type AutocodeApiProfileLike,
+  type AutocodeAutoSwitchSettingsLike,
+  type AutocodeClaudeProfileLike,
+  type AutocodeProviderAccountLike,
+  type AutocodeUnifiedAccount,
+  type AutocodeUnifiedAccountType,
+  type ScoredAutocodeUnifiedAccount,
+} from './account-selection.js';
+
+export {
+  classifyAutocodeRateLimitType,
+  clearAutocodeRateLimitEvents,
+  isAutocodeProfileRateLimited,
+  parseAutocodeResetTime,
+  parseAutocodeUsageOutput,
+  recordAutocodeRateLimitEvent,
+  type AutocodeClaudeUsageData,
+  type AutocodeRateLimitEventLike,
+  type AutocodeRateLimitType,
+  type AutocodeRateLimitedProfileLike,
+} from './usage.js';
+
+export {
+  getAutocodeApiBaseUrlSuggestions,
+  maskAutocodeSecret,
+  normalizeAutocodeApiBaseUrl,
+  validateAutocodeApiKey,
+  validateAutocodeBaseUrl,
+} from './profile-validation.js';
+
+export {
+  AUTOCODE_API_PROFILE_ACCOUNT_PREFIX,
+  buildAutocodeAPIProfileProviderAccount,
+  deactivateAutocodeAPIProfileProviderAccountsState,
+  findAutocodeAPIProfileProviderAccountIndex,
+  getAutocodeAPIProfileProviderAccountId,
+  isAutocodeAPIProfileProviderAccountId,
+  prependAutocodeProviderAccountQueueId,
+  removeAutocodeAPIProfileProviderAccountState,
+  replaceAutocodeProviderAccountQueueId,
+  sanitizeAutocodeProviderAccountQueue,
+  syncAutocodeAPIProfileProviderAccountState,
+  type AutocodeAPIProfileLike,
+  type AutocodeAPIProviderAccountLike,
+  type AutocodeProviderAccountSettingsLike,
+  type SyncAutocodeAPIProfileOptions,
+} from './api-profile-provider-account-sync.js';

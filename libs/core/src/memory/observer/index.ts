@@ -1,4 +1,16 @@
 export {
+  MemoryObserver,
+  type MemoryObserverIpcRequest,
+} from './memory-observer.js';
+
+export {
+  Scratchpad,
+  computeErrorFingerprint,
+  isConfigFile,
+  type ScratchpadCheckpointClient,
+} from './scratchpad.js';
+
+export {
   DEAD_END_LANGUAGE_PATTERNS,
   detectDeadEnd,
   type DeadEndDetectionResult,

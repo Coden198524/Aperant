@@ -1,17 +1,13 @@
+import {
+  AUTOCODE_CLI_LABELS,
+  AUTOCODE_QUICK_CLI_OPTIONS,
+  getAutocodeCliLabel,
+} from '@autocode/core/frontend/cli-display';
 import type { SupportedCLI } from '../../shared/types/settings';
 
-export const CLI_LABELS: Record<SupportedCLI, string> = {
-  'claude-code': 'Claude',
-  codex: 'Codex',
-  gemini: 'Gemini',
-  opencode: 'OpenCode',
-  kilocode: 'Kilo Code',
-  custom: 'Custom CLI',
-  deepseek: 'DeepSeek',
-};
-
-export const QUICK_CLI_OPTIONS: SupportedCLI[] = ['claude-code', 'codex', 'deepseek'];
+export const CLI_LABELS = AUTOCODE_CLI_LABELS as Record<SupportedCLI, string>;
+export const QUICK_CLI_OPTIONS = AUTOCODE_QUICK_CLI_OPTIONS as SupportedCLI[];
 
 export function getCliLabel(cli: SupportedCLI | undefined): string {
-  return CLI_LABELS[cli || 'claude-code'];
+  return getAutocodeCliLabel(cli);
 }

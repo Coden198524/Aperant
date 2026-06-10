@@ -18,6 +18,16 @@ export interface AutocodeProjectPromptProfile {
     databases: string[];
     infrastructure: string[];
   };
+  conventions?: {
+    instructionFiles: string[];
+    configFiles: string[];
+    sourceRoots: string[];
+    testRoots: string[];
+    frameworkConventions: string[];
+    codingRules: string[];
+    architectureHints: string[];
+    workflowHints: string[];
+  };
   workflow: {
     promptIntensity: AutocodePromptIntensity;
     specStyle: 'quick' | 'standard' | 'full';
@@ -46,6 +56,54 @@ function formatList(values: string[], fallback = 'none detected'): string {
 function formatCommands(commands: string[]): string {
   if (commands.length === 0) return 'none detected';
   return commands.slice(0, 4).map((command) => `- ${command}`).join('\n');
+}
+
+function formatInlineList(values: string[] | undefined, fallback = 'none detected'): string {
+  if (!values || values.length === 0) return fallback;
+  return values.slice(0, 6).join(', ');
+}
+
+function formatBulletList(values: string[] | undefined, fallback: string): string {
+  if (!values || values.length === 0) return `- ${fallback}`;
+  return values.slice(0, 6).map((value) => `- ${value}`).join('\n');
+}
+
+function compactText(value: string, maxLength: number): string {
+  if (value.length <= maxLength) return value;
+  if (maxLength <= 3) return value.slice(0, maxLength);
+  return `${value.slice(0, maxLength - 3).trimEnd()}...`;
+}
+
+function formatCompactHints(values: string[] | undefined, fallback: string): string {
+  if (!values || values.length === 0) return fallback;
+  return values.slice(0, 2).map((value) => compactText(value, 96)).join('; ');
+}
+
+function buildProjectConventionSection(profile: AutocodeProjectPromptProfile): string {
+  const conventions = profile.conventions;
+  if (!conventions) {
+    return `## PROJECT CONVENTIONS
+
+- Follow the nearest existing code, test, and architecture pattern before introducing new structure.
+- Use project-specific rule files and config files when the touched area exposes them.`;
+  }
+
+  return `## PROJECT CONVENTIONS
+
+Rule files to respect: ${formatInlineList(conventions.instructionFiles)}
+Key config files: ${formatInlineList(conventions.configFiles)}
+Primary source roots: ${formatInlineList(conventions.sourceRoots)}
+Test roots: ${formatInlineList(conventions.testRoots)}
+
+Framework and flow rules:
+${formatBulletList(conventions.frameworkConventions, 'Follow framework usage already present in the touched files.')}
+
+Coding rules:
+${formatBulletList(conventions.codingRules, 'Follow the existing local coding style and module boundaries.')}
+
+Architecture and workflow:
+${formatBulletList([...conventions.architectureHints, ...conventions.workflowHints], 'Use the smallest reliable project-specific verification path.')}
+`;
 }
 
 function getSpecLengthGuidance(profile: AutocodeProjectPromptProfile): string {
@@ -86,6 +144,8 @@ Project profile:
 - Domain: ${profile.project.domain}
 - Languages: ${formatList(profile.project.languages)}
 - Frameworks: ${formatList(profile.project.frameworks)}
+- Source roots: ${formatInlineList(profile.conventions?.sourceRoots)}
+- Rule files: ${formatInlineList(profile.conventions?.instructionFiles)}
 - Workflow intensity: ${profile.workflow.promptIntensity}
 - Domain guidance: ${domainGuidance}
 
@@ -170,6 +230,8 @@ Do not modify project source code in this phase.
 
 ${buildToolCallJsonGuidance()}
 
+${buildProjectConventionSection(profile)}
+
 ## PROCESS
 
 1. Read the task and the project index from the kickoff message.
@@ -237,6 +299,8 @@ Use the Write tool to create \`tasks.md\` in the spec directory. Do not return t
 
 ${buildToolCallJsonGuidance()}
 
+${buildProjectConventionSection(profile)}
+
 ## PROCESS
 
 1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.json\` summaries.
@@ -289,6 +353,8 @@ Implement the next pending subtask in \`implementation_plan.md\`.
 
 ${buildToolCallJsonGuidance()}
 
+${buildProjectConventionSection(profile)}
+
 ## PROCESS
 
 1. Read the spec, implementation plan, and the current pending subtask.
@@ -332,6 +398,8 @@ Write \`qa_report.md\` in the spec directory with one of these exact status line
 
 ${buildToolCallJsonGuidance()}
 
+${buildProjectConventionSection(profile)}
+
 ## PROCESS
 
 1. Read \`implementation_plan.md\` first and check that all subtasks are completed.
@@ -361,6 +429,8 @@ export function buildAutocodeQaFixerPrompt(profile: AutocodeProjectPromptProfile
 Fix the concrete issues in \`qa_report.md\` and prepare the task for re-review.
 
 ${buildToolCallJsonGuidance()}
+
+${buildProjectConventionSection(profile)}
 
 ## PROCESS
 
@@ -415,12 +485,22 @@ This project has an initialization-time prompt profile. Use it to right-size the
 - Project size: ${profile.project.size} (${profile.project.sourceFileCount} source files)
 - Domain: ${profile.project.domain}
 - Stack: ${formatList([...profile.project.languages, ...profile.project.frameworks])}
+- Source roots: ${formatInlineList(profile.conventions?.sourceRoots)}
+- Rule files: ${formatInlineList(profile.conventions?.instructionFiles)}
 - Prompt intensity: ${profile.workflow.promptIntensity}
 - Spec style: ${profile.workflow.specStyle}
 - Context rule: ${profile.workflow.contextGuidance}
 - Planning rule: ${profile.workflow.planningGuidance}
 - Validation rule: ${profile.workflow.validationGuidance}
 ${domainOverride}
+
+Project-specific rules and flow:
+${formatBulletList([
+  ...(profile.conventions?.frameworkConventions ?? []),
+  ...(profile.conventions?.codingRules ?? []),
+  ...(profile.conventions?.architectureHints ?? []),
+  ...(profile.conventions?.workflowHints ?? []),
+], 'Follow the nearest existing project pattern and verification workflow.')}
 
 Preferred project commands:
 ${commandLines.length > 0 ? commandLines.slice(0, 8).join('\n') : '- None detected; choose the smallest reliable project-specific verification.'}
@@ -443,8 +523,14 @@ export function buildAutocodeCompactProjectPromptProfileSection(
   return `## PROJECT PROFILE
 
 - Stack: ${formatList([...profile.project.languages, ...profile.project.frameworks])}
-- Context: ${profile.workflow.contextGuidance}
-- Validation: ${profile.workflow.validationGuidance}
+- Roots: ${formatInlineList(profile.conventions?.sourceRoots, 'use nearest source files')}
+- Rules: ${formatInlineList(profile.conventions?.instructionFiles, 'follow nearest local conventions')}
+- Context: ${compactText(profile.workflow.contextGuidance, 120)}
+- Validation: ${compactText(profile.workflow.validationGuidance, 120)}
+- Flow: ${formatCompactHints([
+    ...(profile.conventions?.frameworkConventions ?? []),
+    ...(profile.conventions?.architectureHints ?? []),
+  ], 'follow existing module flow')}
 - Commands: ${commands.length > 0 ? commands.join('; ') : 'use the smallest reliable project-specific verification'}
 `;
 }

@@ -28,6 +28,15 @@ import os from 'os';
 import { promisify } from 'util';
 import { isMainThread } from 'worker_threads';
 import { detectOpenSpecCli } from '@autocode/core';
+import {
+  areAutocodeToolConfigsEqual,
+  buildAutocodeClaudeDetectionResult,
+  getAutocodeClaudeDetectionPaths,
+  isAutocodeWrongPlatformPath,
+  normalizeAutocodeExecOutput,
+  normalizeAutocodeToolConfig,
+  sortAutocodeNvmVersionDirs,
+} from '@autocode/core/platform/tool-detection';
 import { findExecutable, findExecutableAsync, getAugmentedEnv, getAugmentedEnvAsync, shouldUseShell, existsAsync } from './env-utils';
 import { isWindows, isMacOS, isUnix, joinPaths, getExecutableExtension } from './platform';
 import type { ToolDetectionResult } from '../shared/types';
@@ -51,8 +60,7 @@ export type ExecFileAsyncOptionsWithVerbatim = ExecFileOptionsWithStringEncoding
   windowsVerbatimArguments?: boolean;
 };
 
-const normalizeExecOutput = (output: string | Buffer): string =>
-  typeof output === 'string' ? output : output.toString('utf-8');
+const normalizeExecOutput = normalizeAutocodeExecOutput;
 import {
   getWindowsExecutablePaths,
   getWindowsExecutablePathsAsync,
@@ -80,29 +88,12 @@ export interface ToolConfig {
   claudePath?: string;
 }
 
-const TOOL_CONFIG_KEYS = [
-  'pythonPath',
-  'gitPath',
-  'githubCLIPath',
-  'gitlabCLIPath',
-  'claudePath',
-] as const satisfies readonly (keyof ToolConfig)[];
-
 function normalizeToolConfig(config: ToolConfig): ToolConfig {
-  const normalized: ToolConfig = {};
-
-  for (const key of TOOL_CONFIG_KEYS) {
-    const value = config[key]?.trim();
-    if (value) {
-      normalized[key] = value;
-    }
-  }
-
-  return normalized;
+  return normalizeAutocodeToolConfig(config);
 }
 
 function areToolConfigsEqual(left: ToolConfig, right: ToolConfig): boolean {
-  return TOOL_CONFIG_KEYS.every((key) => left[key] === right[key]);
+  return areAutocodeToolConfigsEqual(left, right);
 }
 
 /**
@@ -132,33 +123,7 @@ interface CacheEntry {
  * @returns true if the path is from a different platform
  */
 function isWrongPlatformPath(pathStr: string | undefined): boolean {
-  if (!pathStr) return false;
-
-  if (isWindows()) {
-    // On Windows, reject Unix-style absolute paths (starting with /)
-    // but allow relative paths and Windows paths
-    if (pathStr.startsWith('/') && !pathStr.startsWith('//')) {
-      // Unix absolute path on Windows
-      return true;
-    }
-  } else {
-    // On Unix (macOS/Linux), reject Windows-style paths
-    // Windows paths have: drive letter (C:), backslashes, or specific Windows paths
-    if (/^[A-Za-z]:[/\\]/.test(pathStr)) {
-      // Drive letter path (C:\, D:/, etc.)
-      return true;
-    }
-    if (pathStr.includes('\\')) {
-      // Contains backslashes (Windows path separators)
-      return true;
-    }
-    if (pathStr.includes('AppData') || pathStr.includes('Program Files')) {
-      // Contains Windows-specific directory names
-      return true;
-    }
-  }
-
-  return false;
+  return isAutocodeWrongPlatformPath(pathStr, { isWindows: isWindows() });
 }
 
 // ============================================================================
@@ -196,27 +161,11 @@ interface ClaudeDetectionPaths {
  * // On macOS: { homebrewPaths: ['/opt/homebrew/bin/claude', ...], ... }
  */
 export function getClaudeDetectionPaths(homeDir: string): ClaudeDetectionPaths {
-  const homebrewPaths = [
-    '/opt/homebrew/bin/claude', // Apple Silicon
-    '/usr/local/bin/claude',    // Intel Mac
-  ];
-
-  const platformPaths = isWindows()
-    ? [
-        joinPaths(homeDir, 'AppData', 'Local', 'Programs', 'claude', `claude${getExecutableExtension()}`),
-        joinPaths(homeDir, 'AppData', 'Roaming', 'npm', 'claude.cmd'),
-        joinPaths(homeDir, '.local', 'bin', `claude${getExecutableExtension()}`),
-        'C:\\Program Files\\Claude\\claude.exe',
-        'C:\\Program Files (x86)\\Claude\\claude.exe',
-      ]
-    : [
-        joinPaths(homeDir, '.local', 'bin', 'claude'),
-        joinPaths(homeDir, 'bin', 'claude'),
-      ];
-
-  const nvmVersionsDir = joinPaths(homeDir, '.nvm', 'versions', 'node');
-
-  return { homebrewPaths, platformPaths, nvmVersionsDir };
+  return getAutocodeClaudeDetectionPaths(homeDir, {
+    isWindows: isWindows(),
+    executableExtension: getExecutableExtension(),
+    joinPath: joinPaths,
+  });
 }
 
 /**
@@ -239,24 +188,7 @@ export function getClaudeDetectionPaths(homeDir: string): ClaudeDetectionPaths {
 export function sortNvmVersionDirs(
   entries: Array<{ name: string; isDirectory(): boolean }>
 ): string[] {
-  // Regex to match valid semver directories: v20.0.0, v18.17.1, etc.
-  // This prevents NaN from malformed versions (e.g., v20.abc.1) breaking sort
-  const semverRegex = /^v\d+\.\d+\.\d+$/;
-
-  return entries
-    .filter((entry) => entry.isDirectory() && semverRegex.test(entry.name))
-    .sort((a, b) => {
-      // Parse version numbers: v20.0.0 -> [20, 0, 0]
-      const vA = a.name.slice(1).split('.').map(Number);
-      const vB = b.name.slice(1).split('.').map(Number);
-      // Compare major, minor, patch in order (descending)
-      for (let i = 0; i < 3; i++) {
-        const diff = (vB[i] ?? 0) - (vA[i] ?? 0);
-        if (diff !== 0) return diff;
-      }
-      return 0;
-    })
-    .map((entry) => entry.name);
+  return sortAutocodeNvmVersionDirs(entries);
 }
 
 /**
@@ -286,16 +218,7 @@ export function buildClaudeDetectionResult(
   source: ToolDetectionResult['source'],
   messagePrefix: string
 ): ToolDetectionResult | null {
-  if (!validation.valid) {
-    return null;
-  }
-  return {
-    found: true,
-    path: claudePath,
-    version: validation.version,
-    source,
-    message: `${messagePrefix}: ${claudePath}`,
-  };
+  return buildAutocodeClaudeDetectionResult(claudePath, validation, source, messagePrefix);
 }
 
 /**

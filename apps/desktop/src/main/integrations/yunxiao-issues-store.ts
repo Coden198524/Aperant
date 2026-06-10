@@ -1,9 +1,13 @@
 import { existsSync, mkdirSync, readFileSync } from 'fs';
 import path from 'path';
+import {
+  areAutocodeYunxiaoIssuesEqualWithoutSyncTime as isIssueEqualWithoutSyncTime,
+  normalizeAutocodeYunxiaoTags as normalizeTags,
+  toAutocodeYunxiaoIssueRecord as toIssueRecord,
+} from '@autocode/core/integrations/yunxiao';
 import { writeFileAtomicSync } from '../utils/atomic-file';
 import type { Project, YunxiaoIssue, YunxiaoWorkItem, YunxiaoIssueSyncResult } from '../../shared/types';
-import { formatYunxiaoDescriptionContent } from '../ipc-handlers/yunxiao/description';
-import { sanitizeText, sanitizeUrl } from '../ipc-handlers/shared/sanitize';
+import { sanitizeText } from '../ipc-handlers/shared/sanitize';
 
 interface YunxiaoIssueStoreFile {
   version: 1;
@@ -61,57 +65,6 @@ function writeStore(project: Project, file: YunxiaoIssueStoreFile): void {
   mkdirSync(root, { recursive: true });
   const filePath = path.join(root, STORE_FILE_NAME);
   writeFileAtomicSync(filePath, JSON.stringify(file, null, 2));
-}
-
-function normalizeTags(tags?: string[]): string[] | undefined {
-  if (!Array.isArray(tags) || tags.length === 0) return undefined;
-  const normalized = tags
-    .map((tag) => sanitizeText(String(tag), 50))
-    .filter(Boolean);
-  if (normalized.length === 0) return undefined;
-  return Array.from(new Set(normalized));
-}
-
-function toIssueRecord(item: YunxiaoWorkItem, nowIso: string, existing?: YunxiaoIssue): YunxiaoIssue {
-  const workItemId = sanitizeText(item.id || '', 120);
-  const title = sanitizeText(item.subject || `Yunxiao ${workItemId}`, 500);
-  const identifier = sanitizeText(item.identifier || workItemId, 120) || undefined;
-  const statusName = sanitizeText(item.status?.displayName || item.status?.name || '', 120) || undefined;
-  const priority = sanitizeText(item.priority || '', 120) || undefined;
-  const assigneeName = sanitizeText(item.assignedTo?.name || '', 120) || undefined;
-  const creatorName = sanitizeText(item.creator?.name || '', 120) || undefined;
-  const spaceId = sanitizeText(item.space?.id || '', 120) || undefined;
-  const spaceName = sanitizeText(item.space?.name || '', 200) || undefined;
-  const url = sanitizeUrl(item.url || '') || undefined;
-  const description = formatYunxiaoDescriptionContent(item.description || '');
-
-  return {
-    id: `yunxiao-${workItemId}`,
-    workItemId,
-    identifier,
-    title,
-    description,
-    statusName,
-    priority,
-    assigneeName,
-    creatorName,
-    spaceId,
-    spaceName,
-    url,
-    gmtCreate: item.gmtCreate,
-    gmtModified: item.gmtModified,
-    syncedAt: nowIso,
-    localCategory: existing?.localCategory,
-    localSeverity: existing?.localSeverity,
-    localTags: normalizeTags(existing?.localTags),
-    localAnalysis: existing?.localAnalysis
-  };
-}
-
-function isIssueEqualWithoutSyncTime(a: YunxiaoIssue, b: YunxiaoIssue): boolean {
-  const { syncedAt: _aSyncedAt, ...aComparable } = a;
-  const { syncedAt: _bSyncedAt, ...bComparable } = b;
-  return JSON.stringify(aComparable) === JSON.stringify(bComparable);
 }
 
 export function listYunxiaoIssues(project: Project): YunxiaoIssue[] {

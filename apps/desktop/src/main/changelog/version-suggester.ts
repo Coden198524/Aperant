@@ -1,5 +1,10 @@
 import { spawn } from 'child_process';
 import * as os from 'os';
+import {
+  buildAutocodeVersionBumpPrompt,
+  fallbackAutocodeVersionSuggestion,
+  parseAutocodeVersionSuggestionResponse,
+} from '@autocode/core/changelog';
 import type { GitCommit } from '../../shared/types';
 import { getBestAvailableProfileEnv } from '../rate-limit-detector';
 
@@ -101,28 +106,7 @@ export class VersionSuggester {
    * Build prompt for Claude to analyze commits and suggest version bump
    */
   private buildPrompt(commits: GitCommit[], currentVersion: string): string {
-    const commitSummary = commits
-      .map((c, i) => `${i + 1}. ${c.hash} - ${c.subject}`)
-      .join('\n');
-
-    return `Suggest a semantic version bump from these commits.
-
-Current version: ${currentVersion}
-
-Commits (${commits.length}):
-
-${commitSummary}
-
-Rules:
-- MAJOR (X.0.0): Breaking changes, API changes, removed features, architectural changes
-- MINOR (0.X.0): New features, enhancements, additions that maintain backward compatibility
-- PATCH (0.0.X): Bug fixes, small tweaks, documentation updates, refactoring without new features
-
-Return only this JSON object:
-{
-  "bumpType": "major|minor|patch",
-  "reason": "Brief explanation of the decision"
-}`;
+    return buildAutocodeVersionBumpPrompt(commits, currentVersion);
   }
 
   /**
@@ -177,49 +161,14 @@ except Exception as e:
    * Parse AI response to extract version suggestion
    */
   private parseAIResponse(output: string, currentVersion: string): VersionSuggestion {
-    // Extract JSON from output (Claude might wrap it in markdown or other text)
-    const jsonMatch = output.match(/\{[\s\S]*"bumpType"[\s\S]*"reason"[\s\S]*\}/);
-    if (!jsonMatch) {
-      throw new Error('No JSON found in AI response');
-    }
-
-    const parsed = JSON.parse(jsonMatch[0]);
-    const bumpType = parsed.bumpType as 'major' | 'minor' | 'patch';
-    const reason = parsed.reason || 'AI analysis of commits';
-
-    // Calculate new version
-    const [major, minor, patch] = currentVersion.split('.').map(Number);
-
-    let newVersion: string;
-    switch (bumpType) {
-      case 'major':
-        newVersion = `${major + 1}.0.0`;
-        break;
-      case 'minor':
-        newVersion = `${major}.${minor + 1}.0`;
-        break;
-      default:
-        newVersion = `${major}.${minor}.${patch + 1}`;
-        break;
-    }
-
-    return {
-      version: newVersion,
-      reason,
-      bumpType
-    };
+    return parseAutocodeVersionSuggestionResponse(output, currentVersion);
   }
 
   /**
    * Fallback suggestion if AI analysis fails
    */
   private fallbackSuggestion(currentVersion: string): VersionSuggestion {
-    const [major, minor, patch] = currentVersion.split('.').map(Number);
-    return {
-      version: `${major}.${minor}.${patch + 1}`,
-      reason: 'Patch version bump (default)',
-      bumpType: 'patch'
-    };
+    return fallbackAutocodeVersionSuggestion(currentVersion);
   }
 
   /**

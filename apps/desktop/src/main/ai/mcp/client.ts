@@ -118,7 +118,9 @@ export async function createMcpClientsForAgent(
 ): Promise<McpClientResult[]> {
   const customServerIds = (
     resolveOptions.customServerIds
-    ?? registryOptions.customServers?.map((server) => server.id).filter(Boolean)
+    ?? registryOptions.customServers
+      ?.map((server) => server.id)
+      .filter((serverId): serverId is string => Boolean(serverId))
   );
 
   // Determine which servers this agent needs

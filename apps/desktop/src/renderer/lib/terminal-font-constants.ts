@@ -3,43 +3,74 @@
  * Used in both UI components and store validation
  */
 
+import {
+  AUTOCODE_FONT_SIZE_MAX,
+  AUTOCODE_FONT_SIZE_MIN,
+  AUTOCODE_FONT_SIZE_STEP,
+  AUTOCODE_FONT_WEIGHT_MAX,
+  AUTOCODE_FONT_WEIGHT_MIN,
+  AUTOCODE_FONT_WEIGHT_STEP,
+  AUTOCODE_HEX_COLOR_REGEX,
+  AUTOCODE_LETTER_SPACING_MAX,
+  AUTOCODE_LETTER_SPACING_MIN,
+  AUTOCODE_LETTER_SPACING_STEP,
+  AUTOCODE_LINE_HEIGHT_MAX,
+  AUTOCODE_LINE_HEIGHT_MIN,
+  AUTOCODE_LINE_HEIGHT_STEP,
+  AUTOCODE_MAX_FONT_FAMILY_LENGTH,
+  AUTOCODE_MAX_IMPORT_FILE_SIZE,
+  AUTOCODE_SCROLLBACK_MAX,
+  AUTOCODE_SCROLLBACK_MIN,
+  AUTOCODE_SCROLLBACK_STEP,
+  AUTOCODE_VALID_CURSOR_STYLES,
+  isValidAutocodeCursorStyle,
+  isValidAutocodeFontFamily,
+  isValidAutocodeFontSize,
+  isValidAutocodeFontWeight,
+  isValidAutocodeHexColor,
+  isValidAutocodeLetterSpacing,
+  isValidAutocodeLineHeight,
+  isValidAutocodeScrollback,
+  type AutocodeCursorStyle,
+} from '@autocode/core/frontend/terminal-font-settings';
+
 // Font size constraints
-export const FONT_SIZE_MIN = 10;
-export const FONT_SIZE_MAX = 24;
-export const FONT_SIZE_STEP = 1;
+export const FONT_SIZE_MIN = AUTOCODE_FONT_SIZE_MIN;
+export const FONT_SIZE_MAX = AUTOCODE_FONT_SIZE_MAX;
+export const FONT_SIZE_STEP = AUTOCODE_FONT_SIZE_STEP;
 
 // Font weight constraints
-export const FONT_WEIGHT_MIN = 100;
-export const FONT_WEIGHT_MAX = 900;
-export const FONT_WEIGHT_STEP = 100;
+export const FONT_WEIGHT_MIN = AUTOCODE_FONT_WEIGHT_MIN;
+export const FONT_WEIGHT_MAX = AUTOCODE_FONT_WEIGHT_MAX;
+export const FONT_WEIGHT_STEP = AUTOCODE_FONT_WEIGHT_STEP;
 
 // Line height constraints
-export const LINE_HEIGHT_MIN = 1.0;
-export const LINE_HEIGHT_MAX = 2.0;
-export const LINE_HEIGHT_STEP = 0.1;
+export const LINE_HEIGHT_MIN = AUTOCODE_LINE_HEIGHT_MIN;
+export const LINE_HEIGHT_MAX = AUTOCODE_LINE_HEIGHT_MAX;
+export const LINE_HEIGHT_STEP = AUTOCODE_LINE_HEIGHT_STEP;
 
 // Letter spacing constraints
-export const LETTER_SPACING_MIN = -2;
-export const LETTER_SPACING_MAX = 5;
-export const LETTER_SPACING_STEP = 0.5;
+export const LETTER_SPACING_MIN = AUTOCODE_LETTER_SPACING_MIN;
+export const LETTER_SPACING_MAX = AUTOCODE_LETTER_SPACING_MAX;
+export const LETTER_SPACING_STEP = AUTOCODE_LETTER_SPACING_STEP;
 
 // Scrollback constraints
-export const SCROLLBACK_MIN = 1000;
-export const SCROLLBACK_MAX = 100000;
-export const SCROLLBACK_STEP = 1000;
+export const SCROLLBACK_MIN = AUTOCODE_SCROLLBACK_MIN;
+export const SCROLLBACK_MAX = AUTOCODE_SCROLLBACK_MAX;
+export const SCROLLBACK_STEP = AUTOCODE_SCROLLBACK_STEP;
 
 // Maximum font array length to prevent DoS
-export const MAX_FONT_FAMILY_LENGTH = 10;
+export const MAX_FONT_FAMILY_LENGTH = AUTOCODE_MAX_FONT_FAMILY_LENGTH;
 
 // Maximum file size for import (10KB)
-export const MAX_IMPORT_FILE_SIZE = 10 * 1024;
+export const MAX_IMPORT_FILE_SIZE = AUTOCODE_MAX_IMPORT_FILE_SIZE;
 
 // Valid cursor styles
-export const VALID_CURSOR_STYLES = ['block', 'underline', 'bar'] as const;
-export type CursorStyle = typeof VALID_CURSOR_STYLES[number];
+export const VALID_CURSOR_STYLES = AUTOCODE_VALID_CURSOR_STYLES;
+export type CursorStyle = AutocodeCursorStyle;
 
 // Hex color regex (3-digit, 6-digit, or 8-digit)
-export const HEX_COLOR_REGEX = /^#([0-9A-Fa-f]{3}|[0-9A-Fa-f]{6}|[0-9A-Fa-f]{8})$/;
+export const HEX_COLOR_REGEX = AUTOCODE_HEX_COLOR_REGEX;
 
 /**
  * Shared Tailwind CSS classes for range input sliders
@@ -72,7 +103,7 @@ export const SLIDER_INPUT_CLASSES = [
  * Validates a font size value is within bounds
  */
 export function isValidFontSize(value: number): boolean {
-  return value >= FONT_SIZE_MIN && value <= FONT_SIZE_MAX;
+  return isValidAutocodeFontSize(value);
 }
 
 /**
@@ -80,56 +111,47 @@ export function isValidFontSize(value: number): boolean {
  * CSS font-weight only accepts 100, 200, 300... 900
  */
 export function isValidFontWeight(value: number): boolean {
-  return (
-    value >= FONT_WEIGHT_MIN &&
-    value <= FONT_WEIGHT_MAX &&
-    value % FONT_WEIGHT_STEP === 0
-  );
+  return isValidAutocodeFontWeight(value);
 }
 
 /**
  * Validates a line height value is within bounds
  */
 export function isValidLineHeight(value: number): boolean {
-  return value >= LINE_HEIGHT_MIN && value <= LINE_HEIGHT_MAX;
+  return isValidAutocodeLineHeight(value);
 }
 
 /**
  * Validates a letter spacing value is within bounds
  */
 export function isValidLetterSpacing(value: number): boolean {
-  return value >= LETTER_SPACING_MIN && value <= LETTER_SPACING_MAX;
+  return isValidAutocodeLetterSpacing(value);
 }
 
 /**
  * Validates a scrollback value is within bounds
  */
 export function isValidScrollback(value: number): boolean {
-  return value >= SCROLLBACK_MIN && value <= SCROLLBACK_MAX;
+  return isValidAutocodeScrollback(value);
 }
 
 /**
  * Validates a cursor style is one of the valid options
  */
 export function isValidCursorStyle(value: string): value is CursorStyle {
-  return VALID_CURSOR_STYLES.includes(value as CursorStyle);
+  return isValidAutocodeCursorStyle(value);
 }
 
 /**
  * Validates a hex color string
  */
 export function isValidHexColor(value: string): boolean {
-  return HEX_COLOR_REGEX.test(value);
+  return isValidAutocodeHexColor(value);
 }
 
 /**
  * Validates font family array
  */
 export function isValidFontFamily(value: unknown): value is string[] {
-  return (
-    Array.isArray(value) &&
-    value.length > 0 &&
-    value.length <= MAX_FONT_FAMILY_LENGTH &&
-    value.every((item) => typeof item === 'string' && item.length > 0)
-  );
+  return isValidAutocodeFontFamily(value);
 }

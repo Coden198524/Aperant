@@ -1,4 +1,10 @@
 import { assign, createMachine } from 'xstate';
+import {
+  AUTOCODE_TERMINAL_MACHINE_INITIAL_CONTEXT,
+  AUTOCODE_TERMINAL_SWAP_PHASES,
+  isAutocodeTerminalSwapPhase,
+  type AutocodeTerminalSwapPhase,
+} from '@autocode/core/tasks/state-machine-rules';
 
 /**
  * Terminal lifecycle state machine context.
@@ -10,7 +16,7 @@ export interface TerminalContext {
   claudeSessionId?: string;
   profileId?: string;
   swapTargetProfileId?: string;
-  swapPhase?: 'capturing' | 'migrating' | 'recreating' | 'resuming';
+  swapPhase?: AutocodeTerminalSwapPhase;
   isBusy: boolean;
   error?: string;
 }
@@ -44,14 +50,7 @@ export const terminalMachine = createMachine(
       context: TerminalContext;
       events: TerminalEvent;
     },
-    context: {
-      claudeSessionId: undefined,
-      profileId: undefined,
-      swapTargetProfileId: undefined,
-      swapPhase: undefined,
-      isBusy: false,
-      error: undefined,
-    },
+    context: { ...AUTOCODE_TERMINAL_MACHINE_INITIAL_CONTEXT } as TerminalContext,
     states: {
       idle: {
         on: {
@@ -140,10 +139,10 @@ export const terminalMachine = createMachine(
   {
     guards: {
       hasActiveSession: ({ context }) => context.claudeSessionId !== undefined,
-      isCapturingPhase: ({ context }) => context.swapPhase === 'capturing',
-      isMigratingPhase: ({ context }) => context.swapPhase === 'migrating',
-      isRecreatingPhase: ({ context }) => context.swapPhase === 'recreating',
-      isResumingPhase: ({ context }) => context.swapPhase === 'resuming',
+      isCapturingPhase: ({ context }) => isAutocodeTerminalSwapPhase(context, 'capturing'),
+      isMigratingPhase: ({ context }) => isAutocodeTerminalSwapPhase(context, 'migrating'),
+      isRecreatingPhase: ({ context }) => isAutocodeTerminalSwapPhase(context, 'recreating'),
+      isResumingPhase: ({ context }) => isAutocodeTerminalSwapPhase(context, 'resuming'),
     },
     actions: {
       setProfileId: assign({
@@ -190,16 +189,16 @@ export const terminalMachine = createMachine(
       setSwapTarget: assign({
         swapTargetProfileId: ({ event }) =>
           event.type === 'SWAP_INITIATED' ? event.targetProfileId : undefined,
-        swapPhase: () => 'capturing' as const,
+        swapPhase: () => AUTOCODE_TERMINAL_SWAP_PHASES.capturing,
         error: () => undefined,
       }),
       setCapturedSession: assign({
         claudeSessionId: ({ event }) =>
           event.type === 'SWAP_SESSION_CAPTURED' ? event.claudeSessionId : undefined,
       }),
-      setSwapPhaseMigrating: assign({ swapPhase: () => 'migrating' as const }),
-      setSwapPhaseRecreating: assign({ swapPhase: () => 'recreating' as const }),
-      setSwapPhaseResuming: assign({ swapPhase: () => 'resuming' as const }),
+      setSwapPhaseMigrating: assign({ swapPhase: () => AUTOCODE_TERMINAL_SWAP_PHASES.migrating }),
+      setSwapPhaseRecreating: assign({ swapPhase: () => AUTOCODE_TERMINAL_SWAP_PHASES.recreating }),
+      setSwapPhaseResuming: assign({ swapPhase: () => AUTOCODE_TERMINAL_SWAP_PHASES.resuming }),
       applySwapComplete: assign({
         claudeSessionId: ({ event }) =>
           event.type === 'SWAP_RESUME_COMPLETE' ? event.claudeSessionId : undefined,

@@ -1,4 +1,5 @@
 import { assign, createMachine } from 'xstate';
+import { AUTOCODE_ROADMAP_FEATURE_INITIAL_CONTEXT } from '@autocode/core/tasks/state-machine-rules';
 import type { TaskOutcome, RoadmapFeatureStatus } from '../types/roadmap';
 
 export interface RoadmapFeatureContext {
@@ -26,11 +27,7 @@ export const roadmapFeatureMachine = createMachine(
       context: RoadmapFeatureContext;
       events: RoadmapFeatureEvent;
     },
-    context: {
-      linkedSpecId: undefined,
-      taskOutcome: undefined,
-      previousStatus: undefined
-    },
+    context: { ...AUTOCODE_ROADMAP_FEATURE_INITIAL_CONTEXT } as RoadmapFeatureContext,
     states: {
       under_review: {
         on: {

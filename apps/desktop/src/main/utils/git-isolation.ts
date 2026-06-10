@@ -14,7 +14,12 @@
  */
 
 import { execFileSync } from 'child_process';
-import { buildAutocodeTaskBranchName } from '@autocode/core';
+import {
+  AUTOCODE_GIT_ENV_VARS_TO_CLEAR,
+  buildAutocodeTaskBranchName,
+  getAutocodeIsolatedGitEnv,
+  getAutocodeIsolatedGitSpawnOptions,
+} from '@autocode/core';
 import { getToolPath } from '../cli-tool-manager';
 
 /**
@@ -29,17 +34,7 @@ import { getToolPath } from '../cli-tool-manager';
  * GIT_COMMITTER_*: Can cause wrong commit attribution in automated contexts
  */
 export const GIT_ENV_VARS_TO_CLEAR = [
-  'GIT_DIR',
-  'GIT_WORK_TREE',
-  'GIT_INDEX_FILE',
-  'GIT_OBJECT_DIRECTORY',
-  'GIT_ALTERNATE_OBJECT_DIRECTORIES',
-  'GIT_AUTHOR_NAME',
-  'GIT_AUTHOR_EMAIL',
-  'GIT_AUTHOR_DATE',
-  'GIT_COMMITTER_NAME',
-  'GIT_COMMITTER_EMAIL',
-  'GIT_COMMITTER_DATE',
+  ...AUTOCODE_GIT_ENV_VARS_TO_CLEAR,
 ] as const;
 
 /**
@@ -69,15 +64,7 @@ export const GIT_ENV_VARS_TO_CLEAR = [
 export function getIsolatedGitEnv(
   baseEnv: NodeJS.ProcessEnv = process.env
 ): Record<string, string | undefined> {
-  const env: Record<string, string | undefined> = { ...baseEnv };
-
-  for (const varName of GIT_ENV_VARS_TO_CLEAR) {
-    delete env[varName];
-  }
-
-  env.HUSKY = '0';
-
-  return env;
+  return getAutocodeIsolatedGitEnv(baseEnv);
 }
 
 /**
@@ -102,12 +89,7 @@ export function getIsolatedGitSpawnOptions(
   cwd: string,
   additionalOptions: Record<string, unknown> = {}
 ): Record<string, unknown> {
-  return {
-    cwd,
-    env: getIsolatedGitEnv(),
-    encoding: 'utf-8',
-    ...additionalOptions,
-  };
+  return getAutocodeIsolatedGitSpawnOptions(cwd, additionalOptions, process.env);
 }
 
 /**

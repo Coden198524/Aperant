@@ -11,6 +11,8 @@ import {
   normalizeGitLabInstanceUrl,
   normalizeGitLabProjectReference,
   parseGitLabInstanceUrl,
+  sanitizeGitLabProjectRef,
+  sanitizeGitLabToken,
 } from '@autocode/core/integrations/gitlab';
 import type { Project } from '../../../shared/types';
 import { parseEnvFile } from '../utils';
@@ -40,39 +42,11 @@ function normalizeInstanceUrl(value: string | undefined): string | null {
 }
 
 function sanitizeToken(value: string | undefined): string | null {
-  if (!value) return null;
-  let sanitized = '';
-  for (let i = 0; i < value.length; i += 1) {
-    const code = value.charCodeAt(i);
-    if (code <= 0x1F || code === 0x7F) {
-      continue;
-    }
-    sanitized += value[i];
-  }
-  const trimmed = sanitized.trim();
-  if (!trimmed) return null;
-  return trimmed.length > 512 ? trimmed.substring(0, 512) : trimmed;
+  return sanitizeGitLabToken(value);
 }
 
-// Max length for project references (group/project paths)
-// GitLab limits project paths to 255 chars, using 1024 as defense-in-depth
-const MAX_PROJECT_REF_LENGTH = 1024;
-
 function sanitizeProjectRef(value: string | undefined): string | null {
-  if (!value) return null;
-  let sanitized = '';
-  for (let i = 0; i < value.length; i += 1) {
-    const code = value.charCodeAt(i);
-    if (code <= 0x1F || code === 0x7F) {
-      continue;
-    }
-    sanitized += value[i];
-  }
-  const trimmed = sanitized.trim();
-  if (!trimmed) return null;
-  // Reject excessively long inputs as defense-in-depth
-  if (trimmed.length > MAX_PROJECT_REF_LENGTH) return null;
-  return trimmed;
+  return sanitizeGitLabProjectRef(value);
 }
 
 /**

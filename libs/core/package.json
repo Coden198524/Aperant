@@ -12,6 +12,116 @@
       "import": "./dist/index.js",
       "default": "./dist/index.js"
     },
+    "./auth/account-selection": {
+      "types": "./dist/auth/account-selection.d.ts",
+      "import": "./dist/auth/account-selection.js",
+      "default": "./dist/auth/account-selection.js"
+    },
+    "./auth/profile-validation": {
+      "types": "./dist/auth/profile-validation.d.ts",
+      "import": "./dist/auth/profile-validation.js",
+      "default": "./dist/auth/profile-validation.js"
+    },
+    "./auth/usage": {
+      "types": "./dist/auth/usage.d.ts",
+      "import": "./dist/auth/usage.js",
+      "default": "./dist/auth/usage.js"
+    },
+    "./auth/profile-store": {
+      "types": "./dist/auth/profile-store.d.ts",
+      "import": "./dist/auth/profile-store.js",
+      "default": "./dist/auth/profile-store.js"
+    },
+    "./auth/api-profile-provider-account-sync": {
+      "types": "./dist/auth/api-profile-provider-account-sync.d.ts",
+      "import": "./dist/auth/api-profile-provider-account-sync.js",
+      "default": "./dist/auth/api-profile-provider-account-sync.js"
+    },
+    "./io/atomic-file": {
+      "types": "./dist/io/atomic-file.d.ts",
+      "import": "./dist/io/atomic-file.js",
+      "default": "./dist/io/atomic-file.js"
+    },
+    "./io/file-lock": {
+      "types": "./dist/io/file-lock.d.ts",
+      "import": "./dist/io/file-lock.js",
+      "default": "./dist/io/file-lock.js"
+    },
+    "./io/type-guards": {
+      "types": "./dist/io/type-guards.d.ts",
+      "import": "./dist/io/type-guards.js",
+      "default": "./dist/io/type-guards.js"
+    },
+    "./platform/os": {
+      "types": "./dist/platform/os.d.ts",
+      "import": "./dist/platform/os.js",
+      "default": "./dist/platform/os.js"
+    },
+    "./platform/types": {
+      "types": "./dist/platform/types.d.ts",
+      "import": "./dist/platform/types.js",
+      "default": "./dist/platform/types.js"
+    },
+    "./platform/windows-paths": {
+      "types": "./dist/platform/windows-paths.d.ts",
+      "import": "./dist/platform/windows-paths.js",
+      "default": "./dist/platform/windows-paths.js"
+    },
+    "./platform/env-paths": {
+      "types": "./dist/platform/env-paths.d.ts",
+      "import": "./dist/platform/env-paths.js",
+      "default": "./dist/platform/env-paths.js"
+    },
+    "./platform/tool-detection": {
+      "types": "./dist/platform/tool-detection.d.ts",
+      "import": "./dist/platform/tool-detection.js",
+      "default": "./dist/platform/tool-detection.js"
+    },
+    "./platform/app-paths": {
+      "types": "./dist/platform/app-paths.d.ts",
+      "import": "./dist/platform/app-paths.js",
+      "default": "./dist/platform/app-paths.js"
+    },
+    "./platform/path-helpers": {
+      "types": "./dist/platform/path-helpers.d.ts",
+      "import": "./dist/platform/path-helpers.js",
+      "default": "./dist/platform/path-helpers.js"
+    },
+    "./platform/version": {
+      "types": "./dist/platform/version.d.ts",
+      "import": "./dist/platform/version.js",
+      "default": "./dist/platform/version.js"
+    },
+    "./graph": {
+      "types": "./dist/graph/index.d.ts",
+      "import": "./dist/graph/index.js",
+      "default": "./dist/graph/index.js"
+    },
+    "./graph/analysis": {
+      "types": "./dist/graph/analysis.d.ts",
+      "import": "./dist/graph/analysis.js",
+      "default": "./dist/graph/analysis.js"
+    },
+    "./graph/ast": {
+      "types": "./dist/graph/ast.d.ts",
+      "import": "./dist/graph/ast.js",
+      "default": "./dist/graph/ast.js"
+    },
+    "./graph/impact": {
+      "types": "./dist/graph/impact.d.ts",
+      "import": "./dist/graph/impact.js",
+      "default": "./dist/graph/impact.js"
+    },
+    "./graph/types": {
+      "types": "./dist/graph/types.d.ts",
+      "import": "./dist/graph/types.js",
+      "default": "./dist/graph/types.js"
+    },
+    "./graph/language-registry": {
+      "types": "./dist/graph/language-registry.d.ts",
+      "import": "./dist/graph/language-registry.js",
+      "default": "./dist/graph/language-registry.js"
+    },
     "./tasks/cli-catalog": {
       "types": "./dist/tasks/cli-catalog.d.ts",
       "import": "./dist/tasks/cli-catalog.js",
@@ -46,6 +156,11 @@
       "types": "./dist/tasks/task-state-utils.d.ts",
       "import": "./dist/tasks/task-state-utils.js",
       "default": "./dist/tasks/task-state-utils.js"
+    },
+    "./tasks/state-machine-rules": {
+      "types": "./dist/tasks/state-machine-rules.d.ts",
+      "import": "./dist/tasks/state-machine-rules.js",
+      "default": "./dist/tasks/state-machine-rules.js"
     },
     "./tasks/pr-review-state-utils": {
       "types": "./dist/tasks/pr-review-state-utils.d.ts",
@@ -87,6 +202,16 @@
       "import": "./dist/tasks/json-repair.js",
       "default": "./dist/tasks/json-repair.js"
     },
+    "./tasks/ideation-transformers": {
+      "types": "./dist/tasks/ideation-transformers.d.ts",
+      "import": "./dist/tasks/ideation-transformers.js",
+      "default": "./dist/tasks/ideation-transformers.js"
+    },
+    "./tasks/roadmap-transformers": {
+      "types": "./dist/tasks/roadmap-transformers.d.ts",
+      "import": "./dist/tasks/roadmap-transformers.js",
+      "default": "./dist/tasks/roadmap-transformers.js"
+    },
     "./text/encoding": {
       "types": "./dist/text/encoding.d.ts",
       "import": "./dist/text/encoding.js",
@@ -101,6 +226,16 @@
       "types": "./dist/config/model-catalog.d.ts",
       "import": "./dist/config/model-catalog.js",
       "default": "./dist/config/model-catalog.js"
+    },
+    "./config/claude-code-settings": {
+      "types": "./dist/config/claude-code-settings.d.ts",
+      "import": "./dist/config/claude-code-settings.js",
+      "default": "./dist/config/claude-code-settings.js"
+    },
+    "./changelog": {
+      "types": "./dist/changelog/index.d.ts",
+      "import": "./dist/changelog/index.js",
+      "default": "./dist/changelog/index.js"
     },
     "./providers/detection": {
       "types": "./dist/providers/detection.d.ts",
@@ -126,6 +261,41 @@
       "types": "./dist/frontend/task-view-model.d.ts",
       "import": "./dist/frontend/task-view-model.js",
       "default": "./dist/frontend/task-view-model.js"
+    },
+    "./frontend/cli-display": {
+      "types": "./dist/frontend/cli-display.d.ts",
+      "import": "./dist/frontend/cli-display.js",
+      "default": "./dist/frontend/cli-display.js"
+    },
+    "./frontend/model-display": {
+      "types": "./dist/frontend/model-display.d.ts",
+      "import": "./dist/frontend/model-display.js",
+      "default": "./dist/frontend/model-display.js"
+    },
+    "./frontend/subtask-progress": {
+      "types": "./dist/frontend/subtask-progress.d.ts",
+      "import": "./dist/frontend/subtask-progress.js",
+      "default": "./dist/frontend/subtask-progress.js"
+    },
+    "./frontend/time-format": {
+      "types": "./dist/frontend/time-format.d.ts",
+      "import": "./dist/frontend/time-format.js",
+      "default": "./dist/frontend/time-format.js"
+    },
+    "./frontend/display-format": {
+      "types": "./dist/frontend/display-format.d.ts",
+      "import": "./dist/frontend/display-format.js",
+      "default": "./dist/frontend/display-format.js"
+    },
+    "./frontend/error-localizers": {
+      "types": "./dist/frontend/error-localizers.d.ts",
+      "import": "./dist/frontend/error-localizers.js",
+      "default": "./dist/frontend/error-localizers.js"
+    },
+    "./frontend/terminal-font-settings": {
+      "types": "./dist/frontend/terminal-font-settings.d.ts",
+      "import": "./dist/frontend/terminal-font-settings.js",
+      "default": "./dist/frontend/terminal-font-settings.js"
     },
     "./runtime/agent-runtime": {
       "types": "./dist/runtime/agent-runtime.d.ts",
@@ -397,6 +567,16 @@
       "import": "./dist/runtime/session-runtime-options.js",
       "default": "./dist/runtime/session-runtime-options.js"
     },
+    "./runtime/claude-session-paths": {
+      "types": "./dist/runtime/claude-session-paths.d.ts",
+      "import": "./dist/runtime/claude-session-paths.js",
+      "default": "./dist/runtime/claude-session-paths.js"
+    },
+    "./runtime/terminal-session": {
+      "types": "./dist/runtime/terminal-session.d.ts",
+      "import": "./dist/runtime/terminal-session.js",
+      "default": "./dist/runtime/terminal-session.js"
+    },
     "./tools/mcp-registry": {
       "types": "./dist/tools/mcp-registry.d.ts",
       "import": "./dist/tools/mcp-registry.js",
@@ -406,6 +586,11 @@
       "types": "./dist/tools/shell.d.ts",
       "import": "./dist/tools/shell.js",
       "default": "./dist/tools/shell.js"
+    },
+    "./utils/debounce": {
+      "types": "./dist/utils/debounce.d.ts",
+      "import": "./dist/utils/debounce.js",
+      "default": "./dist/utils/debounce.js"
     },
     "./security/sanitize": {
       "types": "./dist/security/sanitize.d.ts",
@@ -427,6 +612,11 @@
       "import": "./dist/memory/index.js",
       "default": "./dist/memory/index.js"
     },
+    "./memory/config": {
+      "types": "./dist/memory/config.d.ts",
+      "import": "./dist/memory/config.js",
+      "default": "./dist/memory/config.js"
+    },
     "./memory/retrieval": {
       "types": "./dist/memory/retrieval/index.d.ts",
       "import": "./dist/memory/retrieval/index.js",
@@ -436,6 +626,11 @@
       "types": "./dist/memory/observer/index.d.ts",
       "import": "./dist/memory/observer/index.js",
       "default": "./dist/memory/observer/index.js"
+    },
+    "./memory/injection": {
+      "types": "./dist/memory/injection/index.d.ts",
+      "import": "./dist/memory/injection/index.js",
+      "default": "./dist/memory/injection/index.js"
     },
     "./context": {
       "types": "./dist/context/index.d.ts",
@@ -472,6 +667,11 @@
       "import": "./dist/integrations/git/remote-provider.js",
       "default": "./dist/integrations/git/remote-provider.js"
     },
+    "./integrations/git/isolation": {
+      "types": "./dist/integrations/git/isolation.d.ts",
+      "import": "./dist/integrations/git/isolation.js",
+      "default": "./dist/integrations/git/isolation.js"
+    },
     "./integrations/gitlab": {
       "types": "./dist/integrations/gitlab/index.d.ts",
       "import": "./dist/integrations/gitlab/index.js",
@@ -481,6 +681,16 @@
       "types": "./dist/integrations/yunxiao/index.d.ts",
       "import": "./dist/integrations/yunxiao/index.js",
       "default": "./dist/integrations/yunxiao/index.js"
+    },
+    "./integrations/yunxiao/status": {
+      "types": "./dist/integrations/yunxiao/status.d.ts",
+      "import": "./dist/integrations/yunxiao/status.js",
+      "default": "./dist/integrations/yunxiao/status.js"
+    },
+    "./integrations/yunxiao/issue-record": {
+      "types": "./dist/integrations/yunxiao/issue-record.d.ts",
+      "import": "./dist/integrations/yunxiao/issue-record.js",
+      "default": "./dist/integrations/yunxiao/issue-record.js"
     },
     "./integrations/gitblit": {
       "types": "./dist/integrations/gitblit/index.d.ts",

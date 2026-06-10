@@ -10,6 +10,11 @@ import { existsSync } from 'fs';
 import { mkdir, copyFile, cp, unlink } from 'fs/promises';
 import { join, dirname } from 'path';
 import { homedir } from 'os';
+import {
+  cwdToAutocodeClaudeProjectPath,
+  getAutocodeClaudeSessionDirPath,
+  getAutocodeClaudeSessionFilePath,
+} from '@autocode/core/runtime/claude-session-paths';
 import { isNodeError } from '../utils/type-guards';
 
 /**
@@ -28,11 +33,7 @@ import { isNodeError } from '../utils/type-guards';
  * @returns The sanitized path format used by Claude for project identification
  */
 export function cwdToProjectPath(cwd: string): string {
-  // Normalize to forward slashes first (cross-platform: Windows C:\foo\bar -> C:/foo/bar)
-  const normalized = cwd.replace(/\\/g, '/');
-  // Remove Windows drive letter (C:, D:, etc.) to avoid colons in directory names
-  // Then replace all path separators with dashes (keeping leading dash for Unix paths)
-  return normalized.replace(/^[a-zA-Z]:/, '').replace(/\//g, '-');
+  return cwdToAutocodeClaudeProjectPath(cwd);
 }
 
 /**
@@ -44,12 +45,13 @@ export function cwdToProjectPath(cwd: string): string {
  * @returns Full path to the session .jsonl file
  */
 export function getSessionFilePath(configDir: string, cwd: string, sessionId: string): string {
-  const expandedConfigDir = configDir.startsWith('~')
-    ? configDir.replace(/^~/, homedir())
-    : configDir;
-
-  const projectPath = cwdToProjectPath(cwd);
-  return join(expandedConfigDir, 'projects', projectPath, `${sessionId}.jsonl`);
+  return getAutocodeClaudeSessionFilePath({
+    configDir,
+    cwd,
+    sessionId,
+    homeDir: homedir(),
+    joinPath: join,
+  });
 }
 
 /**
@@ -61,12 +63,13 @@ export function getSessionFilePath(configDir: string, cwd: string, sessionId: st
  * @returns Full path to the session directory (contains tool-results/)
  */
 export function getSessionDirPath(configDir: string, cwd: string, sessionId: string): string {
-  const expandedConfigDir = configDir.startsWith('~')
-    ? configDir.replace(/^~/, homedir())
-    : configDir;
-
-  const projectPath = cwdToProjectPath(cwd);
-  return join(expandedConfigDir, 'projects', projectPath, sessionId);
+  return getAutocodeClaudeSessionDirPath({
+    configDir,
+    cwd,
+    sessionId,
+    homeDir: homedir(),
+    joinPath: join,
+  });
 }
 
 /**

@@ -27,8 +27,13 @@ function makeProject(): string {
   const projectDir = mkdtempSync(join(tmpdir(), 'prompt-profile-test-'));
   tempDirs.push(projectDir);
   mkdirSync(join(projectDir, 'src'), { recursive: true });
+  mkdirSync(join(projectDir, 'src', '__tests__'), { recursive: true });
   mkdirSync(join(projectDir, '.autocode'), { recursive: true });
   writeFileSync(join(projectDir, 'package-lock.json'), '{}\n', 'utf-8');
+  writeFileSync(join(projectDir, 'AGENTS.md'), '# Project Rules\n\nUse project conventions.\n', 'utf-8');
+  writeFileSync(join(projectDir, 'biome.json'), JSON.stringify({ formatter: { indentStyle: 'space' } }), 'utf-8');
+  writeFileSync(join(projectDir, 'tsconfig.json'), JSON.stringify({ compilerOptions: { strict: true } }), 'utf-8');
+  writeFileSync(join(projectDir, 'vite.config.ts'), 'export default {};\n', 'utf-8');
   writeFileSync(
     join(projectDir, 'package.json'),
     JSON.stringify({
@@ -52,6 +57,7 @@ function makeProject(): string {
     'utf-8',
   );
   writeFileSync(join(projectDir, 'src', 'App.tsx'), 'export function App() { return null; }\n', 'utf-8');
+  writeFileSync(join(projectDir, 'src', '__tests__', 'App.test.tsx'), 'import { describe } from "vitest";\n', 'utf-8');
   return projectDir;
 }
 
@@ -73,12 +79,22 @@ describe('project prompt profile', () => {
     expect(profile.workflow.promptIntensity).toBe('lightweight');
     expect(profile.commands.build).toContain('npm run build');
     expect(profile.commands.test).toContain('npm run test');
+    expect(profile.conventions.instructionFiles).toContain('AGENTS.md');
+    expect(profile.conventions.configFiles).toContain('biome.json');
+    expect(profile.conventions.configFiles).toContain('tsconfig.json');
+    expect(profile.conventions.sourceRoots).toContain('src');
+    expect(profile.conventions.testRoots).toContain('src/__tests__');
+    expect(profile.conventions.frameworkConventions.join('\n')).toContain('React conventions');
+    expect(profile.conventions.codingRules.join('\n')).toContain('Biome');
 
     const storedProfile = loadProjectPromptProfile(projectDir);
     expect(storedProfile?.project.name).toBe(profile.project.name);
 
     const coderOverride = loadProjectPromptOverride(projectDir, 'coder');
     expect(coderOverride?.content).toContain('PROJECT-SPECIFIC PROMPT');
+    expect(coderOverride?.content).toContain('PROJECT CONVENTIONS');
+    expect(coderOverride?.content).toContain('Rule files to respect: AGENTS.md');
+    expect(coderOverride?.content).toContain('React conventions');
     expect(coderOverride?.content).toContain('Implement the next pending subtask');
     expect(coderOverride?.content).toContain('design pattern decision');
     expect(coderOverride?.content).toContain('read the current narrow context');
@@ -110,6 +126,8 @@ describe('project prompt profile', () => {
 
     expect(section).toContain('PROJECT PROMPT ADAPTATION');
     expect(section).toContain('Apply web domain checks only when they are relevant');
+    expect(section).toContain('Rule files: AGENTS.md');
+    expect(section).toContain('Project-specific rules and flow');
     expect(section).toContain('Typecheck: npm run typecheck');
   });
 
@@ -120,6 +138,8 @@ describe('project prompt profile', () => {
     const section = buildCompactProjectPromptProfileSection(profile);
 
     expect(section).toContain('PROJECT PROFILE');
+    expect(section).toContain('Rules: AGENTS.md');
+    expect(section).toContain('Roots: src');
     expect(section).toContain('typecheck: npm run typecheck');
     expect(section).not.toContain('PROJECT PROMPT ADAPTATION');
     expect(section.length).toBeLessThan(700);

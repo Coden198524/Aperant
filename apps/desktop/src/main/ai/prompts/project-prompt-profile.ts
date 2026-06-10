@@ -43,7 +43,7 @@ import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 11;
+export const PROJECT_PROMPT_PROFILE_VERSION = 12;
 export const PROJECT_PROMPT_PROFILE_PATH = getAutocodeProjectPromptProfileRelativePath();
 export const PROJECT_PROMPTS_PATH = getAutocodeProjectPromptsRelativeDir();
 
@@ -66,6 +66,16 @@ export interface ProjectPromptProfile {
     packageManagers: string[];
     databases: string[];
     infrastructure: string[];
+  };
+  conventions: {
+    instructionFiles: string[];
+    configFiles: string[];
+    sourceRoots: string[];
+    testRoots: string[];
+    frameworkConventions: string[];
+    codingRules: string[];
+    architectureHints: string[];
+    workflowHints: string[];
   };
   workflow: {
     promptIntensity: PromptIntensity;
@@ -92,6 +102,10 @@ interface ScanStats {
   sourceFileCount: number;
   testFileCount: number;
   packageJsonPaths: string[];
+  instructionFiles: string[];
+  configFiles: string[];
+  sourceRootCounts: Map<string, number>;
+  testRootCounts: Map<string, number>;
 }
 
 interface PackageManifestInfo {
@@ -138,6 +152,53 @@ const PROJECT_PROMPT_NAMES = [
   'qa_fixer',
 ] as const;
 
+const INSTRUCTION_FILE_NAMES = new Set([
+  'agents.md',
+  'claude.md',
+  'contributing.md',
+  'architecture.md',
+  'styleguide.md',
+  'coding-standards.md',
+  'development.md',
+]);
+
+const CONFIG_FILE_NAMES = new Set([
+  '.editorconfig',
+  '.eslintrc',
+  '.eslintrc.cjs',
+  '.eslintrc.js',
+  '.eslintrc.json',
+  '.prettierrc',
+  '.prettierrc.json',
+  'biome.json',
+  'biome.jsonc',
+  'bun.lock',
+  'bun.lockb',
+  'deno.json',
+  'eslint.config.cjs',
+  'eslint.config.js',
+  'eslint.config.mjs',
+  'package.json',
+  'package-lock.json',
+  'pnpm-lock.yaml',
+  'pnpm-workspace.yaml',
+  'pyproject.toml',
+  'requirements.txt',
+  'tsconfig.json',
+  'yarn.lock',
+]);
+
+const CONFIG_FILE_PATTERNS = [
+  /^electron\.vite\.config\./,
+  /^jest\.config\./,
+  /^playwright\.config\./,
+  /^postcss\.config\./,
+  /^tailwind\.config\./,
+  /^tsconfig\..*\.json$/,
+  /^vite\.config\./,
+  /^vitest\.config\./,
+];
+
 function toPosixPath(filePath: string): string {
   return filePath.split(sep).join('/');
 }
@@ -154,12 +215,88 @@ function safeReadJson(filePath: string): Record<string, unknown> | null {
   }
 }
 
+function isInstructionFile(relPath: string): boolean {
+  const lowerRelPath = relPath.toLowerCase();
+  const fileName = basename(lowerRelPath);
+  if (INSTRUCTION_FILE_NAMES.has(fileName)) return true;
+  return lowerRelPath === '.github/copilot-instructions.md'
+    || lowerRelPath.startsWith('.cursor/rules/')
+    || lowerRelPath.startsWith('docs/architecture')
+    || lowerRelPath.startsWith('docs/development')
+    || lowerRelPath.startsWith('docs/contributing');
+}
+
+function isConfigFile(relPath: string): boolean {
+  const lowerRelPath = relPath.toLowerCase();
+  const fileName = basename(lowerRelPath);
+  return CONFIG_FILE_NAMES.has(fileName)
+    || CONFIG_FILE_PATTERNS.some((pattern) => pattern.test(fileName));
+}
+
+function addCount(map: Map<string, number>, key: string): void {
+  map.set(key, (map.get(key) ?? 0) + 1);
+}
+
+function getRankedKeys(map: Map<string, number>, maxItems: number): string[] {
+  return [...map.entries()]
+    .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
+    .map(([key]) => key)
+    .slice(0, maxItems);
+}
+
+function inferSourceRoot(relPath: string): string {
+  const parts = relPath.split('/').filter(Boolean);
+  if (parts.length <= 1) return dirname(relPath) || '.';
+
+  const first = parts[0];
+  if ((first === 'apps' || first === 'packages' || first === 'libs') && parts.length >= 3) {
+    const srcIndex = parts.indexOf('src');
+    if (srcIndex >= 2) {
+      return parts.slice(0, srcIndex + 1).join('/');
+    }
+    return parts.slice(0, 2).join('/');
+  }
+
+  const srcIndex = parts.indexOf('src');
+  if (srcIndex >= 0) {
+    if (srcIndex === 0 && parts[1] && ['main', 'preload', 'renderer', 'shared'].includes(parts[1])) {
+      return parts.slice(0, 2).join('/');
+    }
+    return parts.slice(0, srcIndex + 1).join('/');
+  }
+
+  return first;
+}
+
+function inferTestRoot(relPath: string): string | null {
+  const parts = relPath.split('/').filter(Boolean);
+  const lowerParts = parts.map((part) => part.toLowerCase());
+  const index = lowerParts.findIndex((part) => (
+    part === '__tests__' ||
+    part === 'tests' ||
+    part === 'test' ||
+    part === 'e2e' ||
+    part === '__test__'
+  ));
+  if (index >= 0) {
+    return parts.slice(0, index + 1).join('/');
+  }
+  if (/\.(test|spec|e2e)\.[^.]+$/i.test(relPath)) {
+    return dirname(relPath) || '.';
+  }
+  return null;
+}
+
 function scanProject(projectPath: string): ScanStats {
   const stats: ScanStats = {
     totalFileCount: 0,
     sourceFileCount: 0,
     testFileCount: 0,
     packageJsonPaths: [],
+    instructionFiles: [],
+    configFiles: [],
+    sourceRootCounts: new Map(),
+    testRootCounts: new Map(),
   };
 
   const maxDepth = 6;
@@ -190,6 +327,13 @@ function scanProject(projectPath: string): ScanStats {
       const lowerRelPath = relPath.toLowerCase();
       stats.totalFileCount += 1;
 
+      if (isInstructionFile(relPath)) {
+        stats.instructionFiles.push(relPath);
+      }
+      if (isConfigFile(relPath)) {
+        stats.configFiles.push(relPath);
+      }
+
       if (entry.name === 'package.json') {
         stats.packageJsonPaths.push(filePath);
       }
@@ -197,6 +341,7 @@ function scanProject(projectPath: string): ScanStats {
       const ext = extname(entry.name).toLowerCase();
       if (SOURCE_EXTENSIONS.has(ext)) {
         stats.sourceFileCount += 1;
+        addCount(stats.sourceRootCounts, inferSourceRoot(relPath));
         if (
           lowerRelPath.includes('/__tests__/') ||
           lowerRelPath.includes('/tests/') ||
@@ -206,6 +351,10 @@ function scanProject(projectPath: string): ScanStats {
           lowerRelPath.includes('.e2e.')
         ) {
           stats.testFileCount += 1;
+          const testRoot = inferTestRoot(relPath);
+          if (testRoot) {
+            addCount(stats.testRootCounts, testRoot);
+          }
         }
       }
     }
@@ -376,6 +525,126 @@ function appendNonNodeCommands(
   }
 }
 
+function hasConfig(stats: ScanStats, fileNameOrPattern: string | RegExp): boolean {
+  return stats.configFiles.some((filePath) => {
+    const fileName = basename(filePath).toLowerCase();
+    if (typeof fileNameOrPattern === 'string') {
+      return fileName === fileNameOrPattern.toLowerCase();
+    }
+    return fileNameOrPattern.test(fileName);
+  });
+}
+
+function normalizeFrameworks(frameworks: string[]): Set<string> {
+  return new Set(frameworks.map((framework) => framework.toLowerCase()));
+}
+
+function collectFrameworkConventions(frameworks: string[], stats: ScanStats): string[] {
+  const frameworkSet = normalizeFrameworks(frameworks);
+  const conventions: string[] = [];
+
+  if (frameworkSet.has('electron')) {
+    conventions.push('Respect the Electron split: main process owns OS/files/services, preload exposes typed bridges, renderer stays UI-focused, and shared types/constants define IPC contracts.');
+  }
+  if (frameworkSet.has('react')) {
+    conventions.push('Follow React conventions: PascalCase components, `useX` hooks, colocated UI tests where present, and existing state/store patterns before adding new abstractions.');
+  }
+  if (frameworkSet.has('vite')) {
+    conventions.push('Use Vite/Vitest-native workflows and path aliases from existing config instead of adding parallel build tooling.');
+  }
+  if (frameworkSet.has('nextjs') || frameworkSet.has('next.js')) {
+    conventions.push('Follow the existing Next.js route/data-fetching model and keep server/client boundaries explicit.');
+  }
+  if (frameworkSet.has('express') || frameworkSet.has('nestjs')) {
+    conventions.push('Follow the existing API layering: routes/controllers should stay thin and service/domain modules should own business logic.');
+  }
+  if (frameworkSet.has('fastapi') || frameworkSet.has('django') || frameworkSet.has('flask')) {
+    conventions.push('Follow the existing Python web layering and keep request schemas, handlers, and persistence concerns separated.');
+  }
+  if (frameworkSet.has('vitest') || frameworkSet.has('jest') || stats.testFileCount > 0) {
+    conventions.push('Match the existing test style and place regression tests near the closest current test root.');
+  }
+  if (frameworkSet.has('playwright')) {
+    conventions.push('Use Playwright for browser/Electron flows that need real UI behavior, keeping specs focused on user-visible outcomes.');
+  }
+
+  return conventions;
+}
+
+function collectCodingRules(stack: ReturnType<StackDetector['detectAll']>, frameworks: string[], stats: ScanStats): string[] {
+  const rules: string[] = [];
+  const languageSet = new Set(stack.languages.map((language) => language.toLowerCase()));
+  const frameworkSet = normalizeFrameworks(frameworks);
+
+  if (languageSet.has('typescript') || hasConfig(stats, /^tsconfig.*\.json$/)) {
+    rules.push('Prefer TypeScript for source changes and keep types aligned with existing path aliases and shared contracts.');
+  }
+  if (hasConfig(stats, 'biome.json') || hasConfig(stats, 'biome.jsonc')) {
+    rules.push('Follow Biome formatting/linting rules; prefer existing import ordering, quotes, and indentation over local style inventions.');
+  } else if (hasConfig(stats, /^eslint\.config\./) || hasConfig(stats, '.eslintrc') || hasConfig(stats, '.eslintrc.json')) {
+    rules.push('Follow ESLint rules and existing lint patterns; avoid introducing rule suppressions unless narrowly justified.');
+  }
+  if (hasConfig(stats, '.editorconfig')) {
+    rules.push('Respect `.editorconfig` whitespace, line ending, and indentation settings.');
+  }
+  if (hasConfig(stats, '.prettierrc') || hasConfig(stats, '.prettierrc.json')) {
+    rules.push('Preserve Prettier-compatible formatting and avoid hand-formatted exceptions.');
+  }
+  if (frameworkSet.has('tailwind')) {
+    rules.push('Reuse existing Tailwind tokens/utilities and component primitives instead of inventing one-off visual styles.');
+  }
+  if (stats.instructionFiles.length > 0) {
+    rules.push(`Treat project instruction files as authoritative when they apply: ${uniqueSorted(stats.instructionFiles).slice(0, 5).join(', ')}.`);
+  }
+
+  return rules;
+}
+
+function collectArchitectureHints(projectPath: string, frameworks: string[], stats: ScanStats, packageManifests: PackageManifestInfo[]): string[] {
+  const frameworkSet = normalizeFrameworks(frameworks);
+  const sourceRoots = getRankedKeys(stats.sourceRootCounts, 6);
+  const hints: string[] = [];
+
+  if (packageManifests.length > 1 || existsSync(join(projectPath, 'pnpm-workspace.yaml'))) {
+    hints.push('Treat this as a workspace/monorepo: keep changes inside the owning package unless the task explicitly crosses package boundaries.');
+  }
+  if (
+    frameworkSet.has('electron') &&
+    sourceRoots.some((root) => root.endsWith('src/main')) &&
+    sourceRoots.some((root) => root.endsWith('src/renderer'))
+  ) {
+    hints.push('For desktop features, trace flow through renderer UI, preload bridge/shared IPC types, then main-process service/handler code.');
+  }
+  if (sourceRoots.length > 0) {
+    hints.push(`Start discovery from the closest source root: ${sourceRoots.slice(0, 5).join(', ')}.`);
+  }
+  if (stats.testRootCounts.size > 0) {
+    hints.push(`Use nearby test roots for regression coverage: ${getRankedKeys(stats.testRootCounts, 4).join(', ')}.`);
+  }
+
+  return hints;
+}
+
+function collectWorkflowHints(commands: ProjectPromptProfile['commands'], stats: ScanStats): string[] {
+  const hints: string[] = [];
+  if (commands.typecheck.length > 0) {
+    hints.push(`Prefer targeted type checking before broad packaging: ${commands.typecheck[0]}.`);
+  }
+  if (commands.lint.length > 0) {
+    hints.push(`Run the project lint command when style/import behavior changes: ${commands.lint[0]}.`);
+  }
+  if (commands.test.length > 0) {
+    hints.push(`Use the nearest relevant test first, then broaden only when risk warrants it; default test command: ${commands.test[0]}.`);
+  }
+  if (commands.build.length > 0) {
+    hints.push(`Use build/package validation for cross-module or release-facing changes: ${commands.build[0]}.`);
+  }
+  if (stats.instructionFiles.length > 0) {
+    hints.push('Read applicable rule or architecture files before changing public APIs, module boundaries, or framework wiring.');
+  }
+  return hints;
+}
+
 export function generateProjectPromptProfile(projectPath: string): ProjectPromptProfile {
   const resolvedProjectPath = statSync(projectPath).isDirectory() ? projectPath : dirname(projectPath);
   const stack = new StackDetector(resolvedProjectPath).detectAll();
@@ -398,6 +667,14 @@ export function generateProjectPromptProfile(projectPath: string): ProjectPrompt
     typecheck: collectScriptCommands(packageManifests, ['typecheck', 'tsc']),
   };
   appendNonNodeCommands(resolvedProjectPath, commands, frameworks);
+  const normalizedCommands = {
+    build: uniqueSorted(commands.build),
+    test: uniqueSorted(commands.test),
+    lint: uniqueSorted(commands.lint),
+    typecheck: uniqueSorted(commands.typecheck),
+  };
+  const sourceRoots = getRankedKeys(stats.sourceRootCounts, 8);
+  const testRoots = getRankedKeys(stats.testRootCounts, 6);
 
   return {
     version: PROJECT_PROMPT_PROFILE_VERSION,
@@ -415,13 +692,18 @@ export function generateProjectPromptProfile(projectPath: string): ProjectPrompt
       databases: uniqueSorted(stack.databases),
       infrastructure: uniqueSorted(stack.infrastructure),
     },
-    workflow,
-    commands: {
-      build: uniqueSorted(commands.build),
-      test: uniqueSorted(commands.test),
-      lint: uniqueSorted(commands.lint),
-      typecheck: uniqueSorted(commands.typecheck),
+    conventions: {
+      instructionFiles: uniqueSorted(stats.instructionFiles).slice(0, 8),
+      configFiles: uniqueSorted(stats.configFiles).slice(0, 12),
+      sourceRoots,
+      testRoots,
+      frameworkConventions: collectFrameworkConventions(frameworks, stats),
+      codingRules: collectCodingRules(stack, frameworks, stats),
+      architectureHints: collectArchitectureHints(resolvedProjectPath, frameworks, stats, packageManifests),
+      workflowHints: collectWorkflowHints(normalizedCommands, stats),
     },
+    workflow,
+    commands: normalizedCommands,
     promptOverrides: {
       generated: [...PROJECT_PROMPT_NAMES],
       directory: PROJECT_PROMPTS_PATH,

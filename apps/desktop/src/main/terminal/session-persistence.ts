@@ -8,6 +8,13 @@
 import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
+import {
+  AUTOCODE_MAX_TERMINAL_SESSION_AGE_MS,
+  AUTOCODE_TERMINAL_SESSION_FILE_VERSION,
+  buildAutocodeTerminalRecoveryInfo,
+  createAutocodeTerminalBufferFileName,
+  partitionAutocodeTerminalSessionsByAge,
+} from '@autocode/core/runtime/terminal-session';
 import type {
   TerminalSessionState,
   TerminalSessionsFile,
@@ -18,7 +25,7 @@ const SESSIONS_FILE = path.join(app.getPath('userData'), 'terminal-sessions.json
 const BUFFERS_DIR = path.join(app.getPath('userData'), 'terminal-buffers');
 
 // Session age limit: 7 days
-const MAX_SESSION_AGE_MS = 7 * 24 * 60 * 60 * 1000;
+const MAX_SESSION_AGE_MS = AUTOCODE_MAX_TERMINAL_SESSION_AGE_MS;
 
 class SessionPersistence {
   private sessions: Map<string, TerminalSessionState> = new Map();
@@ -67,20 +74,17 @@ class SessionPersistence {
       );
 
       // Validate version
-      if (data.version !== 2) {
+      if (data.version !== AUTOCODE_TERMINAL_SESSION_FILE_VERSION) {
         console.warn('[SessionPersistence] Incompatible version, starting fresh');
         return [];
       }
 
       // Filter out stale sessions (older than 7 days)
       const now = Date.now();
-      const validSessions = data.sessions.filter(
-        (s) => now - s.lastActiveAt < MAX_SESSION_AGE_MS
-      );
-
-      // Clean up buffers for stale sessions
-      const staleSessions = data.sessions.filter(
-        (s) => now - s.lastActiveAt >= MAX_SESSION_AGE_MS
+      const { validSessions, staleSessions } = partitionAutocodeTerminalSessionsByAge(
+        data.sessions,
+        now,
+        MAX_SESSION_AGE_MS
       );
       staleSessions.forEach((s) => {
         if (s.bufferFile) {
@@ -105,20 +109,7 @@ class SessionPersistence {
    */
   getRecoveryInfo(): TerminalRecoveryInfo {
     const sessions = Array.from(this.sessions.values());
-
-    return {
-      totalSessions: sessions.length,
-      recoverableSessions: sessions.filter((s) => s.bufferFile || s.daemonPtyId).length,
-      recoveryMethod: sessions.some((s) => s.daemonPtyId) ? 'daemon' : 'state',
-      sessions: sessions.map((s) => ({
-        id: s.id,
-        title: s.title,
-        isCLIMode: s.isCLIMode,
-        lastActiveAt: s.lastActiveAt,
-        hasBuffer: !!s.bufferFile,
-        hasDaemonPty: !!s.daemonPtyId,
-      })),
-    };
+    return buildAutocodeTerminalRecoveryInfo(sessions);
   }
 
   /**
@@ -181,7 +172,7 @@ class SessionPersistence {
       return;
     }
 
-    const bufferFile = `buffer-${sessionId}.txt`;
+    const bufferFile = createAutocodeTerminalBufferFileName(sessionId);
     const bufferPath = path.join(BUFFERS_DIR, bufferFile);
 
     try {
@@ -259,7 +250,7 @@ class SessionPersistence {
    */
   private saveToDisk(): void {
     const data: TerminalSessionsFile = {
-      version: 2,
+      version: AUTOCODE_TERMINAL_SESSION_FILE_VERSION,
       savedAt: Date.now(),
       sessions: Array.from(this.sessions.values()),
     };

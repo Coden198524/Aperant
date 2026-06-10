@@ -3,8 +3,12 @@ import { twMerge } from 'tailwind-merge';
 import { calculateProgress as calculateAutocodeProgress } from '@autocode/core/tasks/progress';
 import {
   formatAutocodeRelativeTime,
-  truncateAutocodeText,
 } from '@autocode/core/frontend/task-view-model';
+import {
+  buildAutocodeTokenHoverTitle,
+  formatAutocodeTokenCount,
+  sanitizeAutocodeMarkdownForDisplay,
+} from '@autocode/core/frontend/display-format';
 
 /**
  * Utility function to merge Tailwind CSS classes
@@ -35,25 +39,14 @@ export function formatRelativeTime(date: Date): string {
  * Format token counts compactly for task UI.
  */
 export function formatTokenCount(count: number): string {
-  if (!Number.isFinite(count)) return '0';
-
-  if (count >= 1_000_000) {
-    return `${(count / 1_000_000).toFixed(1).replace(/\.0$/, '')}M`;
-  }
-  if (count >= 1_000) {
-    return `${(count / 1_000).toFixed(1).replace(/\.0$/, '')}K`;
-  }
-  return String(Math.round(count));
+  return formatAutocodeTokenCount(count);
 }
 
 /**
  * Build hover text for token values.
  */
 export function buildTokenHoverTitle(label: string, count: number): string {
-  const exactTokens = Math.round(count);
-  const tokenText = new Intl.NumberFormat().format(exactTokens);
-
-  return `${label}: ${tokenText}`;
+  return buildAutocodeTokenHoverTitle(label, count);
 }
 
 /**
@@ -64,43 +57,5 @@ export function buildTokenHoverTitle(label: string, count: number): string {
  * @returns Plain text suitable for display
  */
 export function sanitizeMarkdownForDisplay(text: string, maxLength: number = 200): string {
-  if (!text) return '';
-
-  let sanitized = text
-    // Remove markdown headers (# ## ### etc)
-    .replace(/^#{1,6}\s+/gm, '')
-    // Remove bold/italic markers
-    .replace(/\*\*([^*]+)\*\*/g, '$1')
-    .replace(/\*([^*]+)\*/g, '$1')
-    .replace(/__([^_]+)__/g, '$1')
-    .replace(/_([^_]+)_/g, '$1')
-    // Remove inline code
-    .replace(/`([^`]+)`/g, '$1')
-    // Remove code blocks
-    .replace(/```[\s\S]*?```/g, '')
-    // Remove links but keep text
-    .replace(/\[([^\]]+)\]\([^)]+\)/g, '$1')
-    // Remove images
-    .replace(/!\[([^\]]*)\]\([^)]+\)/g, '')
-    // Remove horizontal rules
-    .replace(/^[-*_]{3,}$/gm, '')
-    // Remove blockquotes
-    .replace(/^>\s*/gm, '')
-    // Remove list markers
-    .replace(/^[\s]*[-*+]\s+/gm, '')
-    .replace(/^[\s]*\d+\.\s+/gm, '')
-    // Remove checkbox markers
-    .replace(/\[[ x]\]\s*/gi, '')
-    // Collapse multiple newlines to single space
-    .replace(/\n+/g, ' ')
-    // Collapse multiple spaces to single space
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  // Truncate if needed (0 means no truncation)
-  if (maxLength > 0 && sanitized.length > maxLength) {
-    sanitized = truncateAutocodeText(sanitized, maxLength);
-  }
-
-  return sanitized;
+  return sanitizeAutocodeMarkdownForDisplay(text, maxLength);
 }

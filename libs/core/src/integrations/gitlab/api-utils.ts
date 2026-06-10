@@ -1,4 +1,5 @@
 export const DEFAULT_GITLAB_URL = 'https://gitlab.com';
+export const GITLAB_MAX_PROJECT_REF_LENGTH = 1024;
 
 export function parseGitLabInstanceUrl(value: string): string | null {
   const candidate = value.trim();
@@ -56,4 +57,33 @@ export function encodeGitLabProjectPath(projectPath: string): string {
     return projectPath;
   }
   return encodeURIComponent(projectPath);
+}
+
+export function sanitizeGitLabToken(value: string | undefined): string | null {
+  const sanitized = sanitizeGitLabControlChars(value);
+  if (!sanitized) return null;
+  return sanitized.length > 512 ? sanitized.substring(0, 512) : sanitized;
+}
+
+export function sanitizeGitLabProjectRef(value: string | undefined): string | null {
+  const sanitized = sanitizeGitLabControlChars(value);
+  if (!sanitized) return null;
+  return sanitized.length > GITLAB_MAX_PROJECT_REF_LENGTH ? null : sanitized;
+}
+
+function sanitizeGitLabControlChars(value: string | undefined): string | null {
+  if (!value) return null;
+
+  let sanitized = '';
+  for (let index = 0; index < value.length; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code <= 0x1F || code === 0x7F) {
+      continue;
+    }
+    sanitized += value[index];
+  }
+
+  const trimmed = sanitized.trim();
+  if (!trimmed) return null;
+  return trimmed;
 }

@@ -36,10 +36,18 @@ export type {
 } from './triage.js';
 
 export {
+  GITHUB_ETAG_CACHE_MAX_SIZE,
+  GITHUB_ETAG_CACHE_TTL_MS,
+  GITHUB_ETAG_EVICTION_INTERVAL,
+  clearGitHubETagCache,
+  clearGitHubETagCacheForProject,
+  evictGitHubETagCacheEntries,
   extractGitHubRateLimitInfo,
   normalizeGitHubRepoReference,
 } from './api-utils.js';
 export type {
+  GitHubETagCache,
+  GitHubETagCacheEntry,
   GitHubRateLimitHeadersLike,
   GitHubRateLimitInfo,
 } from './api-utils.js';

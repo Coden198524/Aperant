@@ -7,28 +7,27 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { readFile } from 'fs/promises';
 import { homedir } from 'os';
 import { join } from 'path';
+import {
+  AUTOCODE_PROFILE_STORE_VERSION,
+  DEFAULT_AUTOCODE_AUTO_SWITCH_SETTINGS,
+  getAutocodeClaudeProfilesDir,
+  normalizeAutocodeProfileStoreData,
+  slugifyAutocodeClaudeProfileName,
+  usesAutocodeLegacySharedClaudeDirectory,
+} from '@autocode/core/auth/profile-store';
 import type { ClaudeProfile, ClaudeAutoSwitchSettings } from '../../shared/types';
 
 /**
  * Directory constants for profile isolation
  */
-const DEFAULT_CLAUDE_CONFIG_DIR = join(homedir(), '.claude');
-const CLAUDE_PROFILES_DIR = join(homedir(), '.claude-profiles');
+const CLAUDE_PROFILES_DIR = getAutocodeClaudeProfilesDir(homedir());
 
-export const STORE_VERSION = 3;  // Bumped for encrypted token storage
+export const STORE_VERSION = AUTOCODE_PROFILE_STORE_VERSION;  // Bumped for encrypted token storage
 
 /**
  * Default auto-switch settings
  */
-export const DEFAULT_AUTO_SWITCH_SETTINGS: ClaudeAutoSwitchSettings = {
-  enabled: false,
-  proactiveSwapEnabled: false,  // Proactive monitoring disabled by default
-  sessionThreshold: 95,  // Consider switching at 95% session usage
-  weeklyThreshold: 99,   // Consider switching at 99% weekly usage
-  autoSwitchOnRateLimit: false,  // Prompt user by default
-  autoSwitchOnAuthFailure: false,  // Prompt user by default on auth failures
-  usageCheckInterval: 30000  // Check every 30s when enabled (0 = disabled)
-};
+export const DEFAULT_AUTO_SWITCH_SETTINGS: ClaudeAutoSwitchSettings = DEFAULT_AUTOCODE_AUTO_SWITCH_SETTINGS;
 
 /**
  * Internal storage format for Claude profiles
@@ -52,14 +51,7 @@ export interface ProfileStoreData {
  * Check if a profile uses the legacy shared ~/.claude directory
  */
 function usesLegacySharedDirectory(profile: ClaudeProfile): boolean {
-  if (!profile.configDir) return false;
-
-  // Normalize paths for comparison
-  const normalizedConfigDir = profile.configDir.startsWith('~')
-    ? join(homedir(), profile.configDir.slice(1))
-    : profile.configDir;
-
-  return normalizedConfigDir === DEFAULT_CLAUDE_CONFIG_DIR;
+  return usesAutocodeLegacySharedClaudeDirectory(profile, homedir());
 }
 
 /**
@@ -71,7 +63,7 @@ function usesLegacySharedDirectory(profile: ClaudeProfile): boolean {
  */
 function migrateProfileToIsolatedDirectory(profile: ClaudeProfile): string {
   // Generate isolated directory name from profile name
-  const baseName = profile.name.toLowerCase().replace(/[^a-z0-9]+/g, '-') || 'primary';
+  const baseName = slugifyAutocodeClaudeProfileName(profile.name);
 
   // Ensure the profiles directory exists
   if (!existsSync(CLAUDE_PROFILES_DIR)) {
@@ -136,73 +128,14 @@ function migrateProfileToIsolatedDirectory(profile: ClaudeProfile): string {
  * Shared helper used by both sync and async loaders.
  */
 function parseAndMigrateProfileData(data: Record<string, unknown>): ProfileStoreData | null {
-  // Handle version migration
-  if (data.version === 1) {
-    // Migrate v1 to v2: add usage and rateLimitEvents fields
-    data.version = STORE_VERSION;
-    data.autoSwitch = DEFAULT_AUTO_SWITCH_SETTINGS;
-  }
-
-  if (data.version === STORE_VERSION) {
-    // Track profiles that were migrated in this session
-    const newlyMigratedProfileIds: string[] = [];
-
-    // Parse dates and migrate profile data
-    const profiles = data.profiles as ClaudeProfile[];
-    data.profiles = profiles.map((p: ClaudeProfile) => {
-      // MIGRATION: Clear cached oauthToken to prevent stale token issues
-      // OAuth tokens expire in 8-12 hours. We now read fresh tokens from Keychain
-      // instead of caching them. See: docs/LONG_LIVED_AUTH_PLAN.md
-      if (p.oauthToken) {
-        console.warn('[ProfileStorage] Migrating profile - removing cached oauthToken:', p.name);
-      }
-
-      // Destructure to remove oauthToken and tokenCreatedAt from the profile
-      // eslint-disable-next-line @typescript-eslint/no-unused-vars
-      const { oauthToken: _, tokenCreatedAt: __, ...profileWithoutToken } = p;
-
-      // MIGRATION: Move profiles from shared ~/.claude to isolated directories
-      // This prevents interference with external Claude Code CLI usage
-      let configDir = profileWithoutToken.configDir;
-      if (usesLegacySharedDirectory(p)) {
-        configDir = migrateProfileToIsolatedDirectory(p);
-        // Track this profile as newly migrated (needs re-authentication)
-        newlyMigratedProfileIds.push(p.id);
-        console.warn('[ProfileStorage] Profile isolation migration:', {
-          profileName: p.name,
-          oldConfigDir: p.configDir,
-          newConfigDir: configDir
-        });
-      }
-
-      return {
-        ...profileWithoutToken,
-        configDir,  // Use migrated configDir
-        createdAt: new Date(p.createdAt),
-        lastUsedAt: p.lastUsedAt ? new Date(p.lastUsedAt) : undefined,
-        usage: p.usage ? {
-          ...p.usage,
-          lastUpdated: new Date(p.usage.lastUpdated)
-        } : undefined,
-        rateLimitEvents: p.rateLimitEvents?.map(e => ({
-          ...e,
-          hitAt: new Date(e.hitAt),
-          resetAt: new Date(e.resetAt)
-        }))
-      };
-    });
-
-    // Merge newly migrated profiles with any existing migratedProfileIds
-    const existingMigrated = (data.migratedProfileIds as string[] | undefined) || [];
-    const allMigratedIds = [...new Set([...existingMigrated, ...newlyMigratedProfileIds])];
-    if (allMigratedIds.length > 0) {
-      data.migratedProfileIds = allMigratedIds;
-    }
-
-    return data as unknown as ProfileStoreData;
-  }
-
-  return null;
+  return normalizeAutocodeProfileStoreData<ClaudeProfile>(data, {
+    migrateLegacyProfile: (profile) => (
+      usesLegacySharedDirectory(profile)
+        ? migrateProfileToIsolatedDirectory(profile)
+        : undefined
+    ),
+    logger: console,
+  }) as ProfileStoreData | null;
 }
 
 /**

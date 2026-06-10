@@ -1,8 +1,11 @@
 import type { BrowserWindow } from 'electron';
 import { AUTOCODE_PROJECT_DATA_DIR_NAME, createImportedAutocodeTask } from '@autocode/core';
+import {
+  buildAutocodeYunxiaoTaskDescription,
+  isAutocodeClosedOrResolvedYunxiaoWorkItem,
+} from '@autocode/core/integrations/yunxiao';
 import type { Project, YunxiaoIssueSyncResult, YunxiaoWorkItem } from '../../shared/types';
 import { IPC_CHANNELS } from '../../shared/constants';
-import { isClosedYunxiaoStatus } from '../../shared/utils/yunxiao-status';
 import { projectStore } from '../project-store';
 import { safeSendToRenderer } from '../ipc-handlers/utils';
 import { upsertYunxiaoIssuesFromWorkItems } from './yunxiao-issues-store';
@@ -13,13 +16,12 @@ import {
   getYunxiaoEnvConfig,
   normalizeProjects,
   normalizeWorkItems,
-  resolveWorkitemCategories,
   resolveOrganization,
+  resolveWorkitemCategories,
   toRecord,
   withYunxiaoClient
 } from '../ipc-handlers/yunxiao-handlers';
 import { buildYunxiaoTaskMetadata } from '../ipc-handlers/yunxiao/metadata';
-import { formatYunxiaoDescriptionContent } from '../ipc-handlers/yunxiao/description';
 import { sanitizeText, sanitizeUrl } from '../ipc-handlers/shared/sanitize';
 
 const DEFAULT_SYNC_INTERVAL_MS = 5 * 60 * 1000;
@@ -29,93 +31,6 @@ const TASK_REFRESH_SENTINEL = '__tasks_refresh__';
 
 interface ProjectSyncResult extends YunxiaoIssueSyncResult {
   taskCreated: number;
-}
-
-function isLikelyClosedStatus(rawStatus: string | undefined): boolean {
-  if (!rawStatus) return false;
-  const status = rawStatus.trim().toLowerCase().replace(/\s+/g, '');
-  if (!status) return false;
-
-  const explicitOpenTokens = [
-    'open',
-    'todo',
-    'new',
-    'active',
-    'inprogress',
-    'processing',
-    '鏈叧闂?',
-    '鏈В鍐?',
-    '鏈畬鎴?',
-    '寰呰В鍐?',
-    '澶勭悊涓?',
-    '淇涓?',
-    '瑙ｅ喅涓?',
-    '鍏抽棴涓?',
-    '瀹屾垚涓?'
-  ];
-  if (explicitOpenTokens.some((token) => status.includes(token))) {
-    return false;
-  }
-
-  const exactClosedTokens = new Set([
-    'closed',
-    'resolved',
-    'done',
-    'completed',
-    'complete',
-    'fixed',
-    'canceled',
-    'cancelled',
-    '宸插叧闂?',
-    '鍏抽棴',
-    '宸茶В鍐?',
-    '宸插畬鎴?',
-    '瀹屾垚',
-    '宸蹭慨澶?'
-  ]);
-  if (exactClosedTokens.has(status)) {
-    return true;
-  }
-
-  const partialClosedTokens = [
-    'closed',
-    'resolved',
-    'completed',
-    'cancelled',
-    'canceled',
-    'fixed',
-    '宸插叧闂?',
-    '宸茶В鍐?',
-    '宸插畬鎴?',
-    '宸蹭慨澶?',
-    '楠屾敹閫氳繃'
-  ];
-  return partialClosedTokens.some((token) => status.includes(token));
-}
-
-function isClosedOrResolvedWorkItem(item: YunxiaoWorkItem): boolean {
-  return isClosedYunxiaoStatus(item.status?.displayName) || isClosedYunxiaoStatus(item.status?.name);
-}
-
-function buildYunxiaoTaskDescription(item: YunxiaoWorkItem): string {
-  const safeTitle = sanitizeText(item.subject || `Yunxiao ${item.id}`, 500);
-  const safeIdentifier = sanitizeText(item.identifier || item.id || '', 120);
-  const formattedDescription = formatYunxiaoDescriptionContent(item.description || '');
-  const safeStatus = sanitizeText(item.status?.displayName || item.status?.name || '', 120);
-  const safePriority = sanitizeText(item.priority || '', 120);
-  const safeUrl = sanitizeUrl(item.url || '');
-
-  return `# ${safeTitle}
-
-**Yunxiao Work Item:** ${safeIdentifier}
-${safeUrl ? `**Link:** ${safeUrl}` : ''}
-${safePriority ? `**Priority:** ${safePriority}` : ''}
-${safeStatus ? `**Status:** ${safeStatus}` : ''}
-
-## Description
-
-${formattedDescription}
-`;
 }
 
 function getTrackedYunxiaoTaskIds(project: Project): Set<string> {
@@ -144,7 +59,7 @@ function createBacklogTaskFromYunxiaoItem(project: Project, item: YunxiaoWorkIte
   const safeTitle = sanitizeText(item.subject || `Yunxiao ${item.id}`, 500);
   const safeIdentifier = sanitizeText(item.identifier || item.id, 120);
   const safeUrl = sanitizeUrl(item.url || '');
-  const description = buildYunxiaoTaskDescription(item);
+  const description = buildAutocodeYunxiaoTaskDescription(item);
 
   const metadata = buildYunxiaoTaskMetadata({
     workItemId: sanitizeText(item.id, 120),
@@ -339,7 +254,7 @@ export class YunxiaoAutoSyncService {
         }
 
         for (const item of items) {
-          if (!item.id || isClosedOrResolvedWorkItem(item)) continue;
+          if (!item.id || isAutocodeClosedOrResolvedYunxiaoWorkItem(item)) continue;
           if (!merged.has(item.id)) {
             merged.set(item.id, item);
           }
@@ -410,7 +325,7 @@ export class YunxiaoAutoSyncService {
           }
 
           for (const item of items) {
-            if (!item.id || isClosedOrResolvedWorkItem(item)) continue;
+            if (!item.id || isAutocodeClosedOrResolvedYunxiaoWorkItem(item)) continue;
             if (!merged.has(item.id)) {
               merged.set(item.id, item);
             }
