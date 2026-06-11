@@ -242,6 +242,29 @@ describe('Task Store', () => {
       expect(task.reviewReason).toBe('plan_review');
     });
 
+    it('should preserve execution phase when a coding task is stopped', () => {
+      useTaskStore.setState({
+        tasks: [
+          createTestTask({
+            id: 'task-1',
+            status: 'in_progress',
+            executionProgress: {
+              phase: 'coding',
+              phaseProgress: 45,
+              overallProgress: 45
+            }
+          })
+        ]
+      });
+
+      useTaskStore.getState().updateTaskStatus('task-1', 'human_review', 'stopped');
+
+      const task = useTaskStore.getState().tasks[0];
+      expect(task.status).toBe('human_review');
+      expect(task.reviewReason).toBe('stopped');
+      expect(task.executionProgress?.phase).toBe('coding');
+    });
+
     it('should clear reviewReason when not provided', () => {
       useTaskStore.setState({
         tasks: [createTestTask({ id: 'task-1', status: 'human_review', reviewReason: 'plan_review' })]

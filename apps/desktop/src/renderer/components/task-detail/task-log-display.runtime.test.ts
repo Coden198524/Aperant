@@ -53,4 +53,17 @@ describe('runtime log display', () => {
       'Running standard workflow: discovery -> requirements -> research',
     ]);
   });
+
+  it('removes noisy Codex diagnostics from runtime blocks', () => {
+    const displayLogs = buildDisplayRuntimeLogs([
+      [
+        '2026-06-11T03:43:24.644758Z  WARN codex_core::shell_snapshot: Failed to create shell snapshot for powershell: Shell snapshot not supported yet for PowerShell\n',
+        '2026-06-11T03:43:24.729548Z  WARN codex_core_plugins::manifest: ignoring interface.defaultPrompt[0]: prompt must be at most 128 characters path=C:\\Users\\LS\\.codex\\.tmp\\plugins\\plugins\\ngs-analysis\\.codex-plugin/plugin.json\n',
+        "2026-06-11T03:43:24.801820Z  WARN codex_core_skills::loader: ignoring interface.icon_small: icon path with '..' must resolve under plugin assets/\n",
+        'Actual runtime output.',
+      ].join(''),
+    ]);
+
+    expect(displayLogs.map(log => log.content)).toEqual(['Actual runtime output.']);
+  });
 });

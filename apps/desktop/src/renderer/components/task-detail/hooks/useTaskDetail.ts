@@ -45,6 +45,46 @@ function validateTaskSubtasks(task: Task): boolean {
   return true;
 }
 
+const LOG_PHASES: TaskLogPhase[] = ['planning', 'coding', 'validation'];
+
+function getActiveLogPhase(logs: TaskLogs | null): TaskLogPhase | undefined {
+  if (!logs) {
+    return undefined;
+  }
+
+  return LOG_PHASES.find(phase => logs.phases[phase]?.status === 'active');
+}
+
+function getDefaultExpandedPhases(logs: TaskLogs | null): Set<TaskLogPhase> {
+  const activePhase = getActiveLogPhase(logs);
+  if (activePhase) {
+    return new Set([activePhase]);
+  }
+
+  return new Set(
+    LOG_PHASES.filter(phase => (logs?.phases[phase]?.entries.length ?? 0) > 0)
+  );
+}
+
+function mergeExpandedPhases(
+  previous: Set<TaskLogPhase>,
+  logs: TaskLogs
+): Set<TaskLogPhase> {
+  const activePhase = getActiveLogPhase(logs);
+
+  if (previous.size === 0) {
+    return getDefaultExpandedPhases(logs);
+  }
+
+  if (!activePhase) {
+    return previous;
+  }
+
+  const next = new Set(previous);
+  next.add(activePhase);
+  return next;
+}
+
 export interface UseTaskDetailOptions {
   task: Task;
 }
@@ -262,59 +302,66 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     }
   }, [showDiffDialog, needsReview, worktreeDiff, isLoadingDiff, loadWorktreeDiff]);
 
+  // Clear task-scoped log state immediately when the modal switches to another task.
+  useEffect(() => {
+    setPhaseLogs(null);
+    setExpandedPhases(new Set());
+    setIsLoadingLogs(false);
+  }, [task.projectId, task.specId]);
+
   // Load and watch phase logs - only when Logs tab is active
   useEffect(() => {
-    if (!currentProject || activeTab !== 'logs') return;
+    if (activeTab !== 'logs') return;
+
+    let cancelled = false;
 
     const loadLogs = async () => {
       setIsLoadingLogs(true);
       try {
-        const result = await window.electronAPI.getTaskLogs(currentProject.id, task.specId);
-        if (result.success && result.data) {
-          setPhaseLogs(result.data);
-          // Auto-expand active phase
-          const activePhase = (['planning', 'coding', 'validation'] as TaskLogPhase[]).find(
-            phase => result.data?.phases[phase]?.status === 'active'
-          );
-          if (activePhase) {
-            setExpandedPhases(new Set([activePhase]));
-          }
+        const result = await window.electronAPI.getTaskLogs(task.projectId, task.specId);
+        if (cancelled) {
+          return;
+        }
+
+        if (result.success) {
+          const logs = result.data ?? null;
+          setPhaseLogs(logs);
+          setExpandedPhases(getDefaultExpandedPhases(logs));
+        } else {
+          setPhaseLogs(null);
+          setExpandedPhases(new Set());
+          console.error('Failed to load task logs:', result.error);
         }
       } catch (err) {
-        console.error('Failed to load task logs:', err);
+        if (!cancelled) {
+          console.error('Failed to load task logs:', err);
+        }
       } finally {
-        setIsLoadingLogs(false);
+        if (!cancelled) {
+          setIsLoadingLogs(false);
+        }
       }
     };
 
-    loadLogs();
+    void loadLogs();
 
     // Start watching for log changes
-    window.electronAPI.watchTaskLogs(currentProject.id, task.specId);
+    void window.electronAPI.watchTaskLogs(task.projectId, task.specId);
 
     // Listen for log changes
     const unsubscribe = window.electronAPI.onTaskLogsChanged((specId, logs) => {
       if (specId === task.specId) {
         setPhaseLogs(logs);
-        // Auto-expand newly active phase
-        const activePhase = (['planning', 'coding', 'validation'] as TaskLogPhase[]).find(
-          phase => logs.phases[phase]?.status === 'active'
-        );
-        if (activePhase) {
-          setExpandedPhases(prev => {
-            const next = new Set(prev);
-            next.add(activePhase);
-            return next;
-          });
-        }
+        setExpandedPhases(prev => mergeExpandedPhases(prev, logs));
       }
     });
 
     return () => {
+      cancelled = true;
       unsubscribe();
-      window.electronAPI.unwatchTaskLogs(task.specId);
+      void window.electronAPI.unwatchTaskLogs(task.specId);
     };
-  }, [currentProject, task.specId, activeTab]);
+  }, [task.projectId, task.specId, activeTab]);
 
   // Toggle phase expansion
   const togglePhase = useCallback((phase: TaskLogPhase) => {

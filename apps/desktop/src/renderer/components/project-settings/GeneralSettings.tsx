@@ -17,7 +17,7 @@ import {
   SelectValue
 } from '../ui/select';
 import { Separator } from '../ui/separator';
-import { AVAILABLE_MODELS } from '../../../shared/constants';
+import { ProjectModelSelect } from './ProjectModelSelect';
 import type {
   Project,
   ProjectType,
@@ -197,28 +197,10 @@ export function GeneralSettings({
                 defaultValue: 'Agent Configuration'
               })}
             </h3>
-            <div className="space-y-2">
-              <Label htmlFor="model" className="text-sm font-medium text-foreground">
-                {t('general.model', {
-                  defaultValue: 'Model'
-                })}
-              </Label>
-              <Select
-                value={settings.model}
-                onValueChange={(value) => setSettings({ ...settings, model: value })}
-              >
-                <SelectTrigger id="model">
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {AVAILABLE_MODELS.map((model) => (
-                    <SelectItem key={model.value} value={model.value}>
-                      {model.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
+            <ProjectModelSelect
+              value={settings.model}
+              onChange={(value) => setSettings({ ...settings, model: value })}
+            />
             <div className="space-y-2">
               <Label htmlFor="projectType" className="text-sm font-medium text-foreground">
                 {t('projectSections.general.projectType.label', {

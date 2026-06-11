@@ -3,10 +3,14 @@
  */
 import { act, renderHook, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
-import type { Task } from '../../../../shared/types';
+import type { Task, TaskLogs } from '../../../../shared/types';
 
 const mockGetWorktreeStatus = vi.fn();
 const mockGetWorktreeDiff = vi.fn();
+const mockGetTaskLogs = vi.fn();
+const mockWatchTaskLogs = vi.fn();
+const mockUnwatchTaskLogs = vi.fn();
+const mockOnTaskLogsChanged = vi.fn();
 
 vi.mock('../../../stores/project-store', () => ({
   useProjectStore: (selector: (state: {
@@ -91,10 +95,22 @@ describe('useTaskDetail', () => {
       value: {
         getWorktreeStatus: mockGetWorktreeStatus,
         getWorktreeDiff: mockGetWorktreeDiff,
+        getTaskLogs: mockGetTaskLogs,
+        watchTaskLogs: mockWatchTaskLogs,
+        unwatchTaskLogs: mockUnwatchTaskLogs,
+        onTaskLogsChanged: mockOnTaskLogsChanged,
       },
       writable: true,
       configurable: true,
     });
+
+    mockGetTaskLogs.mockResolvedValue({
+      success: true,
+      data: null,
+    });
+    mockWatchTaskLogs.mockResolvedValue({ success: true });
+    mockUnwatchTaskLogs.mockResolvedValue({ success: true });
+    mockOnTaskLogsChanged.mockReturnValue(vi.fn());
   });
 
   it('loads worktree status on mount without eagerly loading diff', async () => {
@@ -122,5 +138,65 @@ describe('useTaskDetail', () => {
     await waitFor(() => {
       expect(mockGetWorktreeDiff).toHaveBeenCalledTimes(1);
     });
+  });
+
+  it('loads task detail logs by task project id and expands phases with entries', async () => {
+    const logs: TaskLogs = {
+      spec_id: task.specId,
+      created_at: '2026-04-10T00:00:00.000Z',
+      updated_at: '2026-04-10T00:00:01.000Z',
+      phases: {
+        planning: {
+          phase: 'planning',
+          status: 'pending',
+          started_at: null,
+          completed_at: null,
+          entries: [],
+        },
+        coding: {
+          phase: 'coding',
+          status: 'completed',
+          started_at: '2026-04-10T00:00:00.000Z',
+          completed_at: '2026-04-10T00:00:01.000Z',
+          entries: [
+            {
+              timestamp: '2026-04-10T00:00:00.500Z',
+              type: 'info',
+              phase: 'coding',
+              content: 'Visible task detail log entry',
+            },
+          ],
+        },
+        validation: {
+          phase: 'validation',
+          status: 'pending',
+          started_at: null,
+          completed_at: null,
+          entries: [],
+        },
+      },
+    };
+    mockGetTaskLogs.mockResolvedValueOnce({
+      success: true,
+      data: logs,
+    });
+
+    const { result } = renderHook(() => useTaskDetail({ task }));
+
+    act(() => {
+      result.current.setActiveTab('logs');
+    });
+
+    await waitFor(() => {
+      expect(mockGetTaskLogs).toHaveBeenCalledWith(task.projectId, task.specId);
+    });
+
+    expect(mockWatchTaskLogs).toHaveBeenCalledWith(task.projectId, task.specId);
+
+    await waitFor(() => {
+      expect(result.current.phaseLogs).toBe(logs);
+    });
+
+    expect(result.current.expandedPhases.has('coding')).toBe(true);
   });
 });

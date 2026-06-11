@@ -131,14 +131,16 @@ export function countTaskRuntimeLogEntriesForScope(
     return 0;
   }
 
-  return [
+  const entries = [
     ...logs.phases.planning.entries,
     ...logs.phases.coding.entries,
     ...logs.phases.validation.entries,
   ].filter(entry =>
     MODEL_OUTPUT_ENTRY_TYPES.has(entry.type as ModelOutputEntryType) &&
     shouldIncludeModelEntryInScope(entry, task, scope)
-  ).length;
+  );
+
+  return buildDisplayLogEntries(entries).length;
 }
 
 const modelMarkdownComponents: Components = {

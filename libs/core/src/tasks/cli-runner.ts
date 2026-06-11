@@ -525,6 +525,11 @@ const CODING_WORKER_COMPLETION_GRACE_MS = readPositiveInteger(
   process.env.AUTOCODE_WORKER_COMPLETION_GRACE_MS,
   45 * 1000,
 );
+const NOISY_CLI_DIAGNOSTIC_PATTERNS = [
+  /WARN\\s+codex_core::shell_snapshot:\\s+Failed to create shell snapshot for powershell\\b/i,
+  /WARN\\s+codex_core_plugins::manifest:\\s+ignoring interface\\.defaultPrompt\\[[0-9]+\\]:\\s+prompt must be at most [0-9]+ characters\\b/i,
+  /WARN\\s+codex_core_skills::loader:\\s+ignoring interface\\.icon_(?:small|large):\\s+icon path with '\\.\\.' must resolve under plugin assets\\//i,
+];
 
 initializeCliMemoryRuntime()
   .then((contextBlock) => {
@@ -2332,6 +2337,12 @@ function scoreEncodingDamage(text) {
     '堕',
     '姝',
     '垚',
+    '鈥檒',
+    '鈥檓',
+    '鈥檙',
+    '鈥檚',
+    '鈥檛',
+    '鈥檝',
   ];
   let score = 0;
   for (const char of text) {
@@ -2362,7 +2373,7 @@ function loadIconvLite() {
 }
 
 function queueModelOutput(text, state = defaultAttemptState) {
-  const cleaned = cleanLogText(text);
+  const cleaned = stripNoisyCliDiagnosticLines(cleanLogText(text));
   if (!cleaned.trim()) {
     return;
   }
@@ -2384,7 +2395,7 @@ function flushModelOutput(state = defaultAttemptState) {
     state.modelOutputFlushTimer = null;
   }
 
-  const text = state.pendingModelOutput.trim();
+  const text = stripNoisyCliDiagnosticLines(state.pendingModelOutput).trim();
   state.pendingModelOutput = '';
   if (!text) {
     return;
@@ -3242,6 +3253,24 @@ function cleanLogText(value) {
     .replace(/\\r/g, '\\n')
     .replace(/\\x1B\\[[0-?]*[ -/]*[@-~]/g, '')
     .replace(/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]/g, '');
+}
+
+function stripNoisyCliDiagnosticLines(value) {
+  return String(value ?? '')
+    .split('\\n')
+    .filter((line) => !isNoisyCliDiagnosticLine(line))
+    .join('\\n')
+    .replace(/\\n{3,}/g, '\\n\\n');
+}
+
+function isNoisyCliDiagnosticLine(line) {
+  const trimmed = String(line ?? '').trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const message = trimmed.replace(/^\\d{4}-\\d{2}-\\d{2}T[^\\s]+\\s+/, '').trim();
+  return NOISY_CLI_DIAGNOSTIC_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 function limitLogText(value, maxLength) {

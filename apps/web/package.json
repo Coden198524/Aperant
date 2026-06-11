@@ -1,0 +1,30 @@
+{
+  "name": "autocode-web",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Autocode Web platform and local service",
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "dev:client": "vite --host 127.0.0.1 --port 5174",
+    "dev:service": "npm run build:server && node dist/server/index.js",
+    "build": "npm run build:server && vite build",
+    "build:server": "tsc -p tsconfig.server.json",
+    "preview": "node dist/server/index.js",
+    "typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p tsconfig.server.json"
+  },
+  "dependencies": {
+    "@autocode/core": "*",
+    "lucide-react": "^0.577.0",
+    "react": "^19.2.4",
+    "react-dom": "^19.2.4"
+  },
+  "devDependencies": {
+    "@types/node": "^25.5.0",
+    "@types/react": "^19.2.14",
+    "@types/react-dom": "^19.2.3",
+    "@vitejs/plugin-react": "^5.1.2",
+    "typescript": "^5.9.3",
+    "vite": "^7.2.7"
+  }
+}

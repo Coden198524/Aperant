@@ -194,7 +194,6 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
   if (status === 'active' && isTaskSettled) {
     status = 'completed';
   }
-  const hasEntries = (phaseLog?.entries.length || 0) > 0;
 
   // Memoize sorted entries to avoid re-calculating on every render
   // Entries are naturally in chronological order (oldest first from append())
@@ -202,6 +201,7 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
     const entries = buildDisplayLogEntries(phaseLog?.entries || []);
     return logOrder === 'reverse-chronological' ? [...entries].reverse() : entries;
   }, [phaseLog?.entries, logOrder]);
+  const hasEntries = displayedEntries.length > 0;
 
   const getStatusBadge = () => {
     switch (status) {
@@ -270,7 +270,7 @@ function PhaseLogSection({ phase, phaseLog, isExpanded, onToggle, isTaskStuck, i
             {hasEntries && (
               <span className="text-xs text-muted-foreground">
                 {t('tasks:logs.entriesCount', {
-                  count: phaseLog?.entries.length ?? 0,
+                  count: displayedEntries.length,
                   defaultValue: '({{count}} entries)'
                 })}
               </span>

@@ -1,0 +1,35 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "useDefineForClassFields": true,
+    "lib": ["DOM", "DOM.Iterable", "ES2022"],
+    "allowJs": false,
+    "skipLibCheck": true,
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "strict": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "resolveJsonModule": true,
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "types": ["vite/client"],
+    "baseUrl": ".",
+    "paths": {
+      "@web/*": ["src/*"],
+      "@client/*": ["src/client/*"],
+      "@shared/*": ["../desktop/src/shared/*"],
+      "@preload/*": ["../desktop/src/preload/*"],
+      "@/*": ["../desktop/src/renderer/*"],
+      "@renderer/*": ["../desktop/src/renderer/*"],
+      "@components/*": ["../desktop/src/renderer/components/*"],
+      "@hooks/*": ["../desktop/src/renderer/hooks/*"],
+      "@lib/*": ["../desktop/src/renderer/lib/*"],
+      "@features/*": ["../desktop/src/renderer/features/*"]
+    }
+  },
+  "include": ["src/client/**/*", "src/shared/**/*", "vite.config.ts"],
+  "exclude": ["node_modules", "dist"]
+}

@@ -342,20 +342,32 @@ function inferAutocodeProjectTaskProgress(input: {
   status: AutocodeTaskStatus;
   reviewReason?: AutocodeReviewReason;
 }): AutocodeProjectTaskExecutionProgress | undefined {
+  const isStoppedReview = input.status === 'human_review' && input.reviewReason === 'stopped';
   const persistedProgress = progressFromPhase(input.plan?.executionPhase);
-  const xstateProgress = input.plan?.xstateState
+  const usablePersistedProgress = isStoppedReview && !isResumableStoppedPhase(persistedProgress?.phase)
+    ? undefined
+    : persistedProgress;
+  const xstateProgress = !isStoppedReview && input.plan?.xstateState
     ? inferAutocodeExecutionProgressFromXState(input.plan.xstateState)
     : undefined;
   const statusProgress = inferAuthoritativeProgressFromTaskStatus(input.status, input.reviewReason);
-  const planStatusProgress = input.plan?.status && !persistedProgress && !xstateProgress
+  const planStatusProgress = input.plan?.status && !isStoppedReview && !usablePersistedProgress && !xstateProgress
     ? inferAutocodeExecutionProgress(input.plan.status)
     : undefined;
   const activityProgress = strongestProgress([
-    inferProgressFromTaskLogs(input.logs),
+    inferProgressFromTaskLogs(input.logs, { ignoreFailedStatus: isStoppedReview }),
     inferProgressFromSubtasks(input.subtasks),
   ]);
 
-  let progress = strongestProgress([persistedProgress, xstateProgress]) ?? statusProgress ?? planStatusProgress;
+  if (isStoppedReview) {
+    return strongestProgress([
+      usablePersistedProgress,
+      activityProgress,
+      inferStoppedFallbackProgress(input.subtasks),
+    ]);
+  }
+
+  let progress = strongestProgress([usablePersistedProgress, xstateProgress]) ?? statusProgress ?? planStatusProgress;
 
   if (statusProgress && phaseRank(statusProgress.phase) > phaseRank(progress?.phase)) {
     progress = statusProgress;
@@ -376,6 +388,9 @@ function inferAuthoritativeProgressFromTaskStatus(
     case 'pr_created':
       return progressFromPhase('complete');
     case 'human_review':
+      if (reviewReason === 'stopped') {
+        return undefined;
+      }
       return progressFromPhase(reviewReason === 'plan_review' ? 'planning' : 'complete');
     case 'ai_review':
       return progressFromPhase('qa_review');
@@ -386,29 +401,32 @@ function inferAuthoritativeProgressFromTaskStatus(
   }
 }
 
-function inferProgressFromTaskLogs(logs: AutocodeTaskLogs | null): AutocodeProjectTaskExecutionProgress | undefined {
+function inferProgressFromTaskLogs(
+  logs: AutocodeTaskLogs | null,
+  options: { ignoreFailedStatus?: boolean } = {},
+): AutocodeProjectTaskExecutionProgress | undefined {
   if (!logs) {
     return undefined;
   }
 
   const validation = logs.phases.validation;
   if (validation?.status === 'active' || validation?.entries?.length > 0) {
-    return progressFromPhase(validation.status === 'failed' ? 'failed' : 'qa_review');
+    return progressFromPhase(validation.status === 'failed' && !options.ignoreFailedStatus ? 'failed' : 'qa_review');
   }
-  if (validation?.status === 'failed') {
+  if (validation?.status === 'failed' && !options.ignoreFailedStatus) {
     return progressFromPhase('failed');
   }
 
   const coding = logs.phases.coding;
   if (coding?.status === 'active' || coding?.entries?.length > 0) {
-    return progressFromPhase(coding.status === 'failed' ? 'failed' : 'coding');
+    return progressFromPhase(coding.status === 'failed' && !options.ignoreFailedStatus ? 'failed' : 'coding');
   }
-  if (coding?.status === 'failed') {
+  if (coding?.status === 'failed' && !options.ignoreFailedStatus) {
     return progressFromPhase('failed');
   }
 
   const planning = logs.phases.planning;
-  if (planning?.status === 'failed') {
+  if (planning?.status === 'failed' && !options.ignoreFailedStatus) {
     return progressFromPhase('failed');
   }
   if (planning?.status === 'active' || planning?.status === 'completed' || planning?.entries?.length > 0) {
@@ -416,6 +434,16 @@ function inferProgressFromTaskLogs(logs: AutocodeTaskLogs | null): AutocodeProje
   }
 
   return undefined;
+}
+
+function inferStoppedFallbackProgress(
+  subtasks: Array<{ status: string }>,
+): AutocodeProjectTaskExecutionProgress | undefined {
+  return progressFromPhase(subtasks.length > 0 ? 'coding' : 'planning');
+}
+
+function isResumableStoppedPhase(phase: string | undefined): boolean {
+  return phase === 'planning' || phase === 'coding' || phase === 'qa_review' || phase === 'qa_fixing';
 }
 
 function inferProgressFromSubtasks(
@@ -465,8 +493,9 @@ function normalizeAutocodeProjectTaskPhase(phase: string | undefined): AutocodeE
     case 'qa_fixing':
     case 'complete':
     case 'failed':
-    case 'stopped':
       return phase;
+    case 'stopped':
+      return undefined;
     default:
       return undefined;
   }
@@ -487,7 +516,6 @@ function phaseRank(phase: string | undefined): number {
     case 'qa_fixing':
       return 4;
     case 'complete':
-    case 'stopped':
       return 5;
     case 'failed':
       return 6;

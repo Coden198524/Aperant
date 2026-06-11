@@ -74,6 +74,11 @@ export interface UpdateAutocodeTaskLogPhaseInput extends AutocodeTaskLogsInput {
 
 const LOG_TEXT_MAX_CHARS = 4000;
 const LOG_DETAIL_MAX_CHARS = 12000;
+const NOISY_AUTOCODE_TASK_LOG_PATTERNS = [
+  /WARN\s+codex_core::shell_snapshot:\s+Failed to create shell snapshot for powershell\b/i,
+  /WARN\s+codex_core_plugins::manifest:\s+ignoring interface\.defaultPrompt\[[0-9]+]:\s+prompt must be at most [0-9]+ characters\b/i,
+  /WARN\s+codex_core_skills::loader:\s+ignoring interface\.icon_(?:small|large):\s+icon path with '\.\.' must resolve under plugin assets\//i,
+];
 
 export function getAutocodeTaskLogsPath(input: AutocodeTaskLogsInput): string {
   return join(resolveTaskSpecDir(input), AUTOCODE_TASK_ARTIFACTS.taskLogs);
@@ -199,13 +204,17 @@ export function appendAutocodeTaskLogEntry(input: AppendAutocodeTaskLogEntryInpu
         phaseLog.started_at = phaseLog.started_at ?? now;
       }
 
-      phaseLog.entries.push({
-        timestamp: input.timestamp ?? now,
-        type: input.type,
-        phase: input.phase,
-        content: sanitizeText(input.content, LOG_TEXT_MAX_CHARS),
-        ...(input.detail ? { detail: sanitizeText(input.detail, LOG_DETAIL_MAX_CHARS), collapsed: true } : {}),
-      });
+      const content = sanitizeLogMessageText(input.content, LOG_TEXT_MAX_CHARS);
+      const detail = input.detail ? sanitizeLogMessageText(input.detail, LOG_DETAIL_MAX_CHARS) : undefined;
+      if (!(input.type === 'text' && !content.trim() && !detail?.trim())) {
+        phaseLog.entries.push({
+          timestamp: input.timestamp ?? now,
+          type: input.type,
+          phase: input.phase,
+          content,
+          ...(detail ? { detail, collapsed: true } : {}),
+        });
+      }
       logs.phases[input.phase] = phaseLog;
       logs.updated_at = now;
       writeAutocodeTaskLogs(logPath, logs);
@@ -236,7 +245,7 @@ export function updateAutocodeTaskLogPhase(input: UpdateAutocodeTaskLogPhaseInpu
           timestamp: now,
           type: input.status === 'failed' ? 'error' : input.status === 'completed' ? 'success' : 'info',
           phase: input.phase,
-          content: sanitizeText(input.message, LOG_TEXT_MAX_CHARS),
+          content: sanitizeLogMessageText(input.message, LOG_TEXT_MAX_CHARS),
         });
       }
 
@@ -328,19 +337,28 @@ function sanitizePhaseLog(value: AutocodeTaskPhaseLog | undefined, phase: Autoco
     started_at: typeof value?.started_at === 'string' ? value.started_at : null,
     completed_at: typeof value?.completed_at === 'string' ? value.completed_at : null,
     entries: Array.isArray(value?.entries)
-      ? value.entries.map((entry) => sanitizeEntry(entry, phase))
+      ? value.entries
+        .map((entry) => sanitizeEntry(entry, phase))
+        .filter((entry): entry is AutocodeTaskLogEntry => entry !== null)
       : [],
   };
 }
 
-function sanitizeEntry(value: AutocodeTaskLogEntry, fallbackPhase: AutocodeTaskLogPhase): AutocodeTaskLogEntry {
+function sanitizeEntry(value: AutocodeTaskLogEntry, fallbackPhase: AutocodeTaskLogPhase): AutocodeTaskLogEntry | null {
   const phase = isPhase(value.phase) ? value.phase : fallbackPhase;
+  const type = isEntryType(value.type) ? value.type : 'info';
+  const content = sanitizeLogMessageText(value.content, LOG_TEXT_MAX_CHARS);
+  const detail = value.detail ? sanitizeLogMessageText(value.detail, LOG_DETAIL_MAX_CHARS) : undefined;
+  if (type === 'text' && !content.trim() && !detail?.trim()) {
+    return null;
+  }
+
   return {
     timestamp: typeof value.timestamp === 'string' ? value.timestamp : new Date().toISOString(),
-    type: isEntryType(value.type) ? value.type : 'info',
+    type,
     phase,
-    content: sanitizeText(value.content, LOG_TEXT_MAX_CHARS),
-    ...(value.detail ? { detail: sanitizeText(value.detail, LOG_DETAIL_MAX_CHARS) } : {}),
+    content,
+    ...(detail ? { detail } : {}),
     ...(value.tool_name ? { tool_name: sanitizeText(value.tool_name, 200) } : {}),
     ...(value.tool_input ? { tool_input: sanitizeText(value.tool_input, 1000) } : {}),
     ...(value.tool_success !== undefined ? { tool_success: Boolean(value.tool_success) } : {}),
@@ -415,15 +433,43 @@ function readTextIfPresent(filePath: string): string {
 }
 
 function sanitizeText(value: unknown, maxLength: number): string {
+  const normalized = normalizeText(value);
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function sanitizeLogMessageText(value: unknown, maxLength: number): string {
+  const normalized = stripNoisyAutocodeTaskLogText(normalizeText(value));
+  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+function normalizeText(value: unknown): string {
   const text = typeof value === 'string'
     ? value
     : value === null || value === undefined
       ? ''
       : String(value);
-  const normalized = repairAutocodeChineseMojibakeText(text)
+  return repairAutocodeChineseMojibakeText(text)
     .replace(/\r\n/g, '\n')
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, '');
-  return normalized.length > maxLength ? `${normalized.slice(0, maxLength - 3)}...` : normalized;
+}
+
+export function stripNoisyAutocodeTaskLogText(content: string): string {
+  return String(content ?? '')
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .filter((line) => !isNoisyAutocodeTaskLogLine(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n');
+}
+
+function isNoisyAutocodeTaskLogLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) {
+    return false;
+  }
+
+  const message = trimmed.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, '').trim();
+  return NOISY_AUTOCODE_TASK_LOG_PATTERNS.some((pattern) => pattern.test(message));
 }
 
 function hasAutocodeTaskPhaseContent(phase: AutocodeTaskPhaseLog | undefined): boolean {

@@ -493,25 +493,51 @@ export function markAutocodeTaskStopped(input: AutocodeTaskActionInput & {
   message?: string;
 }): AutocodeTask {
   const dataDirName = normalizeAutocodeProjectDataDirName(input.dataDirName);
+  const existingTask = listAutocodeTasks({
+    projectRoot: input.projectRoot,
+    dataDirName,
+  }).find((candidate) => candidate.id === input.taskId || candidate.specId === input.taskId);
+  const stoppedPhase = input.phase ?? inferStoppedTaskPhase(existingTask);
   const task = updateAutocodeTaskPlanStatus({
     projectRoot: input.projectRoot,
     dataDirName,
     taskId: input.taskId,
     planStatus: 'human_review',
     reviewReason: 'stopped',
-    executionPhase: 'stopped',
+    executionPhase: stoppedPhase,
   });
 
   updateAutocodeTaskLogPhase({
     projectRoot: input.projectRoot,
     dataDirName,
     taskId: input.taskId,
-    phase: input.phase ?? (task.executionPhase === 'coding' ? 'coding' : 'planning'),
-    status: 'failed',
+    phase: stoppedPhase,
+    status: 'active',
     message: input.message ?? 'Task stopped.',
   });
 
   return task;
+}
+
+function inferStoppedTaskPhase(task: AutocodeTask | undefined): 'planning' | 'coding' {
+  if (!task) {
+    return 'planning';
+  }
+
+  if (
+    task.executionPhase === 'coding' ||
+    task.executionPhase === 'qa_review' ||
+    task.executionPhase === 'qa_fixing' ||
+    task.executionPhase === 'review'
+  ) {
+    return 'coding';
+  }
+
+  if (task.subtasks.some((subtask) => subtask.status !== 'pending') || task.subtasks.length > 0) {
+    return 'coding';
+  }
+
+  return 'planning';
 }
 
 function hasAutocodePlanSubtasks(planPath: string): boolean {

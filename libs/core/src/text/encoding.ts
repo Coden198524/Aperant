@@ -34,6 +34,15 @@ const MOJIBAKE_PATTERNS = [
   '垚',
 ] as const;
 
+const GBK_UTF8_PUNCTUATION_MOJIBAKE_PATTERNS = [
+  '鈥檒',
+  '鈥檓',
+  '鈥檙',
+  '鈥檚',
+  '鈥檛',
+  '鈥檝',
+] as const;
+
 let gb18030Decoder: TextDecoder | null | undefined;
 
 export function decodeAutocodeCliOutputChunk(input: Uint8Array | string): string {
@@ -101,6 +110,13 @@ function shouldPreferEncodingCandidate(original: string, candidate: string): boo
 function scoreEncodingDamage(text: string): number {
   let score = countReplacementCharacters(text) * 12;
   for (const pattern of MOJIBAKE_PATTERNS) {
+    let index = text.indexOf(pattern);
+    while (index >= 0) {
+      score += pattern.length;
+      index = text.indexOf(pattern, index + pattern.length);
+    }
+  }
+  for (const pattern of GBK_UTF8_PUNCTUATION_MOJIBAKE_PATTERNS) {
     let index = text.indexOf(pattern);
     while (index >= 0) {
       score += pattern.length;

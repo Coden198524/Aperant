@@ -329,8 +329,12 @@ export class TaskStateManager {
         snapshot.context.reviewReason
       );
 
-      // Map XState state to execution phase for persistence
-      const executionPhase = this.mapStateToExecutionPhase(stateValue);
+      const executionPhase = this.resolveExecutionPhaseForTransition(
+        stateValue,
+        reviewReason,
+        lastState,
+        task
+      );
 
       console.debug(`[TaskStateManager] Emitting status for ${taskId}:`, {
         status,
@@ -341,7 +345,7 @@ export class TaskStateManager {
       });
 
       this.persistStatus(task, project, status, reviewReason, stateValue, executionPhase);
-      this.emitStatus(taskId, status, reviewReason, project.id);
+      this.emitStatus(taskId, status, reviewReason, project.id, executionPhase);
     });
 
     actor.start();
@@ -386,7 +390,8 @@ export class TaskStateManager {
     taskId: string,
     status: TaskStatus,
     reviewReason: ReviewReason | undefined,
-    projectId?: string
+    projectId?: string,
+    executionPhaseOverride?: ExecutionPhase
   ): void {
     if (!this.getMainWindow) {
       console.warn(`[TaskStateManager] emitStatus: No main window, cannot emit status ${status} for ${taskId}`);
@@ -407,7 +412,7 @@ export class TaskStateManager {
     const actor = this.actors.get(taskId);
     if (actor) {
       const xstateState = String(actor.getSnapshot().value);
-      const executionPhase = this.mapStateToExecutionPhase(xstateState);
+      const executionPhase = executionPhaseOverride ?? this.mapStateToExecutionPhase(xstateState);
 
       // Only emit if we have a meaningful phase (not idle)
       if (executionPhase && executionPhase !== 'idle') {
@@ -486,6 +491,52 @@ export class TaskStateManager {
       }
     });
   }
+
+  private resolveExecutionPhaseForTransition(
+    xstateState: string,
+    reviewReason: ReviewReason | undefined,
+    previousState: string | undefined,
+    task: Task
+  ): ExecutionPhase {
+    if (xstateState === 'human_review' && reviewReason === 'stopped') {
+      const previousPhase = previousState ? XSTATE_TO_PHASE[previousState] : undefined;
+      const resumablePreviousPhase = normalizeStoppedExecutionPhase(previousPhase);
+      if (resumablePreviousPhase) {
+        return resumablePreviousPhase;
+      }
+      return inferStoppedExecutionPhaseFromTask(task);
+    }
+
+    return this.mapStateToExecutionPhase(xstateState);
+  }
 }
 
 export const taskStateManager = new TaskStateManager();
+
+function normalizeStoppedExecutionPhase(phase: ExecutionPhase | undefined): ExecutionPhase | undefined {
+  switch (phase) {
+    case 'rate_limit_paused':
+    case 'auth_failure_paused':
+      return 'coding';
+    case 'planning':
+    case 'coding':
+    case 'qa_review':
+    case 'qa_fixing':
+      return phase;
+    default:
+      return undefined;
+  }
+}
+
+function inferStoppedExecutionPhaseFromTask(task: Task): ExecutionPhase {
+  const taskPhase = normalizeStoppedExecutionPhase(task.executionProgress?.phase);
+  if (taskPhase) {
+    return taskPhase;
+  }
+
+  if (task.subtasks.some((subtask) => subtask.status !== 'pending') || task.subtasks.length > 0) {
+    return 'coding';
+  }
+
+  return 'planning';
+}

@@ -29,6 +29,7 @@ import {
   DEFAULT_PHASE_THINKING,
   getProviderPreset,
   ALL_AVAILABLE_MODELS,
+  resolveModelEquivalent,
 } from '../../shared/constants';
 import type { ModelType, ThinkingLevel } from '../../shared/types';
 import type { PhaseModelConfig, PhaseThinkingConfig } from '../../shared/types/settings';
@@ -99,19 +100,39 @@ export function AgentProfileSelector({
   const isCustom = profileId === 'custom';
   const currentPhaseModels = phaseModels || DEFAULT_PHASE_MODELS;
   const currentPhaseThinking = phaseThinking || DEFAULT_PHASE_THINKING;
-  const getModelLabel = (modelValue: string) =>
-    ALL_AVAILABLE_MODELS.find(m => m.value === modelValue)?.label
-    || AVAILABLE_MODELS.find(m => m.value === modelValue)?.label?.replace('Claude ', '')
-    || modelValue;
+  const getModelLabel = (modelValue: string) => {
+    if (activeProvider) {
+      return getProviderModelLabel(modelValue, activeProvider);
+    }
+    return ALL_AVAILABLE_MODELS.find(m => m.value === modelValue)?.label
+      || AVAILABLE_MODELS.find(m => m.value === modelValue)?.label?.replace('Claude ', '')
+      || modelValue;
+  };
+  const normalizeModelForActiveProvider = (modelValue: string): ModelType => {
+    if (!activeProvider || activeProvider === 'ollama') {
+      return modelValue as ModelType;
+    }
+    const directMatch = ALL_AVAILABLE_MODELS.some(candidate =>
+      candidate.value === modelValue &&
+      (candidate.provider === activeProvider || (activeProvider === 'openai-compatible' && candidate.provider === 'openai'))
+    );
+    if (directMatch) {
+      return modelValue as ModelType;
+    }
+    return (resolveModelEquivalent(modelValue, activeProvider)?.modelId ?? modelValue) as ModelType;
+  };
 
   const handleProfileSelect = (selectedId: string) => {
     if (selectedId === 'custom') {
       const currentProfile = DEFAULT_AGENT_PROFILES.find(p => p.id === profileId)
         || DEFAULT_AGENT_PROFILES.find(p => p.id === 'auto')!;
       const currentProviderPreset = activeProvider ? getProviderPreset(activeProvider, currentProfile.id) : null;
+      const resolvedModel = normalizeModelForActiveProvider(
+        (model as ModelType) || (currentProviderPreset?.primaryModel ?? currentProfile.model) as ModelType,
+      );
       onProfileChange(
         'custom',
-        (model as ModelType) || (currentProviderPreset?.primaryModel ?? currentProfile.model) as ModelType,
+        resolvedModel,
         thinkingLevel as ThinkingLevel || currentProviderPreset?.primaryThinking || currentProfile.thinkingLevel
       );
       return;
@@ -302,6 +323,7 @@ export function AgentProfileSelector({
                       <MultiProviderModelSelect
                         value={currentPhaseModels[phase]}
                         onChange={(value) => handlePhaseModelChange(phase, value as ModelType)}
+                        filterProvider={activeProvider ?? undefined}
                         className={disabled ? 'pointer-events-none opacity-50' : undefined}
                       />
                     </div>
@@ -327,8 +349,9 @@ export function AgentProfileSelector({
             </Label>
             <div id="custom-model">
               <MultiProviderModelSelect
-                value={model}
+                value={model ? normalizeModelForActiveProvider(model) : model}
                 onChange={(value) => onModelChange(value as ModelType)}
+                filterProvider={activeProvider ?? undefined}
                 className={disabled ? 'pointer-events-none opacity-50' : undefined}
               />
             </div>

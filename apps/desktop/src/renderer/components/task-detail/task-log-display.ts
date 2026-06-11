@@ -43,10 +43,56 @@ const COMPACT_SUMMARY_ROW_PATTERN = /\|\s*(What changed|Verification|Review note
 const COMPACT_SUMMARY_TABLE_PATTERN =
   /\|\s*Item\s*\|\s*Details\s*\|\s*\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|/i;
 const FENCED_CODE_BLOCK_PATTERN = /(^|\n)\s*(```|~~~)/;
+const NOISY_CODEX_DIAGNOSTIC_PATTERNS = [
+  /WARN\s+codex_core::shell_snapshot:\s+Failed to create shell snapshot for powershell\b/i,
+  /WARN\s+codex_core_plugins::manifest:\s+ignoring interface\.defaultPrompt\[\d+\]:\s+prompt must be at most \d+ characters\b/i,
+  /WARN\s+codex_core_skills::loader:\s+ignoring interface\.icon_(?:small|large):\s+icon path with '\.\.' must resolve under plugin assets\//i,
+];
 
 function parseTimestamp(value: string): number | null {
   const parsed = Date.parse(value);
   return Number.isNaN(parsed) ? null : parsed;
+}
+
+function stripLogTimestampPrefix(value: string): string {
+  return value.replace(/^\d{4}-\d{2}-\d{2}T[^\s]+\s+/, '').trim();
+}
+
+function isNoisyCodexDiagnosticLine(line: string): boolean {
+  const trimmed = line.trim();
+  if (!trimmed) return false;
+
+  const withoutTimestamp = stripLogTimestampPrefix(trimmed);
+  return NOISY_CODEX_DIAGNOSTIC_PATTERNS.some(pattern => pattern.test(withoutTimestamp));
+}
+
+export function stripNoisyCodexDiagnostics(content: string): string {
+  return content
+    .replace(/\r\n?/g, '\n')
+    .split('\n')
+    .filter(line => !isNoisyCodexDiagnosticLine(line))
+    .join('\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function normalizeDisplayLogEntry(entry: TaskLogEntry): TaskLogEntry | null {
+  if (entry.type !== 'text') {
+    return entry;
+  }
+
+  const content = stripNoisyCodexDiagnostics(entry.content);
+  if (!content) {
+    return null;
+  }
+
+  const detail = entry.detail ? stripNoisyCodexDiagnostics(entry.detail) : undefined;
+
+  return {
+    ...entry,
+    content,
+    ...(detail ? { detail } : { detail: undefined }),
+  };
 }
 
 function shouldStartNewLine(previousContent: string, nextContent: string): boolean {
@@ -435,7 +481,12 @@ function canMergeRuntimeLogs(previousLog: DisplayRuntimeLog | undefined, nextLog
 export function buildDisplayLogEntries(entries: TaskLogEntry[]): DisplayTaskLogEntry[] {
   const displayEntries: DisplayTaskLogEntry[] = [];
 
-  for (const entry of entries) {
+  for (const rawEntry of entries) {
+    const entry = normalizeDisplayLogEntry(rawEntry);
+    if (!entry) {
+      continue;
+    }
+
     const previousEntry = displayEntries[displayEntries.length - 1];
 
     if (canMergeTextEntries(previousEntry, entry)) {
@@ -462,7 +513,7 @@ export function buildDisplayLogEntries(entries: TaskLogEntry[]): DisplayTaskLogE
 export function buildDisplayRuntimeLogs(logs: string[]): DisplayRuntimeLog[] {
   const displayLogs: DisplayRuntimeLog[] = [];
 
-  for (const log of logs.flatMap(splitRuntimeLogBlocks)) {
+  for (const log of logs.flatMap(value => splitRuntimeLogBlocks(stripNoisyCodexDiagnostics(value)))) {
     const previousLog = displayLogs[displayLogs.length - 1];
 
     if (canMergeRuntimeLogs(previousLog, log)) {

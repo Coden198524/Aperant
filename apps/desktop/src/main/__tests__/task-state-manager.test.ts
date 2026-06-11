@@ -1,6 +1,7 @@
 ﻿import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { TaskStateManager } from '../task-state-manager';
 import type { Task, Project } from '../../shared/types';
+import { persistPlanStatusAndReasonSync } from '../ipc-handlers/task/plan-file-utils';
 
 // Mock dependencies
 vi.mock('../ipc-handlers/utils', () => ({
@@ -211,6 +212,93 @@ describe('TaskStateManager', () => {
       manager.handleUiEvent(mockTask.id, { type: 'USER_STOPPED', hasPlan: false }, mockTask, mockProject);
 
       // Should not throw
+    });
+
+    it('preserves coding phase when a coding task is stopped', () => {
+      const codingTask = createMockTask({
+        id: 'coding-stop',
+        specId: '001-coding-stop',
+        status: 'in_progress',
+        executionProgress: {
+          phase: 'coding',
+          phaseProgress: 45,
+          overallProgress: 45
+        },
+        subtasks: [
+          {
+            id: '1.1',
+            title: 'Implement feature',
+            description: 'Implement feature',
+            status: 'in_progress',
+            files: []
+          }
+        ]
+      });
+
+      manager.handleTaskEvent(
+        codingTask.id,
+        {
+          type: 'CODING_STARTED',
+          taskId: codingTask.id,
+          specId: codingTask.specId,
+          projectId: mockProject.id,
+          timestamp: new Date().toISOString(),
+          eventId: 'evt-coding-started',
+          sequence: 0,
+          subtaskId: '1.1',
+          subtaskDescription: 'Implement feature'
+        },
+        codingTask,
+        mockProject
+      );
+
+      vi.mocked(persistPlanStatusAndReasonSync).mockClear();
+
+      manager.handleUiEvent(codingTask.id, { type: 'USER_STOPPED', hasPlan: true }, codingTask, mockProject);
+
+      expect(persistPlanStatusAndReasonSync).toHaveBeenLastCalledWith(
+        '/mock/path/implementation_plan.md',
+        'human_review',
+        'stopped',
+        mockProject.id,
+        'human_review',
+        'coding'
+      );
+    });
+
+    it('restores stopped human review from the persisted coding phase', () => {
+      const stoppedTask = createMockTask({
+        id: 'stopped-coding',
+        specId: '001-stopped-coding',
+        status: 'human_review',
+        reviewReason: 'stopped',
+        executionProgress: {
+          phase: 'coding',
+          phaseProgress: 50,
+          overallProgress: 50
+        },
+        subtasks: [
+          {
+            id: '1.1',
+            title: 'Resume coding',
+            description: 'Resume coding',
+            status: 'pending',
+            files: []
+          }
+        ]
+      });
+
+      manager.handleUiEvent(stoppedTask.id, { type: 'USER_RESUMED' }, stoppedTask, mockProject);
+
+      expect(persistPlanStatusAndReasonSync).toHaveBeenCalledWith(
+        '/mock/path/implementation_plan.md',
+        'human_review',
+        'stopped',
+        mockProject.id,
+        'human_review',
+        'coding'
+      );
+      expect(manager.getCurrentState(stoppedTask.id)).toBe('coding');
     });
   });
 
