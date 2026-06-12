@@ -44,6 +44,26 @@ import type { ProviderAccount } from '../../../shared/types/provider-account';
 import { createDesktopAgentRuntimeAdapter } from '../../agent/core-runtime-adapter';
 
 const TASK_STOP_STARTUP_GRACE_MS = 5000;
+const CHANGE_REQUESTS_LOG_FILE = 'change_requests.jsonl';
+type ChangeRequestScope = 'planning' | 'implementation';
+type ChangeRequestImpact =
+  | 'requirements'
+  | 'design'
+  | 'tasks'
+  | 'implementation'
+  | 'validation';
+
+interface ChangeRequestRecord {
+  id: string;
+  createdAt: string;
+  taskId: string;
+  specId: string;
+  taskTitle: string;
+  scope: ChangeRequestScope;
+  impacts: ChangeRequestImpact[];
+  feedback: string;
+  attachmentsMarkdown?: string;
+}
 
 /**
  * Check if any provider account is configured (API key or OAuth).
@@ -165,6 +185,14 @@ function isStandardWorkflowTask(task: Task): boolean {
     && task.metadata?.developmentMode === 'standard';
 }
 
+function isSpecWorkflowTask(task: Task): boolean {
+  return !isDirectWorkflowTask(task)
+    && (
+      task.metadata?.sourceType === 'openspec' ||
+      task.metadata?.developmentMode === 'spec'
+    );
+}
+
 function getTaskBaseBranch(task: Task, project: Project): string | undefined {
   return task.metadata?.baseBranch || project.settings?.mainBranch;
 }
@@ -230,25 +258,165 @@ function feedbackRequiresImplementationRestart(feedback: string): boolean {
   return IMPLEMENTATION_FAILURE_FEEDBACK_PATTERNS.some((pattern) => pattern.test(normalized));
 }
 
-function shouldRegenerateStandardPlanForFeedback(task: Task, feedback: string): boolean {
+function classifyChangeRequestImpact(
+  task: Task,
+  feedback: string,
+  scope: ChangeRequestScope,
+): ChangeRequestImpact[] {
+  const normalized = feedback.toLowerCase();
+  const impacts = new Set<ChangeRequestImpact>();
+
+  if (scope === 'planning') {
+    impacts.add('requirements');
+    impacts.add('tasks');
+    impacts.add('validation');
+  } else {
+    impacts.add('implementation');
+  }
+
+  if (isSpecWorkflowTask(task)) {
+    impacts.add('design');
+  }
+
+  if (
+    /\b(requirement|acceptance|behavior|flow|rule|must|support|feature|scenario)\b/i.test(feedback) ||
+    /需求|验收|行为|流程|规则|必须|新增|支持|场景|逻辑/.test(feedback)
+  ) {
+    impacts.add('requirements');
+  }
+
+  if (
+    /\b(design|architecture|api|schema|protocol|state machine|interface|contract|data model)\b/i.test(feedback) ||
+    /设计|架构|接口|协议|状态机|数据结构|数据模型|契约/.test(feedback)
+  ) {
+    impacts.add('design');
+  }
+
+  if (
+    /\b(plan|task|subtask|work package|split|separate|checklist|milestone)\b/i.test(feedback) ||
+    /计划|任务|子任务|工作包|拆分|里程碑|清单/.test(feedback)
+  ) {
+    impacts.add('tasks');
+  }
+
+  if (feedbackRequiresImplementationRestart(feedback)) {
+    impacts.add('implementation');
+    impacts.add('validation');
+  }
+
+  if (
+    /\b(test|tests|verify|validation|build|compile|typecheck|lint|qa)\b/i.test(feedback) ||
+    /测试|验证|构建|编译|类型检查|校验|审核/.test(feedback)
+  ) {
+    impacts.add('validation');
+  }
+
+  if (
+    isStandardWorkflowTask(task) &&
+    !feedbackRequiresImplementationRestart(feedback) &&
+    !normalized.includes('only code') &&
+    !normalized.includes('implementation only')
+  ) {
+    impacts.add('tasks');
+  }
+
+  const orderedImpacts: ChangeRequestImpact[] = [
+    'requirements',
+    'design',
+    'tasks',
+    'implementation',
+    'validation',
+  ];
+  return orderedImpacts.filter((impact) => impacts.has(impact));
+}
+
+function shouldRegeneratePlanForFeedback(task: Task, impacts: ChangeRequestImpact[], feedback: string): boolean {
+  if (isDirectWorkflowTask(task)) {
+    return false;
+  }
+
+  const changesPlanningArtifacts = impacts.some((impact) =>
+    impact === 'requirements' || impact === 'design' || impact === 'tasks'
+  );
+
+  if (changesPlanningArtifacts) {
+    return isSpecWorkflowTask(task) || isStandardWorkflowTask(task);
+  }
+
   return isStandardWorkflowTask(task) && !feedbackRequiresImplementationRestart(feedback);
+}
+
+function createChangeRequestRecord(input: {
+  task: Task;
+  feedback: string;
+  imageReferences: string;
+  scope: ChangeRequestScope;
+  impacts: ChangeRequestImpact[];
+}): ChangeRequestRecord {
+  const now = new Date().toISOString();
+  return {
+    id: `cr-${now.replace(/[-:.TZ]/g, '').slice(0, 17)}`,
+    createdAt: now,
+    taskId: input.task.id,
+    specId: input.task.specId,
+    taskTitle: input.task.title,
+    scope: input.scope,
+    impacts: input.impacts,
+    feedback: input.feedback || 'No feedback provided',
+    ...(input.imageReferences.trim() ? { attachmentsMarkdown: input.imageReferences.trim() } : {}),
+  };
+}
+
+function writeChangeRequestArtifacts(specDirs: Iterable<string>, record: ChangeRequestRecord): void {
+  for (const specDir of new Set(specDirs)) {
+    try {
+      mkdirSync(specDir, { recursive: true });
+
+      const jsonlPath = path.join(specDir, CHANGE_REQUESTS_LOG_FILE);
+      const existingJsonl = safeReadFileSync(jsonlPath) ?? '';
+      writeFileSync(
+        jsonlPath,
+        `${existingJsonl}${existingJsonl.endsWith('\n') || existingJsonl.length === 0 ? '' : '\n'}${JSON.stringify(record)}\n`,
+        'utf-8',
+      );
+
+    } catch (error) {
+      console.warn('[TASK_REVIEW] Failed to write change request artifacts:', error);
+    }
+  }
 }
 
 function buildHumanInputContent(
   feedback: string,
   imageReferences: string,
   scope: 'planning' | 'implementation' = 'implementation',
+  changeRequest?: ChangeRequestRecord,
 ): string {
+  const changeRequestSection = changeRequest
+    ? (
+        `## Change Request\n\n` +
+        `- ID: ${changeRequest.id}\n` +
+        `- Created: ${changeRequest.createdAt}\n` +
+        `- Scope: ${changeRequest.scope}\n` +
+        `- Impact analysis: ${changeRequest.impacts.join(', ') || 'implementation'}\n` +
+        `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}\n\n`
+      )
+    : '';
+
   if (scope === 'planning') {
     return (
       `# Human Input\n\n` +
       `The user reviewed the generated plan/specification and requested planning changes.\n\n` +
+      changeRequestSection +
       `## Requested Changes\n\n` +
       `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
       `## Instructions\n\n` +
+      `- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.\n` +
+      `- First update requirements/design/task artifacts so they reflect this change request before any coding pass.\n` +
       `- If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first.\n` +
-      `- For Standard tasks, update tasks.md with new pending subtasks that implement this feedback.\n` +
-      `- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback.\n` +
+      `- For Standard tasks, update spec.md with changed acceptance criteria and update tasks.md with new pending subtasks that implement this feedback.\n` +
+      `- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.\n` +
+      `- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback, preserving useful completed work where still valid.\n` +
       `- Do not implement code in this planning pass.\n`
     );
   }
@@ -256,12 +424,15 @@ function buildHumanInputContent(
   return (
     `# Human Input\n\n` +
     `The user reviewed the previous implementation and reported issues that require another coding pass.\n\n` +
+    changeRequestSection +
     `## Requested Fixes\n\n` +
     `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
     `## Instructions\n\n` +
+    `- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.\n` +
+    `- If the feedback changes requirements, design, user behavior, or task scope, stop and update the relevant planning artifacts before coding.\n` +
     `- Fix the reported implementation issues.\n` +
     `- Re-run the relevant build/test/validation steps.\n` +
-    `- Update implementation_plan.md as you make progress.\n`
+    `- Update implementation_plan.md as you make progress and record any affected subtask as needs_revision in its description or completion note.\n`
   );
 }
 
@@ -890,17 +1061,28 @@ export function registerTaskExecutionHandlers(
           }
         }
 
-      if (isPlanReview) {
+        if (isPlanReview) {
+          const reviewFeedback = feedback || 'Address the reported plan review issues and regenerate the implementation plan.';
+          const changeImpacts = classifyChangeRequestImpact(task, reviewFeedback, 'planning');
+          const changeRequest = createChangeRequestRecord({
+            task,
+            feedback: reviewFeedback,
+            imageReferences,
+            scope: 'planning',
+            impacts: changeImpacts,
+          });
           const humanInputContent = buildHumanInputContent(
-            feedback || 'Address the reported plan review issues and regenerate the implementation plan.',
+            reviewFeedback,
             imageReferences,
             'planning',
+            changeRequest,
           );
 
           const humanInputPaths = new Set<string>([
             path.join(targetSpecDir, 'HUMAN_INPUT.md'),
             path.join(specDir, 'HUMAN_INPUT.md'),
           ]);
+          writeChangeRequestArtifacts([targetSpecDir, specDir], changeRequest);
 
           for (const humanInputPath of humanInputPaths) {
             try {
@@ -938,19 +1120,32 @@ export function registerTaskExecutionHandlers(
 
         if (needsImplementationRestart) {
           const reviewFeedback = feedback || '';
-          const regenerateStandardPlan = shouldRegenerateStandardPlanForFeedback(task, reviewFeedback);
-          if (!regenerateStandardPlan && !feedbackRequiresImplementationRestart(reviewFeedback)) {
+          const initialScope: ChangeRequestScope = feedbackRequiresImplementationRestart(reviewFeedback)
+            ? 'implementation'
+            : 'planning';
+          const changeImpacts = classifyChangeRequestImpact(task, reviewFeedback, initialScope);
+          const regeneratePlan = shouldRegeneratePlanForFeedback(task, changeImpacts, reviewFeedback);
+          const changeRequest = createChangeRequestRecord({
+            task,
+            feedback: reviewFeedback || 'No feedback provided',
+            imageReferences,
+            scope: regeneratePlan ? 'planning' : 'implementation',
+            impacts: changeImpacts,
+          });
+          if (!regeneratePlan && !feedbackRequiresImplementationRestart(reviewFeedback)) {
             console.warn('[TASK_REVIEW] Human review rejected - creating follow-up coding subtask.');
           }
           const humanInputContent = buildHumanInputContent(
             reviewFeedback || 'No feedback provided',
             imageReferences,
-            regenerateStandardPlan ? 'planning' : 'implementation',
+            regeneratePlan ? 'planning' : 'implementation',
+            changeRequest,
           );
           const humanInputPaths = new Set<string>([
             path.join(targetSpecDir, 'HUMAN_INPUT.md'),
             path.join(specDir, 'HUMAN_INPUT.md'),
           ]);
+          writeChangeRequestArtifacts([targetSpecDir, specDir], changeRequest);
 
           for (const humanInputPath of humanInputPaths) {
             try {
@@ -961,8 +1156,8 @@ export function registerTaskExecutionHandlers(
             }
           }
 
-          if (regenerateStandardPlan) {
-            console.warn('[TASK_REVIEW] Standard review feedback requires new subtasks - restarting planning.');
+          if (regeneratePlan) {
+            console.warn('[TASK_REVIEW] Review feedback changes planning artifacts - restarting planning.');
             taskStateManager.prepareForRestart(taskId);
             taskStateManager.handleUiEvent(
               taskId,

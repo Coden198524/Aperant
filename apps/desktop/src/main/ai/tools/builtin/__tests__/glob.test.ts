@@ -193,7 +193,7 @@ describe('Glob Tool', () => {
     expect(opts.exclude).toBeDefined();
     expect(opts.exclude?.('node_modules')).toBe(true);
     expect(opts.exclude?.('.git')).toBe(true);
-    expect(opts.exclude?.('.autocode/task_logs.json')).toBe(true);
+    expect(opts.exclude?.('.autocode/task_logs.jsonl')).toBe(true);
     expect(opts.exclude?.('vendor/pkg/file.ts')).toBe(true);
     expect(opts.exclude?.('third_party/pkg/file.ts')).toBe(true);
     expect(opts.exclude?.('dist/app.js')).toBe(true);

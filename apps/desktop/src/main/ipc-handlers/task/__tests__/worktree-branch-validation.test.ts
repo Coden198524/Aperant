@@ -192,8 +192,8 @@ describe('shouldHideTaskGitChangePath', () => {
     expect(shouldHideTaskGitChangePath('.git/index')).toBe(true);
     expect(shouldHideTaskGitChangePath('.claude/settings.json')).toBe(true);
     expect(shouldHideTaskGitChangePath('.codex/config.toml')).toBe(true);
-    expect(shouldHideTaskGitChangePath('.autocode/specs/001-task/task_logs.json')).toBe(true);
-    expect(shouldHideTaskGitChangePath('.\\.autocode\\specs\\001-task\\task_logs.json')).toBe(true);
+    expect(shouldHideTaskGitChangePath('.autocode/specs/001-task/task_logs.jsonl')).toBe(true);
+    expect(shouldHideTaskGitChangePath('.\\.autocode\\specs\\001-task\\task_logs.jsonl')).toBe(true);
   });
 
   it('keeps normal project files and similarly named non-root directories visible', () => {

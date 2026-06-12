@@ -950,7 +950,7 @@ export async function createTask(
  */
 export async function createProjectDocumentationTask(
   projectId: string,
-  options: { documentType?: ProjectDocumentType; outputDir?: string } = {}
+  options: { documentType?: ProjectDocumentType; outputDir?: string; language?: string } = {}
 ): Promise<Task | null> {
   const store = useTaskStore.getState();
 

@@ -43,7 +43,7 @@ describe('pre-QA smoke tests', () => {
   it('ignores generated autocode task files during fallback scanning', async () => {
     await mkdir(join(projectDir, '.autocode', 'specs', '001-task'), { recursive: true });
     await writeFile(
-      join(projectDir, '.autocode', 'specs', '001-task', 'task_logs.json'),
+      join(projectDir, '.autocode', 'specs', '001-task', 'task_logs.jsonl'),
       '{"api_key":"abcdefghijklmnopqrstuvwxyzABCDEFGH123456"}\n',
       'utf-8',
     );

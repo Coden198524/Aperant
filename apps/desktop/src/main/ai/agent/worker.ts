@@ -182,7 +182,7 @@ function getQualityConfigFromWorkflowConfig(
 // =============================================================================
 
 // Single writer instance for this worker's spec, shared across all sessions
-// so that planning/coding/QA phases accumulate into one task_logs.json file.
+// so that planning/coding/QA phases accumulate into one task_logs.jsonl file.
 const logWriter = config.session.specDir
   ? new TaskLogWriter(config.session.specDir, basename(config.session.specDir))
   : null;
@@ -965,7 +965,7 @@ async function runSingleSession(
     tools,
     memoryContext: memoryProxy ? { proxy: memoryProxy } : undefined,
     onEvent: (event: StreamEvent) => {
-      // Write stream events to task_logs.json for UI log display
+      // Write stream events to task_logs.jsonl for UI log display
       if (logWriter) {
         logWriter.processEvent(event, phase);
       }
@@ -1581,7 +1581,7 @@ async function runDefaultSession(
             directModifiedFiles.add(filePath);
           }
         }
-        // Write stream events to task_logs.json for UI log display
+        // Write stream events to task_logs.jsonl for UI log display
         if (logWriter) {
           logWriter.processEvent(event, defaultPhase);
         }

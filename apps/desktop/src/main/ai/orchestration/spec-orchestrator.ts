@@ -501,7 +501,7 @@ function buildConstraintReminder(task: string, language?: SupportedLanguage): st
 }
 
 const COMMON_LOW_VALUE_ROOT_FILES = new Set([
-  'task_logs.json',
+  'task_logs.jsonl',
   'task_metadata.json',
   AUTOCODE_TASK_ARTIFACTS.requirements,
   AUTOCODE_TASK_ARTIFACTS.implementationPlan,

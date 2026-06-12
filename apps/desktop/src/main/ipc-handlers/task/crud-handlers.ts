@@ -415,7 +415,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
     async (
       _,
       projectId: string,
-      options?: { documentType?: AutocodeProjectDocType; outputDir?: string }
+      options?: { documentType?: AutocodeProjectDocType; outputDir?: string; language?: string }
     ): Promise<IPCResult<Task>> => {
       const project = projectStore.getProject(projectId);
       if (!project) {
@@ -428,11 +428,14 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       }
 
       try {
+        const language = resolveTaskLanguage({ language: options?.language } as TaskMetadata);
         const result = createAutocodeProjectDocumentationTask({
           projectRoot: project.path,
           dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
           documentType,
+          language,
           outputDir: options?.outputDir,
+          metadata: language ? { language } : undefined,
         });
         const task = toDesktopTask(result.task, projectId);
         projectStore.invalidateTasksCache(projectId);

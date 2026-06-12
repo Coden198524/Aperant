@@ -74,6 +74,7 @@ const AUTOCODE_PROJECT_DATA_DIR_NAME = '.autocode';
 const SERVICE_BASE_URL = (import.meta.env.VITE_AUTOCODE_SERVICE_URL ?? '').replace(/\/+$/, '');
 const TAB_STATE_STORAGE_KEY = 'autocode-web-tab-state';
 const APP_SETTINGS_STORAGE_KEY = 'autocode-web-app-settings';
+const CHANGE_REQUESTS_LOG_FILE = 'change_requests.jsonl';
 const DEFAULT_PROJECT_ENV: ProjectEnvConfig = {
   linearEnabled: false,
   githubEnabled: false,
@@ -109,6 +110,8 @@ type TaskExecutionProgressListener = (
 type TerminalOutputListener = (id: string, data: string) => void;
 type TerminalExitListener = (id: string, exitCode: number) => void;
 type TerminalTitleListener = (id: string, title: string) => void;
+type WebChangeRequestScope = 'planning' | 'implementation';
+type WebChangeRequestImpact = 'requirements' | 'design' | 'tasks' | 'implementation' | 'validation';
 interface TaskLogsWatcher {
   projectId: string;
   specId: string;
@@ -450,17 +453,26 @@ function installTaskApi(api: ElectronAPI): void {
 
   api.createProjectDocumentationTask = async (
     projectId: string,
-    options: { documentType?: ProjectDocumentType; outputDir?: string } = {},
+    options: { documentType?: ProjectDocumentType; outputDir?: string; language?: string } = {},
   ) => withIpcResult(async () => {
     const documentType = options.documentType ?? 'full';
+    const isChinese = options.language?.trim().toLowerCase().startsWith('zh') === true;
     const response = await apiRequest<WebTaskResponse>(`/api/projects/${encodeURIComponent(projectId)}/tasks`, {
       method: 'POST',
       body: JSON.stringify({
-        title: 'Generate project documentation',
-        description: `Generate ${documentType} project documentation for this repository.`,
+        title: isChinese ? '生成项目文档参考包' : 'Generate project documentation',
+        description: isChinese
+          ? [
+              `为当前仓库生成${documentType === 'full' ? '完整项目文档包' : `${documentType} 项目文档`}，供后续需求分析和编码上下文使用。`,
+              '',
+              '除文件名、命令、代码标识符和必要英文专有名词外，生成的 Markdown 正文、标题、表格说明和总结必须使用简体中文。',
+            ].join('\n')
+          : `Generate ${documentType} project documentation for this repository.`,
         developmentMode: 'standard',
+        sourceType: 'project_docs',
         category: 'documentation',
         priority: 'medium',
+        language: options.language,
         projectDocumentType: documentType,
         projectDocumentOutputDir: options.outputDir,
       }),
@@ -636,18 +648,30 @@ function installTaskApi(api: ElectronAPI): void {
   api.submitReview = async (
     taskId: string,
     approved: boolean,
-    _feedback?: string,
-    _images?: unknown[],
+    feedback?: string,
+    images?: unknown[],
     projectId?: string,
   ) => withIpcResult(async () => {
     if (!projectId) {
       throw new Error('projectId is required when submitting a Web task review.');
     }
 
-    const nextStatus: TaskStatus = approved ? 'done' : 'human_review';
-    const reviewReason: ReviewReason | undefined = approved ? undefined : 'qa_rejected';
-    await updateTaskStatus(projectId, taskId, nextStatus, reviewReason, approved ? 'complete' : 'qa_review');
-    emitTaskStatus(taskId, nextStatus, projectId, reviewReason);
+    if (approved) {
+      await updateTaskStatus(projectId, taskId, 'done', undefined, 'complete');
+      emitTaskStatus(taskId, 'done', projectId);
+      return;
+    }
+
+    const changeRequest = await persistWebChangeRequest(projectId, taskId, feedback, images);
+    await updateTaskStatus(
+      projectId,
+      taskId,
+      'human_review',
+      'qa_rejected',
+      changeRequest.forcePlanning ? 'planning' : 'qa_review',
+    );
+    emitTaskStatus(taskId, 'human_review', projectId, 'qa_rejected');
+    await startOrResumeTaskRuntime(taskId, projectId, { forcePlanning: changeRequest.forcePlanning });
   });
 
   api.recoverStuckTask = async (taskId: string, options) => withIpcResult(async () => {
@@ -981,7 +1005,11 @@ async function updateTaskStatus(
   return toDesktopTask(projectId, response.task);
 }
 
-async function startTaskRuntime(projectId: string, taskId: string): Promise<Task> {
+async function startTaskRuntime(
+  projectId: string,
+  taskId: string,
+  options: { forcePlanning?: boolean } = {},
+): Promise<Task> {
   const settings = readStoredAppSettings();
   const task = await findTaskForStart(projectId, taskId);
   const body: StartWebTaskRequest = {
@@ -1000,6 +1028,7 @@ async function startTaskRuntime(projectId: string, taskId: string): Promise<Task
       : typeof task?.metadata?.language === 'string' && task.metadata.language.trim()
         ? { language: task.metadata.language.trim() }
       : {}),
+    ...(options.forcePlanning === true ? { forcePlanning: true } : {}),
   };
   const response = await apiRequest<WebTaskResponse>(
     `/api/projects/${encodeURIComponent(projectId)}/tasks/${encodeURIComponent(taskId)}/start`,
@@ -1022,7 +1051,197 @@ async function findTaskForStart(projectId: string, taskId: string): Promise<Task
   }
 }
 
-async function startOrResumeTaskRuntime(taskId: string, projectId?: string): Promise<Task> {
+async function persistWebChangeRequest(
+  projectId: string,
+  taskId: string,
+  feedback?: string,
+  images?: unknown[],
+): Promise<{ forcePlanning: boolean }> {
+  const task = await findTaskForStart(projectId, taskId);
+  if (!task?.specsPath) {
+    return { forcePlanning: false };
+  }
+
+  const normalizedFeedback = feedback?.trim() || 'No feedback provided';
+  const initialScope: WebChangeRequestScope = webFeedbackRequiresImplementationRestart(normalizedFeedback)
+    ? 'implementation'
+    : 'planning';
+  const impacts = classifyWebChangeRequestImpact(task, normalizedFeedback, initialScope);
+  const forcePlanning = shouldWebRegeneratePlanForFeedback(task, impacts, normalizedFeedback);
+  const scope: WebChangeRequestScope = forcePlanning ? 'planning' : 'implementation';
+  const now = new Date().toISOString();
+  const record = {
+    id: `cr-${now.replace(/[-:.TZ]/g, '').slice(0, 17)}`,
+    createdAt: now,
+    taskId: task.id,
+    specId: task.specId,
+    taskTitle: task.title,
+    scope,
+    impacts,
+    feedback: normalizedFeedback,
+    attachments: summarizeWebReviewAttachments(images),
+  };
+
+  const specDir = task.specsPath.replace(/[\\/]+$/, '');
+  const humanInput = buildWebHumanInputContent(normalizedFeedback, scope, record);
+  await appendWebTaskFile(joinWebTaskPath(specDir, CHANGE_REQUESTS_LOG_FILE), `${JSON.stringify(record)}\n`);
+  await writeWebTaskFile(joinWebTaskPath(specDir, 'HUMAN_INPUT.md'), humanInput);
+  return { forcePlanning };
+}
+
+function classifyWebChangeRequestImpact(
+  task: Task,
+  feedback: string,
+  scope: WebChangeRequestScope,
+): WebChangeRequestImpact[] {
+  const impacts = new Set<WebChangeRequestImpact>();
+  if (scope === 'planning') {
+    impacts.add('requirements');
+    impacts.add('tasks');
+    impacts.add('validation');
+  } else {
+    impacts.add('implementation');
+  }
+  if (isWebSpecTask(task)) impacts.add('design');
+  if (/\b(requirement|acceptance|behavior|flow|rule|feature|scenario)\b/i.test(feedback) || /需求|验收|行为|流程|规则|新增|场景|逻辑/.test(feedback)) impacts.add('requirements');
+  if (/\b(design|architecture|api|schema|protocol|state machine|interface)\b/i.test(feedback) || /设计|架构|接口|协议|状态机|数据结构/.test(feedback)) impacts.add('design');
+  if (/\b(plan|task|subtask|work package|split|checklist)\b/i.test(feedback) || /计划|任务|子任务|工作包|拆分|清单/.test(feedback)) impacts.add('tasks');
+  if (webFeedbackRequiresImplementationRestart(feedback)) {
+    impacts.add('implementation');
+    impacts.add('validation');
+  }
+  if (/\b(test|verify|validation|build|compile|typecheck|lint|qa)\b/i.test(feedback) || /测试|验证|构建|编译|类型检查|校验|审核/.test(feedback)) impacts.add('validation');
+
+  return ['requirements', 'design', 'tasks', 'implementation', 'validation']
+    .filter((impact): impact is WebChangeRequestImpact => impacts.has(impact as WebChangeRequestImpact));
+}
+
+function shouldWebRegeneratePlanForFeedback(
+  task: Task,
+  impacts: WebChangeRequestImpact[],
+  feedback: string,
+): boolean {
+  if (isWebDirectTask(task)) return false;
+  if (impacts.some((impact) => impact === 'requirements' || impact === 'design' || impact === 'tasks')) {
+    return isWebSpecTask(task) || isWebStandardTask(task);
+  }
+  return isWebStandardTask(task) && !webFeedbackRequiresImplementationRestart(feedback);
+}
+
+function isWebDirectTask(task: Task): boolean {
+  return task.metadata?.workflowMode === 'off' || task.metadata?.developmentMode === 'direct';
+}
+
+function isWebStandardTask(task: Task): boolean {
+  return !isWebDirectTask(task) && task.metadata?.developmentMode === 'standard';
+}
+
+function isWebSpecTask(task: Task): boolean {
+  return !isWebDirectTask(task) && (
+    task.metadata?.developmentMode === 'spec' ||
+    task.metadata?.sourceType === 'openspec'
+  );
+}
+
+function webFeedbackRequiresImplementationRestart(feedback: string): boolean {
+  return /\b(build|compile|typecheck|lint|test|syntaxerror|typeerror|referenceerror|module not found|exit code)\b/i.test(feedback)
+    || /构建|编译|类型检查|测试|验证|语法错误|运行失败/.test(feedback);
+}
+
+function buildWebHumanInputContent(
+  feedback: string,
+  scope: WebChangeRequestScope,
+  record: { id: string; createdAt: string; impacts: WebChangeRequestImpact[] },
+): string {
+  const planningInstructions = [
+    '- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.',
+    '- First update requirements/design/task artifacts so they reflect this change request before any coding pass.',
+    '- For OpenSpec tasks, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first.',
+    '- For Standard tasks, update spec.md with changed acceptance criteria and update tasks.md with new pending subtasks that implement this feedback.',
+    '- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
+    '- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback.',
+    '- Do not implement code in this planning pass.',
+  ];
+  const implementationInstructions = [
+    '- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.',
+    '- If the feedback changes requirements, design, user behavior, or task scope, stop and update the relevant planning artifacts before coding.',
+    '- Fix the reported implementation issues.',
+    '- Re-run the relevant build/test/validation steps.',
+    '- Update implementation_plan.md as you make progress and record affected subtasks as needs_revision where appropriate.',
+  ];
+
+  return [
+    '# Human Input',
+    '',
+    scope === 'planning'
+      ? 'The user requested planning changes for this existing task.'
+      : 'The user requested another implementation pass for this existing task.',
+    '',
+    '## Change Request',
+    '',
+    `- ID: ${record.id}`,
+    `- Created: ${record.createdAt}`,
+    `- Scope: ${scope}`,
+    `- Impact analysis: ${record.impacts.join(', ') || 'implementation'}`,
+    `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}`,
+    '',
+    scope === 'planning' ? '## Requested Changes' : '## Requested Fixes',
+    '',
+    feedback,
+    '',
+    '## Instructions',
+    '',
+    ...(scope === 'planning' ? planningInstructions : implementationInstructions),
+    '',
+  ].join('\n');
+}
+
+function summarizeWebReviewAttachments(images?: unknown[]): string[] {
+  if (!Array.isArray(images)) return [];
+  return images
+    .map((image) => (
+      image && typeof image === 'object' && 'filename' in image
+        ? String((image as { filename?: unknown }).filename ?? '').trim()
+        : ''
+    ))
+    .filter(Boolean);
+}
+
+function joinWebTaskPath(dir: string, fileName: string): string {
+  const separator = dir.includes('\\') ? '\\' : '/';
+  return `${dir}${separator}${fileName}`;
+}
+
+async function appendWebTaskFile(filePath: string, content: string): Promise<void> {
+  let existing = '';
+  try {
+    const read = await apiRequest<WebReadFileResponse>('/api/files/read', {
+      method: 'POST',
+      body: JSON.stringify({ path: filePath } satisfies WebFilePathRequest),
+    });
+    existing = read.content;
+  } catch {
+    existing = '';
+  }
+
+  await writeWebTaskFile(
+    filePath,
+    `${existing}${existing.endsWith('\n') || existing.length === 0 ? '' : '\n'}${content}`,
+  );
+}
+
+async function writeWebTaskFile(filePath: string, content: string): Promise<void> {
+  await apiRequest<{ written: true }>('/api/files/write', {
+    method: 'POST',
+    body: JSON.stringify({ path: filePath, content } satisfies WebWriteFileRequest),
+  });
+}
+
+async function startOrResumeTaskRuntime(
+  taskId: string,
+  projectId?: string,
+  options: { forcePlanning?: boolean } = {},
+): Promise<Task> {
   const resolvedProjectId = projectId ?? findProjectIdForTask(taskId);
   if (!resolvedProjectId) {
     throw new Error('projectId is required when starting a Web task.');
@@ -1031,7 +1250,7 @@ async function startOrResumeTaskRuntime(taskId: string, projectId?: string): Pro
   emitTaskStatus(taskId, 'in_progress', resolvedProjectId);
 
   try {
-    const task = await startTaskRuntime(resolvedProjectId, taskId);
+    const task = await startTaskRuntime(resolvedProjectId, taskId, options);
     emitTaskStatus(task.id, task.status, resolvedProjectId, task.reviewReason);
     if (task.executionProgress) {
       emitTaskExecutionProgress(task.id, task.executionProgress, resolvedProjectId);

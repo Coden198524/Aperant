@@ -344,6 +344,19 @@ describe('registerTaskExecutionHandlers', () => {
       'utf-8'
     );
     expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('change_requests.jsonl'),
+      expect.stringContaining('"feedback":"need changes"'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('Do not create a new task'),
+      'utf-8'
+    );
+    expect((fs.writeFileSync as Mock).mock.calls.some(([filePath]) =>
+      String(filePath).includes('CHANGE_REQUESTS.md')
+    )).toBe(false);
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('review-feedback.md'),
       expect.stringContaining('upstream OpenSpec artifacts'),
       'utf-8'
@@ -359,6 +372,76 @@ describe('registerTaskExecutionHandlers', () => {
       '001-plan-review',
       'E:/Work/FastProject',
       '001-plan-review',
+      expect.objectContaining({ forcePlanning: true }),
+      'project-fast',
+    );
+    expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
+  });
+
+  it('restarts planning for Spec completed review feedback that changes requirements', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { taskStateManager } = await import('../../../task-state-manager');
+    const { findTaskWorktree } = await import('../../../worktree-paths');
+    const { existsSync, writeFileSync } = await import('fs');
+    const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
+
+    (findTaskWorktree as Mock).mockReturnValue(null);
+    (findTaskAndProject as Mock).mockReturnValue({
+      task: {
+        id: '001-spec-review',
+        specId: '001-spec-review',
+        projectId: 'project-fast',
+        title: 'Spec review task',
+        description: 'desc',
+        status: 'human_review',
+        reviewReason: 'completed',
+        subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'completed', files: [] }],
+        logs: [],
+        metadata: { developmentMode: 'spec' },
+      },
+      project: {
+        id: 'project-fast',
+        path: 'E:/Work/FastProject',
+        autoBuildPath: '.autocode',
+        settings: {},
+      },
+    });
+    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
+
+    const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
+    const result = await reviewHandler(
+      {},
+      '001-spec-review',
+      false,
+      'Add a new requirement: interrupted skills must roll back cooldown and notify UI.',
+    );
+
+    expect(result).toEqual({ success: true });
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('Impact analysis: requirements, design, tasks, validation'),
+      'utf-8',
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('change_requests.jsonl'),
+      expect.stringContaining('interrupted skills'),
+      'utf-8',
+    );
+    expect((writeFileSync as Mock).mock.calls.some(([filePath]) =>
+      String(filePath).includes('CHANGE_REQUESTS.md')
+    )).toBe(false);
+    expect(writeFileAtomicSync).not.toHaveBeenCalled();
+    expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
+      '001-spec-review',
+      { type: 'PLANNING_STARTED' },
+      expect.any(Object),
+      expect.any(Object),
+    );
+    expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
+      '001-spec-review',
+      'E:/Work/FastProject',
+      '001-spec-review',
       expect.objectContaining({ forcePlanning: true }),
       'project-fast',
     );

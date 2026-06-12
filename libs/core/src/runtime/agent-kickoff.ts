@@ -255,8 +255,10 @@ export function buildAutocodeAgentKickoffMessage(
         '',
         '## PLAN REVIEW REGENERATION',
         `Read ${promptSpecDir}/HUMAN_INPUT.md and address the reviewer feedback.`,
+        `If ${promptSpecDir}/change_requests.jsonl exists, use it as same-task iteration history and keep the audit trail intact.`,
         `If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first, then let the runtime regenerate ${promptSpecDir}/implementation_plan.md from those upstream artifacts.`,
-        `If this task is not backed by OpenSpec, rewrite ${promptSpecDir}/tasks.md directly; do not edit implementation_plan.md.`,
+        `If this task is not backed by OpenSpec, update ${promptSpecDir}/spec.md when requirements or acceptance criteria changed, then rewrite ${promptSpecDir}/tasks.md directly; do not edit implementation_plan.md.`,
+        'Revise task lists incrementally: preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new pending subtasks, and mark obsolete upstream checklist items explicitly.',
         'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
       ].join('\n');
     }

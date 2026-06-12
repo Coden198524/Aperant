@@ -2,11 +2,11 @@
  * Task Log Writer
  * ===============
  *
- * Writes task_logs.json files during TypeScript agent session execution.
+ * Writes task_logs.jsonl files during TypeScript agent session execution.
  * This replaces the Python backend's TaskLogger/LogStorage system.
  *
- * The writer maps AI SDK stream events to the TaskLogs JSON format
- * expected by the frontend log rendering system (TaskLogs component).
+ * The writer maps AI SDK stream events to append-only JSONL records that
+ * are aggregated into the TaskLogs shape expected by the frontend.
  *
  * Phase mapping (Phase → TaskLogPhase):
  *   spec     → planning
@@ -15,14 +15,18 @@
  *   qa       → validation
  */
 
-import { writeFileSync, readFileSync, existsSync, mkdirSync, renameSync, unlinkSync } from 'node:fs';
+import { appendFileSync, readFileSync, existsSync, mkdirSync, statSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import type { TaskLogs, TaskLogPhase, TaskLogPhaseStatus, TaskLogEntry, TaskLogEntryType } from '../../../shared/types';
 import type { StreamEvent } from '../session/types';
 import {
+  AUTOCODE_TASK_ARTIFACTS,
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  parseAutocodeTaskLogs,
   repairAutocodeChineseMojibakeText,
+  serializeAutocodeTaskLogRecord,
   withAutocodeRuntimeFileWriteLockSync,
+  type AutocodeTaskLogJsonlRecord,
   type AutocodeRuntimeFileWriteLockScope,
   type Phase,
 } from '@autocode/core';
@@ -122,7 +126,7 @@ function summarizeToolResult(toolName: string, isError: boolean, result: unknown
     'Preview:',
     preview,
     '',
-    'Output compacted in task_logs.json. Re-run the tool with a narrower range or pattern when exact output is needed.',
+    `Output compacted in ${AUTOCODE_TASK_ARTIFACTS.taskLogs}. Re-run the tool with a narrower range or pattern when exact output is needed.`,
   ].join('\n'), TOOL_DETAIL_MAX_CHARS);
 }
 
@@ -173,63 +177,12 @@ function sanitizeLogs(logs: TaskLogs): TaskLogs {
   };
 }
 
-function mergeLogsForSave(existing: TaskLogs | null, next: TaskLogs): TaskLogs {
-  if (!existing) {
-    return next;
-  }
-
-  return {
-    spec_id: next.spec_id || existing.spec_id,
-    created_at: existing.created_at || next.created_at,
-    updated_at: existing.updated_at > next.updated_at ? existing.updated_at : next.updated_at,
-    phases: {
-      planning: mergePhaseLogs(existing.phases.planning, next.phases.planning, 'planning'),
-      coding: mergePhaseLogs(existing.phases.coding, next.phases.coding, 'coding'),
-      validation: mergePhaseLogs(existing.phases.validation, next.phases.validation, 'validation'),
-    },
-  };
-}
-
-function mergePhaseLogs(
-  existing: TaskLogs['phases'][TaskLogPhase] | undefined,
-  next: TaskLogs['phases'][TaskLogPhase] | undefined,
-  phase: TaskLogPhase,
-): TaskLogs['phases'][TaskLogPhase] {
-  const existingPhase = existing ?? { phase, status: 'pending', started_at: null, completed_at: null, entries: [] };
-  const nextPhase = next ?? { phase, status: 'pending', started_at: null, completed_at: null, entries: [] };
-  const seen = new Set<string>();
-  const entries = [...(existingPhase.entries ?? []), ...(nextPhase.entries ?? [])]
-    .sort((a, b) => new Date(a.timestamp).getTime() - new Date(b.timestamp).getTime())
-    .filter((entry) => {
-      const key = [
-        entry.timestamp,
-        entry.type,
-        entry.phase,
-        entry.subtask_id ?? '',
-        entry.content,
-      ].join('|');
-      if (seen.has(key)) {
-        return false;
-      }
-      seen.add(key);
-      return true;
-    });
-
-  return {
-    phase,
-    status: nextPhase.status !== 'pending' ? nextPhase.status : existingPhase.status,
-    started_at: existingPhase.started_at || nextPhase.started_at,
-    completed_at: nextPhase.completed_at || existingPhase.completed_at,
-    entries,
-  };
-}
-
 // =============================================================================
 // TaskLogWriter
 // =============================================================================
 
 /**
- * Writes task_logs.json to the spec directory during agent execution.
+ * Writes task_logs.jsonl to the spec directory during agent execution.
  *
  * Usage:
  * ```ts
@@ -245,6 +198,7 @@ export class TaskLogWriter {
   private readonly liveTextFlushMs: number;
   private readonly liveTextMaxChars: number;
   private data: TaskLogs;
+  private pendingRecords: AutocodeTaskLogJsonlRecord[] = [];
   private currentPhase: TaskLogPhase = 'planning';
   private currentSubtask: string | undefined;
   private pendingText = '';
@@ -253,7 +207,7 @@ export class TaskLogWriter {
   private pendingTextFlushTimer: NodeJS.Timeout | undefined;
 
   constructor(specDir: string, specId: string, options: TaskLogWriterOptions = {}) {
-    this.logFile = join(specDir, 'task_logs.json');
+    this.logFile = join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
     this.fileWriteLockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir);
     this.liveTextFlushMs = options.liveTextFlushMs ?? DEFAULT_LIVE_TEXT_FLUSH_MS;
     this.liveTextMaxChars = options.liveTextMaxChars ?? DEFAULT_LIVE_TEXT_MAX_CHARS;
@@ -277,11 +231,14 @@ export class TaskLogWriter {
       if (key !== logPhase && phaseData.status === 'active') {
         this.data.phases[key as TaskLogPhase].status = 'completed';
         this.data.phases[key as TaskLogPhase].completed_at = this.timestamp();
+        this.pendingRecords.push(this.createPhaseRecord(this.data.phases[key as TaskLogPhase]));
       }
     }
 
     this.data.phases[logPhase].status = 'active';
     this.data.phases[logPhase].started_at = this.timestamp();
+    this.data.phases[logPhase].completed_at = null;
+    this.pendingRecords.push(this.createPhaseRecord(this.data.phases[logPhase]));
 
     const content = message ?? `Starting ${logPhase} phase`;
     this.addEntry(logPhase, 'phase_start', content);
@@ -297,6 +254,7 @@ export class TaskLogWriter {
     const status: TaskLogPhaseStatus = success ? 'completed' : 'failed';
     this.data.phases[logPhase].status = status;
     this.data.phases[logPhase].completed_at = this.timestamp();
+    this.pendingRecords.push(this.createPhaseRecord(this.data.phases[logPhase]));
 
     const content = message ?? `${success ? 'Completed' : 'Failed'} ${logPhase} phase`;
     this.addEntry(logPhase, 'phase_end', content);
@@ -362,6 +320,8 @@ export class TaskLogWriter {
     if (phaseData?.status === 'pending') {
       phaseData.status = 'active';
       phaseData.started_at = phaseData.started_at ?? this.timestamp();
+      phaseData.completed_at = null;
+      this.pendingRecords.push(this.createPhaseRecord(phaseData));
     }
     this.addEntry(logPhase, entryType, content);
     this.save();
@@ -413,7 +373,9 @@ export class TaskLogWriter {
       };
     }
 
-    this.data.phases[phase].entries.push(sanitizeEntry(entry, phase));
+    const sanitizedEntry = sanitizeEntry(entry, phase);
+    this.data.phases[phase].entries.push(sanitizedEntry);
+    this.pendingRecords.push({ record_type: 'entry', entry: sanitizedEntry });
   }
 
   private writeToolStart(phase: TaskLogPhase, toolName: string, toolInput?: string, toolCallId?: string): void {
@@ -564,7 +526,9 @@ export class TaskLogWriter {
     if (existsSync(this.logFile)) {
       try {
         const content = readFileSync(this.logFile, 'utf-8');
-        return sanitizeLogs(JSON.parse(content) as TaskLogs);
+        if (content.trim()) {
+          return sanitizeLogs(parseAutocodeTaskLogs(content, specId) as TaskLogs);
+        }
       } catch {
         // Corrupted file — start fresh
       }
@@ -599,36 +563,53 @@ export class TaskLogWriter {
             mkdirSync(dir, { recursive: true });
           }
 
-          // Atomic-like write: write to temp file then rename
-          const tmpFile = `${this.logFile}.tmp`;
-          this.data = sanitizeLogs(mergeLogsForSave(this.readExistingLogForSave(), this.data));
-          const serialized = JSON.stringify(this.data, null, 2);
-          JSON.parse(serialized);
-          writeFileSync(tmpFile, serialized, 'utf-8');
-          JSON.parse(readFileSync(tmpFile, 'utf-8'));
-          // renameSync is atomic on same filesystem (POSIX)
-          renameSync(tmpFile, this.logFile);
+          const records = [
+            ...(this.hasExistingLogRecords() ? [] : [this.createMetaRecord()]),
+            ...this.pendingRecords,
+          ];
+          if (records.length === 0) {
+            return;
+          }
+
+          appendFileSync(
+            this.logFile,
+            `${records.map((record) => serializeAutocodeTaskLogRecord(record)).join('\n')}\n`,
+            'utf-8',
+          );
+          this.pendingRecords = [];
         },
       );
     } catch {
-      try {
-        unlinkSync(`${this.logFile}.tmp`);
-      } catch {
-        // Ignore cleanup failures.
-      }
       // Non-fatal: log write failures don't break execution
       // (The UI will just show an empty log section)
     }
   }
 
-  private readExistingLogForSave(): TaskLogs | null {
+  private createMetaRecord(): AutocodeTaskLogJsonlRecord {
+    return {
+      record_type: 'meta',
+      spec_id: this.data.spec_id,
+      created_at: this.data.created_at,
+      updated_at: this.data.updated_at,
+    };
+  }
+
+  private createPhaseRecord(phaseData: TaskLogs['phases'][TaskLogPhase]): AutocodeTaskLogJsonlRecord {
+    return {
+      record_type: 'phase',
+      timestamp: this.timestamp(),
+      phase: phaseData.phase,
+      status: phaseData.status,
+      started_at: phaseData.started_at,
+      completed_at: phaseData.completed_at,
+    };
+  }
+
+  private hasExistingLogRecords(): boolean {
     try {
-      if (!existsSync(this.logFile)) {
-        return null;
-      }
-      return sanitizeLogs(JSON.parse(readFileSync(this.logFile, 'utf-8')) as TaskLogs);
+      return existsSync(this.logFile) && statSync(this.logFile).size > 0;
     } catch {
-      return null;
+      return false;
     }
   }
 

@@ -5,6 +5,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { TaskLogWriter } from './task-log-writer';
 import type { TaskLogs } from '../../../shared/types';
+import { AUTOCODE_TASK_ARTIFACTS, parseAutocodeTaskLogs, serializeAutocodeTaskLogs } from '@autocode/core';
 
 const tempDirs: string[] = [];
 
@@ -22,7 +23,10 @@ function createWriter(specId = 'spec-001'): TaskLogWriter {
 }
 
 function readTaskLogs(specDir: string): TaskLogs {
-  return JSON.parse(readFileSync(join(specDir, 'task_logs.json'), 'utf-8')) as TaskLogs;
+  return parseAutocodeTaskLogs(
+    readFileSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs), 'utf-8'),
+    'spec-001',
+  ) as TaskLogs;
 }
 
 afterEach(() => {
@@ -60,7 +64,7 @@ describe('TaskLogWriter', () => {
         validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] },
       },
     };
-    writeFileSync(join(specDir, 'task_logs.json'), JSON.stringify(externalLogs, null, 2), 'utf-8');
+    writeFileSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs), serializeAutocodeTaskLogs(externalLogs), 'utf-8');
 
     writer.startPhase('coding', 'writer coding start');
 
@@ -184,7 +188,7 @@ describe('TaskLogWriter', () => {
     ]);
   });
 
-  it('always writes parseable JSON for multiline localized text and tool details', () => {
+  it('always writes parseable JSONL for multiline localized text and tool details', () => {
     const { specDir, writer } = createWriterFixture();
     const content = '阶段开始："编码"\n包含中文、引号、反斜杠 \\\\ 和控制字符 \u0000\u0007';
 
@@ -206,8 +210,8 @@ describe('TaskLogWriter', () => {
     );
     writer.endPhase('coding', true, '完成："编码"');
 
-    const raw = readFileSync(join(specDir, 'task_logs.json'), 'utf-8');
-    const logs = JSON.parse(raw) as TaskLogs;
+    const raw = readFileSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs), 'utf-8');
+    const logs = parseAutocodeTaskLogs(raw, 'spec-001') as TaskLogs;
 
     expect(logs.phases.coding.entries.length).toBeGreaterThan(0);
     expect(raw).toContain('阶段开始');

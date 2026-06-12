@@ -1,4 +1,4 @@
-import { existsSync, mkdirSync, readFileSync, renameSync, unlinkSync, writeFileSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync, readFileSync, statSync } from 'node:fs';
 import { basename, dirname, join } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { getAutocodeSpecDir, listAutocodeTasks } from './spec-store.js';
@@ -51,6 +51,32 @@ export interface AutocodeTaskLogs {
   updated_at: string;
   phases: Record<AutocodeTaskLogPhase, AutocodeTaskPhaseLog>;
 }
+
+export interface AutocodeTaskLogMetaRecord {
+  record_type: 'meta';
+  spec_id: string;
+  created_at: string;
+  updated_at?: string;
+}
+
+export interface AutocodeTaskLogPhaseRecord {
+  record_type: 'phase';
+  timestamp: string;
+  phase: AutocodeTaskLogPhase;
+  status: AutocodeTaskLogPhaseStatus;
+  started_at?: string | null;
+  completed_at?: string | null;
+}
+
+export interface AutocodeTaskLogEntryRecord {
+  record_type: 'entry';
+  entry: AutocodeTaskLogEntry;
+}
+
+export type AutocodeTaskLogJsonlRecord =
+  | AutocodeTaskLogMetaRecord
+  | AutocodeTaskLogPhaseRecord
+  | AutocodeTaskLogEntryRecord;
 
 export interface AutocodeTaskLogsInput {
   projectRoot: string;
@@ -113,11 +139,80 @@ export function readAutocodeTaskLogsFromSpecDir(
 }
 
 export function parseAutocodeTaskLogs(content: string, fallbackSpecId: string): AutocodeTaskLogs {
-  try {
-    return sanitizeLogs(JSON.parse(content) as AutocodeTaskLogs, fallbackSpecId);
-  } catch (error) {
-    return salvageAutocodeTaskLogs(content, fallbackSpecId, error);
+  const now = new Date().toISOString();
+  const logs = createEmptyAutocodeTaskLogs(fallbackSpecId, now);
+  let sawRecord = false;
+  let invalidLineCount = 0;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+
+    let record: unknown;
+    try {
+      record = JSON.parse(line);
+    } catch {
+      invalidLineCount += 1;
+      continue;
+    }
+
+    if (!isPlainRecord(record)) {
+      invalidLineCount += 1;
+      continue;
+    }
+
+    sawRecord = true;
+    applyTaskLogJsonlRecord(logs, record, fallbackSpecId);
   }
+
+  if (invalidLineCount > 0) {
+    const warningTimestamp = new Date().toISOString();
+    logs.phases.planning.status = logs.phases.planning.status === 'pending' ? 'failed' : logs.phases.planning.status;
+    logs.phases.planning.started_at = logs.phases.planning.started_at ?? warningTimestamp;
+    logs.phases.planning.completed_at = logs.phases.planning.completed_at ?? warningTimestamp;
+    logs.phases.planning.entries.push({
+      timestamp: warningTimestamp,
+      type: 'error',
+      phase: 'planning',
+      content: `${AUTOCODE_TASK_ARTIFACTS.taskLogs} had ${invalidLineCount} invalid JSONL line(s); valid entries were loaded.`,
+    });
+  }
+
+  return sanitizeLogs(logs, fallbackSpecId);
+}
+
+export function serializeAutocodeTaskLogRecord(record: AutocodeTaskLogJsonlRecord): string {
+  return JSON.stringify(sanitizeTaskLogJsonlRecord(record));
+}
+
+export function serializeAutocodeTaskLogs(logs: AutocodeTaskLogs): string {
+  const sanitized = sanitizeLogs(logs, logs.spec_id);
+  const records: AutocodeTaskLogJsonlRecord[] = [
+    {
+      record_type: 'meta',
+      spec_id: sanitized.spec_id,
+      created_at: sanitized.created_at,
+      updated_at: sanitized.updated_at,
+    },
+    ...(['planning', 'coding', 'validation'] as AutocodeTaskLogPhase[]).map((phase) => ({
+      record_type: 'phase' as const,
+      timestamp: sanitized.updated_at,
+      phase,
+      status: sanitized.phases[phase].status,
+      started_at: sanitized.phases[phase].started_at,
+      completed_at: sanitized.phases[phase].completed_at,
+    })),
+    ...(['planning', 'coding', 'validation'] as AutocodeTaskLogPhase[]).flatMap((phase) =>
+      sanitized.phases[phase].entries.map((entry) => ({
+        record_type: 'entry' as const,
+        entry,
+      }))
+    ),
+  ];
+
+  return `${records.map((record) => serializeAutocodeTaskLogRecord(record)).join('\n')}\n`;
 }
 
 export function mergeAutocodeTaskLogs(
@@ -196,28 +291,41 @@ export function appendAutocodeTaskLogEntry(input: AppendAutocodeTaskLogEntryInpu
     getAutocodeTaskLogsFileWriteLockInput(input, logPath, `task-logs:${input.taskId}:${input.phase}:append`),
     () => {
       const now = new Date().toISOString();
-      const logs = readAutocodeTaskLogs(input) ?? createEmptyAutocodeTaskLogs(input.taskId, now);
+      const hasExistingRecords = hasTaskLogRecords(logPath);
+      const logs = createEmptyAutocodeTaskLogs(input.taskId, now);
       const phaseLog = logs.phases[input.phase] ?? createEmptyPhaseLog(input.phase);
+      const records: AutocodeTaskLogJsonlRecord[] = [];
+
+      if (!hasExistingRecords) {
+        records.push(createMetaRecord(logs));
+      }
 
       if (phaseLog.status === 'pending') {
         phaseLog.status = 'active';
         phaseLog.started_at = phaseLog.started_at ?? now;
+        if (!hasExistingRecords) {
+          records.push(createPhaseRecord(phaseLog, now));
+        }
       }
 
       const content = sanitizeLogMessageText(input.content, LOG_TEXT_MAX_CHARS);
       const detail = input.detail ? sanitizeLogMessageText(input.detail, LOG_DETAIL_MAX_CHARS) : undefined;
       if (!(input.type === 'text' && !content.trim() && !detail?.trim())) {
-        phaseLog.entries.push({
+        const entry = sanitizeEntry({
           timestamp: input.timestamp ?? now,
           type: input.type,
           phase: input.phase,
           content,
           ...(detail ? { detail, collapsed: true } : {}),
-        });
+        }, input.phase);
+        if (entry) {
+          phaseLog.entries.push(entry);
+          records.push({ record_type: 'entry', entry });
+        }
       }
       logs.phases[input.phase] = phaseLog;
       logs.updated_at = now;
-      writeAutocodeTaskLogs(logPath, logs);
+      appendAutocodeTaskLogRecords(logPath, records);
       return logs;
     },
   );
@@ -229,9 +337,15 @@ export function updateAutocodeTaskLogPhase(input: UpdateAutocodeTaskLogPhaseInpu
     getAutocodeTaskLogsFileWriteLockInput(input, logPath, `task-logs:${input.taskId}:${input.phase}:phase`),
     () => {
       const now = new Date().toISOString();
-      const logs = readAutocodeTaskLogs(input) ?? createEmptyAutocodeTaskLogs(input.taskId, now);
+      const hasExistingRecords = hasTaskLogRecords(logPath);
+      const logs = createEmptyAutocodeTaskLogs(input.taskId, now);
       const phaseLog = logs.phases[input.phase] ?? createEmptyPhaseLog(input.phase);
       const wasPending = phaseLog.status === 'pending';
+      const records: AutocodeTaskLogJsonlRecord[] = [];
+
+      if (!hasExistingRecords) {
+        records.push(createMetaRecord(logs));
+      }
 
       phaseLog.status = input.status;
       if ((input.status === 'active' || wasPending) && !phaseLog.started_at) {
@@ -240,37 +354,47 @@ export function updateAutocodeTaskLogPhase(input: UpdateAutocodeTaskLogPhaseInpu
       if (input.status === 'completed' || input.status === 'failed') {
         phaseLog.completed_at = now;
       }
+      records.push(createPhaseRecord(phaseLog, now));
+
       if (input.message) {
-        phaseLog.entries.push({
+        const entry = sanitizeEntry({
           timestamp: now,
           type: input.status === 'failed' ? 'error' : input.status === 'completed' ? 'success' : 'info',
           phase: input.phase,
           content: sanitizeLogMessageText(input.message, LOG_TEXT_MAX_CHARS),
-        });
+        }, input.phase);
+        if (entry) {
+          phaseLog.entries.push(entry);
+          records.push({ record_type: 'entry', entry });
+        }
       }
 
       logs.phases[input.phase] = phaseLog;
       logs.updated_at = now;
-      writeAutocodeTaskLogs(logPath, logs);
+      appendAutocodeTaskLogRecords(logPath, records);
       return logs;
     },
   );
 }
 
-function writeAutocodeTaskLogs(logPath: string, logs: AutocodeTaskLogs): void {
+function appendAutocodeTaskLogRecords(logPath: string, records: AutocodeTaskLogJsonlRecord[]): void {
+  if (records.length === 0) {
+    return;
+  }
+
   mkdirSync(dirname(logPath), { recursive: true });
-  const sanitized = sanitizeLogs(logs, logs.spec_id);
-  const tmpPath = `${logPath}.tmp`;
+  appendFileSync(
+    logPath,
+    `${records.map((record) => serializeAutocodeTaskLogRecord(record)).join('\n')}\n`,
+    'utf8',
+  );
+}
+
+function hasTaskLogRecords(logPath: string): boolean {
   try {
-    writeFileSync(tmpPath, `${JSON.stringify(sanitized, null, 2)}\n`, 'utf8');
-    renameSync(tmpPath, logPath);
-  } catch (error) {
-    try {
-      unlinkSync(tmpPath);
-    } catch {
-      // Ignore cleanup errors and rethrow the original write failure.
-    }
-    throw error;
+    return existsSync(logPath) && statSync(logPath).size > 0;
+  } catch {
+    return false;
   }
 }
 
@@ -314,6 +438,125 @@ function createEmptyPhaseLog(phase: AutocodeTaskLogPhase): AutocodeTaskPhaseLog 
   };
 }
 
+function applyTaskLogJsonlRecord(
+  logs: AutocodeTaskLogs,
+  record: Record<string, unknown>,
+  fallbackSpecId: string,
+): void {
+  if (record.record_type === 'meta') {
+    logs.spec_id = sanitizeText(readString(record.spec_id) ?? fallbackSpecId, 200);
+    logs.created_at = readString(record.created_at) ?? logs.created_at;
+    logs.updated_at = readString(record.updated_at) ?? logs.updated_at;
+    return;
+  }
+
+  if (record.record_type === 'phase') {
+    const phase = isPhase(record.phase) ? record.phase : null;
+    const status = isPhaseStatus(record.status) ? record.status : null;
+    if (!phase || !status) {
+      return;
+    }
+
+    const timestamp = readString(record.timestamp) ?? new Date().toISOString();
+    const phaseLog = logs.phases[phase] ?? createEmptyPhaseLog(phase);
+    phaseLog.status = status;
+    if (record.started_at === null) {
+      phaseLog.started_at = null;
+    } else {
+      phaseLog.started_at = readString(record.started_at) ?? phaseLog.started_at ?? (status === 'active' ? timestamp : null);
+    }
+    if (record.completed_at === null || status === 'active') {
+      phaseLog.completed_at = null;
+    } else {
+      phaseLog.completed_at = readString(record.completed_at) ?? phaseLog.completed_at ?? (
+        status === 'completed' || status === 'failed' ? timestamp : null
+      );
+    }
+    logs.phases[phase] = phaseLog;
+    touchLogs(logs, timestamp);
+    return;
+  }
+
+  if (record.record_type === 'entry' && isPlainRecord(record.entry)) {
+    const fallbackPhase = isPhase(record.entry.phase) ? record.entry.phase : 'coding';
+    const entry = sanitizeEntry(record.entry, fallbackPhase);
+    if (!entry) {
+      return;
+    }
+
+    const phaseLog = logs.phases[entry.phase] ?? createEmptyPhaseLog(entry.phase);
+    if (phaseLog.status === 'pending') {
+      phaseLog.status = 'active';
+      phaseLog.started_at = phaseLog.started_at ?? entry.timestamp;
+    }
+    phaseLog.entries.push(entry);
+    logs.phases[entry.phase] = phaseLog;
+    touchLogs(logs, entry.timestamp);
+  }
+}
+
+function createMetaRecord(logs: AutocodeTaskLogs): AutocodeTaskLogMetaRecord {
+  return {
+    record_type: 'meta',
+    spec_id: logs.spec_id,
+    created_at: logs.created_at,
+    updated_at: logs.updated_at,
+  };
+}
+
+function createPhaseRecord(phaseLog: AutocodeTaskPhaseLog, timestamp: string): AutocodeTaskLogPhaseRecord {
+  return {
+    record_type: 'phase',
+    timestamp,
+    phase: phaseLog.phase,
+    status: phaseLog.status,
+    started_at: phaseLog.started_at,
+    completed_at: phaseLog.completed_at,
+  };
+}
+
+function sanitizeTaskLogJsonlRecord(record: AutocodeTaskLogJsonlRecord): AutocodeTaskLogJsonlRecord {
+  if (record.record_type === 'meta') {
+    const createdAt = typeof record.created_at === 'string' ? record.created_at : new Date().toISOString();
+    return {
+      record_type: 'meta',
+      spec_id: sanitizeText(record.spec_id, 200),
+      created_at: createdAt,
+      updated_at: typeof record.updated_at === 'string' ? record.updated_at : createdAt,
+    };
+  }
+
+  if (record.record_type === 'phase') {
+    const timestamp = typeof record.timestamp === 'string' ? record.timestamp : new Date().toISOString();
+    return {
+      record_type: 'phase',
+      timestamp,
+      phase: isPhase(record.phase) ? record.phase : 'coding',
+      status: isPhaseStatus(record.status) ? record.status : 'active',
+      started_at: typeof record.started_at === 'string' || record.started_at === null ? record.started_at : null,
+      completed_at: typeof record.completed_at === 'string' || record.completed_at === null
+        ? record.completed_at
+        : null,
+    };
+  }
+
+  return {
+    record_type: 'entry',
+    entry: sanitizeEntry(record.entry, isPhase(record.entry?.phase) ? record.entry.phase : 'coding') ?? {
+      timestamp: new Date().toISOString(),
+      type: 'info',
+      phase: 'coding',
+      content: '',
+    },
+  };
+}
+
+function touchLogs(logs: AutocodeTaskLogs, timestamp: string): void {
+  if (timestamp > logs.updated_at) {
+    logs.updated_at = timestamp;
+  }
+}
+
 function sanitizeLogs(logs: AutocodeTaskLogs, fallbackSpecId: string): AutocodeTaskLogs {
   const createdAt = typeof logs.created_at === 'string' ? logs.created_at : new Date().toISOString();
   const updatedAt = typeof logs.updated_at === 'string' ? logs.updated_at : createdAt;
@@ -344,72 +587,37 @@ function sanitizePhaseLog(value: AutocodeTaskPhaseLog | undefined, phase: Autoco
   };
 }
 
-function sanitizeEntry(value: AutocodeTaskLogEntry, fallbackPhase: AutocodeTaskLogPhase): AutocodeTaskLogEntry | null {
-  const phase = isPhase(value.phase) ? value.phase : fallbackPhase;
-  const type = isEntryType(value.type) ? value.type : 'info';
-  const content = sanitizeLogMessageText(value.content, LOG_TEXT_MAX_CHARS);
-  const detail = value.detail ? sanitizeLogMessageText(value.detail, LOG_DETAIL_MAX_CHARS) : undefined;
+function sanitizeEntry(value: unknown, fallbackPhase: AutocodeTaskLogPhase): AutocodeTaskLogEntry | null {
+  const source = isPlainRecord(value) ? value : {};
+  const phase = isPhase(source.phase) ? source.phase : fallbackPhase;
+  const type = isEntryType(source.type) ? source.type : 'info';
+  const content = sanitizeLogMessageText(source.content, LOG_TEXT_MAX_CHARS);
+  const detail = source.detail ? sanitizeLogMessageText(source.detail, LOG_DETAIL_MAX_CHARS) : undefined;
   if (type === 'text' && !content.trim() && !detail?.trim()) {
     return null;
   }
 
   return {
-    timestamp: typeof value.timestamp === 'string' ? value.timestamp : new Date().toISOString(),
+    timestamp: typeof source.timestamp === 'string' ? source.timestamp : new Date().toISOString(),
     type,
     phase,
     content,
     ...(detail ? { detail } : {}),
-    ...(value.tool_name ? { tool_name: sanitizeText(value.tool_name, 200) } : {}),
-    ...(value.tool_input ? { tool_input: sanitizeText(value.tool_input, 1000) } : {}),
-    ...(value.tool_success !== undefined ? { tool_success: Boolean(value.tool_success) } : {}),
-    ...(value.tool_call_id ? { tool_call_id: sanitizeText(value.tool_call_id, 200) } : {}),
-    ...(value.subtask_id ? { subtask_id: sanitizeText(value.subtask_id, 200) } : {}),
-    ...(typeof value.session === 'number' ? { session: value.session } : {}),
-    ...(value.subphase ? { subphase: sanitizeText(value.subphase, 200) } : {}),
-    ...(value.collapsed !== undefined ? { collapsed: Boolean(value.collapsed) } : {}),
-    ...(value.model ? { model: value.model } : {}),
+    ...(source.tool_name ? { tool_name: sanitizeText(source.tool_name, 200) } : {}),
+    ...(source.tool_input ? { tool_input: sanitizeText(source.tool_input, 1000) } : {}),
+    ...(source.tool_success !== undefined ? { tool_success: Boolean(source.tool_success) } : {}),
+    ...(source.tool_call_id ? { tool_call_id: sanitizeText(source.tool_call_id, 200) } : {}),
+    ...(source.subtask_id ? { subtask_id: sanitizeText(source.subtask_id, 200) } : {}),
+    ...(typeof source.session === 'number' ? { session: source.session } : {}),
+    ...(source.subphase ? { subphase: sanitizeText(source.subphase, 200) } : {}),
+    ...(source.collapsed !== undefined ? { collapsed: Boolean(source.collapsed) } : {}),
+    ...(isPlainRecord(source.model) ? { model: source.model } : {}),
   };
 }
 
 export function salvageAutocodeTaskLogs(content: string, fallbackSpecId: string, error: unknown): AutocodeTaskLogs {
   const now = new Date().toISOString();
-  const specId = extractJsonStringField(content, 'spec_id') ?? fallbackSpecId;
-  const logs = createEmptyAutocodeTaskLogs(specId, now);
-  logs.created_at = extractJsonStringField(content, 'created_at') ?? now;
-  logs.updated_at = extractJsonStringField(content, 'updated_at') ?? now;
-
-  const entryPattern = /"timestamp"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"type"\s*:\s*"([^"]+)"[\s\S]{0,1200}?"content"\s*:\s*"([^"\\]*(?:\\.[^"\\]*)*)"[\s\S]{0,1200}?"phase"\s*:\s*"(planning|coding|validation)"/g;
-  for (const match of content.matchAll(entryPattern)) {
-    const phase = match[4] as AutocodeTaskLogPhase;
-    let entryContent = match[3] ?? '';
-    try {
-      entryContent = JSON.parse(`"${entryContent}"`) as string;
-    } catch {
-      // Keep the recovered fragment when an individual entry is also damaged.
-    }
-
-    logs.phases[phase].entries.push({
-      timestamp: match[1] ?? now,
-      type: isEntryType(match[2]) ? match[2] : 'info',
-      phase,
-      content: sanitizeText(entryContent, LOG_TEXT_MAX_CHARS),
-    });
-  }
-
-  for (const phase of Object.keys(logs.phases) as AutocodeTaskLogPhase[]) {
-    const phaseContentMatch = content.match(new RegExp(`"${phase}"\\s*:\\s*\\{[\\s\\S]*?\\}`));
-    const phaseContent = phaseContentMatch?.[0] ?? '';
-    const startedAt = extractJsonStringField(phaseContent, 'started_at');
-    const completedAt = extractJsonStringField(phaseContent, 'completed_at');
-    logs.phases[phase].started_at = startedAt;
-    logs.phases[phase].completed_at = completedAt;
-    if (completedAt) {
-      logs.phases[phase].status = 'completed';
-    } else if (startedAt || logs.phases[phase].entries.length > 0) {
-      logs.phases[phase].status = 'active';
-    }
-  }
-
+  const logs = createEmptyAutocodeTaskLogs(fallbackSpecId, now);
   logs.phases.planning.status = logs.phases.planning.status === 'pending' ? 'failed' : logs.phases.planning.status;
   logs.phases.planning.started_at = logs.phases.planning.started_at ?? now;
   logs.phases.planning.completed_at = logs.phases.planning.completed_at ?? now;
@@ -476,17 +684,12 @@ function hasAutocodeTaskPhaseContent(phase: AutocodeTaskPhaseLog | undefined): b
   return Boolean(phase) && ((phase?.entries?.length ?? 0) > 0 || phase?.status !== 'pending');
 }
 
-function extractJsonStringField(content: string, field: string): string | null {
-  const match = content.match(new RegExp(`"${field}"\\s*:\\s*"([^"\\\\]*(?:\\\\.[^"\\\\]*)*)"`));
-  if (!match?.[1]) {
-    return null;
-  }
+function isPlainRecord(value: unknown): value is Record<string, unknown> {
+  return Boolean(value) && typeof value === 'object' && !Array.isArray(value);
+}
 
-  try {
-    return JSON.parse(`"${match[1]}"`) as string;
-  } catch {
-    return match[1];
-  }
+function readString(value: unknown): string | null {
+  return typeof value === 'string' && value.trim() ? value : null;
 }
 
 function isPhase(value: unknown): value is AutocodeTaskLogPhase {

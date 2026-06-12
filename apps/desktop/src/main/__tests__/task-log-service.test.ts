@@ -17,7 +17,7 @@ vi.mock('fs', async (importOriginal) => {
 
 vi.mock('@autocode/core', () => ({
   AUTOCODE_TASK_ARTIFACTS: {
-    taskLogs: 'task_logs.json',
+    taskLogs: 'task_logs.jsonl',
   },
   mergeAutocodeTaskLogs: (...args: unknown[]) => mergeAutocodeTaskLogsMock(...args),
   readAutocodeTaskLogsFromSpecDir: (...args: unknown[]) => readAutocodeTaskLogsFromSpecDirMock(...args),

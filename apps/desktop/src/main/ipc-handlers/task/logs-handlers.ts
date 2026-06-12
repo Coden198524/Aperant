@@ -5,7 +5,9 @@ import type { IPCResult, TaskLogs, TaskLogStreamChunk } from '../../../shared/ty
 import path from 'path';
 import { existsSync, mkdirSync, writeFileSync } from 'fs';
 import {
+  AUTOCODE_TASK_ARTIFACTS,
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
+  serializeAutocodeTaskLogs,
   withAutocodeRuntimeFileWriteLockSync,
 } from '@autocode/core';
 import { projectStore } from '../../project-store';
@@ -31,10 +33,10 @@ function createEmptyTaskLogs(specId: string, createdAt?: string): TaskLogs {
 
 function writeTaskLogs(specDir: string, logs: TaskLogs): void {
   mkdirSync(specDir, { recursive: true });
-  const logFile = path.join(specDir, 'task_logs.json');
+  const logFile = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
   const lockScope = inferAutocodeRuntimeFileWriteLockScopeFromSpecDir(specDir);
   const writeLogs = () => {
-    writeFileSync(logFile, JSON.stringify(logs, null, 2), 'utf-8');
+    writeFileSync(logFile, serializeAutocodeTaskLogs(logs), 'utf-8');
   };
   if (!existsSync(lockScope.projectRoot)) {
     writeLogs();
@@ -192,7 +194,7 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
 
         // Start watching even if specDir doesn't exist yet — the poll loop
         // in TaskLogService handles missing files gracefully and will pick up
-        // task_logs.json once the agent creates it during execution.
+        // task_logs.jsonl once the agent creates it during execution.
         taskLogService.startWatching(specId, specDir, absoluteProjectPath, specsRelPath);
         return { success: true };
       } catch (error) {

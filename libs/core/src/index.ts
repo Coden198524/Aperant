@@ -1460,6 +1460,7 @@ export {
   type AppendAutocodeTaskLogEntryInput,
   type AutocodeTaskLogEntry,
   type AutocodeTaskLogEntryType,
+  type AutocodeTaskLogJsonlRecord,
   type AutocodeTaskLogPhase,
   type AutocodeTaskLogPhaseStatus,
   type AutocodeTaskLogs,
@@ -1476,6 +1477,8 @@ export {
   readAutocodeTaskLogs,
   readAutocodeTaskLogsFromSpecDir,
   salvageAutocodeTaskLogs,
+  serializeAutocodeTaskLogRecord,
+  serializeAutocodeTaskLogs,
   updateAutocodeTaskLogPhase,
 } from './tasks/logs.js';
 

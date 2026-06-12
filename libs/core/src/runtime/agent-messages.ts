@@ -206,6 +206,7 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('```');
     parts.push('');
   }
+  appendChangeRequestAuditTrail(parts, input.specDir);
 
   appendOpenSpecUpstreamPlanningContext(parts, input, humanInputContent);
 
@@ -230,13 +231,13 @@ export function buildAutocodeTaskExecutionMessages(
     parts.push('```');
     parts.push('');
     if (input.forcePlanning) {
-      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated Autocode Markdown checklist. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. Do not code in this planning pass.`);
+      parts.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}. Address Human Review Input and overwrite the plan with an updated Autocode Markdown checklist. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. For Standard tasks, update spec.md and tasks.md before regenerating runtime work. Revise task lists incrementally: preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new pending work, and mark obsolete upstream checklist items explicitly. Do not code in this planning pass.`);
     } else {
       parts.push(`Resume pending or in-progress runtime work items. Leave completed work items alone. Mark each finished work item completed in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`);
     }
   } else {
     parts.push(input.forcePlanning
-      ? `Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items, addressing Human Review Input if present. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. Do not code in this planning pass.`
+      ? `Create ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items, addressing Human Review Input if present. For OpenSpec-backed tasks, update upstream OpenSpec artifacts first and derive this runtime plan from those updated artifacts. For Standard tasks, update spec.md and tasks.md first. Do not code in this planning pass.`
       : `No implementation plan exists yet. Start by creating ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with phases and runtime work items, then implement each item.`);
   }
 
@@ -285,6 +286,26 @@ function readText(filePath: string): string | null {
   }
 }
 
+function appendChangeRequestAuditTrail(parts: string[], specDir: string): void {
+  const jsonl = readText(join(specDir, 'change_requests.jsonl'));
+  if (jsonl === null) {
+    return;
+  }
+
+  parts.push('## Change Request Audit Trail');
+  parts.push('');
+  parts.push('Treat these entries as iteration history for the same task. Do not create a new task unless the user explicitly requested a separate follow-up task.');
+  parts.push('');
+  parts.push('### change_requests.jsonl');
+  parts.push('');
+  parts.push('Each line is one RequestChanges event with scope, impact analysis, feedback, and attachments.');
+  parts.push('');
+  parts.push('```jsonl');
+  parts.push(limitText(jsonl, 8000));
+  parts.push('```');
+  parts.push('');
+}
+
 function readJson<T>(filePath: string): T | null {
   const content = readText(filePath);
   if (content === null) {
@@ -325,8 +346,10 @@ function appendOpenSpecUpstreamPlanningContext(
   if (input.forcePlanning) {
     parts.push('Request Changes rule:');
     parts.push('- Apply the reviewer feedback to the relevant OpenSpec upstream Markdown files first: proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md.');
+    parts.push('- Use change_requests.jsonl as the same-task iteration audit trail when present.');
     parts.push(`- Then regenerate ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} from the updated OpenSpec artifacts.`);
     parts.push(`- Do not make ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} the only changed planning artifact when the feedback changes product behavior, requirements, design, or task scope.`);
+    parts.push('- Revise tasks incrementally: preserve valid completed work, add new pending work, reset invalidated work to pending with needs_revision notes, and mark obsolete upstream tasks explicitly.');
     parts.push('- Do not implement code in this planning pass.');
     if (humanInputContent) {
       parts.push('- Treat HUMAN_INPUT.md as required OpenSpec change feedback, not just runtime-plan feedback.');

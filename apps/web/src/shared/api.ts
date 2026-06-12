@@ -299,6 +299,7 @@ export interface CreateWebTaskRequest {
   title?: string;
   description: string;
   developmentMode?: AutocodeTaskDevelopmentMode;
+  sourceType?: 'manual' | 'project_docs';
   category?: AutocodeTaskCategory;
   complexity?: AutocodeTaskComplexity;
   impact?: AutocodeTaskImpact;
@@ -307,6 +308,9 @@ export interface CreateWebTaskRequest {
   provider?: string;
   thinkingLevel?: string;
   language?: string;
+  projectDocumentType?: 'full' | 'product' | 'architecture' | 'technical';
+  projectDocumentOutputDir?: string;
+  projectDocumentOutputs?: string[];
   useWorktree?: boolean;
   pushNewBranches?: boolean;
 }
@@ -323,6 +327,7 @@ export interface StartWebTaskRequest {
   model?: string;
   bypassPermissions?: boolean;
   language?: string;
+  forcePlanning?: boolean;
 }
 
 export interface WebTaskResponse {

@@ -224,7 +224,7 @@ export interface ElectronAPI {
   createTask: (projectId: string, title: string, description: string, metadata?: TaskMetadata) => Promise<IPCResult<Task>>;
   createProjectDocumentationTask: (
     projectId: string,
-    options?: { documentType?: ProjectDocumentType; outputDir?: string }
+    options?: { documentType?: ProjectDocumentType; outputDir?: string; language?: string }
   ) => Promise<IPCResult<Task>>;
   deleteTask: (taskId: string) => Promise<IPCResult>;
   updateTask: (

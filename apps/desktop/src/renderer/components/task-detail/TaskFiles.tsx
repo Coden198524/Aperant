@@ -28,7 +28,15 @@ interface TaskFilesProps {
 }
 
 // File extensions to display
-const ALLOWED_EXTENSIONS = ['.md', '.json'];
+const ALLOWED_EXTENSIONS = ['.md', '.json', '.jsonl'];
+const FILE_PRIORITY: Record<string, number> = {
+  'HUMAN_INPUT.md': 0,
+  'change_requests.jsonl': 1,
+  'spec.md': 2,
+  'tasks.md': 3,
+  'implementation_plan.md': 4,
+  'task_logs.jsonl': 5,
+};
 
 type FileViewMode = 'reader' | 'source';
 type FileKind = 'markdown' | 'json' | 'text';
@@ -43,7 +51,7 @@ type TaskFileNode = FileNode & { source?: 'autocode' | 'openspec' };
 
 // Get icon for file type
 function getFileIcon(filename: string) {
-  if (filename.endsWith('.json')) {
+  if (filename.endsWith('.json') || filename.endsWith('.jsonl')) {
     return <FileJson className="h-4 w-4 text-amber-500" />;
   }
   return <FileText className="h-4 w-4 text-blue-500" />;
@@ -283,10 +291,10 @@ export function TaskFiles({ task }: TaskFilesProps) {
         (file) => !file.isDirectory && ALLOWED_EXTENSIONS.some(ext => file.name.endsWith(ext))
       );
 
-      // Sort files: spec.md first, then alphabetically
+      // Sort high-signal task files first, then alphabetically.
       filteredFiles.sort((a, b) => {
-        if (a.name === 'spec.md') return -1;
-        if (b.name === 'spec.md') return 1;
+        const priorityDelta = (FILE_PRIORITY[a.name] ?? 100) - (FILE_PRIORITY[b.name] ?? 100);
+        if (priorityDelta !== 0) return priorityDelta;
         return a.name.localeCompare(b.name);
       });
 

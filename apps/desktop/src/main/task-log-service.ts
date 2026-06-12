@@ -20,7 +20,7 @@ function findWorktreeSpecDir(projectPath: string, specId: string, specsRelPath: 
 }
 
 /**
- * Service for loading and watching phase-based task logs (task_logs.json)
+ * Service for loading and watching phase-based task logs (task_logs.jsonl)
  *
  * This service provides:
  * - Loading logs from the spec directory (and worktree spec directory when active)

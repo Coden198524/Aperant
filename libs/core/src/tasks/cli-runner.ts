@@ -268,16 +268,19 @@ function buildTaskRunPrompt(input: {
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
       `- If ${input.specDir}/HUMAN_INPUT.md exists, address it as plan-review feedback.`,
+      `- If ${input.specDir}/change_requests.jsonl exists, read it as the iteration audit trail and preserve prior change-request history.`,
       ...(isOpenSpecTask
         ? ['- Apply plan-review feedback to upstream OpenSpec artifacts first, then derive the downstream implementation plan.']
         : ['- Do not read or edit openspec/ artifacts for this Standard task.']),
       ...(isOpenSpecTask
         ? [`- Regenerate ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} only from updated OpenSpec artifacts.`]
         : [
+            `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} when feedback changes requirements, acceptance criteria, user-visible behavior, or constraints.`,
             `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as the upstream Autocode task list.`,
             `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
           ]),
       '- Keep tasks independently implementable and verifiable.',
+      '- Revise the task list incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
       '- Every executable task must include _Depends on_ and _Verification_. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
       '- Set new task checkboxes to [ ].',
     ].join('\n')}`;
@@ -352,11 +355,17 @@ function buildTaskOpenSpecCompactContextReference(input: {
       ? '- If HUMAN_INPUT.md exists, update the relevant upstream OpenSpec Markdown files first: proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md.'
       : `- Read ${AUTOCODE_TASK_ARTIFACTS.openSpecContext} first and open full OpenSpec artifacts only for exact wording.`,
     input.forcePlanning
+      ? `- If change_requests.jsonl exists, use it as the same-task iteration audit trail.`
+      : '',
+    input.forcePlanning
       ? `- Then regenerate ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} from the updated OpenSpec artifacts.`
       : '- Treat implementation_plan.md as downstream runtime state, not product truth.',
     input.forcePlanning
       ? `- Do not make ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} the only changed planning artifact when feedback changes product behavior, requirements, design, or task scope.`
       : '- Complete the current runtime work package and update downstream status only.',
+    input.forcePlanning
+      ? '- Revise OpenSpec tasks.md incrementally: preserve completed items that still apply, add new pending items, and mark invalidated or obsolete items explicitly instead of erasing history.'
+      : '',
     input.forcePlanning ? '- Do not implement code in this planning pass.' : '',
     '',
     'OpenSpec artifact paths:',
@@ -460,7 +469,7 @@ function buildNodeRunnerScript(input: {
 }): string {
   return `const { spawn } = require('node:child_process');
 const { createHash, randomUUID } = require('node:crypto');
-const { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
+const { appendFileSync, existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, unlinkSync, writeFileSync } = require('node:fs');
 const { basename, dirname, join, resolve } = require('node:path');
 const { pathToFileURL } = require('node:url');
 const { TextDecoder } = require('node:util');
@@ -3110,23 +3119,30 @@ function appendTaskLogEntry(logPhase, type, message, detail, extra) {
   const now = new Date().toISOString();
   const logsPath = join(specDir, artifacts.taskLogs);
   withFileWriteLock(logsPath, 'runner:task-logs:append:' + logPhase, () => {
-    const logs = readJson(logsPath) || createEmptyLogs(now);
-    const phaseLog = logs.phases[logPhase] || { phase: logPhase, status: 'pending', started_at: null, completed_at: null, entries: [] };
-    if (phaseLog.status === 'pending') {
-      phaseLog.status = 'active';
+    const records = [];
+    if (!hasTaskLogRecords(logsPath)) {
+      records.push(createTaskLogMetaRecord(now));
     }
-    phaseLog.started_at = phaseLog.started_at || now;
-    phaseLog.entries.push({
+    records.push({
+      record_type: 'phase',
       timestamp: now,
-      type,
-      content: limitLogText(message, 4000),
       phase: logPhase,
-      ...(detail ? { detail: limitLogText(detail, 12000), collapsed: true } : {}),
-      ...(extra ? dropUndefinedTokenUsage(extra) : {}),
+      status: 'active',
+      started_at: now,
+      completed_at: null,
     });
-    logs.phases[logPhase] = phaseLog;
-    logs.updated_at = now;
-    writeJson(logsPath, logs);
+    records.push({
+      record_type: 'entry',
+      entry: {
+        timestamp: now,
+        type,
+        content: limitLogText(message, 4000),
+        phase: logPhase,
+        ...(detail ? { detail: limitLogText(detail, 12000), collapsed: true } : {}),
+        ...(extra ? dropUndefinedTokenUsage(extra) : {}),
+      },
+    });
+    appendTaskLogRecords(logsPath, records);
   });
 }
 
@@ -3134,38 +3150,58 @@ function updateTaskLogs(logPhase, status, message) {
   const now = new Date().toISOString();
   const logsPath = join(specDir, artifacts.taskLogs);
   withFileWriteLock(logsPath, 'runner:task-logs:phase:' + logPhase, () => {
-    const logs = readJson(logsPath) || createEmptyLogs(now);
-    const phaseLog = logs.phases[logPhase] || { phase: logPhase, status: 'pending', started_at: null, completed_at: null, entries: [] };
-    phaseLog.status = status;
-    phaseLog.started_at = phaseLog.started_at || now;
-    if (status === 'active') {
-      phaseLog.completed_at = null;
-    } else if (status === 'completed' || status === 'failed') {
-      phaseLog.completed_at = now;
+    const records = [];
+    if (!hasTaskLogRecords(logsPath)) {
+      records.push(createTaskLogMetaRecord(now));
     }
-    phaseLog.entries.push({
+    records.push({
+      record_type: 'phase',
       timestamp: now,
-      type: status === 'failed' ? 'error' : status === 'completed' ? 'success' : 'info',
-      content: limitLogText(message, 4000),
       phase: logPhase,
+      status,
+      started_at: now,
+      completed_at: status === 'completed' || status === 'failed' ? now : null,
     });
-    logs.phases[logPhase] = phaseLog;
-    logs.updated_at = now;
-    writeJson(logsPath, logs);
+    records.push({
+      record_type: 'entry',
+      entry: {
+        timestamp: now,
+        type: status === 'failed' ? 'error' : status === 'completed' ? 'success' : 'info',
+        content: limitLogText(message, 4000),
+        phase: logPhase,
+      },
+    });
+    appendTaskLogRecords(logsPath, records);
   });
 }
 
-function createEmptyLogs(now) {
+function createTaskLogMetaRecord(now) {
   return {
+    record_type: 'meta',
     spec_id: specDir.split(/[\\\\/]/).pop() || taskTitle,
     created_at: now,
     updated_at: now,
-    phases: {
-      planning: { phase: 'planning', status: 'pending', started_at: null, completed_at: null, entries: [] },
-      coding: { phase: 'coding', status: 'pending', started_at: null, completed_at: null, entries: [] },
-      validation: { phase: 'validation', status: 'pending', started_at: null, completed_at: null, entries: [] },
-    },
   };
+}
+
+function appendTaskLogRecords(logsPath, records) {
+  if (!records.length) {
+    return;
+  }
+  mkdirSync(dirname(logsPath), { recursive: true });
+  appendFileSync(
+    logsPath,
+    records.map((record) => JSON.stringify(record)).join('\\n') + '\\n',
+    'utf8',
+  );
+}
+
+function hasTaskLogRecords(logsPath) {
+  try {
+    return existsSync(logsPath) && statSync(logsPath).size > 0;
+  } catch {
+    return false;
+  }
 }
 
 function isCodexJsonInvocation(command, args) {

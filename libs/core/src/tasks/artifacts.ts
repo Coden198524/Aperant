@@ -9,7 +9,7 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   openSpecContext: 'openspec_context.md',
   requirements: 'requirements.md',
   taskMetadata: 'task_metadata.json',
-  taskLogs: 'task_logs.json',
+  taskLogs: 'task_logs.jsonl',
   directSummary: 'direct_summary.md',
   qaReport: 'qa_report.md',
   runResult: 'autocode-run-result.json',

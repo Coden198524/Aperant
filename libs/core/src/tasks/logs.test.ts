@@ -1,11 +1,11 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseAutocodeTaskLogs, stripNoisyAutocodeTaskLogText } from './logs.js';
+import { parseAutocodeTaskLogs, serializeAutocodeTaskLogs, stripNoisyAutocodeTaskLogText } from './logs.js';
 
 describe('Autocode task logs', () => {
   it('strips known Codex diagnostic noise from persisted text entries', () => {
     const logs = parseAutocodeTaskLogs(
-      JSON.stringify({
+      serializeAutocodeTaskLogs({
         spec_id: '001-task',
         created_at: '2026-06-11T03:43:24.179Z',
         updated_at: '2026-06-11T03:45:04.741Z',

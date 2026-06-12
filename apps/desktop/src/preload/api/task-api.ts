@@ -32,7 +32,7 @@ export interface TaskAPI {
   ) => Promise<IPCResult<Task>>;
   createProjectDocumentationTask: (
     projectId: string,
-    options?: { documentType?: ProjectDocumentType; outputDir?: string }
+    options?: { documentType?: ProjectDocumentType; outputDir?: string; language?: string }
   ) => Promise<IPCResult<Task>>;
   deleteTask: (taskId: string) => Promise<IPCResult>;
   updateTask: (
@@ -136,7 +136,7 @@ export const createTaskAPI = (): TaskAPI => ({
 
   createProjectDocumentationTask: (
     projectId: string,
-    options?: { documentType?: ProjectDocumentType; outputDir?: string }
+    options?: { documentType?: ProjectDocumentType; outputDir?: string; language?: string }
   ): Promise<IPCResult<Task>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CREATE_PROJECT_DOCS, projectId, options),
 

@@ -915,7 +915,10 @@ export function App() {
     const projectId = activeProjectId || selectedProjectId;
     if (!projectId) return;
 
-    const task = await createProjectDocumentationTask(projectId, { documentType: 'full' });
+    const task = await createProjectDocumentationTask(projectId, {
+      documentType: 'full',
+      language: settings.language,
+    });
     if (task) {
       setActiveView('kanban');
       setSelectedTask(task);
@@ -931,7 +934,6 @@ export function App() {
         <Sidebar
           onSettingsClick={() => setIsSettingsDialogOpen(true)}
           onNewTaskClick={() => setIsNewTaskDialogOpen(true)}
-          onProjectDocsClick={handleCreateProjectDocs}
           activeView={activeView}
           onViewChange={setActiveView}
         />
@@ -998,7 +1000,11 @@ export function App() {
                 )}
                 {activeView === 'context' && (activeProjectId || selectedProjectId) && (
                   <ErrorBoundary>
-                    <Context projectId={activeProjectId || selectedProjectId!} />
+                    <Context
+                      projectId={activeProjectId || selectedProjectId!}
+                      onProjectDocsClick={handleCreateProjectDocs}
+                      canCreateProjectDocs={Boolean(selectedProject?.autoBuildPath)}
+                    />
                   </ErrorBoundary>
                 )}
                 {activeView === 'ideation' && (activeProjectId || selectedProjectId) && (

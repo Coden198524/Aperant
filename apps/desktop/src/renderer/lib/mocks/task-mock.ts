@@ -29,28 +29,38 @@ export const taskMock = {
 
   createProjectDocumentationTask: async (
     projectId: string,
-    options: { documentType?: 'full' | 'product' | 'architecture' | 'technical'; outputDir?: string } = {}
-  ) => ({
-    success: true,
-    data: {
-      id: `task-${Date.now()}`,
-      projectId,
-      specId: `00${mockTasks.length + 1}-project-docs`,
-      title: 'Generate project documentation',
-      description: 'Create project documents for future spec and coding context.',
-      status: 'backlog' as const,
-      subtasks: [],
-      logs: [],
-      metadata: {
-        sourceType: 'project_docs' as const,
-        category: 'documentation' as const,
-        projectDocumentType: options.documentType ?? 'full',
-        projectDocumentOutputDir: options.outputDir ?? '.autocode/project-docs',
-      },
-      createdAt: new Date(),
-      updatedAt: new Date()
-    }
-  }),
+    options: {
+      documentType?: 'full' | 'product' | 'architecture' | 'technical';
+      outputDir?: string;
+      language?: string;
+    } = {}
+  ) => {
+    const isChinese = options.language?.trim().toLowerCase().startsWith('zh') === true;
+    return {
+      success: true,
+      data: {
+        id: `task-${Date.now()}`,
+        projectId,
+        specId: `00${mockTasks.length + 1}-project-docs`,
+        title: isChinese ? '生成项目文档参考包' : 'Generate project documentation',
+        description: isChinese
+          ? '创建简体中文项目文档，供后续需求分析和编码上下文使用。'
+          : 'Create project documents for future spec and coding context.',
+        status: 'backlog' as const,
+        subtasks: [],
+        logs: [],
+        metadata: {
+          sourceType: 'project_docs' as const,
+          category: 'documentation' as const,
+          language: options.language,
+          projectDocumentType: options.documentType ?? 'full',
+          projectDocumentOutputDir: options.outputDir ?? '.autocode/project-docs',
+        },
+        createdAt: new Date(),
+        updatedAt: new Date()
+      }
+    };
+  },
 
   deleteTask: async () => ({ success: true }),
 

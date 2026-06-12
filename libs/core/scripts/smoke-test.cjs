@@ -2136,12 +2136,18 @@ async function main() {
     }).find((candidate) => candidate.id === task.id);
     assert.equal(stalePhaseLoadedTask.executionProgress.phase, 'coding');
     const salvagedTaskLogs = core.parseAutocodeTaskLogs(
-      '{"spec_id":"broken-task","phases":{"coding":{"started_at":"2026-01-01T00:00:00.000Z","entries":[{"timestamp":"2026-01-01T00:00:01.000Z","type":"info","content":"Recovered","phase":"coding"}]}}',
+      [
+        '{"record_type":"meta","spec_id":"jsonl-task","created_at":"2026-01-01T00:00:00.000Z"}',
+        '{"record_type":"phase","timestamp":"2026-01-01T00:00:00.000Z","phase":"coding","status":"active","started_at":"2026-01-01T00:00:00.000Z"}',
+        '{"record_type":"entry","entry":{"timestamp":"2026-01-01T00:00:01.000Z","type":"info","content":"Recovered","phase":"coding"}}',
+        '{"record_type":"entry","entry":',
+      ].join('\n'),
       'fallback-task',
     );
-    assert.equal(salvagedTaskLogs.spec_id, 'broken-task');
+    assert.equal(salvagedTaskLogs.spec_id, 'jsonl-task');
     assert.equal(salvagedTaskLogs.phases.coding.status, 'active');
     assert.equal(salvagedTaskLogs.phases.coding.entries[0].content, 'Recovered');
+    assert.match(salvagedTaskLogs.phases.planning.entries[0].content, /invalid JSONL line/);
     const worktreeTaskLogs = core.createEmptyAutocodeTaskLogs(task.id, '2026-01-01T00:00:00.000Z');
     worktreeTaskLogs.updated_at = '2026-01-01T00:01:00.000Z';
     worktreeTaskLogs.phases.coding.status = 'active';
@@ -2780,7 +2786,7 @@ async function main() {
     assert.equal(core.decodeAutocodeCliOutputChunk(Buffer.from(mojibakeChineseLogText, 'utf8')), chineseLogText);
     assert.equal(core.decodeAutocodeCliOutputChunk(iconvLite.encode(chineseLogText, 'gbk')), chineseLogText);
     assert.match(
-      core.summarizeTaskLog('{"type":"tool_start","tool_name":"Read"}', 'task_logs.json'),
+      core.summarizeTaskLog('{"record_type":"entry","entry":{"type":"tool_start","tool_name":"Read"}}', 'task_logs.jsonl'),
       /tool_start=1/,
     );
     assert.match(core.formatImageReadResult('icon.jpg', 'abc'), /data:image\/jpeg;base64,abc/);

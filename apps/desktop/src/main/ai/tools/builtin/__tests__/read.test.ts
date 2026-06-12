@@ -252,12 +252,10 @@ describe('Read Tool', () => {
 
   it('should summarize the active task log instead of returning full large content', async () => {
     const content = [
-      '{"phases":{"coding":{"entries":[',
-      '{"type":"tool_start","tool_name":"Read"},',
-      '{"type":"tool_end","tool_name":"Read"},',
-      '{"type":"text","content":"hello"},',
-      '{"type":"error","content":"bad"}',
-      ']}}}',
+      '{"record_type":"entry","entry":{"type":"tool_start","tool_name":"Read","phase":"coding","timestamp":"2026-01-01T00:00:00.000Z","content":"read"}}',
+      '{"record_type":"entry","entry":{"type":"tool_end","tool_name":"Read","phase":"coding","timestamp":"2026-01-01T00:00:01.000Z","content":"done"}}',
+      '{"record_type":"entry","entry":{"type":"text","phase":"coding","timestamp":"2026-01-01T00:00:02.000Z","content":"hello"}}',
+      '{"record_type":"entry","entry":{"type":"error","phase":"coding","timestamp":"2026-01-01T00:00:03.000Z","content":"bad"}}',
     ].join('\n');
     setupTextFile(content);
     vi.mocked(fs.fstatSync).mockReturnValue({
@@ -267,14 +265,14 @@ describe('Read Tool', () => {
     } as unknown as fs.Stats);
 
     const result = await readTool.config.execute(
-      { file_path: '/test/specs/001/task_logs.json' },
+      { file_path: '/test/specs/001/task_logs.jsonl' },
       baseContext,
     ) as string;
 
     expect(result).toContain('[Task log file:');
     expect(result).toContain('tool_start=1');
     expect(result).toContain('Full task logs are intentionally not returned');
-    expect(result).not.toContain('{"phases"');
+    expect(result).not.toContain('record_type');
   });
 
   it('should return error when file not found', async () => {

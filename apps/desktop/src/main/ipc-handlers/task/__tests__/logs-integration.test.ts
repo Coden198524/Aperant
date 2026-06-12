@@ -68,6 +68,18 @@ vi.mock('../../../utils/path-helpers', () => ({
   })
 }));
 
+vi.mock('@autocode/core', () => ({
+  AUTOCODE_TASK_ARTIFACTS: {
+    taskLogs: 'task_logs.jsonl',
+  },
+  inferAutocodeRuntimeFileWriteLockScopeFromSpecDir: () => ({
+    projectRoot: '/absolute/path/to/project',
+    dataDirName: '.autocode',
+  }),
+  serializeAutocodeTaskLogs: (logs: unknown) => `${JSON.stringify({ record_type: 'meta', logs })}\n`,
+  withAutocodeRuntimeFileWriteLockSync: (_input: unknown, fn: () => unknown) => fn(),
+}));
+
 describe('Task Logs Integration (IPC → Service → State)', () => {
   let ipcHandlers: Record<string, Function>;
   let mockMainWindow: Partial<BrowserWindow>;
@@ -353,7 +365,7 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
         { recursive: true }
       );
       const taskLogWrites = (writeFileSync as Mock).mock.calls
-        .filter(([filePath]) => String(filePath).endsWith('task_logs.json'));
+        .filter(([filePath]) => String(filePath).endsWith('task_logs.jsonl'));
       expect(taskLogWrites).toHaveLength(1);
       expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
         'task:logsChanged',
@@ -396,15 +408,15 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
 
       expect(result.success).toBe(true);
       const taskLogWrites = (writeFileSync as Mock).mock.calls
-        .filter(([filePath]) => String(filePath).endsWith('task_logs.json'));
+        .filter(([filePath]) => String(filePath).endsWith('task_logs.jsonl'));
       expect(taskLogWrites).toHaveLength(2);
       expect(writeFileSync).toHaveBeenCalledWith(
-        path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task', 'task_logs.json'),
+        path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task', 'task_logs.jsonl'),
         expect.any(String),
         'utf-8'
       );
       expect(writeFileSync).toHaveBeenCalledWith(
-        path.join('/absolute/path/to/project/.autocode/worktrees/tasks/001-test-task', '.autocode/specs', '001-test-task', 'task_logs.json'),
+        path.join('/absolute/path/to/project/.autocode/worktrees/tasks/001-test-task', '.autocode/specs', '001-test-task', 'task_logs.jsonl'),
         expect.any(String),
         'utf-8'
       );

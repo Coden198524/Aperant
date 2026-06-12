@@ -21,6 +21,7 @@ import {
   readAutocodeTaskLogsFromSpecDir,
   resolveAutocodeCli,
   saveAutocodeImplementationPlanSync,
+  serializeAutocodeTaskLogs,
   markAutocodeTaskStopped,
   updateAutocodeTaskLogPhase,
   updateAutocodeTaskPlanStatus,
@@ -230,6 +231,7 @@ export class WebLocalService {
           ? { bypassPermissions: request.bypassPermissions }
           : {}),
         ...(request.language ? { language: request.language as never } : {}),
+        ...(request.forcePlanning === true ? { forcePlanning: true } : {}),
         ...(typeof project.settings?.mainBranch === 'string'
           ? { baseBranch: project.settings.mainBranch }
           : {}),
@@ -1839,7 +1841,7 @@ function writeTaskLogsToSpecDir(specDir: string, logs: AutocodeTaskLogs): void {
   mkdirSync(specDir, { recursive: true });
   writeFileSync(
     join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs),
-    `${JSON.stringify(logs, null, 2)}\n`,
+    serializeAutocodeTaskLogs(logs),
     'utf-8',
   );
 }
@@ -1957,7 +1959,7 @@ export function getDistClientDir(importMetaUrl: string): string {
 
 function createTaskMetadata(body: CreateWebTaskRequest): AutocodeTaskMetadata {
   const metadata: AutocodeTaskMetadata = {
-    sourceType: 'manual',
+    sourceType: body.sourceType === 'project_docs' ? 'project_docs' : 'manual',
     developmentMode: normalizeDevelopmentMode(body.developmentMode),
   };
 
@@ -1971,6 +1973,15 @@ function createTaskMetadata(body: CreateWebTaskRequest): AutocodeTaskMetadata {
     metadata.thinkingLevel = body.thinkingLevel.trim();
   }
   if (typeof body.language === 'string' && body.language.trim()) metadata.language = body.language.trim();
+  if (isSetValue(body.projectDocumentType, new Set(['full', 'product', 'architecture', 'technical']))) {
+    metadata.projectDocumentType = body.projectDocumentType;
+  }
+  if (typeof body.projectDocumentOutputDir === 'string' && body.projectDocumentOutputDir.trim()) {
+    metadata.projectDocumentOutputDir = body.projectDocumentOutputDir.trim();
+  }
+  if (Array.isArray(body.projectDocumentOutputs)) {
+    metadata.projectDocumentOutputs = body.projectDocumentOutputs.filter((item) => typeof item === 'string' && item.trim());
+  }
   if (typeof body.useWorktree === 'boolean') metadata.useWorktree = body.useWorktree;
   if (typeof body.pushNewBranches === 'boolean') metadata.pushNewBranches = body.pushNewBranches;
 
