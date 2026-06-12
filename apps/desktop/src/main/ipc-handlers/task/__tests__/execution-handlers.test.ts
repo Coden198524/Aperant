@@ -15,6 +15,7 @@ vi.mock('fs', () => ({
   existsSync: vi.fn(() => false),
   readFileSync: vi.fn(() => ''),
   writeFileSync: vi.fn(),
+  appendFileSync: vi.fn(),
   mkdirSync: vi.fn(),
   unlinkSync: vi.fn(),
 }));
@@ -147,6 +148,8 @@ describe('registerTaskExecutionHandlers', () => {
 
     const planShards = await import('../../../ai/schema/plan-shards');
     const fs = await import('fs');
+    (fs.existsSync as Mock).mockImplementation(() => false);
+    (fs.readFileSync as Mock).mockImplementation(() => '');
     (planShards.loadImplementationPlanFromFilesSync as Mock).mockImplementation((planPath: string) => {
       try {
         const content = (fs.readFileSync as Mock)(planPath);
@@ -159,6 +162,8 @@ describe('registerTaskExecutionHandlers', () => {
     (planShards.saveImplementationPlanToFilesSync as Mock).mockImplementation((planPath: string, plan: unknown) => {
       (atomicFile.writeFileAtomicSync as Mock)(planPath, JSON.stringify(plan, null, 2));
     });
+    const worktreePaths = await import('../../../worktree-paths');
+    (worktreePaths.findTaskWorktree as Mock).mockImplementation(() => null);
   });
 
   it('scopes TASK_START lookups and task errors by requested projectId', async () => {
@@ -340,7 +345,7 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('need changes'),
       'utf-8'
     );
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
+    expect(fs.appendFileSync).toHaveBeenCalledWith(
       expect.stringContaining('change_requests.jsonl'),
       expect.stringContaining('"feedback":"need changes"'),
       'utf-8'
@@ -368,12 +373,12 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('Flow documents to update: HUMAN_INPUT.md, change_requests.jsonl, spec.md, requirements.md, tasks.md, implementation_plan.md, qa_report.md'),
       'utf-8'
     );
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
+    expect(fs.appendFileSync).toHaveBeenCalledWith(
       expect.stringContaining('change_requests.jsonl'),
       expect.stringContaining('"mode":"standard-planning"'),
       'utf-8'
     );
-    expect(fs.writeFileSync).toHaveBeenCalledWith(
+    expect(fs.appendFileSync).toHaveBeenCalledWith(
       expect.stringContaining('change_requests.jsonl'),
       expect.stringContaining('"commitPolicy"'),
       'utf-8'
@@ -395,11 +400,11 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('restarts planning for Standard completed review feedback that changes requirements', async () => {
+  it('applies a local Standard change patch when stale progress still says planning', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { findTaskWorktree } = await import('../../../worktree-paths');
-    const { existsSync, writeFileSync } = await import('fs');
+    const { appendFileSync, existsSync, readFileSync, writeFileSync } = await import('fs');
     const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskWorktree as Mock).mockReturnValue(null);
@@ -412,6 +417,7 @@ describe('registerTaskExecutionHandlers', () => {
         description: 'desc',
         status: 'human_review',
         reviewReason: 'completed',
+        executionProgress: { phase: 'planning', phaseProgress: 100, overallProgress: 100 },
         subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'completed', files: [] }],
         logs: [],
         metadata: { developmentMode: 'standard', workflowMode: 'balanced' },
@@ -423,8 +429,26 @@ describe('registerTaskExecutionHandlers', () => {
         settings: {},
       },
     });
-    (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (taskStateManager.getCurrentState as Mock).mockReturnValue(undefined);
     (existsSync as Mock).mockReturnValue(true);
+    (readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          phases: [
+            {
+              id: '1',
+              phase: 1,
+              name: 'Implementation',
+              type: 'implementation',
+              subtasks: [
+                { id: '1.1', title: 'Existing work', description: 'done', status: 'completed', files: [] },
+              ],
+            },
+          ],
+        });
+      }
+      return '';
+    });
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
     const result = await reviewHandler(
@@ -437,7 +461,7 @@ describe('registerTaskExecutionHandlers', () => {
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('Impact analysis: requirements, design, tasks, validation'),
+      expect.stringContaining('Impact analysis: requirements, implementation'),
       'utf-8',
     );
     expect(writeFileSync).toHaveBeenCalledWith(
@@ -450,12 +474,12 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('commit-ready'),
       'utf-8',
     );
-    expect(writeFileSync).toHaveBeenCalledWith(
+    expect(appendFileSync).toHaveBeenCalledWith(
       expect.stringContaining('change_requests.jsonl'),
       expect.stringContaining('interrupted skills'),
       'utf-8',
     );
-    expect(writeFileSync).toHaveBeenCalledWith(
+    expect(appendFileSync).toHaveBeenCalledWith(
       expect.stringContaining('change_requests.jsonl'),
       expect.stringContaining('"flowDocuments"'),
       'utf-8',
@@ -463,20 +487,44 @@ describe('registerTaskExecutionHandlers', () => {
     expect((writeFileSync as Mock).mock.calls.some(([filePath]) =>
       String(filePath).includes('CHANGE_REQUESTS.md')
     )).toBe(false);
-    expect(writeFileAtomicSync).not.toHaveBeenCalled();
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('spec.md'),
+      expect.stringContaining('CR ID: cr-'),
+      'utf-8',
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('requirements.md'),
+      expect.stringContaining('interrupted skills'),
+      'utf-8',
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('tasks.md'),
+      expect.stringContaining('Change request cr-'),
+      'utf-8',
+    );
+    expect(writeFileAtomicSync).toHaveBeenCalledWith(
+      expect.stringContaining('implementation_plan.md'),
+      expect.stringContaining('interrupted skills'),
+    );
+    expect(writeFileAtomicSync).toHaveBeenCalledWith(
+      expect.stringContaining('implementation_plan.md'),
+      expect.stringContaining('"executionPhase": "coding"'),
+    );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-standard-requirements-review',
-      { type: 'PLANNING_STARTED' },
+      { type: 'USER_RESUMED' },
       expect.any(Object),
       expect.any(Object),
     );
-    expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
-      '001-standard-requirements-review',
-      'E:/Work/FastProject',
-      '001-standard-requirements-review',
-      expect.objectContaining({ forcePlanning: true }),
-      'project-fast',
-    );
+    const humanInputWrites = (writeFileSync as Mock).mock.calls
+      .filter(([filePath]) => String(filePath).includes('HUMAN_INPUT.md'))
+      .map(([, content]) => String(content));
+    const finalHumanInput = humanInputWrites[humanInputWrites.length - 1];
+    expect(finalHumanInput).toContain('planning artifacts were patched locally');
+    expect(finalHumanInput).toContain('Continue coding from the pending change-request work item');
+    expect(finalHumanInput).not.toContain('Do not implement code in this planning pass');
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).not.toBe(true);
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
@@ -753,7 +801,7 @@ describe('registerTaskExecutionHandlers', () => {
   it('restarts coding for completed human review even without build-failure keywords', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
-    const { writeFileSync, readFileSync } = await import('fs');
+    const { existsSync, writeFileSync, readFileSync } = await import('fs');
     const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskAndProject as Mock).mockReturnValue({
@@ -777,6 +825,7 @@ describe('registerTaskExecutionHandlers', () => {
       },
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
     (readFileSync as Mock).mockImplementation((filePath: string) => {
       if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({
@@ -818,10 +867,10 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('restarts planning for Standard completed review feedback that needs new subtasks', async () => {
+  it('applies a local Standard change patch for legacy balanced metadata that needs new subtasks', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
-    const { existsSync, writeFileSync } = await import('fs');
+    const { existsSync, readFileSync, writeFileSync } = await import('fs');
     const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskAndProject as Mock).mockReturnValue({
@@ -835,7 +884,7 @@ describe('registerTaskExecutionHandlers', () => {
         reviewReason: 'completed',
         subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'completed', files: [] }],
         logs: [],
-        metadata: { developmentMode: 'standard', workflowMode: 'balanced' },
+        metadata: { workflowMode: 'balanced' },
       },
       project: {
         id: 'project-fast',
@@ -846,6 +895,24 @@ describe('registerTaskExecutionHandlers', () => {
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
     (existsSync as Mock).mockReturnValue(true);
+    (readFileSync as Mock).mockImplementation((filePath: string) => {
+      if (filePath.includes('implementation_plan.md')) {
+        return JSON.stringify({
+          phases: [
+            {
+              id: '1',
+              phase: 1,
+              name: 'Implementation',
+              type: 'implementation',
+              subtasks: [
+                { id: '1.1', title: 'Existing work', description: 'done', status: 'completed', files: [] },
+              ],
+            },
+          ],
+        });
+      }
+      return '';
+    });
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
     const result = await reviewHandler({}, '001-standard-review', false, 'Add another tuning pass with separate verification.');
@@ -856,20 +923,27 @@ describe('registerTaskExecutionHandlers', () => {
       expect.stringContaining('update tasks.md with concrete pending subtasks'),
       'utf-8'
     );
-    expect(writeFileAtomicSync).not.toHaveBeenCalled();
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('tasks.md'),
+      expect.stringContaining('Add another tuning pass'),
+      'utf-8'
+    );
+    expect(writeFileAtomicSync).toHaveBeenCalledWith(
+      expect.stringContaining('implementation_plan.md'),
+      expect.stringContaining('Add another tuning pass'),
+    );
+    expect(writeFileAtomicSync).toHaveBeenCalledWith(
+      expect.stringContaining('implementation_plan.md'),
+      expect.stringContaining('"status": "in_progress"'),
+    );
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
       '001-standard-review',
-      { type: 'PLANNING_STARTED' },
+      { type: 'USER_RESUMED' },
       expect.any(Object),
       expect.any(Object)
     );
-    expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
-      '001-standard-review',
-      'E:/Work/FastProject',
-      '001-standard-review',
-      expect.objectContaining({ forcePlanning: true }),
-      'project-fast',
-    );
+    const startOptions = mockAgentManager.startTaskExecution.mock.calls[0]?.[3];
+    expect(startOptions?.forcePlanning).not.toBe(true);
     expect(mockAgentManager.startSpecCreation).not.toHaveBeenCalled();
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
@@ -877,7 +951,7 @@ describe('registerTaskExecutionHandlers', () => {
   it('restarts coding for completed review feedback that contains build failures', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
-    const { writeFileSync, readFileSync } = await import('fs');
+    const { existsSync, writeFileSync, readFileSync } = await import('fs');
     const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskAndProject as Mock).mockReturnValue({
@@ -901,6 +975,7 @@ describe('registerTaskExecutionHandlers', () => {
       },
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
     (readFileSync as Mock).mockImplementation((filePath: string) => {
       if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({
@@ -945,7 +1020,7 @@ describe('registerTaskExecutionHandlers', () => {
   it('restarts coding for human_review with missing reviewReason', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
-    const { writeFileSync } = await import('fs');
+    const { existsSync, writeFileSync } = await import('fs');
 
     (findTaskAndProject as Mock).mockReturnValue({
       task: {
@@ -968,6 +1043,7 @@ describe('registerTaskExecutionHandlers', () => {
       },
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
     const result = await reviewHandler({}, '001-missing-reason', false, 'Continue optimizing the value tuning experience.');
@@ -991,7 +1067,7 @@ describe('registerTaskExecutionHandlers', () => {
   it('still appends a new follow-up subtask when plan already has pending subtasks', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
-    const { readFileSync } = await import('fs');
+    const { existsSync, readFileSync } = await import('fs');
     const { writeFileAtomicSync } = await import('../../../utils/atomic-file');
 
     (findTaskAndProject as Mock).mockReturnValue({
@@ -1015,6 +1091,7 @@ describe('registerTaskExecutionHandlers', () => {
       },
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
     (readFileSync as Mock).mockImplementation((filePath: string) => {
       if (filePath.includes('implementation_plan.md')) {
         return JSON.stringify({
@@ -1049,6 +1126,7 @@ describe('registerTaskExecutionHandlers', () => {
   it('saves follow-up subtasks through plan helpers on Request Changes', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
+    const { existsSync } = await import('fs');
     const planShards = await import('../../../ai/schema/plan-shards');
 
     const existingPlan = {
@@ -1086,6 +1164,7 @@ describe('registerTaskExecutionHandlers', () => {
       },
     });
     (taskStateManager.getCurrentState as Mock).mockReturnValue('human_review');
+    (existsSync as Mock).mockReturnValue(true);
     (planShards.loadImplementationPlanFromFilesSync as Mock).mockReturnValue(existingPlan);
 
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];

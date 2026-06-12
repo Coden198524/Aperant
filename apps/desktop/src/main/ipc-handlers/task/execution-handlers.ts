@@ -5,6 +5,7 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   createAutocodeAgentRuntimePlan,
   getAutocodeAgentRuntimeModeLabel,
+  resolveAutocodeTaskDevelopmentMode,
   resolveAutocodeTaskStartEvent,
   startAutocodeAgentRuntime,
 } from '@autocode/core';
@@ -12,7 +13,7 @@ import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
 import type { TaskEvent } from '../../../shared/state-machines/task-machine';
 import path from 'path';
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
+import { appendFileSync, existsSync, readFileSync, writeFileSync, mkdirSync } from 'fs';
 import { spawnSync, execFileSync } from 'child_process';
 import {
   loadImplementationPlanFromFilesSync,
@@ -81,6 +82,15 @@ interface ChangeRequestRecord {
   feedback: string;
   attachmentsMarkdown?: string;
 }
+
+interface StandardChangeRequestPatchResult {
+  applied: boolean;
+  patchedSpecDirs: string[];
+  patchedFiles: string[];
+  reason?: string;
+}
+
+type CoreTaskModeMetadata = Parameters<typeof resolveAutocodeTaskDevelopmentMode>[0];
 
 /**
  * Check if any provider account is configured (API key or OAuth).
@@ -193,12 +203,23 @@ function getPlanFilePathsForTask(project: Project, task: Task, specsBaseDir: str
 }
 
 function isDirectWorkflowTask(task: Task): boolean {
-  return task.metadata?.workflowMode === 'off' || task.metadata?.developmentMode === 'direct';
+  return resolveAutocodeTaskDevelopmentMode(task.metadata as CoreTaskModeMetadata, 'standard') === 'direct';
 }
 
 function isStandardWorkflowTask(task: Task): boolean {
-  return !isDirectWorkflowTask(task)
-    && task.metadata?.developmentMode === 'standard';
+  return resolveAutocodeTaskDevelopmentMode(task.metadata as CoreTaskModeMetadata, 'standard') === 'standard';
+}
+
+function isPlanReviewRequest(task: Task, currentXState?: string | null): boolean {
+  if (currentXState === 'plan_review' || task.reviewReason === 'plan_review') {
+    return true;
+  }
+
+  if (task.reviewReason) {
+    return false;
+  }
+
+  return task.status === 'human_review' && task.executionProgress?.phase === 'planning';
 }
 
 function getTaskBaseBranch(task: Task, project: Project): string | undefined {
@@ -317,6 +338,7 @@ function classifyChangeRequestImpact(
   }
 
   if (
+    scope === 'planning' &&
     isStandardWorkflowTask(task) &&
     !feedbackRequiresImplementationRestart(feedback) &&
     !normalized.includes('only code') &&
@@ -348,7 +370,7 @@ function shouldRegeneratePlanForFeedback(task: Task, impacts: ChangeRequestImpac
     return isStandardWorkflowTask(task);
   }
 
-  return isStandardWorkflowTask(task) && !feedbackRequiresImplementationRestart(feedback);
+  return false;
 }
 
 function createChangeRequestRecord(input: {
@@ -471,10 +493,9 @@ function writeChangeRequestArtifacts(specDirs: Iterable<string>, record: ChangeR
       mkdirSync(specDir, { recursive: true });
 
       const jsonlPath = path.join(specDir, CHANGE_REQUESTS_LOG_FILE);
-      const existingJsonl = safeReadFileSync(jsonlPath) ?? '';
-      writeFileSync(
+      appendFileSync(
         jsonlPath,
-        `${existingJsonl}${existingJsonl.endsWith('\n') || existingJsonl.length === 0 ? '' : '\n'}${JSON.stringify(record)}\n`,
+        `${JSON.stringify(record)}\n`,
         'utf-8',
       );
 
@@ -540,6 +561,41 @@ function buildHumanInputContent(
     `- Re-run the relevant build/test/validation steps.\n` +
     `- Keep this iteration commit-ready: after validation passes, use the normal task commit flow when commits are enabled.\n` +
     `- Update implementation_plan.md as you make progress and record any affected subtask as needs_revision in its description or completion note.\n`
+  );
+}
+
+function buildLocalPatchedStandardInputContent(
+  feedback: string,
+  imageReferences: string,
+  changeRequest: ChangeRequestRecord,
+  patchResult: StandardChangeRequestPatchResult,
+): string {
+  const patchedFileNames = Array.from(new Set(
+    patchResult.patchedFiles.map((filePath) => path.basename(filePath)),
+  ));
+  const patchedFilesLine = patchedFileNames.length > 0
+    ? patchedFileNames.join(', ')
+    : AUTOCODE_TASK_ARTIFACTS.implementationPlan;
+
+  return (
+    `# Human Input\n\n` +
+    `The user requested a same-task Standard iteration. The planning artifacts were patched locally before this coding pass.\n\n` +
+    `## Change Request\n\n` +
+    `- ID: ${changeRequest.id}\n` +
+    `- Created: ${changeRequest.createdAt}\n` +
+    `- Scope: ${changeRequest.scope}\n` +
+    `- Impact analysis: ${changeRequest.impacts.join(', ') || 'implementation'}\n` +
+    `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}\n` +
+    `- Patched files: ${patchedFilesLine}\n\n` +
+    `## Requested Changes\n\n` +
+    `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
+    `## Instructions\n\n` +
+    `- Continue coding from the pending change-request work item in ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.\n` +
+    `- Do not regenerate the full plan unless the patched artifacts are missing or internally inconsistent.\n` +
+    `- Implement only behavior required by this change request and preserve completed work that still satisfies the updated requirements.\n` +
+    `- Read the latest ${CHANGE_REQUESTS_LOG_FILE} entry only if you need the structured iteration contract.\n` +
+    `- Update ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as subtasks progress, including validation results.\n` +
+    `- Run the smallest reliable targeted validation for the affected area before returning to review.\n`
   );
 }
 
@@ -618,6 +674,270 @@ function reopenCompletedPlanForFollowupFix(planPath: string, feedback: string): 
     console.error('[reopenCompletedPlanForFollowupFix] Failed to update plan:', error);
     return false;
   }
+}
+
+function applyStandardChangeRequestLocalPatch(
+  specDirs: Iterable<string>,
+  changeRequest: ChangeRequestRecord,
+): StandardChangeRequestPatchResult {
+  const patchedSpecDirs: string[] = [];
+  const patchedFiles = new Set<string>();
+  const uniqueSpecDirs = Array.from(new Set(specDirs));
+  let planPatchApplied = false;
+
+  for (const specDir of uniqueSpecDirs) {
+    try {
+      mkdirSync(specDir, { recursive: true });
+      const changedFiles = patchStandardChangeRequestArtifacts(specDir, changeRequest);
+      const planPatched = patchStandardChangeRequestImplementationPlan(specDir, changeRequest);
+      if (changedFiles.length > 0 || planPatched) {
+        patchedSpecDirs.push(specDir);
+        changedFiles.forEach((file) => patchedFiles.add(file));
+        if (planPatched) {
+          planPatchApplied = true;
+          patchedFiles.add(path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
+        }
+      }
+    } catch (error) {
+      console.warn('[TASK_REVIEW] Failed to apply local Standard change patch:', error);
+    }
+  }
+
+  return {
+    applied: planPatchApplied,
+    patchedSpecDirs,
+    patchedFiles: Array.from(patchedFiles),
+    ...(planPatchApplied ? {} : { reason: 'No existing implementation_plan.md could be patched locally.' }),
+  };
+}
+
+function patchStandardChangeRequestArtifacts(
+  specDir: string,
+  changeRequest: ChangeRequestRecord,
+): string[] {
+  const changed: string[] = [];
+  const impacts = new Set(changeRequest.impacts);
+
+  if (changeRequest.iteration.flowDocuments.includes('spec.md')) {
+    const filePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile);
+    if (appendChangeRequestSection(filePath, buildSpecChangeRequestSection(changeRequest))) {
+      changed.push(filePath);
+    }
+  }
+
+  if (changeRequest.iteration.flowDocuments.includes('requirements.md')) {
+    const filePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.requirements);
+    if (appendChangeRequestSection(filePath, buildRequirementsChangeRequestSection(changeRequest))) {
+      changed.push(filePath);
+    }
+  }
+
+  if (changeRequest.iteration.flowDocuments.includes('tasks.md') || impacts.has('tasks')) {
+    const filePath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.tasks);
+    if (appendChangeRequestSection(filePath, buildTasksChangeRequestSection(changeRequest))) {
+      changed.push(filePath);
+    }
+  }
+
+  return changed;
+}
+
+function appendChangeRequestSection(filePath: string, section: string): boolean {
+  const existing = safeReadFileSync(filePath);
+  if (existing?.includes(section.match(/CR ID:\s*([^\n]+)/)?.[1] ?? '__missing_change_request_id__')) {
+    return false;
+  }
+
+  const prefix = existing?.trimEnd()
+    ? `${existing.trimEnd()}\n\n`
+    : '';
+  writeFileSync(filePath, `${prefix}${section.trimEnd()}\n`, 'utf-8');
+  return true;
+}
+
+function buildSpecChangeRequestSection(changeRequest: ChangeRequestRecord): string {
+  return [
+    '## Change Request Iterations',
+    '',
+    `### ${changeRequest.id}`,
+    '',
+    `- CR ID: ${changeRequest.id}`,
+    `- Scope: ${changeRequest.scope}`,
+    `- Impacts: ${changeRequest.impacts.join(', ') || 'implementation'}`,
+    `- Evidence: HUMAN_INPUT.md; ${CHANGE_REQUESTS_LOG_FILE}`,
+    `- Requested change: ${compactChangeRequestFeedback(changeRequest.feedback)}`,
+    '- Design note: preserve existing accepted behavior unless this change request explicitly overrides it.',
+    '- Open question policy: if source evidence is missing, record an assumption or validation task before coding.',
+  ].join('\n');
+}
+
+function buildRequirementsChangeRequestSection(changeRequest: ChangeRequestRecord): string {
+  return [
+    '## Change Request Requirements',
+    '',
+    `### ${changeRequest.id}`,
+    '',
+    `- CR ID: ${changeRequest.id}`,
+    `- Requirement delta: ${compactChangeRequestFeedback(changeRequest.feedback)}`,
+    '- Acceptance delta: the changed behavior must satisfy this request without regressing unchanged requirements.',
+    `- Evidence: HUMAN_INPUT.md; ${CHANGE_REQUESTS_LOG_FILE}`,
+    '- Validation: run the smallest reliable check for the affected area and record the result.',
+  ].join('\n');
+}
+
+function buildTasksChangeRequestSection(changeRequest: ChangeRequestRecord): string {
+  const phaseId = buildChangeRequestPlanPhaseId(changeRequest);
+  const summary = buildFollowupSummary(changeRequest.feedback) || changeRequest.id;
+  return [
+    '## Change Request Tasks',
+    '',
+    `CR ID: ${changeRequest.id}`,
+    '',
+    `- [ ] ${phaseId}. Change request ${changeRequest.id}`,
+    '',
+    `- [ ] ${phaseId}.1 Address ${summary}`,
+    `  - Apply only the changes required by ${changeRequest.id}; preserve completed work that still satisfies the updated requirement.`,
+    '  - Reset or revise only affected implementation details.',
+    '  - _Files to modify: none_',
+    '  - _Depends on: none_',
+    `  - _Requirements: ${changeRequest.id}_`,
+    `  - _Evidence: HUMAN_INPUT.md ${changeRequest.id}; ${CHANGE_REQUESTS_LOG_FILE} latest entry_`,
+    `  - _Verification: ${buildChangeRequestVerification(changeRequest)}_`,
+  ].join('\n');
+}
+
+function patchStandardChangeRequestImplementationPlan(
+  specDir: string,
+  changeRequest: ChangeRequestRecord,
+): boolean {
+  const planPath = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
+  const plan = loadImplementationPlanFromFilesSync(planPath) as ShardableImplementationPlan | null;
+  if (!plan) {
+    return false;
+  }
+
+  if (!Array.isArray(plan.phases)) {
+    plan.phases = [];
+  }
+
+  const phaseId = buildChangeRequestPlanPhaseId(changeRequest);
+  const existingPhase = plan.phases.find((phase) =>
+    String(phase.id ?? phase.phase ?? '') === phaseId
+  );
+  if (existingPhase) {
+    return true;
+  }
+
+  const referencedSubtaskIds = extractReferencedSubtaskIds(changeRequest.feedback);
+  const revisedCount = markReferencedSubtasksForRevision(plan, referencedSubtaskIds, changeRequest);
+  const summary = buildFollowupSummary(changeRequest.feedback) || changeRequest.id;
+  const phaseNumber = plan.phases.length + 1;
+  plan.phases.push({
+    id: phaseId,
+    phase: phaseNumber,
+    name: `Change request ${changeRequest.id}`,
+    type: 'iteration',
+    depends_on: [],
+    subtasks: [
+      {
+        id: `${phaseId}.1`,
+        title: `Address ${summary}`,
+        description: [
+          `Apply the same-task change request ${changeRequest.id}.`,
+          `Feedback: ${compactChangeRequestFeedback(changeRequest.feedback, 600)}`,
+          revisedCount > 0
+            ? `Previously completed affected subtasks reset for revision: ${referencedSubtaskIds.join(', ')}.`
+            : 'Preserve completed work that still satisfies the updated requirement; only revise affected behavior.',
+        ].join('\n'),
+        status: 'pending',
+        files_to_modify: [],
+        depends_on: [],
+        requirements: [changeRequest.id],
+        evidence: `HUMAN_INPUT.md ${changeRequest.id}; ${CHANGE_REQUESTS_LOG_FILE} latest entry`,
+        verification: {
+          type: 'targeted',
+          run: buildChangeRequestVerification(changeRequest),
+        },
+      },
+    ],
+  });
+
+  plan.status = 'in_progress';
+  plan.planStatus = 'in_progress';
+  plan.reviewReason = undefined;
+  plan.xstateState = 'coding';
+  plan.executionPhase = 'coding';
+  plan.updated_at = new Date().toISOString();
+  saveImplementationPlanToFilesSync(planPath, plan);
+  return true;
+}
+
+function markReferencedSubtasksForRevision(
+  plan: ShardableImplementationPlan,
+  referencedSubtaskIds: string[],
+  changeRequest: ChangeRequestRecord,
+): number {
+  if (referencedSubtaskIds.length === 0) {
+    return 0;
+  }
+
+  const idSet = new Set(referencedSubtaskIds);
+  let revised = 0;
+  for (const phase of plan.phases ?? []) {
+    const subtasks = Array.isArray(phase.subtasks)
+      ? phase.subtasks
+      : Array.isArray(phase.chunks)
+        ? phase.chunks
+        : [];
+    for (const subtask of subtasks) {
+      const id = String(subtask.id ?? subtask.subtask_id ?? '');
+      if (!idSet.has(id)) {
+        continue;
+      }
+      subtask.status = 'pending';
+      subtask.completed_at = null;
+      subtask.duration_ms = null;
+      const existingDescription = typeof subtask.description === 'string' ? subtask.description : '';
+      if (!existingDescription.includes(changeRequest.id)) {
+        subtask.description = [
+          existingDescription,
+          `Needs revision for ${changeRequest.id}: ${compactChangeRequestFeedback(changeRequest.feedback, 400)}`,
+        ].filter(Boolean).join('\n\n');
+      }
+      revised += 1;
+    }
+  }
+  return revised;
+}
+
+function extractReferencedSubtaskIds(feedback: string): string[] {
+  const ids = new Set<string>();
+  for (const match of feedback.matchAll(/\b(?:subtask|task|work package|任务|子任务)?\s*([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)+)\b/gi)) {
+    ids.add(match[1]);
+  }
+  return Array.from(ids);
+}
+
+function buildChangeRequestPlanPhaseId(changeRequest: ChangeRequestRecord): string {
+  const digits = changeRequest.id.replace(/\D/g, '').slice(-8) || '1';
+  return `CR${digits}`;
+}
+
+function buildChangeRequestVerification(changeRequest: ChangeRequestRecord): string {
+  if (changeRequest.impacts.includes('validation')) {
+    return 'Run the targeted build/test/typecheck/lint command for the affected area and record the result.';
+  }
+  return 'Run the smallest reliable targeted validation for the affected area, or record why manual verification is sufficient.';
+}
+
+function compactChangeRequestFeedback(feedback: string, maxLength = 1000): string {
+  const compact = (feedback || 'No feedback provided')
+    .replace(/\r\n/g, '\n')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .join(' ');
+  return compact.length > maxLength ? `${compact.slice(0, maxLength)}...` : compact;
 }
 
 /**
@@ -941,9 +1261,7 @@ export function registerTaskExecutionHandlers(
         );
       } else {
         const currentXState = taskStateManager.getCurrentState(taskId);
-        const isPlanReview = currentXState === 'plan_review'
-          || task.reviewReason === 'plan_review'
-          || (task.status === 'human_review' && task.executionProgress?.phase === 'planning');
+        const isPlanReview = isPlanReviewRequest(task, currentXState);
         const isErrorRecovery = currentXState === 'error' || task.reviewReason === 'errors';
         const needsImplementationRestart = task.status === 'human_review'
           && !isPlanReview
@@ -1173,9 +1491,7 @@ export function registerTaskExecutionHandlers(
 
         if (needsImplementationRestart) {
           const reviewFeedback = feedback || '';
-          const initialScope: ChangeRequestScope = feedbackRequiresImplementationRestart(reviewFeedback)
-            ? 'implementation'
-            : 'planning';
+          const initialScope: ChangeRequestScope = 'implementation';
           const changeImpacts = classifyChangeRequestImpact(task, reviewFeedback, initialScope);
           const regeneratePlan = shouldRegeneratePlanForFeedback(task, changeImpacts, reviewFeedback);
           const changeRequest = createChangeRequestRecord({
@@ -1210,6 +1526,55 @@ export function registerTaskExecutionHandlers(
           }
 
           if (regeneratePlan) {
+            const localPatchResult = isStandardWorkflowTask(task)
+              ? applyStandardChangeRequestLocalPatch([targetSpecDir, specDir], changeRequest)
+              : { applied: false, patchedSpecDirs: [], patchedFiles: [], reason: 'Not a Standard task.' };
+            if (localPatchResult.applied) {
+              const codingInputContent = buildLocalPatchedStandardInputContent(
+                reviewFeedback || 'No feedback provided',
+                imageReferences,
+                changeRequest,
+                localPatchResult,
+              );
+              for (const humanInputPath of humanInputPaths) {
+                try {
+                  writeFileSync(humanInputPath, codingInputContent, 'utf-8');
+                } catch (error) {
+                  console.error('[TASK_REVIEW] Failed to rewrite HUMAN_INPUT.md after local Standard patch:', error);
+                  return { success: false, error: 'Failed to write human input file' };
+                }
+              }
+
+              console.warn(
+                '[TASK_REVIEW] Applied local Standard change patch; resuming implementation without full planning.',
+                {
+                  patchedSpecDirs: localPatchResult.patchedSpecDirs,
+                  patchedFiles: localPatchResult.patchedFiles,
+                },
+              );
+              taskStateManager.prepareForRestart(taskId);
+              taskStateManager.handleUiEvent(
+                taskId,
+                { type: 'USER_RESUMED' },
+                task,
+                project
+              );
+              projectStore.invalidateTasksCache(project.id);
+
+              try {
+                await startTaskExecutionFromCurrentPlan(taskId, task, project, '[TASK_REVIEW]');
+              } catch (error) {
+                console.error('[TASK_REVIEW] Failed to restart execution after local Standard change patch:', error);
+                return {
+                  success: false,
+                  error: error instanceof Error ? error.message : 'Failed to restart task execution'
+                };
+              }
+
+              return { success: true };
+            }
+
+            console.warn('[TASK_REVIEW] Local Standard change patch unavailable; restarting planning.', localPatchResult.reason);
             console.warn('[TASK_REVIEW] Review feedback changes planning artifacts - restarting planning.');
             taskStateManager.prepareForRestart(taskId);
             taskStateManager.handleUiEvent(
