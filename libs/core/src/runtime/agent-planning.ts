@@ -3,6 +3,7 @@ import {
   normalizeAutocodeWorkDependencyIds,
 } from './work-dependencies.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
+import { isTraceableAutocodeEvidence } from '../tasks/plan-quality.js';
 import type { AutocodeTaskRuntimeConcurrencyResolved } from './concurrency.js';
 
 export const AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY: AutocodeTaskRuntimeConcurrencyResolved = {
@@ -24,11 +25,14 @@ export interface AutocodePlanningScheduleSubtask {
   id: string;
   status: string;
   depends_on?: unknown;
+  evidence?: unknown;
   verification?: unknown;
 }
 
 export interface AutocodePlanningSchedulingValidationOptions {
   runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyResolved;
+  requireEvidence?: boolean;
+  developmentMode?: string;
 }
 
 export function isAutocodeWriteToolPlanOutputFailure(message: string): boolean {
@@ -63,7 +67,8 @@ export function validateAutocodePlanningSchedulingMetadata(
   plan: AutocodePlanningSchedulePlan | null | undefined,
   options: AutocodePlanningSchedulingValidationOptions,
 ): string[] {
-  if (!plan || !shouldRequireAutocodePlanningSchedulingMetadata(options)) {
+  const requireEvidence = options.requireEvidence === true || options.developmentMode === 'standard';
+  if (!plan || (!shouldRequireAutocodePlanningSchedulingMetadata(options) && !requireEvidence)) {
     return [];
   }
 
@@ -79,11 +84,16 @@ export function validateAutocodePlanningSchedulingMetadata(
       });
 
       const hasDependencyMetadata = Object.hasOwn(subtask, 'depends_on');
+      const hasEvidenceMetadata = Object.hasOwn(subtask, 'evidence') &&
+        isTraceableAutocodeEvidence(subtask.evidence);
       const hasVerificationMetadata = Object.hasOwn(subtask, 'verification') &&
         subtask.verification !== undefined;
 
       if (!hasDependencyMetadata) {
         errors.push(`${subtask.id} missing _Depends on: ..._ metadata`);
+      }
+      if (requireEvidence && !hasEvidenceMetadata) {
+        errors.push(`${subtask.id} missing _Evidence: ..._ metadata`);
       }
       if (!hasVerificationMetadata) {
         errors.push(`${subtask.id} missing _Verification: ..._ metadata`);
@@ -108,8 +118,9 @@ export function buildAutocodePlanningStructuredOutputRetryPrompt(errorMessage: s
     `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.tasks} with the Write tool.`,
     'Write checklist Markdown, not JSON. Each Write input is one object with file_path and content.',
     'Use forward slashes in file_path.',
-    'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" with _Files_, _Depends on_, _Requirements_, and _Verification_.',
+    'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" with _Files_, _Depends on_, _Requirements_, _Evidence_, and _Verification_.',
     'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
+    'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.json, project source/docs, or verified official/industry references.',
     'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
     'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
     'For complex tasks, keep necessary tasks concise in the single Markdown file.',
@@ -130,6 +141,7 @@ export function buildAutocodePlanningStructuredOutputValidationRetryPrompt(error
     'Use forward slashes in file_path.',
     `Rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
     'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
+    'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.json, project source/docs, or verified official/industry references.',
     'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
     'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
     'For complex tasks, keep descriptions concise instead of splitting files.',
@@ -148,7 +160,8 @@ export function buildAutocodeStandardTasksValidationRetryPrompt(errors: string[]
     '',
     `Retry with the Write tool and rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks}, not ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
     'Use checklist Markdown with phase items such as "- [ ] 1. Phase" and task items such as "- [ ] 1.1 Task".',
-    'Every executable task must include _Depends on_ and _Verification_. Include _Files to create/modify_ when write intent is known.',
+    'Every executable task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
+    'Evidence must cite spec.md, requirements.md, context.json, project source/docs, existing project patterns, or verified official/industry references. Do not use "none" or vague guesses.',
     'Use _Depends on: none_ only for root tasks. Add real dependencies for tasks that share files or consume prior outputs.',
     'Keep independent tasks dependency-free when they can run safely in parallel.',
   ].join('\n');

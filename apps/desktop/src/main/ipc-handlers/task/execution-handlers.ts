@@ -516,6 +516,8 @@ function buildHumanInputContent(
       `- For Standard tasks, update spec.md with changed requirements, design decisions, acceptance criteria, risks, and open questions.\n` +
       `- Then update tasks.md with concrete pending subtasks that implement this feedback and keep dependencies/verification current.\n` +
       `- Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.\n` +
+      `- Edit incrementally: only touch affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Keep unaffected sections stable.\n` +
+      `- Every new or revised requirement/design/task must keep or add Evidence. If evidence is missing, record an assumption/open question or add a validation task instead of guessing.\n` +
       `- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.\n` +
       `- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback, preserving useful completed work where still valid.\n` +
       `- Update verification metadata for revised tasks, and ensure the next coding/QA pass runs the relevant tests before the task is committed.\n` +

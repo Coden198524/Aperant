@@ -15,6 +15,7 @@ const createStartedAutocodeAgentRuntimeMock = vi.fn(() => ({
     },
   },
 }));
+const resolveAutocodeDirectSessionStateMock = vi.fn((..._args: unknown[]): unknown => null);
 const emitSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
 
 const writeFileSyncMock = vi.fn();
@@ -65,6 +66,23 @@ vi.mock('@autocode/core', async (importOriginal) => {
     ...actual,
     createStartedAutocodeAgentRuntime: (_input: unknown) =>
       createStartedAutocodeAgentRuntimeMock(),
+    resolveAutocodeDirectSessionState: (...args: unknown[]) =>
+      resolveAutocodeDirectSessionStateMock(...args),
+    buildAutocodeDirectTaskExecutionMessages: (input: {
+      directSessionState?: { providerResponseId?: string } | null;
+      directContinuationMode?: 'provider' | 'summary';
+    }) => {
+      if (input.directSessionState && input.directContinuationMode) {
+        return [{
+          role: 'user',
+          content: [
+            `Provider continuation: ${input.directSessionState.providerResponseId ?? 'summary'}`,
+            '继续修复按钮无反应的问题。',
+          ].join('\n'),
+        }];
+      }
+      return actual.buildAutocodeDirectTaskExecutionMessages(input as never);
+    },
   };
 });
 
@@ -156,6 +174,8 @@ describe('AgentManager worktree execution', () => {
     writeFileSyncMock.mockReset();
     spawnProcessMock.mockReset();
     createStartedAutocodeAgentRuntimeMock.mockClear();
+    resolveAutocodeDirectSessionStateMock.mockReset();
+    resolveAutocodeDirectSessionStateMock.mockReturnValue(null);
     createOrGetWorktreeMock.mockResolvedValue({
       worktreePath: 'E:/repo/.autocode/worktrees/tasks/001-task',
       branch: 'autocode/001-task',
@@ -289,6 +309,64 @@ describe('AgentManager worktree execution', () => {
       yunxiaoEnabled: false,
     });
     expect(executorConfig.session.projectDir).toBe('E:/repo');
+  });
+
+  it('continues direct tasks with an openai previous response id instead of full context', async () => {
+    const fs = await import('fs');
+    const settings = await import('../settings-utils');
+    const authResolver = await import('../ai/auth/resolver');
+
+    (settings.readSettingsFile as unknown as ReturnType<typeof vi.fn>).mockReturnValue({
+      providerAccounts: [{ id: 'openai-1', provider: 'openai' }],
+      globalPriorityOrder: ['openai-1'],
+      language: 'zh-CN',
+    });
+    (authResolver.resolveAuthFromQueue as unknown as ReturnType<typeof vi.fn>).mockResolvedValue({
+      accountId: 'openai-1',
+      resolvedProvider: 'openai.responses',
+      resolvedModelId: 'gpt-5.3-codex',
+      apiKey: 'test-key',
+    });
+    resolveAutocodeDirectSessionStateMock.mockReturnValue({
+      version: 1,
+      sessionId: 'direct-session-1',
+      createdAt: '2026-01-01T00:00:00.000Z',
+      updatedAt: '2026-01-01T00:00:00.000Z',
+      iteration: 1,
+      provider: 'openai.responses',
+      modelId: 'gpt-5.3-codex',
+      providerResponseId: 'resp_prev',
+      latestSummary: 'Old direct summary that should not be resent for provider continuation.',
+    });
+    (fs.existsSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) =>
+      filePath.endsWith('task_metadata.json') ||
+      filePath.endsWith('HUMAN_INPUT.md') ||
+      filePath.endsWith('change_requests.jsonl')
+    );
+    (fs.readFileSync as unknown as ReturnType<typeof vi.fn>).mockImplementation((filePath: string) => {
+      if (filePath.endsWith('HUMAN_INPUT.md')) {
+        return '继续修复按钮无反应的问题。';
+      }
+      if (filePath.endsWith('change_requests.jsonl')) {
+        return JSON.stringify({ feedback: '继续修复按钮无反应的问题。' });
+      }
+      return JSON.stringify({ workflowMode: 'off', model: 'gpt-5.3-codex' });
+    });
+
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+
+    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', { useWorktree: false }, 'project-1');
+
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    expect(executorConfig.session.sessionId).toBe('direct-session-1');
+    expect(executorConfig.session.previousResponseId).toBe('resp_prev');
+    expect(executorConfig.session.responsePersistence).toBe(true);
+    expect(executorConfig.session.directProviderContinuation).toBe(true);
+    expect(executorConfig.session.initialMessages[0].content).toContain('Provider continuation');
+    expect(executorConfig.session.initialMessages[0].content).toContain('继续修复按钮无反应的问题。');
+    expect(executorConfig.session.initialMessages[0].content).not.toContain('Prior Direct Session Summary');
   });
 
   it('passes the task spec directory to Codex CLI workspace claims', async () => {

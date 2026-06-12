@@ -24,6 +24,7 @@ export interface AutocodeSessionResult {
   toolCallCount: number;
   completedSubtaskIds?: string[];
   structuredOutput?: Record<string, unknown>;
+  providerResponseId?: string;
 }
 
 export interface AutocodeTokenUsage {
@@ -106,4 +107,3 @@ export interface AutocodeProgressState {
 }
 
 export type AutocodeSessionEventCallback = (event: AutocodeStreamEvent) => void;
-

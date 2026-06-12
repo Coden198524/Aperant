@@ -8,6 +8,7 @@ export function buildAutocodeAggressiveCoderPrompt(): string {
     '',
     '- The kickoff message is the source of truth for the current work item.',
     '- Do not read spec.md or implementation_plan.md at the start when the kickoff includes "Current Work Item" or "Current Work Package".',
+    '- Use Evidence References from the kickoff as the only expansion path when details are missing; read those artifacts/files narrowly instead of loading the full spec.',
     '- Read only listed pattern files, files to modify, or directly relevant existing files.',
     '- For create-only work items, create or overwrite/update the listed target files directly unless the request is ambiguous.',
     '- If no files are listed, do one minimal target discovery only: check obvious root files by name or a narrow glob, then edit the best match.',
@@ -55,4 +56,3 @@ export function buildAutocodeAggressiveCoderPrompt(): string {
     '- Do not commit or push unless the user or task explicitly requires it.',
   ].join('\n');
 }
-

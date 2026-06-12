@@ -28,6 +28,7 @@ const RUNTIME_BOUNDARY_PATTERNS = [
   /Project index generation failed/g,
   /No project instructions found/g,
   /Spec phase \d+\/\d+:/g,
+  /Standard planning:/g,
   /Running [\w-]+ session/g,
   /Applied MMO routing hints:/g,
   /Complexity (?:assessed|fallback|heuristic|override|escalated)/g,
@@ -287,6 +288,7 @@ function looksStructuredRuntimeLog(content: string): boolean {
     /^Project index generation failed/i.test(trimmed) ||
     /^No project instructions found/i.test(trimmed) ||
     /^Spec phase \d+\/\d+:/i.test(trimmed) ||
+    /^Standard planning:/i.test(trimmed) ||
     /^Running [\w-]+ session/i.test(trimmed) ||
     /^Applied MMO routing hints:/i.test(trimmed) ||
     /^Complexity (assessed|fallback|heuristic|override|escalated)/i.test(trimmed) ||
@@ -360,8 +362,17 @@ function normalizeCompactSummaryTables(content: string): string {
     .join('\n');
 }
 
+function normalizeInternalSpecPhaseNames(content: string): string {
+  return content
+    .replace(/(Spec phase \d+\/\d+:\s*)quick_spec\b/gi, '$1Standard light planning')
+    .replace(/\b(Standard planning:\s*)quick_spec\b/gi, '$1Standard light planning')
+    .replace(/\b(Error in spec\s*)quick_spec(\s*phase:)/gi, '$1Standard light planning$2')
+    .replace(/\(spec phase=quick_spec\b/gi, '(spec phase=Standard light planning')
+    .replace(/\bquick_spec\b/gi, 'Standard light planning');
+}
+
 function normalizeRuntimeLogContent(content: string): string {
-  return normalizeCompactSummaryTables(insertRuntimeBoundaries(content));
+  return normalizeInternalSpecPhaseNames(normalizeCompactSummaryTables(insertRuntimeBoundaries(content)));
 }
 
 function splitRuntimeLogBlocks(content: string): string[] {
@@ -400,6 +411,7 @@ function splitRuntimeLogBlocks(content: string): string[] {
       /^Project index generation failed/i.test(trimmed) ||
       /^No project instructions found/i.test(trimmed) ||
       /^Spec phase \d+\/\d+:/i.test(trimmed) ||
+      /^Standard planning:/i.test(trimmed) ||
       /^Running [\w-]+ session/i.test(trimmed) ||
       /^Applied MMO routing hints:/i.test(trimmed) ||
       /^Complexity (assessed|fallback|heuristic|override|escalated)/i.test(trimmed) ||

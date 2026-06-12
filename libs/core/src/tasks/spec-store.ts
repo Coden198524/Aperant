@@ -353,6 +353,9 @@ export function buildAutocodeTaskRequirements(
     ...requirements,
     task_description: description,
     workflow_type: workflowType,
+    evidence_sources: requirements.evidence_sources ?? ['User task description'],
+    standards_references: requirements.standards_references ?? [],
+    assumptions: requirements.assumptions ?? [],
   };
 }
 
@@ -638,7 +641,7 @@ function readSpecTitle(filePath: string): string | null {
   }
 
   try {
-    const match = /^#\s+(?:Quick Spec:|Specification:)?\s*(.+)$/m.exec(readFileSync(filePath, 'utf8'));
+    const match = /^#\s+(?:(?:Quick Spec|Specification|\u89c4\u683c)[:\uff1a])?\s*(.+)$/m.exec(readFileSync(filePath, 'utf8'));
     return match?.[1]?.trim() || null;
   } catch {
     return null;

@@ -33,6 +33,7 @@ interface ParsedPlanItem {
   patternFiles: string[];
   dependsOn: string[];
   requirements: string[];
+  evidence?: string;
   verification?: string;
   hasFilesField: boolean;
   hasFilesToCreateField: boolean;
@@ -40,6 +41,7 @@ interface ParsedPlanItem {
   hasPatternFilesField: boolean;
   hasDependsOnField: boolean;
   hasRequirementsField: boolean;
+  hasEvidenceField: boolean;
   hasVerificationField: boolean;
   completion?: string;
   startedAt?: string;
@@ -128,12 +130,14 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
         patternFiles: [],
         dependsOn: [],
         requirements: [],
+        evidence: undefined,
         hasFilesField: false,
         hasFilesToCreateField: false,
         hasFilesToModifyField: false,
         hasPatternFilesField: false,
         hasDependsOnField: false,
         hasRequirementsField: false,
+        hasEvidenceField: false,
         hasVerificationField: false,
       };
       items.push(current);
@@ -226,6 +230,11 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
       addListField(lines, 'Pattern files', subtask.pattern_files, '    ');
       addListField(lines, 'Depends on', subtask.depends_on, '    ', { writeNoneWhenEmptyArray: true });
       addListField(lines, 'Requirements', subtask.requirements, '    ');
+
+      const evidence = stringifyPlanValue(subtask.evidence);
+      if (evidence) {
+        lines.push(`    - _Evidence: ${compactInlineMarkdownField(evidence)}_`);
+      }
 
       const verification = stringifyVerification(subtask.verification);
       if (verification) {
@@ -522,6 +531,7 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         'pattern_files',
         'depends_on',
         'requirements',
+        'evidence',
         'verification',
       ]) {
         if (subtask[key] !== undefined) {
@@ -605,6 +615,12 @@ function applyPlanItemField(item: ParsedPlanItem, rawKey: string, rawValue: stri
     case 'requirements':
       item.hasRequirementsField = true;
       item.requirements = splitPlanList(value);
+      break;
+    case 'evidence':
+    case 'source evidence':
+    case 'evidence sources':
+      item.hasEvidenceField = true;
+      item.evidence = value;
       break;
     case 'verification':
       item.hasVerificationField = true;
@@ -701,6 +717,7 @@ function planItemToSubtask(item: ParsedPlanItem): MutableAutocodePlanSubtask {
   if (item.patternFiles.length > 0 || item.hasPatternFilesField) subtask.pattern_files = item.patternFiles;
   if (item.dependsOn.length > 0 || item.hasDependsOnField) subtask.depends_on = item.dependsOn;
   if (item.requirements.length > 0 || item.hasRequirementsField) subtask.requirements = item.requirements;
+  if (item.evidence || item.hasEvidenceField) subtask.evidence = item.evidence ?? '';
   if (item.verification) subtask.verification = { type: 'manual', run: item.verification };
   if (item.completion) {
     subtask.completion_summary = item.completion;

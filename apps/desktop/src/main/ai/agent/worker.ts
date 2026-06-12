@@ -22,12 +22,16 @@ import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import { createOpenAICompatibleEndpointFetch } from '../providers/openai-base-url';
 import {
   AUTOCODE_TASK_ARTIFACTS,
+  AUTOCODE_DIRECT_SESSION_STATE_VERSION,
   AUTOCODE_PROJECT_INDEX_FILE_NAME,
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+  buildAutocodeDirectTaskExecutionMessages,
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   isOfficialOpenAIBaseUrl,
   normalizeOpenAICompatibleBaseUrl,
+  resolveAutocodeDirectSessionState,
   resolveAutocodeTaskRuntimeConcurrency,
+  saveAutocodeDirectSessionState,
   type Phase,
   type SupportedProvider,
 } from '@autocode/core';
@@ -161,6 +165,38 @@ function isAggressiveWorkflow(
 
 function formatPathForPrompt(filePath: string): string {
   return formatAutocodePathForPrompt(filePath);
+}
+
+function getSpecPhaseDisplayName(phase: SpecPhase, language?: string): string {
+  const labels: Record<SpecPhase, string> = language === 'zh-CN'
+    ? {
+        complexity_assessment: '\u590d\u6742\u5ea6\u8bc4\u4f30',
+        discovery: '\u9879\u76ee\u53d1\u73b0',
+        requirements: '\u9700\u6c42\u5206\u6790',
+        historical_context: '\u5386\u53f2\u4e0a\u4e0b\u6587',
+        research: '\u7814\u7a76\u9a8c\u8bc1',
+        context: '\u4e0a\u4e0b\u6587\u5efa\u6a21',
+        spec_writing: '\u89c4\u683c\u6587\u6863',
+        self_critique: '\u81ea\u6211\u5ba1\u67e5',
+        planning: '\u4efb\u52a1\u8ba1\u5212',
+        validation: '\u8ba1\u5212\u6821\u9a8c',
+        quick_spec: '\u6807\u51c6\u8f7b\u91cf\u89c4\u5212',
+      }
+    : {
+        complexity_assessment: 'Complexity assessment',
+        discovery: 'Project discovery',
+        requirements: 'Requirements analysis',
+        historical_context: 'Historical context',
+        research: 'Research validation',
+        context: 'Context modeling',
+        spec_writing: 'Specification writing',
+        self_critique: 'Self critique',
+        planning: 'Task planning',
+        validation: 'Plan validation',
+        quick_spec: 'Standard light planning',
+      };
+
+  return labels[phase] ?? phase.replace(/_/g, ' ');
 }
 
 /**
@@ -577,6 +613,54 @@ async function runContinuableSessionWithGatewayFallback(
   return runContinuableSession(fallbackConfig, runnerOptions, continuationOptions);
 }
 
+async function runDirectSessionWithGatewayFallback(
+  sessionConfig: SessionConfig,
+  runnerOptions: Parameters<typeof runAgentSession>[1],
+  session: SerializableSessionConfig,
+  modelId: string,
+): Promise<SessionResult> {
+  const firstResult = await runAgentSession(sessionConfig, runnerOptions);
+
+  if (!supportsChatFallbackTransport(session) || !shouldFallbackForResponsesPersistenceError(firstResult)) {
+    return firstResult;
+  }
+
+  const normalizedBaseUrl = normalizeBaseUrl(session.baseURL);
+  if (normalizedBaseUrl) {
+    RESPONSES_PERSISTENCE_BROKEN_BASE_URLS.add(normalizedBaseUrl);
+  }
+
+  postLog(
+    `[GatewayFallback] Direct Responses continuation is not supported for provider=${session.provider}, baseURL=${session.baseURL ?? 'unknown baseURL'}; retrying without provider session persistence.`,
+  );
+
+  return runAgentSession({
+    ...sessionConfig,
+    model: createForcedChatModel(session, modelId),
+    initialMessages: buildDirectSummaryFallbackMessages(session, sessionConfig.initialMessages),
+    responsePersistence: false,
+    previousResponseId: undefined,
+  }, runnerOptions);
+}
+
+function buildDirectSummaryFallbackMessages(
+  session: SerializableSessionConfig,
+  fallbackMessages: SessionConfig['initialMessages'],
+): SessionConfig['initialMessages'] {
+  const state = resolveAutocodeDirectSessionState(session.specDir, session.sourceSpecDir);
+  if (!state) {
+    return fallbackMessages;
+  }
+  return buildAutocodeDirectTaskExecutionMessages({
+    specDir: session.specDir,
+    specId: basename(session.specDir),
+    projectRoot: session.projectDir,
+    language: session.language,
+    directSessionState: state,
+    directContinuationMode: 'summary',
+  });
+}
+
 // =============================================================================
 // Prompt Assembly (provider-agnostic context injection)
 // =============================================================================
@@ -648,6 +732,8 @@ function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig
     `Update ${promptSpecDir}/spec.md, ${promptSpecDir}/requirements.md, and ${promptSpecDir}/tasks.md where the feedback changes requirements, acceptance criteria, design decisions, task scope, or verification.`,
     `Regenerate ${promptSpecDir}/implementation_plan.md from the updated Autocode Standard tasks.`,
     `Do not make ${promptSpecDir}/implementation_plan.md the only changed planning artifact when the feedback changes requirements, design, user behavior, or task scope.`,
+    'Only edit affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Keep unaffected sections stable.',
+    'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
     'Add or update focused verification commands for every new or revised task so the next coding pass can test and commit through the normal task flow.',
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
     'Preserve useful parts of the previous Autocode Standard documents only when they still match the reviewer feedback; otherwise replace them.',
@@ -736,11 +822,12 @@ async function assemblePrompt(
   session: SerializableSessionConfig,
 ): Promise<string> {
   const useCompactAggressiveCoderPrompt = promptName === 'coder' && isAggressiveWorkflow(session);
+  const useProviderDirectContinuationPrompt = promptName === 'direct_task' && session.directProviderContinuation === true;
   const profileProjectDir = getPromptProfileProjectDir(session);
-  const projectPromptProfile = shouldUseProjectPromptProfile(session, promptName)
+  const projectPromptProfile = !useProviderDirectContinuationPrompt && shouldUseProjectPromptProfile(session, promptName)
     ? getProjectPromptProfile(session)
     : null;
-  const projectOverride = useCompactAggressiveCoderPrompt
+  const projectOverride = useCompactAggressiveCoderPrompt || useProviderDirectContinuationPrompt
     ? null
     : loadProjectPromptOverride(profileProjectDir, promptName);
   if (projectOverride && !loggedProjectPromptOverrides.has(projectOverride.path)) {
@@ -767,7 +854,7 @@ async function assemblePrompt(
   }
 
   let humanInput: string | null = null;
-  if (!promptName.startsWith('qa_')) {
+  if (!promptName.startsWith('qa_') && !useProviderDirectContinuationPrompt) {
     const humanInputPath = join(session.specDir, 'HUMAN_INPUT.md');
     if (existsSync(humanInputPath)) {
       try {
@@ -778,7 +865,7 @@ async function assemblePrompt(
     }
   }
 
-  let promptWithContext = useCompactAggressiveCoderPrompt
+  let promptWithContext = useCompactAggressiveCoderPrompt || useProviderDirectContinuationPrompt
     ? basePrompt
     : injectContext(basePrompt, {
       specDir: session.specDir,
@@ -1412,6 +1499,22 @@ function persistDirectTaskCompletion(
 
       writeFileSync(join(specDir, 'direct_summary.md'), summary, 'utf-8');
       saveImplementationPlanToFilesSync(specDir, plan);
+
+      const existingState = resolveAutocodeDirectSessionState(specDir, session.sourceSpecDir);
+      saveAutocodeDirectSessionState(specDir, {
+        version: AUTOCODE_DIRECT_SESSION_STATE_VERSION,
+        sessionId: session.sessionId ?? result?.usage.sessionId ?? existingState?.sessionId ?? crypto.randomUUID(),
+        createdAt: existingState?.createdAt ?? now,
+        updatedAt: now,
+        iteration: (existingState?.iteration ?? 0) + 1,
+        provider: session.provider,
+        modelId: session.modelId,
+        providerResponseId: result?.providerResponseId ?? existingState?.providerResponseId,
+        originalRequest: existingState?.originalRequest ?? extractDirectTaskDescription(session),
+        latestSummary: summary,
+        changedFiles: modifiedFiles,
+        lastOutcome: result?.outcome ?? 'unknown',
+      });
     } catch (error) {
       postLog(`Direct completion summary persistence failed for ${specDir}: ${error instanceof Error ? error.message : String(error)}`);
     }
@@ -1492,6 +1595,7 @@ async function runDefaultSession(
   const contextWindowLimit = getModelContextWindow(session.modelId);
 
   const sessionConfig: SessionConfig = {
+    sessionId: session.sessionId,
     agentType: session.agentType,
     model,
     systemPrompt: appendLanguageRequirement(session.systemPrompt, session.language),
@@ -1508,6 +1612,7 @@ async function runDefaultSession(
     subtaskId: session.subtaskId,
     contextWindowLimit,
     responsePersistence: session.responsePersistence,
+    previousResponseId: session.previousResponseId,
   };
 
   // Start phase logging for default session
@@ -1575,7 +1680,7 @@ async function runDefaultSession(
     };
 
     result = isDirectTaskSession(session)
-      ? await runAgentSession(sessionConfig, runnerOptions)
+      ? await runDirectSessionWithGatewayFallback(sessionConfig, runnerOptions, session, session.modelId)
       : await runContinuableSessionWithGatewayFallback(
           sessionConfig,
           runnerOptions,
@@ -2077,9 +2182,10 @@ async function runSpecOrchestrator(
 
   // Wire event listeners
   orchestrator.on('phase-start', (phase: SpecPhase, phaseNumber: number, totalPhases: number) => {
-    postLog(`Spec phase ${phaseNumber}/${totalPhases}: ${phase}`);
+    const displayPhase = getSpecPhaseDisplayName(phase, session.language);
+    postLog(`Spec phase ${phaseNumber}/${totalPhases}: ${displayPhase}`);
     if (logWriter) {
-      logWriter.startPhase('spec', `${phase} (${phaseNumber}/${totalPhases})`);
+      logWriter.startPhase('spec', `${displayPhase} (${phaseNumber}/${totalPhases})`);
     }
     postMessage({
       type: 'execution-progress',
@@ -2088,7 +2194,7 @@ async function runSpecOrchestrator(
         phase: 'planning', // spec creation maps to 'planning' in the UI execution phases
         phaseProgress: phaseNumber / Math.max(totalPhases, 1),
         overallProgress: phaseNumber / Math.max(totalPhases, 1),
-        message: `Standard planning: ${phase} (${phaseNumber}/${totalPhases})`,
+        message: `Standard planning: ${displayPhase} (${phaseNumber}/${totalPhases})`,
       },
       projectId: config.projectId,
     });
@@ -2106,7 +2212,7 @@ async function runSpecOrchestrator(
   });
 
   orchestrator.on('error', (error: Error, phase: SpecPhase) => {
-    postLog(`Error in spec ${phase} phase: ${error.message}`);
+    postLog(`Error in spec ${getSpecPhaseDisplayName(phase, session.language)} phase: ${error.message}`);
   });
 
   const outcome = await orchestrator.run();

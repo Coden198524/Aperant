@@ -34,6 +34,7 @@ export type {
 } from '@autocode/core/runtime/agent-session-types';
 
 export interface SessionConfig {
+  sessionId?: string;
   agentType: AgentType;
   model: LanguageModel;
   systemPrompt: string;
@@ -52,5 +53,6 @@ export interface SessionConfig {
   provider?: SupportedProvider;
   contextWindowLimit?: number;
   responsePersistence?: boolean;
+  previousResponseId?: string;
   outputSchema?: ZodSchema;
 }

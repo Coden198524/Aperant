@@ -19,6 +19,14 @@ const DesignPatternOutputSchema = z.object({
   guidance: z.string(),
 });
 
+export const ContextEvidenceSourceOutputSchema = z.object({
+  path: z.string(),
+  symbol: z.string().optional(),
+  lines: z.string().optional(),
+  proves: z.string(),
+  confidence: z.enum(['low', 'medium', 'high']).default('medium'),
+});
+
 export const SpecContextOutputSchema = z.object({
   task_description: z.string(),
   scoped_services: z.array(z.string()),
@@ -26,6 +34,9 @@ export const SpecContextOutputSchema = z.object({
   files_to_modify: z.array(FileModificationOutputSchema),
   files_to_reference: z.array(FileReferenceOutputSchema),
   design_patterns: z.array(DesignPatternOutputSchema),
+  evidence_sources: z.array(ContextEvidenceSourceOutputSchema).default([]),
+  standards_references: z.array(z.string()).default([]),
+  assumptions: z.array(z.string()).default([]),
   implementation_notes: z.array(z.string()),
   risks: z.array(z.string()),
   verification_suggestions: z.array(z.string()),
@@ -39,6 +50,9 @@ export const RequirementsOutputSchema = z.object({
   user_requirements: z.array(z.string()),
   acceptance_criteria: z.array(z.string()),
   constraints: z.array(z.string()),
+  evidence_sources: z.array(z.string()).default([]),
+  standards_references: z.array(z.string()).default([]),
+  assumptions: z.array(z.string()).default([]),
   created_at: z.string(),
 });
 
@@ -78,5 +92,6 @@ export const ResearchOutputSchema = z.object({
 });
 
 export type SpecContextOutput = z.infer<typeof SpecContextOutputSchema>;
+export type ContextEvidenceSourceOutput = z.infer<typeof ContextEvidenceSourceOutputSchema>;
 export type RequirementsOutput = z.infer<typeof RequirementsOutputSchema>;
 export type ResearchOutput = z.infer<typeof ResearchOutputSchema>;

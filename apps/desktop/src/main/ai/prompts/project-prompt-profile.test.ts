@@ -116,6 +116,8 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).toContain('PARALLEL EXECUTION PLANNING');
     expect(plannerOverride?.content).toContain('Every executable subtask MUST include exactly one `_Depends on: ..._` line');
     expect(plannerOverride?.content).toContain('File metadata is write intent');
+    expect(plannerOverride?.content).toContain('source files, project docs, existing patterns, or verified official/industry references');
+    expect(plannerOverride?.content).toContain('one `_Evidence: ..._` line');
   });
 
   it('builds an adaptation section for bundled prompts', () => {

@@ -3,6 +3,7 @@ import { join } from 'node:path';
 import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import { loadAutocodeTaskRequirementsSync } from '../tasks/requirements-store.js';
+import type { AutocodeDirectSessionState } from './direct-session-state.js';
 
 export type AutocodeAgentMessageRole = 'user' | 'assistant';
 
@@ -32,11 +33,14 @@ export interface BuildAutocodeRuntimeMessagesInput {
   dataDirName?: string;
   language?: AutocodeAgentLanguage;
   forcePlanning?: boolean;
+  directSessionState?: AutocodeDirectSessionState | null;
+  directContinuationMode?: 'provider' | 'summary';
 }
 
 const DIRECT_TASK_TEXT_LIMIT = 6000;
 const DIRECT_TASK_REFERENCE_LIMIT = 25;
 const DIRECT_TASK_ATTACHMENT_LIMIT = 10;
+const DIRECT_CHANGE_REQUEST_LIMIT = 6000;
 
 export function buildAutocodeDefaultSpecPrompt(input: BuildAutocodeSpecPromptInput): string {
   if (input.projectType === 'game-mmo') {
@@ -56,7 +60,7 @@ export function buildAutocodeDefaultPlannerPrompt(input: BuildAutocodeAgentPromp
   if (input.projectType === 'game-mmo') {
     return `Plan MMO spec ${input.specId} in ${input.projectRoot}. Write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} with concrete subtasks for only affected domains: engine, rendering, animation, assets, streaming, server authority, networking, tools, release, performance, and QA. ${parallelGuidance}`;
   }
-  return `Plan spec ${input.specId} in ${input.projectRoot}. Read ${AUTOCODE_TASK_ARTIFACTS.specFile} and write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as a Markdown checklist with phases and subtasks. ${parallelGuidance}`;
+  return `Plan spec ${input.specId} in ${input.projectRoot}. Read ${AUTOCODE_TASK_ARTIFACTS.specFile}, ${AUTOCODE_TASK_ARTIFACTS.requirements}, context.json, and project evidence when available; write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} as a Markdown checklist with phases and subtasks. Each requirement, design choice, task, and verification step must trace to source files, project docs, existing patterns, or verified official/industry references. Put unverified details in assumptions or validation tasks instead of guessing. ${parallelGuidance}`;
 }
 
 export function buildAutocodeDefaultQAPrompt(input: BuildAutocodeAgentPromptInput): string {
@@ -89,6 +93,10 @@ export function buildAutocodeCompletionSummaryRequirement(language?: AutocodeAge
 export function buildAutocodeDirectTaskExecutionMessages(
   input: BuildAutocodeRuntimeMessagesInput,
 ): AutocodeAgentMessage[] {
+  if (input.directSessionState && input.directContinuationMode) {
+    return buildAutocodeDirectTaskContinuationMessages(input);
+  }
+
   const parts: string[] = [];
   const planPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.implementationPlan);
   const metadataPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
@@ -162,6 +170,54 @@ export function buildAutocodeDirectTaskExecutionMessages(
       parts.push(`- ...${metadata.referencedFiles.length - DIRECT_TASK_REFERENCE_LIMIT} more omitted`);
     }
     parts.push('');
+  }
+
+  parts.push('## Completion Summary Requirement');
+  parts.push(buildAutocodeCompletionSummaryRequirement(input.language));
+
+  return [{ role: 'user', content: parts.join('\n') }];
+}
+
+function buildAutocodeDirectTaskContinuationMessages(
+  input: BuildAutocodeRuntimeMessagesInput,
+): AutocodeAgentMessage[] {
+  const state = input.directSessionState;
+  const parts: string[] = [];
+
+  parts.push(`Continue Direct task ${input.specId} in project: ${input.projectRoot}`);
+  parts.push(`Task data: ${input.specDir}`);
+  if (input.directContinuationMode === 'provider' && state?.providerResponseId) {
+    parts.push(`Provider continuation: use previous response ${state.providerResponseId}. Do not request or restate prior task context unless the latest change request is ambiguous.`);
+  } else {
+    parts.push('Provider continuation is unavailable. Use the compact prior-session summary below as the only carried context, then inspect files only as needed.');
+  }
+  parts.push('Apply only the latest requested changes. Keep edits focused and run one relevant validation when practical.');
+  if (input.language === 'zh-CN') {
+    parts.push('Language: write all progress notes and final review notes in Simplified Chinese.');
+  } else if (input.language === 'fr') {
+    parts.push('Language: write all progress notes and final review notes in French.');
+  }
+  parts.push('');
+
+  appendLatestDirectFeedback(parts, input.specDir);
+
+  if (input.directContinuationMode === 'summary' && state) {
+    if (state.latestSummary) {
+      parts.push('## Prior Direct Session Summary');
+      parts.push('');
+      parts.push(limitText(state.latestSummary, 4000));
+      parts.push('');
+    }
+    if (Array.isArray(state.changedFiles) && state.changedFiles.length > 0) {
+      parts.push('## Files Changed Previously');
+      for (const filePath of state.changedFiles.slice(0, DIRECT_TASK_REFERENCE_LIMIT)) {
+        parts.push(`- ${filePath}`);
+      }
+      if (state.changedFiles.length > DIRECT_TASK_REFERENCE_LIMIT) {
+        parts.push(`- ...${state.changedFiles.length - DIRECT_TASK_REFERENCE_LIMIT} more omitted`);
+      }
+      parts.push('');
+    }
   }
 
   parts.push('## Completion Summary Requirement');
@@ -294,6 +350,40 @@ function appendChangeRequestAuditTrail(parts: string[], specDir: string): void {
   parts.push(limitText(jsonl, 8000));
   parts.push('```');
   parts.push('');
+}
+
+function appendLatestDirectFeedback(parts: string[], specDir: string): void {
+  const humanInput = readText(join(specDir, 'HUMAN_INPUT.md'));
+  if (humanInput !== null) {
+    parts.push('## Latest Human Input');
+    parts.push('');
+    parts.push('```markdown');
+    parts.push(limitText(humanInput, DIRECT_CHANGE_REQUEST_LIMIT));
+    parts.push('```');
+    parts.push('');
+  }
+
+  const jsonl = readText(join(specDir, 'change_requests.jsonl'));
+  const latestEntry = jsonl
+    ?.split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .at(-1);
+  if (latestEntry) {
+    parts.push('## Latest Change Request Entry');
+    parts.push('');
+    parts.push('```json');
+    parts.push(limitText(latestEntry, DIRECT_CHANGE_REQUEST_LIMIT));
+    parts.push('```');
+    parts.push('');
+  }
+
+  if (humanInput === null && !latestEntry) {
+    parts.push('## Latest Human Input');
+    parts.push('');
+    parts.push('No HUMAN_INPUT.md or change_requests.jsonl entry was found. Continue only from the active user request and prior provider session.');
+    parts.push('');
+  }
 }
 
 function readJson<T>(filePath: string): T | null {

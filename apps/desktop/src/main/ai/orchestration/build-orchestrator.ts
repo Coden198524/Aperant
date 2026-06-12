@@ -26,6 +26,7 @@ import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/proje
 import {
   AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
   AUTOCODE_TASK_ARTIFACTS,
+  buildAutocodePlanQualityRetryPrompt,
   buildAutocodePlanningStructuredOutputRetryPrompt,
   buildAutocodePlanningStructuredOutputValidationRetryPrompt,
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
@@ -34,6 +35,7 @@ import {
   isAutocodeImplementationPlanFileFailure,
   isAutocodeWriteToolPlanOutputFailure,
   summarizeAutocodeCodingAttemptFailure,
+  validateAutocodeStandardPlanArtifacts,
   validateAutocodePlanningSchedulingMetadata,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type Phase,
@@ -72,6 +74,7 @@ function validatePlanningSchedulingMetadata(
 ): string[] {
   return validateAutocodePlanningSchedulingMetadata(plan, {
     runtimeConcurrency: config.runtimeConcurrency ?? AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
+    requireEvidence: true,
   });
 }
 
@@ -506,6 +509,7 @@ export class BuildOrchestrator extends EventEmitter {
         now,
         language: this.config.language,
         sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
+        requireTaskEvidence: true,
       });
       await saveImplementationPlanToFiles(this.config.specDir, plan as never);
       this.emitTyped('log', translateLogMessage('Generated runtime work packages from tasks.md', this.config.language));
@@ -513,6 +517,47 @@ export class BuildOrchestrator extends EventEmitter {
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       return { success: false, error: message };
+    }
+  }
+
+  private async validateStandardPlanArtifactQuality(
+    tasksMarkdown?: string,
+  ): Promise<string[]> {
+    const [specMarkdown, requirementsMarkdown, contextJson] = await Promise.all([
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.specFile),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
+      this.readOptionalJsonPlanArtifact('context.json'),
+    ]);
+    const result = validateAutocodeStandardPlanArtifacts({
+      specMarkdown,
+      requirementsMarkdown,
+      tasksMarkdown: tasksMarkdown ?? await this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.tasks),
+      contextJson,
+      requireSpecEvidence: true,
+      requireRequirementsEvidence: true,
+      requireTaskEvidence: true,
+      requireContextEvidence: true,
+    });
+    return result.errors;
+  }
+
+  private async readOptionalPlanArtifact(fileName: string): Promise<string | null> {
+    try {
+      return await readFile(join(this.config.specDir, fileName), 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  private async readOptionalJsonPlanArtifact(fileName: string): Promise<unknown> {
+    const content = await this.readOptionalPlanArtifact(fileName);
+    if (!content) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(content);
+    } catch {
+      return content;
     }
   }
 
@@ -606,6 +651,20 @@ export class BuildOrchestrator extends EventEmitter {
           };
         }
         planningRetryContext = buildAutocodeStandardTasksValidationRetryPrompt(validationErrors);
+        continue;
+      }
+
+      const artifactQualityErrors = await this.validateStandardPlanArtifactQuality();
+      if (artifactQualityErrors.length > 0) {
+        validationFailures++;
+        this.emitTyped('log', `Standard plan artifact quality failed (attempt ${validationFailures}): ${artifactQualityErrors.join(', ')}`);
+        if (validationFailures >= maxPlanningRetries) {
+          return {
+            success: false,
+            error: `Standard plan artifact quality failed after ${validationFailures} attempts: ${artifactQualityErrors.join(', ')}`,
+          };
+        }
+        planningRetryContext = buildAutocodePlanQualityRetryPrompt(artifactQualityErrors);
         continue;
       }
 

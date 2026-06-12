@@ -10,6 +10,7 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   taskMetadata: 'task_metadata.json',
   taskLogs: 'task_logs.jsonl',
   directSummary: 'direct_summary.md',
+  directSession: 'direct_session.json',
   qaReport: 'qa_report.md',
   runResult: 'autocode-run-result.json',
 } as const;

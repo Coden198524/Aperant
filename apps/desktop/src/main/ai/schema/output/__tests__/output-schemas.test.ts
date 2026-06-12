@@ -163,6 +163,15 @@ describe('Spec phase output schemas', () => {
         files: ['Source/Renderer/RenderTask.cpp'],
         guidance: 'Reuse builder-style setup for graph nodes',
       }],
+      evidence_sources: [{
+        path: 'Source/Renderer/Renderer.cpp',
+        symbol: 'Renderer',
+        lines: '1-80',
+        proves: 'Renderer owns pass execution',
+        confidence: 'high',
+      }],
+      standards_references: ['Project rendering architecture notes'],
+      assumptions: ['One legacy pass may have implicit dependencies'],
       implementation_notes: ['Keep pass ordering deterministic'],
       risks: ['Render pass dependencies may be implicit'],
       verification_suggestions: ['Run renderer unit tests'],
@@ -180,10 +189,14 @@ describe('Spec phase output schemas', () => {
       user_requirements: ['Allow deleting unnecessary subtasks'],
       acceptance_criteria: ['Deleted subtasks no longer execute'],
       constraints: ['Do not delete completed source changes'],
+      evidence_sources: ['src/tasks/store.ts - current subtask persistence'],
+      standards_references: ['Project task lifecycle rules'],
+      assumptions: ['No remote sync is required for deleted subtasks'],
       created_at: '2026-05-02T00:00:00.000Z',
     });
 
     expect(result.workflow_type).toBe('feature');
+    expect(result.evidence_sources).toContain('src/tasks/store.ts - current subtask persistence');
   });
 
   it('accepts research output', () => {

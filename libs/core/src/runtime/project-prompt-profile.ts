@@ -129,6 +129,17 @@ function getComplexPlanningGuidance(profile: AutocodeProjectPromptProfile): stri
   ].join('\n');
 }
 
+function getSpecStyleLabel(profile: AutocodeProjectPromptProfile): string {
+  switch (profile.workflow.specStyle) {
+    case 'quick':
+      return 'light Standard';
+    case 'standard':
+      return 'Standard';
+    default:
+      return 'full Standard';
+  }
+}
+
 function buildGeneratedHeader(profile: AutocodeProjectPromptProfile, promptName: string): string {
   const domainGuidance = profile.project.domain === 'general'
     ? 'Use general software-development quality checks.'
@@ -218,7 +229,7 @@ export function buildAutocodeSpecQuickPrompt(profile: AutocodeProjectPromptProfi
 
 ## ROLE
 
-Create only the spec and upstream task list needed for the current task.
+Create only the compact Standard light plan and upstream task list needed for the current task.
 
 ## OUTPUTS
 
@@ -236,7 +247,7 @@ ${buildProjectConventionSection(profile)}
 
 1. Read the task and the project index from the kickoff message.
 2. Inspect only the files needed to identify the change.
-3. Write a short \`spec.md\` with overview, scope, files, change details, and success criteria.
+3. Write a compact Standard \`spec.md\` with overview, scope, files, change details, and success criteria.
 4. Write \`tasks.md\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} tasks unless the task truly needs more.
 
 ## PLAN SIZE LIMITS
@@ -270,6 +281,7 @@ Status: pending
   - _Files to modify: path/to/file_
   - _Depends on: none_
   - _Requirements: 1.1_
+  - _Evidence: spec.md requirement 1.1; path/to/file existing pattern_
   - _Verification: smallest relevant verification command_
 \`\`\`
 
@@ -306,7 +318,8 @@ ${buildProjectConventionSection(profile)}
 1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.json\` summaries.
 2. Read \`spec.md\`, \`requirements.md\`, or \`context.json\` only if the kickoff context is missing the detail needed for tasks.md; use Read \`limit\` for large files.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
-4. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
+4. Ground requirements, design choices, task scope, and verification commands in source files, project docs, existing patterns, or verified official/industry references. Put gaps in assumptions or validation tasks.
+5. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
 
 ## TASK SIZE LIMITS
 
@@ -331,7 +344,7 @@ ${buildParallelExecutionPlanningGuidance()}
 ## TASK REQUIREMENTS
 
 - Use Autocode Markdown checklist format with \`- [ ] 1. Phase title\` and \`- [ ] 1.1 Subtask title\`.
-- Each task needs an id, title, concise description bullets, pending checkbox, precise file metadata, exactly one dependency line, and verification.
+- Each task needs an id, title, concise description bullets, pending checkbox, precise file metadata, exactly one dependency line, one \`_Evidence: ..._\` line, and verification.
 - When a design pattern matters, include the decision in a task bullet.
 - Prefer targeted verification commands:
 ${formatCommands([
@@ -488,7 +501,7 @@ This project has an initialization-time prompt profile. Use it to right-size the
 - Source roots: ${formatInlineList(profile.conventions?.sourceRoots)}
 - Rule files: ${formatInlineList(profile.conventions?.instructionFiles)}
 - Prompt intensity: ${profile.workflow.promptIntensity}
-- Spec style: ${profile.workflow.specStyle}
+- Spec style: ${getSpecStyleLabel(profile)}
 - Context rule: ${profile.workflow.contextGuidance}
 - Planning rule: ${profile.workflow.planningGuidance}
 - Validation rule: ${profile.workflow.validationGuidance}

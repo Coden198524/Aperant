@@ -49,7 +49,7 @@ Set:
 
 ## Workflow Hints
 
-- `simple`: discovery, quick_spec, validation.
+- `simple`: Standard light planning, validation.
 - `standard`: discovery, requirements, context, spec_writing, planning, validation.
 - `standard` with external facts: add research.
 - `complex`: add research and self_critique.

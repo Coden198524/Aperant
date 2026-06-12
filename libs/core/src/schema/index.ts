@@ -73,6 +73,7 @@ export {
 export {
   AICommentTriagesOutputSchema,
   ComplexityAssessmentOutputSchema,
+  ContextEvidenceSourceOutputSchema,
   ExtractedInsightsOutputSchema,
   FindingValidationsOutputSchema,
   ImplementationPlanOutputSchema,
@@ -90,6 +91,7 @@ export {
   getOutputSchemaForAgent,
   type AICommentTriagesOutput,
   type ComplexityAssessmentOutput,
+  type ContextEvidenceSourceOutput,
   type ExtractedInsightsOutput,
   type FindingValidationItemOutput,
   type FindingValidationsOutput,

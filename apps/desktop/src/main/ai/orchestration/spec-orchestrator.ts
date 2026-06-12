@@ -6,7 +6,7 @@
  *   complexity_assessment → [phases based on tier]
  *
  * Complexity assessment runs FIRST to gate the workflow:
- *   - SIMPLE: quick_spec → validation (2 phases — no discovery/requirements)
+ *   - SIMPLE: Standard light planning → validation (2 phases — no discovery/requirements)
  *   - STANDARD: discovery → requirements → spec_writing → planning → validation
  *   - COMPLEX: Full pipeline including research and self-critique
  *
@@ -22,11 +22,14 @@ import type { AgentType } from '../config/agent-configs';
 import { GENERAL_AGENT_PROFILE, type ProjectAgentProfile } from '../config/project-agent-profile';
 import {
   AUTOCODE_TASK_ARTIFACTS,
+  buildAutocodePlanQualityRetryPrompt,
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
   isAutocodeProjectDataPath,
+  normalizeAutocodeContextEvidenceSources,
   saveAutocodeImplementationPlan,
   saveAutocodeTaskRequirementsSync,
   stringifyAutocodeImplementationPlanMarkdown,
+  validateAutocodeStandardPlanArtifacts,
   type Phase,
 } from '@autocode/core';
 import type { SupportedLanguage } from '../../../shared/constants/i18n';
@@ -89,6 +92,38 @@ export type SpecPhase =
   | 'validation'
   | 'quick_spec';
 
+function formatSpecPhaseNameForLog(phase: SpecPhase, language?: SupportedLanguage): string {
+  const labels: Record<SpecPhase, string> = language === 'zh-CN'
+    ? {
+        complexity_assessment: '\u590d\u6742\u5ea6\u8bc4\u4f30',
+        discovery: '\u9879\u76ee\u53d1\u73b0',
+        requirements: '\u9700\u6c42\u5206\u6790',
+        historical_context: '\u5386\u53f2\u4e0a\u4e0b\u6587',
+        research: '\u7814\u7a76\u9a8c\u8bc1',
+        context: '\u4e0a\u4e0b\u6587\u5efa\u6a21',
+        spec_writing: '\u89c4\u683c\u6587\u6863',
+        self_critique: '\u81ea\u6211\u5ba1\u67e5',
+        planning: '\u4efb\u52a1\u8ba1\u5212',
+        validation: '\u8ba1\u5212\u6821\u9a8c',
+        quick_spec: '\u6807\u51c6\u8f7b\u91cf\u89c4\u5212',
+      }
+    : {
+        complexity_assessment: 'Complexity assessment',
+        discovery: 'Project discovery',
+        requirements: 'Requirements analysis',
+        historical_context: 'Historical context',
+        research: 'Research validation',
+        context: 'Context modeling',
+        spec_writing: 'Specification writing',
+        self_critique: 'Self critique',
+        planning: 'Task planning',
+        validation: 'Plan validation',
+        quick_spec: 'Standard light planning',
+      };
+
+  return labels[phase] ?? phase.replace(/_/g, ' ');
+}
+
 /** Maps spec phases to their agent types */
 const PHASE_AGENT_MAP: Record<SpecPhase, AgentType> = {
   discovery: 'spec_discovery',
@@ -108,7 +143,7 @@ const PHASE_AGENT_MAP: Record<SpecPhase, AgentType> = {
  * Phases to run for each complexity tier.
  * Complexity assessment runs BEFORE these phases as the gating step.
  *
- * - SIMPLE: skip discovery & requirements entirely — quick_spec handles everything.
+ * - SIMPLE: skip discovery & requirements entirely; the internal quick_spec phase writes a light Standard plan.
  * - STANDARD: discovery builds context.json, requirements gathers formal reqs,
  *   then spec_writing + planning. 'context' phase removed (redundant with discovery).
  * - COMPLEX: full pipeline including research and self-critique.
@@ -203,7 +238,7 @@ export interface SpecOrchestratorConfig {
   runSession: (config: SpecSessionRunConfig) => Promise<SessionResult>;
 }
 
-interface QuickSpecPlan {
+interface StandardLightPlan {
   specMarkdown: string;
   implementationPlan: {
     feature: string;
@@ -221,6 +256,7 @@ interface QuickSpecPlan {
         files_to_create?: string[];
         files_to_modify?: string[];
         pattern_files?: string[];
+        evidence?: string;
         verification: {
           type: string;
           run: string;
@@ -749,11 +785,11 @@ async function inferDocumentationSourceFileHints(projectDir: string, sourceDirs:
     .map((hint) => hint.path);
 }
 
-function _buildAggressiveQuickSpecPlan(
+function _buildAggressiveStandardLightPlan(
   taskDescription: string | undefined,
   language?: SupportedLanguage,
   patternFiles: string[] = [],
-): QuickSpecPlan {
+): StandardLightPlan {
   const task = normalizeTaskDescription(taskDescription);
   const feature = oneLine(task, 120);
   const title = language === 'zh-CN' ? '实现完整任务' : 'Implement complete task';
@@ -762,7 +798,7 @@ function _buildAggressiveQuickSpecPlan(
     ? '根据项目类型运行最小可用验证；若没有自动化验证，说明已完成的人工检查。'
     : 'Run the smallest available project-specific verification; if none exists, describe the manual check completed.';
   const specMarkdown = [
-    `# Quick Spec: ${feature}`,
+    `# Specification: ${feature}`,
     '',
     '## Overview',
     task,
@@ -808,6 +844,7 @@ function _buildAggressiveQuickSpecPlan(
               files_to_create: [],
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              evidence: 'spec.md scope and user task description',
               verification: {
                 type: 'manual',
                 run: verificationRun,
@@ -824,11 +861,11 @@ function _buildAggressiveQuickSpecPlan(
   };
 }
 
-function buildLocalizedAggressiveQuickSpecPlan(
+function buildLocalizedAggressiveStandardLightPlan(
   taskDescription: string | undefined,
   language?: SupportedLanguage,
   patternFiles: string[] = [],
-): QuickSpecPlan {
+): StandardLightPlan {
   const task = normalizeTaskDescription(taskDescription);
   const filesToCreate = inferAggressiveCreateFiles(task, patternFiles);
   const feature = oneLine(task, 120);
@@ -844,7 +881,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
   const constraintReminder = buildConstraintReminder(task, language);
   const specMarkdown = isChinese
     ? [
-        `# \u5feb\u901f\u89c4\u683c\uff1a${feature}`,
+        `# \u89c4\u683c\uff1a${feature}`,
         '',
         '## \u6982\u8ff0',
         task,
@@ -867,7 +904,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
         '',
       ].join('\n')
     : [
-        `# Quick Spec: ${feature}`,
+        `# Specification: ${feature}`,
         '',
         '## Overview',
         task,
@@ -915,6 +952,7 @@ function buildLocalizedAggressiveQuickSpecPlan(
               files_to_create: filesToCreate,
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              evidence: 'spec.md scope and user task description',
               verification: {
                 type: 'manual',
                 run: verificationRun,
@@ -1016,12 +1054,12 @@ function getProfiledDocumentationQualityGuidance(
     : guidance;
 }
 
-function buildSourceDocumentationQuickSpecPlan(
+function buildSourceDocumentationStandardLightPlan(
   taskDescription: string | undefined,
   language?: SupportedLanguage,
   patternFiles: string[] = [],
   agentProfile?: ProjectAgentProfile,
-): QuickSpecPlan {
+): StandardLightPlan {
   const task = normalizeTaskDescription(taskDescription);
   const feature = oneLine(task, 120);
   const outputFile = inferDocumentationOutputFile(task);
@@ -1132,6 +1170,7 @@ function buildSourceDocumentationQuickSpecPlan(
               files_to_create: [outputFile, ...DOCUMENTATION_SUPPORT_FILES],
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              evidence: 'spec.md documentation scope; project source files; evidence_index.json',
               verification: {
                 type: 'manual',
                 run: verificationRun,
@@ -1257,15 +1296,18 @@ function buildStructuredJsonOutputRetryPrompt(
   const phaseGuidance: Partial<Record<SpecPhase, string[]>> = {
     discovery: [
       'Summarize only the files and patterns directly relevant to the task.',
-      'Include files_to_modify, files_to_reference, scoped_services, design_patterns, implementation_notes, risks, and verification_suggestions.',
+      'Include files_to_modify, files_to_reference, scoped_services, design_patterns, evidence_sources, standards_references, assumptions, implementation_notes, risks, and verification_suggestions.',
+      'For context.json, evidence_sources must be objects with path, optional symbol, optional lines, proves, and confidence.',
+      'Every major architecture or pattern claim must be backed by evidence_sources; put uncertain claims in assumptions instead of presenting them as fact.',
     ],
     context: [
       'Focus on task-specific architecture, files, patterns, risks, and verification suggestions.',
       'Do not copy source code or broad repository inventories.',
     ],
     requirements: [
-      'Include task_description, workflow_type, services_involved, user_requirements, acceptance_criteria, constraints, and created_at.',
+      'Include task_description, workflow_type, services_involved, user_requirements, acceptance_criteria, constraints, evidence_sources, standards_references, assumptions, and created_at.',
       'Keep each requirement and criterion short and actionable.',
+      'Every requirement and acceptance criterion must come from the user request, project source/docs, or a verified standards reference; put gaps in assumptions.',
     ],
     research: [
       'Include concise verified findings only; link to sources instead of copying documentation.',
@@ -1311,6 +1353,10 @@ function getStructuredJsonOutputSchema(phase: SpecPhase): ZodSchema | undefined 
     default:
       return undefined;
   }
+}
+
+function isAutocodePlanQualityError(error: string): boolean {
+  return /too large|Evidence|evidence_sources|context\.json|requirements\.md|spec\.md|tasks\.md/i.test(error);
 }
 
 async function writeStructuredJsonOutput(
@@ -1405,6 +1451,14 @@ function normalizeSpecContextOutput(value: unknown): SpecContextOutput | unknown
     files_to_modify: normalizeFileModifications(record.files_to_modify, record.filesToModify, record.likely_files_to_create),
     files_to_reference: normalizeFileReferences(record.files_to_reference, record.filesToReference, record.pattern_files),
     design_patterns: normalizeDesignPatterns(record.design_patterns, record.patterns),
+    evidence_sources: normalizeAutocodeContextEvidenceSources([
+      ...toArray(record.evidence_sources),
+      ...toArray(record.evidence),
+      ...toArray(record.sources),
+      ...toArray(record.source_references),
+    ]),
+    standards_references: stringArrayFrom(record.standards_references, record.standards, record.industry_standards, record.official_docs),
+    assumptions: stringArrayFrom(record.assumptions, record.inferred_claims, record.unknowns),
     implementation_notes: stringArrayFrom(record.implementation_notes, record.notes, record.notes_for_next_phase),
     risks: stringArrayFrom(record.risks, record.risk_notes),
     verification_suggestions: stringArrayFrom(record.verification_suggestions, record.validation_strategy, record.recommended_checks),
@@ -1461,6 +1515,10 @@ function toStringArray(value: unknown): string[] {
     return text ? [text] : [];
   }
   return value.map(stringifyCompact).filter(Boolean);
+}
+
+function toArray(value: unknown): unknown[] {
+  return Array.isArray(value) ? value : value === undefined || value === null || value === '' ? [] : [value];
 }
 
 function normalizeFileModifications(...values: unknown[]): SpecContextOutput['files_to_modify'] {
@@ -1558,6 +1616,9 @@ function normalizeRequirementsOutput(
     user_requirements: stringArrayFrom(record.user_requirements, record.requirements, record.functional_requirements, taskDescription),
     acceptance_criteria: stringArrayFrom(record.acceptance_criteria, record.acceptanceCriteria, record.success_criteria, record.validation_scenarios),
     constraints: stringArrayFrom(record.constraints, record.non_functional_requirements, record.risks),
+    evidence_sources: stringArrayFrom(record.evidence_sources, record.evidence, record.sources, record.source_references),
+    standards_references: stringArrayFrom(record.standards_references, record.standards, record.industry_standards, record.official_docs),
+    assumptions: stringArrayFrom(record.assumptions, record.inferred_claims, record.unknowns),
     created_at: stringFrom(record.created_at, record.createdAt) || new Date().toISOString(),
   };
 }
@@ -1710,6 +1771,9 @@ function buildFallbackRequirementsOutput(
     constraints: [
       'Follow existing project architecture, coding conventions, and design patterns.',
     ],
+    evidence_sources: ['User task description'],
+    standards_references: [],
+    assumptions: ['Fallback requirements were generated because the requirements phase did not produce validated output.'],
     created_at: new Date().toISOString(),
   };
 }
@@ -1723,6 +1787,13 @@ function buildFallbackContextOutput(taskDescription?: string): SpecContextOutput
     files_to_modify: [],
     files_to_reference: [],
     design_patterns: [],
+    evidence_sources: [{
+      path: 'User task description',
+      proves: 'Fallback context starts from the user task because discovery did not produce validated output.',
+      confidence: 'low',
+    }],
+    standards_references: [],
+    assumptions: ['Fallback context was generated because discovery did not produce validated output.'],
     implementation_notes: [
       'Use the task description as the source of truth.',
       'Inspect only files directly relevant to the implementation before editing.',
@@ -2109,7 +2180,9 @@ export class SpecOrchestrator extends EventEmitter {
         this.config.workflowConfig!,
       );
 
-      this.emitTyped('log', `Running ${complexity} workflow: ${phasesToRun.join(' → ')}`);
+      this.emitTyped('log', `Running ${complexity} workflow: ${phasesToRun
+        .map((phase) => formatSpecPhaseNameForLog(phase, this.config.language))
+        .join(' → ')}`);
 
       for (const phase of phasesToRun) {
         if (
@@ -2122,7 +2195,7 @@ export class SpecOrchestrator extends EventEmitter {
         ) {
           const phaseNumber = phasesExecuted.length + 1;
           const totalPhases = phasesToRun.length + (phasesExecuted.includes('complexity_assessment') ? 1 : 0);
-          const result = await this.writeAggressiveQuickSpec(phaseNumber, totalPhases);
+          const result = await this.writeAggressiveStandardLightPlan(phaseNumber, totalPhases);
           phasesExecuted.push(phase);
           if (!result.success) {
             await this.saveState();
@@ -2545,9 +2618,14 @@ export class SpecOrchestrator extends EventEmitter {
           if (attempt < maxPhaseRetries) {
             // Build LLM-friendly error feedback so the agent knows what to fix
             const schemaHint = undefined;
+            const isQualityFailure = schemaValidation.errors.some(isAutocodePlanQualityError);
             schemaRetryContext = isPlanningPhase
-              ? buildPlanStructuredOutputValidationRetryPrompt(phase, schemaValidation.errors, schemaHint)
-              : buildValidationRetryPrompt(
+              ? isQualityFailure
+                ? buildAutocodePlanQualityRetryPrompt(schemaValidation.errors)
+                : buildPlanStructuredOutputValidationRetryPrompt(phase, schemaValidation.errors, schemaHint)
+              : isQualityFailure
+                ? buildAutocodePlanQualityRetryPrompt(schemaValidation.errors)
+                : buildValidationRetryPrompt(
                   PHASE_OUTPUTS[phase]?.[0] ?? 'output file',
                   schemaValidation.errors,
                   schemaHint,
@@ -2748,6 +2826,11 @@ export class SpecOrchestrator extends EventEmitter {
   private async validatePhaseSchema(
     phase: SpecPhase,
   ): Promise<{ valid: boolean; errors: string[] } | null> {
+    const qualityValidation = await this.validateStandardPlanArtifactQuality(phase);
+    if (qualityValidation && !qualityValidation.valid) {
+      return qualityValidation;
+    }
+
     if (phase === 'planning' || phase === 'quick_spec') {
       try {
         await this.deriveRuntimePlanFromTasks();
@@ -2807,17 +2890,82 @@ export class SpecOrchestrator extends EventEmitter {
     return null; // No schema for this phase
   }
 
+  private async validateStandardPlanArtifactQuality(
+    phase: SpecPhase,
+  ): Promise<{ valid: boolean; errors: string[] } | null> {
+    const specMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.specFile);
+    const requirementsMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.requirements);
+    const tasksMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.tasks);
+    const contextJson = await this.readOptionalJsonArtifact('context.json');
+
+    const shouldValidate = (
+      phase === 'discovery' ||
+      phase === 'context' ||
+      phase === 'requirements' ||
+      phase === 'spec_writing' ||
+      phase === 'self_critique' ||
+      phase === 'planning' ||
+      phase === 'quick_spec'
+    );
+    if (!shouldValidate) {
+      return null;
+    }
+
+    const result = validateAutocodeStandardPlanArtifacts({
+      contextJson: phase === 'discovery' || phase === 'context' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
+        ? contextJson
+        : undefined,
+      requirementsMarkdown: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
+        ? requirementsMarkdown
+        : undefined,
+      specMarkdown: phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning' || phase === 'quick_spec'
+        ? specMarkdown
+        : undefined,
+      tasksMarkdown: phase === 'planning' || phase === 'quick_spec'
+        ? tasksMarkdown
+        : undefined,
+      requireContextEvidence: phase === 'discovery' || phase === 'context' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
+      requireRequirementsEvidence: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
+      requireSpecEvidence: phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
+      requireTaskEvidence: phase === 'planning' || phase === 'quick_spec',
+    });
+    return result.valid
+      ? { valid: true, errors: [] }
+      : { valid: false, errors: result.errors };
+  }
+
+  private async readOptionalArtifact(fileName: string): Promise<string | null> {
+    try {
+      return await readFile(join(this.config.specDir, fileName), 'utf-8');
+    } catch {
+      return null;
+    }
+  }
+
+  private async readOptionalJsonArtifact(fileName: string): Promise<unknown> {
+    const content = await this.readOptionalArtifact(fileName);
+    if (!content) {
+      return undefined;
+    }
+    try {
+      return JSON.parse(content);
+    } catch {
+      return content;
+    }
+  }
+
   private async deriveRuntimePlanFromTasks(): Promise<void> {
     const tasksMarkdown = await readFile(join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.tasks), 'utf-8');
     const plan = buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(tasksMarkdown, {
       now: new Date().toISOString(),
       language: this.config.language,
       sourcePath: AUTOCODE_TASK_ARTIFACTS.tasks,
+      requireTaskEvidence: true,
     });
     await saveAutocodeImplementationPlan(this.config.specDir, plan);
   }
 
-  private async writeAggressiveQuickSpec(
+  private async writeAggressiveStandardLightPlan(
     phaseNumber: number,
     totalPhases: number,
   ): Promise<SpecPhaseResult> {
@@ -2829,13 +2977,13 @@ export class SpecOrchestrator extends EventEmitter {
       this.config.taskDescription ?? '',
     );
     const plan = isSourceDocumentationTask(this.config.taskDescription)
-      ? buildSourceDocumentationQuickSpecPlan(
+      ? buildSourceDocumentationStandardLightPlan(
           this.config.taskDescription ?? 'Complete the requested task',
           this.config.language,
           patternFiles,
           this.config.agentProfile,
         )
-      : buildLocalizedAggressiveQuickSpecPlan(
+      : buildLocalizedAggressiveStandardLightPlan(
           this.config.taskDescription ?? 'Complete the requested task',
           this.config.language,
           patternFiles,
@@ -2856,7 +3004,7 @@ export class SpecOrchestrator extends EventEmitter {
       const result: SpecPhaseResult = { phase, success: true, errors: [], retries: 0 };
       const patternFiles = plan.implementationPlan.phases[0]?.subtasks[0]?.pattern_files ?? [];
       const fileHint = patternFiles.length > 0 ? `; file hints: ${patternFiles.join(', ')}` : '';
-      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Aggressive workflow'} generated quick spec and one-task source without an AI planning session${fileHint}`);
+      this.emitTyped('log', `${plan.implementationPlan.workflow_type === 'documentation' ? 'Documentation analysis' : 'Aggressive workflow'} generated a Standard light plan and one-task source without an AI planning session${fileHint}`);
       this.emitTyped('phase-complete', phase, result);
       return result;
     } catch (error) {
@@ -2889,6 +3037,7 @@ export class SpecOrchestrator extends EventEmitter {
       const firstPhase = plan.phases?.[0];
       const filesToCreate = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_create ?? []));
       const filesToModify = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_modify ?? []));
+      const evidence = uniqueStrings(subtasks.flatMap((subtask) => typeof subtask.evidence === 'string' ? [subtask.evidence] : []));
       const verification = [...subtasks].reverse().find((subtask) => subtask.verification)?.verification
         ?? { type: 'manual', scenario: 'Review the completed change and run the project checks that apply to this task.' };
       const taskList = subtasks
@@ -2916,6 +3065,7 @@ export class SpecOrchestrator extends EventEmitter {
               status: 'pending',
               ...(filesToCreate.length > 0 ? { files_to_create: filesToCreate } : {}),
               ...(filesToModify.length > 0 ? { files_to_modify: filesToModify } : {}),
+              ...(evidence.length > 0 ? { evidence: evidence.join('; ') } : {}),
               verification,
             },
           ],

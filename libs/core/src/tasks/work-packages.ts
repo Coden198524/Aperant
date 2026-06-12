@@ -13,6 +13,7 @@ import {
   parseAutocodeImplementationPlanMarkdown,
   stringifyAutocodeImplementationPlanMarkdown,
 } from './plan-store.js';
+import { isTraceableAutocodeEvidence } from './plan-quality.js';
 
 export { stringifyAutocodeImplementationPlanMarkdown };
 
@@ -28,6 +29,7 @@ export interface AutocodeRuntimeTask {
   patternFiles: string[];
   dependsOn: string[];
   requirements: string[];
+  evidence?: string;
   verification?: unknown;
 }
 
@@ -45,6 +47,7 @@ export interface BuildAutocodeRuntimeWorkPackagePhasesInput {
   language?: string;
   sourceName?: string;
   sourcePath?: string;
+  requireTaskEvidence?: boolean;
   emptyTasksFallback?: MutableAutocodePlanSubtask;
 }
 
@@ -56,6 +59,7 @@ export interface BuildAutocodeRuntimeImplementationPlanFromTasksInput {
   sourcePath?: string;
   sourceKind?: string;
   upstreamOwner?: string;
+  requireTaskEvidence?: boolean;
 }
 
 const AUTOCODE_WORK_PACKAGE_MAX_TASKS = 5;
@@ -72,6 +76,7 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
     language: input.language,
     sourceName: 'Autocode',
     sourcePath,
+    requireTaskEvidence: input.requireTaskEvidence,
   });
 
   if (!hasRuntimeWorkPackages(phases)) {
@@ -108,8 +113,18 @@ export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
 export function buildAutocodeRuntimeWorkPackagePhases(
   input: BuildAutocodeRuntimeWorkPackagePhasesInput,
 ): MutableAutocodePlanPhase[] {
+  const flattenedTasks = flattenAutocodeRuntimeTasks(input.parsedPhases, input.language, input.sourceName);
+  if (input.requireTaskEvidence) {
+    const evidenceErrors = validateAutocodeRuntimeTaskEvidenceMetadata(
+      flattenedTasks,
+      `${input.sourceName || 'Autocode'} task`,
+    );
+    if (evidenceErrors.length > 0) {
+      throw new Error(evidenceErrors.join('; '));
+    }
+  }
   const runtimeTasks = completeAutocodeRuntimeTaskDependencyGraph(
-    flattenAutocodeRuntimeTasks(input.parsedPhases, input.language, input.sourceName),
+    flattenedTasks,
   );
   assertAutocodeRuntimeTasksHaveValidDependencies(runtimeTasks, `${input.sourceName || 'Autocode'} task`);
   if (runtimeTasks.length === 0) {
@@ -180,6 +195,7 @@ export function flattenAutocodeRuntimeTasks(
         patternFiles: toStringArray(subtask.pattern_files),
         dependsOn: sanitizeAutocodeRuntimeDependencyIds(subtask.depends_on),
         requirements: toStringArray(subtask.requirements),
+        evidence: stringFrom(subtask.evidence),
         verification: subtask.verification,
       });
     }
@@ -225,6 +241,15 @@ export function assertAutocodeRuntimeTasksHaveValidDependencies(
 
   const summary = describeAutocodeWorkDependencyBlockers(analysis.blocked);
   throw new Error(`${label} dependency graph is invalid: ${summary}`);
+}
+
+export function validateAutocodeRuntimeTaskEvidenceMetadata(
+  tasks: AutocodeRuntimeTask[],
+  label = 'runtime task',
+): string[] {
+  return tasks
+    .filter((task) => !isTraceableAutocodeEvidence(task.evidence))
+    .map((task) => `${label} ${task.id} missing traceable _Evidence: ..._ metadata`);
 }
 
 export function groupAutocodeRuntimeTasksIntoWorkPackages(
@@ -350,6 +375,7 @@ function buildAutocodeRuntimeWorkPackageSubtask(
     ...upstreamTaskIds,
     ...workPackage.tasks.flatMap((task) => task.requirements),
   ]);
+  const evidence = uniqueAutocodeRuntimeStrings(workPackage.tasks.map((task) => task.evidence || ''));
   const hasWriteIntent = filesToCreate.length > 0 || filesToModify.length > 0 || patternFiles.length > 0;
 
   return {
@@ -362,6 +388,7 @@ function buildAutocodeRuntimeWorkPackageSubtask(
     ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
     depends_on: workPackage.dependsOn,
     ...(requirements.length > 0 ? { requirements } : {}),
+    ...(evidence.length > 0 ? { evidence: evidence.join('; ') } : {}),
     verification: {
       type: 'manual',
       run: buildWorkPackageVerification(workPackage, input.language),
@@ -391,6 +418,7 @@ function buildRuntimeWorkPackageDescription(
       ...workPackage.tasks.flatMap((task) => [
         `- ${task.id} ${task.title}`,
         `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, task.title))}`,
+        ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
         ...(task.dependsOn.length > 0 ? [`  依赖：${task.dependsOn.join(', ')}`] : []),
       ]),
       '',
@@ -408,6 +436,7 @@ function buildRuntimeWorkPackageDescription(
     ...workPackage.tasks.flatMap((task) => [
       `- ${task.id} ${task.title}`,
       `  ${singleLine(sanitizeAutocodeRuntimeTaskDescription(task.description, task.title))}`,
+      ...(task.evidence ? [`  Evidence: ${singleLine(task.evidence)}`] : []),
       ...(task.dependsOn.length > 0 ? [`  Upstream prerequisites: ${task.dependsOn.join(', ')}`] : []),
     ]),
     '',

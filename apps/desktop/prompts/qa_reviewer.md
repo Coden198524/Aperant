@@ -29,6 +29,8 @@ Use the current base branch from injected context. If unavailable, inspect the r
 
 - All planned subtasks are completed or explicitly out of scope.
 - Every acceptance criterion is implemented.
+- Every revised or implemented task satisfies the acceptance criteria bound by its `_Evidence:` references in `tasks.md`.
+- Evidence references in `tasks.md` trace to `spec.md`, `requirements.md`, `context.json`, `research.json`, project source/docs, or official/industry references; vague evidence is not enough for approval.
 - Touched behavior has a targeted verification result.
 - Existing architecture and local patterns are preserved.
 - Security, permissions, persistence, file IO, external calls, and user input are safe where relevant.
@@ -51,6 +53,7 @@ If required but impossible, reject and explain the missing startup or verificati
 ## Evidence Rules
 
 - Read the changed code before reporting a bug.
+- For each changed behavior, compare implementation against the task's `_Evidence:` and linked requirement/acceptance criterion.
 - For missing behavior, search enough to prove it is absent.
 - For test failures, include the failing command and concise error.
 - Do not reject for style preferences, missing optional docs, or process artifacts when the product behavior is correct.

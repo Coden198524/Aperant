@@ -54,6 +54,24 @@ describe('runtime log display', () => {
     ]);
   });
 
+  it('renders internal quick_spec phase names as Standard light planning', () => {
+    const displayLogs = buildDisplayRuntimeLogs([
+      [
+        'Spec phase 2/3: quick_spec',
+        'Running spec_writer session (spec phase=quick_spec, session=1)',
+        'Standard planning: quick_spec (2/3)',
+        'Running simple workflow: quick_spec -> validation',
+      ].join(''),
+    ]);
+
+    expect(displayLogs.map(log => log.content)).toEqual([
+      'Spec phase 2/3: Standard light planning',
+      'Running spec_writer session (spec phase=Standard light planning, session=1)',
+      'Standard planning: Standard light planning (2/3)',
+      'Running simple workflow: Standard light planning -> validation',
+    ]);
+  });
+
   it('removes noisy Codex diagnostics from runtime blocks', () => {
     const displayLogs = buildDisplayRuntimeLogs([
       [

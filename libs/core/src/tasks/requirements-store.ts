@@ -14,6 +14,9 @@ export interface AutocodeTaskRequirements extends Record<string, unknown> {
   user_requirements?: string[];
   acceptance_criteria?: string[];
   constraints?: string[];
+  evidence_sources?: string[];
+  standards_references?: string[];
+  assumptions?: string[];
   created_at?: string;
   attached_images?: Array<{
     filename?: string;
@@ -30,6 +33,9 @@ const KNOWN_REQUIREMENT_KEYS = new Set([
   'user_requirements',
   'acceptance_criteria',
   'constraints',
+  'evidence_sources',
+  'standards_references',
+  'assumptions',
   'created_at',
   'attached_images',
 ]);
@@ -105,6 +111,15 @@ export function parseAutocodeTaskRequirementsMarkdown(content: string): Autocode
   const constraintsSection = sectionContent(content, 'Constraints');
   const constraints = parseMarkdownList(constraintsSection);
   if (constraints.length > 0 || constraintsSection) requirements.constraints = constraints;
+  const evidenceSourcesSection = sectionContent(content, 'Evidence Sources');
+  const evidenceSources = parseMarkdownList(evidenceSourcesSection);
+  if (evidenceSources.length > 0 || evidenceSourcesSection) requirements.evidence_sources = evidenceSources;
+  const standardsReferencesSection = sectionContent(content, 'Standards References');
+  const standardsReferences = parseMarkdownList(standardsReferencesSection);
+  if (standardsReferences.length > 0 || standardsReferencesSection) requirements.standards_references = standardsReferences;
+  const assumptionsSection = sectionContent(content, 'Assumptions');
+  const assumptions = parseMarkdownList(assumptionsSection);
+  if (assumptions.length > 0 || assumptionsSection) requirements.assumptions = assumptions;
   if (createdAt) requirements.created_at = createdAt;
   if (Array.isArray(attachedImages)) {
     requirements.attached_images = attachedImages as AutocodeTaskRequirements['attached_images'];
@@ -126,6 +141,9 @@ export function stringifyAutocodeTaskRequirementsMarkdown(
   addListSection(lines, 'User Requirements', toStringArray(requirements.user_requirements));
   addListSection(lines, 'Acceptance Criteria', toStringArray(requirements.acceptance_criteria));
   addListSection(lines, 'Constraints', toStringArray(requirements.constraints));
+  addListSection(lines, 'Evidence Sources', toStringArray(requirements.evidence_sources));
+  addListSection(lines, 'Standards References', toStringArray(requirements.standards_references));
+  addListSection(lines, 'Assumptions', toStringArray(requirements.assumptions));
   addTextSection(lines, 'Created At', stringFrom(requirements.created_at));
 
   if (Array.isArray(requirements.attached_images) && requirements.attached_images.length > 0) {

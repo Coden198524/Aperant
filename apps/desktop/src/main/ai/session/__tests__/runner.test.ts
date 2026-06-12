@@ -40,7 +40,7 @@ function createMockConfig(overrides: Partial<SessionConfig> = {}): SessionConfig
  */
 function createMockStreamResult(
   parts: Array<Record<string, unknown>>,
-  options?: { text?: string; totalUsage?: Record<string, number> | null },
+  options?: { text?: string; totalUsage?: Record<string, number> | null; providerMetadata?: Record<string, unknown> },
 ) {
   return {
     fullStream: (async function* () {
@@ -54,6 +54,7 @@ function createMockStreamResult(
         ? undefined
         : options?.totalUsage ?? { inputTokens: 100, outputTokens: 50 },
     ),
+    providerMetadata: Promise.resolve(options?.providerMetadata),
   };
 }
 
@@ -668,5 +669,35 @@ describe('runAgentSession', () => {
       instructions: 'Spec prompt',
       store: false,
     });
+  });
+
+  it('should continue openai responses sessions with previousResponseId', async () => {
+    mockStreamText.mockReturnValue(
+      createMockStreamResult([], {
+        text: 'continued',
+        totalUsage: { inputTokens: 10, outputTokens: 5 },
+        providerMetadata: { openai: { responseId: 'resp_next' } },
+      }),
+    );
+
+    const result = await runAgentSession(createMockConfig({
+      sessionId: 'direct-session-1',
+      systemPrompt: 'Direct prompt',
+      responsePersistence: false,
+      previousResponseId: 'resp_prev',
+      model: {
+        modelId: 'gpt-5.3-codex',
+        provider: 'openai.responses',
+      } as SessionConfig['model'],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    expect(callArgs.providerOptions?.openai).toMatchObject({
+      instructions: 'Direct prompt',
+      store: true,
+      previousResponseId: 'resp_prev',
+    });
+    expect(result.usage.sessionId).toBe('direct-session-1');
+    expect(result.providerResponseId).toBe('resp_next');
   });
 });

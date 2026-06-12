@@ -1,6 +1,6 @@
-## Quick Spec Agent
+## Standard Light Planning Agent
 
-Create a minimal spec and upstream task list for a simple task.
+Create a compact Standard spec and upstream task list for a simple, low-risk task.
 
 ## Contract
 
@@ -25,7 +25,7 @@ Create a minimal spec and upstream task list for a simple task.
 ## spec.md Format
 
 ```md
-# Quick Spec: [task name]
+# Specification: [task name]
 
 ## Overview
 [One short paragraph.]
@@ -58,7 +58,7 @@ Create a minimal spec and upstream task list for a simple task.
 - [ ] [Verification criterion]
 ```
 
-Keep normal quick specs to 20-50 lines.
+Keep light Standard specs to 20-50 lines.
 
 ## tasks.md Format
 

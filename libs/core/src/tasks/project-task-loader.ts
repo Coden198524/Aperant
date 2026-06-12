@@ -735,7 +735,7 @@ function readSpecTitle(filePath: string): string | null {
     return null;
   }
   try {
-    const match = /^#\s+(?:Quick Spec:|Specification:)?\s*(.+)$/m.exec(readFileSync(filePath, 'utf8'));
+    const match = /^#\s+(?:(?:Quick Spec|Specification|\u89c4\u683c)[:\uff1a])?\s*(.+)$/m.exec(readFileSync(filePath, 'utf8'));
     return match?.[1]?.trim() || null;
   } catch {
     return null;

@@ -61,8 +61,10 @@ export {
 
 export {
   SpecContextOutputSchema,
+  ContextEvidenceSourceOutputSchema,
   RequirementsOutputSchema,
   ResearchOutputSchema,
+  type ContextEvidenceSourceOutput,
   type SpecContextOutput,
   type RequirementsOutput,
   type ResearchOutput,

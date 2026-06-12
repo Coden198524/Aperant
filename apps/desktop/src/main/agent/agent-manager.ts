@@ -2,6 +2,7 @@
 import path from 'path';
 import { existsSync, readdirSync, readFileSync, writeFileSync } from 'fs';
 import { execFileSync, execSync } from 'child_process';
+import { randomUUID } from 'crypto';
 import {
   AUTOCODE_COMMON_BASE_BRANCHES,
   AUTOCODE_DEFAULT_BASE_BRANCH,
@@ -24,6 +25,7 @@ import {
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   inferAutocodePinnedProviderFromModel,
   isAutocodeCommonBaseBranch,
+  isAutocodeOpenAIResponsesTransport,
   loadAutocodeImplementationPlanSync,
   loadAutocodeTaskRuntimeMetadataConfig,
   normalizeAutocodeBaseBranch,
@@ -34,6 +36,7 @@ import {
   resolveAutocodeTaskPhaseProvider,
   resolveAutocodeTaskRuntimeConcurrency,
   resolveAutocodeTaskWorkflowMode,
+  resolveAutocodeDirectSessionState,
   withAutocodeRuntimeFileWriteLockSync,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type AutocodeRuntimeWorkspaceMode,
@@ -1054,6 +1057,14 @@ export class AgentManager extends EventEmitter {
 
     const effectiveCwd = worktreePath ?? projectPath;
     const effectiveProjectDir = worktreePath ?? projectPath;
+    const directSessionState = resolveAutocodeDirectSessionState(worktreeSpecDir, specDir);
+    const supportsProviderContinuation = isAutocodeOpenAIResponsesTransport(resolved.provider, resolved.modelId);
+    const useProviderContinuation = supportsProviderContinuation && Boolean(directSessionState?.providerResponseId);
+    const directContinuationMode = directSessionState
+      ? useProviderContinuation
+        ? 'provider'
+        : 'summary'
+      : undefined;
 
     if (this.shouldUseCodexCliRuntime(resolved)) {
       await this.startCodexCliRuntime({
@@ -1079,9 +1090,12 @@ export class AgentManager extends EventEmitter {
       projectRoot: effectiveProjectDir,
       dataDirName: project?.autoBuildPath,
       language,
+      directSessionState,
+      directContinuationMode,
     });
 
     const sessionConfig: SerializableSessionConfig = {
+      sessionId: directSessionState?.sessionId ?? randomUUID(),
       agentType: 'direct_task',
       systemPrompt,
       initialMessages,
@@ -1099,7 +1113,9 @@ export class AgentManager extends EventEmitter {
       baseURL: resolved.auth?.baseURL,
       configDir: resolved.configDir,
       oauthTokenFilePath: resolved.auth?.oauthTokenFilePath,
-      responsePersistence: false,
+      responsePersistence: supportsProviderContinuation,
+      previousResponseId: useProviderContinuation ? directSessionState?.providerResponseId : undefined,
+      directProviderContinuation: useProviderContinuation,
       mcpOptions: sessionRuntime.mcpOptions,
       workflowMode: 'off',
       language,

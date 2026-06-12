@@ -56,23 +56,23 @@ export function buildAutocodeSpecKickoffMessage(
   } else {
     switch (input.agentType) {
       case 'spec_discovery':
-        baseMessage = `Analyze ${promptProjectDir} for architecture, stack, and conventions relevant to: ${input.taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use the project index first, run at most two narrow discovery tools, and omit transcripts, copied source, long analysis, and large optional sections.`;
+        baseMessage = `Analyze ${promptProjectDir} for architecture, stack, conventions, source evidence, and verification commands relevant to: ${input.taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use the project index first, run targeted discovery tools only for files or standards that directly affect the task, and omit transcripts, copied source, long analysis, and large optional sections. evidence_sources must be structured entries with path, optional symbol, optional lines, proves, and confidence.`;
         break;
       case 'spec_gatherer':
-        baseMessage = `Gather requirements for: ${input.taskDescription}. Project root: ${promptProjectDir}. Return one compact JSON object for requirements.md; the orchestrator writes ${promptSpecDir}/requirements.md. spec.md does not exist yet. Prefer the task and provided context; keep requirements, acceptance criteria, and constraints short. No prose or markdown fence outside the JSON.`;
+        baseMessage = `Gather evidence-backed requirements for: ${input.taskDescription}. Project root: ${promptProjectDir}. Return one compact JSON object for requirements.md; the orchestrator writes ${promptSpecDir}/requirements.md. spec.md does not exist yet. Derive requirements from the user request, provided context, targeted source evidence, and verified standards only; put missing details in assumptions. Include evidence_sources, standards_references, and assumptions. No prose or markdown fence outside the JSON.`;
         break;
       case 'spec_researcher':
-        baseMessage = `Research external dependencies, APIs, SDKs, or integration constraints for: ${input.taskDescription}. Use task context, prior outputs, and project index first; read code in ${promptProjectDir} only when needed. If no research is needed, return research.json with empty integrations_researched and unverified_claims plus concise recommendations. The orchestrator writes ${promptSpecDir}/research.json. Final response: one valid JSON object only.`;
+        baseMessage = `Research external dependencies, APIs, SDKs, platform rules, security/accessibility requirements, or integration constraints for: ${input.taskDescription}. Use task context, prior outputs, and project index first; read code in ${promptProjectDir} only when needed. Prefer official documentation, standards bodies, vendor docs, or project-local documentation. If no research is needed, return research.json with empty integrations_researched and unverified_claims plus concise recommendations. The orchestrator writes ${promptSpecDir}/research.json. Final response: one valid JSON object only.`;
         break;
       case 'spec_writer':
-        baseMessage = `Write a compact spec.md for: ${input.taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep overview, touched files, behavior, and acceptance checks.`;
+        baseMessage = `Write an evidence-backed spec.md for: ${input.taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep spec.md as a compact decision index, not a full analysis dump. Include proposal, requirements, design notes, touched files, acceptance checks, evidence, standards/references, assumptions, and risks.`;
         break;
       case 'planner':
         baseMessage = [
           `Create ${promptSpecDir}/tasks.md for: ${input.taskDescription}.`,
           'Use provided phase context first; read only relevant spec.md sections if needed.',
           `Use Autocode Standard planning: update ${promptSpecDir}/spec.md with proposal/requirements/design/acceptance/risk sections when missing or stale.`,
-          'Output concrete Autocode Markdown checklist tasks with dependencies and verification notes.',
+          'Output concrete Autocode Markdown checklist tasks with source-backed guidance, dependencies, requirement links, evidence notes, and verification commands.',
           `Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it.`,
           `Project root: ${promptProjectDir}.`,
         ].join(' ');
@@ -92,6 +92,9 @@ export function buildAutocodeSpecKickoffMessage(
   }
 
   const contextSections: string[] = [baseMessage];
+  if (shouldAddStandardPlanningEvidenceContract(input.agentType, input.specPhase)) {
+    contextSections.push(buildAutocodeStandardPlanningEvidenceContract(promptProjectDir, promptSpecDir));
+  }
   if (input.projectIndex) {
     contextSections.push(`\n\n## PROJECT INDEX (pre-generated)\n\nThe following project structure analysis has been pre-generated for you. Use this as your starting point instead of scanning the entire project:\n\n\`\`\`json\n${input.projectIndex}\n\`\`\``);
   }
@@ -113,6 +116,51 @@ export function buildAutocodeSpecKickoffMessage(
   }
 
   return appendAutocodeLanguageRequirement(contextSections.join(''), input.language);
+}
+
+function shouldAddStandardPlanningEvidenceContract(
+  agentType: AgentType | string,
+  specPhase?: string,
+): boolean {
+  return [
+    'discovery',
+    'requirements',
+    'research',
+    'context',
+    'spec_writing',
+    'planning',
+    'validation',
+  ].includes(specPhase ?? '') || [
+    'spec_discovery',
+    'spec_gatherer',
+    'spec_researcher',
+    'spec_context',
+    'spec_writer',
+    'spec_critic',
+    'spec_validation',
+    'planner',
+    'mmo_system_designer',
+  ].includes(agentType);
+}
+
+function buildAutocodeStandardPlanningEvidenceContract(
+  promptProjectDir: string,
+  promptSpecDir: string,
+): string {
+  return [
+    '',
+    '',
+    '## STANDARD PLANNING EVIDENCE CONTRACT',
+    '',
+    `- Ground requirements, design notes, and tasks in ${promptProjectDir} source files, generated project docs, existing specs/tasks, package/config files, or verified official/industry references.`,
+    '- Do not invent framework behavior, APIs, product flows, file ownership, or acceptance criteria from general model knowledge.',
+    '- If an external API, SDK, security rule, accessibility rule, protocol, game-networking pattern, or platform behavior matters, use verified official documentation or explicitly mark it as an assumption.',
+    `- Record evidence in ${promptSpecDir}/requirements.md as evidence_sources, standards_references, and assumptions when those files are generated.`,
+    '- In context.json, evidence_sources must use structured entries: path, optional symbol, optional lines, proves, confidence.',
+    '- In spec.md, include Evidence, Standards / References, and Assumptions sections when the task is not trivial; keep it compact as a decision index.',
+    '- In tasks.md, each executable task should cite a source path, project pattern, requirement ID, or standards reference in its guidance or metadata.',
+    '- If evidence is missing after targeted inspection, write an open question or assumption and plan a validation task; never fill the gap with a confident guess.',
+  ].join('\n');
 }
 
 export function buildAutocodeMmoAgentRole(agentType: AgentType | string): string | null {
@@ -248,7 +296,7 @@ export function buildAutocodeAgentKickoffMessage(
         baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. End with a short markdown review table.`;
         break;
       case 'qa_reviewer':
-        baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, and file hints. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Read source only when the check fails or the plan lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read spec.md, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+        baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, file hints, and ${promptSpecDir}/tasks.md Evidence metadata when present. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Verify changed behavior against Evidence-bound requirements before approving. Read source only when the check fails or the plan/evidence lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read the full spec, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
         break;
       case 'qa_fixer':
         baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/qa_report.md to indicate fixes have been applied.`;
@@ -274,7 +322,9 @@ export function buildAutocodeAgentKickoffMessage(
         `For Standard tasks, update ${promptSpecDir}/spec.md and ${promptSpecDir}/requirements.md when requirements, acceptance criteria, risks, constraints, or design decisions changed; then rewrite ${promptSpecDir}/tasks.md directly.`,
         `Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.`,
         `Do not edit ${promptSpecDir}/implementation_plan.md directly; the runtime derives it from the updated Standard artifacts.`,
+        'Revise documents incrementally: only edit affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Do not rewrite unaffected sections.',
         'Revise task lists incrementally: preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new pending subtasks, and mark obsolete upstream checklist items explicitly.',
+        'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
         'Add focused verification metadata for every new or revised task so the next coding pass can test and keep the iteration commit-ready.',
         'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
       ].join('\n');

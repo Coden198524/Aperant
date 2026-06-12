@@ -29,6 +29,7 @@ export interface AutocodeCoderKickoffSubtaskContext {
   filesToCreate: string[];
   filesToModify: string[];
   patternFiles: string[];
+  evidence?: string;
   verification?: string | AutocodeVerificationLike;
   workPackage?: boolean;
   upstreamTaskIds?: string[];
@@ -94,6 +95,7 @@ export function findAutocodeSubtaskKickoffContext(
         files_to_create?: unknown;
         files_to_modify?: unknown;
         pattern_files?: unknown;
+        evidence?: unknown;
         verification?: unknown;
         work_package?: unknown;
         upstream_task_ids?: unknown;
@@ -121,6 +123,7 @@ export function findAutocodeSubtaskKickoffContext(
         filesToCreate: toStringArray(subtaskRecord.files_to_create),
         filesToModify: toStringArray(subtaskRecord.files_to_modify),
         patternFiles: toStringArray(subtaskRecord.pattern_files),
+        evidence: typeof subtaskRecord.evidence === 'string' ? subtaskRecord.evidence : undefined,
         verification: typeof subtaskRecord.verification === 'string'
           || (subtaskRecord.verification && typeof subtaskRecord.verification === 'object')
           ? subtaskRecord.verification as string | AutocodeVerificationLike
@@ -177,6 +180,9 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     if (context.upstreamSource) {
       lines.push(`- Upstream source: ${context.upstreamSource}`);
     }
+    if (context.evidence) {
+      lines.push(`- Evidence: ${context.evidence}`);
+    }
   } else {
     lines.push('');
     lines.push(`Read ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}, locate work item "${subtaskId}", and implement only that item.`);
@@ -189,6 +195,15 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     for (const item of context.completedSummaries) {
       const label = item.title ? `${item.id} ${item.title}` : item.id;
       lines.push(`- ${label}: ${item.summary}`);
+    }
+  }
+
+  if (context?.evidence) {
+    lines.push('');
+    lines.push('## Evidence References');
+    lines.push('- Use these references to decide what to read next; do not read the full spec unless an evidence reference points there.');
+    for (const item of splitEvidenceReferences(context.evidence)) {
+      lines.push(`- ${item}`);
     }
   }
 
@@ -234,6 +249,7 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
   lines.push('## Execution Rules');
   if (context) {
     lines.push(`- The Current Work Item section above is already loaded from the plan. Do not read spec.md or ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} before implementation.`);
+    lines.push('- If you need more detail, read only the file or artifact paths named in Evidence References and File Focus, with narrow line ranges where possible.');
   }
   if (documentationOnly) {
     lines.push('- Documentation-only workflow: do not edit product source files and do not run builds, tests, or AI QA.');
@@ -299,6 +315,14 @@ function toStringArray(value: unknown): string[] {
 
 function formatBulletList(items: string[]): string {
   return items.map((item) => `- \`${formatPathForPrompt(item)}\``).join('\n');
+}
+
+function splitEvidenceReferences(evidence: string): string[] {
+  return evidence
+    .split(/\s*;\s*|\r?\n/)
+    .map((item) => item.trim())
+    .filter(Boolean)
+    .slice(0, 12);
 }
 
 function formatPathForPrompt(filePath: string): string {

@@ -569,6 +569,16 @@ export {
 } from './runtime/agent-messages.js';
 
 export {
+  AUTOCODE_DIRECT_SESSION_STATE_FILE,
+  AUTOCODE_DIRECT_SESSION_STATE_VERSION,
+  getAutocodeDirectSessionStatePath,
+  loadAutocodeDirectSessionState,
+  resolveAutocodeDirectSessionState,
+  saveAutocodeDirectSessionState,
+  type AutocodeDirectSessionState,
+} from './runtime/direct-session-state.js';
+
+export {
   AutocodeAgentState,
   type AutocodeTaskProfileAssignment,
   type AutocodeTaskProfileAssignmentReason,
@@ -1406,6 +1416,22 @@ export {
 } from './tasks/work-packages.js';
 
 export {
+  AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS,
+  type AutocodeContextEvidenceSource,
+  type AutocodeEvidenceConfidence,
+  type AutocodePlanArtifactLimit,
+  type AutocodePlanQualityLimits,
+  type AutocodePlanQualityResult,
+  type ValidateAutocodeStandardPlanArtifactsInput,
+  buildAutocodePlanQualityRetryPrompt,
+  isMeaningfulAutocodeEvidence,
+  isTraceableAutocodeEvidence,
+  normalizeAutocodeContextEvidenceSource,
+  normalizeAutocodeContextEvidenceSources,
+  validateAutocodeStandardPlanArtifacts,
+} from './tasks/plan-quality.js';
+
+export {
   AUTOCODE_JSON_ERROR_PREFIX,
   AUTOCODE_JSON_ERROR_TITLE_SUFFIX,
   AUTOCODE_TASK_STATUS_PRIORITY,
@@ -1673,6 +1699,7 @@ export {
   AICommentTriageSchema,
   AICommentTriagesOutputSchema,
   ComplexityAssessmentOutputSchema,
+  ContextEvidenceSourceOutputSchema,
   ComplexityAssessmentSchema,
   ExtractedInsightsOutputSchema,
   ExtractedInsightsSchema,
@@ -1711,6 +1738,7 @@ export {
   validateImplementationPlanLanguage,
   type AICommentTriagesOutput,
   type ComplexityAssessmentOutput,
+  type ContextEvidenceSourceOutput,
   type ExtractedInsightsOutput,
   type FindingValidationItemOutput,
   type FindingValidationsOutput,

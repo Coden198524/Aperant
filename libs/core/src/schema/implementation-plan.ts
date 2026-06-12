@@ -248,7 +248,7 @@ function coercePlan(input: unknown): unknown {
   // If model wrote flat steps/tasks/implementation_steps instead of phases[], wrap in a single phase.
   // Many models produce a flat array of steps rather than the nested
   // phases[].subtasks[] structure our schema requires.
-  // The quick_spec agent commonly writes "implementation_steps" as well.
+  // The Standard light planning agent commonly writes "implementation_steps" as well.
   let phases = raw.phases;
   if (!phases && (raw.steps || raw.tasks || raw.implementation_steps)) {
     const items = (raw.steps ?? raw.tasks ?? raw.implementation_steps) as unknown[];

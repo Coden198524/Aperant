@@ -32,10 +32,14 @@ If `HUMAN_INPUT.md` exists, treat this as an iteration of the same Standard task
 
 - Investigate enough existing code to match local architecture. Prefer targeted Grep/Glob/Read over broad scans.
 - Reuse existing module boundaries, helpers, conventions, and design patterns.
+- Every phase and executable subtask must be grounded in `spec.md`, `requirements.md`, `context.json`, project source/docs, or verified standards. Do not create tasks from generic model assumptions.
+- When a task depends on a framework/API/security/accessibility/gameplay/networking convention, cite the project source path or official/industry reference in the task guidance.
+- If evidence is missing, add a discovery/validation task or record an assumption; do not turn the assumption into implementation work.
 - Introduce a named pattern only when it removes real complexity.
 - Keep normal plans to 4 phases or fewer and about 24 subtasks or fewer.
 - For genuinely complex work, keep all required subtasks but shorten each note.
 - Each subtask should name likely files and the smallest reliable verification step.
+- Each subtask should include one short evidence note in guidance or metadata, such as `Evidence: spec.md requirement 1`, `Evidence: src/foo.ts pattern`, or `Evidence: official SDK docs`.
 - For Request Changes iterations, update `spec.md`, `requirements.md`, and `tasks.md` only where the new requirement changes them; keep unaffected sections stable.
 - Make the next coding pass commit-ready: every new or revised task needs a focused verification command and clear completion criteria.
 - Do not include copied source, research notes, long rationale, or large examples.
@@ -87,6 +91,7 @@ Status: pending
   - _Files to modify: path/to/existing-file_
   - _Depends on: none_
   - _Requirements: 1.1_
+  - _Evidence: spec.md requirement 1.1; path/to/source.ts pattern_
   - _Verification: npm test -- targeted.test.ts_
 ```
 

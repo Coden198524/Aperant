@@ -115,13 +115,13 @@ export const AUTOCODE_SPAWN_SUBAGENT_TOOL_DESCRIPTION = `Spawn a specialist suba
 
 Available subagent types:
 - complexity_assessor: Assess task complexity (simple/standard/complex). Returns structured JSON.
-- spec_discovery: Analyze project structure, tech stack, conventions. Writes context.json.
-- spec_gatherer: Gather and validate requirements from task description. Writes requirements.md.
-- spec_researcher: Research implementation approaches, external APIs, libraries. Writes research.json.
-- spec_writer: Write the specification (spec.md) and implementation plan. Writes files.
+- spec_discovery: Analyze project structure, tech stack, conventions, and source evidence. Writes context.json.
+- spec_gatherer: Gather and validate evidence-backed requirements from task description, project source, and standards. Writes requirements.md.
+- spec_researcher: Research implementation approaches, external APIs, libraries, and standards using verified sources. Writes research.json.
+- spec_writer: Write the evidence-backed specification (spec.md). Writes files.
 - spec_critic: Review spec for completeness, technical feasibility, gaps.
 - spec_validation: Final validation of spec.md and implementation_plan.md.
-- planner: Create implementation plan with subtasks.
+- planner: Create source-backed tasks with dependencies, evidence notes, and verification.
 - coder: Implement code changes.
 - qa_reviewer: Review implementation against specification.
 - qa_fixer: Fix issues found by qa_reviewer.

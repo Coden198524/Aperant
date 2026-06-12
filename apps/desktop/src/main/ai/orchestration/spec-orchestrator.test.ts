@@ -6,6 +6,7 @@ import { describe, expect, it, vi } from 'vitest';
 import {
   loadAutocodeImplementationPlan,
   loadAutocodeTaskRequirementsSync,
+  saveAutocodeTaskRequirementsSync,
   stringifyAutocodeImplementationPlanMarkdown,
 } from '@autocode/core';
 
@@ -18,10 +19,99 @@ import {
 } from './spec-orchestrator';
 import { MMO_AGENT_PROFILE } from '../config/project-agent-profile';
 
+const TEST_CONTEXT_EVIDENCE = {
+  path: 'src/App.tsx',
+  symbol: 'App',
+  lines: '1-20',
+  proves: 'Existing app entry point identifies the affected local workflow.',
+  confidence: 'high',
+};
+
+const TEST_TASK_EVIDENCE = 'context.json src/App.tsx lines 1-20; spec.md Requirements; requirements.md Acceptance Criteria';
+
 async function saveTasksSource(specDir: string, plan: Record<string, unknown>): Promise<void> {
+  const planWithEvidence = addTaskEvidence(plan);
   await writeFile(
     join(specDir, 'tasks.md'),
-    stringifyAutocodeImplementationPlanMarkdown(plan).replace(/^# Implementation Plan/m, '# Tasks'),
+    stringifyAutocodeImplementationPlanMarkdown(planWithEvidence).replace(/^# Implementation Plan/m, '# Tasks'),
+    'utf-8',
+  );
+}
+
+function evidenceSources(): Array<typeof TEST_CONTEXT_EVIDENCE> {
+  return [{ ...TEST_CONTEXT_EVIDENCE }];
+}
+
+function addTaskEvidence(plan: Record<string, unknown>): Record<string, unknown> {
+  const copy = JSON.parse(JSON.stringify(plan)) as Record<string, unknown>;
+  const phases = Array.isArray(copy.phases) ? copy.phases : [];
+  for (const phase of phases) {
+    if (!phase || typeof phase !== 'object') continue;
+    const record = phase as Record<string, unknown>;
+    const subtasks = Array.isArray(record.subtasks)
+      ? record.subtasks
+      : Array.isArray(record.chunks)
+        ? record.chunks
+        : [];
+    for (const subtask of subtasks) {
+      if (!subtask || typeof subtask !== 'object') continue;
+      const subtaskRecord = subtask as Record<string, unknown>;
+      subtaskRecord.evidence ??= TEST_TASK_EVIDENCE;
+    }
+  }
+  return copy;
+}
+
+async function writeValidStandardArtifacts(
+  specDir: string,
+  taskDescription = 'Refactor local task execution flow',
+): Promise<void> {
+  await writeFile(
+    join(specDir, 'context.json'),
+    JSON.stringify({
+      task_description: taskDescription,
+      scoped_services: [],
+      architecture_summary: 'Local codebase change.',
+      files_to_modify: [],
+      files_to_reference: [],
+      design_patterns: [],
+      implementation_notes: ['Reuse existing patterns.'],
+      risks: [],
+      verification_suggestions: ['Run tests.'],
+      evidence_sources: evidenceSources(),
+      created_at: '2026-05-13T00:00:00.000Z',
+    }, null, 2),
+    'utf-8',
+  );
+
+  saveAutocodeTaskRequirementsSync(specDir, {
+    task_description: taskDescription,
+    workflow_type: 'refactor',
+    services_involved: [],
+    user_requirements: [taskDescription],
+    acceptance_criteria: ['Existing behavior remains intact'],
+    constraints: ['Use existing patterns'],
+    evidence_sources: [TEST_TASK_EVIDENCE],
+    standards_references: ['Project conventions from AGENTS.md'],
+    assumptions: [],
+    created_at: '2026-05-13T00:00:00.000Z',
+  });
+
+  await writeFile(
+    join(specDir, 'spec.md'),
+    [
+      '# Spec',
+      '',
+      '## Requirements',
+      `- ${taskDescription}. Evidence: ${TEST_TASK_EVIDENCE}.`,
+      '',
+      '## Design Notes',
+      `- Reuse existing runtime orchestration patterns. Evidence: ${TEST_TASK_EVIDENCE}.`,
+      '',
+      '## Evidence',
+      `- ${TEST_TASK_EVIDENCE}.`,
+      '',
+    ].join('\n'),
     'utf-8',
   );
 }
@@ -141,6 +231,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       implementation_notes: ['Use plain HTML, CSS, and JavaScript.'],
       risks: ['Manual browser verification is required.'],
       verification_suggestions: ['Open index.html in a browser.'],
+      evidence_sources: evidenceSources(),
+      standards_references: [],
+      assumptions: [],
       created_at: '2026-05-13T00:00:00.000Z',
     };
     const runSession = vi.fn(async () => ({
@@ -241,6 +334,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       implementation_notes: ['Use native HTML, CSS, and JavaScript.'],
       risks: ['Manual browser verification is required.'],
       verification_suggestions: ['Open index.html to verify.'],
+      evidence_sources: evidenceSources(),
     };
     const runSession = vi.fn(async () => ({
       outcome: 'completed' as const,
@@ -296,6 +390,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       requirements: ['Create the dashboard page', 'Support add, filter, and status updates'],
       success_criteria: ['Open index.html successfully', 'node --check main.js passes'],
       risks: ['Manual browser smoke testing is required'],
+      evidence_sources: [TEST_TASK_EVIDENCE],
     };
     const runSession = vi.fn(async () => ({
       outcome: 'completed' as const,
@@ -414,6 +509,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
               implementation_notes: ['Reuse existing patterns.'],
               risks: [],
               verification_suggestions: ['Run tests.'],
+              evidence_sources: evidenceSources(),
               created_at: '2026-05-13T00:00:00.000Z',
             }),
           }],
@@ -436,6 +532,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
               user_requirements: ['Refactor local task execution flow'],
               acceptance_criteria: ['Existing behavior remains intact'],
               constraints: ['Use existing patterns'],
+              evidence_sources: [TEST_TASK_EVIDENCE],
+              standards_references: ['Project conventions from AGENTS.md'],
+              assumptions: [],
               created_at: '2026-05-13T00:00:00.000Z',
             }),
           }],
@@ -445,7 +544,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }
 
       if (config.specPhase === 'spec_writing' || config.specPhase === 'self_critique') {
-        await writeFile(join(specDir, 'spec.md'), '# Spec\n\nRefactor local task execution flow.\n', 'utf-8');
+        await writeValidStandardArtifacts(specDir);
       }
 
       if (config.specPhase === 'planning') {
@@ -539,6 +638,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     });
 
     try {
+      await writeValidStandardArtifacts(specDir, 'Refactor platform workflow');
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
@@ -623,10 +723,10 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('compacts aggressive simple quick specs into one coder subtask', async () => {
+  it('compacts aggressive simple Standard light plans into one coder subtask', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn(async () => {
-      await writeFile(join(specDir, 'spec.md'), '# Quick Spec: Local Notes Tool\n', 'utf-8');
+      await writeFile(join(specDir, 'spec.md'), '# Specification: Local Notes Tool\n', 'utf-8');
       await saveTasksSource(specDir, {
         feature: 'Local Notes Tool',
         workflow_type: 'simple',
@@ -679,7 +779,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         taskDescription: 'Create a small local notes tool',
         complexityOverride: 'simple',
         workflowConfig: { optimizationLevel: 'aggressive' },
-        generatePrompt: vi.fn(async () => 'Create quick spec and plan.'),
+        generatePrompt: vi.fn(async () => 'Create Standard light plan.'),
         runSession,
       });
 
@@ -715,7 +815,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('writes localized aggressive quick specs from only the user task text', async () => {
+  it('writes localized aggressive Standard light plans from only the user task text', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn();
     const localizedTask = '\u7528 C++ \u5b9e\u73b0\u4e00\u4e2a\u63a7\u5236\u53f0\u5f85\u529e\u4e8b\u9879\u5de5\u5177';
@@ -761,7 +861,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
 
       expect(result.success).toBe(true);
       expect(runSession).not.toHaveBeenCalled();
-      expect(spec).toContain(`# \u5feb\u901f\u89c4\u683c\uff1a${localizedTask}`);
+      expect(spec).toContain(`# \u89c4\u683c\uff1a${localizedTask}`);
       expect(spec).not.toContain('Project directory');
       expect(plan.feature).toBe(localizedTask);
       expect(plan.source_task?.constraint_terms).toEqual(expect.arrayContaining(['C++', 'Console']));
@@ -777,7 +877,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('adds generic create-file hints for aggressive quick specs in empty projects', async () => {
+  it('adds generic create-file hints for aggressive Standard light plans in empty projects', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn();
 
@@ -816,7 +916,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     const runSession = vi.fn(async (config: { specPhase: SpecPhase }) => {
       phases.push(config.specPhase);
       if (config.specPhase === 'quick_spec') {
-        await writeFile(join(specDir, 'spec.md'), '# Quick Spec\n\nImplement the local app.\n', 'utf-8');
+        await writeFile(join(specDir, 'spec.md'), '# Specification\n\nImplement the local app.\n', 'utf-8');
         await saveTasksSource(specDir, {
           feature: 'Local app',
           workflow_type: 'simple',
@@ -1107,6 +1207,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
               implementation_notes: ['Plan integration details.'],
               risks: ['External API behavior.'],
               verification_suggestions: ['Run tests.'],
+              evidence_sources: evidenceSources(),
               created_at: '2026-05-13T00:00:00.000Z',
             }),
           }],
@@ -1507,6 +1608,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
             implementation_notes: ['Document systems.'],
             risks: ['Broad analysis scope.'],
             verification_suggestions: ['Review generated docs.'],
+            evidence_sources: evidenceSources(),
             created_at: '2026-05-20T00:00:00.000Z',
           },
         };
@@ -1527,6 +1629,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
             user_requirements: ['Identify game systems and gameplay mechanics.'],
             acceptance_criteria: ['The analysis covers engine, server, network, and gameplay systems.'],
             constraints: ['Do not modify source code.'],
+            evidence_sources: [TEST_TASK_EVIDENCE],
+            standards_references: ['Project conventions from AGENTS.md'],
+            assumptions: [],
             created_at: '2026-05-20T00:00:00.000Z',
           },
         };
@@ -1594,6 +1699,9 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
             user_requirements: ['Analyze systems.'],
             acceptance_criteria: ['Documentation identifies systems.'],
             constraints: ['Do not modify source.'],
+            evidence_sources: [TEST_TASK_EVIDENCE],
+            standards_references: ['Project conventions from AGENTS.md'],
+            assumptions: [],
             created_at: '2026-05-20T00:00:00.000Z',
           },
         };

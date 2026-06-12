@@ -239,8 +239,10 @@ function buildTaskRunPrompt(input: {
       '',
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} with overview, scope, implementation notes, and success criteria.`,
       `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if the current task description needs structured requirements.`,
+      `- Include evidence_sources, standards_references, and assumptions in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} when evidence or assumptions affect the task.`,
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as an Autocode Markdown checklist with concrete phases and tasks.`,
       `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
+      '- Ground requirements, design notes, task scope, and verification in project source/docs, existing patterns, or verified official/industry references; if evidence is missing, write an assumption or validation task instead of guessing.',
       '- Use [ ] for pending subtasks and concise metadata bullets: _Depends on_, _Requirements_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
     ].join('\n')}`;
   }
@@ -260,9 +262,11 @@ function buildTaskRunPrompt(input: {
       `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} when the latest change request changes structured requirements or acceptance criteria.`,
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as the upstream Autocode task list.`,
       `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
+      '- Ground every new or revised requirement, design note, task, dependency, and verification command in project source/docs, existing patterns, or verified official/industry references.',
+      '- If evidence is missing, add an assumption/open question or validation task; do not create implementation work from a guess.',
       '- Keep tasks independently implementable and verifiable.',
       '- Revise the task list incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
-      '- Every executable task must include _Depends on_ and _Verification_. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
+      '- Every executable task must include _Depends on_, _Verification_, and a short _Evidence_ note. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
       '- Keep the iteration testable and commit-ready: every new or revised task needs a focused verification command, and the next coding pass should be able to use the normal task commit flow after validation succeeds.',
       '- Set new task checkboxes to [ ].',
     ].join('\n')}`;
@@ -380,6 +384,7 @@ const command = ${JSON.stringify(input.command)};
 const args = ${JSON.stringify(input.args)};
 const iconvLiteModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('iconv-lite'))};
 const workPackagesModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/work-packages') ?? resolveOptionalRunnerDependency('./work-packages.js'))};
+const planQualityModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@autocode/core/tasks/plan-quality') ?? resolveOptionalRunnerDependency('./plan-quality.js'))};
 const libsqlSqlite3ModulePath = ${JSON.stringify(resolveOptionalRunnerDependency('@libsql/client/sqlite3'))};
 const promptFilePath = ${JSON.stringify(input.promptFilePath)};
 const phase = ${JSON.stringify(input.phase)};
@@ -1655,11 +1660,14 @@ function readPlanItems() {
         patternFiles: normalizeRunnerStringArray(metadata.pattern_files),
         dependsOn: normalizeRunnerWorkDependencyIds(metadata.depends_on),
         requirements: normalizeRunnerStringArray(metadata.requirements),
+        evidence: typeof metadata.evidence === 'string' ? metadata.evidence.trim() : '',
         hasFileMetadata: hasMetadataField('files') ||
           hasMetadataField('files_to_create') ||
           hasMetadataField('files_to_modify') ||
           hasMetadataField('pattern_files'),
         hasDependencyMetadata: hasMetadataField('depends_on'),
+        hasEvidenceMetadata: hasMetadataField('evidence') &&
+          isMeaningfulRunnerEvidence(metadata.evidence),
         hasVerificationMetadata: hasMetadataField('verification'),
         phaseName: currentPhaseName,
         isSubtask: match[1].length > 0 || /[.-]/.test(match[3]),
@@ -1719,10 +1727,31 @@ function applyPlanItemFileHint(item, detail) {
     item.dependsOn.push(...values);
     return;
   }
+  if (key === 'evidence' || key === 'source evidence' || key === 'evidence sources') {
+    item.hasEvidenceMetadata = isMeaningfulRunnerEvidence(match[2]);
+    item.evidence = String(match[2] || '').trim();
+    return;
+  }
   if (key === 'verification') {
     item.hasVerificationMetadata = true;
   }
 }
+
+function isMeaningfulRunnerEvidence(value) {
+  const text = String(value || '').trim().toLowerCase();
+  return text.length >= 6 && !EMPTY_EVIDENCE_TOKENS.has(text);
+}
+
+const EMPTY_EVIDENCE_TOKENS = new Set([
+  'none',
+  'n/a',
+  'na',
+  'unknown',
+  'todo',
+  'tbd',
+  'no evidence',
+  'unspecified',
+]);
 
 function splitPlanList(value) {
   return String(value || '')
@@ -2650,6 +2679,11 @@ async function validateExpectedArtifacts() {
     return derivedPlanError;
   }
 
+  const qualityError = await validateStandardPlanArtifactQuality();
+  if (qualityError) {
+    return qualityError;
+  }
+
   if (phase === 'spec') {
     if (!existsSync(join(specDir, artifacts.specFile))) {
       return \`CLI finished without creating \${artifacts.specFile}.\`;
@@ -2674,6 +2708,59 @@ async function validateExpectedArtifacts() {
   return undefined;
 }
 
+async function validateStandardPlanArtifactQuality() {
+  if (phase !== 'spec' && phase !== 'planning') {
+    return undefined;
+  }
+  if (!planQualityModulePath) {
+    return undefined;
+  }
+  try {
+    const moduleUrl = pathToFileURL(planQualityModulePath).href;
+    const planQuality = await import(moduleUrl);
+    const contextJson = readOptionalJsonArtifact('context.json');
+    const result = planQuality.validateAutocodeStandardPlanArtifacts({
+      specMarkdown: readOptionalArtifact(artifacts.specFile),
+      requirementsMarkdown: readOptionalArtifact(artifacts.requirements),
+      tasksMarkdown: readOptionalArtifact(artifacts.tasks || 'tasks.md'),
+      contextJson,
+      requireSpecEvidence: phase === 'planning',
+      requireRequirementsEvidence: phase === 'planning',
+      requireTaskEvidence: true,
+      requireContextEvidence: phase === 'planning',
+    });
+    if (!result || result.valid) {
+      return undefined;
+    }
+    return 'Standard plan artifact quality failed: ' + result.errors.slice(0, 8).join('; ');
+  } catch (error) {
+    return 'Unable to validate Standard plan artifact quality: ' + (error instanceof Error ? error.message : String(error));
+  }
+}
+
+function readOptionalArtifact(fileName) {
+  if (!fileName) {
+    return undefined;
+  }
+  try {
+    return readFileSync(join(specDir, fileName), 'utf8');
+  } catch {
+    return undefined;
+  }
+}
+
+function readOptionalJsonArtifact(fileName) {
+  const content = readOptionalArtifact(fileName);
+  if (!content) {
+    return undefined;
+  }
+  try {
+    return JSON.parse(content);
+  } catch {
+    return content;
+  }
+}
+
 async function deriveRuntimePlanFromStandardTasksIfNeeded() {
   if (phase !== 'spec' && phase !== 'planning') {
     return undefined;
@@ -2696,6 +2783,7 @@ async function deriveRuntimePlanFromStandardTasksIfNeeded() {
         now: new Date().toISOString(),
         language,
         sourcePath: artifacts.tasks || 'tasks.md',
+        requireTaskEvidence: true,
       },
     );
     const existingPlanMetadata = readExistingPlanMachineMetadata();
@@ -2733,9 +2821,14 @@ function validatePlanningSchedulingMetadata() {
   }
   const items = readPlanItems().filter((item) => item.isSubtask);
   const errors = [];
+  const mode = String(taskMetadata?.developmentMode || '').toLowerCase();
+  const requireEvidence = mode === 'standard';
   for (const item of items) {
     if (!item.hasDependencyMetadata) {
       errors.push(item.id + ' missing _Depends on: ..._ metadata');
+    }
+    if (requireEvidence && !item.hasEvidenceMetadata) {
+      errors.push(item.id + ' missing _Evidence: ..._ metadata');
     }
     if (!item.hasVerificationMetadata) {
       errors.push(item.id + ' missing _Verification: ..._ metadata');
@@ -2781,7 +2874,10 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- Single Autocode Markdown checklist.',
     '- Include at least one executable task numbered like 1.1, 1.2, or 2.1.',
     '- A top-level phase alone is not enough.',
-    '- Each task must include _Depends on_ and _Verification_. Include _Files to create/modify_ when write intent is known.',
+    '- Each task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
+    '- Evidence must cite spec.md, requirements.md, context.json, project source/docs, existing project patterns, or verified official/industry references.',
+    '- Keep spec.md compact as a decision index; put detailed source evidence in context.json and cite it from tasks.md.',
+    '- If this is a Request Changes retry, update only affected requirement/design/task sections and preserve unaffected content.',
     '- Use _Depends on: none_ only for root work. Use _Files to modify: none_ only for read-only validation.',
   ];
 
@@ -2811,6 +2907,7 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '    - Describe the implementation step.',
     '    - _Files to modify: path/to/file.ts_',
     '    - _Depends on: none_',
+    '    - _Evidence: spec.md requirement 1.1; src/example.ts existing pattern_',
     '    - _Verification: npm test_',
     '~~~',
   ].join('\\n');

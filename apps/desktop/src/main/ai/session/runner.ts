@@ -192,7 +192,7 @@ export async function runAgentSession(
 ): Promise<SessionResult> {
   const { onEvent, onAuthRefresh, onModelRefresh, tools, memoryContext, onAccountSwitch, currentAccountId } = options;
   const startTime = Date.now();
-  const sessionId = crypto.randomUUID();
+  const sessionId = config.sessionId ?? crypto.randomUUID();
 
   let authRetries = 0;
   let activeConfig = config;
@@ -509,7 +509,7 @@ async function executeStream(
   const hasTools = tools != null && Object.keys(tools).length > 0;
   const useOutputSchema = config.outputSchema != null && !hasTools;
   const maxOutputTokens = resolveMaxOutputTokens(config);
-  const responsePersistence = config.responsePersistence === true;
+  const responsePersistence = config.responsePersistence === true || Boolean(config.previousResponseId);
 
   const result = streamText({
     model: config.model,
@@ -520,7 +520,7 @@ async function executeStream(
     maxOutputTokens,
     stopWhen: stopCondition,
     abortSignal: mergedAbortSignal,
-    ...((thinkingOptions || isResponsesModel || (useOutputSchema && isAnthropicModel) || promptCachingMetadata) ? {
+    ...((thinkingOptions || isResponsesModel || usesResponsesTransport || (useOutputSchema && isAnthropicModel) || promptCachingMetadata) ? {
       providerOptions: {
         ...(thinkingOptions ?? {}),
         ...(usesResponsesTransport ? {
@@ -528,6 +528,7 @@ async function executeStream(
             ...(thinkingOptions?.openai ?? {}),
             ...(config.systemPrompt ? { instructions: config.systemPrompt } : {}),
             store: responsePersistence,
+            ...(config.previousResponseId ? { previousResponseId: config.previousResponseId } : {}),
           },
         } : {}),
         ...(useOutputSchema && isAnthropicModel ? {
@@ -837,11 +838,23 @@ async function executeStream(
   // Get total usage from AI SDK result. Providers differ in field naming, so
   // normalize below instead of assuming only inputTokens/outputTokens.
   let totalUsage: unknown;
+  let providerResponseId: string | undefined;
 
   try {
     totalUsage = await withTimeout(result.totalUsage, POST_STREAM_TIMEOUT_MS, 'result.totalUsage');
   } catch (err) {
     // Fall through - use summary usage collected during stream iteration.
+  }
+
+  const providerMetadataPromise = (result as { providerMetadata?: PromiseLike<unknown> }).providerMetadata;
+  if (providerMetadataPromise) {
+    try {
+      providerResponseId = extractOpenAIResponseId(
+        await withTimeout(providerMetadataPromise, POST_STREAM_TIMEOUT_MS, 'result.providerMetadata'),
+      );
+    } catch {
+      providerResponseId = undefined;
+    }
   }
 
   const normalizedTotalUsage = normalizeTokenUsage(totalUsage);
@@ -908,6 +921,7 @@ async function executeStream(
     toolCallCount: summary.toolCallCount,
     ...(completedSubtaskIds.size > 0 ? { completedSubtaskIds: Array.from(completedSubtaskIds) } : {}),
     ...(structuredOutput ? { structuredOutput } : {}),
+    ...(providerResponseId ? { providerResponseId } : {}),
   };
 }
 
@@ -958,4 +972,16 @@ function withTimeout<T>(thenable: PromiseLike<T>, ms: number, label: string): Pr
       (error) => { clearTimeout(timer); reject(error as Error); },
     );
   });
+}
+
+function extractOpenAIResponseId(metadata: unknown): string | undefined {
+  if (!metadata || typeof metadata !== 'object') {
+    return undefined;
+  }
+  const openai = (metadata as Record<string, unknown>).openai;
+  if (!openai || typeof openai !== 'object') {
+    return undefined;
+  }
+  const responseId = (openai as Record<string, unknown>).responseId;
+  return typeof responseId === 'string' && responseId.trim() ? responseId : undefined;
 }

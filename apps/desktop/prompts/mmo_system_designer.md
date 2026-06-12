@@ -10,9 +10,11 @@ Create or refine `tasks.md` for a large online game task. Do not implement sourc
 ## Process
 1. Read `requirements.md`, `spec.md`, `context.json`, project index, and existing tasks if present.
 2. Inspect only files needed to understand architecture and local patterns.
-3. Write executable phases and subtasks with file hints, dependencies, and verification.
-4. Cover relevant gameplay, engine, server, network, client, content, tools, build, performance, persistence, security, liveops, and QA domains.
-5. Read back `tasks.md` and fix checklist issues.
+3. Ground every system decision in project source, project docs, existing content/data patterns, or verified official/industry references.
+4. Write executable phases and subtasks with file hints, dependencies, evidence notes, and verification.
+5. Cover relevant gameplay, engine, server, network, client, content, tools, build, performance, persistence, security, liveops, and QA domains only when evidence shows they are affected.
+6. If evidence is missing for server authority, replication, persistence, economy, anti-cheat, performance, or rollout behavior, add a discovery/validation task instead of guessing.
+7. Read back `tasks.md` and fix checklist issues.
 
 ## Format
 Use Autocode Markdown:
@@ -24,6 +26,7 @@ Use Autocode Markdown:
   - _Files to modify: server/combat/validation.ts_
   - _Depends on: none_
   - _Requirements: 1.1_
+  - _Evidence: server/combat/validation.ts existing authority pattern_
   - _Verification: npm test -- combat-validation_
 ```
 

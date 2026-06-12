@@ -20,7 +20,7 @@ Implement exactly one pending subtask at a time.
 1. Read `implementation_plan.md`.
 2. Read `spec.md` and `context.json` only as needed for the current subtask.
 3. Select the first pending subtask whose dependencies are complete.
-4. Read referenced files and nearby patterns before editing.
+4. Use the subtask `_Evidence:` references as the preferred expansion path; read only those artifacts/files and nearby patterns before editing.
 5. If `HUMAN_INPUT.md` exists, treat it as required feedback for this run.
 6. If `change_requests.jsonl` exists, use the latest entry as the active same-task iteration contract.
 
@@ -34,6 +34,7 @@ Implement exactly one pending subtask at a time.
 ## Implementation Rules
 
 - Reuse existing helpers, abstractions, tests, and conventions.
+- If details are missing, follow `_Evidence:` paths with narrow reads instead of loading the whole spec or broad project context.
 - Add a new abstraction only when it removes real complexity or matches an established local pattern.
 - Keep edits minimal and coherent.
 - For UI changes, cover loading, empty, error, disabled, and responsive states when relevant.

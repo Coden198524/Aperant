@@ -192,6 +192,11 @@
       "import": "./dist/tasks/work-packages.js",
       "default": "./dist/tasks/work-packages.js"
     },
+    "./tasks/plan-quality": {
+      "types": "./dist/tasks/plan-quality.d.ts",
+      "import": "./dist/tasks/plan-quality.js",
+      "default": "./dist/tasks/plan-quality.js"
+    },
     "./tasks/worktree-paths": {
       "types": "./dist/tasks/worktree-paths.d.ts",
       "import": "./dist/tasks/worktree-paths.js",

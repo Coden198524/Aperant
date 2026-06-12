@@ -40,6 +40,8 @@ export interface WorkerConfig {
  * so we pass provider/model identifiers and reconstruct in the worker.
  */
 export interface SerializableSessionConfig {
+  /** Stable local session id for same-task Direct continuations. */
+  sessionId?: string;
   agentType: SessionConfig['agentType'];
   systemPrompt: string;
   initialMessages: SessionConfig['initialMessages'];
@@ -70,6 +72,10 @@ export interface SerializableSessionConfig {
   oauthTokenFilePath?: string;
   /** Persist OpenAI Responses API state across tool-call steps. Disable for one-shot sessions. */
   responsePersistence?: boolean;
+  /** Previous OpenAI Responses id for provider-native same-session continuation. */
+  previousResponseId?: SessionConfig['previousResponseId'];
+  /** Direct mode continuation uses provider memory; avoid re-injecting bulky local context. */
+  directProviderContinuation?: boolean;
   /** MCP options resolved from project settings (serialized for worker) */
   mcpOptions?: {
     context7Enabled?: boolean;

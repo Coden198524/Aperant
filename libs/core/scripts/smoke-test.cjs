@@ -13,6 +13,74 @@ function makeChineseMojibake(value) {
   return iconvLite.decode(Buffer.from(value, 'utf8'), 'gbk');
 }
 
+function writeSmokeContext(specsPath, taskDescription) {
+  writeFileSync(
+    join(specsPath, 'context.json'),
+    JSON.stringify({
+      task_description: taskDescription,
+      scoped_services: [],
+      architecture_summary: 'Smoke test task with generated CLI artifacts.',
+      files_to_modify: [],
+      files_to_reference: [],
+      design_patterns: [],
+      implementation_notes: ['Validate generated planning artifacts.'],
+      risks: [],
+      verification_suggestions: ['Run core smoke test.'],
+      evidence_sources: [{
+        path: 'libs/core/scripts/smoke-test.cjs',
+        symbol: 'smoke-test',
+        lines: '1-2600',
+        proves: 'Smoke test defines the expected CLI planning behavior.',
+        confidence: 'high',
+      }],
+      created_at: '2026-01-01T00:00:00.000Z',
+    }, null, 2),
+    'utf8',
+  );
+}
+
+function writeSmokeRequirements(specsPath, taskDescription, evidenceLabel) {
+  writeFileSync(
+    join(specsPath, 'requirements.md'),
+    [
+      '# Requirements',
+      '',
+      '## Task Description',
+      taskDescription,
+      '',
+      '## Workflow Type',
+      'feature',
+      '',
+      '## Services Involved',
+      '- None',
+      '',
+      '## User Requirements',
+      `- ${taskDescription}`,
+      '',
+      '## Acceptance Criteria',
+      '- Generated planning artifacts pass validation.',
+      '',
+      '## Constraints',
+      '- Keep smoke test artifacts compact.',
+      '',
+      '## Evidence Sources',
+      `- requirements.md ${evidenceLabel}`,
+      '- context.json libs/core/scripts/smoke-test.cjs',
+      '',
+      '## Standards References',
+      '- Project smoke-test conventions',
+      '',
+      '## Assumptions',
+      '- None',
+      '',
+      '## Created At',
+      '2026-01-01T00:00:00.000Z',
+      '',
+    ].join('\n'),
+    'utf8',
+  );
+}
+
 async function main() {
   const core = await import('../dist/index.js');
   const projectRoot = mkdtempSync(join(tmpdir(), 'autocode-core-smoke-'));
@@ -82,6 +150,18 @@ async function main() {
         sourceType: 'manual',
       }),
       ['1.2 missing _Depends on: ..._ metadata', '1.2 missing _Verification: ..._ metadata'],
+    );
+    assert.deepEqual(
+      core.validateAutocodePlanningSchedulingMetadata({
+        phases: [{
+          subtasks: [
+            { id: '1.1', status: 'pending', depends_on: [], verification: 'npm test' },
+          ],
+        }],
+      }, {
+        requireEvidence: true,
+      }),
+      ['1.1 missing _Evidence: ..._ metadata'],
     );
     assert.match(
       core.buildAutocodePlanningStructuredOutputValidationRetryPrompt(['bad tasks.md']),
@@ -562,9 +642,84 @@ async function main() {
     const requirements = core.loadAutocodeTaskRequirementsSync(task.specsPath);
     assert.equal(requirements.task_description, 'Create provider account settings shared by desktop and VS Code.');
     assert.equal(requirements.workflow_type, 'feature');
+    assert.deepEqual(requirements.evidence_sources, ['User task description']);
+    assert.deepEqual(requirements.standards_references, []);
+    assert.deepEqual(requirements.assumptions, []);
     assert.deepEqual(requirements.attached_images, [
       { filename: 'settings.png', path: 'attachments/settings.png', description: '' },
     ]);
+    const evidenceRequirementsMarkdown = core.stringifyAutocodeTaskRequirementsMarkdown({
+      task_description: 'Add settings',
+      workflow_type: 'feature',
+      evidence_sources: ['src/settings.ts - current settings pattern'],
+      standards_references: ['Project AGENTS.md'],
+      assumptions: ['No external provider migration is required'],
+    });
+    const evidenceRequirements = core.parseAutocodeTaskRequirementsMarkdown(evidenceRequirementsMarkdown);
+    assert.deepEqual(evidenceRequirements.evidence_sources, ['src/settings.ts - current settings pattern']);
+    assert.deepEqual(evidenceRequirements.standards_references, ['Project AGENTS.md']);
+    assert.deepEqual(evidenceRequirements.assumptions, ['No external provider migration is required']);
+    const structuredEvidence = core.normalizeAutocodeContextEvidenceSources([
+      {
+        path: 'src/settings.ts',
+        symbol: 'SettingsStore',
+        lines: '10-44',
+        proves: 'Settings are persisted through the shared store.',
+        confidence: 'high',
+      },
+    ]);
+    assert.deepEqual(structuredEvidence[0], {
+      path: 'src/settings.ts',
+      symbol: 'SettingsStore',
+      lines: '10-44',
+      proves: 'Settings are persisted through the shared store.',
+      confidence: 'high',
+    });
+    assert.equal(core.isTraceableAutocodeEvidence('context.json evidence src/settings.ts SettingsStore'), true);
+    const planQuality = core.validateAutocodeStandardPlanArtifacts({
+      specMarkdown: [
+        '# Specification: Settings',
+        '',
+        '## Design Notes',
+        '- Reuse settings store - Evidence: context.json src/settings.ts SettingsStore',
+        '',
+        '## Requirements',
+        '1. Persist settings',
+        '   - Acceptance: settings survive reload',
+        '   - Evidence: requirements.md Evidence Sources',
+        '',
+        '## Evidence',
+        '- context.json src/settings.ts SettingsStore',
+      ].join('\n'),
+      requirementsMarkdown: [
+        '# Requirements',
+        '',
+        '## Evidence Sources',
+        '- src/settings.ts - current settings store',
+      ].join('\n'),
+      tasksMarkdown: [
+        '# Tasks',
+        '',
+        '- [ ] 1. Implementation',
+        '',
+        '  - [ ] 1.1 Persist settings',
+        '    - _Depends on: none_',
+        '    - _Evidence: context.json src/settings.ts SettingsStore_',
+        '    - _Verification: npm test -- settings_',
+      ].join('\n'),
+      contextJson: {
+        architecture_summary: 'Settings store owns persistence.',
+        evidence_sources: structuredEvidence,
+      },
+      requireSpecEvidence: true,
+      requireRequirementsEvidence: true,
+      requireTaskEvidence: true,
+      requireContextEvidence: true,
+    });
+    assert.equal(planQuality.valid, true);
+    assert.ok(core.validateAutocodeStandardPlanArtifacts({
+      specMarkdown: Array.from({ length: 151 }, (_, index) => `line ${index}`).join('\n'),
+    }).errors.some((error) => error.includes('spec.md is too large')));
     const taskMetadata = JSON.parse(readFileSync(join(task.specsPath, 'task_metadata.json'), 'utf8'));
     assert.equal(taskMetadata.taskTitle, 'Add provider settings');
     assert.equal(core.normalizeAutocodeTaskDevelopmentMode('fast'), null);
@@ -641,18 +796,38 @@ async function main() {
       '  - [ ] 1.1 Inspect without edits',
       '    - _Files to modify: none_',
       '    - _Depends on: none_',
+      '    - _Evidence: requirements.md read-only validation task_',
       '    - _Verification: manual check_',
       '',
     ].join('\n'));
     const noneMetadataSubtask = noneMetadataPlan.phases[0].subtasks[0];
     assert.deepEqual(noneMetadataSubtask.files_to_modify, []);
     assert.deepEqual(noneMetadataSubtask.depends_on, []);
+    assert.equal(noneMetadataSubtask.evidence, 'requirements.md read-only validation task');
     assert.equal(Object.prototype.hasOwnProperty.call(noneMetadataSubtask, 'files_to_modify'), true);
     assert.equal(Object.prototype.hasOwnProperty.call(noneMetadataSubtask, 'depends_on'), true);
     const noneMetadataMarkdown = core.stringifyAutocodeImplementationPlanMarkdown(noneMetadataPlan);
     assert.match(noneMetadataMarkdown, /_Files to modify: none_/);
     assert.match(noneMetadataMarkdown, /_Depends on: none_/);
+    assert.match(noneMetadataMarkdown, /_Evidence: requirements\.md read-only validation task_/);
     assert.deepEqual(core.normalizeAutocodeWorkDependencyIds(['none', '\u65e0\u4f9d\u8d56', '1.1']), ['1.1']);
+
+    assert.throws(
+      () => core.buildAutocodeRuntimeImplementationPlanFromTasksMarkdown([
+        '# Tasks',
+        '',
+        '- [ ] 1. Implementation',
+        '',
+        '  - [ ] 1.1 Missing evidence',
+        '    - _Depends on: none_',
+        '    - _Verification: manual check_',
+        '',
+      ].join('\n'), {
+        now: '2026-01-02T03:04:00.000Z',
+        requireTaskEvidence: true,
+      }),
+      /missing traceable _Evidence: \.\.\._ metadata/,
+    );
 
     const specRuntimePlan = core.createAutocodeAgentRuntimeStartPlan({
       projectRoot,
@@ -1521,8 +1696,26 @@ async function main() {
     });
     writeFileSync(
       join(retryTask.specsPath, 'spec.md'),
-      '# Retry Missing Subtasks Spec\n\nThe implementation plan must be repaired by the CLI runner.\n',
+      [
+        '# Retry Missing Subtasks Spec',
+        '',
+        '## Requirements',
+        '- The implementation plan must be repaired by the CLI runner. Evidence: requirements.md retry validation requirement.',
+        '',
+        '## Design Notes',
+        '- Retry should produce one executable subtask. Evidence: requirements.md retry validation requirement.',
+        '',
+        '## Evidence',
+        '- requirements.md retry validation requirement.',
+        '',
+      ].join('\n'),
       'utf8',
+    );
+    writeSmokeContext(retryTask.specsPath, 'Exercise CLI planning retry when no executable subtasks are written.');
+    writeSmokeRequirements(
+      retryTask.specsPath,
+      'Exercise CLI planning retry when no executable subtasks are written.',
+      'retry validation requirement',
     );
     const retryRuntime = core.createStartedAutocodeAgentRuntime({
       projectRoot,
@@ -1565,8 +1758,26 @@ async function main() {
     });
     writeFileSync(
       join(codexUsageTask.specsPath, 'spec.md'),
-      '# Track Codex CLI Usage Spec\n\nThe fake Codex CLI should generate a plan and usage data.\n',
+      [
+        '# Track Codex CLI Usage Spec',
+        '',
+        '## Requirements',
+        '- The fake Codex CLI should generate a plan and usage data. Evidence: requirements.md Codex CLI usage requirement.',
+        '',
+        '## Design Notes',
+        '- Persist token usage from Codex JSON events. Evidence: requirements.md Codex CLI usage requirement.',
+        '',
+        '## Evidence',
+        '- requirements.md Codex CLI usage requirement.',
+        '',
+      ].join('\n'),
       'utf8',
+    );
+    writeSmokeContext(codexUsageTask.specsPath, 'Exercise Codex JSON usage accounting without a token_count event.');
+    writeSmokeRequirements(
+      codexUsageTask.specsPath,
+      'Exercise Codex JSON usage accounting without a token_count event.',
+      'Codex CLI usage requirement',
     );
     const codexUsageRuntime = core.createStartedAutocodeAgentRuntime({
       projectRoot,
@@ -2106,6 +2317,7 @@ writeFileSync(
     '    - Verify usage events update plan metadata and task logs.',
     '    - _Files: libs/core/src/tasks/cli-runner.ts_',
     '    - _Depends on: none_',
+    '    - _Evidence: requirements.md Codex CLI usage requirement_',
     '    - _Verification: npm --workspace @autocode/core run smoke_',
     '',
   ].join('\\n'),
@@ -2203,8 +2415,14 @@ if (prompt.includes('Create initial spec artifacts') || prompt.includes('Create 
     [
       '# Fake Custom CLI Spec',
       '',
-      '## Overview',
-      'Generated by the smoke-test fake custom CLI.',
+      '## Requirements',
+      '- Generated by the smoke-test fake custom CLI. Evidence: requirements.md fake lifecycle requirement.',
+      '',
+      '## Design Notes',
+      '- Validate returned artifacts before coding. Evidence: requirements.md fake lifecycle requirement.',
+      '',
+      '## Evidence',
+      '- requirements.md fake lifecycle requirement.',
       '',
     ].join('\\n'),
     'utf8',
@@ -2278,6 +2496,7 @@ function writeTasks() {
       '    - _Files: src/fake-flow.ts_',
       '    - _Depends on: none_',
       '    - _Requirements: 1.1_',
+      '    - _Evidence: requirements.md fake lifecycle requirement_',
       '    - _Verification: fake CLI smoke check_',
       '',
       '  - [ ] 1.2 Verify fake lifecycle',
@@ -2285,6 +2504,7 @@ function writeTasks() {
       '    - _Files: src/fake-flow.test.ts_',
       '    - _Depends on: 1.1_',
       '    - _Requirements: 1.2_',
+      '    - _Evidence: requirements.md fake lifecycle verification criterion_',
       '    - _Verification: fake CLI smoke check_',
       '',
     ].join('\\n'),
@@ -2334,6 +2554,7 @@ writeFileSync(
     '    - Replace the invalid top-level-only plan with an executable subtask.',
     '    - _Files to modify: implementation_plan.md_',
     '    - _Depends on: none_',
+    '    - _Evidence: requirements.md retry validation error required executable subtask_',
     '    - _Verification: npm --workspace @autocode/core run smoke_',
     '',
   ].join('\\n'),
@@ -2354,4 +2575,3 @@ main().catch((error) => {
   console.error(error);
   process.exit(1);
 });
-
