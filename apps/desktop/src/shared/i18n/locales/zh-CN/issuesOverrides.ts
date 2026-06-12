@@ -134,10 +134,10 @@ export const zhCNIssuesOverrides = {
       progress: {
         fetchingIssue: '正在获取问题 #{{issueNumber}}...',
         analyzingIssue: '正在分析问题...',
-        creatingSpec: '正在根据问题创建规格...',
-        startingSpecCreation: '正在启动规格创建...',
-        started: '自动修复规格创建已启动！',
-        specReady: '规格目录已创建。点击“开始”继续。'
+        creatingSpec: '正在根据问题创建标准规划...',
+        startingSpecCreation: '正在启动标准规划...',
+        started: '自动修复标准规划已启动！',
+        specReady: '标准规划目录已创建。点击“开始”继续。'
       }
     }
   }

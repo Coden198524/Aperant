@@ -119,7 +119,7 @@ const CONTENT_TYPES: Record<string, string> = {
   '.svg': 'image/svg+xml',
 };
 
-const WEB_TASK_DEVELOPMENT_MODES = new Set<AutocodeTaskDevelopmentMode>(['direct', 'standard', 'spec']);
+const WEB_TASK_DEVELOPMENT_MODES = new Set<AutocodeTaskDevelopmentMode>(['direct', 'standard']);
 const WEB_TASK_CATEGORIES = new Set<AutocodeTaskCategory>([
   'feature',
   'bug_fix',
@@ -1991,7 +1991,7 @@ function createTaskMetadata(body: CreateWebTaskRequest): AutocodeTaskMetadata {
 function normalizeDevelopmentMode(value: unknown): AutocodeTaskDevelopmentMode {
   return WEB_TASK_DEVELOPMENT_MODES.has(value as AutocodeTaskDevelopmentMode)
     ? value as AutocodeTaskDevelopmentMode
-    : 'direct';
+    : 'standard';
 }
 
 function isSetValue<T extends string>(value: unknown, allowedValues: Set<T>): value is T {

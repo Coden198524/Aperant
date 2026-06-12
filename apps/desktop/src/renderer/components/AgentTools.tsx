@@ -103,9 +103,9 @@ function getThinkingLabel(level: ThinkingLevel): string {
 }
 
 const AGENT_CONFIGS: Record<string, AgentConfig> = {
-  // Spec Creation Phases - all use 'spec' phase settings
+  // Standard planning phases - all use the planning-doc phase settings.
   spec_gatherer: {
-    label: 'Spec Gatherer',
+    label: 'Requirements Gatherer',
     description: 'Collects initial requirements from user',
     category: 'spec',
     tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
@@ -113,7 +113,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     settingsSource: { type: 'phase', phase: 'spec' },
   },
   spec_researcher: {
-    label: 'Spec Researcher',
+    label: 'Integration Researcher',
     description: 'Validates external integrations and APIs',
     category: 'spec',
     tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
@@ -121,15 +121,15 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     settingsSource: { type: 'phase', phase: 'spec' },
   },
   spec_writer: {
-    label: 'Spec Writer',
-    description: 'Creates the spec.md document',
+    label: 'Standard Plan Writer',
+    description: 'Creates the Standard planning documents',
     category: 'spec',
     tools: ['Read', 'Glob', 'Grep', 'Write', 'Edit', 'Bash'],
     mcp_servers: [],
     settingsSource: { type: 'phase', phase: 'spec' },
   },
   spec_critic: {
-    label: 'Spec Critic',
+    label: 'Planning Critic',
     description: 'Self-critique using deep analysis',
     category: 'spec',
     tools: ['Read', 'Glob', 'Grep'],
@@ -137,7 +137,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     settingsSource: { type: 'phase', phase: 'spec' },
   },
   spec_discovery: {
-    label: 'Spec Discovery',
+    label: 'Project Discovery',
     description: 'Initial project discovery and analysis',
     category: 'spec',
     tools: ['Read', 'Glob', 'Grep', 'WebFetch', 'WebSearch'],
@@ -145,7 +145,7 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     settingsSource: { type: 'phase', phase: 'spec' },
   },
   spec_context: {
-    label: 'Spec Context',
+    label: 'Codebase Context',
     description: 'Builds context from existing codebase',
     category: 'spec',
     tools: ['Read', 'Glob', 'Grep'],
@@ -153,8 +153,8 @@ const AGENT_CONFIGS: Record<string, AgentConfig> = {
     settingsSource: { type: 'phase', phase: 'spec' },
   },
   spec_validation: {
-    label: 'Spec Validation',
-    description: 'Validates spec completeness and quality',
+    label: 'Planning Validation',
+    description: 'Validates planning completeness and quality',
     category: 'spec',
     tools: ['Read', 'Glob', 'Grep'],
     mcp_servers: [],
@@ -381,7 +381,7 @@ const BUILTIN_MCP_SERVER_SET = new Set<string>(ALL_MCP_SERVERS);
 
 // Category metadata - neutral styling per design.json
 const CATEGORIES = {
-  spec: { label: 'Spec Creation', icon: FileCheck },
+  spec: { label: 'Standard Planning', icon: FileCheck },
   build: { label: 'Build', icon: Code },
   qa: { label: 'QA', icon: CheckCircle2 },
   utility: { label: 'Utility', icon: Wrench },
@@ -743,9 +743,9 @@ export function AgentTools() {
   });
   const categoryLabels = {
     spec: getLocalizedStaticText(i18n.language, {
-      en: 'Spec Creation',
-      fr: 'Creation de spec',
-      'zh-CN': '规格创建'
+      en: 'Standard Planning',
+      fr: 'Planification Standard',
+      'zh-CN': '标准规划'
     }),
     build: getLocalizedStaticText(i18n.language, {
       en: 'Build',

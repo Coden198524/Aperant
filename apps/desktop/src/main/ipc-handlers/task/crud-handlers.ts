@@ -5,7 +5,6 @@ import {
   buildAutocodeTaskModeMetadata,
   createAutocodeProjectDocumentationTask,
   createManualAutocodeTask,
-  createManualAutocodeTaskWithDeferredOpenSpecArtifacts,
   getAutocodeRoadmapFilePath,
   getAutocodeSpecDir,
   isAutocodeProjectDocType,
@@ -185,9 +184,6 @@ const TASK_MODE_METADATA_KEYS = new Set([
   'workflowMode',
   'sourceType',
   'runtimeConcurrency',
-  'openSpecGenerationMode',
-  'upstreamSpecSystem',
-  'downstreamExecutionSystem',
 ]);
 
 function hasOwnMetadataKey(metadata: Partial<TaskMetadata>, key: string): boolean {
@@ -197,11 +193,8 @@ function hasOwnMetadataKey(metadata: Partial<TaskMetadata>, key: string): boolea
 function isManagedTaskModeMetadata(metadata: TaskMetadata | undefined): boolean {
   return (
     metadata?.developmentMode === 'direct' ||
-    metadata?.developmentMode === 'fast' ||
     metadata?.developmentMode === 'standard' ||
-    metadata?.developmentMode === 'spec' ||
-    metadata?.sourceType === 'manual' ||
-    metadata?.sourceType === 'openspec'
+    metadata?.sourceType === 'manual'
   );
 }
 
@@ -363,17 +356,14 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
         finalTitle = await generateTitleWithFallback(description, 'TASK_CREATE', resolveTaskLanguage(metadata));
       }
 
-      const requestedMode = resolveAutocodeTaskDevelopmentMode(metadata as AutocodeTaskMetadata | undefined);
-      const taskMetadata = buildAutocodeTaskModeMetadata(requestedMode, {
+      const resolvedMode = resolveAutocodeTaskDevelopmentMode(metadata as AutocodeTaskMetadata | undefined);
+      const taskMetadata = buildAutocodeTaskModeMetadata(resolvedMode, {
         ...metadata,
         language: resolveTaskLanguage(metadata),
       } as AutocodeTaskMetadata) as TaskMetadata;
 
       try {
-        const createCoreTask = requestedMode === 'spec'
-          ? createManualAutocodeTaskWithDeferredOpenSpecArtifacts
-          : createManualAutocodeTask;
-        const coreTask = createCoreTask({
+        const coreTask = createManualAutocodeTask({
           projectRoot: project.path,
           dataDirName: project.autoBuildPath || AUTOCODE_PROJECT_DATA_DIR_NAME,
           title: finalTitle,

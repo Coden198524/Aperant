@@ -21,8 +21,6 @@ export interface AutocodeTaskRuntimeConcurrencyResolved {
 export interface ResolveAutocodeTaskRuntimeConcurrencyInput {
   developmentMode?: AutocodeTaskDevelopmentMode | string;
   workflowMode?: AutocodeTaskWorkflowMode | string;
-  sourceType?: string;
-  upstreamSpecSystem?: string;
   runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyMetadata;
 }
 
@@ -70,20 +68,13 @@ function getDefaultRuntimeWorkers(
   if (isDirectRuntimeMode(metadata)) {
     return 1;
   }
-  if (
-    metadata?.developmentMode === 'spec' ||
-    metadata?.sourceType === 'openspec' ||
-    metadata?.upstreamSpecSystem === 'openspec'
-  ) {
-    return 5;
-  }
   return 2;
 }
 
 function isDirectRuntimeMode(
   metadata: ResolveAutocodeTaskRuntimeConcurrencyInput | null | undefined,
 ): boolean {
-  return metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
+  return metadata?.developmentMode === 'direct' || metadata?.workflowMode === 'off';
 }
 
 function shouldUseDefaultRuntimeConcurrency(

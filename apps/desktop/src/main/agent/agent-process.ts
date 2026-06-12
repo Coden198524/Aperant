@@ -827,7 +827,7 @@ export class AgentProcessManager {
       phase: currentPhase,
       phaseProgress: 0,
       overallProgress: this.events.calculateOverallProgress(currentPhase, 0),
-      message: isSpecRunner ? 'Starting spec creation...' : 'Starting build process...',
+      message: isSpecRunner ? 'Starting Standard planning...' : 'Starting build process...',
       sequenceNumber: ++sequenceNumber,
       completedPhases: [...completedPhases]
     }, projectId);

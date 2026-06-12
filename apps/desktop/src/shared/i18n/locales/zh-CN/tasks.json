@@ -232,11 +232,8 @@
     "saveBaseBranch": "保存",
     "developmentMode": {
       "direct": "直连",
-      "fast": "直连",
-      "standard": "标准",
-      "spec": "Spec"
+      "standard": "标准"
     },
-    "fastMode": "直连",
     "severity": "严重程度",
     "pullRequest": "拉取请求",
     "showMore": "显示更多",
@@ -401,23 +398,13 @@
       "recommended": "推荐",
       "direct": {
         "title": "Direct 直连模式",
-        "description": "单次直连所选大模型编码，跳过 OpenSpec、分阶段规划和 QA。",
-        "performance": "最接近直接使用大模型本身，适合小改动或目标明确的任务。"
-      },
-      "fast": {
-        "title": "Direct 直连模式",
-        "description": "单次直连所选大模型编码，跳过 OpenSpec、分阶段规划和 QA。",
+        "description": "单次直连所选大模型编码，跳过分阶段规划和 QA。",
         "performance": "最接近直接使用大模型本身，适合小改动或目标明确的任务。"
       },
       "standard": {
         "title": "Standard 标准模式",
-        "description": "使用 Autocode 轻量规格和实现计划，不生成 OpenSpec 上游文档。",
-        "performance": "适合大多数开发任务，在速度和结构之间平衡。"
-      },
-      "spec": {
-        "title": "Spec 模式",
-        "description": "执行前生成 OpenSpec proposal、design、tasks 和 spec delta。",
-        "performance": "适合复杂、高风险或产品规格需要追踪的改动。"
+        "description": "使用 Autocode 规划需求、设计要点、任务清单、实现计划和 QA。",
+        "performance": "适合可靠迭代开发的需求到任务结构化流程。"
       }
     },
     "workflowOptimization": {

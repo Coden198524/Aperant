@@ -11,7 +11,7 @@
  */
 import { useRef, useState, useEffect, type ReactNode } from 'react';
 import { useTranslation } from 'react-i18next';
-import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, FileText, ListChecks, Sparkles, Loader2, Zap } from 'lucide-react';
+import { ChevronDown, ChevronUp, Image as ImageIcon, X, Camera, ListChecks, Sparkles, Loader2, Zap } from 'lucide-react';
 import { Label } from '../ui/label';
 import { Input } from '../ui/input';
 import { Textarea } from '../ui/textarea';
@@ -592,7 +592,6 @@ export function TaskFormFields({
               {([
                 { mode: 'direct' as const, icon: Zap },
                 { mode: 'standard' as const, icon: ListChecks },
-                { mode: 'spec' as const, icon: FileText },
               ]).map(({ mode, icon: Icon }) => (
                 <button
                   key={mode}

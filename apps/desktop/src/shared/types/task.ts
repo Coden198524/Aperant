@@ -200,9 +200,8 @@ export type TaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 'complex
 export type TaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type TaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
-export type TaskDevelopmentMode = 'direct' | 'standard' | 'spec';
-export type LegacyTaskDevelopmentMode = 'fast';
-export type TaskDevelopmentModeMetadata = TaskDevelopmentMode | LegacyTaskDevelopmentMode;
+export type TaskDevelopmentMode = 'direct' | 'standard';
+export type TaskDevelopmentModeMetadata = TaskDevelopmentMode;
 export type ProjectDocumentType = 'full' | 'product' | 'architecture' | 'technical';
 export type TaskRuntimeConcurrencyMode = 'serial' | 'concurrent';
 export type TaskRuntimeConcurrencyUnit = 'work_item';
@@ -231,7 +230,7 @@ export type TaskCategory =
 
 export interface TaskMetadata {
   // Origin tracking
-  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
+  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
   taskTitle?: string;  // Stable user-facing task title; implementation plans must not overwrite it
   developmentMode?: TaskDevelopmentModeMetadata;
   ideationType?: string;  // e.g., 'code_improvements', 'security_hardening'
@@ -280,16 +279,6 @@ export interface TaskMetadata {
   projectDocumentType?: ProjectDocumentType;
   projectDocumentOutputDir?: string;
   projectDocumentOutputs?: string[];
-  openSpecChangeId?: string;
-  openSpecChangeDir?: string;
-  openSpecProposalPath?: string;
-  openSpecDesignPath?: string;
-  openSpecTasksPath?: string;
-  openSpecSpecDeltaPaths?: string[];
-  openSpecGenerationMode?: 'ai' | 'template' | 'deferred';
-  openSpecValidationCommand?: string;
-  upstreamSpecSystem?: 'openspec';
-  downstreamExecutionSystem?: 'autocode';
 
   // Image attachments (screenshots, mockups, diagrams)
   attachedImages?: ImageAttachment[];

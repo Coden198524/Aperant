@@ -18,9 +18,8 @@ import { ScrollArea } from '../ui/scroll-area';
 import { Button } from '../ui/button';
 import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
 import { cn } from '../../lib/utils';
-import { useProjectStore } from '../../stores/project-store';
 import { useSettingsStore } from '../../stores/settings-store';
-import type { Task, TaskMetadata } from '../../../shared/types';
+import type { Task } from '../../../shared/types';
 import type { FileNode } from '../../../shared/types/project';
 
 interface TaskFilesProps {
@@ -47,7 +46,7 @@ type FileContextMenuState = {
 };
 type JsonValue = string | number | boolean | null | JsonValue[] | { [key: string]: JsonValue };
 type ParsedJson = { value: JsonValue; error?: never } | { value?: never; error: string };
-type TaskFileNode = FileNode & { source?: 'autocode' | 'openspec' };
+type TaskFileNode = FileNode;
 
 // Get icon for file type
 function getFileIcon(filename: string) {
@@ -62,82 +61,6 @@ function getFileKind(filename: string | null): FileKind {
   if (filename.endsWith('.json')) return 'json';
   if (filename.endsWith('.md')) return 'markdown';
   return 'text';
-}
-
-function toAbsoluteProjectPath(projectRoot: string, relativePath: string): string {
-  const separator = projectRoot.includes('\\') ? '\\' : '/';
-  const root = projectRoot.replace(/[\\/]+$/, '');
-  const relative = relativePath.replace(/[\\/]+/g, separator);
-  return `${root}${separator}${relative}`;
-}
-
-function inferProjectRootFromSpecsPath(specsPath?: string): string | undefined {
-  if (!specsPath?.trim()) {
-    return undefined;
-  }
-
-  const usesBackslash = specsPath.includes('\\');
-  const normalized = specsPath.trim().replace(/[\\/]+$/, '').replace(/\\/g, '/');
-  const match = /^(.*)\/[^/]+\/specs\/[^/]+$/.exec(normalized);
-  if (!match?.[1]) {
-    return undefined;
-  }
-
-  return usesBackslash ? match[1].replace(/\//g, '\\') : match[1];
-}
-
-function getTaskMetadataPath(specsPath: string): string {
-  const separator = specsPath.includes('\\') ? '\\' : '/';
-  return `${specsPath.replace(/[\\/]+$/, '')}${separator}task_metadata.json`;
-}
-
-function isTaskMetadata(value: unknown): value is TaskMetadata {
-  return Boolean(value && typeof value === 'object' && !Array.isArray(value));
-}
-
-async function loadLatestTaskMetadata(specsPath: string, fallback?: TaskMetadata): Promise<TaskMetadata | undefined> {
-  const result = await window.electronAPI.readFile(getTaskMetadataPath(specsPath));
-  if (!result.success || typeof result.data !== 'string') {
-    return fallback;
-  }
-
-  try {
-    const parsed = JSON.parse(result.data) as unknown;
-    return isTaskMetadata(parsed)
-      ? { ...fallback, ...parsed }
-      : fallback;
-  } catch {
-    return fallback;
-  }
-}
-
-function getOpenSpecArtifactFiles(metadata: TaskMetadata | undefined, projectRoot?: string): TaskFileNode[] {
-  if (
-    !projectRoot ||
-    (metadata?.upstreamSpecSystem !== 'openspec' && metadata?.sourceType !== 'openspec')
-  ) {
-    return [];
-  }
-
-  const changeDir = metadata.openSpecChangeDir?.trim();
-  const entries = [
-    { label: 'OpenSpec proposal.md', relativePath: metadata.openSpecProposalPath || (changeDir ? `${changeDir}/proposal.md` : undefined) },
-    { label: 'OpenSpec design.md', relativePath: metadata.openSpecDesignPath || (changeDir ? `${changeDir}/design.md` : undefined) },
-    { label: 'OpenSpec tasks.md', relativePath: metadata.openSpecTasksPath || (changeDir ? `${changeDir}/tasks.md` : undefined) },
-    ...(metadata.openSpecSpecDeltaPaths ?? []).map((relativePath, index) => ({
-      label: index === 0 ? 'OpenSpec spec.md' : `OpenSpec spec ${index + 1}.md`,
-      relativePath,
-    })),
-  ];
-
-  return entries
-    .filter((entry): entry is { label: string; relativePath: string } => Boolean(entry.relativePath))
-    .map((entry) => ({
-      name: entry.label,
-      path: toAbsoluteProjectPath(projectRoot, entry.relativePath),
-      isDirectory: false,
-      source: 'openspec',
-    }));
 }
 
 function getJsonSummary(value: JsonValue): string {
@@ -252,9 +175,6 @@ function SourceContent({ content }: { content: string }) {
 export function TaskFiles({ task }: TaskFilesProps) {
   const { t } = useTranslation(['tasks']);
   const { settings } = useSettingsStore();
-  const projectRoot = useProjectStore((state) =>
-    state.projects.find((project) => project.id === task.projectId)?.path
-  );
 
   // State for file listing
   const [files, setFiles] = useState<TaskFileNode[]>([]);
@@ -298,19 +218,13 @@ export function TaskFiles({ task }: TaskFilesProps) {
         return a.name.localeCompare(b.name);
       });
 
-      const latestMetadata = await loadLatestTaskMetadata(task.specsPath, task.metadata);
-      const effectiveProjectRoot = projectRoot ?? inferProjectRootFromSpecsPath(task.specsPath);
-      const openSpecFiles = getOpenSpecArtifactFiles(latestMetadata, effectiveProjectRoot);
-      setFiles([
-        ...filteredFiles.map((file) => ({ ...file, source: 'autocode' as const })),
-        ...openSpecFiles,
-      ]);
+      setFiles(filteredFiles);
     } catch (err) {
       setFilesError(err instanceof Error ? err.message : 'Unknown error');
     } finally {
       setIsLoadingFiles(false);
     }
-  }, [projectRoot, task]);
+  }, [task]);
 
   // Load file content
   const loadFileContent = useCallback(async (filePath: string) => {
@@ -684,15 +598,8 @@ export function TaskFiles({ task }: TaskFilesProps) {
                   )}
                 >
                   {getFileIcon(file.name)}
-                  <span className="flex min-w-0 flex-1 flex-col">
-                    <span className="truncate text-xs font-medium">
-                      {file.name}
-                    </span>
-                    {file.source === 'openspec' && (
-                      <span className="truncate text-[10px] text-muted-foreground">
-                        OpenSpec
-                      </span>
-                    )}
+                  <span className="min-w-0 flex-1 truncate text-xs font-medium">
+                    {file.name}
                   </span>
                   {selectedFile === file.path && (
                     <ChevronRight className="h-3 w-3 text-muted-foreground" />

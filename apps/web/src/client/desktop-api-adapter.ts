@@ -112,6 +112,23 @@ type TerminalExitListener = (id: string, exitCode: number) => void;
 type TerminalTitleListener = (id: string, title: string) => void;
 type WebChangeRequestScope = 'planning' | 'implementation';
 type WebChangeRequestImpact = 'requirements' | 'design' | 'tasks' | 'implementation' | 'validation';
+type WebChangeRequestFlowDocument =
+  | 'HUMAN_INPUT.md'
+  | 'change_requests.jsonl'
+  | 'spec.md'
+  | 'requirements.md'
+  | 'tasks.md'
+  | 'implementation_plan.md'
+  | 'qa_report.md'
+  | 'direct_summary.md';
+
+interface WebChangeRequestIterationPlan {
+  mode: 'standard-planning' | 'standard-implementation' | 'direct-implementation';
+  flowDocuments: WebChangeRequestFlowDocument[];
+  requiredActions: string[];
+  validation: string[];
+  commitPolicy: string;
+}
 interface TaskLogsWatcher {
   projectId: string;
   specId: string;
@@ -1078,6 +1095,7 @@ async function persistWebChangeRequest(
     taskTitle: task.title,
     scope,
     impacts,
+    iteration: buildWebChangeRequestIterationPlan(task, impacts, scope),
     feedback: normalizedFeedback,
     attachments: summarizeWebReviewAttachments(images),
   };
@@ -1097,12 +1115,12 @@ function classifyWebChangeRequestImpact(
   const impacts = new Set<WebChangeRequestImpact>();
   if (scope === 'planning') {
     impacts.add('requirements');
+    impacts.add('design');
     impacts.add('tasks');
     impacts.add('validation');
   } else {
     impacts.add('implementation');
   }
-  if (isWebSpecTask(task)) impacts.add('design');
   if (/\b(requirement|acceptance|behavior|flow|rule|feature|scenario)\b/i.test(feedback) || /需求|验收|行为|流程|规则|新增|场景|逻辑/.test(feedback)) impacts.add('requirements');
   if (/\b(design|architecture|api|schema|protocol|state machine|interface)\b/i.test(feedback) || /设计|架构|接口|协议|状态机|数据结构/.test(feedback)) impacts.add('design');
   if (/\b(plan|task|subtask|work package|split|checklist)\b/i.test(feedback) || /计划|任务|子任务|工作包|拆分|清单/.test(feedback)) impacts.add('tasks');
@@ -1123,9 +1141,80 @@ function shouldWebRegeneratePlanForFeedback(
 ): boolean {
   if (isWebDirectTask(task)) return false;
   if (impacts.some((impact) => impact === 'requirements' || impact === 'design' || impact === 'tasks')) {
-    return isWebSpecTask(task) || isWebStandardTask(task);
+    return isWebStandardTask(task);
   }
   return isWebStandardTask(task) && !webFeedbackRequiresImplementationRestart(feedback);
+}
+
+function buildWebChangeRequestIterationPlan(
+  task: Task,
+  impacts: WebChangeRequestImpact[],
+  scope: WebChangeRequestScope,
+): WebChangeRequestIterationPlan {
+  const documents = new Set<WebChangeRequestFlowDocument>(['HUMAN_INPUT.md', CHANGE_REQUESTS_LOG_FILE]);
+  const actions = new Set<string>();
+  const validation = new Set<string>();
+
+  if (isWebStandardTask(task)) {
+    documents.add('implementation_plan.md');
+    actions.add('Keep this as the same Standard task iteration; do not create a new task for the follow-up requirement.');
+    actions.add('Update changed flow documents before starting the coding pass.');
+    actions.add('Preserve completed work that still satisfies the updated requirement, and reset only affected work to pending with needs_revision notes.');
+    actions.add('Add or adjust verification metadata for every new or revised task.');
+    validation.add('Run the smallest reliable targeted validation for the affected area.');
+    validation.add('Record validation results in the implementation plan completion note or QA report.');
+
+    if (scope === 'planning' || impacts.includes('requirements') || impacts.includes('design')) {
+      documents.add('spec.md');
+      documents.add('requirements.md');
+      actions.add('Revise requirements, acceptance criteria, constraints, risks, and open questions before regenerating runtime work.');
+    }
+    if (scope === 'planning' || impacts.includes('tasks')) {
+      documents.add('tasks.md');
+      actions.add('Regenerate tasks.md incrementally, keeping unaffected checklist items stable.');
+    }
+    if (impacts.includes('validation')) {
+      documents.add('qa_report.md');
+      validation.add('Run or queue the relevant build/test/typecheck/lint command before human review.');
+    }
+
+    return {
+      mode: scope === 'planning' ? 'standard-planning' : 'standard-implementation',
+      flowDocuments: orderWebChangeRequestFlowDocuments(documents),
+      requiredActions: Array.from(actions),
+      validation: Array.from(validation),
+      commitPolicy: 'After validation passes, keep the iteration in the same task and use the normal task commit flow; include this change request ID in the summary or commit context when committing is enabled.',
+    };
+  }
+
+  documents.add('direct_summary.md');
+  actions.add('Handle the feedback in one direct implementation pass.');
+  actions.add('Do not create a new task unless the user explicitly asks for one.');
+  validation.add('Run one relevant validation check, or record why validation was not possible.');
+
+  return {
+    mode: 'direct-implementation',
+    flowDocuments: orderWebChangeRequestFlowDocuments(documents),
+    requiredActions: Array.from(actions),
+    validation: Array.from(validation),
+    commitPolicy: 'Use the normal task commit flow after validation if commits are enabled; do not push automatically.',
+  };
+}
+
+function orderWebChangeRequestFlowDocuments(
+  documents: Set<WebChangeRequestFlowDocument>,
+): WebChangeRequestFlowDocument[] {
+  const order: WebChangeRequestFlowDocument[] = [
+    'HUMAN_INPUT.md',
+    'change_requests.jsonl',
+    'spec.md',
+    'requirements.md',
+    'tasks.md',
+    'implementation_plan.md',
+    'qa_report.md',
+    'direct_summary.md',
+  ];
+  return order.filter((document) => documents.has(document));
 }
 
 function isWebDirectTask(task: Task): boolean {
@@ -1136,13 +1225,6 @@ function isWebStandardTask(task: Task): boolean {
   return !isWebDirectTask(task) && task.metadata?.developmentMode === 'standard';
 }
 
-function isWebSpecTask(task: Task): boolean {
-  return !isWebDirectTask(task) && (
-    task.metadata?.developmentMode === 'spec' ||
-    task.metadata?.sourceType === 'openspec'
-  );
-}
-
 function webFeedbackRequiresImplementationRestart(feedback: string): boolean {
   return /\b(build|compile|typecheck|lint|test|syntaxerror|typeerror|referenceerror|module not found|exit code)\b/i.test(feedback)
     || /构建|编译|类型检查|测试|验证|语法错误|运行失败/.test(feedback);
@@ -1151,15 +1233,35 @@ function webFeedbackRequiresImplementationRestart(feedback: string): boolean {
 function buildWebHumanInputContent(
   feedback: string,
   scope: WebChangeRequestScope,
-  record: { id: string; createdAt: string; impacts: WebChangeRequestImpact[] },
+  record: {
+    id: string;
+    createdAt: string;
+    impacts: WebChangeRequestImpact[];
+    iteration: WebChangeRequestIterationPlan;
+  },
 ): string {
+  const iterationProtocol = [
+    '## Standard Iteration Protocol',
+    '',
+    `- Mode: ${record.iteration.mode}`,
+    `- Flow documents to update: ${record.iteration.flowDocuments.join(', ')}`,
+    `- Validation: ${record.iteration.validation.join('; ')}`,
+    `- Commit policy: ${record.iteration.commitPolicy}`,
+    '',
+    '### Required Actions',
+    '',
+    ...record.iteration.requiredActions.map((action) => `- ${action}`),
+    '',
+  ];
   const planningInstructions = [
     '- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.',
     '- First update requirements/design/task artifacts so they reflect this change request before any coding pass.',
-    '- For OpenSpec tasks, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first.',
-    '- For Standard tasks, update spec.md with changed acceptance criteria and update tasks.md with new pending subtasks that implement this feedback.',
+    '- For Standard tasks, update spec.md with changed requirements, design decisions, acceptance criteria, risks, and open questions.',
+    '- Then update tasks.md with new pending subtasks that implement this feedback. Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.',
     '- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
     '- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback.',
+    '- Update verification metadata for revised tasks, and ensure the next coding/QA pass runs the relevant tests before the task is committed.',
+    '- Keep this iteration commit-ready: the final coding pass should use the normal task commit flow after validation succeeds.',
     '- Do not implement code in this planning pass.',
   ];
   const implementationInstructions = [
@@ -1167,6 +1269,7 @@ function buildWebHumanInputContent(
     '- If the feedback changes requirements, design, user behavior, or task scope, stop and update the relevant planning artifacts before coding.',
     '- Fix the reported implementation issues.',
     '- Re-run the relevant build/test/validation steps.',
+    '- Keep this iteration commit-ready: after validation passes, use the normal task commit flow when commits are enabled.',
     '- Update implementation_plan.md as you make progress and record affected subtasks as needs_revision where appropriate.',
   ];
 
@@ -1185,6 +1288,7 @@ function buildWebHumanInputContent(
     `- Impact analysis: ${record.impacts.join(', ') || 'implementation'}`,
     `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}`,
     '',
+    ...iterationProtocol,
     scope === 'planning' ? '## Requested Changes' : '## Requested Fixes',
     '',
     feedback,
@@ -1394,8 +1498,8 @@ function toCreateTaskRequest(
 }
 
 function normalizeDevelopmentMode(value: TaskMetadata['developmentMode'] | undefined): CreateWebTaskRequest['developmentMode'] {
-  if (value === 'direct' || value === 'standard' || value === 'spec') return value;
-  return 'direct';
+  if (value === 'direct' || value === 'standard') return value;
+  return 'standard';
 }
 
 function normalizePreferredCli(value: unknown): StartWebTaskRequest['cli'] {

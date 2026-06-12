@@ -16,13 +16,12 @@
  */
 
 import { execFile } from 'node:child_process';
-import { existsSync, mkdirSync, readFileSync } from 'fs';
+import { existsSync, mkdirSync } from 'fs';
 import { cp, rm } from 'fs/promises';
-import { isAbsolute, join, resolve } from 'path';
+import { join, resolve } from 'path';
 import { promisify } from 'util';
 import {
   AUTOCODE_DEFAULT_BASE_BRANCH,
-  AUTOCODE_TASK_ARTIFACTS,
   buildAutocodeTaskBranchName,
   getAutocodeTaskWorktreePath,
 } from '@autocode/core';
@@ -86,7 +85,7 @@ export interface WorktreeResult {
  *                        tracking after worktree creation. Defaults to false.
  * @param autoBuildPath  Optional custom data directory (e.g. ".autocode").
  *                       Passed to getSpecsDir() for spec-copy logic.
- * @param syncSpecDir    If true, refresh existing spec/OpenSpec files in the
+ * @param syncSpecDir    If true, refresh existing Autocode spec files in the
  *                       worktree before returning.
  */
 export async function createOrGetWorktree(
@@ -290,50 +289,6 @@ async function syncTaskRuntimeFilesToWorktree(
     }
   }
 
-  const openSpecChangeDir = readTaskOpenSpecChangeDir(sourceSpecDir);
-  if (!openSpecChangeDir) {
-    return;
-  }
-
-  const sourceChangeDir = join(projectPath, openSpecChangeDir);
-  const destChangeDir = join(worktreePath, openSpecChangeDir);
-  if (!existsSync(sourceChangeDir) || (!overwriteExisting && existsSync(destChangeDir))) {
-    return;
-  }
-
-  try {
-    mkdirSync(join(destChangeDir, '..'), { recursive: true });
-    await cp(sourceChangeDir, destChangeDir, { recursive: true, force: true });
-    console.warn(`[WorktreeManager] Synced OpenSpec change into worktree: ${openSpecChangeDir}`);
-  } catch (err: unknown) {
-    const message = err instanceof Error ? err.message : String(err);
-    console.warn(`[WorktreeManager] Warning: Could not copy OpenSpec change to worktree: ${message}`);
-  }
-}
-
-function readTaskOpenSpecChangeDir(specDir: string): string {
-  try {
-    const metadataPath = join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata);
-    if (!existsSync(metadataPath)) {
-      return '';
-    }
-    const metadata = JSON.parse(readFileSync(metadataPath, 'utf8')) as Record<string, unknown>;
-    const openSpecChangeDir = typeof metadata.openSpecChangeDir === 'string'
-      ? metadata.openSpecChangeDir.trim()
-      : '';
-    if (
-      !openSpecChangeDir ||
-      isAbsolute(openSpecChangeDir) ||
-      openSpecChangeDir.startsWith('..') ||
-      openSpecChangeDir.includes('../') ||
-      openSpecChangeDir.includes('..\\')
-    ) {
-      return '';
-    }
-    return openSpecChangeDir;
-  } catch {
-    return '';
-  }
 }
 
 // ---------------------------------------------------------------------------

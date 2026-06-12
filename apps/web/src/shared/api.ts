@@ -3,7 +3,6 @@ import type {
   AutocodeTask,
   AutocodeTaskCategory,
   AutocodeTaskComplexity,
-  AutocodeTaskDevelopmentMode,
   AutocodeExecutionPhase,
   AutocodeTaskLogs,
   AutocodeTaskImpact,
@@ -14,6 +13,8 @@ import type {
   ProjectIndex,
   WorkspaceSummary,
 } from '@autocode/core';
+
+export type WebTaskDevelopmentMode = 'direct' | 'standard';
 
 export interface WebHealthResponse {
   ok: true;
@@ -298,7 +299,7 @@ export interface WebTaskListResponse {
 export interface CreateWebTaskRequest {
   title?: string;
   description: string;
-  developmentMode?: AutocodeTaskDevelopmentMode;
+  developmentMode?: WebTaskDevelopmentMode;
   sourceType?: 'manual' | 'project_docs';
   category?: AutocodeTaskCategory;
   complexity?: AutocodeTaskComplexity;

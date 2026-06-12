@@ -6,7 +6,6 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   tasks: 'tasks.md',
   implementationPlan: 'implementation_plan.md',
   specFile: 'spec.md',
-  openSpecContext: 'openspec_context.md',
   requirements: 'requirements.md',
   taskMetadata: 'task_metadata.json',
   taskLogs: 'task_logs.jsonl',

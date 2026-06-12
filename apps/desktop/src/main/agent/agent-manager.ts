@@ -18,7 +18,6 @@ import {
   buildAutocodeTaskExecutionMessages,
   collectAutocodeRuntimeFileIntentsFromPlan,
   createStartedAutocodeAgentRuntime,
-  ensureOpenSpecArtifactsForAutocodeTask,
   getAutocodeSpecDir,
   getAutocodeSpecsDir,
   getAutocodeSpecsRelativeDir,
@@ -35,23 +34,10 @@ import {
   resolveAutocodeTaskPhaseProvider,
   resolveAutocodeTaskRuntimeConcurrency,
   resolveAutocodeTaskWorkflowMode,
-  appendAutocodeTaskLogEntry,
-  updateAutocodeTaskLogPhase,
   withAutocodeRuntimeFileWriteLockSync,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type AutocodeRuntimeWorkspaceMode,
-  type OpenSpecArtifactProgress,
 } from '@autocode/core';
-import {
-  estimateAutocodeOpenSpecGenerationProgress,
-  estimateAutocodeOpenSpecOverallProgress,
-  formatAutocodeDuration,
-  formatAutocodeOpenSpecArtifactName,
-  formatAutocodeOpenSpecArtifactPosition,
-  formatAutocodeOpenSpecArtifactProgressMessage,
-  formatAutocodeOpenSpecGenerationLifecycleMessage,
-  isAutocodeChineseLanguageName,
-} from '@autocode/core/runtime/openspec-progress';
 import { AgentState } from './agent-state';
 import { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
@@ -82,7 +68,6 @@ import type { ProviderAccount } from '../../shared/types/provider-account';
 import { tryLoadPrompt } from '../ai/prompts/prompt-loader';
 import { buildProviderQueueResolutionErrorMessage } from './provider-queue-errors';
 import { resolveProjectAgentProfile } from '../ai/config/project-agent-profile';
-import { createDesktopOpenSpecArtifactGenerator } from '../openspec-artifact-generator';
 
 export function inferPinnedProviderFromModel(model: string | undefined): BuiltinProvider | null {
   return inferAutocodePinnedProviderFromModel(model) as BuiltinProvider | null;
@@ -272,9 +257,6 @@ export class AgentManager extends EventEmitter {
     /** Generation counter to prevent stale cleanup after restart */
     generation: number;
   }> = new Map();
-  private openSpecGenerationInFlight: Map<string, Promise<boolean>> = new Map();
-  private openSpecGenerationTaskKeyByTaskId: Map<string, string> = new Map();
-
   constructor() {
     super();
 
@@ -798,19 +780,6 @@ export class AgentManager extends EventEmitter {
     const workflowMode = this.resolveTaskWorkflowMode(specDir);
     if (workflowMode === 'off') {
       await this.startDirectTaskExecution(taskId, projectPath, specId, options, projectId);
-      return;
-    }
-
-    const openSpecReady = await this.ensureDeferredOpenSpecArtifactsBeforePlanning({
-      taskId,
-      projectPath,
-      dataDirName: project?.autoBuildPath,
-      specId,
-      specDir,
-      projectId,
-      forcePlanning: options.forcePlanning === true,
-    });
-    if (!openSpecReady) {
       return;
     }
 
@@ -1358,12 +1327,7 @@ export class AgentManager extends EventEmitter {
    * Check if a task is running
    */
   isRunning(taskId: string): boolean {
-    return this.state.hasProcess(taskId) || this.isOpenSpecGenerationRunning(taskId);
-  }
-
-  isOpenSpecGenerationRunning(taskId: string): boolean {
-    const inFlightKey = this.openSpecGenerationTaskKeyByTaskId.get(taskId);
-    return !!inFlightKey && this.openSpecGenerationInFlight.has(inFlightKey);
+    return this.state.hasProcess(taskId);
   }
 
   getTaskRuntimeMs(taskId: string): number | null {
@@ -1677,191 +1641,6 @@ export class AgentManager extends EventEmitter {
     );
   }
 
-  private async ensureDeferredOpenSpecArtifactsBeforePlanning(input: {
-    taskId: string;
-    projectPath: string;
-    dataDirName?: string;
-    specId: string;
-    specDir: string;
-    projectId?: string;
-    forcePlanning?: boolean;
-  }): Promise<boolean> {
-    const metadata = loadAutocodeTaskRuntimeMetadataConfig(input.specDir) as TaskMetadata | null;
-    if (metadata?.sourceType !== 'openspec') {
-      return true;
-    }
-    const language = typeof metadata.language === 'string' && metadata.language.trim()
-      ? resolveSupportedLanguage(metadata.language)
-      : this.resolveAppLanguage();
-    const reviewFeedback = input.forcePlanning === true
-      ? readPlanReviewHumanInput(input.specDir)
-      : '';
-    const shouldRegenerateForReview = reviewFeedback.length > 0;
-    if (
-      !shouldRegenerateForReview &&
-      metadata.openSpecGenerationMode !== 'deferred' &&
-      hasCompleteOpenSpecRuntimeArtifacts(input.projectPath, metadata)
-    ) {
-      return true;
-    }
-
-    const inFlightKey = [
-      path.resolve(input.projectPath),
-      input.dataDirName ?? '',
-      input.specId,
-    ].join('::');
-    const inFlight = this.openSpecGenerationInFlight.get(inFlightKey);
-    if (inFlight) {
-      console.warn('[AgentManager] Reusing in-flight OpenSpec generation for task:', input.specId);
-      this.openSpecGenerationTaskKeyByTaskId.set(input.taskId, inFlightKey);
-      return inFlight;
-    }
-
-    const generation = Promise.resolve().then(async (): Promise<boolean> => {
-      let eventSequence = Date.now();
-      const nextSequence = () => {
-        eventSequence = Math.max(eventSequence + 1, Date.now());
-        return eventSequence;
-      };
-      const createBaseEvent = () => ({
-        taskId: input.taskId,
-        specId: input.specId,
-        projectId: input.projectId ?? '',
-        timestamp: new Date().toISOString(),
-        sequence: nextSequence(),
-      });
-      const emitProgress = (event: OpenSpecArtifactProgress) => {
-        const message = formatOpenSpecArtifactProgressMessage(event, language);
-        if (!message) {
-          return;
-        }
-        try {
-          appendAutocodeTaskLogEntry({
-            projectRoot: input.projectPath,
-            dataDirName: input.dataDirName,
-            taskId: input.specId,
-            phase: 'planning',
-            type: event.stage === 'artifact_failed' ? 'error' : 'info',
-            content: message,
-          });
-        } catch (logError) {
-          console.warn('[AgentManager] Failed to record OpenSpec progress:', logError);
-        }
-        const phaseProgress = estimateOpenSpecGenerationProgress(event);
-        this.emit('task-event', input.taskId, {
-          ...createBaseEvent(),
-          type: 'OPENSPEC_GENERATION_PROGRESS',
-          eventId: `${input.taskId}-openspec-generation-progress-${Date.now()}`,
-          message,
-          phaseProgress,
-          overallProgress: estimateOpenSpecOverallProgress(phaseProgress),
-          artifactId: event.artifactId,
-          outputPath: event.outputPath,
-        }, input.projectId);
-      };
-
-      try {
-        const startedMessage = formatOpenSpecGenerationLifecycleMessage(
-          shouldRegenerateForReview ? 'updating' : 'starting',
-          language,
-        );
-        updateAutocodeTaskLogPhase({
-          projectRoot: input.projectPath,
-          dataDirName: input.dataDirName,
-          taskId: input.specId,
-          phase: 'planning',
-          status: 'active',
-          message: startedMessage,
-        });
-        this.emit('task-event', input.taskId, {
-          ...createBaseEvent(),
-          type: 'OPENSPEC_GENERATION_STARTED',
-          eventId: `${input.taskId}-openspec-generation-started-${Date.now()}`,
-          message: startedMessage,
-        }, input.projectId);
-
-        const result = await ensureOpenSpecArtifactsForAutocodeTask({
-          projectRoot: input.projectPath,
-          dataDirName: input.dataDirName,
-          taskId: input.specId,
-          overwrite: shouldRegenerateForReview,
-          reviewFeedback,
-          language,
-          requireOpenSpecProtocol: shouldRegenerateForReview,
-          artifactGenerator: createDesktopOpenSpecArtifactGenerator(metadata, { onProgress: emitProgress }),
-          onProgress: emitProgress,
-        });
-
-        if (result.generated) {
-          const completedMessage = formatOpenSpecGenerationLifecycleMessage(
-            shouldRegenerateForReview ? 'updated' : 'completed',
-            language,
-          );
-          updateAutocodeTaskLogPhase({
-            projectRoot: input.projectPath,
-            dataDirName: input.dataDirName,
-            taskId: input.specId,
-            phase: 'planning',
-            status: 'completed',
-            message: completedMessage,
-          });
-          this.emit('task-event', input.taskId, {
-            ...createBaseEvent(),
-            type: 'OPENSPEC_GENERATION_COMPLETED',
-            eventId: `${input.taskId}-openspec-generation-completed-${Date.now()}`,
-            openSpecChangeId: result.change?.changeId,
-            message: completedMessage,
-          }, input.projectId);
-          if (input.projectId) {
-            projectStore.invalidateTasksCache(input.projectId);
-          }
-        }
-
-        return true;
-      } catch (error) {
-        const message = error instanceof Error ? error.message : String(error);
-        const failedMessage = formatOpenSpecGenerationLifecycleMessage('failed', language, message);
-        console.error('[AgentManager] Failed to generate deferred OpenSpec artifacts:', error);
-        try {
-          updateAutocodeTaskLogPhase({
-            projectRoot: input.projectPath,
-            dataDirName: input.dataDirName,
-            taskId: input.specId,
-            phase: 'planning',
-            status: 'failed',
-            message: failedMessage,
-          });
-        } catch (logError) {
-          console.warn('[AgentManager] Failed to record OpenSpec generation failure:', logError);
-        }
-        this.emit('task-event', input.taskId, {
-          ...createBaseEvent(),
-          type: 'OPENSPEC_GENERATION_FAILED',
-          eventId: `${input.taskId}-openspec-generation-failed-${Date.now()}`,
-          error: message,
-          message: failedMessage,
-        }, input.projectId);
-        this.emit('error', input.taskId, failedMessage, input.projectId);
-        return false;
-      }
-    });
-
-    this.openSpecGenerationInFlight.set(inFlightKey, generation);
-    this.openSpecGenerationTaskKeyByTaskId.set(input.taskId, inFlightKey);
-    try {
-      return await generation;
-    } finally {
-      if (this.openSpecGenerationInFlight.get(inFlightKey) === generation) {
-        this.openSpecGenerationInFlight.delete(inFlightKey);
-      }
-      for (const [taskId, taskKey] of this.openSpecGenerationTaskKeyByTaskId.entries()) {
-        if (taskKey === inFlightKey) {
-          this.openSpecGenerationTaskKeyByTaskId.delete(taskId);
-        }
-      }
-    }
-  }
-
   private async startCodexCliRuntime(input: {
     taskId: string;
     projectPath: string;
@@ -1993,78 +1772,4 @@ export class AgentManager extends EventEmitter {
     return tryLoadPrompt(promptName);
   }
 
-}
-
-function hasCompleteOpenSpecRuntimeArtifacts(projectPath: string, metadata: TaskMetadata): boolean {
-  return (
-    projectRelativeFileExists(projectPath, metadata.openSpecProposalPath) &&
-    projectRelativeFileExists(projectPath, metadata.openSpecDesignPath) &&
-    projectRelativeFileExists(projectPath, metadata.openSpecTasksPath) &&
-    Array.isArray(metadata.openSpecSpecDeltaPaths) &&
-    metadata.openSpecSpecDeltaPaths.length > 0 &&
-    metadata.openSpecSpecDeltaPaths.every((artifactPath) => projectRelativeFileExists(projectPath, artifactPath))
-  );
-}
-
-type OpenSpecLifecycleStatus = 'starting' | 'updating' | 'completed' | 'updated' | 'failed';
-
-function formatOpenSpecGenerationLifecycleMessage(
-  status: OpenSpecLifecycleStatus,
-  language?: string,
-  detail?: string,
-): string {
-  return formatAutocodeOpenSpecGenerationLifecycleMessage(status, language, detail);
-}
-
-function formatOpenSpecArtifactProgressMessage(
-  event: OpenSpecArtifactProgress,
-  language?: string,
-): string {
-  return formatAutocodeOpenSpecArtifactProgressMessage(event, language);
-}
-
-function estimateOpenSpecGenerationProgress(event: OpenSpecArtifactProgress): number {
-  return estimateAutocodeOpenSpecGenerationProgress(event);
-}
-
-function estimateOpenSpecOverallProgress(phaseProgress: number): number {
-  return estimateAutocodeOpenSpecOverallProgress(phaseProgress);
-}
-
-function formatOpenSpecArtifactName(event: OpenSpecArtifactProgress): string {
-  return formatAutocodeOpenSpecArtifactName(event);
-}
-
-function formatOpenSpecArtifactPosition(event: OpenSpecArtifactProgress): string {
-  return formatAutocodeOpenSpecArtifactPosition(event);
-}
-
-function formatDuration(elapsedMs: number | undefined): string {
-  return formatAutocodeDuration(elapsedMs);
-}
-
-function isChineseLanguageName(language: unknown): boolean {
-  return isAutocodeChineseLanguageName(language);
-}
-
-function readPlanReviewHumanInput(specDir: string): string {
-  try {
-    const humanInputPath = path.join(specDir, 'HUMAN_INPUT.md');
-    return existsSync(humanInputPath) ? readFileSync(humanInputPath, 'utf8').trim() : '';
-  } catch {
-    return '';
-  }
-}
-
-function projectRelativeFileExists(projectPath: string, artifactPath: unknown): boolean {
-  if (typeof artifactPath !== 'string' || !artifactPath.trim()) {
-    return false;
-  }
-
-  const absolutePath = path.resolve(projectPath, artifactPath);
-  const relativePath = path.relative(projectPath, absolutePath);
-  if (relativePath.startsWith('..') || path.isAbsolute(relativePath)) {
-    return false;
-  }
-  return existsSync(absolutePath);
 }

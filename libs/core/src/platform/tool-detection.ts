@@ -1,6 +1,6 @@
 import { joinPaths } from './os.js';
 
-export type AutocodeCliTool = 'python' | 'git' | 'gh' | 'glab' | 'claude' | 'openspec';
+export type AutocodeCliTool = 'python' | 'git' | 'gh' | 'glab' | 'claude';
 
 export interface AutocodeToolConfig {
   pythonPath?: string;

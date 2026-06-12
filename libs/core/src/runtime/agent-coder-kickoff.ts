@@ -44,7 +44,6 @@ export interface BuildAutocodeFocusedCoderKickoffMessageInput {
   projectDir: string;
   subtaskId: string;
   context: AutocodeCoderKickoffSubtaskContext | null;
-  openSpecContext?: string | null;
 }
 
 export function findAutocodeSubtaskKickoffContext(
@@ -148,7 +147,6 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
   const gameMmoImplementation = isGameMmoImplementationContext(context);
   const workLabel = context?.workPackage ? 'work package' : 'subtask';
   const workHeading = context?.workPackage ? '## Current Work Package' : '## Current Work Item';
-  const openSpecContext = input.openSpecContext?.trim() || null;
   const lines: string[] = [
     `Implement ${workLabel} "${subtaskId}" only.`,
     `Project root: ${promptProjectDir}.`,
@@ -174,7 +172,7 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
       lines.push(`- Description: ${context.description}`);
     }
     if (context.upstreamTaskIds?.length) {
-      lines.push(`- Upstream OpenSpec tasks: ${context.upstreamTaskIds.join(', ')}`);
+      lines.push(`- Source task IDs: ${context.upstreamTaskIds.join(', ')}`);
     }
     if (context.upstreamSource) {
       lines.push(`- Upstream source: ${context.upstreamSource}`);
@@ -182,16 +180,6 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
   } else {
     lines.push('');
     lines.push(`Read ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}, locate work item "${subtaskId}", and implement only that item.`);
-  }
-
-  if (openSpecContext) {
-    lines.push('');
-    lines.push(`## OpenSpec Compact Context (${AUTOCODE_TASK_ARTIFACTS.openSpecContext})`);
-    lines.push('Use this compact upstream context first; open full OpenSpec artifacts only when exact wording is needed.');
-    lines.push('');
-    lines.push('```markdown');
-    lines.push(openSpecContext);
-    lines.push('```');
   }
 
   if (context?.completedSummaries?.length) {
@@ -401,4 +389,3 @@ function isGameMmoDocumentationContext(context: AutocodeCoderKickoffSubtaskConte
 function isGameMmoImplementationContext(context: AutocodeCoderKickoffSubtaskContext | null): boolean {
   return !isDocumentationContext(context) && context?.projectType === 'game-mmo';
 }
-

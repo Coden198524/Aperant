@@ -237,15 +237,6 @@
     "claudePath": "Claude CLI Path",
     "claudePathDescription": "Path to Claude CLI executable (leave empty for auto-detection)",
     "claudePathPlaceholder": "claude (default)",
-    "openSpecCli": "OpenSpec CLI",
-    "openSpecCliDescription": "Required to generate upstream proposal, design, tasks, and spec documents",
-    "openSpecInstalled": "OpenSpec is installed",
-    "openSpecMissing": "OpenSpec is not installed",
-    "openSpecInstall": "Install OpenSpec",
-    "openSpecInstalling": "Opening installer...",
-    "openSpecInstallSuccess": "Installation started in your terminal. Refresh after it finishes.",
-    "openSpecInstallError": "Failed to start OpenSpec installation",
-    "openSpecLearnMore": "Install docs",
     "refresh": "Refresh",
     "detectedPath": "Auto-detected",
     "detectedVersion": "Version",
@@ -505,7 +496,7 @@
     },
     "phases": {
       "spec": {
-        "label": "Spec Creation",
+        "label": "Standard Planning",
         "description": "Discovery, requirements, context gathering"
       },
       "planning": {
@@ -1212,7 +1203,7 @@
       "title": "Per-Phase Model Preferences",
       "description": "Configure which model to use for each pipeline phase",
       "spec": {
-        "label": "Spec Creation Model",
+        "label": "Standard Planning Model",
         "description": "Model used for discovery, requirements, and context gathering"
       },
       "planning": {
@@ -1287,12 +1278,12 @@
       "title": "Advanced Settings",
       "retryLimits": "Retry Limits",
       "qualityChecks": "Quality Checks",
-      "specCreationMode": "Spec Creation Mode",
+      "specCreationMode": "Standard Planning Mode",
       "retries": {
         "planning": "Planning Retries",
         "subtask": "Subtask Retries",
         "qa": "QA Cycles",
-        "specPhase": "Spec Phase Retries"
+        "specPhase": "Planning Phase Retries"
       },
       "checks": {
         "smokeTests": "Pre-QA Smoke Tests",

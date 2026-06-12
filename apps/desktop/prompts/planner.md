@@ -24,8 +24,9 @@ Read the provided context first. Read files from disk only when needed.
 - `context.json`: relevant files, patterns, risks.
 - `project_index.json`: structure, commands, services.
 - `HUMAN_INPUT.md`: required plan-review feedback when present.
+- `change_requests.jsonl`: same-task iteration audit trail when present.
 
-If `HUMAN_INPUT.md` exists, regenerate `tasks.md` to address it. Preserve useful old task content only when it still fits the feedback.
+If `HUMAN_INPUT.md` exists, treat this as an iteration of the same Standard task. Read the latest `change_requests.jsonl` entry when present, update the required flow documents first, then regenerate `tasks.md` to address it. Preserve useful old task content only when it still fits the feedback.
 
 ## Planning Rules
 
@@ -35,6 +36,8 @@ If `HUMAN_INPUT.md` exists, regenerate `tasks.md` to address it. Preserve useful
 - Keep normal plans to 4 phases or fewer and about 24 subtasks or fewer.
 - For genuinely complex work, keep all required subtasks but shorten each note.
 - Each subtask should name likely files and the smallest reliable verification step.
+- For Request Changes iterations, update `spec.md`, `requirements.md`, and `tasks.md` only where the new requirement changes them; keep unaffected sections stable.
+- Make the next coding pass commit-ready: every new or revised task needs a focused verification command and clear completion criteria.
 - Do not include copied source, research notes, long rationale, or large examples.
 - Do not mark subtasks complete. Use `[ ]` only.
 

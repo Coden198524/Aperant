@@ -51,10 +51,10 @@ function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflow
 }
 
 function resolveDraftDevelopmentMode(draft: TaskDraft): TaskDevelopmentMode {
-  if (draft.developmentMode === 'direct' || draft.developmentMode === 'standard' || draft.developmentMode === 'spec') {
+  if (draft.developmentMode === 'direct' || draft.developmentMode === 'standard') {
     return draft.developmentMode;
   }
-  return draft.developmentMode === 'fast' || draft.workflowMode === 'off' ? 'direct' : 'standard';
+  return draft.workflowMode === 'off' ? 'direct' : 'standard';
 }
 
 export function TaskCreationWizard({
@@ -535,7 +535,7 @@ export function TaskCreationWizard({
       const allReferencedFiles = parseFileMentions(description, referencedFiles);
 
       const metadata: TaskMetadata = {
-        sourceType: developmentMode === 'spec' ? 'openspec' : 'manual',
+        sourceType: 'manual',
         developmentMode,
         language: settings.language || i18n.language,
       };
@@ -580,11 +580,6 @@ export function TaskCreationWizard({
       if (allReferencedFiles.length > 0) metadata.referencedFiles = allReferencedFiles;
       if (requireReviewBeforeCoding && developmentMode !== 'direct') metadata.requireReviewBeforeCoding = true;
       metadata.workflowMode = workflowModeForDevelopmentMode(developmentMode);
-      if (developmentMode === 'spec') {
-        metadata.openSpecGenerationMode = 'deferred';
-        metadata.upstreamSpecSystem = 'openspec';
-        metadata.downstreamExecutionSystem = 'autocode';
-      }
       metadata.useWorktree = useWorktree;
       if (useWorktree) {
         // Resolve PROJECT_DEFAULT_BRANCH to the actual branch name for worktree creation.

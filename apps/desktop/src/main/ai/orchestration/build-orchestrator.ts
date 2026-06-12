@@ -33,7 +33,6 @@ import {
   formatAutocodeCodingRecoveryHints,
   isAutocodeImplementationPlanFileFailure,
   isAutocodeWriteToolPlanOutputFailure,
-  loadAutocodeTaskRuntimeMetadataConfig,
   summarizeAutocodeCodingAttemptFailure,
   validateAutocodePlanningSchedulingMetadata,
   type AutocodeTaskRuntimeConcurrencyResolved,
@@ -71,10 +70,8 @@ function validatePlanningSchedulingMetadata(
   plan: ImplementationPlan | null,
   config: BuildOrchestratorConfig,
 ): string[] {
-  const metadata = loadAutocodeTaskRuntimeMetadataConfig(config.specDir);
   return validateAutocodePlanningSchedulingMetadata(plan, {
     runtimeConcurrency: config.runtimeConcurrency ?? AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY,
-    sourceType: metadata?.sourceType,
   });
 }
 
@@ -493,8 +490,7 @@ export class BuildOrchestrator extends EventEmitter {
   // ===========================================================================
 
   private shouldDeriveRuntimePlanFromStandardTasks(): boolean {
-    const metadata = loadAutocodeTaskRuntimeMetadataConfig(this.config.specDir);
-    return metadata?.sourceType !== 'openspec';
+    return true;
   }
 
   private async deriveRuntimePlanFromStandardTasks(): Promise<{ success: boolean; error?: string }> {

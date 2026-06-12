@@ -296,18 +296,13 @@ async function createTaskFromInput(sidebarProvider?: AutocodeSidebarProvider): P
     [
       {
         label: 'Standard',
-        description: 'Lightweight Autocode plan, no OpenSpec docs',
+        description: 'Autocode plan with requirements, design notes, tasks, implementation, and QA',
         mode: 'standard' as AutocodeTaskDevelopmentMode,
       },
       {
         label: 'Direct',
         description: 'One coding session connected straight to the selected model',
         mode: 'direct' as AutocodeTaskDevelopmentMode,
-      },
-      {
-        label: 'Spec',
-        description: 'OpenSpec upstream docs before execution',
-        mode: 'spec' as AutocodeTaskDevelopmentMode,
       },
     ],
     {

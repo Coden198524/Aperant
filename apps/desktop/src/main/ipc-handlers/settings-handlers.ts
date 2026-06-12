@@ -4,7 +4,6 @@ import { execFileSync } from 'node:child_process';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { is } from '@electron-toolkit/utils';
-import { getOpenSpecInstallCommand } from '@autocode/core';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -22,7 +21,6 @@ import { getSettingsPath, readSettingsFile } from '../settings-utils';
 import { resetMemoryService } from './context/memory-service-factory';
 import { initializeLocalMemoryDatabase } from '../ai/memory/db';
 import { configureTools, getToolPath, getToolInfo, isPathFromWrongPlatform, preWarmToolCache } from '../cli-tool-manager';
-import { openTerminalWithCommand } from './claude-code-handlers';
 import type { ProviderAccount } from '../../shared/types/provider-account';
 import type { APIProfile } from '../../shared/types/profile';
 import type { ClaudeProfile } from '../../shared/types/agent';
@@ -547,7 +545,6 @@ export function registerSettingsHandlers(
       gh: ReturnType<typeof getToolInfo>;
       glab: ReturnType<typeof getToolInfo>;
       claude: ReturnType<typeof getToolInfo>;
-      openspec: ReturnType<typeof getToolInfo>;
     }>> => {
       try {
         return {
@@ -558,54 +555,12 @@ export function registerSettingsHandlers(
             gh: getToolInfo('gh'),
             glab: getToolInfo('glab'),
             claude: getToolInfo('claude'),
-            openspec: getToolInfo('openspec'),
           },
         };
       } catch (error) {
         return {
           success: false,
           error: error instanceof Error ? error.message : 'Failed to get CLI tools info',
-        };
-      }
-    }
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.OPENSPEC_CHECK_CLI,
-    async (): Promise<IPCResult<{ installed: boolean; version?: string; path?: string }>> => {
-      try {
-        const info = getToolInfo('openspec');
-        return {
-          success: true,
-          data: {
-            installed: info.found,
-            version: info.version,
-            path: info.path,
-          },
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to check OpenSpec CLI',
-        };
-      }
-    }
-  );
-
-  ipcMain.handle(
-    IPC_CHANNELS.OPENSPEC_INSTALL_CLI,
-    async (): Promise<IPCResult<{ command: string }>> => {
-      try {
-        const command = getOpenSpecInstallCommand();
-        await openTerminalWithCommand(command);
-        return {
-          success: true,
-          data: { command },
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to start OpenSpec installation',
         };
       }
     }

@@ -223,7 +223,7 @@ export function WorkflowOptimizationSettings() {
                 </div>
                 <div>
                   <label className="text-xs text-gray-600 dark:text-gray-400">
-                    Spec Phase Retries
+                    Planning Phase Retries
                   </label>
                   <input
                     type="number"
@@ -271,9 +271,9 @@ export function WorkflowOptimizationSettings() {
               </div>
             </div>
 
-            {/* Spec Creation Mode */}
+            {/* Standard Planning Mode */}
             <div>
-              <h4 className="text-sm font-semibold mb-2">Spec Creation Mode</h4>
+              <h4 className="text-sm font-semibold mb-2">Standard Planning Mode</h4>
               <select
                 value={settings.specCreationMode ?? 'auto'}
                 onChange={(e) =>

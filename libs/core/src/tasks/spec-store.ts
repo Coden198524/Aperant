@@ -48,9 +48,8 @@ export type AutocodeTaskComplexity = 'trivial' | 'small' | 'medium' | 'large' | 
 export type AutocodeTaskImpact = 'low' | 'medium' | 'high' | 'critical';
 export type AutocodeTaskPriority = 'low' | 'medium' | 'high' | 'urgent';
 export type AutocodeTaskWorkflowMode = 'off' | 'conservative' | 'balanced' | 'aggressive';
-export type AutocodeTaskDevelopmentMode = 'direct' | 'standard' | 'spec';
-export type LegacyAutocodeTaskDevelopmentMode = 'fast';
-export type AutocodeTaskDevelopmentModeMetadata = AutocodeTaskDevelopmentMode | LegacyAutocodeTaskDevelopmentMode;
+export type AutocodeTaskDevelopmentMode = 'direct' | 'standard';
+export type AutocodeTaskDevelopmentModeMetadata = AutocodeTaskDevelopmentMode;
 export type AutocodeSubtaskStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
 export type AutocodeExecutionPhase =
   | 'idle'
@@ -65,7 +64,7 @@ export type AutocodeExecutionPhase =
   | 'stopped';
 
 export interface AutocodeTaskMetadata {
-  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec';
+  sourceType?: 'ideation' | 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs';
   taskTitle?: string;
   developmentMode?: AutocodeTaskDevelopmentModeMetadata;
   category?: AutocodeTaskCategory;
@@ -358,19 +357,12 @@ export function buildAutocodeTaskRequirements(
 }
 
 export function isAutocodeTaskDevelopmentMode(value: unknown): value is AutocodeTaskDevelopmentMode {
-  return value === 'direct' || value === 'standard' || value === 'spec';
-}
-
-export function isLegacyAutocodeTaskDevelopmentMode(value: unknown): value is LegacyAutocodeTaskDevelopmentMode {
-  return value === 'fast';
+  return value === 'direct' || value === 'standard';
 }
 
 export function normalizeAutocodeTaskDevelopmentMode(
   value: unknown,
 ): AutocodeTaskDevelopmentMode | null {
-  if (value === 'fast') {
-    return 'direct';
-  }
   return isAutocodeTaskDevelopmentMode(value) ? value : null;
 }
 
@@ -389,9 +381,6 @@ export function resolveAutocodeTaskDevelopmentMode(
   if (metadata?.workflowMode === 'off') {
     return 'direct';
   }
-  if (metadata?.sourceType === 'openspec' || metadata?.upstreamSpecSystem === 'openspec') {
-    return 'spec';
-  }
   return defaultMode;
 }
 
@@ -401,7 +390,7 @@ export function buildAutocodeTaskModeMetadata(
 ): AutocodeTaskMetadata {
   if (developmentMode === 'direct') {
     return {
-      ...stripOpenSpecTaskMetadata(metadata),
+      ...metadata,
       sourceType: 'manual',
       developmentMode: 'direct',
       workflowMode: 'off',
@@ -413,31 +402,8 @@ export function buildAutocodeTaskModeMetadata(
     };
   }
 
-  if (developmentMode === 'spec') {
-    return {
-      ...metadata,
-      sourceType: 'openspec',
-      developmentMode: 'spec',
-      workflowMode: metadata.workflowMode && metadata.workflowMode !== 'off'
-        ? metadata.workflowMode
-        : 'balanced',
-      runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency({
-        ...metadata,
-        sourceType: 'openspec',
-        developmentMode: 'spec',
-        workflowMode: metadata.workflowMode && metadata.workflowMode !== 'off'
-          ? metadata.workflowMode
-          : 'balanced',
-        upstreamSpecSystem: 'openspec',
-      }),
-      openSpecGenerationMode: metadata.openSpecGenerationMode ?? 'deferred',
-      upstreamSpecSystem: 'openspec',
-      downstreamExecutionSystem: 'autocode',
-    };
-  }
-
   return {
-    ...stripOpenSpecTaskMetadata(metadata),
+    ...metadata,
     sourceType: 'manual',
     developmentMode: 'standard',
     workflowMode: 'balanced',
@@ -694,45 +660,6 @@ function readJson<T>(filePath: string): T | null {
 function writeJson(filePath: string, value: unknown): void {
   mkdirSync(dirname(filePath), { recursive: true });
   writeFileSync(filePath, `${JSON.stringify(value, null, 2)}\n`, 'utf8');
-}
-
-function stripOpenSpecTaskMetadata(metadata: AutocodeTaskMetadata): AutocodeTaskMetadata {
-  const {
-    openSpecChangeId,
-    openSpecChangeDir,
-    openSpecProposalPath,
-    openSpecDesignPath,
-    openSpecTasksPath,
-    openSpecSpecDeltaPaths,
-    openSpecGenerationMode,
-    openSpecGeneratedAt,
-    openSpecCapability,
-    openSpecContextPath,
-    openSpecReviewFeedback,
-    openSpecReviewFeedbackUpdatedAt,
-    openSpecScaffoldCommand,
-    openSpecValidationCommand,
-    upstreamSpecSystem,
-    downstreamExecutionSystem,
-    ...manualMetadata
-  } = metadata;
-  void openSpecChangeId;
-  void openSpecChangeDir;
-  void openSpecProposalPath;
-  void openSpecDesignPath;
-  void openSpecTasksPath;
-  void openSpecSpecDeltaPaths;
-  void openSpecGenerationMode;
-  void openSpecGeneratedAt;
-  void openSpecCapability;
-  void openSpecContextPath;
-  void openSpecReviewFeedback;
-  void openSpecReviewFeedbackUpdatedAt;
-  void openSpecScaffoldCommand;
-  void openSpecValidationCommand;
-  void upstreamSpecSystem;
-  void downstreamExecutionSystem;
-  return manualMetadata;
 }
 
 function optionalStringFrom(...values: unknown[]): string | undefined {

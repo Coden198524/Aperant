@@ -640,16 +640,17 @@ function readPlanReviewFeedback(session: SerializableSessionConfig): string | nu
 function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig): string {
   const promptSpecDir = formatPathForPrompt(session.specDir);
   const feedback = readPlanReviewFeedback(session);
-  const openSpecDirective = buildOpenSpecPlanReviewDirective(session, promptSpecDir);
   const lines = [
     '## PLAN REVIEW REGENERATION',
     'This run was started from Request Changes in plan review.',
     `Read ${promptSpecDir}/HUMAN_INPUT.md and treat it as required reviewer feedback.`,
-    openSpecDirective || `Rewrite ${promptSpecDir}/tasks.md to address that feedback. Do not edit implementation_plan.md; the runtime derives it.`,
+    `If ${promptSpecDir}/change_requests.jsonl exists, use its latest entry as the active same-task iteration contract.`,
+    `Update ${promptSpecDir}/spec.md, ${promptSpecDir}/requirements.md, and ${promptSpecDir}/tasks.md where the feedback changes requirements, acceptance criteria, design decisions, task scope, or verification.`,
+    `Regenerate ${promptSpecDir}/implementation_plan.md from the updated Autocode Standard tasks.`,
+    `Do not make ${promptSpecDir}/implementation_plan.md the only changed planning artifact when the feedback changes requirements, design, user behavior, or task scope.`,
+    'Add or update focused verification commands for every new or revised task so the next coding pass can test and commit through the normal task flow.',
     'Keep this as a planning-only run: do not implement code, do not run coding subtasks, and do not mark subtasks completed.',
-    openSpecDirective
-      ? 'Preserve useful parts of the previous OpenSpec artifacts and plan only when they still match the reviewer feedback; otherwise replace them.'
-      : 'Preserve useful parts of the previous tasks.md only when they still match the reviewer feedback; otherwise replace them.',
+    'Preserve useful parts of the previous Autocode Standard documents only when they still match the reviewer feedback; otherwise replace them.',
   ];
 
   if (feedback) {
@@ -657,52 +658,6 @@ function buildPlanReviewRegenerationDirective(session: SerializableSessionConfig
   }
 
   return lines.join('\n');
-}
-
-function buildOpenSpecPlanReviewDirective(
-  session: SerializableSessionConfig,
-  promptSpecDir: string,
-): string {
-  const metadata = readTaskMetadata(session.specDir);
-  if (metadata?.sourceType !== 'openspec') {
-    return '';
-  }
-
-  const artifactLines = [
-    metadata.openSpecProposalPath ? `- proposal.md: ${metadata.openSpecProposalPath}` : '',
-    metadata.openSpecDesignPath ? `- design.md: ${metadata.openSpecDesignPath}` : '',
-    metadata.openSpecTasksPath ? `- tasks.md: ${metadata.openSpecTasksPath}` : '',
-    ...((Array.isArray(metadata.openSpecSpecDeltaPaths) ? metadata.openSpecSpecDeltaPaths : [])
-      .map((artifactPath, index) => `- spec delta ${index + 1}: ${artifactPath}`)),
-  ].filter(Boolean);
-
-  return [
-    'OpenSpec is the upstream specification layer for this task.',
-    'First update the relevant OpenSpec Markdown artifacts to reflect the reviewer feedback.',
-    ...(metadata.openSpecChangeId ? [`OpenSpec change ID: ${metadata.openSpecChangeId}`] : []),
-    ...(metadata.openSpecChangeDir ? [`OpenSpec change directory: ${metadata.openSpecChangeDir}`] : []),
-    ...(artifactLines.length > 0 ? ['OpenSpec artifacts:', ...artifactLines] : []),
-    `After updating OpenSpec artifacts, regenerate ${promptSpecDir}/implementation_plan.md from the updated tasks.md and spec deltas.`,
-    `Do not make ${promptSpecDir}/implementation_plan.md the only changed planning artifact when the feedback changes requirements, design, user behavior, or task scope.`,
-  ].join('\n');
-}
-
-function readTaskMetadata(specDir: string): {
-  sourceType?: string;
-  openSpecChangeId?: string;
-  openSpecChangeDir?: string;
-  openSpecProposalPath?: string;
-  openSpecDesignPath?: string;
-  openSpecTasksPath?: string;
-  openSpecSpecDeltaPaths?: unknown;
-} | null {
-  try {
-    const content = readFileSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.taskMetadata), 'utf-8');
-    const parsed = JSON.parse(content);
-    return parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed : null;
-  } catch {
-    return null;
-  }
 }
 
 function countPlanSubtasks(plan: ShardableImplementationPlan | null): number {
@@ -2133,7 +2088,7 @@ async function runSpecOrchestrator(
         phase: 'planning', // spec creation maps to 'planning' in the UI execution phases
         phaseProgress: phaseNumber / Math.max(totalPhases, 1),
         overallProgress: phaseNumber / Math.max(totalPhases, 1),
-        message: `Spec creation: ${phase} (${phaseNumber}/${totalPhases})`,
+        message: `Standard planning: ${phase} (${phaseNumber}/${totalPhases})`,
       },
       projectId: config.projectId,
     });

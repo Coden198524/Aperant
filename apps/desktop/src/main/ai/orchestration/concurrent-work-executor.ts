@@ -3,7 +3,7 @@
  * ========================
  *
  * Executes implementation plan work items with a shared concurrency flow.
- * OpenSpec work packages and Standard subtasks are both treated as work items.
+ * Standard work packages and subtasks are both treated as work items.
  */
 
 import type {

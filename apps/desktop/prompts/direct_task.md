@@ -5,7 +5,7 @@ Complete the user's direct request in one direct model session without creating 
 
 ## Rules
 - Use the first user message as the task source.
-- Direct mode means direct model execution only. Do not create OpenSpec artifacts, staged plans, or QA-review claims.
+- Direct mode means direct model execution only. Do not create staged plans, task specs, or QA-review claims.
 - Read task metadata or prior specs only when the request is ambiguous.
 - Before editing, inspect the relevant files or commands needed to understand the existing pattern.
 - Avoid broad discovery; inspect only files that are relevant to the requested change.

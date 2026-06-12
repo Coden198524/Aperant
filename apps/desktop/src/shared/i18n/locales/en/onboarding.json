@@ -15,7 +15,7 @@
         "description": "Generate code and build features using Claude Code agents"
       },
       "specDriven": {
-        "title": "Spec-Driven Workflow",
+        "title": "Autocode Standard Workflow",
         "description": "Define tasks with clear specifications and let Autocode handle the implementation"
       },
       "memory": {

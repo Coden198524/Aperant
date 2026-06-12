@@ -11,10 +11,11 @@ import {
   requestAutocodeTaskChanges,
   updateAutocodeTaskPlanStatus,
   type AutocodeCli,
-  type AutocodeTaskDevelopmentMode,
   type AutocodeProjectDocType,
 } from '@autocode/core';
 import { getConfiguredDataDirName } from '../adapters/workspace-adapter.js';
+
+type VscodeTaskDevelopmentMode = 'direct' | 'standard';
 
 export function listState(projectRoot: string) {
   const dataDirName = getConfiguredDataDirName();
@@ -22,7 +23,7 @@ export function listState(projectRoot: string) {
 }
 
 export function createManualTask(projectRoot: string, title: string, description: string, options: {
-  developmentMode?: AutocodeTaskDevelopmentMode;
+  developmentMode?: VscodeTaskDevelopmentMode;
 } = {}) {
   return createManualAutocodeTask({
     projectRoot,

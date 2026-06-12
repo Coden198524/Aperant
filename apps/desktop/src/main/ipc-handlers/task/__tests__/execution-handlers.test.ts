@@ -308,12 +308,9 @@ describe('registerTaskExecutionHandlers', () => {
         subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'pending', files: [] }],
         logs: [],
         metadata: {
-          sourceType: 'openspec',
-          openSpecChangeDir: 'openspec/changes/change-001-plan-review',
-          openSpecProposalPath: 'openspec/changes/change-001-plan-review/proposal.md',
-          openSpecDesignPath: 'openspec/changes/change-001-plan-review/design.md',
-          openSpecTasksPath: 'openspec/changes/change-001-plan-review/tasks.md',
-          openSpecSpecDeltaPaths: ['openspec/changes/change-001-plan-review/specs/game/spec.md'],
+          sourceType: 'manual',
+          developmentMode: 'standard',
+          workflowMode: 'balanced',
         },
       },
       project: {
@@ -357,8 +354,28 @@ describe('registerTaskExecutionHandlers', () => {
       String(filePath).includes('CHANGE_REQUESTS.md')
     )).toBe(false);
     expect(fs.writeFileSync).toHaveBeenCalledWith(
-      expect.stringContaining('review-feedback.md'),
-      expect.stringContaining('upstream OpenSpec artifacts'),
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('Autocode Standard flow'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('Standard Iteration Protocol'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('Flow documents to update: HUMAN_INPUT.md, change_requests.jsonl, spec.md, requirements.md, tasks.md, implementation_plan.md, qa_report.md'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('change_requests.jsonl'),
+      expect.stringContaining('"mode":"standard-planning"'),
+      'utf-8'
+    );
+    expect(fs.writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('change_requests.jsonl'),
+      expect.stringContaining('"commitPolicy"'),
       'utf-8'
     );
     expect(fs.unlinkSync).not.toHaveBeenCalled();
@@ -378,7 +395,7 @@ describe('registerTaskExecutionHandlers', () => {
     expect(mockAgentManager.startQAProcess).not.toHaveBeenCalled();
   });
 
-  it('restarts planning for Spec completed review feedback that changes requirements', async () => {
+  it('restarts planning for Standard completed review feedback that changes requirements', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { taskStateManager } = await import('../../../task-state-manager');
     const { findTaskWorktree } = await import('../../../worktree-paths');
@@ -388,16 +405,16 @@ describe('registerTaskExecutionHandlers', () => {
     (findTaskWorktree as Mock).mockReturnValue(null);
     (findTaskAndProject as Mock).mockReturnValue({
       task: {
-        id: '001-spec-review',
-        specId: '001-spec-review',
+        id: '001-standard-requirements-review',
+        specId: '001-standard-requirements-review',
         projectId: 'project-fast',
-        title: 'Spec review task',
+        title: 'Standard review task',
         description: 'desc',
         status: 'human_review',
         reviewReason: 'completed',
         subtasks: [{ id: '1', title: 'Subtask 1', description: 'desc', status: 'completed', files: [] }],
         logs: [],
-        metadata: { developmentMode: 'spec' },
+        metadata: { developmentMode: 'standard', workflowMode: 'balanced' },
       },
       project: {
         id: 'project-fast',
@@ -412,7 +429,7 @@ describe('registerTaskExecutionHandlers', () => {
     const reviewHandler = handleHandlers[IPC_CHANNELS.TASK_REVIEW];
     const result = await reviewHandler(
       {},
-      '001-spec-review',
+      '001-standard-requirements-review',
       false,
       'Add a new requirement: interrupted skills must roll back cooldown and notify UI.',
     );
@@ -424,8 +441,23 @@ describe('registerTaskExecutionHandlers', () => {
       'utf-8',
     );
     expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('requirements.md'),
+      'utf-8',
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('HUMAN_INPUT.md'),
+      expect.stringContaining('commit-ready'),
+      'utf-8',
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('change_requests.jsonl'),
       expect.stringContaining('interrupted skills'),
+      'utf-8',
+    );
+    expect(writeFileSync).toHaveBeenCalledWith(
+      expect.stringContaining('change_requests.jsonl'),
+      expect.stringContaining('"flowDocuments"'),
       'utf-8',
     );
     expect((writeFileSync as Mock).mock.calls.some(([filePath]) =>
@@ -433,15 +465,15 @@ describe('registerTaskExecutionHandlers', () => {
     )).toBe(false);
     expect(writeFileAtomicSync).not.toHaveBeenCalled();
     expect(taskStateManager.handleUiEvent).toHaveBeenCalledWith(
-      '001-spec-review',
+      '001-standard-requirements-review',
       { type: 'PLANNING_STARTED' },
       expect.any(Object),
       expect.any(Object),
     );
     expect(mockAgentManager.startTaskExecution).toHaveBeenCalledWith(
-      '001-spec-review',
+      '001-standard-requirements-review',
       'E:/Work/FastProject',
-      '001-spec-review',
+      '001-standard-requirements-review',
       expect.objectContaining({ forcePlanning: true }),
       'project-fast',
     );
@@ -821,7 +853,7 @@ describe('registerTaskExecutionHandlers', () => {
     expect(result).toEqual({ success: true });
     expect(writeFileSync).toHaveBeenCalledWith(
       expect.stringContaining('HUMAN_INPUT.md'),
-      expect.stringContaining('update tasks.md with new pending subtasks'),
+      expect.stringContaining('update tasks.md with concrete pending subtasks'),
       'utf-8'
     );
     expect(writeFileAtomicSync).not.toHaveBeenCalled();

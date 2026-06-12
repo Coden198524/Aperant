@@ -206,12 +206,9 @@
     "baseBranchUpdateFailed": "Impossible d'enregistrer la branche de base pour le moment.",
     "editBaseBranch": "Modifier",
     "saveBaseBranch": "Enregistrer",
-    "fastMode": "Direct",
     "developmentMode": {
       "direct": "Direct",
-      "fast": "Direct",
-      "standard": "Standard",
-      "spec": "Spec"
+      "standard": "Standard"
     },
     "severity": "sévérité",
     "pullRequest": "Pull Request",
@@ -309,23 +306,13 @@
       "recommended": "Recommande",
       "direct": {
         "title": "Direct",
-        "description": "Une seule session de codage connectee directement au modele selectionne. Ignore OpenSpec, la planification par etapes et la QA.",
-        "performance": "Au plus proche de l'utilisation directe du modele; ideal pour les petits changements clairs."
-      },
-      "fast": {
-        "title": "Direct",
-        "description": "Une seule session de codage connectee directement au modele selectionne. Ignore OpenSpec, la planification par etapes et la QA.",
+        "description": "Une seule session de codage connectee directement au modele selectionne. Ignore la planification par etapes et la QA.",
         "performance": "Au plus proche de l'utilisation directe du modele; ideal pour les petits changements clairs."
       },
       "standard": {
         "title": "Standard",
-        "description": "Specification Autocode legere et plan d'implementation. Aucun document OpenSpec en amont.",
+        "description": "Planification Autocode avec exigences, notes de conception, liste de taches, plan d'implementation et QA.",
         "performance": "Bon equilibre entre vitesse et structure pour la plupart des travaux."
-      },
-      "spec": {
-        "title": "Spec",
-        "description": "Genere proposition, design, taches et deltas OpenSpec avant l'execution.",
-        "performance": "Chemin le plus tracable pour les changements complexes, risques ou orientes produit."
       }
     },
     "workflowOptimization": {

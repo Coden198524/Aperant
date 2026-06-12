@@ -29,7 +29,6 @@ export interface AutocodePlanningScheduleSubtask {
 
 export interface AutocodePlanningSchedulingValidationOptions {
   runtimeConcurrency?: AutocodeTaskRuntimeConcurrencyResolved;
-  sourceType?: string | null;
 }
 
 export function isAutocodeWriteToolPlanOutputFailure(message: string): boolean {
@@ -57,7 +56,7 @@ export function shouldRequireAutocodePlanningSchedulingMetadata(
     return false;
   }
 
-  return options.sourceType !== 'openspec';
+  return true;
 }
 
 export function validateAutocodePlanningSchedulingMetadata(

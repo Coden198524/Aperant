@@ -361,7 +361,7 @@ export function getTaskSeverityLabel(
 
 export function getTaskSourceTypeLabel(
   t: TFunction,
-  sourceType: 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs' | 'openspec'
+  sourceType: 'manual' | 'imported' | 'insights' | 'roadmap' | 'linear' | 'yunxiao' | 'github' | 'gitlab' | 'project_docs'
 ): string {
   return t(`tasks:metadata.sourceTypes.${sourceType}`, {
     defaultValue: {
@@ -373,8 +373,7 @@ export function getTaskSourceTypeLabel(
       yunxiao: 'Yunxiao',
       github: 'GitHub',
       gitlab: 'GitLab',
-      project_docs: 'Project Docs',
-      openspec: 'OpenSpec'
+      project_docs: 'Project Docs'
     }[sourceType]
   });
 }

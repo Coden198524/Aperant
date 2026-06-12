@@ -289,15 +289,6 @@
     "claudePath": "Claude CLI 路径",
     "claudePathDescription": "Claude CLI 可执行文件路径（留空则自动检测）",
     "claudePathPlaceholder": "claude (默认)",
-    "openSpecCli": "OpenSpec CLI",
-    "openSpecCliDescription": "用于生成上游 proposal、design、tasks 和 spec 文档",
-    "openSpecInstalled": "OpenSpec 已安装",
-    "openSpecMissing": "未安装 OpenSpec",
-    "openSpecInstall": "安装 OpenSpec",
-    "openSpecInstalling": "正在打开安装终端...",
-    "openSpecInstallSuccess": "已在终端开始安装。完成后请刷新。",
-    "openSpecInstallError": "启动 OpenSpec 安装失败",
-    "openSpecLearnMore": "安装文档",
     "refresh": "刷新",
     "detectedPath": "自动检测到",
     "detectedVersion": "版本",
@@ -335,7 +326,7 @@
     "title": "分阶段模型偏好",
     "description": "配置每个流水线阶段使用的模型",
     "spec": {
-      "label": "规范创建模型",
+      "label": "标准规划模型",
       "description": "用于发现、需求和上下文收集的模型"
     },
     "planning": {
@@ -544,7 +535,7 @@
     },
     "phases": {
       "spec": {
-        "label": "规范创建",
+        "label": "标准规划",
         "description": "用于探索、需求分析与上下文收集"
       },
       "planning": {
@@ -1045,7 +1036,7 @@
       "title": "分阶段模型偏好",
       "description": "配置流水线每个阶段使用的模型",
       "spec": {
-        "label": "规范创建模型",
+        "label": "标准规划模型",
         "description": "用于探索、需求分析与上下文收集的模型"
       },
       "planning": {

@@ -1,4 +1,5 @@
 import type { AgentType } from '../config/agent-configs.js';
+import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import {
   appendAutocodeLanguageRequirement,
   getAutocodeImplementationPlanLanguageRequirement,
@@ -67,7 +68,14 @@ export function buildAutocodeSpecKickoffMessage(
         baseMessage = `Write a compact spec.md for: ${input.taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep overview, touched files, behavior, and acceptance checks.`;
         break;
       case 'planner':
-        baseMessage = `Create ${promptSpecDir}/tasks.md for: ${input.taskDescription}. Use provided phase context first; read only relevant spec.md sections if needed. Output concrete Autocode Markdown checklist tasks. Do not write implementation_plan.md; the runtime derives it. Project root: ${promptProjectDir}.`;
+        baseMessage = [
+          `Create ${promptSpecDir}/tasks.md for: ${input.taskDescription}.`,
+          'Use provided phase context first; read only relevant spec.md sections if needed.',
+          `Use Autocode Standard planning: update ${promptSpecDir}/spec.md with proposal/requirements/design/acceptance/risk sections when missing or stale.`,
+          'Output concrete Autocode Markdown checklist tasks with dependencies and verification notes.',
+          `Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runtime derives it.`,
+          `Project root: ${promptProjectDir}.`,
+        ].join(' ');
         break;
       case 'spec_critic':
         baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
@@ -79,7 +87,7 @@ export function buildAutocodeSpecKickoffMessage(
         baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.md are complete, consistent, and ready for implementation. Use targeted reads with limits; do not read entire large files unless required. Fix only blocking issues. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
         break;
       default:
-        baseMessage = `Complete the spec creation task described in your system prompt. Task: ${input.taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
+        baseMessage = `Complete the Autocode Standard planning task described in your system prompt. Task: ${input.taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
     }
   }
 
@@ -221,7 +229,14 @@ export function buildAutocodeAgentKickoffMessage(
   } else {
     switch (input.agentType) {
       case 'planner':
-        baseMessage = `Read the spec at ${promptSpecDir}/spec.md and create a detailed Autocode Markdown checklist task list at ${promptSpecDir}/tasks.md. Do not write implementation_plan.md; the runtime derives it as work packages. Project root: ${promptProjectDir}`;
+        baseMessage = [
+          `Read the Standard task spec at ${promptSpecDir}/spec.md.`,
+          'Use the Autocode Standard workflow.',
+          `First update ${promptSpecDir}/spec.md with Standard sections when missing or stale: Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, Risks/Open Questions.`,
+          `Then create ${promptSpecDir}/tasks.md as a concrete Autocode Markdown checklist with executable tasks, dependencies, and verification notes.`,
+          `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it as work packages from tasks.md.`,
+          `Project root: ${promptProjectDir}`,
+        ].join(' ');
         break;
       case 'coder':
         baseMessage = input.subtaskId
@@ -255,10 +270,12 @@ export function buildAutocodeAgentKickoffMessage(
         '',
         '## PLAN REVIEW REGENERATION',
         `Read ${promptSpecDir}/HUMAN_INPUT.md and address the reviewer feedback.`,
-        `If ${promptSpecDir}/change_requests.jsonl exists, use it as same-task iteration history and keep the audit trail intact.`,
-        `If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first, then let the runtime regenerate ${promptSpecDir}/implementation_plan.md from those upstream artifacts.`,
-        `If this task is not backed by OpenSpec, update ${promptSpecDir}/spec.md when requirements or acceptance criteria changed, then rewrite ${promptSpecDir}/tasks.md directly; do not edit implementation_plan.md.`,
+        `If ${promptSpecDir}/change_requests.jsonl exists, use the latest entry as the active same-task iteration contract and keep the audit trail intact.`,
+        `For Standard tasks, update ${promptSpecDir}/spec.md and ${promptSpecDir}/requirements.md when requirements, acceptance criteria, risks, constraints, or design decisions changed; then rewrite ${promptSpecDir}/tasks.md directly.`,
+        `Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.`,
+        `Do not edit ${promptSpecDir}/implementation_plan.md directly; the runtime derives it from the updated Standard artifacts.`,
         'Revise task lists incrementally: preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new pending subtasks, and mark obsolete upstream checklist items explicitly.',
+        'Add focused verification metadata for every new or revised task so the next coding pass can test and keep the iteration commit-ready.',
         'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
       ].join('\n');
     }
@@ -304,7 +321,12 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
 
   switch (input.agentType) {
     case 'planner':
-      return `Read ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist. Do not write implementation_plan.md; the runtime derives it as work packages. Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.`;
+      return [
+        `Read ${promptSpecDir}/spec.md and use the Autocode Standard workflow.`,
+        `Update ${promptSpecDir}/spec.md with Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, and Risks/Open Questions when needed.`,
+        `Create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist. Do not write implementation_plan.md; the runtime derives it as work packages.`,
+        'Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.',
+      ].join(' ');
     case 'coder':
       return `Implement the current pending subtask from ${promptSpecDir}/implementation_plan.md in ${promptProjectDir}. Mark it [x] and add a _Completion_ note when done.`;
     case 'direct_task':

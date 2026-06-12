@@ -74,16 +74,14 @@ interface TaskCardProps {
   onToggleSelect?: () => void;
 }
 
-function resolveCardDevelopmentMode(task: Task): 'direct' | 'standard' | 'spec' {
-  if (task.metadata?.developmentMode === 'direct' || task.metadata?.developmentMode === 'standard' || task.metadata?.developmentMode === 'spec') {
+function resolveCardDevelopmentMode(task: Task): 'direct' | 'standard' {
+  if (task.metadata?.developmentMode === 'direct' || task.metadata?.developmentMode === 'standard') {
     return task.metadata.developmentMode;
   }
-  if (task.metadata?.developmentMode === 'fast' || task.metadata?.workflowMode === 'off') {
+  if (task.metadata?.workflowMode === 'off') {
     return 'direct';
   }
-  return task.metadata?.sourceType === 'openspec' || task.metadata?.upstreamSpecSystem === 'openspec'
-    ? 'spec'
-    : 'standard';
+  return 'standard';
 }
 
 // Custom comparator for React.memo - only re-render when relevant task data changes
@@ -595,13 +593,9 @@ export const TaskCard = memo(function TaskCard({
                 variant="outline"
                 className="text-[10px] px-1.5 py-0.5 flex items-center gap-1 bg-amber-500/10 text-amber-600 dark:text-amber-400 border-amber-500/30"
               >
-                {developmentMode === 'direct' ? (
-                  <Zap className="h-2.5 w-2.5" />
-                ) : (
-                  <FileCode className="h-2.5 w-2.5" />
-                )}
+                <Zap className="h-2.5 w-2.5" />
                 {t(`metadata.developmentMode.${developmentMode}`, {
-                  defaultValue: developmentMode === 'direct' ? 'Direct' : 'Spec',
+                  defaultValue: 'Direct',
                 })}
               </Badge>
             )}

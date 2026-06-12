@@ -199,7 +199,6 @@
     "filesChanged": "{{count}} file(s) changed"
   },
   "metadata": {
-    "fastMode": "Direct",
     "baseBranch": "Base Branch",
     "baseBranchUnknown": "Unknown",
     "baseBranchProjectDefault": "Use project default",
@@ -214,9 +213,7 @@
     "saveBaseBranch": "Save",
     "developmentMode": {
       "direct": "Direct",
-      "fast": "Direct",
-      "standard": "Standard",
-      "spec": "Spec"
+      "standard": "Standard"
     },
     "severity": "severity",
     "pullRequest": "Pull Request",
@@ -318,23 +315,13 @@
       "recommended": "Recommended",
       "direct": {
         "title": "Direct",
-        "description": "One coding session connected straight to the selected model. Skips OpenSpec, staged planning, and QA.",
-        "performance": "Closest to using the model itself; best for small or obvious changes."
-      },
-      "fast": {
-        "title": "Direct",
-        "description": "One coding session connected straight to the selected model. Skips OpenSpec, staged planning, and QA.",
+        "description": "One coding session connected straight to the selected model. Skips staged planning and QA.",
         "performance": "Closest to using the model itself; best for small or obvious changes."
       },
       "standard": {
         "title": "Standard",
-        "description": "Lightweight Autocode spec and implementation plan. No OpenSpec upstream docs.",
-        "performance": "Balanced speed and structure for most development work."
-      },
-      "spec": {
-        "title": "Spec",
-        "description": "Generate OpenSpec proposal, design, tasks, and spec deltas before execution.",
-        "performance": "Most traceable path for complex, risky, or product-facing changes."
+        "description": "Autocode planning with requirements, design notes, task checklist, implementation plan, and QA.",
+        "performance": "Structured requirements-to-tasks workflow for reliable iterative development."
       }
     },
     "workflowOptimization": {

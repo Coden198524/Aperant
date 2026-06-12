@@ -22,6 +22,7 @@ Implement exactly one pending subtask at a time.
 3. Select the first pending subtask whose dependencies are complete.
 4. Read referenced files and nearby patterns before editing.
 5. If `HUMAN_INPUT.md` exists, treat it as required feedback for this run.
+6. If `change_requests.jsonl` exists, use the latest entry as the active same-task iteration contract.
 
 ## Path Discipline
 
@@ -52,6 +53,8 @@ Run the smallest reliable check for the subtask:
 
 If a check is unavailable, record the reason and the next best check. Do not run many equivalent commands.
 
+For Request Changes iterations, prefer the verification command named by the revised task or latest change request. The task should be ready for the normal commit flow after validation passes.
+
 - On Node 24+, do not mix `require(...)` with top-level `await` in `node -e`, stdin, or eval scripts. Use an async IIFE around CommonJS code, or use ESM `import` with `node --input-type=module`.
 - On Windows, avoid fragile nested shell quoting for quick smoke checks; prefer one simple command.
 - Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the subtask explicitly changes state-machine code.
@@ -73,6 +76,7 @@ If blocked:
 ## Git
 
 - Commit only project source changes for the completed subtask when the workflow expects commits.
+- For same-task iterations, include the change request ID in the commit context or final summary when commits are enabled.
 - Do not commit `.autocode/specs/*`, `qa_report.md`, `QA_FIX_REQUEST.md`, or runtime logs.
 - Do not push.
 

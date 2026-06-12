@@ -73,7 +73,7 @@ export function TaskWarnings({
                 {t('detail.incompleteDescription', {
                   completed: taskProgress.completed,
                   total: taskProgress.total,
-                  defaultValue: 'This task has a spec and implementation plan but never completed any subtasks ({{completed}}/{{total}}). The process likely crashed during spec creation. Click Resume to continue implementation.'
+                  defaultValue: 'This task has a spec and implementation plan but never completed any subtasks ({{completed}}/{{total}}). The process likely crashed during Standard planning. Click Resume to continue implementation.'
                 })}
               </p>
               <Button

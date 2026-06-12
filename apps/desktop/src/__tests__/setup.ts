@@ -109,12 +109,9 @@ if (typeof window !== 'undefined') {
         git: { found: false, source: 'fallback', message: 'Not available in tests' },
         gh: { found: false, source: 'fallback', message: 'Not available in tests' },
         glab: { found: false, source: 'fallback', message: 'Not available in tests' },
-        claude: { found: false, source: 'fallback', message: 'Not available in tests' },
-        openspec: { found: false, source: 'fallback', message: 'Not available in tests' }
+        claude: { found: false, source: 'fallback', message: 'Not available in tests' }
       }
     }),
-    checkOpenSpecCli: vi.fn().mockResolvedValue({ success: true, data: { installed: false } }),
-    installOpenSpecCli: vi.fn().mockResolvedValue({ success: false, error: 'Not available in tests' }),
     selectDirectory: vi.fn(),
     getAppVersion: vi.fn(),
     // Tab state persistence (IPC-based)

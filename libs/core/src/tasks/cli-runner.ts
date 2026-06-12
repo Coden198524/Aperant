@@ -52,7 +52,6 @@ export interface AutocodeTaskRunPlan {
 
 const PROMPT_FILE_NAME = 'autocode-run-prompt.md';
 const RUNNER_FILE_NAME = 'autocode-runner.cjs';
-const OPENSPEC_ARTIFACT_PROMPT_LIMIT = 12000;
 const requireFromCore = createRequire(import.meta.url);
 
 export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput): AutocodeTaskRunPlan {
@@ -203,12 +202,6 @@ function buildTaskRunPrompt(input: {
   });
   const contextReference = projectDocsReference ? `${projectDocsReference}\n\n` : '';
   const humanInputReference = buildTaskHumanInputReference(input.specDir);
-  const isOpenSpecTask = input.task.metadata?.sourceType === 'openspec';
-  const openSpecExecutionReference = buildTaskOpenSpecCompactContextReference({
-    task: input.task,
-    specDir: input.specDir,
-    forcePlanning: false,
-  });
 
   if (input.phase === 'direct') {
     return `${header}${contextReference}${humanInputReference}${[
@@ -253,13 +246,7 @@ function buildTaskRunPrompt(input: {
   }
 
   if (input.phase === 'planning') {
-    const openSpecReference = buildTaskOpenSpecCompactContextReference({
-      task: input.task,
-      specDir: input.specDir,
-      forcePlanning: true,
-    });
     return `${header}${contextReference}${humanInputReference}${[
-      ...(openSpecReference ? [openSpecReference, ''] : []),
       '## Goal',
       '',
       'Create or repair the implementation plan.',
@@ -268,25 +255,20 @@ function buildTaskRunPrompt(input: {
       '',
       `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} and ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} if needed.`,
       `- If ${input.specDir}/HUMAN_INPUT.md exists, address it as plan-review feedback.`,
-      `- If ${input.specDir}/change_requests.jsonl exists, read it as the iteration audit trail and preserve prior change-request history.`,
-      ...(isOpenSpecTask
-        ? ['- Apply plan-review feedback to upstream OpenSpec artifacts first, then derive the downstream implementation plan.']
-        : ['- Do not read or edit openspec/ artifacts for this Standard task.']),
-      ...(isOpenSpecTask
-        ? [`- Regenerate ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} only from updated OpenSpec artifacts.`]
-        : [
-            `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} when feedback changes requirements, acceptance criteria, user-visible behavior, or constraints.`,
-            `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as the upstream Autocode task list.`,
-            `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
-          ]),
+      `- If ${input.specDir}/change_requests.jsonl exists, read it as the iteration audit trail and preserve prior change-request history. Use the latest entry's iteration contract as the active same-task change request.`,
+      `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} when feedback changes requirements, acceptance criteria, user-visible behavior, or constraints.`,
+      `- Update ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} when the latest change request changes structured requirements or acceptance criteria.`,
+      `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as the upstream Autocode task list.`,
+      `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
       '- Keep tasks independently implementable and verifiable.',
       '- Revise the task list incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
       '- Every executable task must include _Depends on_ and _Verification_. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
+      '- Keep the iteration testable and commit-ready: every new or revised task needs a focused verification command, and the next coding pass should be able to use the normal task commit flow after validation succeeds.',
       '- Set new task checkboxes to [ ].',
     ].join('\n')}`;
   }
 
-  return `${header}${contextReference}${humanInputReference}${openSpecExecutionReference ? `${openSpecExecutionReference}\n\n` : ''}${[
+  return `${header}${contextReference}${humanInputReference}${[
     '## Goal',
     '',
     'Implement the task from the existing spec and runtime work plan.',
@@ -294,15 +276,13 @@ function buildTaskRunPrompt(input: {
     '## Required Workflow',
     '',
     `- Read ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} first.`,
-    ...(isOpenSpecTask
-      ? [`- If ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.openSpecContext} exists, use it as the OpenSpec context and open full OpenSpec artifacts only for exact wording.`]
-      : ['- Do not read openspec/ artifacts unless the current work item explicitly references them.']),
     `- Use ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} only for missing acceptance details.`,
     '- The runner invokes you once per runtime work package. In each invocation, implement only the Current Work Item section.',
     '- Do not start later work packages early, even if they look related.',
-    '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes during coding; the runner owns status updates after this invocation.',
+    '- Do not edit implementation_plan.md status checkboxes during coding; the runner owns status updates after this invocation.',
     '- Put completion details in your final response or the implementation summary, not by editing plan status.',
     '- Run the most relevant validation command for the project.',
+    '- When HUMAN_INPUT.md or change_requests.jsonl exists, treat the latest change request as a same-task iteration: satisfy its validation guidance and keep the changes ready for the normal task commit flow after tests pass.',
     '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
     '- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.',
     '- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.',
@@ -319,85 +299,6 @@ function buildCliMemoryNotesInstruction(): string {
     '- Memory Notes format: "- [gotcha|decision|pattern|error_pattern|module_insight] concise reusable note".',
     '- Omit Memory Notes when there is nothing durable to remember.',
   ].join('\n');
-}
-
-function buildTaskOpenSpecCompactContextReference(input: {
-  task: AutocodeTask;
-  specDir: string;
-  forcePlanning: boolean;
-}): string {
-  const metadata = input.task.metadata ?? {};
-  if (metadata.sourceType !== 'openspec') {
-    return '';
-  }
-
-  const contextPath = join(input.specDir, AUTOCODE_TASK_ARTIFACTS.openSpecContext);
-  const artifacts = [
-    { label: 'proposal.md', path: stringFrom(metadata.openSpecProposalPath) },
-    { label: 'design.md', path: stringFrom(metadata.openSpecDesignPath) },
-    { label: 'tasks.md', path: stringFrom(metadata.openSpecTasksPath) },
-    ...toStringArray(metadata.openSpecSpecDeltaPaths).map((pathValue, index) => ({
-      label: index === 0 ? 'spec delta' : `spec delta ${index + 1}`,
-      path: pathValue,
-    })),
-  ].filter((artifact) => artifact.path);
-
-  const lines = [
-    '## OpenSpec Compact Context',
-    '',
-    'OpenSpec is the upstream specification layer. Autocode files are downstream runtime state.',
-    stringFrom(metadata.openSpecChangeId) ? `Change ID: ${stringFrom(metadata.openSpecChangeId)}` : '',
-    stringFrom(metadata.openSpecChangeDir) ? `Change directory: ${stringFrom(metadata.openSpecChangeDir)}` : '',
-    `Compact context: ${contextPath}`,
-    '',
-    input.forcePlanning ? 'Request Changes rule:' : 'Execution rule:',
-    input.forcePlanning
-      ? '- If HUMAN_INPUT.md exists, update the relevant upstream OpenSpec Markdown files first: proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md.'
-      : `- Read ${AUTOCODE_TASK_ARTIFACTS.openSpecContext} first and open full OpenSpec artifacts only for exact wording.`,
-    input.forcePlanning
-      ? `- If change_requests.jsonl exists, use it as the same-task iteration audit trail.`
-      : '',
-    input.forcePlanning
-      ? `- Then regenerate ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan} from the updated OpenSpec artifacts.`
-      : '- Treat implementation_plan.md as downstream runtime state, not product truth.',
-    input.forcePlanning
-      ? `- Do not make ${AUTOCODE_TASK_ARTIFACTS.implementationPlan} the only changed planning artifact when feedback changes product behavior, requirements, design, or task scope.`
-      : '- Complete the current runtime work package and update downstream status only.',
-    input.forcePlanning
-      ? '- Revise OpenSpec tasks.md incrementally: preserve completed items that still apply, add new pending items, and mark invalidated or obsolete items explicitly instead of erasing history.'
-      : '',
-    input.forcePlanning ? '- Do not implement code in this planning pass.' : '',
-    '',
-    'OpenSpec artifact paths:',
-    ...artifacts.map((artifact) => `- ${artifact.label}: ${artifact.path}`),
-    '',
-  ].filter(Boolean);
-
-  if (existsSync(contextPath)) {
-    try {
-      lines.push('```markdown');
-      lines.push(limitPromptText(readFileSync(contextPath, 'utf8'), OPENSPEC_ARTIFACT_PROMPT_LIMIT));
-      lines.push('```');
-    } catch {
-      // Keep the path references even if the compact context cannot be read.
-    }
-  }
-
-  return lines.join('\n');
-}
-
-function stringFrom(value: unknown): string {
-  return typeof value === 'string' ? value.trim() : '';
-}
-
-function toStringArray(value: unknown): string[] {
-  return Array.isArray(value)
-    ? value.map((item) => stringFrom(item)).filter(Boolean)
-    : [];
-}
-
-function limitPromptText(value: string, maxLength: number): string {
-  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
 }
 
 function buildTaskHumanInputReference(specDir: string): string {
@@ -1048,7 +949,6 @@ async function finalize(currentAttemptId, exitCode, signal, explicitError) {
 async function finishRun(exitCode, signal, explicitError, validationError) {
   if (finalized) return;
   finalized = true;
-  syncOpenSpecTasksFromPlan();
   const failed = exitCode !== 0 || Boolean(explicitError) || Boolean(validationError);
   const now = new Date().toISOString();
   const result = {
@@ -1267,7 +1167,6 @@ function startCodingWorkerAttempt(subtask) {
   activeCodingAttempts.set(currentAttemptId, { state, subtask, workerId });
   markPlanSubtaskStatus(subtask.id, 'in_progress');
   restoreKnownCodingStatuses(subtask.id);
-  syncOpenSpecTasksFromPlan();
 
   const progress = getCodingProgress();
   const workLabel = subtask.workPackage ? 'work package' : 'subtask';
@@ -1349,7 +1248,6 @@ function finalizeCodingAttempt(currentAttemptId, exitCode, signal, explicitError
   }
 
   restoreKnownCodingStatuses(attempt.subtask.id);
-  syncOpenSpecTasksFromPlan();
   fillCodingWorkers();
 }
 
@@ -1368,7 +1266,6 @@ function finishCodingWorkQueue() {
     for (const item of dependencyBlockedItems) {
       markPlanSubtaskStatus(item.id, 'blocked', formatRunnerDependencyBlocker(item));
     }
-    syncOpenSpecTasksFromPlan();
     finishRun(
       1,
       undefined,
@@ -1404,10 +1301,10 @@ function buildFocusedSubtaskPrompt(subtask) {
   const workLabel = subtask.workPackage ? 'Work Package' : 'Subtask';
   const workflowRules = subtask.workPackage
     ? [
-        '- Implement every upstream OpenSpec task listed in this work package.',
+        '- Implement every Autocode source task listed in this work package.',
         '- Do not implement later pending work packages in this invocation.',
         '- Keep other work package checkboxes unchanged.',
-        '- Do not edit implementation_plan.md or OpenSpec tasks.md status checkboxes; this runner updates work package ' + subtask.id + ' after the CLI exits.',
+        '- Do not edit implementation_plan.md status checkboxes; this runner updates work package ' + subtask.id + ' after the CLI exits.',
         '- Return a concise completion summary for this work package.',
         '- Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread the surrounding lines once before retrying.',
         '- Treat legacy or non-UTF-8 files as encoding-sensitive: do not use apply_patch or UTF-8 rewrites on them. Use an encoding-preserving script/tool and keep the original file encoding.',
@@ -1434,7 +1331,7 @@ function buildFocusedSubtaskPrompt(subtask) {
     'Phase: ' + (subtask.phaseName || 'Implementation'),
     'Title: ' + subtask.title,
     subtask.dependsOn && subtask.dependsOn.length > 0 ? 'Depends on completed work items: ' + subtask.dependsOn.join(', ') : '',
-    subtask.upstreamTaskIds && subtask.upstreamTaskIds.length > 0 ? 'Upstream OpenSpec tasks: ' + subtask.upstreamTaskIds.join(', ') : '',
+    subtask.upstreamTaskIds && subtask.upstreamTaskIds.length > 0 ? 'Source task IDs: ' + subtask.upstreamTaskIds.join(', ') : '',
     subtask.upstreamSource ? 'Upstream source: ' + subtask.upstreamSource : '',
     '',
     'Description:',
@@ -2056,76 +1953,6 @@ function upsertPlanSubtaskMachineMetadata(content, subtaskId, updates) {
 
 function compactPlanField(value) {
   return cleanLogText(value).replace(/\\s+/g, ' ').replace(/_/g, '\\\\_').trim().slice(0, 500);
-}
-
-function syncOpenSpecTasksFromPlan() {
-  const metadata = readJson(join(specDir, artifacts.taskMetadata));
-  if (!metadata || metadata.sourceType !== 'openspec' || typeof metadata.openSpecTasksPath !== 'string') {
-    return;
-  }
-  const tasksPath = join(cwd, metadata.openSpecTasksPath);
-  if (!existsSync(tasksPath)) {
-    return;
-  }
-  const statusById = new Map();
-  const items = readPlanItems();
-  for (const item of items) {
-    if (!item.isSubtask) continue;
-    const status = item.status === 'completed' ? 'completed' : 'pending';
-    statusById.set(item.id, status);
-    for (const upstreamTaskId of item.upstreamTaskIds || []) {
-      statusById.set(upstreamTaskId, status);
-    }
-  }
-  for (const item of items.filter((candidate) => !candidate.isSubtask)) {
-    const childPrefix = item.id + '.';
-    const children = items.filter((candidate) => candidate.isSubtask && candidate.id.startsWith(childPrefix));
-    if (children.length > 0) {
-      statusById.set(item.id, children.every((child) => child.status === 'completed') ? 'completed' : 'pending');
-    }
-  }
-
-  withFileWriteLock(tasksPath, 'runner:openspec-tasks', () => {
-    let content = '';
-    try {
-      content = readFileSync(tasksPath, 'utf8');
-    } catch {
-      return;
-    }
-    populateParentOpenSpecTaskStatuses(content, statusById);
-    const updated = content.replace(
-      /^(\\s*-\\s+\\[)([ xX/!\\-])(\\]\\s+)([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(\\.?)(\\s+.+)$/gm,
-      (line, prefix, oldMarker, suffix, id, dot, rest) => {
-        const status = statusById.get(id);
-        if (!status) return line;
-        return prefix + (status === 'completed' ? 'x' : ' ') + suffix + id + dot + rest;
-      },
-    );
-    if (updated !== content) {
-      writeFileSync(tasksPath, updated, 'utf8');
-    }
-  });
-}
-
-function populateParentOpenSpecTaskStatuses(content, statusById) {
-  const taskIds = [...content.matchAll(/^\\s*-\\s+\\[[ xX/!\\-]\\]\\s+([A-Za-z0-9]+(?:[.-][A-Za-z0-9]+)*)(?:\\.?)\\s+.+$/gm)]
-    .map((match) => match[1])
-    .filter(Boolean)
-    .sort((a, b) => b.length - a.length);
-
-  for (const taskId of taskIds) {
-    if (statusById.has(taskId)) {
-      continue;
-    }
-    const children = taskIds.filter((candidate) => candidate !== taskId && candidate.startsWith(taskId + '.'));
-    if (children.length === 0 || children.some((childId) => !statusById.has(childId))) {
-      continue;
-    }
-    statusById.set(
-      taskId,
-      children.every((childId) => statusById.get(childId) === 'completed') ? 'completed' : 'pending',
-    );
-  }
 }
 
 function inferFileWriteLockScope() {
@@ -2848,7 +2675,7 @@ async function validateExpectedArtifacts() {
 }
 
 async function deriveRuntimePlanFromStandardTasksIfNeeded() {
-  if ((phase !== 'spec' && phase !== 'planning') || isOpenSpecRunnerTask()) {
+  if (phase !== 'spec' && phase !== 'planning') {
     return undefined;
   }
 
@@ -2895,14 +2722,9 @@ function readExistingPlanMachineMetadata() {
   }
 }
 
-function isOpenSpecRunnerTask() {
-  return String(taskMetadata?.sourceType || '').toLowerCase() === 'openspec';
-}
-
 function shouldValidatePlanningSchedulingMetadata() {
   const mode = String(taskMetadata?.developmentMode || '').toLowerCase();
-  const sourceType = String(taskMetadata?.sourceType || '').toLowerCase();
-  return sourceType !== 'openspec' && (mode === 'standard' || runtimeConcurrency.mode === 'concurrent');
+  return mode === 'standard' || runtimeConcurrency.mode === 'concurrent';
 }
 
 function validatePlanningSchedulingMetadata() {
@@ -2931,7 +2753,7 @@ function validatePlanningSchedulingMetadata() {
 }
 
 function buildArtifactValidationRetryPrompt(validationError) {
-  const standardTasksMode = !isOpenSpecRunnerTask() && (phase === 'spec' || phase === 'planning');
+  const standardTasksMode = phase === 'spec' || phase === 'planning';
   const requiredOutputs = phase === 'spec'
     ? [
         \`- Write or repair \${specDir}/\${artifacts.specFile}.\`,

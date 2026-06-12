@@ -407,11 +407,6 @@
       "import": "./dist/runtime/workflow-metrics.js",
       "default": "./dist/runtime/workflow-metrics.js"
     },
-    "./runtime/openspec-progress": {
-      "types": "./dist/runtime/openspec-progress.d.ts",
-      "import": "./dist/runtime/openspec-progress.js",
-      "default": "./dist/runtime/openspec-progress.js"
-    },
     "./runtime/agent-recovery": {
       "types": "./dist/runtime/agent-recovery.d.ts",
       "import": "./dist/runtime/agent-recovery.js",
@@ -696,11 +691,6 @@
       "types": "./dist/integrations/gitblit/index.d.ts",
       "import": "./dist/integrations/gitblit/index.js",
       "default": "./dist/integrations/gitblit/index.js"
-    },
-    "./openspec": {
-      "types": "./dist/openspec/index.d.ts",
-      "import": "./dist/openspec/index.js",
-      "default": "./dist/openspec/index.js"
     }
   },
   "files": [

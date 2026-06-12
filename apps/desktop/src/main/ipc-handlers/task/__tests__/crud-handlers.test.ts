@@ -260,7 +260,7 @@ describe('registerTaskCRUDHandlers', () => {
     }
   });
 
-  it('normalizes runtime concurrency when a fast task is edited to standard mode', async () => {
+  it('normalizes runtime concurrency when a direct task is edited to standard mode', async () => {
     const { findTaskAndProject } = await import('../shared');
     const { updatePlanFile } = await import('../plan-file-utils');
     const tempProjectPath = mkdtempSync(path.join(tmpdir(), 'autocode-crud-'));
@@ -269,7 +269,7 @@ describe('registerTaskCRUDHandlers', () => {
     const metadataPath = path.join(specDir, 'task_metadata.json');
     const staleMetadata = {
       sourceType: 'manual' as const,
-      developmentMode: 'fast' as const,
+      developmentMode: 'direct' as const,
       workflowMode: 'off' as const,
       runtimeConcurrency: {
         mode: 'serial' as const,

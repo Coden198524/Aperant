@@ -50,12 +50,12 @@
       "title": "Paramètres avancés",
       "retryLimits": "Limites de réessai",
       "qualityChecks": "Vérifications de qualité",
-      "specCreationMode": "Mode de création de spécification",
+      "specCreationMode": "Mode de planification Standard",
       "retries": {
         "planning": "Réessais de planification",
         "subtask": "Réessais de sous-tâche",
         "qa": "Cycles QA",
-        "specPhase": "Réessais de phase de spécification"
+        "specPhase": "Réessais de phase de planification"
       },
       "checks": {
         "smokeTests": "Tests de fumée pré-QA",

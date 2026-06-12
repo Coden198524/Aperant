@@ -7,7 +7,6 @@ import {
   getAutocodeAgentRuntimeModeLabel,
   resolveAutocodeTaskStartEvent,
   startAutocodeAgentRuntime,
-  withAutocodeRuntimeFileWriteLockSync,
 } from '@autocode/core';
 import { IPC_CHANNELS, getSpecsDir } from '../../../shared/constants';
 import type { IPCResult, TaskStartOptions, TaskStatus, ImageAttachment, Task, Project } from '../../../shared/types';
@@ -52,6 +51,23 @@ type ChangeRequestImpact =
   | 'tasks'
   | 'implementation'
   | 'validation';
+type ChangeRequestFlowDocument =
+  | 'HUMAN_INPUT.md'
+  | 'change_requests.jsonl'
+  | 'spec.md'
+  | 'requirements.md'
+  | 'tasks.md'
+  | 'implementation_plan.md'
+  | 'qa_report.md'
+  | 'direct_summary.md';
+
+interface ChangeRequestIterationPlan {
+  mode: 'standard-planning' | 'standard-implementation' | 'direct-implementation';
+  flowDocuments: ChangeRequestFlowDocument[];
+  requiredActions: string[];
+  validation: string[];
+  commitPolicy: string;
+}
 
 interface ChangeRequestRecord {
   id: string;
@@ -61,6 +77,7 @@ interface ChangeRequestRecord {
   taskTitle: string;
   scope: ChangeRequestScope;
   impacts: ChangeRequestImpact[];
+  iteration: ChangeRequestIterationPlan;
   feedback: string;
   attachmentsMarkdown?: string;
 }
@@ -176,21 +193,12 @@ function getPlanFilePathsForTask(project: Project, task: Task, specsBaseDir: str
 }
 
 function isDirectWorkflowTask(task: Task): boolean {
-  return task.metadata?.workflowMode === 'off';
+  return task.metadata?.workflowMode === 'off' || task.metadata?.developmentMode === 'direct';
 }
 
 function isStandardWorkflowTask(task: Task): boolean {
   return !isDirectWorkflowTask(task)
-    && task.metadata?.sourceType !== 'openspec'
     && task.metadata?.developmentMode === 'standard';
-}
-
-function isSpecWorkflowTask(task: Task): boolean {
-  return !isDirectWorkflowTask(task)
-    && (
-      task.metadata?.sourceType === 'openspec' ||
-      task.metadata?.developmentMode === 'spec'
-    );
 }
 
 function getTaskBaseBranch(task: Task, project: Project): string | undefined {
@@ -268,14 +276,11 @@ function classifyChangeRequestImpact(
 
   if (scope === 'planning') {
     impacts.add('requirements');
+    impacts.add('design');
     impacts.add('tasks');
     impacts.add('validation');
   } else {
     impacts.add('implementation');
-  }
-
-  if (isSpecWorkflowTask(task)) {
-    impacts.add('design');
   }
 
   if (
@@ -340,7 +345,7 @@ function shouldRegeneratePlanForFeedback(task: Task, impacts: ChangeRequestImpac
   );
 
   if (changesPlanningArtifacts) {
-    return isSpecWorkflowTask(task) || isStandardWorkflowTask(task);
+    return isStandardWorkflowTask(task);
   }
 
   return isStandardWorkflowTask(task) && !feedbackRequiresImplementationRestart(feedback);
@@ -362,9 +367,102 @@ function createChangeRequestRecord(input: {
     taskTitle: input.task.title,
     scope: input.scope,
     impacts: input.impacts,
+    iteration: buildChangeRequestIterationPlan(input.task, input.impacts, input.scope),
     feedback: input.feedback || 'No feedback provided',
     ...(input.imageReferences.trim() ? { attachmentsMarkdown: input.imageReferences.trim() } : {}),
   };
+}
+
+function buildChangeRequestIterationPlan(
+  task: Task,
+  impacts: ChangeRequestImpact[],
+  scope: ChangeRequestScope,
+): ChangeRequestIterationPlan {
+  const flowDocuments = new Set<ChangeRequestFlowDocument>([
+    'HUMAN_INPUT.md',
+    CHANGE_REQUESTS_LOG_FILE,
+  ]);
+  const requiredActions = new Set<string>();
+  const validation = new Set<string>();
+  const standardTask = isStandardWorkflowTask(task);
+
+  if (standardTask) {
+    flowDocuments.add('implementation_plan.md');
+    requiredActions.add('Keep this as the same Standard task iteration; do not create a new task for the follow-up requirement.');
+    requiredActions.add('Update changed flow documents before starting the coding pass.');
+    requiredActions.add('Preserve completed work that still satisfies the updated requirement, and reset only affected work to pending with needs_revision notes.');
+    requiredActions.add('Add or adjust verification metadata for every new or revised task.');
+    validation.add('Run the smallest reliable targeted validation for the affected area.');
+    validation.add('Record validation results in the implementation plan completion note or QA report.');
+
+    if (scope === 'planning' || impacts.some((impact) => impact === 'requirements' || impact === 'design')) {
+      flowDocuments.add('spec.md');
+      flowDocuments.add('requirements.md');
+      requiredActions.add('Revise requirements, acceptance criteria, constraints, risks, and open questions before regenerating runtime work.');
+    }
+    if (scope === 'planning' || impacts.includes('tasks')) {
+      flowDocuments.add('tasks.md');
+      requiredActions.add('Regenerate tasks.md incrementally, keeping unaffected checklist items stable.');
+    }
+    if (impacts.includes('validation')) {
+      flowDocuments.add('qa_report.md');
+      validation.add('Run or queue the relevant build/test/typecheck/lint command before human review.');
+    }
+
+    return {
+      mode: scope === 'planning' ? 'standard-planning' : 'standard-implementation',
+      flowDocuments: orderChangeRequestFlowDocuments(flowDocuments),
+      requiredActions: Array.from(requiredActions),
+      validation: Array.from(validation),
+      commitPolicy: 'After validation passes, keep the iteration in the same task and use the normal task commit flow; include this change request ID in the summary or commit context when committing is enabled.',
+    };
+  }
+
+  flowDocuments.add('direct_summary.md');
+  requiredActions.add('Handle the feedback in one direct implementation pass.');
+  requiredActions.add('Do not create a new task unless the user explicitly asks for one.');
+  validation.add('Run one relevant validation check, or record why validation was not possible.');
+
+  return {
+    mode: 'direct-implementation',
+    flowDocuments: orderChangeRequestFlowDocuments(flowDocuments),
+    requiredActions: Array.from(requiredActions),
+    validation: Array.from(validation),
+    commitPolicy: 'Use the normal task commit flow after validation if commits are enabled; do not push automatically.',
+  };
+}
+
+function orderChangeRequestFlowDocuments(
+  documents: Set<ChangeRequestFlowDocument>,
+): ChangeRequestFlowDocument[] {
+  const order: ChangeRequestFlowDocument[] = [
+    'HUMAN_INPUT.md',
+    'change_requests.jsonl',
+    'spec.md',
+    'requirements.md',
+    'tasks.md',
+    'implementation_plan.md',
+    'qa_report.md',
+    'direct_summary.md',
+  ];
+  return order.filter((document) => documents.has(document));
+}
+
+function buildIterationProtocolSection(changeRequest?: ChangeRequestRecord): string {
+  if (!changeRequest) {
+    return '';
+  }
+
+  return (
+    `## Standard Iteration Protocol\n\n` +
+    `- Mode: ${changeRequest.iteration.mode}\n` +
+    `- Flow documents to update: ${changeRequest.iteration.flowDocuments.join(', ')}\n` +
+    `- Validation: ${changeRequest.iteration.validation.join('; ')}\n` +
+    `- Commit policy: ${changeRequest.iteration.commitPolicy}\n\n` +
+    `### Required Actions\n\n` +
+    changeRequest.iteration.requiredActions.map((action) => `- ${action}`).join('\n') +
+    `\n\n`
+  );
 }
 
 function writeChangeRequestArtifacts(specDirs: Iterable<string>, record: ChangeRequestRecord): void {
@@ -399,24 +497,29 @@ function buildHumanInputContent(
         `- Created: ${changeRequest.createdAt}\n` +
         `- Scope: ${changeRequest.scope}\n` +
         `- Impact analysis: ${changeRequest.impacts.join(', ') || 'implementation'}\n` +
-        `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}\n\n`
+      `- Audit trail: ${CHANGE_REQUESTS_LOG_FILE}\n\n`
       )
     : '';
+  const iterationProtocolSection = buildIterationProtocolSection(changeRequest);
 
   if (scope === 'planning') {
     return (
       `# Human Input\n\n` +
       `The user reviewed the generated plan/specification and requested planning changes.\n\n` +
       changeRequestSection +
+      iterationProtocolSection +
       `## Requested Changes\n\n` +
       `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
       `## Instructions\n\n` +
       `- Treat this as an iteration of the existing task. Do not create a new task unless the user explicitly asks for a separate follow-up task.\n` +
       `- First update requirements/design/task artifacts so they reflect this change request before any coding pass.\n` +
-      `- If this task is backed by OpenSpec, update proposal.md, design.md, tasks.md, and/or specs/<capability>/spec.md first.\n` +
-      `- For Standard tasks, update spec.md with changed acceptance criteria and update tasks.md with new pending subtasks that implement this feedback.\n` +
+      `- For Standard tasks, update spec.md with changed requirements, design decisions, acceptance criteria, risks, and open questions.\n` +
+      `- Then update tasks.md with concrete pending subtasks that implement this feedback and keep dependencies/verification current.\n` +
+      `- Use the Autocode Standard flow: proposal -> requirements -> design -> tasks -> implementation plan.\n` +
       `- Revise task lists incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.\n` +
       `- Regenerate implementation_plan.md only after the upstream specification artifacts reflect this feedback, preserving useful completed work where still valid.\n` +
+      `- Update verification metadata for revised tasks, and ensure the next coding/QA pass runs the relevant tests before the task is committed.\n` +
+      `- Keep this iteration commit-ready: the final coding pass should use the normal task commit flow after validation succeeds.\n` +
       `- Do not implement code in this planning pass.\n`
     );
   }
@@ -425,6 +528,7 @@ function buildHumanInputContent(
     `# Human Input\n\n` +
     `The user reviewed the previous implementation and reported issues that require another coding pass.\n\n` +
     changeRequestSection +
+    iterationProtocolSection +
     `## Requested Fixes\n\n` +
     `${feedback || 'No feedback provided'}${imageReferences}\n\n` +
     `## Instructions\n\n` +
@@ -432,61 +536,9 @@ function buildHumanInputContent(
     `- If the feedback changes requirements, design, user behavior, or task scope, stop and update the relevant planning artifacts before coding.\n` +
     `- Fix the reported implementation issues.\n` +
     `- Re-run the relevant build/test/validation steps.\n` +
+    `- Keep this iteration commit-ready: after validation passes, use the normal task commit flow when commits are enabled.\n` +
     `- Update implementation_plan.md as you make progress and record any affected subtask as needs_revision in its description or completion note.\n`
   );
-}
-
-function writeOpenSpecReviewFeedback(projectPath: string, task: Task, humanInputContent: string): void {
-  const metadata = task.metadata;
-  if (metadata?.sourceType !== 'openspec' || typeof metadata.openSpecChangeDir !== 'string') {
-    return;
-  }
-
-  const changeDir = path.resolve(projectPath, metadata.openSpecChangeDir);
-  const relativeChangeDir = path.relative(projectPath, changeDir);
-  if (relativeChangeDir.startsWith('..') || path.isAbsolute(relativeChangeDir)) {
-    console.warn('[TASK_REVIEW] Skipping OpenSpec review feedback write outside project:', metadata.openSpecChangeDir);
-    return;
-  }
-
-  try {
-    if (!existsSync(changeDir)) {
-      mkdirSync(changeDir, { recursive: true });
-    }
-    const feedbackPath = path.join(changeDir, 'review-feedback.md');
-    const writeFeedback = () => {
-      writeFileSync(
-        feedbackPath,
-        [
-          '# Review Feedback',
-          '',
-          'This feedback came from Autocode plan review. Apply it to the upstream OpenSpec artifacts before regenerating downstream runtime plans.',
-          '',
-          humanInputContent.trimEnd(),
-          '',
-          `Recorded at: ${new Date().toISOString()}`,
-          '',
-        ].join('\n'),
-        'utf-8',
-      );
-    };
-
-    if (!existsSync(projectPath)) {
-      writeFeedback();
-      return;
-    }
-
-    withAutocodeRuntimeFileWriteLockSync(
-      {
-        projectRoot: projectPath,
-        filePath: feedbackPath,
-        ownerId: `desktop:openspec-review-feedback:${task.specId}`,
-      },
-      writeFeedback,
-    );
-  } catch (error) {
-    console.warn('[TASK_REVIEW] Failed to write OpenSpec review feedback:', error);
-  }
 }
 
 function buildFollowupSummary(feedback: string): string {
@@ -1092,7 +1144,6 @@ export function registerTaskExecutionHandlers(
               return { success: false, error: 'Failed to write human input file' };
             }
           }
-          writeOpenSpecReviewFeedback(project.path, task, humanInputContent);
 
           taskStateManager.prepareForRestart(taskId);
           taskStateManager.handleUiEvent(

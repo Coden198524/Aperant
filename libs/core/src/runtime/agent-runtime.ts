@@ -295,7 +295,7 @@ export function getAutocodeAgentRuntimeModeLabel(mode: AutocodeAgentRuntimeMode)
     case 'direct':
       return 'direct model execution';
     case 'spec':
-      return 'spec creation';
+      return 'standard planning';
     case 'planning':
       return 'implementation planning';
     case 'coding':
@@ -343,5 +343,5 @@ function createAutocodeAgentRuntimeMessages(
 }
 
 function isDirectAutocodeWorkflow(metadata: AutocodeAgentRuntimeMetadata | undefined): boolean {
-  return metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'fast' || metadata?.workflowMode === 'off';
+  return metadata?.developmentMode === 'direct' || metadata?.workflowMode === 'off';
 }

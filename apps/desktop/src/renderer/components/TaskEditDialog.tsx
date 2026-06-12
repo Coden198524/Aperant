@@ -65,15 +65,13 @@ function workflowModeForDevelopmentMode(mode: TaskDevelopmentMode): TaskWorkflow
 }
 
 function resolveTaskDevelopmentMode(metadata: TaskMetadata | undefined): TaskDevelopmentMode {
-  if (metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'standard' || metadata?.developmentMode === 'spec') {
+  if (metadata?.developmentMode === 'direct' || metadata?.developmentMode === 'standard') {
     return metadata.developmentMode;
   }
   if (metadata?.workflowMode === 'off') {
     return 'direct';
   }
-  return metadata?.sourceType === 'openspec' || metadata?.upstreamSpecSystem === 'openspec'
-    ? 'spec'
-    : 'standard';
+  return 'standard';
 }
 
 export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDialogProps) {
@@ -272,10 +270,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
     metadataUpdates.requireReviewBeforeCoding = developmentMode !== 'direct' && requireReviewBeforeCoding;
     metadataUpdates.developmentMode = developmentMode;
     metadataUpdates.workflowMode = workflowModeForDevelopmentMode(developmentMode);
-    metadataUpdates.sourceType = developmentMode === 'spec' ? 'openspec' : 'manual';
-    metadataUpdates.openSpecGenerationMode = developmentMode === 'spec' ? 'deferred' : undefined;
-    metadataUpdates.upstreamSpecSystem = developmentMode === 'spec' ? 'openspec' : undefined;
-    metadataUpdates.downstreamExecutionSystem = developmentMode === 'spec' ? 'autocode' : undefined;
+    metadataUpdates.sourceType = 'manual';
 
     const success = await persistUpdateTask(task.id, {
       title: trimmedTitle,

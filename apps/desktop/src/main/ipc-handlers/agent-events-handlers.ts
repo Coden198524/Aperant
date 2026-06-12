@@ -152,8 +152,7 @@ export function registerAgenteventsHandlers(
             // Clean exit (code 0) means the task completed successfully but the terminal
             // event was lost in transit. Treat as completed, not stopped.
             const directModeFallback = checkTask.metadata?.workflowMode === 'off' ||
-              checkTask.metadata?.developmentMode === 'direct' ||
-              checkTask.metadata?.developmentMode === 'fast';
+              checkTask.metadata?.developmentMode === 'direct';
             console.warn(
               `[agent-events-handlers] Task ${taskId} still in XState ${currentState} ` +
               `${STUCK_TASK_FALLBACK_TIMEOUT_MS}ms after clean exit (code 0), forcing ${directModeFallback ? 'DIRECT_COMPLETED' : 'QA_PASSED'}`
@@ -376,110 +375,6 @@ export function registerAgenteventsHandlers(
     console.debug(`[agent-events-handlers] Event ${event.type} accepted: ${accepted}`);
     if (!accepted) {
       return;
-    }
-
-    if (event.type === 'OPENSPEC_GENERATION_STARTED') {
-      const message = typeof event.message === 'string'
-        ? event.message
-        : 'Generating OpenSpec artifacts...';
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
-        taskId,
-        {
-          phase: 'planning',
-          phaseProgress: 5,
-          overallProgress: 5,
-          message,
-          sequenceNumber: event.sequence,
-        } satisfies ExecutionProgressData,
-        project.id
-      );
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_LOG,
-        taskId,
-        message,
-        project.id
-      );
-    } else if (event.type === 'OPENSPEC_GENERATION_PROGRESS') {
-      const message = typeof event.message === 'string'
-        ? event.message
-        : 'Generating OpenSpec artifacts...';
-      const phaseProgress = typeof event.phaseProgress === 'number'
-        ? event.phaseProgress
-        : 15;
-      const overallProgress = typeof event.overallProgress === 'number'
-        ? event.overallProgress
-        : Math.round(5 + ((Math.max(5, Math.min(35, phaseProgress)) - 5) / 30) * 10);
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
-        taskId,
-        {
-          phase: 'planning',
-          phaseProgress,
-          overallProgress,
-          message,
-          sequenceNumber: event.sequence,
-        } satisfies ExecutionProgressData,
-        project.id
-      );
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_LOG,
-        taskId,
-        message,
-        project.id
-      );
-    } else if (event.type === 'OPENSPEC_GENERATION_COMPLETED') {
-      const message = typeof event.message === 'string'
-        ? event.message
-        : 'OpenSpec artifacts generated. Preparing implementation plan...';
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
-        taskId,
-        {
-          phase: 'planning',
-          phaseProgress: 35,
-          overallProgress: 15,
-          message,
-          sequenceNumber: event.sequence,
-        } satisfies ExecutionProgressData,
-        project.id
-      );
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_LOG,
-        taskId,
-        message,
-        project.id
-      );
-    } else if (event.type === 'OPENSPEC_GENERATION_FAILED') {
-      const message = typeof event.message === 'string'
-        ? event.message
-        : typeof event.error === 'string' ? event.error : 'OpenSpec artifact generation failed.';
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_EXECUTION_PROGRESS,
-        taskId,
-        {
-          phase: 'failed',
-          phaseProgress: 100,
-          overallProgress: 100,
-          message,
-          sequenceNumber: event.sequence,
-        } satisfies ExecutionProgressData,
-        project.id
-      );
-      safeSendToRenderer(
-        getMainWindow,
-        IPC_CHANNELS.TASK_LOG,
-        taskId,
-        message,
-        project.id
-      );
     }
 
     const mainPlanPath = getPlanPath(project, task);

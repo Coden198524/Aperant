@@ -6,12 +6,6 @@ import {
   type AutocodeAgentRuntimePlan,
   type AutocodeAgentRuntimeStartRequest,
 } from '../runtime/agent-runtime.js';
-import {
-  createAutocodeTaskFromOpenSpecDraftWithGeneratedArtifacts,
-  normalizeOpenSpecChangeId,
-  type CreateAutocodeTaskFromGeneratedOpenSpecDraftInput,
-  type CreateAutocodeTaskFromOpenSpecDraftInput,
-} from '../openspec/index.js';
 import { buildProjectIndex, type ProjectIndex } from '../project/index.js';
 import { summarizeWorkspace, type WorkspaceSummary } from '../workspace/summary.js';
 import {
@@ -61,16 +55,7 @@ export interface CreateManualAutocodeTaskInput extends AutocodeTaskPathsInput {
   requirements?: AutocodeTaskRequirements;
   now?: string;
   prepareSpecArtifacts?: CreateAutocodeTaskInput['prepareSpecArtifacts'];
-  openSpecCli?: CreateAutocodeTaskFromOpenSpecDraftInput['openSpecCli'];
-  openSpecSchema?: CreateAutocodeTaskFromOpenSpecDraftInput['openSpecSchema'];
 }
-
-export interface CreateManualAutocodeTaskWithOpenSpecArtifactsInput extends CreateManualAutocodeTaskInput {
-  openSpecArtifactGenerator: CreateAutocodeTaskFromGeneratedOpenSpecDraftInput['artifactGenerator'];
-  validateOpenSpec?: CreateAutocodeTaskFromGeneratedOpenSpecDraftInput['validateOpenSpec'];
-}
-
-export type CreateManualAutocodeTaskWithDeferredOpenSpecArtifactsInput = CreateManualAutocodeTaskInput;
 
 export interface CreateAutocodeAgentRuntimeStartPlanInput extends AutocodeTaskPathsInput {
   taskId: string;
@@ -145,15 +130,12 @@ export function buildAutocodeWorkspaceState(input: BuildAutocodeWorkspaceStateIn
 }
 
 export function buildManualAutocodeTaskMetadata(metadata?: AutocodeTaskMetadata): AutocodeTaskMetadata {
-  const developmentMode = resolveAutocodeTaskDevelopmentMode(metadata, 'standard');
+  const developmentMode = resolveManualAutocodeTaskDevelopmentMode(metadata);
   return buildAutocodeTaskModeMetadata(developmentMode, metadata);
 }
 
 export function createManualAutocodeTask(input: CreateManualAutocodeTaskInput): AutocodeTask {
-  const developmentMode = resolveAutocodeTaskDevelopmentMode(input.metadata, 'standard');
-  if (developmentMode === 'spec') {
-    return createManualAutocodeTaskWithDeferredOpenSpecArtifacts(input);
-  }
+  const developmentMode = resolveManualAutocodeTaskDevelopmentMode(input.metadata);
 
   return createAutocodeTask({
     projectRoot: input.projectRoot,
@@ -181,79 +163,9 @@ export function createManualAutocodeTask(input: CreateManualAutocodeTaskInput): 
   });
 }
 
-export async function createManualAutocodeTaskWithOpenSpecArtifacts(
-  input: CreateManualAutocodeTaskWithOpenSpecArtifactsInput,
-): Promise<AutocodeTask> {
-  return (await createAutocodeTaskFromOpenSpecDraftWithGeneratedArtifacts({
-    projectRoot: input.projectRoot,
-    dataDirName: input.dataDirName,
-    title: input.title,
-    description: input.description,
-    metadata: buildAutocodeTaskModeMetadata('spec', input.metadata),
-    requirements: input.requirements,
-    now: input.now,
-    prepareSpecArtifacts: input.prepareSpecArtifacts,
-    openSpecCli: input.openSpecCli,
-    openSpecSchema: input.openSpecSchema,
-    artifactGenerator: input.openSpecArtifactGenerator,
-    validateOpenSpec: input.validateOpenSpec,
-  })).task;
-}
-
-export function createManualAutocodeTaskWithDeferredOpenSpecArtifacts(
-  input: CreateManualAutocodeTaskWithDeferredOpenSpecArtifactsInput,
-): AutocodeTask {
-  const metadata = {
-    ...buildAutocodeTaskModeMetadata('spec', input.metadata),
-    openSpecGenerationMode: 'deferred',
-    upstreamSpecSystem: 'openspec',
-    downstreamExecutionSystem: 'autocode',
-  };
-
-  return createAutocodeTask({
-    projectRoot: input.projectRoot,
-    dataDirName: input.dataDirName,
-    title: input.title,
-    description: input.description,
-    metadata,
-    requirements: input.requirements,
-    now: input.now,
-    prepareSpecArtifacts: (context) => {
-      const deferredMetadata: AutocodeTaskMetadata = {
-        ...context.metadata,
-        sourceType: 'openspec',
-        openSpecChangeId: normalizeOpenSpecChangeId(String(context.metadata.openSpecChangeId ?? context.specId)),
-        openSpecGenerationMode: 'deferred',
-        upstreamSpecSystem: 'openspec',
-        downstreamExecutionSystem: 'autocode',
-      };
-      writeFileSync(
-        join(context.specDir, AUTOCODE_TASK_ARTIFACTS.specFile),
-        `${buildDeferredOpenSpecExecutionSpecMarkdown({
-          title: context.title,
-          description: context.description,
-          changeId: String(deferredMetadata.openSpecChangeId ?? context.specId),
-          language: deferredMetadata.language,
-        }).trimEnd()}\n`,
-        'utf8',
-      );
-      const prepared = input.prepareSpecArtifacts?.({
-        ...context,
-        metadata: deferredMetadata,
-      });
-      return {
-        metadata: {
-          ...deferredMetadata,
-          ...prepared?.metadata,
-          sourceType: 'openspec',
-          openSpecGenerationMode: 'deferred',
-          upstreamSpecSystem: 'openspec',
-          downstreamExecutionSystem: 'autocode',
-        },
-        requirements: prepared?.requirements,
-      };
-    },
-  });
+function resolveManualAutocodeTaskDevelopmentMode(metadata?: AutocodeTaskMetadata): 'direct' | 'standard' {
+  const developmentMode = resolveAutocodeTaskDevelopmentMode(metadata, 'standard');
+  return developmentMode === 'direct' ? 'direct' : 'standard';
 }
 
 function buildManualAutocodeExecutionSpecMarkdown(input: {
@@ -279,13 +191,23 @@ function buildManualAutocodeExecutionSpecMarkdown(input: {
     '',
     '## Execution',
     input.developmentMode === 'direct'
-      ? 'Run one direct coding session against the selected model. Do not generate OpenSpec artifacts or staged plans.'
-      : 'Use lightweight Autocode specification and implementation planning. Do not generate upstream OpenSpec artifacts.',
+      ? 'Run one direct coding session against the selected model. Do not create staged planning or QA artifacts.'
+      : [
+          'Use Standard Autocode planning. Preserve the local Autocode workflow: spec.md, tasks.md, and implementation_plan.md stay inside this task directory.',
+          'Follow the Autocode Standard spec-driven flow: clarify proposal and requirements, capture design decisions, define acceptance criteria and risks, then produce executable tasks.',
+          'Before coding, keep spec.md and tasks.md aligned; implementation_plan.md is downstream runtime state derived from those Standard artifacts.',
+        ].join('\n'),
     '',
     '## Done',
     '- The change satisfies the request.',
     '- Only relevant files are modified.',
     '- Useful verification is recorded.',
+    ...(input.developmentMode === 'direct'
+      ? []
+      : [
+          '- spec.md records requirements, design notes, acceptance criteria, and risks.',
+          '- tasks.md contains concrete checklist work items with dependencies before implementation starts.',
+        ]),
   ].join('\n');
 }
 
@@ -307,68 +229,13 @@ function buildChineseManualAutocodeExecutionSpecMarkdown(input: {
     '',
     '## 执行方式',
     input.developmentMode === 'direct'
-      ? '直连所选大模型进入单次编码会话，不生成 OpenSpec 文档，不做分阶段规划。'
-      : '使用 Autocode 轻量规格和实现计划执行，不生成 OpenSpec 上游文档。',
+      ? '直连所选大模型进入单次编码会话，不创建分阶段规划或 QA 工件。'
+      : '使用 Autocode Standard 规范流程：先澄清目标和需求，再记录设计决策、验收标准、风险和可执行任务，最后由运行时生成 implementation_plan.md。',
     '',
     '## 完成标准',
     '- 变更满足请求描述。',
     '- 只修改相关文件。',
     '- 记录必要的验证结果。',
-  ].join('\n');
-}
-
-function buildDeferredOpenSpecExecutionSpecMarkdown(input: {
-  title: string;
-  description: string;
-  changeId: string;
-  language?: unknown;
-}): string {
-  if (isChineseLanguage(input.language)) {
-    return buildChineseDeferredOpenSpecExecutionSpecMarkdown(input);
-  }
-
-  return [
-    `# ${input.title}`,
-    '',
-    '## Role',
-    'This is a lightweight Autocode execution handoff. OpenSpec remains the upstream specification layer.',
-    '',
-    '## Request',
-    input.description,
-    '',
-    '## Planning Startup',
-    `When this task starts, generate OpenSpec artifacts for change \`${input.changeId}\`:`,
-    '- `proposal.md`',
-    '- `design.md`',
-    '- `tasks.md`',
-    '- `specs/<capability>/spec.md`',
-    '',
-    'After generation, use those OpenSpec artifacts as the source of truth and use Autocode files only for runtime state.',
-  ].join('\n');
-}
-
-function buildChineseDeferredOpenSpecExecutionSpecMarkdown(input: {
-  title: string;
-  description: string;
-  changeId: string;
-}): string {
-  return [
-    `# ${input.title}`,
-    '',
-    '## 角色',
-    '这是轻量级 Autocode 执行交接文档。OpenSpec 仍然是上游规格层。',
-    '',
-    '## 请求',
-    input.description,
-    '',
-    '## 规划启动',
-    `此任务启动时，为变更 \`${input.changeId}\` 生成 OpenSpec 文档：`,
-    '- `proposal.md`',
-    '- `design.md`',
-    '- `tasks.md`',
-    '- `specs/<capability>/spec.md`',
-    '',
-    '生成后，以 OpenSpec 文档作为事实来源，Autocode 文件只作为运行状态记录。',
   ].join('\n');
 }
 
