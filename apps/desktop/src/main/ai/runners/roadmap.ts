@@ -18,9 +18,10 @@ import type { SimpleClientResult } from '../client/types';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
 import {
+  AUTOCODE_PROJECT_DOCS_INDEX_FILE_NAME,
   AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME,
   AUTOCODE_ROADMAP_FILE_NAME,
-  getAutocodeProjectIndexPath,
+  getAutocodeProjectDocsPath,
   getAutocodeRoadmapDir,
   getAutocodeRoadmapFilePath,
   getAutocodeSpecsDir,
@@ -28,7 +29,6 @@ import {
   type ThinkingLevel,
 } from '@autocode/core';
 import type { SecurityProfile } from '../security/bash-validator';
-import { runProjectIndexer } from '../project/project-indexer';
 import { safeParseJson } from '../../utils/json-repair';
 import { tryLoadPrompt } from '../prompts/prompt-loader';
 
@@ -42,6 +42,33 @@ const MAX_RETRIES = 3;
 const MAX_STEPS_PER_PHASE = 30;
 
 const DISCOVERY_REQUIRED_FIELDS = ['project_name', 'target_audience', 'product_vision'] as const;
+
+function shouldUseSimplifiedChinese(language: string | undefined): boolean {
+  return language?.trim().toLowerCase().replace('_', '-').startsWith('zh') === true;
+}
+
+function getDiscoveryLanguageInstruction(language: string): string {
+  if (!shouldUseSimplifiedChinese(language)) return '';
+  return [
+    '',
+    '',
+    '## Language',
+    'Write all user-facing JSON string values in Simplified Chinese.',
+    'Keep JSON keys, IDs, file paths, commands, APIs, package names, and code identifiers unchanged.',
+  ].join('\n');
+}
+
+function getRoadmapLanguageInstruction(language: string): string {
+  if (!shouldUseSimplifiedChinese(language)) return '';
+  return [
+    '',
+    '',
+    '## Language',
+    'Write all roadmap user-facing JSON string values in Simplified Chinese.',
+    'This includes project vision, target audience text, phase names/descriptions, milestone titles/descriptions, feature titles/descriptions, rationales, acceptance criteria, and user stories.',
+    'Keep JSON keys, IDs, file paths, commands, APIs, package names, and code identifiers unchanged.',
+  ].join('\n');
+}
 
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
@@ -79,49 +106,31 @@ function extractJsonObjectFromText(text: string): Record<string, unknown> | null
   return null;
 }
 
-function asStringArray(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === 'string' && item.length > 0);
-}
-
 function buildFallbackDiscovery(
   projectDir: string,
-  projectIndexFile: string,
+  projectDocsIndexFile: string,
+  language = 'en',
 ): Record<string, unknown> | null {
   const projectName = basename(projectDir) || 'Project';
-  let projectType = 'other';
-  let primaryLanguage = 'Unknown';
-  const frameworks = new Set<string>();
-  const keyDependencies = new Set<string>();
-
-  if (!existsSync(projectIndexFile)) {
+  const useChinese = shouldUseSimplifiedChinese(language);
+  if (!existsSync(projectDocsIndexFile)) {
     return null;
   }
-
-  const parsed = safeParseJson<Record<string, unknown>>(readFileSync(projectIndexFile, 'utf-8'));
-  if (!parsed) {
-    return null;
-  }
-
-  if (typeof parsed.project_type === 'string' && parsed.project_type.trim()) {
-    projectType = parsed.project_type;
-  }
-  const services = (parsed.services ?? {}) as Record<string, unknown>;
-  for (const service of Object.values(services)) {
-    const s = service as Record<string, unknown>;
-    if (primaryLanguage === 'Unknown' && typeof s.language === 'string' && s.language.trim()) {
-      primaryLanguage = s.language;
-    }
-    if (typeof s.framework === 'string' && s.framework.trim()) {
-      frameworks.add(s.framework);
-    }
-    for (const dep of asStringArray(s.dependencies)) {
-      keyDependencies.add(dep);
-    }
-  }
+  const projectDocsContent = readFileSync(projectDocsIndexFile, 'utf-8');
+  const firstHeading = projectDocsContent
+    .split(/\r?\n/)
+    .map((line) => line.replace(/^#+\s*/, '').trim())
+    .find((line) => line.length > 0);
+  const documentTitle = firstHeading && !/documentation|文档|索引/i.test(firstHeading)
+    ? firstHeading
+    : projectName;
+  const projectType = 'documented-project';
+  const primaryLanguage = 'Unknown';
+  const frameworks: string[] = [];
+  const keyDependencies: string[] = [];
 
   return {
-    project_name: projectName,
+    project_name: documentTitle,
     project_type: projectType,
     tech_stack: {
       primary_language: primaryLanguage,
@@ -129,28 +138,38 @@ function buildFallbackDiscovery(
       key_dependencies: Array.from(keyDependencies).slice(0, 15),
     },
     target_audience: {
-      primary_persona: 'Developers maintaining and extending this project',
-      secondary_personas: ['Technical stakeholders reviewing progress'],
-      pain_points: ['Manual workflows', 'Lack of clear implementation priorities'],
-      goals: ['Ship features faster', 'Improve reliability and maintainability'],
-      usage_context: 'Used during active software development and delivery workflows',
+      primary_persona: useChinese ? '维护和扩展该项目的开发者' : 'Developers maintaining and extending this project',
+      secondary_personas: useChinese ? ['评估进度的技术相关方'] : ['Technical stakeholders reviewing progress'],
+      pain_points: useChinese ? ['手动流程较多', '缺少清晰的实现优先级'] : ['Manual workflows', 'Lack of clear implementation priorities'],
+      goals: useChinese ? ['更快交付功能', '提升可靠性和可维护性'] : ['Ship features faster', 'Improve reliability and maintainability'],
+      usage_context: useChinese ? '用于活跃的软件开发和交付流程' : 'Used during active software development and delivery workflows',
     },
     product_vision: {
-      one_liner: `${projectName} helps users complete core workflows with higher efficiency and quality.`,
-      problem_statement: 'The current workflow lacks a clear, prioritized roadmap tied to user outcomes.',
-      value_proposition: 'Provides a focused plan for incremental delivery based on the existing codebase.',
-      success_metrics: ['Feature throughput', 'Defect reduction', 'User satisfaction'],
+      one_liner: useChinese
+        ? `${projectName} 帮助用户以更高效率和质量完成核心工作流。`
+        : `${projectName} helps users complete core workflows with higher efficiency and quality.`,
+      problem_statement: useChinese
+        ? '当前工作流缺少与用户结果绑定的清晰优先级路线图。'
+        : 'The current workflow lacks a clear, prioritized roadmap tied to user outcomes.',
+      value_proposition: useChinese
+        ? '基于现有代码库提供聚焦的增量交付计划。'
+        : 'Provides a focused plan for incremental delivery based on the existing codebase.',
+      success_metrics: useChinese ? ['功能交付效率', '缺陷减少', '用户满意度'] : ['Feature throughput', 'Defect reduction', 'User satisfaction'],
     },
     current_state: {
       maturity: 'prototype',
       existing_features: [],
-      known_gaps: ['Roadmap details were inferred from local project metadata due AI generation failure'],
+      known_gaps: useChinese
+        ? ['由于 AI 生成失败，路线图发现信息根据本地项目文档和源码路径推断。']
+        : ['Roadmap discovery details were inferred from local project documentation and source paths due AI generation failure'],
       technical_debt: [],
     },
     competitive_context: {
       alternatives: [],
       differentiators: [],
-      market_position: 'Niche or evolving product area; precise positioning requires deeper analysis',
+      market_position: useChinese
+        ? '细分或发展中的产品领域；精确定位需要进一步分析。'
+        : 'Niche or evolving product area; precise positioning requires deeper analysis',
       competitor_pain_points: [],
       competitor_analysis_available: false,
     },
@@ -235,7 +254,7 @@ export type RoadmapStreamEvent =
 async function runDiscoveryPhase(
   projectDir: string,
   outputDir: string,
-  projectIndexFile: string,
+  projectDocsIndexFile: string,
   refresh: boolean,
   client: SimpleClientResult,
   language: string,
@@ -259,23 +278,22 @@ async function runDiscoveryPhase(
   let retryContext: string | undefined;
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    const languageInstruction = language === 'zh'
-      ? '\n\n## Language\nWrite all user-facing content in Simplified Chinese. Keep JSON keys and technical identifiers unchanged.'
-      : '';
-    const contextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Project Directory**: ${projectDir}\n**Project Index**: ${projectIndexFile}\n**Output Directory**: ${outputDir}\n**Output File**: ${discoveryFile}\n${languageInstruction}\n\nUse the paths above when reading input files and writing output.`;
+    const languageInstruction = getDiscoveryLanguageInstruction(language);
+    const contextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Project Directory**: ${projectDir}\n**Project Documentation Index**: ${projectDocsIndexFile}\n**Output Directory**: ${outputDir}\n**Output File**: ${discoveryFile}\n${languageInstruction}\n\nUse the project documentation index when it exists. If it is missing or incomplete, inspect source files directly. Use the paths above when reading input files and writing output.`;
 
     const basePrompt = loadedDiscoveryPrompt
       ? loadedDiscoveryPrompt + contextBlock
       : `Analyze the project and create a discovery document.
 
-**Project Index**: ${projectIndexFile}
+**Project Documentation Index**: ${projectDocsIndexFile}
 **Output Directory**: ${outputDir}
 **Output File**: ${discoveryFile}
+${languageInstruction}
 
 This runs non-interactively. Infer sensible defaults; do not ask questions.
 
 Your task:
-1. Analyze the project (read README, code structure, key files)
+1. Analyze the project (read the project documentation index when available, then README, code structure, and key files)
 2. Infer target audience, vision, and constraints from your analysis
 3. Create ${discoveryFile} with valid JSON
 
@@ -369,14 +387,14 @@ The JSON must contain at minimum: project_name, target_audience, product_vision,
   }
 
   try {
-    const fallback = buildFallbackDiscovery(projectDir, projectIndexFile);
+    const fallback = buildFallbackDiscovery(projectDir, projectDocsIndexFile, language);
     if (!fallback) {
       return { phase: 'discovery', success: false, outputs: [], errors };
     }
     writeFileSync(discoveryFile, JSON.stringify(fallback, null, 2), 'utf-8');
     onStream?.({
       type: 'error',
-      error: 'Discovery fallback used: generated roadmap_discovery.json from local project index',
+      error: 'Discovery fallback used: generated roadmap_discovery.json from local project documentation',
     });
     return { phase: 'discovery', success: true, outputs: [discoveryFile], errors };
   } catch (error) {
@@ -397,7 +415,7 @@ The JSON must contain at minimum: project_name, target_audience, product_vision,
 async function runFeaturesPhase(
   projectDir: string,
   outputDir: string,
-  projectIndexFile: string,
+  projectDocsIndexFile: string,
   refresh: boolean,
   client: SimpleClientResult,
   language: string,
@@ -438,19 +456,18 @@ The following ${preservedFeatures.length} features already exist and will be pre
 Generate new complementary features without duplicating these:
 ${preservedInfo}\n`;
     }
-    const languageInstruction = language === 'zh'
-      ? '\n\n## Language\nWrite all roadmap user-facing text in Simplified Chinese. Keep JSON keys, IDs, paths, commands, APIs, and code identifiers unchanged.'
-      : '';
-    const featuresContextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Discovery File**: ${discoveryFile}\n**Project Index**: ${projectIndexFile}\n**Output File**: ${roadmapFile}\n${preservedSection}${languageInstruction}\n\nUse the paths above when reading input files and writing output. Write the complete roadmap JSON to the Output File path.`;
+    const languageInstruction = getRoadmapLanguageInstruction(language);
+    const featuresContextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Discovery File**: ${discoveryFile}\n**Project Documentation Index**: ${projectDocsIndexFile}\n**Output File**: ${roadmapFile}\n${preservedSection}${languageInstruction}\n\nUse the project documentation index when it exists. If it is missing or incomplete, inspect source files directly. Use the paths above when reading input files and writing output. Write the complete roadmap JSON to the Output File path.`;
 
     const prompt = loadedFeaturesPrompt
       ? loadedFeaturesPrompt + featuresContextBlock
       : `Generate a roadmap with prioritized features.
 
 **Discovery File**: ${discoveryFile}
-**Project Index**: ${projectIndexFile}
+**Project Documentation Index**: ${projectDocsIndexFile}
 **Output File**: ${roadmapFile}
 ${preservedSection}
+${languageInstruction}
 Based on the discovery data:
 1. Read the discovery file to understand the project
 2. Generate features that address user pain points
@@ -634,21 +651,15 @@ export async function runRoadmapGeneration(
   } = config;
 
   const outputDir = config.outputDir ?? getAutocodeRoadmapDir(projectDir, dataDirName);
-  const projectIndexFile = getAutocodeProjectIndexPath(projectDir, dataDirName);
+  const projectDocsIndexFile = getAutocodeProjectDocsPath(
+    projectDir,
+    AUTOCODE_PROJECT_DOCS_INDEX_FILE_NAME,
+    dataDirName,
+  );
 
   // Ensure output directory exists
   if (!existsSync(outputDir)) {
     mkdirSync(outputDir, { recursive: true });
-  }
-  if (refresh || !existsSync(projectIndexFile)) {
-    try {
-      runProjectIndexer(projectDir, projectIndexFile);
-    } catch (error) {
-      onStream?.({
-        type: 'error',
-        error: `Project index generation failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`,
-      });
-    }
   }
 
   // Create tool context for read-only tools + Write
@@ -676,7 +687,7 @@ export async function runRoadmapGeneration(
   // Phase 1: Discovery
   onStream?.({ type: 'phase-start', phase: 'discovery' });
   const discoveryResult = await runDiscoveryPhase(
-    projectDir, outputDir, projectIndexFile, refresh, client, language, abortSignal, onStream,
+    projectDir, outputDir, projectDocsIndexFile, refresh, client, language, abortSignal, onStream,
   );
   phases.push(discoveryResult);
   onStream?.({ type: 'phase-complete', phase: 'discovery', success: discoveryResult.success });
@@ -692,7 +703,7 @@ export async function runRoadmapGeneration(
   // Phase 2: Feature Generation
   onStream?.({ type: 'phase-start', phase: 'features' });
   const featuresResult = await runFeaturesPhase(
-    projectDir, outputDir, projectIndexFile, refresh, client, language, abortSignal, onStream,
+    projectDir, outputDir, projectDocsIndexFile, refresh, client, language, abortSignal, onStream,
   );
   phases.push(featuresResult);
   onStream?.({ type: 'phase-complete', phase: 'features', success: featuresResult.success });

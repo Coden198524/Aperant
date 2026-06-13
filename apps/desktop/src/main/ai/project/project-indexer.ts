@@ -1,6 +1,5 @@
 export {
   buildProjectIndex,
-  runProjectIndexer,
 } from '@autocode/core';
 export type {
   ConventionsInfo,

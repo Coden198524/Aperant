@@ -2,16 +2,16 @@
   "$schema": "Design System Guidelines v2.0",
   "meta": {
     "name": "Auto-Build UI Design System",
-    "description": "A modern, professional design system inspired by Fey/Oscura aesthetics. Features deep dark mode with warm yellow accents, muted semantic colors, and clean typography.",
-    "designPhilosophy": "Minimal, data-focused interfaces optimized for dark mode. Near-black backgrounds with warm yellow accents create visual hierarchy. Color is reserved primarily for semantic meaning (success/error) while neutral grays handle most UI elements.",
-    "defaultTheme": "Oscura Midnight - deep dark with saturated yellow accent"
+    "description": "A modern, professional design system with exactly two built-in themes: a mature neutral light theme and a low-glare dark theme.",
+    "designPhilosophy": "Minimal, data-focused interfaces with mature neutral surfaces, crisp blue interactive accents, and muted semantic colors. Color is reserved primarily for action, focus, and state while neutral grays handle most UI elements.",
+    "defaultTheme": "Autocode Light / Autocode Dark"
   },
 
   "designPrinciples": {
     "core": [
       {
-        "name": "Dark-First Design",
-        "description": "Design primarily for dark mode with near-black backgrounds (#0B0B0F). Light mode is a secondary consideration with warm off-white tones."
+        "name": "Dual Theme Design",
+        "description": "Design for one polished light theme and one polished dark theme. Both should feel complete, restrained, and consistent."
       },
       {
         "name": "Semantic Color Usage",
@@ -35,7 +35,7 @@
       }
     ],
     "donts": [
-      "Avoid pure black (#000000) - use near-black (#0B0B0F) instead",
+      "Avoid pure black (#000000) - use low-glare charcoal (#0D1117) instead",
       "Don't overuse the accent color - reserve it for key interactive elements",
       "Avoid cramped layouts - maintain minimum 16px spacing between elements",
       "Don't use sharp corners - minimum 8px border-radius on interactive elements",
@@ -44,105 +44,37 @@
   },
 
   "themeSystem": {
-    "description": "Multi-theme system with 7 color themes, each supporting light and dark modes",
-    "implementation": "Use data-theme attribute for color theme and .dark class for mode. Default theme requires no data-theme attribute.",
+    "description": "Two-theme system with one light theme and one dark theme",
+    "implementation": "Use the .dark class for dark mode. Light mode is the default root state. Do not set data-theme attributes.",
     "cssSelectors": {
-      "lightDefault": ":root",
-      "darkDefault": ".dark",
-      "themeVariant": "[data-theme=\"{id}\"]",
-      "darkThemeVariant": "[data-theme=\"{id}\"].dark"
+      "light": ":root",
+      "dark": ".dark"
     },
     "examples": [
-      "<html> (default light)",
-      "<html class=\"dark\"> (default dark - Oscura Midnight)",
-      "<html data-theme=\"dusk\" class=\"dark\"> (dusk dark - slightly lighter)",
-      "<html data-theme=\"lime\"> (lime light)"
+      "<html> (Autocode light)",
+      "<html class=\"dark\"> (Autocode dark)"
     ],
-    "colorThemes": [
+    "themes": [
       {
-        "id": "default",
-        "name": "Default",
-        "description": "Oscura Midnight - deepest dark with saturated yellow accent, inspired by Fey/Oscura",
+        "id": "light",
+        "name": "Autocode Light",
+        "description": "Mature neutral work surface with GitHub-like borders and calm blue accents",
         "previewColors": {
-          "lightBg": "#F2F2ED",
-          "lightAccent": "#A5A66A",
-          "darkBg": "#0B0B0F",
-          "darkAccent": "#D6D876"
-        },
-        "semanticColors": {
-          "success": "#4EBE96",
-          "error": { "light": "#D84F68", "dark": "#FF5C5C" },
-          "warning": "#D2D714",
-          "info": "#479FFA"
-        },
-        "note": "No data-theme attribute needed - this is the base theme. Best for financial/data-heavy applications."
-      },
-      {
-        "id": "dusk",
-        "name": "Dusk",
-        "description": "Warmer Oscura variant with slightly lighter dark mode",
-        "previewColors": {
-          "lightBg": "#F5F5F0",
-          "lightAccent": "#B8B978",
-          "darkBg": "#131419",
-          "darkAccent": "#E6E7A3"
-        },
-        "semanticColors": {
-          "success": "#4EBE96",
-          "error": "#D84F68",
-          "warning": "#D2D714",
-          "info": "#479FFA"
-        },
-        "note": "Same accent family as Default but with warmer backgrounds and softer colors"
-      },
-      {
-        "id": "lime",
-        "name": "Lime",
-        "description": "Fresh, energetic lime/chartreuse with purple accents",
-        "previewColors": {
-          "lightBg": "#E8F5A3",
-          "darkBg": "#0F0F1A",
-          "accent": "#7C3AED"
+          "background": "#F6F8FA",
+          "surface": "#FFFFFF",
+          "accent": "#0969DA",
+          "text": "#1F2328"
         }
       },
       {
-        "id": "ocean",
-        "name": "Ocean",
-        "description": "Calm, professional blue tones",
+        "id": "dark",
+        "name": "Autocode Dark",
+        "description": "Low-glare charcoal work surface with VS Code-like contrast and softer blue accents",
         "previewColors": {
-          "lightBg": "#E0F2FE",
-          "darkBg": "#082F49",
-          "accent": "#0284C7"
-        }
-      },
-      {
-        "id": "retro",
-        "name": "Retro",
-        "description": "Warm, nostalgic amber/orange vibes",
-        "previewColors": {
-          "lightBg": "#FEF3C7",
-          "darkBg": "#1C1917",
-          "accent": "#D97706"
-        }
-      },
-      {
-        "id": "neo",
-        "name": "Neo",
-        "description": "Modern cyberpunk pink/magenta",
-        "previewColors": {
-          "lightBg": "#FDF4FF",
-          "darkBg": "#0F0720",
-          "accent": "#D946EF"
-        }
-      },
-      {
-        "id": "forest",
-        "name": "Forest",
-        "description": "Natural, earthy green tones",
-        "previewColors": {
-          "lightBg": "#DCFCE7",
-          "darkBg": "#052E16",
-          "accent": "#16A34A"
+          "background": "#0D1117",
+          "surface": "#161B22",
+          "accent": "#58A6FF",
+          "text": "#E6EDF3"
         }
       }
     ],
@@ -150,17 +82,17 @@
   },
 
   "colors": {
-    "note": "These are the Default theme colors (Oscura Midnight). See themeSystem for all available themes.",
+    "note": "These are the only two built-in theme color sets.",
     "cssVariablePrefix": "--color-",
 
     "lightMode": {
       "background": {
-        "primary": "#F2F2ED",
-        "primaryDescription": "Warm off-white with subtle cream tint",
+        "primary": "#F6F8FA",
+        "primaryDescription": "Mature neutral app background",
         "primaryVariable": "--color-background-primary",
-        "secondary": "#E8E8E3",
-        "secondaryDescription": "Slightly darker warm gray for cards",
-        "neutral": "#EDEDE8"
+        "secondary": "#F1F3F5",
+        "secondaryDescription": "Subtle neutral gray for secondary panels",
+        "neutral": "#EAEEF2"
       },
       "surface": {
         "card": "#FFFFFF",
@@ -168,74 +100,74 @@
         "overlay": "rgba(0, 0, 0, 0.5)"
       },
       "text": {
-        "primary": "#0B0B0F",
-        "primaryDescription": "Near-black for maximum readability",
-        "secondary": "#5C6974",
-        "secondaryDescription": "Muted gray for supporting text",
-        "tertiary": "#868F97",
-        "inverse": "#0B0B0F"
+        "primary": "#1F2328",
+        "primaryDescription": "High-contrast neutral ink for long-session readability",
+        "secondary": "#24292F",
+        "secondaryDescription": "Readable neutral gray for supporting text",
+        "tertiary": "#57606A",
+        "inverse": "#FFFFFF"
       },
       "accent": {
-        "primary": "#A5A66A",
-        "primaryDescription": "Muted olive/yellow for light mode",
-        "primaryHover": "#8E8F5A",
-        "primaryLight": "#EFEFE0"
+        "primary": "#0969DA",
+        "primaryDescription": "Mature blue for primary actions and focus",
+        "primaryHover": "#0757B4",
+        "primaryLight": "#DDF4FF"
       },
       "border": {
-        "default": "#DEDED9",
-        "focus": "#A5A66A"
+        "default": "#D0D7DE",
+        "focus": "#0969DA"
       }
     },
 
     "darkMode": {
       "background": {
-        "primary": "#0B0B0F",
-        "primaryDescription": "Near-black - deepest dark background (OLED optimized)",
+        "primary": "#0D1117",
+        "primaryDescription": "Low-glare charcoal app background",
         "primaryVariable": "--color-background-primary",
-        "secondary": "#121216",
+        "secondary": "#161B22",
         "secondaryDescription": "Slightly lighter for cards and surfaces",
-        "neutral": "#0E0E12"
+        "neutral": "#21262D"
       },
       "surface": {
-        "card": "#121216",
+        "card": "#161B22",
         "cardDescription": "Same as background.secondary for subtle elevation",
-        "elevated": "#1A1A1F",
+        "elevated": "#21262D",
         "overlay": "rgba(0, 0, 0, 0.85)"
       },
       "text": {
-        "primary": "#E6E6E6",
+        "primary": "#E6EDF3",
         "primaryDescription": "Light gray - main text color",
-        "secondary": "#868F97",
+        "secondary": "#C9D1D9",
         "secondaryDescription": "Muted gray for supporting text",
-        "tertiary": "#5C6974",
-        "inverse": "#0B0B0F"
+        "tertiary": "#8B949E",
+        "inverse": "#0D1117"
       },
       "accent": {
-        "primary": "#D6D876",
-        "primaryDescription": "Saturated yellow - Oscura accent (more vibrant for better contrast)",
-        "primaryHover": "#C5C85A",
-        "primaryLight": "#2A2A1F",
-        "primaryLightDescription": "Dark yellowish background for selected states"
+        "primary": "#58A6FF",
+        "primaryDescription": "Softer blue accent for dark mode",
+        "primaryHover": "#79C0FF",
+        "primaryLight": "#13233A",
+        "primaryLightDescription": "Dark blue background for selected states"
       },
       "border": {
-        "default": "#232323",
+        "default": "#30363D",
         "defaultDescription": "Subtle dark border for card definition",
-        "focus": "#D6D876"
+        "focus": "#58A6FF"
       }
     },
 
     "semantic": {
-      "success": "#4EBE96",
-      "successLight": { "light": "#E0F5ED", "dark": "#1A2924" },
-      "successDescription": "Teal green - for success states, positive values, confirmations",
-      "warning": "#D2D714",
-      "warningLight": { "light": "#F5F5D0", "dark": "#262618" },
-      "warningDescription": "Yellow-green - for warnings, caution states",
-      "error": { "light": "#D84F68", "dark": "#FF5C5C" },
-      "errorLight": { "light": "#FCE8EC", "dark": "#2A1A1A" },
+      "success": "#1A7F37",
+      "successLight": { "light": "#DAFBE1", "dark": "#102C1A" },
+      "successDescription": "GitHub-like green - for success states, positive values, confirmations",
+      "warning": "#9A6700",
+      "warningLight": { "light": "#FFF8C5", "dark": "#2D230E" },
+      "warningDescription": "Muted amber - for warnings, caution states",
+      "error": { "light": "#CF222E", "dark": "#F85149" },
+      "errorLight": { "light": "#FFEBE9", "dark": "#2D1517" },
       "errorDescription": "Red - for errors, negative values, destructive actions",
-      "info": "#479FFA",
-      "infoLight": { "light": "#E8F4FF", "dark": "#1A2230" },
+      "info": "#0969DA",
+      "infoLight": { "light": "#DDF4FF", "dark": "#10233C" },
       "infoDescription": "Blue - for links and informational elements"
     },
 
@@ -245,7 +177,7 @@
         "md": "0 4px 6px -1px rgba(0, 0, 0, 0.07), 0 2px 4px -2px rgba(0, 0, 0, 0.05)",
         "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.08), 0 4px 6px -4px rgba(0, 0, 0, 0.05)",
         "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04)",
-        "focus": "0 0 0 3px rgba(165, 166, 106, 0.2)"
+        "focus": "0 0 0 3px rgba(37, 99, 235, 0.2)"
       },
       "darkMode": {
         "note": "Shadows are deeper in dark mode. Cards primarily use borders for definition.",
@@ -253,7 +185,7 @@
         "md": "0 4px 6px -1px rgba(0, 0, 0, 0.7)",
         "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.8)",
         "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.9)",
-        "focus": "0 0 0 2px rgba(230, 231, 163, 0.2)"
+        "focus": "0 0 0 2px rgba(96, 165, 250, 0.2)"
       }
     }
   },
@@ -394,7 +326,7 @@
       "lgUsage": "Elevated cards, dropdowns, popovers",
       "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.08), 0 8px 10px -6px rgba(0, 0, 0, 0.04)",
       "xlUsage": "Modals, dialogs",
-      "focus": "0 0 0 3px rgba(165, 166, 106, 0.2)",
+      "focus": "0 0 0 3px rgba(37, 99, 235, 0.2)",
       "focusUsage": "Focus ring for interactive elements (uses accent color)"
     },
     "darkMode": {
@@ -403,7 +335,7 @@
       "md": "0 4px 6px -1px rgba(0, 0, 0, 0.7)",
       "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.8)",
       "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.9)",
-      "focus": "0 0 0 2px rgba(230, 231, 163, 0.2)"
+      "focus": "0 0 0 2px rgba(96, 165, 250, 0.2)"
     }
   },
 
@@ -413,7 +345,7 @@
       "styling": {
         "background": "var(--color-surface-card)",
         "lightModeValue": "#FFFFFF",
-        "darkModeValue": "#121216",
+        "darkModeValue": "#161B22",
         "borderRadius": "xl (16px) to 2xl (20px)",
         "padding": "24px",
         "shadow": "var(--shadow-md) - soft and diffused",
@@ -426,9 +358,9 @@
           "useBorder": "optional, very subtle"
         },
         "darkMode": {
-          "background": "#121216",
+          "background": "#161B22",
           "useShadow": false,
-          "useBorder": "required - 1px solid #232323 for definition"
+          "useBorder": "required - 1px solid #30363D for definition"
         }
       },
       "variants": {
@@ -448,10 +380,10 @@
       "variants": {
         "primary": {
           "background": "var(--color-accent-primary)",
-          "lightModeValue": "#A5A66A",
-          "darkModeValue": "#D6D876",
+          "lightModeValue": "#0969DA",
+          "darkModeValue": "#58A6FF",
           "text": "var(--color-text-inverse)",
-          "textNote": "Dark text on yellow accent for maximum contrast",
+          "textNote": "Mode-appropriate inverse text on the blue accent for contrast",
           "borderRadius": "md (8px) or full for pill style",
           "hover": "var(--color-accent-primary-hover)"
         },
@@ -469,13 +401,13 @@
         },
         "success": {
           "background": "var(--color-semantic-success)",
-          "value": "#4EBE96",
+          "value": "#1A7F37",
           "text": "white"
         },
         "danger": {
           "background": "var(--color-semantic-error)",
           "lightValue": "#D84F68",
-          "darkValue": "#FF5C5C",
+          "darkValue": "#F85149",
           "text": "white"
         }
       }
@@ -568,8 +500,8 @@
       },
       "styling": {
         "trackColor": "var(--color-border-default)",
-        "lightTrack": "#DEDED9",
-        "darkTrack": "#232323",
+        "lightTrack": "#D0D7DE",
+        "darkTrack": "#30363D",
         "fillColor": "var(--color-accent-primary) or semantic colors",
         "strokeWidth": "4-6px",
         "centerText": "Percentage in bold"
@@ -636,16 +568,16 @@
       "styling": {
         "off": {
           "track": "var(--color-border-default)",
-          "lightTrack": "#DEDED9",
-          "darkTrack": "#232323",
+          "lightTrack": "#D0D7DE",
+          "darkTrack": "#30363D",
           "thumb": "white"
         },
         "on": {
           "track": "var(--color-accent-primary)",
-          "lightTrack": "#A5A66A",
-          "darkTrack": "#D6D876",
+          "lightTrack": "#0969DA",
+          "darkTrack": "#58A6FF",
           "thumb": "var(--color-text-inverse)",
-          "thumbNote": "Dark thumb on yellow track for contrast"
+          "thumbNote": "Mode-appropriate inverse thumb on the blue track for contrast"
         },
         "transition": "smooth 200ms"
       }
@@ -776,83 +708,83 @@
     "minimumTouchTarget": "44px × 44px",
     "colorContrast": "Minimum 4.5:1 for normal text, 3:1 for large text",
     "reduceMotion": "Respect prefers-reduced-motion media query",
-    "darkModeNote": "Yellow accent (#D6D876) on near-black (#0B0B0F) provides ~11:1 contrast ratio"
+    "darkModeNote": "Blue accent (#58A6FF) on charcoal (#0D1117) provides strong focus contrast"
   },
 
   "darkModeDetails": {
-    "note": "Oscura Midnight - inspired by Fey/Oscura VS Code theme. Saturated yellow accent with muted semantic colors.",
+    "note": "Autocode Dark - low-glare charcoal surfaces with softer blue accents and muted semantic colors.",
     "implementation": "Add 'dark' class to document root (<html class=\"dark\">) to enable dark mode. All CSS variables automatically update.",
     "designPrinciples": [
-      "Near-black backgrounds (#0B0B0F) for maximum contrast and OLED optimization",
-      "Light gray text hierarchy (#E6E6E6 → #868F97 → #5C6974)",
-      "Saturated yellow accent (#D6D876) for interactive elements - vibrant enough for good contrast",
-      "Muted semantic colors - teal success (#4EBE96), soft red errors (#FF5C5C)",
-      "Subtle borders (#232323) instead of shadows for card definition",
+      "Charcoal backgrounds (#0D1117) for low-glare long sessions",
+      "Light text hierarchy (#E6EDF3 -> #C9D1D9 -> #8B949E)",
+      "Soft blue accent (#58A6FF) for interactive elements and focus states",
+      "Muted semantic colors - green success (#3FB950), soft red errors (#F85149)",
+      "Subtle borders (#30363D) instead of shadows for card definition",
       "Use color sparingly - mostly grayscale with semantic colors for meaning"
     ],
     "colors": {
       "background": {
-        "primary": "#0B0B0F",
+        "primary": "#0D1117",
         "primaryVariable": "--color-background-primary",
-        "primaryDescription": "Near-black - main app background (OLED optimized)",
-        "secondary": "#121216",
+        "primaryDescription": "Low-glare charcoal - main app background",
+        "secondary": "#161B22",
         "secondaryVariable": "--color-background-secondary",
         "secondaryDescription": "Slightly lighter for cards and elevated surfaces",
-        "neutral": "#0E0E12",
+        "neutral": "#21262D",
         "neutralVariable": "--color-background-neutral"
       },
       "surface": {
-        "card": "#121216",
+        "card": "#161B22",
         "cardVariable": "--color-surface-card",
         "cardDescription": "Dark card surface - same as background.secondary",
-        "elevated": "#1A1A1F",
+        "elevated": "#21262D",
         "elevatedVariable": "--color-surface-elevated",
         "overlay": "rgba(0, 0, 0, 0.85)"
       },
       "text": {
-        "primary": "#E6E6E6",
+        "primary": "#E6EDF3",
         "primaryVariable": "--color-text-primary",
         "primaryDescription": "Light gray for maximum readability",
-        "secondary": "#868F97",
+        "secondary": "#C9D1D9",
         "secondaryDescription": "Muted gray for secondary content",
-        "tertiary": "#5C6974",
+        "tertiary": "#8B949E",
         "tertiaryDescription": "Darkest text - captions, disabled",
-        "inverse": "#0B0B0F",
+        "inverse": "#0D1117",
         "inverseDescription": "Dark text on light backgrounds (e.g., accent buttons)"
       },
       "accent": {
-        "primary": "#D6D876",
+        "primary": "#58A6FF",
         "primaryVariable": "--color-accent-primary",
-        "primaryDescription": "Saturated yellow - more vibrant than pale yellow for better contrast",
-        "primaryHover": "#C5C85A",
+        "primaryDescription": "Softer blue accent for dark mode",
+        "primaryHover": "#79C0FF",
         "primaryHoverVariable": "--color-accent-primary-hover",
-        "primaryLight": "#2A2A1F",
+        "primaryLight": "#13233A",
         "primaryLightVariable": "--color-accent-primary-light",
-        "primaryLightDescription": "Dark yellowish background for selected states"
+        "primaryLightDescription": "Dark blue background for selected states"
       },
       "semantic": {
-        "success": "#4EBE96",
+        "success": "#3FB950",
         "successVariable": "--color-semantic-success",
-        "successLight": "#1A2924",
+        "successLight": "#102C1A",
         "successDescription": "Teal - positive values, confirmations, gains",
-        "warning": "#D2D714",
+        "warning": "#D29922",
         "warningVariable": "--color-semantic-warning",
-        "warningLight": "#262618",
-        "error": "#FF5C5C",
+        "warningLight": "#2D230E",
+        "error": "#F85149",
         "errorVariable": "--color-semantic-error",
-        "errorLight": "#2A1A1A",
+        "errorLight": "#2D1517",
         "errorDescription": "Soft red - negative values, errors, losses",
-        "info": "#479FFA",
+        "info": "#58A6FF",
         "infoVariable": "--color-semantic-info",
-        "infoLight": "#1A2230"
+        "infoLight": "#10233C"
       },
       "border": {
-        "default": "#232323",
+        "default": "#30363D",
         "defaultVariable": "--color-border-default",
         "defaultDescription": "Subtle dark border for card definition",
-        "focus": "#D6D876",
+        "focus": "#58A6FF",
         "focusVariable": "--color-border-focus",
-        "focusDescription": "Yellow accent ring for focused elements"
+        "focusDescription": "Blue accent ring for focused elements"
       },
       "shadows": {
         "note": "Shadows are deeper/stronger in dark mode but cards primarily use borders for definition.",
@@ -860,7 +792,7 @@
         "md": "0 4px 6px -1px rgba(0, 0, 0, 0.7)",
         "lg": "0 10px 15px -3px rgba(0, 0, 0, 0.8)",
         "xl": "0 20px 25px -5px rgba(0, 0, 0, 0.9)",
-        "focus": "0 0 0 2px rgba(230, 231, 163, 0.2)"
+        "focus": "0 0 0 2px rgba(96, 165, 250, 0.2)"
       }
     }
   },
@@ -874,9 +806,9 @@
     ],
     "themeSwitching": {
       "darkMode": "Add 'dark' class to <html> element",
-      "colorTheme": "Add data-theme attribute to <html> element (e.g., data-theme=\"dusk\")",
+      "colorTheme": "Do not expose additional color palettes; keep colorTheme persisted as 'default' for compatibility",
       "storage": "Persist theme preference in localStorage",
-      "systemPreference": "Respect prefers-color-scheme media query for initial mode"
+      "systemPreference": "Do not expose a system theme option; users explicitly choose light or dark"
     },
     "react": [
       "Create reusable components for each component type",

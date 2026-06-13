@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useTranslation } from 'react-i18next';
-import { Download, RefreshCw, AlertCircle } from 'lucide-react';
+import { Download, RefreshCw, AlertCircle, FileText } from 'lucide-react';
 import { debugLog } from '../shared/utils/debug-logger';
 import {
   DndContext,
@@ -68,8 +68,8 @@ import { useIpcListeners } from './hooks/useIpc';
 import { useGlobalTerminalListeners } from './hooks/useGlobalTerminalListeners';
 import { useTerminalProfileChange } from './hooks/useTerminalProfileChange';
 import { useAutoRecoverStuckTasks } from './hooks/useAutoRecoverStuckTasks';
-import { COLOR_THEMES, UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_DEFAULT } from '../shared/constants';
-import type { Task, Project, ColorTheme, ProjectEnvConfig } from '../shared/types';
+import { UI_SCALE_MIN, UI_SCALE_MAX, UI_SCALE_DEFAULT } from '../shared/constants';
+import type { Task, Project, ProjectEnvConfig } from '../shared/types';
 import { ProjectTabBar } from './components/ProjectTabBar';
 import { AddProjectModal } from './components/AddProjectModal';
 import { ViewStateProvider } from './contexts/ViewStateContext';
@@ -179,6 +179,9 @@ export function App() {
   const [initError, setInitError] = useState<string | null>(null);
   const [skippedInitProjectId, setSkippedInitProjectId] = useState<string | null>(null);
   const [showAddProjectModal, setShowAddProjectModal] = useState(false);
+  const [pendingProjectDocsReminder, setPendingProjectDocsReminder] = useState<Project | null>(null);
+  const [showProjectDocsReminder, setShowProjectDocsReminder] = useState(false);
+  const [isCreatingProjectDocs, setIsCreatingProjectDocs] = useState(false);
 
   // GitHub setup state (shown after Autocode init)
   const [showGitHubSetup, setShowGitHubSetup] = useState(false);
@@ -204,6 +207,24 @@ export function App() {
   // Get tabs and selected project
   const projectTabs = getProjectTabs();
   const selectedProject = projects.find((p) => p.id === (activeProjectId || selectedProjectId));
+
+  useEffect(() => {
+    if (
+      pendingProjectDocsReminder &&
+      !showInitDialog &&
+      !showGitHubSetup &&
+      !isSettingsDialogOpen &&
+      !showProjectDocsReminder
+    ) {
+      setShowProjectDocsReminder(true);
+    }
+  }, [
+    pendingProjectDocsReminder,
+    showInitDialog,
+    showGitHubSetup,
+    isSettingsDialogOpen,
+    showProjectDocsReminder,
+  ]);
 
   // Initial load
   useEffect(() => {
@@ -478,51 +499,9 @@ export function App() {
   useEffect(() => {
     const root = document.documentElement;
 
-    const applyTheme = () => {
-      // Apply light/dark mode
-      if (settings.theme === 'dark') {
-        root.classList.add('dark');
-      } else if (settings.theme === 'light') {
-        root.classList.remove('dark');
-      } else {
-        // System preference
-        if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-          root.classList.add('dark');
-        } else {
-          root.classList.remove('dark');
-        }
-      }
-    };
-
-    // Apply color theme via data-theme attribute
-    // Validate colorTheme against known themes, fallback to 'default' if invalid
-    const validThemeIds = COLOR_THEMES.map((t) => t.id);
-    const rawColorTheme = settings.colorTheme ?? 'default';
-    const colorTheme: ColorTheme = validThemeIds.includes(rawColorTheme as ColorTheme)
-      ? (rawColorTheme as ColorTheme)
-      : 'default';
-
-    if (colorTheme === 'default') {
-      root.removeAttribute('data-theme');
-    } else {
-      root.setAttribute('data-theme', colorTheme);
-    }
-
-    applyTheme();
-
-    // Listen for system theme changes
-    const mediaQuery = window.matchMedia('(prefers-color-scheme: dark)');
-    const handleChange = () => {
-      if (settings.theme === 'system') {
-        applyTheme();
-      }
-    };
-    mediaQuery.addEventListener('change', handleChange);
-
-    return () => {
-      mediaQuery.removeEventListener('change', handleChange);
-    };
-  }, [settings.theme, settings.colorTheme]);
+    root.classList.toggle('dark', settings.theme === 'dark');
+    root.removeAttribute('data-theme');
+  }, [settings.theme]);
 
   // Apply UI scale
   useEffect(() => {
@@ -766,6 +745,7 @@ export function App() {
 
         if (updatedProject) {
           await handlePostInitializationSetup(updatedProject);
+          setPendingProjectDocsReminder(updatedProject);
         }
       } else {
         // Initialization failed - show error but keep dialog open
@@ -925,6 +905,32 @@ export function App() {
     }
   };
 
+  const handleCreateProjectDocsFromReminder = async () => {
+    if (!pendingProjectDocsReminder) return;
+
+    setIsCreatingProjectDocs(true);
+    try {
+      const task = await createProjectDocumentationTask(pendingProjectDocsReminder.id, {
+        documentType: 'full',
+        language: settings.language,
+      });
+      if (task) {
+        setShowProjectDocsReminder(false);
+        setPendingProjectDocsReminder(null);
+        setActiveView('kanban');
+        setSelectedTask(task);
+      }
+    } finally {
+      setIsCreatingProjectDocs(false);
+    }
+  };
+
+  const handleDismissProjectDocsReminder = () => {
+    if (isCreatingProjectDocs) return;
+    setShowProjectDocsReminder(false);
+    setPendingProjectDocsReminder(null);
+  };
+
   return (
     <ViewStateProvider>
       <TooltipProvider>
@@ -996,12 +1002,16 @@ export function App() {
                   />
                 </div>
                 {activeView === 'roadmap' && (activeProjectId || selectedProjectId) && (
-                  <Roadmap projectId={activeProjectId || selectedProjectId!} onGoToTask={handleGoToTask} />
+                  <ErrorBoundary>
+                    <Roadmap projectId={activeProjectId || selectedProjectId!} onGoToTask={handleGoToTask} />
+                  </ErrorBoundary>
                 )}
                 {activeView === 'context' && (activeProjectId || selectedProjectId) && (
                   <ErrorBoundary>
                     <Context
                       projectId={activeProjectId || selectedProjectId!}
+                      projectPath={selectedProject?.path}
+                      projectDataDir={selectedProject?.autoBuildPath}
                       onProjectDocsClick={handleCreateProjectDocs}
                       canCreateProjectDocs={Boolean(selectedProject?.autoBuildPath)}
                     />
@@ -1155,6 +1165,9 @@ export function App() {
                   <li>{t('initialize.createFolder')}</li>
                   <li>{t('initialize.copyFramework')}</li>
                   <li>{t('initialize.setupSpecs')}</li>
+                  <li>{t('initialize.generateProjectDocs', {
+                    defaultValue: '提醒你生成项目文档，为 AI 提供更完整的上下文',
+                  })}</li>
                 </ul>
               </div>
               {!settings.autoBuildPath && (
@@ -1218,6 +1231,49 @@ export function App() {
             onSkip={handleGitHubSetupSkip}
           />
         )}
+
+        {/* Project Documentation Reminder - shown after initialization follow-up setup */}
+        <Dialog open={showProjectDocsReminder} onOpenChange={(open) => {
+          if (!open) handleDismissProjectDocsReminder();
+        }}>
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle className="flex items-center gap-2">
+                <FileText className="h-5 w-5" />
+                {t('projectDocsReminder.title', { defaultValue: '生成项目文档' })}
+              </DialogTitle>
+              <DialogDescription>
+                {t('projectDocsReminder.description', {
+                  projectName: pendingProjectDocsReminder?.name || '',
+                  defaultValue: '{{projectName}} 已初始化。现在生成项目文档吗？',
+                })}
+              </DialogDescription>
+            </DialogHeader>
+            <div className="rounded-lg bg-muted p-4 text-sm text-muted-foreground">
+              {t('projectDocsReminder.body', {
+                defaultValue: '项目文档会为智能体提供稳定的产品、架构、技术和验证上下文，让后续规划和编码更准确。',
+              })}
+            </div>
+            <DialogFooter>
+              <Button variant="outline" onClick={handleDismissProjectDocsReminder} disabled={isCreatingProjectDocs}>
+                {t('projectDocsReminder.later', { defaultValue: '稍后' })}
+              </Button>
+              <Button onClick={handleCreateProjectDocsFromReminder} disabled={isCreatingProjectDocs}>
+                {isCreatingProjectDocs ? (
+                  <>
+                    <RefreshCw className="mr-2 h-4 w-4 animate-spin" />
+                    {t('projectDocsReminder.creating', { defaultValue: '正在创建...' })}
+                  </>
+                ) : (
+                  <>
+                    <FileText className="mr-2 h-4 w-4" />
+                    {t('projectDocsReminder.create', { defaultValue: '生成文档' })}
+                  </>
+                )}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
 
         {/* Remove Project Confirmation Dialog */}
         <Dialog open={showRemoveProjectDialog} onOpenChange={(open) => {

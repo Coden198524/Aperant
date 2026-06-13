@@ -6,10 +6,19 @@
     "createFolder": "Create a .autocode folder in your project",
     "copyFramework": "Copy the Autocode framework files",
     "setupSpecs": "Set up the specs directory for your tasks",
+    "generateProjectDocs": "Prompt you to generate project documentation for better AI context",
     "sourcePathNotConfigured": "Source path not configured",
     "sourcePathNotConfiguredDescription": "Please set the Autocode source path in App Settings before initializing.",
     "initFailed": "Initialization Failed",
     "initFailedDescription": "Failed to initialize Autocode. Please try again."
+  },
+  "projectDocsReminder": {
+    "title": "Generate Project Documents",
+    "description": "{{projectName}} is initialized. Generate project documents now?",
+    "body": "Project documents give agents stable product, architecture, technical, and verification context before they plan or code.",
+    "later": "Later",
+    "create": "Generate Docs",
+    "creating": "Creating..."
   },
   "gitSetup": {
     "title": "Git Repository Required",

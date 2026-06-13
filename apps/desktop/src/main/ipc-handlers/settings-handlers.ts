@@ -29,6 +29,30 @@ import { loadProfileStore } from '../claude-profile/profile-storage';
 
 const settingsPath = getSettingsPath();
 
+function normalizeThemeSettings(settings: Partial<AppSettings>): boolean {
+  const mutableSettings = settings as Partial<AppSettings> & Record<string, unknown>;
+  let changed = false;
+
+  if (
+    mutableSettings.theme !== undefined &&
+    mutableSettings.theme !== 'light' &&
+    mutableSettings.theme !== 'dark'
+  ) {
+    mutableSettings.theme = DEFAULT_APP_SETTINGS.theme;
+    changed = true;
+  }
+
+  if (
+    mutableSettings.colorTheme !== undefined &&
+    mutableSettings.colorTheme !== 'default'
+  ) {
+    mutableSettings.colorTheme = 'default';
+    changed = true;
+  }
+
+  return changed;
+}
+
 async function migrateToProviderAccounts(settings: AppSettings): Promise<{ changed: boolean; settings: AppSettings }> {
   if (settings._migratedProviderAccounts) {
     return { changed: false, settings };
@@ -302,6 +326,10 @@ export function registerSettingsHandlers(
       const settings: AppSettings = { ...DEFAULT_APP_SETTINGS, ...savedSettings };
       let needsSave = false;
 
+      if (normalizeThemeSettings(settings)) {
+        needsSave = true;
+      }
+
       // Migration: Set agent profile to 'auto' for users who haven't made a selection (one-time)
       // This ensures new users get the optimized 'auto' profile as the default
       // while preserving existing user preferences
@@ -448,13 +476,16 @@ export function registerSettingsHandlers(
       try {
         // Load current settings using shared helper
         const savedSettings = readSettingsFile();
-        const currentSettings = { ...DEFAULT_APP_SETTINGS, ...savedSettings };
+        const currentSettings = { ...DEFAULT_APP_SETTINGS, ...savedSettings } as AppSettings;
+        normalizeThemeSettings(currentSettings);
 
         // Strip providerAccounts and globalPriorityOrder — these are managed
         // exclusively by their dedicated IPC handlers (PROVIDER_ACCOUNTS_*)
         // to prevent the general settings save from clobbering them.
         const { providerAccounts: _pa, globalPriorityOrder: _gpo, ...safeSettings } = settings;
+        normalizeThemeSettings(safeSettings);
         const newSettings = { ...currentSettings, ...safeSettings };
+        normalizeThemeSettings(newSettings);
 
         // Sync defaultModel when agent profile changes (#414)
         if (settings.selectedAgentProfile) {

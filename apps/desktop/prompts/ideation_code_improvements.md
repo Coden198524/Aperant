@@ -4,7 +4,7 @@
 Find improvements that are clearly enabled by existing code patterns. This is code-led ideation, not product roadmap planning.
 
 ## Inputs
-- `project_index.json`
+- `project-docs/index.md`
 - `ideation_context.json`
 - Optional memory and graph hint files
 - Injected Output Directory, Project Directory, and Max Ideas

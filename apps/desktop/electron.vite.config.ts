@@ -5,7 +5,7 @@ import { config as dotenvConfig } from 'dotenv';
 import { electronImportTransformPlugin } from './electron-import-transform-plugin';
 import { electronEsmFixPlugin } from '../../electron-esm-fix-plugin';
 
-// Load .env file for build-time constants (Sentry DSN, etc.)
+// Load .env file for build-time constants.
 dotenvConfig({ path: resolve(__dirname, '.env') });
 
 /**
@@ -17,12 +17,6 @@ dotenvConfig({ path: resolve(__dirname, '.env') });
  * The `define` option replaces these values at build time, so they're
  * embedded in the bundle and available at runtime in packaged apps.
  */
-const sentryDefines = {
-  '__SENTRY_DSN__': JSON.stringify(process.env.SENTRY_DSN || ''),
-  '__SENTRY_TRACES_SAMPLE_RATE__': JSON.stringify(process.env.SENTRY_TRACES_SAMPLE_RATE || '0.1'),
-  '__SENTRY_PROFILES_SAMPLE_RATE__': JSON.stringify(process.env.SENTRY_PROFILES_SAMPLE_RATE || '0.1'),
-};
-
 /** Embedded API keys — search works out of the box, no user config needed. */
 const embeddedKeys = {
   '__SERPER_API_KEY__': JSON.stringify(process.env.SERPER_API_KEY || ''),
@@ -30,7 +24,7 @@ const embeddedKeys = {
 
 export default defineConfig({
   main: {
-    define: { ...sentryDefines, ...embeddedKeys },
+    define: { ...embeddedKeys },
     plugins: [
       electronImportTransformPlugin(),
       externalizeDepsPlugin({
@@ -47,14 +41,6 @@ export default defineConfig({
         'kuzu',
         'electron-updater',
         '@electron-toolkit/utils',
-        // Sentry and its transitive dependencies (opentelemetry -> debug -> ms)
-        '@sentry/electron',
-        '@sentry/core',
-        '@sentry/node',
-        '@sentry/utils',
-        '@opentelemetry/instrumentation',
-        'debug',
-        'ms',
         // Minimatch for glob pattern matching in worktree handlers
         'minimatch',
         // XState for task state machine
@@ -136,7 +122,7 @@ export default defineConfig({
     }
   },
   renderer: {
-    define: sentryDefines,
+    define: { ...embeddedKeys },
     root: resolve(__dirname, 'src/renderer'),
     build: {
       rollupOptions: {

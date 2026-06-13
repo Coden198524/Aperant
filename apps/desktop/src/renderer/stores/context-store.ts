@@ -8,7 +8,7 @@ import type {
 } from '../../shared/types';
 
 interface ContextState {
-  // Project Index
+  // Deprecated project-index compatibility state
   projectIndex: ProjectIndex | null;
   indexLoading: boolean;
   indexError: string | null;
@@ -45,7 +45,7 @@ interface ContextState {
 }
 
 export const useContextStore = create<ContextState>((set) => ({
-  // Project Index
+  // Deprecated project-index compatibility state
   projectIndex: null,
   indexLoading: false,
   indexError: null,

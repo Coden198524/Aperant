@@ -18,7 +18,6 @@ import {
   AUTOCODE_DEFAULT_BASE_BRANCH,
   AUTOCODE_TASK_ARTIFACTS,
   detectAutocodeProjectCapabilities,
-  getAutocodeProjectIndexPath,
   injectAutocodePromptContext,
   isAutocodeGitBranchName,
   normalizeAutocodeBaseBranch,
@@ -467,20 +466,48 @@ export function detectBaseBranch(specDir: string, projectDir: string): string {
 // =============================================================================
 
 /**
- * Load project_index.json from the project's data directory.
+ * Build lightweight project metadata for capability detection.
+ *
+ * Kept under the old function name for compatibility with callers.
  */
 export function loadProjectIndex(projectDir: string, dataDirName?: string): Record<string, unknown> {
-  const indexPath = getAutocodeProjectIndexPath(projectDir, dataDirName);
-  if (!existsSync(indexPath)) return {};
+  void dataDirName;
+  const packageJsonPath = join(projectDir, 'package.json');
+  const dependencies: Record<string, string> = {};
   try {
-    return JSON.parse(readFileSync(indexPath, 'utf-8')) as Record<string, unknown>;
+    if (existsSync(packageJsonPath)) {
+      const packageJson = JSON.parse(readFileSync(packageJsonPath, 'utf-8')) as Record<string, unknown>;
+      Object.assign(
+        dependencies,
+        (packageJson.dependencies as Record<string, string> | undefined) ?? {},
+        (packageJson.devDependencies as Record<string, string> | undefined) ?? {},
+      );
+    }
   } catch {
-    return {};
+    // Ignore malformed package metadata.
   }
+
+  const dependencyNames = Object.keys(dependencies);
+  const framework = dependencyNames.find((name) => (
+    ['electron', '@tauri-apps/api', 'react', 'vue', 'svelte', 'express', 'fastify', 'next'].includes(name)
+  ));
+
+  return {
+    project_root: projectDir,
+    project_type: framework ?? 'unknown',
+    services: {
+      main: {
+        type: 'api',
+        path: projectDir,
+        framework,
+        dependencies: dependencyNames,
+      },
+    },
+  };
 }
 
 /**
- * Detect project capabilities from project_index.json.
+ * Detect project capabilities from lightweight project metadata.
  * Mirrors detect_project_capabilities() from Python.
  */
 export function detectProjectCapabilities(projectIndex: Record<string, unknown>): ProjectCapabilities {

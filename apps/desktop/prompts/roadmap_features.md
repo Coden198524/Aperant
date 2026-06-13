@@ -5,12 +5,12 @@ Read `roadmap_discovery.json` and write a prioritized `roadmap.json` to the inje
 
 ## Inputs
 - Discovery File from injected context.
-- Project Index from injected context.
+- Project Documentation Index from injected context.
 - Optional `competitor_analysis.json`.
 - Optional preserved feature list from injected context.
 
 ## Process
-1. Read discovery and project index.
+1. Read discovery and the project documentation index.
 2. Preserve existing features listed in the injected context; generate complementary new features.
 3. Use competitor pain points when available.
 4. Prioritize by user value, implementation risk, technical readiness, and dependency order.

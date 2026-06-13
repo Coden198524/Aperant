@@ -1,10 +1,9 @@
-import { Check, Sun, Moon, Monitor } from 'lucide-react';
+import { Check, Sun, Moon } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
 import { cn } from '../../lib/utils';
 import { Label } from '../ui/label';
-import { COLOR_THEMES } from '../../../shared/constants';
 import { useSettingsStore } from '../../stores/settings-store';
-import type { ColorTheme, AppSettings } from '../../../shared/types';
+import type { AppSettings } from '../../../shared/types';
 
 interface ThemeSelectorProps {
   settings: AppSettings;
@@ -12,8 +11,7 @@ interface ThemeSelectorProps {
 }
 
 /**
- * Theme selector component displaying a grid of theme cards with preview swatches
- * and a 3-option mode toggle (Light/Dark/System)
+ * Theme selector component displaying the two supported app themes.
  *
  * Theme changes are applied immediately for live preview, while other settings
  * require saving to take effect.
@@ -22,119 +20,111 @@ export function ThemeSelector({ settings, onSettingsChange }: ThemeSelectorProps
   const { t } = useTranslation('settings');
   const updateStoreSettings = useSettingsStore((state) => state.updateSettings);
 
-  const currentColorTheme = settings.colorTheme || 'default';
-  const currentMode = settings.theme;
-  const isDark = currentMode === 'dark' ||
-    (currentMode === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+  const currentMode = settings.theme === 'light' ? 'light' : 'dark';
 
-  const handleColorThemeChange = (themeId: ColorTheme) => {
+  const handleModeChange = (mode: AppSettings['theme']) => {
     // Update local draft state
-    onSettingsChange({ ...settings, colorTheme: themeId });
+    onSettingsChange({ ...settings, theme: mode, colorTheme: 'default' });
     // Apply immediately to store for live preview (triggers App.tsx useEffect)
-    updateStoreSettings({ colorTheme: themeId });
+    updateStoreSettings({ theme: mode, colorTheme: 'default' });
   };
 
-  const handleModeChange = (mode: 'light' | 'dark' | 'system') => {
-    // Update local draft state
-    onSettingsChange({ ...settings, theme: mode });
-    // Apply immediately to store for live preview (triggers App.tsx useEffect)
-    updateStoreSettings({ theme: mode });
-  };
-
-  const getModeIcon = (mode: string) => {
-    switch (mode) {
-      case 'light':
-        return <Sun className="h-4 w-4" />;
-      case 'dark':
-        return <Moon className="h-4 w-4" />;
-      default:
-        return <Monitor className="h-4 w-4" />;
+  const themeOptions = [
+    {
+      id: 'light' as const,
+      label: t('theme.light', 'Light'),
+      description: t('theme.lightDescription', 'Bright, neutral surfaces with a crisp blue accent.'),
+      icon: Sun,
+      preview: {
+        background: '#F6F7F9',
+        card: '#FFFFFF',
+        text: '#111827',
+        muted: '#D8DEE8',
+        accent: '#2563EB'
+      }
+    },
+    {
+      id: 'dark' as const,
+      label: t('theme.dark', 'Dark'),
+      description: t('theme.darkDescription', 'Low-glare charcoal surfaces with a softer blue accent.'),
+      icon: Moon,
+      preview: {
+        background: '#0F1115',
+        card: '#171A21',
+        text: '#F1F5F9',
+        muted: '#2C3442',
+        accent: '#60A5FA'
+      }
     }
-  };
+  ];
 
   return (
     <div className="space-y-6">
-      {/* Mode Toggle */}
       <div className="space-y-3">
-        <Label className="text-sm font-medium text-foreground">{t('theme.mode', 'Appearance Mode')}</Label>
-        <p className="text-sm text-muted-foreground">{t('theme.modeDescription', 'Choose light, dark, or system preference')}</p>
-        <div className="grid grid-cols-3 gap-3 max-w-md pt-1">
-          {(['system', 'light', 'dark'] as const).map((mode) => (
-            <button
-              key={mode}
-              onClick={() => handleModeChange(mode)}
-              className={cn(
-                'flex flex-col items-center gap-2 p-4 rounded-lg border-2 transition-all',
-                'focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
-                currentMode === mode
-                  ? 'border-primary bg-primary/5'
-                  : 'border-border hover:border-primary/50 hover:bg-accent/50'
-              )}
-            >
-              {getModeIcon(mode)}
-              <span className="text-sm font-medium">
-                {mode === 'system'
-                  ? t('theme.system', 'System')
-                  : mode === 'light'
-                    ? t('theme.light', 'Light')
-                    : t('theme.dark', 'Dark')}
-              </span>
-            </button>
-          ))}
-        </div>
-      </div>
-
-      {/* Color Theme Grid */}
-      <div className="space-y-3">
-        <Label className="text-sm font-medium text-foreground">{t('theme.colorThemeLabel', 'Color Theme')}</Label>
-        <p className="text-sm text-muted-foreground">{t('theme.colorThemeDescription', 'Select a color palette for the interface')}</p>
-        <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-3 pt-1">
-          {COLOR_THEMES.map((theme) => {
-            const isSelected = currentColorTheme === theme.id;
-            const bgColor = isDark ? theme.previewColors.darkBg : theme.previewColors.bg;
-            const accentColor = isDark
-              ? (theme.previewColors.darkAccent || theme.previewColors.accent)
-              : theme.previewColors.accent;
+        <Label className="text-sm font-medium text-foreground">{t('theme.mode', 'Theme')}</Label>
+        <p className="text-sm text-muted-foreground">{t('theme.modeDescription', 'Choose one of the two built-in themes')}</p>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 max-w-2xl pt-1">
+          {themeOptions.map((option) => {
+            const Icon = option.icon;
+            const isSelected = currentMode === option.id;
 
             return (
               <button
-                key={theme.id}
-                onClick={() => handleColorThemeChange(theme.id)}
+                key={option.id}
+                onClick={() => handleModeChange(option.id)}
                 className={cn(
-                  'relative flex flex-col p-4 rounded-lg border-2 text-left transition-all',
+                  'relative flex min-h-[168px] flex-col gap-3 rounded-md border-2 p-4 text-left transition-all',
                   'hover:shadow-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2',
                   isSelected
-                    ? 'border-primary bg-primary/5 shadow-sm'
-                    : 'border-border hover:border-primary/50 hover:bg-accent/30'
+                    ? 'border-primary bg-primary/5'
+                    : 'border-border hover:border-primary/50 hover:bg-accent/50'
                 )}
               >
-                {/* Selection indicator */}
                 {isSelected && (
-                  <div className="absolute top-2 right-2 w-5 h-5 rounded-full bg-primary flex items-center justify-center">
-                    <Check className="w-3 h-3 text-primary-foreground" />
+                  <div className="absolute right-3 top-3 flex h-5 w-5 items-center justify-center rounded-full bg-primary">
+                    <Check className="h-3 w-3 text-primary-foreground" />
                   </div>
                 )}
 
-                {/* Preview swatches */}
-                <div className="flex items-center gap-2 mb-3">
-                  <div className="flex -space-x-1.5">
+                <div
+                  className="h-16 rounded-md border p-2"
+                  style={{
+                    backgroundColor: option.preview.background,
+                    borderColor: option.preview.muted
+                  }}
+                >
+                  <div className="flex h-full gap-2">
                     <div
-                      className="w-6 h-6 rounded-full border-2 border-background shadow-sm"
-                      style={{ backgroundColor: bgColor }}
-                      title={t('theme.backgroundColor', { defaultValue: 'Background color' })}
+                      className="h-full w-5 rounded-sm"
+                      style={{ backgroundColor: option.preview.card }}
                     />
-                    <div
-                      className="w-6 h-6 rounded-full border-2 border-background shadow-sm"
-                      style={{ backgroundColor: accentColor }}
-                      title={t('theme.accentColor', { defaultValue: 'Accent color' })}
-                    />
+                    <div className="flex flex-1 flex-col gap-2">
+                      <div
+                        className="h-2.5 w-20 rounded-full"
+                        style={{ backgroundColor: option.preview.text }}
+                      />
+                      <div
+                        className="h-2 w-full rounded-full"
+                        style={{ backgroundColor: option.preview.muted }}
+                      />
+                      <div
+                        className="h-2 w-2/3 rounded-full"
+                        style={{ backgroundColor: option.preview.muted }}
+                      />
+                      <div
+                        className="mt-auto h-2.5 w-10 rounded-full"
+                        style={{ backgroundColor: option.preview.accent }}
+                      />
+                    </div>
                   </div>
                 </div>
 
-                {/* Theme info */}
-                <div className="space-y-1">
-                  <p className="font-medium text-sm text-foreground">{theme.name}</p>
-                  <p className="text-xs text-muted-foreground line-clamp-2">{theme.description}</p>
+                <div className="flex items-start gap-2 pr-6">
+                  <Icon className="mt-0.5 h-4 w-4 text-primary" />
+                  <div className="space-y-1">
+                    <p className="text-sm font-medium text-foreground">{option.label}</p>
+                    <p className="text-xs leading-5 text-muted-foreground">{option.description}</p>
+                  </div>
                 </div>
               </button>
             );

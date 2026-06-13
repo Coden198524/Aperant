@@ -12,6 +12,7 @@ export interface BuildAutocodeSpecKickoffMessageInput {
   projectDir: string;
   taskDescription: string;
   priorPhaseOutputs?: Record<string, string>;
+  /** @deprecated Carries generated project documentation reference text. */
   projectIndex?: string;
   specPhase?: string;
   language?: AutocodeOutputLanguage;
@@ -96,7 +97,10 @@ export function buildAutocodeSpecKickoffMessage(
     contextSections.push(buildAutocodeStandardPlanningEvidenceContract(promptProjectDir, promptSpecDir));
   }
   if (input.projectIndex) {
-    contextSections.push(`\n\n## PROJECT INDEX (pre-generated)\n\nThe following project structure analysis has been pre-generated for you. Use this as your starting point instead of scanning the entire project:\n\n\`\`\`json\n${input.projectIndex}\n\`\`\``);
+    const projectDocsReference = input.projectIndex.trimStart().startsWith('## Project Documentation Reference')
+      ? input.projectIndex
+      : `## Project Documentation Reference\n\n${input.projectIndex}`;
+    contextSections.push(`\n\n${projectDocsReference}`);
   }
 
   const planLanguageRequirement = (input.agentType === 'planner' || input.specPhase === 'quick_spec')
@@ -394,6 +398,7 @@ export function buildAutocodeAgenticSpecOrchestratorKickoffMessage(input: {
   taskDescription: string;
   specDir: string;
   projectDir: string;
+  /** @deprecated Carries generated project documentation reference text. */
   projectIndexContent?: string;
 }): string {
   const promptSpecDir = formatAutocodePathForPrompt(input.specDir);
@@ -404,7 +409,10 @@ export function buildAutocodeAgenticSpecOrchestratorKickoffMessage(input: {
     `\nProject directory: ${promptProjectDir}`,
   ];
   if (input.projectIndexContent) {
-    parts.push(`\n\n## PROJECT INDEX\n\n\`\`\`json\n${input.projectIndexContent}\n\`\`\``);
+    const projectDocsReference = input.projectIndexContent.trimStart().startsWith('## Project Documentation Reference')
+      ? input.projectIndexContent
+      : `## Project Documentation Reference\n\n${input.projectIndexContent}`;
+    parts.push(`\n\n${projectDocsReference}`);
   }
   return parts.join('');
 }

@@ -70,19 +70,9 @@ export function useSettings() {
     }
   };
 
-  const applyTheme = (theme: 'light' | 'dark' | 'system') => {
-    if (theme === 'dark') {
-      document.documentElement.classList.add('dark');
-    } else if (theme === 'light') {
-      document.documentElement.classList.remove('dark');
-    } else {
-      // System preference
-      if (window.matchMedia('(prefers-color-scheme: dark)').matches) {
-        document.documentElement.classList.add('dark');
-      } else {
-        document.documentElement.classList.remove('dark');
-      }
-    }
+  const applyTheme = (theme: AppSettings['theme']) => {
+    document.documentElement.classList.toggle('dark', theme === 'dark');
+    document.documentElement.removeAttribute('data-theme');
   };
 
   const updateSettings = (partial: Partial<AppSettings>) => {

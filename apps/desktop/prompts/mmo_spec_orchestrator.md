@@ -10,7 +10,7 @@ Create `spec.md` and a single Markdown `tasks.md` for an MMO-scale task. Do not 
 {{mmo_specialist_roster}}
 
 ## Process
-1. Read the task and available context: `requirements.md`, `context.json`, `project_index.json`, and prior outputs.
+1. Read the task and available context: `requirements.md`, `context.json`, `project-docs/index.md`, and prior outputs.
 2. Cover only MMO domains affected by the task.
 3. Write `spec.md` with scope, requirements, risks, acceptance criteria, and validation.
 4. Write `tasks.md` as one Autocode Markdown checklist.

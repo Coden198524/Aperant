@@ -82,8 +82,5 @@ export const zhCNOnboardingSharedOverrides = {
       authenticateProfile: '\u8ba4\u8bc1\u914d\u7f6e\u5931\u8d25',
       saveToken: '\u4fdd\u5b58\u4ee4\u724c\u5931\u8d25'
     }
-  },
-  privacy: {
-    saveFailed: '\u4fdd\u5b58\u9690\u79c1\u8bbe\u7f6e\u5931\u8d25\uff0c\u8bf7\u91cd\u8bd5\u3002'
   }
 } as const;

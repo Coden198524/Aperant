@@ -5,11 +5,20 @@ import type { Actor } from 'xstate';
 import type {
   Competitor,
   CompetitorAnalysis,
+  CompetitorMarketGap,
+  CompetitorPainPoint,
+  FeatureSourceProvider,
   ManualCompetitorInput,
   Roadmap,
   RoadmapFeature,
+  RoadmapFeaturePriority,
   RoadmapFeatureStatus,
   RoadmapGenerationStatus,
+  RoadmapMilestone,
+  RoadmapPhase,
+  RoadmapPhaseStatus,
+  RoadmapStatus,
+  TargetAudience,
   TaskOutcome,
   FeatureSource
 } from '../../shared/types';
@@ -194,6 +203,329 @@ const initialGenerationStatus: RoadmapGenerationStatus = {
   message: ''
 };
 
+const ROADMAP_FEATURE_PRIORITIES = ['must', 'should', 'could', 'wont'] as const;
+const ROADMAP_FEATURE_STATUSES = ['under_review', 'planned', 'in_progress', 'done'] as const;
+const ROADMAP_PHASE_STATUSES = ['planned', 'in_progress', 'completed'] as const;
+const ROADMAP_STATUSES = ['draft', 'active', 'archived'] as const;
+const ROADMAP_LEVELS = ['low', 'medium', 'high'] as const;
+const ROADMAP_TASK_OUTCOMES = ['completed', 'deleted', 'archived'] as const;
+const ROADMAP_GENERATION_PHASES = ['idle', 'analyzing', 'discovering', 'generating', 'complete', 'error'] as const;
+const COMPETITOR_RELEVANCE = ['high', 'medium', 'low'] as const;
+const COMPETITOR_SOURCES = ['manual', 'ai'] as const;
+const FEATURE_SOURCE_PROVIDERS = ['internal', 'canny', 'github_issue'] as const;
+
+const FEATURE_STATUS_ALIASES: Record<string, RoadmapFeatureStatus> = {
+  under_review: 'under_review',
+  planned: 'planned',
+  in_progress: 'in_progress',
+  done: 'done',
+  idea: 'under_review',
+  backlog: 'under_review',
+  proposed: 'under_review',
+  pending: 'under_review',
+  approved: 'planned',
+  scheduled: 'planned',
+  active: 'in_progress',
+  building: 'in_progress',
+  complete: 'done',
+  completed: 'done',
+  shipped: 'done'
+};
+
+type UnknownRecord = Record<string, unknown>;
+
+function isRecord(value: unknown): value is UnknownRecord {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function getValue(record: UnknownRecord, camelKey: string, snakeKey?: string): unknown {
+  return record[camelKey] ?? (snakeKey ? record[snakeKey] : undefined);
+}
+
+function asString(value: unknown, fallback = ''): string {
+  if (typeof value === 'string') return value;
+  if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+  return fallback;
+}
+
+function asOptionalString(value: unknown): string | undefined {
+  const stringValue = asString(value).trim();
+  return stringValue ? stringValue : undefined;
+}
+
+function asNumber(value: unknown, fallback = 0): number {
+  if (typeof value === 'number' && Number.isFinite(value)) return value;
+  if (typeof value === 'string' && value.trim() !== '') {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return fallback;
+}
+
+function asStringArray(value: unknown): string[] {
+  if (typeof value === 'string') {
+    const trimmed = value.trim();
+    return trimmed ? [trimmed] : [];
+  }
+  if (!Array.isArray(value)) return [];
+  return value
+    .map((item) => asString(item).trim())
+    .filter((item) => item.length > 0);
+}
+
+function asRecordArray(value: unknown): UnknownRecord[] {
+  if (!Array.isArray(value)) return [];
+  return value.filter(isRecord);
+}
+
+function asOneOf<T extends string>(value: unknown, allowed: readonly T[], fallback: T): T {
+  const normalized = asString(value).toLowerCase();
+  return allowed.includes(normalized as T) ? (normalized as T) : fallback;
+}
+
+function asOptionalOneOf<T extends string>(value: unknown, allowed: readonly T[]): T | undefined {
+  const normalized = asString(value).toLowerCase();
+  return allowed.includes(normalized as T) ? (normalized as T) : undefined;
+}
+
+function parseDate(value: unknown, fallback: Date): Date {
+  if (value instanceof Date && !Number.isNaN(value.getTime())) return value;
+  if (typeof value === 'string' || typeof value === 'number') {
+    const parsed = new Date(value);
+    if (!Number.isNaN(parsed.getTime())) return parsed;
+  }
+  return fallback;
+}
+
+function parseOptionalDate(value: unknown): Date | undefined {
+  const fallback = new Date(NaN);
+  const parsed = parseDate(value, fallback);
+  return Number.isNaN(parsed.getTime()) ? undefined : parsed;
+}
+
+function timestampFromDateLike(value: unknown): number | undefined {
+  return parseOptionalDate(value)?.getTime();
+}
+
+function normalizeFeatureStatus(value: unknown): RoadmapFeatureStatus {
+  const normalized = asString(value).toLowerCase();
+  return FEATURE_STATUS_ALIASES[normalized] ?? 'under_review';
+}
+
+function normalizeFeatureSource(value: unknown): FeatureSource {
+  const record = isRecord(value) ? value : {};
+  const source: FeatureSource = {
+    provider: asOneOf<FeatureSourceProvider>(
+      getValue(record, 'provider'),
+      FEATURE_SOURCE_PROVIDERS,
+      'internal'
+    )
+  };
+  const importedAt = parseOptionalDate(getValue(record, 'importedAt', 'imported_at'));
+  const lastSyncedAt = parseOptionalDate(getValue(record, 'lastSyncedAt', 'last_synced_at'));
+  if (importedAt) source.importedAt = importedAt;
+  if (lastSyncedAt) source.lastSyncedAt = lastSyncedAt;
+  return source;
+}
+
+function normalizeMilestone(value: unknown, index: number): RoadmapMilestone {
+  const record = isRecord(value) ? value : {};
+  return {
+    id: asString(getValue(record, 'id'), `milestone-${index + 1}`),
+    title: asString(getValue(record, 'title'), `Milestone ${index + 1}`),
+    description: asString(getValue(record, 'description')),
+    features: asStringArray(getValue(record, 'features')),
+    status: asOneOf(getValue(record, 'status'), ['planned', 'achieved'] as const, 'planned'),
+    targetDate: parseOptionalDate(getValue(record, 'targetDate', 'target_date'))
+  };
+}
+
+function normalizePhase(value: unknown, index: number): RoadmapPhase {
+  const record = isRecord(value) ? value : {};
+  return {
+    id: asString(getValue(record, 'id'), `phase-${index + 1}`),
+    name: asString(getValue(record, 'name'), `Phase ${index + 1}`),
+    description: asString(getValue(record, 'description')),
+    order: asNumber(getValue(record, 'order'), index + 1),
+    status: asOneOf<RoadmapPhaseStatus>(
+      getValue(record, 'status'),
+      ROADMAP_PHASE_STATUSES,
+      'planned'
+    ),
+    features: asStringArray(getValue(record, 'features')),
+    milestones: asRecordArray(getValue(record, 'milestones')).map(normalizeMilestone)
+  };
+}
+
+function normalizeFeature(value: unknown, index: number): RoadmapFeature {
+  const record = isRecord(value) ? value : {};
+  const competitorInsightIds = asStringArray(
+    getValue(record, 'competitorInsightIds', 'competitor_insight_ids')
+  );
+  const taskOutcome = asOptionalOneOf<TaskOutcome>(
+    getValue(record, 'taskOutcome', 'task_outcome'),
+    ROADMAP_TASK_OUTCOMES
+  );
+  const previousStatus = getValue(record, 'previousStatus', 'previous_status');
+  const votesValue = getValue(record, 'votes');
+  const votes = typeof votesValue === 'number' && Number.isFinite(votesValue)
+    ? votesValue
+    : undefined;
+
+  return {
+    id: asString(getValue(record, 'id'), `feature-${index + 1}`),
+    title: asString(getValue(record, 'title'), `Feature ${index + 1}`),
+    description: asString(getValue(record, 'description')),
+    rationale: asString(getValue(record, 'rationale')),
+    priority: asOneOf<RoadmapFeaturePriority>(
+      getValue(record, 'priority'),
+      ROADMAP_FEATURE_PRIORITIES,
+      'should'
+    ),
+    complexity: asOneOf(getValue(record, 'complexity'), ROADMAP_LEVELS, 'medium'),
+    impact: asOneOf(getValue(record, 'impact'), ROADMAP_LEVELS, 'medium'),
+    phaseId: asString(getValue(record, 'phaseId', 'phase_id')),
+    dependencies: asStringArray(getValue(record, 'dependencies')),
+    status: normalizeFeatureStatus(getValue(record, 'status')),
+    acceptanceCriteria: asStringArray(getValue(record, 'acceptanceCriteria', 'acceptance_criteria')),
+    userStories: asStringArray(getValue(record, 'userStories', 'user_stories')),
+    linkedSpecId: asOptionalString(getValue(record, 'linkedSpecId', 'linked_spec_id')),
+    taskOutcome,
+    previousStatus: asOptionalOneOf<RoadmapFeatureStatus>(previousStatus, ROADMAP_FEATURE_STATUSES),
+    competitorInsightIds: competitorInsightIds.length > 0 ? competitorInsightIds : undefined,
+    source: normalizeFeatureSource(getValue(record, 'source')),
+    externalId: asOptionalString(getValue(record, 'externalId', 'external_id')),
+    externalUrl: asOptionalString(getValue(record, 'externalUrl', 'external_url')),
+    votes
+  };
+}
+
+function normalizeTargetAudience(value: unknown): TargetAudience {
+  const record = isRecord(value) ? value : {};
+  const painPoints = asStringArray(getValue(record, 'painPoints', 'pain_points'));
+  const goals = asStringArray(getValue(record, 'goals'));
+  const usageContext = asOptionalString(getValue(record, 'usageContext', 'usage_context'));
+
+  return {
+    primary: asString(getValue(record, 'primary') ?? getValue(record, 'primaryPersona', 'primary_persona')),
+    secondary: asStringArray(
+      getValue(record, 'secondary') ?? getValue(record, 'secondaryPersonas', 'secondary_personas')
+    ),
+    ...(painPoints.length > 0 ? { painPoints } : {}),
+    ...(goals.length > 0 ? { goals } : {}),
+    ...(usageContext ? { usageContext } : {})
+  };
+}
+
+function normalizePainPoint(value: unknown, index: number): CompetitorPainPoint {
+  const record = isRecord(value) ? value : {};
+  return {
+    id: asString(getValue(record, 'id'), `pain-point-${index + 1}`),
+    description: asString(getValue(record, 'description')),
+    source: asString(getValue(record, 'source')),
+    severity: asOneOf(getValue(record, 'severity'), COMPETITOR_RELEVANCE, 'medium'),
+    frequency: asString(getValue(record, 'frequency')),
+    opportunity: asString(getValue(record, 'opportunity'))
+  };
+}
+
+function normalizeCompetitor(value: unknown, index: number): Competitor {
+  const record = isRecord(value) ? value : {};
+  return {
+    id: asString(getValue(record, 'id'), `competitor-${index + 1}`),
+    name: asString(getValue(record, 'name'), `Competitor ${index + 1}`),
+    url: asString(getValue(record, 'url')),
+    description: asString(getValue(record, 'description')),
+    relevance: asOneOf(getValue(record, 'relevance'), COMPETITOR_RELEVANCE, 'medium'),
+    painPoints: asRecordArray(getValue(record, 'painPoints', 'pain_points')).map(normalizePainPoint),
+    strengths: asStringArray(getValue(record, 'strengths')),
+    marketPosition: asString(getValue(record, 'marketPosition', 'market_position')),
+    source: asOptionalOneOf(getValue(record, 'source'), COMPETITOR_SOURCES)
+  };
+}
+
+function normalizeMarketGap(value: unknown, index: number): CompetitorMarketGap {
+  const record = isRecord(value) ? value : {};
+  return {
+    id: asString(getValue(record, 'id'), `market-gap-${index + 1}`),
+    description: asString(getValue(record, 'description')),
+    affectedCompetitors: asStringArray(getValue(record, 'affectedCompetitors', 'affected_competitors')),
+    opportunitySize: asOneOf(getValue(record, 'opportunitySize', 'opportunity_size'), COMPETITOR_RELEVANCE, 'medium'),
+    suggestedFeature: asString(getValue(record, 'suggestedFeature', 'suggested_feature'))
+  };
+}
+
+function normalizeCompetitorAnalysis(analysis: CompetitorAnalysis | null | undefined): CompetitorAnalysis | null {
+  if (!analysis || !isRecord(analysis)) return null;
+
+  const projectContext = getValue(analysis, 'projectContext', 'project_context');
+  const projectContextRecord = isRecord(projectContext) ? projectContext : {};
+  const insightsSummary = getValue(analysis, 'insightsSummary', 'insights_summary');
+  const insightsSummaryRecord = isRecord(insightsSummary) ? insightsSummary : {};
+  const researchMetadata = getValue(analysis, 'researchMetadata', 'research_metadata');
+  const researchMetadataRecord = isRecord(researchMetadata) ? researchMetadata : {};
+  const metadata = getValue(analysis, 'metadata');
+  const metadataRecord = isRecord(metadata) ? metadata : {};
+
+  return {
+    projectContext: {
+      projectName: asString(getValue(projectContextRecord, 'projectName', 'project_name')),
+      projectType: asString(getValue(projectContextRecord, 'projectType', 'project_type')),
+      targetAudience: asString(getValue(projectContextRecord, 'targetAudience', 'target_audience'))
+    },
+    competitors: asRecordArray(getValue(analysis, 'competitors')).map(normalizeCompetitor),
+    marketGaps: asRecordArray(getValue(analysis, 'marketGaps', 'market_gaps')).map(normalizeMarketGap),
+    insightsSummary: {
+      topPainPoints: asStringArray(getValue(insightsSummaryRecord, 'topPainPoints', 'top_pain_points')),
+      differentiatorOpportunities: asStringArray(
+        getValue(insightsSummaryRecord, 'differentiatorOpportunities', 'differentiator_opportunities')
+      ),
+      marketTrends: asStringArray(getValue(insightsSummaryRecord, 'marketTrends', 'market_trends'))
+    },
+    researchMetadata: {
+      searchQueriesUsed: asStringArray(getValue(researchMetadataRecord, 'searchQueriesUsed', 'search_queries_used')),
+      sourcesConsulted: asStringArray(getValue(researchMetadataRecord, 'sourcesConsulted', 'sources_consulted')),
+      limitations: asStringArray(getValue(researchMetadataRecord, 'limitations'))
+    },
+    createdAt: parseDate(
+      getValue(analysis, 'createdAt', 'created_at') ?? getValue(metadataRecord, 'createdAt', 'created_at'),
+      new Date()
+    )
+  };
+}
+
+export function normalizeRoadmapForStore(roadmap: Roadmap): Roadmap {
+  if (!isRecord(roadmap)) return roadmap;
+
+  const targetAudience = getValue(roadmap, 'targetAudience', 'target_audience');
+  const metadata = getValue(roadmap, 'metadata');
+  const metadataRecord = isRecord(metadata) ? metadata : {};
+  const competitorAnalysis = normalizeCompetitorAnalysis(
+    getValue(roadmap, 'competitorAnalysis', 'competitor_analysis') as CompetitorAnalysis | null | undefined
+  );
+
+  return {
+    id: asString(getValue(roadmap, 'id'), `roadmap-${Date.now()}`),
+    projectId: asString(getValue(roadmap, 'projectId', 'project_id')),
+    projectName: asString(getValue(roadmap, 'projectName', 'project_name')),
+    version: asString(getValue(roadmap, 'version'), '1.0'),
+    vision: asString(getValue(roadmap, 'vision')),
+    targetAudience: normalizeTargetAudience(targetAudience),
+    phases: asRecordArray(getValue(roadmap, 'phases')).map(normalizePhase),
+    features: asRecordArray(getValue(roadmap, 'features')).map(normalizeFeature),
+    status: asOneOf<RoadmapStatus>(getValue(roadmap, 'status'), ROADMAP_STATUSES, 'draft'),
+    ...(competitorAnalysis ? { competitorAnalysis } : {}),
+    createdAt: parseDate(
+      getValue(roadmap, 'createdAt', 'created_at') ?? getValue(metadataRecord, 'createdAt', 'created_at'),
+      new Date()
+    ),
+    updatedAt: parseDate(
+      getValue(roadmap, 'updatedAt', 'updated_at') ?? getValue(metadataRecord, 'updatedAt', 'updated_at'),
+      new Date()
+    )
+  };
+}
+
 /**
  * Derive RoadmapGenerationStatus from the generation actor's current snapshot.
  */
@@ -220,9 +552,11 @@ export const useRoadmapStore = create<RoadmapState>((set) => ({
 
   // Actions
   setRoadmap: (roadmap) => {
+    const normalizedRoadmap = roadmap ? normalizeRoadmapForStore(roadmap) : null;
+
     // Prune stale actors: stop and remove actors for features not in the new roadmap
-    if (roadmap) {
-      const newFeatureIds = new Set(roadmap.features.map((f) => f.id));
+    if (normalizedRoadmap) {
+      const newFeatureIds = new Set(normalizedRoadmap.features.map((f) => f.id));
       for (const [featureId, actor] of featureActors.entries()) {
         if (!newFeatureIds.has(featureId)) {
           actor.stop();
@@ -234,26 +568,35 @@ export const useRoadmapStore = create<RoadmapState>((set) => ({
       featureActors.forEach((actor) => actor.stop());
       featureActors.clear();
     }
-    return set({ roadmap });
+    return set({ roadmap: normalizedRoadmap });
   },
 
-  setCompetitorAnalysis: (analysis) => set({ competitorAnalysis: analysis }),
+  setCompetitorAnalysis: (analysis) => set({ competitorAnalysis: normalizeCompetitorAnalysis(analysis) }),
 
   setGenerationStatus: (status) => {
+    const normalizedStatus: RoadmapGenerationStatus = {
+      phase: asOneOf(status.phase, ROADMAP_GENERATION_PHASES, 'idle'),
+      progress: Math.max(0, Math.min(100, asNumber(status.progress, 0))),
+      message: asString(status.message),
+      error: asOptionalString(status.error),
+      startedAt: parseOptionalDate(status.startedAt),
+      lastActivityAt: parseOptionalDate(status.lastActivityAt)
+    };
+
     const actor = getOrCreateGenerationActor(
-      status.phase !== 'idle' ? status.phase : undefined,
-      status.phase !== 'idle' ? {
-        progress: status.progress,
-        message: status.message,
-        error: status.error,
-        startedAt: status.startedAt?.getTime(),
-        lastActivityAt: status.lastActivityAt?.getTime()
+      normalizedStatus.phase !== 'idle' ? normalizedStatus.phase : undefined,
+      normalizedStatus.phase !== 'idle' ? {
+        progress: normalizedStatus.progress,
+        message: normalizedStatus.message,
+        error: normalizedStatus.error,
+        startedAt: timestampFromDateLike(normalizedStatus.startedAt),
+        lastActivityAt: timestampFromDateLike(normalizedStatus.lastActivityAt)
       } : undefined
     );
 
     // Map the incoming status phase to an XState event
     let event: RoadmapGenerationEvent | null = null;
-    switch (status.phase) {
+    switch (normalizedStatus.phase) {
       case 'analyzing': {
         const currentState = String(actor.getSnapshot().value);
         if (currentState === 'idle') {
@@ -324,7 +667,7 @@ export const useRoadmapStore = create<RoadmapState>((set) => ({
           actor.send({ type: 'RESET' });
           actor.send({ type: 'START_GENERATION' });
         }
-        event = { type: 'GENERATION_ERROR', error: status.error ?? 'Unknown error' };
+        event = { type: 'GENERATION_ERROR', error: normalizedStatus.error ?? 'Unknown error' };
         break;
       }
       case 'idle': {
@@ -346,7 +689,11 @@ export const useRoadmapStore = create<RoadmapState>((set) => ({
     // Send progress updates for active states
     const currentState = String(actor.getSnapshot().value);
     if (currentState === 'analyzing' || currentState === 'discovering' || currentState === 'generating') {
-      actor.send({ type: 'PROGRESS_UPDATE', progress: status.progress, message: status.message });
+      actor.send({
+        type: 'PROGRESS_UPDATE',
+        progress: normalizedStatus.progress,
+        message: normalizedStatus.message
+      });
     }
 
     // Derive store state from the actor snapshot
@@ -776,11 +1123,12 @@ export async function loadRoadmap(projectId: string): Promise<void> {
   const result = await window.electronAPI.getRoadmap(projectId);
   if (result.success && result.data) {
     // Migrate roadmap to latest schema if needed
-    const migratedRoadmap = migrateRoadmapIfNeeded(result.data);
+    const normalizedRoadmap = normalizeRoadmapForStore(result.data);
+    const migratedRoadmap = migrateRoadmapIfNeeded(normalizedRoadmap);
     store.setRoadmap(migratedRoadmap);
 
     // Save migrated roadmap if changes were made
-    if (migratedRoadmap !== result.data) {
+    if (migratedRoadmap !== normalizedRoadmap) {
       window.electronAPI.saveRoadmap(projectId, migratedRoadmap).catch((err) => {
         console.error('[Roadmap] Failed to save migrated roadmap:', err);
       });

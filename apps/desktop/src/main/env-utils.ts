@@ -221,8 +221,7 @@ export function getAugmentedEnv(additionalPaths?: string[]): Record<string, stri
   // Prepend new paths to PATH (prepend so they take priority)
   env.PATH = [...pathsToAdd, currentPath].filter(Boolean).join(pathSeparator);
 
-  // Add Sentry environment variables for Python subprocesses
-  // These are embedded at build time and need to be passed explicitly
+  // Legacy no-op hook for removed remote error reporting environment variables.
   const sentryEnv = getSentryEnvForSubprocess();
   Object.assign(env, sentryEnv);
 
@@ -400,8 +399,7 @@ export async function getAugmentedEnvAsync(additionalPaths?: string[]): Promise<
   // Prepend new paths to PATH (prepend so they take priority)
   env.PATH = [...pathsToAdd, currentPath].filter(Boolean).join(pathSeparator);
 
-  // Add Sentry environment variables for Python subprocesses
-  // These are embedded at build time and need to be passed explicitly
+  // Legacy no-op hook for removed remote error reporting environment variables.
   const sentryEnv = getSentryEnvForSubprocess();
   Object.assign(env, sentryEnv);
 

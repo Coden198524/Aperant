@@ -17,12 +17,6 @@ vi.mock('../../client/factory', () => ({
   createSimpleClient: (...args: unknown[]) => mockCreateSimpleClient(...args),
 }));
 
-const mockRunProjectIndexer = vi.fn();
-
-vi.mock('../../project/project-indexer', () => ({
-  runProjectIndexer: (...args: unknown[]) => mockRunProjectIndexer(...args),
-}));
-
 // Filesystem mocks
 const mockExistsSync = vi.fn();
 const mockReadFileSync = vi.fn();
@@ -143,7 +137,6 @@ describe('runRoadmapGeneration', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     mockCreateSimpleClient.mockResolvedValue(makeMockClient());
-    mockRunProjectIndexer.mockReturnValue({});
     // Output dir exists by default (created by mkdirSync is a no-op)
     mockExistsSync.mockReturnValue(false);
     mockMkdirSync.mockReturnValue(undefined);
@@ -194,6 +187,46 @@ describe('runRoadmapGeneration', () => {
     expect(result.phases[1].phase).toBe('features');
   });
 
+  it('injects Simplified Chinese language instructions for zh-CN', async () => {
+    let streamCallCount = 0;
+    let discoveryCreated = false;
+    let roadmapCreated = false;
+
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      if (p.endsWith('project-docs/index.md')) return true;
+      if (p.endsWith('roadmap_discovery.json')) return discoveryCreated;
+      if (p.endsWith('roadmap.json')) return roadmapCreated;
+      return false;
+    });
+
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap_discovery.json')) return VALID_DISCOVERY_JSON;
+      if (p.endsWith('roadmap.json')) return VALID_ROADMAP_JSON;
+      return '{}';
+    });
+
+    mockStreamText.mockImplementation(() => {
+      streamCallCount += 1;
+      if (streamCallCount === 1) {
+        discoveryCreated = true;
+      } else if (streamCallCount === 2) {
+        roadmapCreated = true;
+      }
+      return makeStream([]);
+    });
+
+    const result = await runRoadmapGeneration(baseConfig({ refresh: true, language: 'zh-CN' }));
+
+    expect(result.success).toBe(true);
+    expect(mockStreamText).toHaveBeenCalledTimes(2);
+    const discoverySystem = mockStreamText.mock.calls[0][0].system;
+    const roadmapSystem = mockStreamText.mock.calls[1][0].system;
+    expect(discoverySystem).toContain('Write all user-facing JSON string values in Simplified Chinese');
+    expect(roadmapSystem).toContain('Write all roadmap user-facing JSON string values in Simplified Chinese');
+    expect(roadmapSystem).toContain('feature titles/descriptions');
+  });
+
   // ---------------------------------------------------------------------------
   // Discovery phase failure
   // ---------------------------------------------------------------------------
@@ -226,21 +259,21 @@ describe('runRoadmapGeneration', () => {
     expect(result.phases).toHaveLength(1);
   });
 
-  it('uses project-index fallback discovery when retries are exhausted', async () => {
+  it('uses project-docs fallback discovery when retries are exhausted', async () => {
     let discoveryCreated = false;
     let discoveryJson = '{}';
 
     mockExistsSync.mockImplementation((p: string) => {
       if (p.endsWith('roadmap') && !p.includes('.json')) return true;
-      if (p.endsWith('project_index.json')) return true;
+      if (p.endsWith('project-docs/index.md')) return true;
       if (p.endsWith('roadmap_discovery.json')) return discoveryCreated;
       if (p.endsWith('roadmap.json')) return true;
       return false;
     });
 
     mockReadFileSync.mockImplementation((p: string) => {
-      if (p.endsWith('project_index.json')) {
-        return '{"project_type":"desktop-app","services":{"app":{"language":"TypeScript","framework":"Electron","dependencies":["react"]}}}';
+      if (p.endsWith('project-docs/index.md')) {
+        return '# TestProject\n\n- Architecture: Electron desktop app\n- Technical: TypeScript and React';
       }
       if (p.endsWith('roadmap_discovery.json')) return discoveryJson;
       if (p.endsWith('roadmap.json')) return VALID_ROADMAP_JSON;
@@ -266,6 +299,44 @@ describe('runRoadmapGeneration', () => {
       expect.any(String),
       'utf-8',
     );
+  });
+
+  it('writes Chinese fallback discovery content when language is zh-CN', async () => {
+    let discoveryCreated = false;
+    let discoveryJson = '{}';
+
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      if (p.endsWith('project-docs/index.md')) return true;
+      if (p.endsWith('roadmap_discovery.json')) return discoveryCreated;
+      if (p.endsWith('roadmap.json')) return true;
+      return false;
+    });
+
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p.endsWith('project-docs/index.md')) {
+        return '# TestProject\n\n- Architecture: Electron desktop app\n- Technical: TypeScript and React';
+      }
+      if (p.endsWith('roadmap_discovery.json')) return discoveryJson;
+      if (p.endsWith('roadmap.json')) return VALID_ROADMAP_JSON;
+      return '{}';
+    });
+
+    mockWriteFileSync.mockImplementation((p: string, content: string) => {
+      if (p.endsWith('roadmap_discovery.json')) {
+        discoveryCreated = true;
+        discoveryJson = content;
+      }
+      return undefined;
+    });
+
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    const result = await runRoadmapGeneration(baseConfig({ language: 'zh-CN' }));
+
+    expect(result.success).toBe(true);
+    expect(discoveryJson).toContain('维护和扩展该项目的开发者');
+    expect(discoveryJson).toContain('当前工作流缺少与用户结果绑定的清晰优先级路线图');
   });
 
   it('uses retry feedback that forces Write tool when discovery file is missing', async () => {
@@ -330,7 +401,7 @@ describe('runRoadmapGeneration', () => {
     mockExistsSync.mockImplementation((p: string) => {
       if (p.endsWith('roadmap')) return true;
       if (p.endsWith('roadmap_discovery.json')) return true; // discovery succeeded
-      if (p.endsWith('project_index.json')) return false;
+      if (p.endsWith('project-docs/index.md')) return false;
       return false; // roadmap.json never created
     });
 
@@ -388,10 +459,10 @@ describe('runRoadmapGeneration', () => {
     );
   });
 
-  it('generates project_index.json when missing', async () => {
+  it('does not generate legacy project_index.json when project docs are missing', async () => {
     mockExistsSync.mockImplementation((p: string) => {
       if (p.endsWith('roadmap') && !p.includes('.json')) return true;
-      if (p.endsWith('project_index.json')) return false;
+      if (p.endsWith('project-docs/index.md')) return false;
       if (p.endsWith('roadmap_discovery.json')) return true;
       if (p.endsWith('roadmap.json')) return true;
       return false;
@@ -400,9 +471,10 @@ describe('runRoadmapGeneration', () => {
     const result = await runRoadmapGeneration(baseConfig({ refresh: false }));
 
     expect(result.success).toBe(true);
-    expect(mockRunProjectIndexer).toHaveBeenCalledWith(
-      '/project',
-      expect.stringContaining('.autocode'),
+    expect(mockWriteFileSync).not.toHaveBeenCalledWith(
+      expect.stringContaining('project_index.json'),
+      expect.anything(),
+      expect.anything(),
     );
   });
 

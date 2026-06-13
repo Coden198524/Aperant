@@ -51,7 +51,7 @@ export interface NotificationSettings {
 }
 
 // ============================================
-// Context Types (Project Index & Memories)
+// Context Types (Project Documents & Memories)
 // ============================================
 
 export interface ProjectIndex {

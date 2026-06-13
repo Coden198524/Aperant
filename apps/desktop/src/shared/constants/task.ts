@@ -40,10 +40,10 @@ export const TASK_STATUS_LABELS: Record<TaskStatusColumn | 'pr_created' | 'error
 // Note: error maps to 'human_review' column in Kanban view (errors need human attention)
 export const TASK_STATUS_COLORS: Record<TaskStatusColumn | 'pr_created' | 'error', string> = {
   backlog: 'bg-muted text-muted-foreground',
-  queue: 'bg-cyan-500/10 text-cyan-400',
+  queue: 'bg-blue-500/10 text-blue-700 dark:text-blue-300',
   in_progress: 'bg-info/10 text-info',
   ai_review: 'bg-warning/10 text-warning',
-  human_review: 'bg-purple-500/10 text-purple-400',
+  human_review: 'bg-violet-500/10 text-violet-700 dark:text-violet-300',
   done: 'bg-success/10 text-success',
   pr_created: 'bg-info/10 text-info',
   error: 'bg-destructive/10 text-destructive'
@@ -107,11 +107,11 @@ export const EXECUTION_PHASE_COLORS: Record<string, string> = {
 // Execution phase badge colors (outline style)
 export const EXECUTION_PHASE_BADGE_COLORS: Record<string, string> = {
   idle: 'bg-muted/50 text-muted-foreground border-muted',
-  planning: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
+  planning: 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30',
   coding: 'bg-info/10 text-info border-info/30',
-  rate_limit_paused: 'bg-orange-500/10 text-orange-400 border-orange-500/30',
-  auth_failure_paused: 'bg-red-500/10 text-red-400 border-red-500/30',
-  qa_review: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+  rate_limit_paused: 'bg-orange-500/10 text-orange-700 dark:text-orange-300 border-orange-500/30',
+  auth_failure_paused: 'bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/30',
+  qa_review: 'bg-violet-500/10 text-violet-700 dark:text-violet-300 border-violet-500/30',
   qa_fixing: 'bg-warning/10 text-warning border-warning/30',
   complete: 'bg-success/10 text-success border-success/30',
   failed: 'bg-destructive/10 text-destructive border-destructive/30'
@@ -149,13 +149,13 @@ export const TASK_CATEGORY_LABELS: Record<string, string> = {
 export const TASK_CATEGORY_COLORS: Record<string, string> = {
   feature: 'bg-primary/10 text-primary border-primary/30',
   bug_fix: 'bg-destructive/10 text-destructive border-destructive/30',
-  refactoring: 'bg-cyan-500/10 text-cyan-400 border-cyan-500/30',
-  documentation: 'bg-amber-500/10 text-amber-500 border-amber-500/30',
-  security: 'bg-red-500/10 text-red-400 border-red-500/30',
-  performance: 'bg-purple-500/10 text-purple-400 border-purple-500/30',
+  refactoring: 'bg-cyan-500/10 text-cyan-700 dark:text-cyan-300 border-cyan-500/30',
+  documentation: 'bg-amber-500/10 text-amber-700 dark:text-amber-300 border-amber-500/30',
+  security: 'bg-red-500/10 text-red-700 dark:text-red-300 border-red-500/30',
+  performance: 'bg-purple-500/10 text-purple-700 dark:text-purple-300 border-purple-500/30',
   ui_ux: 'bg-info/10 text-info border-info/30',
-  infrastructure: 'bg-slate-500/10 text-slate-400 border-slate-500/30',
-  testing: 'bg-emerald-500/10 text-emerald-400 border-emerald-500/30'
+  infrastructure: 'bg-slate-500/10 text-slate-700 dark:text-slate-300 border-slate-500/30',
+  testing: 'bg-emerald-500/10 text-emerald-700 dark:text-emerald-300 border-emerald-500/30'
 };
 
 // ============================================
@@ -174,7 +174,7 @@ export const TASK_COMPLEXITY_COLORS: Record<string, string> = {
   trivial: 'bg-success/10 text-success',
   small: 'bg-info/10 text-info',
   medium: 'bg-warning/10 text-warning',
-  large: 'bg-orange-500/10 text-orange-400',
+  large: 'bg-orange-500/10 text-orange-700 dark:text-orange-300',
   complex: 'bg-destructive/10 text-destructive'
 };
 

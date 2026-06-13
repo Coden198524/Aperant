@@ -60,6 +60,14 @@ import {
 } from '../../shared/constants';
 import { getTaskCategoryLabel, getTaskComplexityLabel } from '../lib/i18n-labels';
 
+const INSIGHTS_MARKDOWN_CLASS = [
+  'prose prose-sm dark:prose-invert max-w-none',
+  'prose-p:text-foreground/90 prose-headings:text-foreground prose-strong:text-foreground',
+  'prose-li:text-foreground/90 prose-code:text-foreground prose-pre:bg-muted prose-pre:text-foreground',
+  'prose-blockquote:text-foreground/80 prose-blockquote:border-border prose-th:text-foreground prose-td:text-foreground/90',
+  'prose-a:text-primary'
+].join(' ');
+
 // createSafeLink - factory function that creates a SafeLink component with i18n support
 const createSafeLink = (opensInNewWindowText: string) => {
   return function SafeLink({ href, children, ...props }: React.AnchorHTMLAttributes<HTMLAnchorElement>) {
@@ -512,7 +520,7 @@ export function Insights({ projectId }: InsightsProps) {
                     {t('insights.messages.assistant')}
                   </div>
                   {streamingContent && (
-                    <div className="prose prose-sm dark:prose-invert max-w-none">
+                    <div className={INSIGHTS_MARKDOWN_CLASS}>
                       <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
                         {streamingContent}
                       </ReactMarkdown>
@@ -608,7 +616,7 @@ export function Insights({ projectId }: InsightsProps) {
 
         {/* Image analysis warning */}
         {pendingImages.length > 0 && (
-          <div className="mt-1 flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-500">
+          <div className="mt-1 flex items-center gap-1.5 rounded-md bg-amber-500/10 px-2 py-1 text-xs text-amber-700 dark:text-amber-300">
             <AlertCircle className="h-3 w-3 shrink-0" />
             <span>{t('insights.images.analysisUnsupported')}</span>
           </div>
@@ -701,7 +709,7 @@ function MessageBubble({
           {isUser ? t('insights.messages.user') : t('insights.messages.assistant')}
         </div>
         {message.content && (
-          <div className="prose prose-sm dark:prose-invert max-w-none">
+          <div className={INSIGHTS_MARKDOWN_CLASS}>
             <ReactMarkdown remarkPlugins={[remarkGfm]} components={markdownComponents}>
               {message.content}
             </ReactMarkdown>
@@ -870,11 +878,11 @@ function LocalizedToolUsageHistory({ tools }: ToolUsageHistoryProps) {
   const getToolColor = (toolName: string) => {
     switch (toolName) {
       case 'Read':
-        return 'text-blue-500';
+        return 'text-blue-700 dark:text-blue-300';
       case 'Glob':
-        return 'text-amber-500';
+        return 'text-amber-700 dark:text-amber-300';
       case 'Grep':
-        return 'text-green-500';
+        return 'text-green-700 dark:text-green-300';
       default:
         return 'text-muted-foreground';
     }
@@ -935,19 +943,19 @@ function LocalizedToolIndicator({ name, input }: ToolIndicatorProps) {
         return {
           icon: FileText,
           label: t('insights.tools.readingFile'),
-          color: 'text-blue-500 bg-blue-500/10'
+          color: 'text-blue-700 dark:text-blue-300 bg-blue-500/10'
         };
       case 'Glob':
         return {
           icon: FolderSearch,
           label: t('insights.tools.searchingFiles'),
-          color: 'text-amber-500 bg-amber-500/10'
+          color: 'text-amber-700 dark:text-amber-300 bg-amber-500/10'
         };
       case 'Grep':
         return {
           icon: Search,
           label: t('insights.tools.searchingCode'),
-          color: 'text-green-500 bg-green-500/10'
+          color: 'text-green-700 dark:text-green-300 bg-green-500/10'
         };
       default:
         return {

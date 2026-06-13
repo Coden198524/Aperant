@@ -22,7 +22,7 @@ Read the provided context first. Read files from disk only when needed.
 - `requirements.md`: user request and workflow type.
 - `spec.md`: scope, success criteria, files, services.
 - `context.json`: relevant files, patterns, risks.
-- `project_index.json`: structure, commands, services.
+- `project-docs/index.md`: generated project documentation index, structure, commands, and important docs.
 - `HUMAN_INPUT.md`: required plan-review feedback when present.
 - `change_requests.jsonl`: same-task iteration audit trail when present.
 

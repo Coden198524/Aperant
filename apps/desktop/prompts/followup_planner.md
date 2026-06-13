@@ -4,7 +4,7 @@ Append new work to an existing completed plan.
 
 ## Contract
 
-- Read `FOLLOWUP_REQUEST.md`, `spec.md`, `implementation_plan.md`, `context.json`, and `project_index.json` when available.
+- Read `FOLLOWUP_REQUEST.md`, `spec.md`, `implementation_plan.md`, `context.json`, and `project-docs/index.md` when available.
 - Preserve existing phases, subtasks, statuses, notes, and completion summaries.
 - Append new Markdown checklist phases to `implementation_plan.md`.
 - Do not write JSON.

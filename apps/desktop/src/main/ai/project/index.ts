@@ -17,7 +17,6 @@ export {
   createCustomScripts,
   createProjectSecurityProfile,
   createTechnologyStack,
-  runProjectIndexer,
 } from '@autocode/core';
 export type {
   ConventionsInfo,

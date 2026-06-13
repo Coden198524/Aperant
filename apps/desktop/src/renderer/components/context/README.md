@@ -14,7 +14,7 @@ context/
 ├── InfoItem.tsx                # Reusable info display component
 ├── MemoryCard.tsx              # Memory episode card component
 ├── ServiceCard.tsx             # Service card component with all service details
-├── ProjectIndexTab.tsx         # Project index tab content
+├── ProjectDocumentsTab.tsx     # Project documentation reader
 ├── MemoriesTab.tsx             # Memories tab content
 ├── service-sections/           # Collapsible service detail sections
 │   ├── EnvironmentSection.tsx
@@ -32,13 +32,13 @@ context/
 ## Architecture
 
 ### Main Component (`Context.tsx`)
-- Orchestrates the two main tabs (Project Index and Memories)
+- Orchestrates the two main tabs (Project Docs and Memories)
 - Uses custom hooks for data fetching and state management
 - Delegates rendering to specialized tab components
 - Clean, readable entry point (~70 lines)
 
 ### Tab Components
-- **ProjectIndexTab**: Displays project structure, services, infrastructure, and conventions
+- **ProjectDocumentsTab**: Displays generated project documentation content
 - **MemoriesTab**: Shows memory status, search interface, and recent memories
 
 ### Service Sections

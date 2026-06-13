@@ -10,7 +10,6 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-import { getAutocodeProjectIndexPath } from '@autocode/core';
 
 import { categorizeMatches } from './categorizer.js';
 import { fetchGraphHints, isMemoryEnabled } from './graphiti-integration.js';
@@ -34,15 +33,16 @@ import type {
 // ---------------------------------------------------------------------------
 
 function loadProjectIndex(projectDir: string, dataDirName?: string): ProjectIndex {
-  const indexFile = getAutocodeProjectIndexPath(projectDir, dataDirName);
-  if (fs.existsSync(indexFile)) {
-    try {
-      return JSON.parse(fs.readFileSync(indexFile, 'utf8')) as ProjectIndex;
-    } catch {
+  void dataDirName;
+  return {
+    services: {
+      main: {
+        type: 'api',
+        path: projectDir,
+      },
+    },
+  };
       // Corrupt file — fall through to empty index
-    }
-  }
-  return {};
 }
 
 function getServiceContext(

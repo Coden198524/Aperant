@@ -9,8 +9,9 @@ import type { ProviderAccount, BuiltinProvider } from './provider-account';
 import type { ProviderModelSpec } from '../constants/models';
 import type { AutocodeCli } from '@autocode/core/tasks/cli-catalog';
 
-// Color theme types for multi-theme support
-export type ColorTheme = 'default' | 'dusk' | 'lime' | 'ocean' | 'retro' | 'neo' | 'forest';
+// Kept for backwards-compatible persisted settings. The app now exposes one
+// light theme and one dark theme only.
+export type ColorTheme = 'default';
 
 // Developer tools preferences - IDE and terminal selection
 // Comprehensive list based on Stack Overflow Developer Survey 2024, JetBrains Survey, and market research
@@ -255,7 +256,7 @@ export type MixedPhaseConfig = Record<PipelinePhase, MixedPhaseEntry>;
 export type MixedFeatureConfig = Record<keyof FeatureModelConfig, MixedPhaseEntry>;
 
 export interface AppSettings {
-  theme: 'light' | 'dark' | 'system';
+  theme: 'light' | 'dark';
   colorTheme?: ColorTheme;
   defaultModel: string;
   agentFramework: string;
@@ -343,7 +344,7 @@ export interface AppSettings {
   customCLIPath?: string;
   // YOLO mode: invoke Claude with --dangerously-skip-permissions flag
   dangerouslySkipPermissions?: boolean;
-  // Anonymous error reporting (Sentry) - enabled by default to help improve the app
+  // Legacy setting kept for compatibility. Remote error reporting is disabled.
   sentryEnabled?: boolean;
   // Auto-name Claude terminals based on initial message (only triggers once per session)
   autoNameClaudeTerminals?: boolean;

@@ -49,6 +49,43 @@ export const zhCNContextWorkspaceOverrides = {
     }
   },
   context: {
+    tabs: {
+      projectDocuments: '\u9879\u76ee\u6587\u6863'
+    },
+    actions: {
+      projectDocs: '\u751f\u6210\u6587\u6863',
+      projectDocsTooltip: '\u751f\u6210\u6216\u5237\u65b0\u672c\u9879\u76ee\u7684\u6587\u6863\u53c2\u8003\u5305'
+    },
+    projectDocuments: {
+      title: '\u9879\u76ee\u6587\u6863',
+      refresh: '\u5237\u65b0\u6587\u6863',
+      noProjectPath: '\u672a\u627e\u5230\u9879\u76ee\u8def\u5f84',
+      emptyTitle: '\u6682\u65e0\u9879\u76ee\u6587\u6863',
+      emptyDescription: '\u751f\u6210\u9879\u76ee\u6587\u6863\u53c2\u8003\u5305\u540e\uff0c\u53ef\u5728\u8fd9\u91cc\u9605\u8bfb\u4ea7\u54c1\u3001\u67b6\u6784\u548c\u6280\u672f\u4e0a\u4e0b\u6587\u3002',
+      emptyList: '\u5c1a\u672a\u751f\u6210\u6587\u6863',
+      files: {
+        index: '\u7d22\u5f15',
+        product: '\u4ea7\u54c1',
+        architecture: '\u67b6\u6784',
+        technical: '\u6280\u672f',
+        outline: '\u5927\u7eb2',
+        evidence: '\u8bc1\u636e'
+      },
+      descriptions: {
+        index: '\u6587\u6863\u5165\u53e3\u548c\u76ee\u5f55',
+        product: '\u4ea7\u54c1\u80cc\u666f\u3001\u53d7\u4f17\u3001\u76ee\u6807\u548c\u6d41\u7a0b',
+        architecture: '\u7cfb\u7edf\u7ed3\u6784\u3001\u8fb9\u754c\u548c\u8fd0\u884c\u62d3\u6251',
+        technical: '\u5b9e\u73b0\u7ec6\u8282\u3001\u547d\u4ee4\u3001\u98ce\u9669\u548c\u7ea6\u5b9a',
+        outline: 'Agent \u4f7f\u7528\u7684\u7ed3\u6784\u5316\u5927\u7eb2',
+        evidence: '\u6e90\u6587\u4ef6\u5f15\u7528\u3001\u8bc1\u636e\u3001\u98ce\u9669\u548c\u5f00\u653e\u95ee\u9898'
+      },
+      errors: {
+        listFailed: '\u52a0\u8f7d\u9879\u76ee\u6587\u6863\u5931\u8d25',
+        listFailedTitle: '\u65e0\u6cd5\u52a0\u8f7d\u6587\u6863',
+        readFailed: '\u8bfb\u53d6\u6587\u6863\u5931\u8d25',
+        readFailedTitle: '\u65e0\u6cd5\u8bfb\u53d6\u6587\u6863'
+      }
+    },
     projectIndex: {
       title: '项目结构',
       description: 'AI 发现的代码库结构知识',

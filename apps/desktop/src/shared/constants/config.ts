@@ -20,7 +20,6 @@ import {
   AUTOCODE_ROADMAP_FILE_NAME,
   getAutocodeIdeationRelativeDir,
   getAutocodeProjectEnvRelativePath,
-  getAutocodeProjectIndexRelativePath,
   getAutocodeRoadmapRelativeDir,
 } from '@autocode/core/project/data-paths';
 
@@ -84,8 +83,8 @@ export const DEFAULT_APP_SETTINGS = {
   betaUpdates: false,
   // Language preference (default to English)
   language: 'en' as const,
-  // Anonymous error reporting (Sentry) - enabled by default to help improve the app
-  sentryEnabled: true,
+  // Legacy setting kept for compatibility. Remote error reporting is disabled.
+  sentryEnabled: false,
   // Auto-name Claude terminals based on initial message (enabled by default)
   autoNameClaudeTerminals: true,
   // GPU acceleration for terminal rendering
@@ -150,7 +149,6 @@ export const AUTO_BUILD_PATHS = {
   MANUAL_COMPETITORS: AUTOCODE_MANUAL_COMPETITORS_FILE_NAME,
   IDEATION_FILE: AUTOCODE_IDEATION_FILE_NAME,
   IDEATION_CONTEXT: AUTOCODE_IDEATION_CONTEXT_FILE_NAME,
-  PROJECT_INDEX: getAutocodeProjectIndexRelativePath(PROJECT_DATA_DIR_NAME),
   PROJECT_ENV: getAutocodeProjectEnvRelativePath(PROJECT_DATA_DIR_NAME),
   MEMORY_STATE: '.memory_state.json'
 } as const;

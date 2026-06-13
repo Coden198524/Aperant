@@ -314,10 +314,12 @@
   "theme": {
     "title": "外观",
     "description": "自定义 Autocode 的外观",
-    "mode": "模式",
-    "modeDescription": "在浅色与深色主题之间选择",
+    "mode": "主题",
+    "modeDescription": "选择两套内置主题之一",
     "light": "浅色",
+    "lightDescription": "明亮的中性界面，搭配清晰的蓝色强调色。",
     "dark": "深色",
+    "darkDescription": "低眩光的炭黑界面，搭配更柔和的蓝色强调色。",
     "system": "跟随系统",
     "colorTheme": "配色主题",
     "colorThemeDescription": "选择你偏好的颜色方案"
@@ -973,10 +975,6 @@
   "debug": {
     "title": "调试与日志",
     "description": "访问日志和调试信息以协助排障",
-    "errorReporting": {
-      "label": "匿名错误上报",
-      "description": "发送崩溃报告以帮助改进 Autocode。不会收集个人数据或代码。"
-    },
     "openLogsFolder": "打开日志文件夹",
     "copyDebugInfo": "复制调试信息",
     "copied": "已复制！",

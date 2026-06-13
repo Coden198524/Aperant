@@ -113,7 +113,7 @@ function createTestTask(overrides: Partial<TestTaskData> = {}): TestTaskData {
 // Sample settings data
 function createTestSettings(overrides: Partial<TestSettingsData> = {}): TestSettingsData {
   return {
-    theme: 'system',
+    theme: 'dark',
     telemetry: true,
     autoUpdate: true,
     defaultModel: 'sonnet',
@@ -887,7 +887,7 @@ describe('E2E Smoke Tests', () => {
       expect(getResult).toMatchObject({
         success: true,
         data: expect.objectContaining({
-          theme: 'system',
+          theme: 'dark',
           telemetry: true
         })
       });
@@ -1012,7 +1012,7 @@ describe('E2E Smoke Tests', () => {
       expect(resetResult).toMatchObject({
         success: true,
         data: expect.objectContaining({
-          theme: 'system',
+          theme: 'dark',
           telemetry: true,
           autoUpdate: true,
           defaultModel: 'sonnet'
@@ -1167,15 +1167,15 @@ describe('E2E Smoke Tests', () => {
       expect(verifyResult).toMatchObject({ success: true });
     });
 
-    it('should handle theme toggle cycle (system -> light -> dark -> system)', async () => {
+    it('should handle theme toggle cycle (dark -> light -> dark)', async () => {
       await import('../../preload/index');
       const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
 
       const saveSettings = electronAPI['saveSettings'] as (settings: object) => Promise<unknown>;
 
-      // Start with system theme
-      let currentTheme = 'system';
-      const themeProgression = ['light', 'dark', 'system'];
+      // Start with dark theme
+      let currentTheme = 'dark';
+      const themeProgression = ['light', 'dark'];
 
       for (const nextTheme of themeProgression) {
         mockIpcRenderer.invoke.mockResolvedValueOnce({
@@ -1193,8 +1193,8 @@ describe('E2E Smoke Tests', () => {
         currentTheme = nextTheme;
       }
 
-      // Verify we cycled back to system
-      expect(currentTheme).toBe('system');
+      // Verify we cycled back to dark
+      expect(currentTheme).toBe('dark');
     });
   });
 

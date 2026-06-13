@@ -6,10 +6,19 @@
     "createFolder": "在你的项目中创建一个 .autocode 文件夹",
     "copyFramework": "复制 Autocode 框架文件",
     "setupSpecs": "为你的任务设置 specs 目录",
+    "generateProjectDocs": "提醒你生成项目文档，为 AI 提供更完整的上下文",
     "sourcePathNotConfigured": "未配置源路径",
     "sourcePathNotConfiguredDescription": "在初始化之前，请在应用设置中设置 Autocode 源路径。",
     "initFailed": "初始化失败",
     "initFailedDescription": "无法初始化 Autocode。请重试。"
+  },
+  "projectDocsReminder": {
+    "title": "生成项目文档",
+    "description": "{{projectName}} 已初始化。现在生成项目文档吗？",
+    "body": "项目文档会为智能体提供稳定的产品、架构、技术和验证上下文，让后续规划和编码更准确。",
+    "later": "稍后",
+    "create": "生成文档",
+    "creating": "正在创建..."
   },
   "gitSetup": {
     "title": "需要 Git 仓库",

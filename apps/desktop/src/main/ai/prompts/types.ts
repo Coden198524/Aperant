@@ -40,7 +40,7 @@ export interface PromptContext {
 // Project Capabilities
 // =============================================================================
 
-/** Project capabilities detected from project_index.json */
+/** Project capabilities detected from lightweight project metadata */
 export interface ProjectCapabilities {
   /** True if project uses Electron */
   is_electron: boolean;

@@ -1,8 +1,6 @@
 import { ipcMain } from 'electron';
 import type { BrowserWindow } from 'electron';
-import { existsSync, readFileSync } from 'fs';
 import {
-  getAutocodeProjectIndexPath,
   toAutocodeRendererMemory,
 } from '@autocode/core';
 import { IPC_CHANNELS } from '../../../shared/constants';
@@ -15,28 +13,10 @@ import type {
 import { projectStore } from '../../project-store';
 import { buildMemoryStatus } from './memory-status-handlers';
 import { getMemoryService } from './memory-service-factory';
-import { runProjectIndexer } from '../../ai/project/project-indexer';
 
 // ============================================================
 // HELPERS
 // ============================================================
-
-/**
- * Load project index from file
- */
-function loadProjectIndex(projectPath: string, dataDirName?: string): ProjectIndex | null {
-  const indexPath = getAutocodeProjectIndexPath(projectPath, dataDirName);
-  if (!existsSync(indexPath)) {
-    return null;
-  }
-
-  try {
-    const content = readFileSync(indexPath, 'utf-8');
-    return JSON.parse(content);
-  } catch {
-    return null;
-  }
-}
 
 /**
  * Load recent memories from the MemoryService with graceful degradation.
@@ -77,9 +57,6 @@ export function registerProjectContextHandlers(
       }
 
       try {
-        // Load project index
-        const projectIndex = loadProjectIndex(project.path, project.autoBuildPath);
-
         // Build memory status (libSQL-based)
         const memoryStatus = await buildMemoryStatus();
 
@@ -89,7 +66,7 @@ export function registerProjectContextHandlers(
         return {
           success: true,
           data: {
-            projectIndex,
+            projectIndex: null,
             memoryStatus,
             memoryState: null,
             recentMemories,
@@ -115,12 +92,10 @@ export function registerProjectContextHandlers(
       }
 
       try {
-        const indexOutputPath = getAutocodeProjectIndexPath(project.path, project.autoBuildPath);
-
-        // Run the TypeScript project indexer (replaces Python subprocess)
-        const projectIndex = runProjectIndexer(project.path, indexOutputPath);
-
-        return { success: true, data: projectIndex };
+        return {
+          success: false,
+          error: 'Project index has been replaced by project documents. Generate or refresh project documentation instead.',
+        };
       } catch (error) {
         return {
           success: false,

@@ -18,7 +18,7 @@ import { createSimpleClient } from '../client/factory';
 import { buildToolRegistry } from '../tools/build-registry';
 import type { ToolContext } from '../tools/types';
 import {
-  getAutocodeProjectIndexPath,
+  buildAutocodeProjectDocsReferencePrompt,
   getAutocodeRoadmapFilePath,
   getAutocodeSpecsDir,
   type ModelShorthand,
@@ -117,21 +117,14 @@ function isResponsesApiModel(modelId: string | undefined): boolean {
 function loadProjectContext(projectDir: string, dataDirName?: string): string {
   const contextParts: string[] = [];
 
-  // Load project index if available
-  const indexPath = getAutocodeProjectIndexPath(projectDir, dataDirName);
-  if (existsSync(indexPath)) {
-    const index = safeParseJson<Record<string, unknown>>(readFileSync(indexPath, 'utf-8'));
-    if (index) {
-      const summary = {
-        project_root: index.project_root ?? '',
-        project_type: index.project_type ?? 'unknown',
-        services: Object.keys((index.services as Record<string, unknown>) ?? {}),
-        infrastructure: index.infrastructure ?? {},
-      };
-      contextParts.push(
-        `## Project Structure\n\`\`\`json\n${JSON.stringify(summary, null, 2)}\n\`\`\``,
-      );
-    }
+  // Load generated project documentation if available.
+  const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
+    projectRoot: projectDir,
+    dataDirName,
+    maxBytes: 12_000,
+  });
+  if (projectDocsReference) {
+    contextParts.push(projectDocsReference);
   }
 
   // Load roadmap if available

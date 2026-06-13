@@ -9,7 +9,8 @@ import type {
   RoadmapFeature,
   RoadmapPhase,
   RoadmapFeaturePriority,
-  RoadmapFeatureStatus
+  RoadmapFeatureStatus,
+  RoadmapGenerationStatus
 } from '../../shared/types';
 
 // Helper to create test features
@@ -106,6 +107,76 @@ describe('Roadmap Store', () => {
       useRoadmapStore.getState().setRoadmap(null);
 
       expect(useRoadmapStore.getState().roadmap).toBeNull();
+    });
+
+    it('should normalize generated roadmap data before storing', () => {
+      const rawRoadmap = {
+        id: 'roadmap-generated',
+        projectId: 'project-1',
+        projectName: 'Generated Project',
+        version: '1.0',
+        vision: 'Generated vision',
+        targetAudience: {
+          primary: 'Developers',
+          secondary: 'Operators'
+        },
+        phases: [
+          {
+            id: 'phase-1',
+            name: 'Phase 1',
+            description: 'First phase',
+            order: '2',
+            status: 'unknown',
+            milestones: [
+              {
+                id: 'milestone-1',
+                title: 'Milestone 1',
+                description: 'Milestone description',
+                features: 'feature-1',
+                status: 'achieved',
+                target_date: '2025-01-02T00:00:00.000Z'
+              }
+            ]
+          }
+        ],
+        features: [
+          {
+            id: 'feature-1',
+            title: 'Generated feature',
+            description: 'Generated description',
+            priority: 'urgent',
+            complexity: 'huge',
+            impact: 'large',
+            phase_id: 'phase-1',
+            dependencies: 'feature-0',
+            status: 'idea',
+            acceptance_criteria: 'Acceptance criterion',
+            user_stories: 'As a user, I can keep working',
+            source: { provider: 'unknown' }
+          }
+        ],
+        status: 'unexpected',
+        createdAt: '2025-01-01T00:00:00.000Z',
+        updatedAt: '2025-01-03T00:00:00.000Z'
+      } as unknown as Roadmap;
+
+      useRoadmapStore.getState().setRoadmap(rawRoadmap);
+
+      const roadmap = useRoadmapStore.getState().roadmap!;
+      expect(roadmap.targetAudience.secondary).toEqual(['Operators']);
+      expect(roadmap.phases[0].order).toBe(2);
+      expect(roadmap.phases[0].status).toBe('planned');
+      expect(roadmap.phases[0].milestones[0].features).toEqual(['feature-1']);
+      expect(roadmap.features[0].priority).toBe('should');
+      expect(roadmap.features[0].complexity).toBe('medium');
+      expect(roadmap.features[0].impact).toBe('medium');
+      expect(roadmap.features[0].status).toBe('under_review');
+      expect(roadmap.features[0].dependencies).toEqual(['feature-0']);
+      expect(roadmap.features[0].acceptanceCriteria).toEqual(['Acceptance criterion']);
+      expect(roadmap.features[0].userStories).toEqual(['As a user, I can keep working']);
+      expect(roadmap.features[0].source?.provider).toBe('internal');
+      expect(roadmap.status).toBe('draft');
+      expect(roadmap.updatedAt.getTime()).toBe(new Date('2025-01-03T00:00:00.000Z').getTime());
     });
   });
 
@@ -781,6 +852,21 @@ describe('Roadmap Store', () => {
       expect(status.phase).toBe('generating');
       expect(status.startedAt).toBeDefined();
       expect(status.startedAt!.getTime()).toBe(persistedStartedAt.getTime());
+    });
+
+    it('should accept string timestamps from persisted progress', () => {
+      useRoadmapStore.getState().setGenerationStatus({
+        phase: 'generating',
+        progress: 70,
+        message: 'Generating...',
+        startedAt: '2025-06-01T12:00:00.000Z',
+        lastActivityAt: '2025-06-01T12:05:00.000Z'
+      } as unknown as RoadmapGenerationStatus);
+
+      const status = useRoadmapStore.getState().generationStatus;
+      expect(status.phase).toBe('generating');
+      expect(status.startedAt?.getTime()).toBe(new Date('2025-06-01T12:00:00.000Z').getTime());
+      expect(status.lastActivityAt?.getTime()).toBeDefined();
     });
   });
 

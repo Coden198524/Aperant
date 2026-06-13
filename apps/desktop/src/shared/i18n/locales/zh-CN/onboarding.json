@@ -175,30 +175,8 @@
     "welcome": "欢迎",
     "accounts": "账户",
     "devtools": "开发工具",
-    "privacy": "隐私",
     "memory": "记忆",
     "done": "完成"
-  },
-  "privacy": {
-    "title": "帮助改进 Autocode",
-    "subtitle": "匿名错误上报可以帮助我们更快修复问题",
-    "whatWeCollect": {
-      "title": "我们会收集什么",
-      "crashReports": "崩溃报告和错误堆栈",
-      "errorMessages": "错误信息（文件路径会匿名化）",
-      "appVersion": "应用版本与平台信息"
-    },
-    "whatWeNeverCollect": {
-      "title": "我们绝不会收集",
-      "code": "您的代码或项目文件",
-      "filenames": "完整文件路径（用户名会被隐藏）",
-      "apiKeys": "API 密钥或令牌",
-      "personalData": "个人信息或使用数据"
-    },
-    "toggle": {
-      "label": "发送匿名错误报告",
-      "description": "帮助我们定位并修复问题"
-    }
   },
   "claudeCode": {
     "title": "Claude Code CLI",

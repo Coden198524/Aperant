@@ -22,7 +22,6 @@ import {
   normalizeAutocodeWorkDependencyIds,
   saveAutocodeImplementationPlanSync,
 } from '@autocode/core';
-import { AUTOCODE_PROJECT_INDEX_FILE_NAME } from '@autocode/core/project/data-paths';
 import { createSimpleClient } from '../client/factory';
 import { safeParseJson } from '../../utils/json-repair';
 
@@ -305,12 +304,6 @@ export function validatePrereqs(specDir: string): ValidationResult {
     errors.push(`Spec directory does not exist: ${specDir}`);
     fixes.push(`Create directory: mkdir -p ${specDir}`);
     return { valid: false, checkpoint: 'prereqs', errors, warnings, fixes };
-  }
-
-  const projectIndex = join(specDir, AUTOCODE_PROJECT_INDEX_FILE_NAME);
-  if (!existsSync(projectIndex)) {
-    errors.push('project_index.json not found');
-    fixes.push('Run project analysis to generate project_index.json');
   }
 
   return { valid: errors.length === 0, checkpoint: 'prereqs', errors, warnings, fixes };

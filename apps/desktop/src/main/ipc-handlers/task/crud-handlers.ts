@@ -214,7 +214,7 @@ function normalizeTaskModeMetadata(metadata: TaskMetadata): TaskMetadata {
 }
 
 /**
- * Generate a title from a description using AI, with Sentry breadcrumbs and fallback.
+ * Generate a title from a description using AI, with local breadcrumbs and fallback.
  * Shared between TASK_CREATE and TASK_UPDATE handlers.
  */
 async function generateTitleWithFallback(

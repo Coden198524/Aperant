@@ -1176,7 +1176,7 @@ function startCodingWorkerAttempt(subtask) {
   const progress = getCodingProgress();
   const workLabel = subtask.workPackage ? 'work package' : 'subtask';
   const message = 'Worker ' + workerId + ' coding ' + workLabel + ' ' + subtask.id + ': ' + subtask.title;
-  updateTaskLogs('coding', 'active', message);
+  updateTaskLogs('coding', 'active', message, false);
   appendTaskLogEntry('coding', 'info', message, undefined, buildAttemptLogExtra(state));
   emitPhase('coding', message, progress.percent);
 
@@ -3065,7 +3065,7 @@ function appendTaskLogEntry(logPhase, type, message, detail, extra) {
   });
 }
 
-function updateTaskLogs(logPhase, status, message) {
+function updateTaskLogs(logPhase, status, message, appendEntry = true) {
   const now = new Date().toISOString();
   const logsPath = join(specDir, artifacts.taskLogs);
   withFileWriteLock(logsPath, 'runner:task-logs:phase:' + logPhase, () => {
@@ -3081,15 +3081,17 @@ function updateTaskLogs(logPhase, status, message) {
       started_at: now,
       completed_at: status === 'completed' || status === 'failed' ? now : null,
     });
-    records.push({
-      record_type: 'entry',
-      entry: {
-        timestamp: now,
-        type: status === 'failed' ? 'error' : status === 'completed' ? 'success' : 'info',
-        content: limitLogText(message, 4000),
-        phase: logPhase,
-      },
-    });
+    if (appendEntry && message) {
+      records.push({
+        record_type: 'entry',
+        entry: {
+          timestamp: now,
+          type: status === 'failed' ? 'error' : status === 'completed' ? 'success' : 'info',
+          content: limitLogText(message, 4000),
+          phase: logPhase,
+        },
+      });
+    }
     appendTaskLogRecords(logsPath, records);
   });
 }

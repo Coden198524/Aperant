@@ -1,11 +1,8 @@
 // Polyfill CommonJS require for ESM compatibility
-// This MUST be at the very top, before any imports that might trigger Sentry's
-// require-in-the-middle hooks. Sentry's hooks expect require.cache to exist,
-// which is only available in CommonJS. Without this, node-pty native module
-// loading fails with "ReferenceError: require is not defined".
+// This MUST be at the very top so native CommonJS modules can resolve correctly
+// in packaged ESM builds.
 import Module, { createRequire } from 'module';
 const require = createRequire(import.meta.url);
-// Make require globally available for Sentry's require-in-the-middle hooks
 globalThis.require = require;
 
 // In packaged Electron apps, native modules (e.g. @libsql/client) are placed in
@@ -63,7 +60,6 @@ import { getAppLanguage, initAppLanguage } from './app-language';
 import { readSettingsFile } from './settings-utils';
 import { registerSettingsAccessor } from './ai/auth/resolver';
 import { appLog, setupErrorLogging } from './app-logger';
-import { initSentryMain } from './sentry';
 import { preWarmToolCache } from './cli-tool-manager';
 import { initializeClaudeProfileManager, getClaudeProfileManager } from './claude-profile-manager';
 import { isProfileAuthenticated } from './claude-profile/profile-utils';
@@ -178,9 +174,6 @@ const DEFAULT_SCREEN_HEIGHT: number = 1080;
 // Setup error logging early (captures uncaught exceptions)
 setupErrorLogging();
 
-// Initialize Sentry for error tracking (respects user's sentryEnabled setting)
-initSentryMain();
-
 // Wire up settings accessor for the AI auth resolver.
 // This lets resolveAuth() / buildDefaultQueueConfig() read provider accounts
 // and priority order from app settings without a circular dependency on the settings store.
@@ -189,13 +182,27 @@ registerSettingsAccessor((key: string) => {
   return settings?.[key] as string | undefined;
 });
 
+function normalizeStartupThemeSettings(settings: AppSettings): AppSettings {
+  const mutableSettings = settings as AppSettings & Record<string, unknown>;
+
+  if (mutableSettings.theme !== 'light' && mutableSettings.theme !== 'dark') {
+    mutableSettings.theme = DEFAULT_APP_SETTINGS.theme;
+  }
+
+  if (mutableSettings.colorTheme !== undefined && mutableSettings.colorTheme !== 'default') {
+    mutableSettings.colorTheme = 'default';
+  }
+
+  return settings;
+}
+
 /**
  * Load app settings synchronously (for use during startup).
  * This is a simple merge with defaults - no migrations or auto-detection.
  */
 function loadSettingsSync(): AppSettings {
   const savedSettings = readSettingsFile();
-  return { ...DEFAULT_APP_SETTINGS, ...savedSettings } as AppSettings;
+  return normalizeStartupThemeSettings({ ...DEFAULT_APP_SETTINGS, ...savedSettings } as AppSettings);
 }
 
 /**

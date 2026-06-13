@@ -20,7 +20,7 @@ Read, in this order:
 1. `spec.md`
 2. `implementation_plan.md`
 3. `context.json`
-4. `project_index.json`
+4. `project-docs/index.md`
 5. changed files from the branch diff
 
 Use the current base branch from injected context. If unavailable, inspect the recent git history and project metadata.

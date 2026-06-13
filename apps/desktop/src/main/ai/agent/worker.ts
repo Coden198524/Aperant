@@ -23,8 +23,8 @@ import { createOpenAICompatibleEndpointFetch } from '../providers/openai-base-ur
 import {
   AUTOCODE_TASK_ARTIFACTS,
   AUTOCODE_DIRECT_SESSION_STATE_VERSION,
-  AUTOCODE_PROJECT_INDEX_FILE_NAME,
   DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
+  buildAutocodeProjectDocsReferencePrompt,
   buildAutocodeDirectTaskExecutionMessages,
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   isOfficialOpenAIBaseUrl,
@@ -102,7 +102,6 @@ import {
 } from '../prompts/project-prompt-profile';
 import { createMcpClientsForAgent, mergeMcpTools, closeAllMcpClients } from '../mcp/client';
 import type { McpClientResult } from '../mcp/types';
-import { runProjectIndexer } from '../project/project-indexer';
 import type { ProjectType, TaskLogPhase, TaskWorkflowMode } from '../../../shared/types';
 import { FileContentCache } from '../tools/cache/file-cache';
 import { buildFocusedCoderKickoffMessage } from './session-efficiency';
@@ -2104,18 +2103,18 @@ async function runSpecOrchestrator(
   postLog(`Starting SpecOrchestrator pipeline (complexity-first phase routing)`);
 
   // Generate project index BEFORE any agent runs – gives all phases project context
-  let projectIndexContent: string | undefined;
+  let projectDocsReference: string | undefined;
   if (isAggressiveWorkflow(session)) {
-    postLog('Aggressive workflow enabled: skipping project index generation');
+    postLog('Aggressive workflow enabled: skipping project documentation context injection');
   } else {
-    try {
-      const indexOutputPath = join(session.specDir, AUTOCODE_PROJECT_INDEX_FILE_NAME);
-      postLog('Generating project index...');
-      runProjectIndexer(session.projectDir, indexOutputPath);
-      projectIndexContent = readFileSync(indexOutputPath, 'utf-8');
-      postLog(`Project index generated (${(projectIndexContent.length / 1024).toFixed(1)}KB)`);
-    } catch (error) {
-      postLog(`Project index generation failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+    projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
+      projectRoot: session.projectDir,
+      dataDirName: session.dataDirName,
+    });
+    if (projectDocsReference) {
+      postLog(`Project documentation loaded (${(projectDocsReference.length / 1024).toFixed(1)}KB)`);
+    } else {
+      postLog('Project documentation not found; continuing with targeted source reads');
     }
   }
 
@@ -2126,7 +2125,7 @@ async function runSpecOrchestrator(
     complexityOverride: isAggressiveWorkflow(session) ? 'simple' : undefined,
     useAiAssessment: !isAggressiveWorkflow(session),
     workflowConfig: getWorkflowConfigFromMode(session.workflowMode),
-    projectIndex: projectIndexContent,
+    projectIndex: projectDocsReference,
     language: session.language,
     abortSignal: abortController.signal,
     agentProfile: resolveProjectAgentProfile(session.projectType),
@@ -2273,16 +2272,14 @@ async function runAgenticSpecOrchestrator(
 
   postLog('Starting Agentic SpecOrchestrator (AI-driven pipeline via SpawnSubagent)');
 
-  // Generate project index
-  let projectIndexContent: string | undefined;
-  try {
-    const indexOutputPath = join(session.specDir, AUTOCODE_PROJECT_INDEX_FILE_NAME);
-    postLog('Generating project index...');
-    runProjectIndexer(session.projectDir, indexOutputPath);
-    projectIndexContent = readFileSync(indexOutputPath, 'utf-8');
-    postLog(`Project index generated (${(projectIndexContent.length / 1024).toFixed(1)}KB)`);
-  } catch (error) {
-    postLog(`Project index generation failed (non-fatal): ${error instanceof Error ? error.message : String(error)}`);
+  const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
+    projectRoot: session.projectDir,
+    dataDirName: session.dataDirName,
+  });
+  if (projectDocsReference) {
+    postLog(`Project documentation loaded (${(projectDocsReference.length / 1024).toFixed(1)}KB)`);
+  } else {
+    postLog('Project documentation not found; continuing with targeted source reads');
   }
 
   // Create the SubagentExecutor
@@ -2321,8 +2318,8 @@ async function runAgenticSpecOrchestrator(
     `\nProject directory: ${promptProjectDir}`,
   ];
 
-  if (projectIndexContent) {
-    kickoffParts.push(`\n\n## PROJECT INDEX\n\n\`\`\`json\n${projectIndexContent}\n\`\`\``);
+  if (projectDocsReference) {
+    kickoffParts.push(`\n\n${projectDocsReference}`);
   }
 
   const kickoffMessage = kickoffParts.join('');

@@ -157,7 +157,8 @@
     "save": "保存",
     "apply": "应用",
     "delete": "删除",
-    "settings": "设置"
+    "settings": "设置",
+    "success": "成功"
   },
   "os": {
     "windows": "Windows",
@@ -620,6 +621,53 @@
     "deleteSuccess": "工作树“{{branch}}”已成功删除",
     "bulkDeleteSuccess": "已成功删除 {{count}} 个工作树",
     "bulkDeleteSuccess_plural": "已成功删除 {{count}} 个工作树"
+  },
+  "worktreesView": {
+    "title": "工作树",
+    "description": "管理 Autocode 任务使用的隔离工作区",
+    "emptyProject": "选择一个项目以查看工作树",
+    "emptyTitle": "暂无工作树",
+    "emptyDescription": "Autocode 构建功能时会自动创建工作树，为每个任务提供隔离的工作环境。",
+    "taskSection": "任务工作树",
+    "terminalSection": "终端工作树",
+    "filesChanged": "{{count}} 个文件已更改",
+    "filesChanged_one": "{{count}} 个文件已更改",
+    "filesChanged_other": "{{count}} 个文件已更改",
+    "commitsAhead": "领先 {{count}} 个提交",
+    "commitsAhead_one": "领先 {{count}} 个提交",
+    "commitsAhead_other": "领先 {{count}} 个提交",
+    "mergeTo": "合并到 {{branch}}",
+    "copyPath": "复制路径",
+    "createdAt": "创建于 {{date}}",
+    "sourceBranch": "源分支",
+    "targetBranch": "目标分支",
+    "changes": "更改",
+    "changesSummary": "{{commits}} 个提交，{{files}} 个文件",
+    "mergeDialog": {
+      "title": "合并工作树",
+      "description": "将此工作树中的更改合并到基础分支。",
+      "success": "合并成功",
+      "failed": "合并失败",
+      "conflictingFiles": "冲突文件：",
+      "merging": "正在合并..."
+    },
+    "deleteDialog": {
+      "title": "删除工作树？",
+      "description": "这将永久删除该工作树及所有未提交的更改。",
+      "warning": "此操作无法撤销。"
+    },
+    "deleteTerminalDialog": {
+      "title": "删除终端工作树？",
+      "description": "这将永久删除该工作树及其分支。所有未提交的更改都会丢失。"
+    },
+    "errors": {
+      "loadTaskWorktrees": "加载任务工作树失败",
+      "loadWorktrees": "加载工作树失败",
+      "taskNotFound": "未找到此工作树对应的任务",
+      "mergeFailed": "合并失败",
+      "deleteWorktree": "删除工作树失败",
+      "deleteTerminalWorktree": "删除终端工作树失败"
+    }
   },
   "notification": {
     "accountSwitched": "账户已切换",

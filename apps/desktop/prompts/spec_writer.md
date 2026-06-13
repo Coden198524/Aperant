@@ -19,7 +19,7 @@ Write a concise `spec.md` from gathered requirements and context.
 - `requirements.md`: task, workflow type, acceptance criteria.
 - `context.json`: likely files, patterns, risks, verification.
 - `research.json`: external facts and gotchas, when present.
-- `project_index.json`: services, commands, tech stack.
+- `project-docs/index.md`: generated project documentation index, services, commands, and tech stack.
 
 If the project is greenfield or empty, describe files to create instead of forcing existing-code sections.
 

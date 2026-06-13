@@ -50,20 +50,28 @@ const MODEL_OUTPUT_ENTRY_TYPES = new Set<ModelOutputEntryType>([
 ]);
 
 const MODEL_PHASE_STYLES: Record<TaskLogPhase, {
-  glow: string;
+  rail: string;
   prompt: string;
+  chip: string;
+  latest: string;
 }> = {
   planning: {
-    glow: 'from-amber-400/20',
-    prompt: 'text-amber-300',
+    rail: 'bg-warning',
+    prompt: 'text-warning',
+    chip: 'border-warning/30 bg-warning/10 text-warning',
+    latest: 'border-warning/40 bg-warning/5',
   },
   coding: {
-    glow: 'from-cyan-400/20',
-    prompt: 'text-cyan-300',
+    rail: 'bg-info',
+    prompt: 'text-info',
+    chip: 'border-info/30 bg-info/10 text-info',
+    latest: 'border-info/40 bg-info/5',
   },
   validation: {
-    glow: 'from-emerald-400/20',
-    prompt: 'text-emerald-300',
+    rail: 'bg-success',
+    prompt: 'text-success',
+    chip: 'border-success/30 bg-success/10 text-success',
+    latest: 'border-success/40 bg-success/5',
   },
 };
 
@@ -145,57 +153,57 @@ export function countTaskRuntimeLogEntriesForScope(
 
 const modelMarkdownComponents: Components = {
   p: ({ children }) => (
-    <p className="my-1.5 leading-relaxed text-slate-100">
+    <p className="my-1.5 leading-relaxed text-foreground">
       {children}
     </p>
   ),
   h1: ({ children }) => (
-    <h1 className="mb-2 mt-3 text-sm font-semibold text-amber-200">
+    <h1 className="mb-2 mt-3 text-sm font-semibold text-foreground">
       {children}
     </h1>
   ),
   h2: ({ children }) => (
-    <h2 className="mb-2 mt-3 text-[13px] font-semibold text-amber-200">
+    <h2 className="mb-2 mt-3 text-[13px] font-semibold text-foreground">
       {children}
     </h2>
   ),
   h3: ({ children }) => (
-    <h3 className="mb-1.5 mt-2.5 text-xs font-semibold text-cyan-200">
+    <h3 className="mb-1.5 mt-2.5 text-xs font-semibold text-foreground">
       {children}
     </h3>
   ),
   h4: ({ children }) => (
-    <h4 className="mb-1 mt-2 text-[11px] font-semibold text-cyan-200">
+    <h4 className="mb-1 mt-2 text-[11px] font-semibold text-foreground">
       {children}
     </h4>
   ),
   ul: ({ children }) => (
-    <ul className="my-1.5 ml-4 list-disc space-y-1 text-slate-100">
+    <ul className="my-1.5 ml-4 list-disc space-y-1 text-foreground">
       {children}
     </ul>
   ),
   ol: ({ children }) => (
-    <ol className="my-1.5 ml-4 list-decimal space-y-1 text-slate-100">
+    <ol className="my-1.5 ml-4 list-decimal space-y-1 text-foreground">
       {children}
     </ol>
   ),
   li: ({ children }) => (
-    <li className="pl-1 leading-relaxed marker:text-sky-300">
+    <li className="pl-1 leading-relaxed marker:text-primary">
       {children}
     </li>
   ),
   strong: ({ children }) => (
-    <strong className="font-semibold text-emerald-200">
+    <strong className="font-semibold text-foreground">
       {children}
     </strong>
   ),
   em: ({ children }) => (
-    <em className="text-slate-300">
+    <em className="text-muted-foreground">
       {children}
     </em>
   ),
   blockquote: ({ children }) => (
-    <blockquote className="my-2 border-l-2 border-slate-600 pl-3 text-slate-300">
+    <blockquote className="my-2 rounded-r-md border-l-2 border-primary/40 bg-primary/5 py-1 pl-3 text-foreground/80">
       {children}
     </blockquote>
   ),
@@ -204,7 +212,7 @@ const modelMarkdownComponents: Components = {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="break-all text-sky-300 underline-offset-2 hover:underline"
+      className="break-all text-primary underline-offset-2 hover:underline"
     >
       {children}
     </a>
@@ -214,41 +222,41 @@ const modelMarkdownComponents: Components = {
 
     if (isInline) {
       return (
-        <code className="rounded border border-slate-700 bg-slate-900 px-1 py-0.5 text-[10px] text-cyan-200" {...props}>
+        <code className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground" {...props}>
           {children}
         </code>
       );
     }
 
     return (
-      <code className={cn('block whitespace-pre font-mono text-[10px] leading-relaxed text-teal-100', className)} {...props}>
+      <code className={cn('block whitespace-pre font-mono text-[11px] leading-relaxed text-foreground', className)} {...props}>
         {children}
       </code>
     );
   },
   pre: ({ children }) => (
-    <pre className="my-2 max-w-full overflow-x-auto rounded-md border border-slate-700 bg-slate-950/90 p-2.5">
+    <pre className="my-2 max-w-full overflow-x-auto rounded-md border border-border bg-muted/70 p-2.5">
       {children}
     </pre>
   ),
   table: ({ children }) => (
-    <div className="my-2 max-w-full overflow-x-auto rounded-md border border-slate-700">
-      <table className="w-full border-collapse text-[10px] text-slate-100">
+    <div className="my-2 max-w-full overflow-x-auto rounded-md border border-border bg-card">
+      <table className="w-full border-collapse text-[11px] text-foreground">
         {children}
       </table>
     </div>
   ),
   th: ({ children }) => (
-    <th className="border-b border-r border-slate-700 bg-slate-900 px-2 py-1 text-left font-semibold text-slate-200 last:border-r-0">
+    <th className="border-b border-r border-border bg-muted px-2 py-1.5 text-left font-semibold text-foreground last:border-r-0">
       {children}
     </th>
   ),
   td: ({ children }) => (
-    <td className="border-b border-r border-slate-800 px-2 py-1 align-top last:border-r-0">
+    <td className="border-b border-r border-border px-2 py-1.5 align-top last:border-r-0">
       {children}
     </td>
   ),
-  hr: () => <hr className="my-3 border-slate-700" />,
+  hr: () => <hr className="my-3 border-border" />,
 };
 
 function createEmptyTaskLogs(specId: string, timestamp: string): TaskLogsData {
@@ -938,8 +946,8 @@ export function TaskRuntimeLogs({
     <section
       className={cn(
         compact
-          ? 'flex h-72 min-h-[16rem] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-muted/10'
-          : 'flex h-full min-h-0 flex-col border-l border-border bg-muted/10',
+          ? 'flex h-72 min-h-[16rem] min-w-0 flex-col overflow-hidden rounded-md border border-border bg-card'
+          : 'flex h-full min-h-0 flex-col border-l border-border bg-card',
         className
       )}
       data-testid="task-runtime-logs"
@@ -958,8 +966,8 @@ export function TaskRuntimeLogs({
               </span>
             )}
             {isModelStreaming && (
-              <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-emerald-400/30 bg-emerald-400/10 px-1.5 py-0.5 text-[10px] font-medium text-emerald-300">
-                <span className="h-1.5 w-1.5 rounded-full bg-emerald-300 animate-pulse" />
+              <span className="ml-2 inline-flex items-center gap-1 rounded-full border border-success/30 bg-success/10 px-1.5 py-0.5 text-[10px] font-medium text-success">
+                <span className="h-1.5 w-1.5 rounded-full bg-success animate-pulse" />
                 {t('tasks:logs.modelOutputLive', { defaultValue: 'Live' })}
               </span>
             )}
@@ -979,11 +987,11 @@ export function TaskRuntimeLogs({
         </span>
       </div>
       {modelOutputEntries.length > 0 ? (
-        <div className="relative min-h-0 flex-1 bg-[#080B10]">
+        <div className="relative min-h-0 flex-1 bg-background/70">
           <div
             ref={modelScrollRef}
             className={cn(
-              'h-full overflow-y-auto scrollbar-thin scrollbar-thumb-slate-700 scrollbar-track-transparent',
+              'h-full overflow-y-auto scrollbar-thin scrollbar-thumb-border scrollbar-track-transparent',
               compact ? 'p-3' : 'p-4'
             )}
             onScroll={handleModelScroll}
@@ -1011,7 +1019,7 @@ export function TaskRuntimeLogs({
               type="button"
               variant="secondary"
               size="sm"
-              className="absolute bottom-3 right-3 h-7 gap-1.5 border border-slate-600/60 bg-slate-900/90 px-2 text-[11px] text-slate-100 shadow-lg hover:bg-slate-800"
+              className="absolute bottom-3 right-3 h-7 gap-1.5 border border-border bg-card px-2 text-[11px] text-foreground shadow-lg hover:bg-accent"
               onClick={() => scrollModelToLatest()}
             >
               <ArrowDownToLine className="h-3.5 w-3.5" />
@@ -1024,7 +1032,7 @@ export function TaskRuntimeLogs({
           className={cn(
             'flex min-h-0 flex-1 items-center justify-center text-center text-sm text-muted-foreground',
             compact ? 'p-4' : 'p-6',
-            isModelActive && 'bg-[#080B10]'
+            isModelActive && 'bg-background/70'
           )}
         >
           <div>
@@ -1068,16 +1076,16 @@ function ModelActivityStatus({
   return (
     <div
       className={cn(
-        'font-mono text-[11px] text-slate-300',
+        'text-[11px] text-muted-foreground',
         centered ? 'flex flex-col items-center' : 'flex items-center gap-2 pl-6'
       )}
     >
       <div className={cn('flex items-center gap-2', centered && 'justify-center')}>
-        <span className="h-2 w-2 rounded-full bg-amber-300 animate-pulse" />
-        <span className="text-amber-200">{label}</span>
+        <span className="h-2 w-2 rounded-full bg-warning animate-pulse" />
+        <span className="font-medium text-warning">{label}</span>
       </div>
       {description && (
-        <p className="mt-2 max-w-[280px] text-center text-xs leading-relaxed text-slate-500">
+        <p className="mt-2 max-w-[280px] text-center text-xs leading-relaxed text-muted-foreground">
           {description}
         </p>
       )}
@@ -1087,8 +1095,8 @@ function ModelActivityStatus({
 
 function LogHistoryLoadingHint({ label }: { label: string }) {
   return (
-    <div className="flex items-center justify-center py-2 text-[11px] text-slate-400">
-      <div className="rounded-full border border-slate-700 bg-slate-900/70 px-2.5 py-1">
+    <div className="flex items-center justify-center py-2 text-[11px] text-muted-foreground">
+      <div className="rounded-full border border-border bg-card px-2.5 py-1">
         {label}
       </div>
     </div>
@@ -1115,28 +1123,28 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
     return (
       <div
         className={cn(
-          'flex min-w-0 items-center gap-2 rounded border border-slate-800/80 bg-slate-950/50 px-3 py-1.5 font-mono text-[11px] leading-relaxed',
-          isLatest && 'border-slate-700 bg-slate-950/70'
+          'flex min-w-0 items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 font-mono text-[11px] leading-relaxed text-foreground shadow-sm',
+          isLatest && styles.latest
         )}
       >
         <span className={cn('shrink-0', styles.prompt)}>{'>'}</span>
-        <span className="shrink-0 rounded border border-slate-700 bg-slate-900 px-1.5 py-0.5 text-[10px] uppercase tracking-wide text-slate-400">
+        <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase', styles.chip)}>
           tool
         </span>
         <span
           className={cn(
             'shrink-0 font-medium',
             tool.status === 'error'
-              ? 'text-rose-300'
+              ? 'text-destructive'
               : tool.status === 'done'
-                ? 'text-emerald-300'
-                : 'text-sky-300'
+                ? 'text-success'
+                : 'text-info'
           )}
         >
           {tool.name}
         </span>
         {tool.input && (
-          <span className="min-w-0 truncate text-slate-400" title={tool.input}>
+          <span className="min-w-0 truncate text-muted-foreground" title={tool.input}>
             {tool.input}
           </span>
         )}
@@ -1144,10 +1152,10 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
           className={cn(
             'ml-auto shrink-0 text-[10px]',
             tool.status === 'error'
-              ? 'text-rose-400'
+              ? 'text-destructive'
               : tool.status === 'done'
-                ? 'text-emerald-400'
-                : 'text-slate-500'
+                ? 'text-success'
+                : 'text-muted-foreground'
           )}
         >
           {tool.status}
@@ -1159,17 +1167,17 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
   return (
     <div
       className={cn(
-        'group relative overflow-hidden rounded-md border border-slate-700/60 bg-slate-950/70 px-3 py-2.5 shadow-sm',
-        isLatest && 'border-slate-500/70 bg-slate-950',
-        isError && 'border-rose-500/40'
+        'group relative overflow-hidden rounded-md border border-border bg-card px-3 py-2.5 shadow-sm',
+        isLatest && styles.latest,
+        isError && 'border-destructive/40 bg-destructive/5'
       )}
     >
-      <div className={cn('pointer-events-none absolute inset-y-0 left-0 w-20 bg-gradient-to-r to-transparent opacity-80', styles.glow)} />
-      <div className="relative mb-1.5 flex items-center gap-2 font-mono text-[10px] leading-none text-slate-500">
+      <div className={cn('pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-r-full', styles.rail)} />
+      <div className="relative mb-1.5 flex items-center gap-2 font-mono text-[10px] leading-none text-muted-foreground">
         <span className={cn('text-[11px]', styles.prompt)}>{'>'}</span>
-        {timeLabel && <span className="tabular-nums text-slate-500">{timeLabel}</span>}
+        {timeLabel && <span className="tabular-nums text-muted-foreground">{timeLabel}</span>}
         {entry.mergedEntryCount && entry.mergedEntryCount > 1 && (
-          <span className="rounded bg-slate-800/80 px-1.5 py-0.5 text-slate-400">
+          <span className={cn('rounded border px-1.5 py-0.5', styles.chip)}>
             {t('tasks:logs.streamChunkCount', {
               count: entry.mergedEntryCount,
               defaultValue: '{{count}} chunks',
@@ -1177,10 +1185,10 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
           </span>
         )}
       </div>
-      <div className="relative font-mono text-[11px] leading-relaxed">
-        <div className="max-w-none text-slate-100 [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
+      <div className="relative text-[12px] leading-relaxed">
+        <div className="max-w-none text-foreground [&_*:first-child]:mt-0 [&_*:last-child]:mb-0">
           {isError ? (
-            <p className="my-1.5 whitespace-pre-wrap break-words leading-relaxed text-rose-300">
+            <p className="my-1.5 whitespace-pre-wrap break-words leading-relaxed text-destructive">
               {visibleContent}
             </p>
           ) : (

@@ -6,10 +6,19 @@
     "createFolder": "Créer un dossier .autocode dans votre projet",
     "copyFramework": "Copier les fichiers du framework Autocode",
     "setupSpecs": "Configurer le répertoire des spécifications pour vos tâches",
+    "generateProjectDocs": "Vous inviter à générer la documentation du projet pour améliorer le contexte IA",
     "sourcePathNotConfigured": "Chemin source non configuré",
     "sourcePathNotConfiguredDescription": "Veuillez définir le chemin source Autocode dans les paramètres de l'application avant d'initialiser.",
     "initFailed": "Échec de l'initialisation",
     "initFailedDescription": "Échec de l'initialisation de Autocode. Veuillez réessayer."
+  },
+  "projectDocsReminder": {
+    "title": "Générer la documentation du projet",
+    "description": "{{projectName}} est initialisé. Générer la documentation maintenant ?",
+    "body": "La documentation du projet donne aux agents un contexte stable sur le produit, l'architecture, la technique et la vérification avant de planifier ou coder.",
+    "later": "Plus tard",
+    "create": "Générer",
+    "creating": "Création..."
   },
   "gitSetup": {
     "title": "Dépôt Git requis",

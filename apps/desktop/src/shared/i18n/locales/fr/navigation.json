@@ -24,8 +24,7 @@
     "help": "Aide & Feedback",
     "newTask": "Nouvelle tâche",
     "collapseSidebar": "Réduire la barre latérale",
-    "expandSidebar": "Développer la barre latérale",
-    "sponsor": "Nous sponsoriser"
+    "expandSidebar": "Développer la barre latérale"
   },
   "tooltips": {
     "settings": "Paramètres de l'application",

@@ -1676,6 +1676,13 @@ async function main() {
     );
     assert.ok(fakeLogText.includes('\u5f53\u524d\u5b50\u4efb\u52a1\uff1awp-1'));
     assert.equal(fakeLogText.includes(makeChineseMojibake('\u5f53\u524d\u5b50\u4efb\u52a1\uff1awp-1')), false);
+    const fakeCodingWorkerStartEntries = fakeLogs.phases.coding.entries
+      .filter((entry) => /^Worker 1 coding (?:work package|subtask) wp-1:/.test(entry.content));
+    assert.equal(
+      fakeCodingWorkerStartEntries.length,
+      1,
+      JSON.stringify(fakeCodingWorkerStartEntries.map((entry) => entry.content)),
+    );
 
     const fakeDoneTask = core.markAutocodeTaskDone({
       projectRoot,

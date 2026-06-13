@@ -258,10 +258,12 @@
   "theme": {
     "title": "Appearance",
     "description": "Customize how Autocode looks",
-    "mode": "Mode",
-    "modeDescription": "Choose between light and dark themes",
+    "mode": "Theme",
+    "modeDescription": "Choose one of the two built-in themes",
     "light": "Light",
+    "lightDescription": "Bright, neutral surfaces with a crisp blue accent.",
     "dark": "Dark",
+    "darkDescription": "Low-glare charcoal surfaces with a softer blue accent.",
     "system": "System",
     "colorTheme": "Color Theme",
     "colorThemeDescription": "Choose your preferred color palette"
@@ -901,10 +903,6 @@
   "debug": {
     "title": "Debug & Logs",
     "description": "Access logs and debug information for troubleshooting",
-    "errorReporting": {
-      "label": "Anonymous Error Reporting",
-      "description": "Send crash reports to help improve Autocode. No personal data or code is collected."
-    },
     "openLogsFolder": "Open Logs Folder",
     "copyDebugInfo": "Copy Debug Info",
     "copied": "Copied!",
