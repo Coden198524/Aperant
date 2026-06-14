@@ -16,7 +16,12 @@ import {
   resolveAutocodeCliInvocation,
   type AutocodeCli,
 } from './cli-catalog.js';
-import type { AutocodeAgentLanguage } from '../runtime/agent-messages.js';
+import {
+  CHANGE_REQUEST_AUDIT_MAX_CHARS,
+  DIRECT_CHANGE_REQUEST_LIMIT,
+  compactChangeRequestJsonlForPrompt,
+  type AutocodeAgentLanguage,
+} from '../runtime/agent-messages.js';
 import {
   resolveAutocodeTaskRuntimeConcurrency,
   type AutocodeTaskRuntimeConcurrencyResolved,
@@ -53,6 +58,9 @@ export interface AutocodeTaskRunPlan {
 const PROMPT_FILE_NAME = 'autocode-run-prompt.md';
 const RUNNER_FILE_NAME = 'autocode-runner.cjs';
 const requireFromCore = createRequire(import.meta.url);
+export const AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS = 4_000;
+const CLI_TASK_DESCRIPTION_COMPACTION_NOTICE =
+  '\n\n...[task description middle omitted for prompt budget; read the task metadata if exact omitted detail is required]...\n\n';
 
 export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput): AutocodeTaskRunPlan {
   const task = resolveTask(input.projectRoot, input.dataDirName, input.taskId);
@@ -94,7 +102,7 @@ export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput)
       phase,
       specDir,
       taskTitle: task.title,
-      taskDescription: task.description,
+      taskDescription: compactTaskRunTaskDescription(task.description || task.title),
       taskMetadata: task.metadata,
       projectId: input.projectId,
       language: input.language,
@@ -185,25 +193,64 @@ function buildTaskRunPrompt(input: {
   specDir: string;
   language?: AutocodeAgentLanguage;
 }): string {
+  const isChinese = isTaskRunChineseLanguage(input.language);
   const languageInstruction = buildTaskRunLanguageInstruction(input.language);
-  const header = [
-    '# Autocode Task Run',
-    '',
-    `Project root: ${input.projectRoot}`,
-    `Spec directory: ${input.specDir}`,
-    `Task ID: ${input.task.specId}`,
-    `Task title: ${input.task.title}`,
-    '',
-    ...(languageInstruction ? ['## Language', '', languageInstruction, ''] : []),
-  ].join('\n');
+  const header = isChinese
+    ? [
+        '# Autocode 任务运行',
+        '',
+        `Project root: ${input.projectRoot}`,
+        `Spec directory: ${input.specDir}`,
+        `Task ID: ${input.task.specId}`,
+        `Task title: ${input.task.title}`,
+        '',
+        ...(languageInstruction ? ['## 语言', '', languageInstruction, ''] : []),
+      ].join('\n')
+    : [
+        '# Autocode Task Run',
+        '',
+        `Project root: ${input.projectRoot}`,
+        `Spec directory: ${input.specDir}`,
+        `Task ID: ${input.task.specId}`,
+        `Task title: ${input.task.title}`,
+        '',
+        ...(languageInstruction ? ['## Language', '', languageInstruction, ''] : []),
+      ].join('\n');
   const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
     projectRoot: input.projectRoot,
     dataDirName: input.dataDirName,
+    language: input.language,
   });
   const contextReference = projectDocsReference ? `${projectDocsReference}\n\n` : '';
-  const humanInputReference = buildTaskHumanInputReference(input.specDir);
+  const humanInputReference = [
+    buildTaskHumanInputReference(input.specDir, input.language),
+    buildTaskChangeRequestReference(input.specDir, input.language),
+  ].join('');
+  const taskDescription = compactTaskRunTaskDescription(input.task.description || input.task.title);
 
   if (input.phase === 'direct') {
+    if (isChinese) {
+      return `${header}${contextReference}${humanInputReference}${[
+        '## 目标',
+        '',
+        '直接实现任务；不使用单独的规格工作流。',
+        '',
+        '## 任务描述',
+        '',
+        taskDescription,
+        '',
+        '## 必须遵循的流程',
+        '',
+        '- 编辑前先检查相关项目文件。',
+        '- 做最小且有效的变更。',
+        '- 运行最相关的验证。',
+        '- 在 Node 24+ 中，不要在 node -e、stdin 或 eval 脚本里混用 require(...) 和顶层 await；请使用 async IIFE，或配合 node --input-type=module 使用 ESM import。',
+        '- 避免针对任务初始状态或瞬时状态编写脆弱的冒烟断言；重试和恢复可能推进状态。除非任务明确修改状态机代码，否则验证最终行为或持久化文件。',
+        buildCliMemoryNotesInstruction(input.language),
+        `- 在 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} 留下一段简短实现总结。`,
+      ].join('\n')}`;
+    }
+
     return `${header}${contextReference}${humanInputReference}${[
       '## Goal',
       '',
@@ -211,7 +258,7 @@ function buildTaskRunPrompt(input: {
       '',
       '## Task Description',
       '',
-      input.task.description || input.task.title,
+      taskDescription,
       '',
       '## Required Workflow',
       '',
@@ -220,12 +267,34 @@ function buildTaskRunPrompt(input: {
       '- Run the most relevant validation.',
       '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
       '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
-      buildCliMemoryNotesInstruction(),
+      buildCliMemoryNotesInstruction(input.language),
       `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary}.`,
     ].join('\n')}`;
   }
 
   if (input.phase === 'spec') {
+    if (isChinese) {
+      return `${header}${contextReference}${humanInputReference}${[
+        '## 目标',
+        '',
+        '创建初始规格产物。',
+        '',
+        '## 任务描述',
+        '',
+        taskDescription,
+        '',
+        '## 必须生成的内容',
+        '',
+        `- 编写 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile}，包含概览、范围、实现说明和成功标准。`,
+        `- 如果当前任务描述需要结构化需求，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
+        `- 当证据或假设会影响任务时，在 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements} 中包含 evidence_sources、standards_references 和 assumptions。`,
+        `- 编写 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks}，使用 Autocode Markdown 清单组织具体阶段和任务。`,
+        `- 不要编写 ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}；运行器会基于 ${AUTOCODE_TASK_ARTIFACTS.tasks} 推导运行时工作包。`,
+        '- 需求、设计说明、任务范围和验证必须基于项目源码/文档、现有模式，或经过核实的官方/行业参考；如果缺少证据，请写明假设或验证任务，不要猜测。',
+        '- 待办子任务使用 [ ]，并附上简洁元数据项：_Depends on_、_Requirements_ 和 _Verification_。如果已知写入意图，也包含 _Files to create/modify_。',
+      ].join('\n')}`;
+    }
+
     return `${header}${contextReference}${humanInputReference}${[
       '## Goal',
       '',
@@ -233,7 +302,7 @@ function buildTaskRunPrompt(input: {
       '',
       '## Task Description',
       '',
-      input.task.description || input.task.title,
+      taskDescription,
       '',
       '## Required Output',
       '',
@@ -248,6 +317,31 @@ function buildTaskRunPrompt(input: {
   }
 
   if (input.phase === 'planning') {
+    if (isChinese) {
+      return `${header}${contextReference}${humanInputReference}${[
+        '## 目标',
+        '',
+        '创建或修复实施计划。',
+        '',
+        '## 必须生成的内容',
+        '',
+        `- 按需阅读 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile} 和 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
+        `- 如果 ${input.specDir}/HUMAN_INPUT.md 存在，将它作为计划评审反馈处理。`,
+        `- 如果 ${input.specDir}/change_requests.jsonl 存在，将它作为迭代审计轨迹读取并保留此前的变更请求历史。使用最新条目的迭代契约作为当前同一任务的有效变更请求。`,
+        `- 当反馈改变需求、验收标准、用户可见行为或约束时，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile}。`,
+        `- 当最新变更请求改变结构化需求或验收标准时，更新 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.requirements}。`,
+        `- 将 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} 写成上游 Autocode 任务列表。`,
+        `- 不要编写 ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}；运行器会基于 ${AUTOCODE_TASK_ARTIFACTS.tasks} 推导运行时工作包。`,
+        '- 所有新增或修订的需求、设计说明、任务、依赖和验证命令，都必须基于项目源码/文档、现有模式，或经过核实的官方/行业参考。',
+        '- 如果缺少证据，请添加假设/开放问题或验证任务；不要基于猜测创建实现工作。',
+        '- 保持任务可独立实现和验证。',
+        '- 增量修订任务列表：保留仍然有效的已完成工作，将受影响工作重置为待办并标注 needs_revision，为新需求添加新的待办子任务，将过时的上游清单项标记为 obsolete，不要删除历史。',
+        '- 每个可执行任务都必须包含 _Depends on_、_Verification_ 和简短 _Evidence_ 说明。只有根任务可使用 _Depends on: none_。如果已知写入意图，也包含 _Files to create/modify_。',
+        '- 保持本轮迭代可测试、可提交：每个新增或修订任务都需要聚焦的验证命令，并且下一轮编码在验证通过后应能使用正常任务提交流程。',
+        '- 新任务复选框保持 [ ]。',
+      ].join('\n')}`;
+    }
+
     return `${header}${contextReference}${humanInputReference}${[
       '## Goal',
       '',
@@ -272,6 +366,32 @@ function buildTaskRunPrompt(input: {
     ].join('\n')}`;
   }
 
+  if (isChinese) {
+    return `${header}${contextReference}${humanInputReference}${[
+      '## 目标',
+      '',
+      '根据现有规格和运行工作计划实现任务。',
+      '',
+      '## 必须遵循的流程',
+      '',
+      `- 首先阅读 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.implementationPlan}。`,
+      `- 仅在缺少验收细节时参考 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.specFile}。`,
+      '- 运行器会针对每个运行时工作包调用你一次。每次调用只实现 Current Work Item 章节。',
+      '- 不要提前开始后续工作包，即使它们看起来相关。',
+      '- 编码期间不要编辑 implementation_plan.md 的状态复选框；运行器会在本次调用结束后负责更新状态。',
+      '- 将完成详情放在最终回复或实现总结中，不要通过编辑计划状态来表达完成。',
+      '- 运行项目最相关的验证命令。',
+      '- 当 HUMAN_INPUT.md 或 change_requests.jsonl 存在时，将最新变更请求视为同一任务迭代：满足其中的验证指导，并在测试通过后保持变更可进入正常任务提交流程。',
+      '- 编辑既有文件前，读取当前的窄范围上下文，并只针对当前精确行打补丁；如果编辑未命中，重新读取一次周边行再重试。',
+      '- 将旧版或非 UTF-8 文件视为编码敏感：不要对它们使用 apply_patch 或 UTF-8 重写。请使用保留编码的脚本/工具，并保持原始文件编码。',
+      '- 在旧版 Windows 游戏项目中，假设带中文注释或乱码的文件可能不是 UTF-8；编辑前先确认或保留编码。',
+      '- 在 Node 24+ 中，不要在 node -e、stdin 或 eval 脚本里混用 require(...) 和顶层 await；请使用 async IIFE，或配合 node --input-type=module 使用 ESM import。',
+      '- 避免针对任务初始状态或瞬时状态编写脆弱的冒烟断言；重试和恢复可能推进状态。除非任务明确修改状态机代码，否则验证最终行为或持久化文件。',
+      buildCliMemoryNotesInstruction(input.language),
+      `- 在 ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} 留下一段简短实现总结，或在最终回复中包含完成详情。`,
+    ].join('\n')}`;
+  }
+
   return `${header}${contextReference}${humanInputReference}${[
     '## Goal',
     '',
@@ -292,12 +412,20 @@ function buildTaskRunPrompt(input: {
     '- In legacy Windows game projects, assume files with Chinese comments or mojibake may be non-UTF-8; verify or preserve encoding before editing.',
     '- On Node 24+, do not mix require(...) with top-level await in node -e, stdin, or eval scripts; use an async IIFE or ESM import with node --input-type=module.',
     '- Avoid brittle smoke assertions against initial or transient task status; retries and resume can advance state. Verify final behavior or durable files unless the task explicitly changes state-machine code.',
-    buildCliMemoryNotesInstruction(),
+    buildCliMemoryNotesInstruction(input.language),
     `- Leave a short implementation summary in ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.directSummary} or include completion details in your final response.`,
   ].join('\n')}`;
 }
 
-function buildCliMemoryNotesInstruction(): string {
+function buildCliMemoryNotesInstruction(language?: AutocodeAgentLanguage): string {
+  if (isTaskRunChineseLanguage(language)) {
+    return [
+      '- 如果发现可长期复用的项目知识，请在最终回复末尾添加一个准确命名为 "Memory Notes" 的章节。',
+      '- Memory Notes 格式："- [gotcha|decision|pattern|error_pattern|module_insight] 简洁可复用的说明"。',
+      '- 如果没有值得长期记住的内容，省略 Memory Notes。',
+    ].join('\n');
+  }
+
   return [
     '- If you discover durable project knowledge, add a final "Memory Notes" section.',
     '- Memory Notes format: "- [gotcha|decision|pattern|error_pattern|module_insight] concise reusable note".',
@@ -305,16 +433,34 @@ function buildCliMemoryNotesInstruction(): string {
   ].join('\n');
 }
 
-function buildTaskHumanInputReference(specDir: string): string {
+function buildTaskHumanInputReference(specDir: string, language?: AutocodeAgentLanguage): string {
   const humanInputPath = join(specDir, 'HUMAN_INPUT.md');
   if (!existsSync(humanInputPath)) {
     return '';
   }
   try {
-    const content = readFileSync(humanInputPath, 'utf8').trim();
+    const rawContent = readFileSync(humanInputPath, 'utf8').trim();
+    const content = limitTaskRunPromptText(
+      rawContent,
+      DIRECT_CHANGE_REQUEST_LIMIT,
+      '\n...[HUMAN_INPUT.md truncated; read the file directly if exact omitted feedback is required]',
+    );
     if (!content) {
       return '';
     }
+    if (isTaskRunChineseLanguage(language)) {
+      return [
+        '## 用户反馈',
+        '',
+        `用户在 ${humanInputPath} 提交了后续反馈。请将这些反馈作为下一次运行的必需上下文。`,
+        '',
+        '```markdown',
+        content,
+        '```',
+        '',
+      ].join('\n');
+    }
+
     return [
       '## Human Input',
       '',
@@ -330,12 +476,91 @@ function buildTaskHumanInputReference(specDir: string): string {
   }
 }
 
-function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): string {
-  if (language === 'zh-CN') {
+function buildTaskChangeRequestReference(specDir: string, language?: AutocodeAgentLanguage): string {
+  const changeRequestsPath = join(specDir, 'change_requests.jsonl');
+  if (!existsSync(changeRequestsPath)) {
+    return '';
+  }
+  try {
+    const content = readFileSync(changeRequestsPath, 'utf8').trim();
+    if (!content) {
+      return '';
+    }
+    const compactContent = compactChangeRequestJsonlForPrompt(content, {
+      maxEntries: 3,
+      maxChars: CHANGE_REQUEST_AUDIT_MAX_CHARS,
+    });
+
+    if (isTaskRunChineseLanguage(language)) {
+      return [
+        '## 变更请求摘要',
+        '',
+        `来自 ${changeRequestsPath}。使用最新条目作为当前同一任务迭代契约；只有需要旧历史细节时再读取原 JSONL 文件。`,
+        '',
+        '```text',
+        compactContent,
+        '```',
+        '',
+      ].join('\n');
+    }
+
     return [
-      'Write all non-code prose in Simplified Chinese, including plans, specs, summaries, and review notes.',
-      'Keep code identifiers, commands, paths, API names, package names, and source text unchanged unless translation is requested.',
-      'Final answer: concise Chinese markdown table with rows for changes, verification, and review notes.',
+      '## Change Request Summary',
+      '',
+      `From ${changeRequestsPath}. Use the latest entry as the active same-task iteration contract; read the JSONL file directly only if older history is required.`,
+      '',
+      '```text',
+      compactContent,
+      '```',
+      '',
+    ].join('\n');
+  } catch {
+    return '';
+  }
+}
+
+function limitTaskRunPromptText(value: string, maxLength: number, suffix: string): string {
+  if (maxLength <= 0) {
+    return '';
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const budget = Math.max(0, maxLength - suffix.length);
+  if (budget <= 0) {
+    return value.slice(0, maxLength);
+  }
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return `${value.slice(0, headBudget).trimEnd()}${suffix}${value.slice(-tailBudget).trimStart()}`;
+}
+
+function compactTaskRunTaskDescription(value: string): string {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (normalized.length <= AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS) {
+    return normalized;
+  }
+
+  const budget = Math.max(0, AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS - CLI_TASK_DESCRIPTION_COMPACTION_NOTICE.length);
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return [
+    normalized.slice(0, headBudget).trimEnd(),
+    CLI_TASK_DESCRIPTION_COMPACTION_NOTICE,
+    normalized.slice(-tailBudget).trimStart(),
+  ].join('');
+}
+
+function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): string {
+  if (isTaskRunChineseLanguage(language)) {
+    return [
+      '除代码、路径、命令、API 名称、包名、源文本和必要英文专有名词外，所有说明、计划、规格、总结和评审备注都必须使用简体中文。',
+      '最终答复必须是简洁的中文 Markdown 表格，包含“变更”“验证”“评审备注”。',
     ].join(' ');
   }
 
@@ -348,6 +573,10 @@ function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): strin
   }
 
   return '';
+}
+
+function isTaskRunChineseLanguage(language: AutocodeAgentLanguage): boolean {
+  return typeof language === 'string' && language.trim().toLowerCase().replace(/_/g, '-').startsWith('zh');
 }
 
 function resolveOptionalRunnerDependency(moduleName: string): string | undefined {
@@ -404,6 +633,8 @@ const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
 const codexJsonMode = isCodexJsonInvocation(command, args);
 const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
+const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
+const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
 let validationRetryCount = 0;
 let attemptId = 0;
 let memoryContextBlock = '';
@@ -432,6 +663,14 @@ const codingFailures = [];
 let nextCodingWorkerId = 0;
 const MODEL_OUTPUT_FLUSH_MS = 750;
 const MODEL_OUTPUT_MAX_CHARS = 3500;
+const CLI_MEMORY_CONTEXT_MAX_CHARS = 1800;
+const CLI_MEMORY_ITEM_MAX_CHARS = 260;
+const CLI_MEMORY_RELATED_FILES_MAX = 3;
+const CLI_MEMORY_FILE_MAX_CHARS = 80;
+const CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS = 1200;
+const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;
+const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;
+const CLI_MEMORY_STORAGE_FILE_REF_MAX_CHARS = 160;
 const CODING_WORKER_INACTIVITY_TIMEOUT_MS = readPositiveInteger(
   process.env.AUTOCODE_WORKER_INACTIVITY_TIMEOUT_MS,
   10 * 60 * 1000,
@@ -469,10 +708,10 @@ async function initializeCliMemoryRuntime() {
     return '';
   }
   const memories = [
-    ...loadCliLocalSessionMemories(4),
-    ...await searchCliMemoryDatabase(taskDescription || taskTitle, 8),
+    ...loadCliLocalSessionMemories(3),
+    ...await searchCliMemoryDatabase(taskDescription || taskTitle, 5),
   ];
-  const deduped = dedupeCliMemories(memories).slice(0, 8);
+  const deduped = dedupeCliMemories(memories).slice(0, 6);
   if (deduped.length === 0) {
     return '';
   }
@@ -482,13 +721,37 @@ async function initializeCliMemoryRuntime() {
     'Use these prior outcomes, gotchas, and decisions when relevant. Do not repeat failed approaches.',
     '',
   ];
+  let omitted = 0;
   for (const memory of deduped) {
-    const files = memory.relatedFiles && memory.relatedFiles.length > 0
-      ? ' Files: ' + memory.relatedFiles.join(', ') + '.'
-      : '';
-    lines.push('- [' + memory.type + '] ' + limitLogText(memory.content, 900) + files);
+    const line = formatCliMemoryPromptLine(memory);
+    const next = lines.concat(line).join('\\n');
+    if (next.length > CLI_MEMORY_CONTEXT_MAX_CHARS) {
+      omitted += 1;
+      continue;
+    }
+    lines.push(line);
   }
-  return lines.join('\\n');
+  if (omitted > 0) {
+    lines.push('- ... ' + omitted + ' more memory item(s) omitted; search memory only if needed.');
+  }
+  return limitCliMemoryContext(lines.join('\\n'));
+}
+
+function formatCliMemoryPromptLine(memory) {
+  const sourceRelatedFiles = Array.isArray(memory.relatedFiles)
+    ? memory.relatedFiles.filter(Boolean)
+    : [];
+  const relatedFiles = sourceRelatedFiles
+    .slice(0, CLI_MEMORY_RELATED_FILES_MAX)
+    .map((file) => limitLogText(file, CLI_MEMORY_FILE_MAX_CHARS));
+  const files = relatedFiles.length > 0
+    ? ' Files: ' + relatedFiles.join(', ') + (sourceRelatedFiles.length > relatedFiles.length ? ', ...' : '') + '.'
+    : '';
+  return '- [' + memory.type + '] ' + limitLogText(memory.content, CLI_MEMORY_ITEM_MAX_CHARS) + files;
+}
+
+function limitCliMemoryContext(value) {
+  return limitLogText(value, CLI_MEMORY_CONTEXT_MAX_CHARS);
 }
 
 function buildPromptWithMemoryContext(basePrompt) {
@@ -593,9 +856,15 @@ function recordCliWorkItemMemory(subtask, outcome, summary, explicitNotes) {
     return null;
   }
   const now = new Date().toISOString();
-  const files = getWorkItemFiles(subtask || {});
+  const files = compactCliMemoryStorageFiles(getWorkItemFiles(subtask || {}));
   const sessionId = getCliMemorySessionId(subtask.id || 'task');
-  const memoryNotes = Array.isArray(explicitNotes) ? explicitNotes : [];
+  const compactSummary = limitCliMemoryStorageText(summary);
+  const memoryNotes = (Array.isArray(explicitNotes) ? explicitNotes : [])
+    .map((note) => ({
+      ...note,
+      content: limitCliMemoryStorageText(note.content),
+    }))
+    .filter((note) => note.content);
   const content = buildCliWorkUnitOutcomeContent(subtask, outcome, summary, files, now);
   const insight = {
     sessionId,
@@ -603,7 +872,7 @@ function recordCliWorkItemMemory(subtask, outcome, summary, explicitNotes) {
     timestamp: now,
     outcome,
     insights: [
-      summary || content,
+      compactSummary || content,
       ...memoryNotes.map((note) => note.content),
     ].filter(Boolean),
     keyFiles: files,
@@ -611,7 +880,7 @@ function recordCliWorkItemMemory(subtask, outcome, summary, explicitNotes) {
     workUnit: {
       id: subtask.id || 'task',
       title: subtask.title || taskTitle,
-      description: Array.isArray(subtask.details) && subtask.details.length > 0 ? subtask.details.join('\\n') : taskDescription,
+      description: limitCliMemoryStorageText(Array.isArray(subtask.details) && subtask.details.length > 0 ? subtask.details.join('\\n') : taskDescription),
       upstreamTaskIds: Array.isArray(subtask.upstreamTaskIds) ? subtask.upstreamTaskIds : [],
     },
   };
@@ -634,7 +903,7 @@ function recordCliWorkItemMemory(subtask, outcome, summary, explicitNotes) {
       hierarchy: [phase, subtask.id || 'task'],
       label: (subtask.id || 'task') + (subtask.title ? ': ' + subtask.title : ''),
     },
-    citationText: summary,
+    citationText: compactSummary,
   }));
   for (const note of memoryNotes) {
     pendingMemoryWrites.push(storeCliMemoryDatabaseEntry({
@@ -761,14 +1030,25 @@ function buildCliWorkUnitOutcomeContent(subtask, outcome, summary, files, comple
   const upstream = Array.isArray(subtask.upstreamTaskIds) && subtask.upstreamTaskIds.length > 0
     ? 'Upstream tasks: ' + subtask.upstreamTaskIds.join(', ')
     : '';
-  return [
+  return limitCliMemoryStorageText([
     'Work unit ' + (subtask.id || 'task') + title + ' finished with outcome: ' + outcome + '.',
-    Array.isArray(subtask.details) && subtask.details.length > 0 ? 'Task: ' + subtask.details.join('\\n') : '',
-    summary ? 'Summary: ' + summary : '',
+    Array.isArray(subtask.details) && subtask.details.length > 0 ? 'Task: ' + limitCliMemoryStorageText(subtask.details.join('\\n')) : '',
+    summary ? 'Summary: ' + limitCliMemoryStorageText(summary) : '',
     upstream,
     files.length > 0 ? 'Files: ' + files.join(', ') : '',
     'Completed at: ' + completedAt,
-  ].filter(Boolean).join('\\n');
+  ].filter(Boolean).join('\\n'), CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS);
+}
+
+function limitCliMemoryStorageText(value, maxLength = CLI_MEMORY_STORAGE_FIELD_MAX_CHARS) {
+  return limitLogText(value, maxLength);
+}
+
+function compactCliMemoryStorageFiles(files) {
+  return [...new Set((Array.isArray(files) ? files : [])
+    .map((file) => limitLogText(file, CLI_MEMORY_STORAGE_FILE_REF_MAX_CHARS))
+    .filter(Boolean))]
+    .slice(0, CLI_MEMORY_STORAGE_FILE_REF_LIMIT);
 }
 
 function resolveCliMemoryDatabasePath() {
@@ -2147,22 +2427,42 @@ function decodeLegacyCliOutput(data) {
 }
 
 function repairChineseMojibakeText(text) {
-  if (!text || text.includes('\\uFFFD') || scoreEncodingDamage(text) < 2 || !iconvLite) {
-    return text;
+  const separatorRepairedText = repairDenseInjectedFullStopText(text);
+  const directPhraseRepairedText = repairKnownChineseMojibakePhrases(separatorRepairedText);
+  if (directPhraseRepairedText !== separatorRepairedText) {
+    return directPhraseRepairedText;
+  }
+  if (
+    !separatorRepairedText ||
+    !iconvLite ||
+    scoreMojibakePatternDamage(separatorRepairedText) < 2 ||
+    scoreEncodingDamage(separatorRepairedText) < 2
+  ) {
+    return separatorRepairedText;
   }
 
-  let candidate = text;
+  let candidate = separatorRepairedText;
   try {
-    candidate = iconvLite.decode(iconvLite.encode(text, 'gbk'), 'utf8');
+    candidate = normalizeLossyMojibakePunctuation(
+      iconvLite.decode(iconvLite.encode(separatorRepairedText, 'gbk'), 'utf8')
+    );
   } catch {
-    return text;
+    return separatorRepairedText;
   }
 
-  return shouldPreferEncodingCandidate(text, candidate) ? candidate : text;
+  return shouldPreferEncodingCandidate(separatorRepairedText, candidate) ? candidate : separatorRepairedText;
+}
+
+function repairKnownChineseMojibakePhrases(text) {
+  return String(text ?? '')
+    .replace(/\u8930\u64b3\u58a0\u701b\u612a\u6362\u9354\u2605\u7d30/g, '\u5f53\u524d\u5b50\u4efb\u52a1\uff1a');
 }
 
 function shouldPreferEncodingCandidate(original, candidate) {
   if (!candidate || candidate === original) {
+    return false;
+  }
+  if (addsDenseInjectedFullStops(original, candidate)) {
     return false;
   }
   const originalScore = scoreEncodingDamage(original);
@@ -2171,6 +2471,16 @@ function shouldPreferEncodingCandidate(original, candidate) {
 }
 
 function scoreEncodingDamage(text) {
+  let score = 0;
+  for (const char of text) {
+    if (char.charCodeAt(0) === 0xfffd) {
+      score += 12;
+    }
+  }
+  return score + scoreMojibakePatternDamage(text);
+}
+
+function scoreMojibakePatternDamage(text) {
   const patterns = [
     '锟斤拷',
     '锛',
@@ -2208,13 +2518,48 @@ function scoreEncodingDamage(text) {
     '鈥檚',
     '鈥檛',
     '鈥檝',
+    '\u7487\u5b58\u69d1',
+    '\u6924\u572d\u6d30',
+    '\u9422\u71b8\u579a',
+    '\u6d93\ue15f\u6783',
+    '\u9350\u546d\ue190',
+    '\u9422\u3126\u57db',
+    '\u6d60\uff47\u721c',
+    '\u95b0\u5d87\u7586',
+    '\u5bee\u20ac\u6fee',
+    '\u7039\u5c7e\u579a',
+    '\u59dd\uff45\u6e6a',
+    '\u9352\u6d99\u5270',
+    '\u6d60\u8bf2\u59df',
+    '\u74ba\ue21c\u568e',
+    '\u690b\u5ea8\u6ad3',
+    '\u8930\u64b3\u58a0',
+    '\u93c2\u56e6\u6b22',
+    '\u9352\u55d8\u703d',
+    '\u7039\u70b5\u5e47',
+    '\u6960\u5c83\u7609',
+    '\u93cb\u8235\u702f',
+    '\u5a34\u4f7a\u25bc',
+    '\u9429\ue1bd\u7223',
+    '\u6d5c\u0443\u6427',
+    '\u6d93\u660f\ue6e6',
+    '\u9356\u546d\u60c8',
+    '\u6748\u64b3\u56ad',
+    '\u6dc7\ue1bd\u657c',
+    '\u6dc7\ue1bc\ue632',
+    '\u6fb6\u52ed\u608a',
+    '\u9354\u72ba\u6d47',
+    '\u6fb6\u8fab\u89e6',
+    '\u7487\ue161\u2588',
+    '\u7ee0\u20ac\u6d63',
+    '\u9354\u71bb\u5158',
+    '\u93c1\u7248\u5d41',
+    '\u9429\ue1bc\u7d8d',
+    '\u7eef\u8364\u7cba',
+    '\u93c8\u5d85\u59df',
+    '\u5bb8\u30e4\u7d94',
   ];
   let score = 0;
-  for (const char of text) {
-    if (char.charCodeAt(0) === 0xfffd) {
-      score += 12;
-    }
-  }
   for (const pattern of patterns) {
     let index = text.indexOf(pattern);
     while (index >= 0) {
@@ -2223,6 +2568,39 @@ function scoreEncodingDamage(text) {
     }
   }
   return score;
+}
+
+function repairDenseInjectedFullStopText(text) {
+  if (!hasDenseInjectedFullStopDamage(text)) {
+    return text;
+  }
+
+  return text.replace(/。(?=[^。])/g, '');
+}
+
+function addsDenseInjectedFullStops(original, candidate) {
+  const originalCount = countInjectedFullStopSeparators(original);
+  const candidateCount = countInjectedFullStopSeparators(candidate);
+  return candidateCount - originalCount >= 20 && hasDenseInjectedFullStopDamage(candidate);
+}
+
+function hasDenseInjectedFullStopDamage(text) {
+  const count = countInjectedFullStopSeparators(text);
+  return count >= 20 && count * 4 >= text.length;
+}
+
+function countInjectedFullStopSeparators(text) {
+  let count = 0;
+  for (let index = 0; index < text.length - 1; index += 1) {
+    if (text[index] === '。' && !/\s|。/.test(text[index + 1] || '')) {
+      count += 1;
+    }
+  }
+  return count;
+}
+
+function normalizeLossyMojibakePunctuation(text) {
+  return text.replace(/\uFFFD\?/g, '。');
 }
 
 function loadIconvLite() {
@@ -2297,11 +2675,16 @@ function processCodexJsonLine(line, state = defaultAttemptState) {
   if (!trimmed) {
     return;
   }
+  const normalizedJsonLine = normalizeCodexJsonEventLine(trimmed);
 
   let event;
   try {
-    event = JSON.parse(trimmed);
+    event = JSON.parse(normalizedJsonLine);
   } catch {
+    if (isLikelyInternalCodexJsonLog(normalizedJsonLine)) {
+      appendCollapsedInternalCodexJsonLog(normalizedJsonLine, state);
+      return;
+    }
     process.stdout.write(trimmed + '\\n');
     queueModelOutput(trimmed + '\\n', state);
     return;
@@ -2336,6 +2719,11 @@ function handleCodexJsonEvent(event, state = defaultAttemptState) {
     tokenUsageHandled = true;
     return true;
   };
+
+  if (handleCodexCommandExecutionEvent(envelope, payload, payloadType, state)) {
+    handleTokenUsage();
+    return true;
+  }
 
   if (payloadType === 'token_count' || payloadType === 'usage' || payloadType === 'usage_update') {
     handleTokenUsage();
@@ -2426,6 +2814,96 @@ function handleCodexJsonEvent(event, state = defaultAttemptState) {
     payloadType === 'response_started' ||
     usageOnlyEvent ||
     handleCodexCompletionEvent(payloadType, state);
+}
+
+function handleCodexCommandExecutionEvent(envelope, payload, payloadType, state = defaultAttemptState) {
+  const item = asRecord(envelope?.item);
+  const source = payloadType === 'command_execution'
+    ? payload
+    : item && getFirstString(item, ['type']) === 'command_execution'
+      ? item
+      : null;
+  if (!source) {
+    return false;
+  }
+
+  const commandText = getFirstString(source, ['command', 'cmd']) || '';
+  const output = stringifyCodexText(
+    source.aggregated_output ?? source.output ?? source.result ?? source.content ?? source.stdout ?? source.stderr
+  );
+  const exitCode = typeof source.exit_code === 'number'
+    ? source.exit_code
+    : typeof source.exitCode === 'number'
+      ? source.exitCode
+      : undefined;
+  const status = getFirstString(source, ['status']) || (exitCode === 0 ? 'completed' : undefined);
+  const success = exitCode === undefined
+    ? status ? !/fail|error|cancel/i.test(status) : undefined
+    : exitCode === 0;
+  const content = formatCodexCommandExecutionSummary(commandText, success, exitCode);
+  const detail = formatCodexCommandExecutionDetail(commandText, output, exitCode, status);
+
+  appendTaskLogEntry(
+    logPhase,
+    'tool_end',
+    content,
+    detail,
+    buildAttemptLogExtra(state, {
+      tool_name: 'Command',
+      tool_input: commandText ? limitLogText(commandText, 1000) : undefined,
+      tool_success: success,
+      tool_call_id: getFirstString(source, ['id', 'call_id', 'callId']),
+    }),
+  );
+  return true;
+}
+
+function formatCodexCommandExecutionSummary(commandText, success, exitCode) {
+  const statusText = success === false
+    ? localizeMessage('commandFailed', 'Command failed', {})
+    : localizeMessage('commandCompleted', 'Command completed', {});
+  const suffix = exitCode === undefined ? '' : ' (exit ' + exitCode + ')';
+  return commandText
+    ? statusText + suffix + ': ' + limitLogText(commandText, 240)
+    : statusText + suffix;
+}
+
+function formatCodexCommandExecutionDetail(commandText, output, exitCode, status) {
+  const lines = [];
+  if (commandText) {
+    lines.push('Command:', commandText, '');
+  }
+  if (exitCode !== undefined || status) {
+    lines.push('Result:', [
+      status ? 'status=' + status : '',
+      exitCode !== undefined ? 'exit_code=' + exitCode : '',
+    ].filter(Boolean).join(', '), '');
+  }
+  if (output.trim()) {
+    lines.push('Output:', output.trim());
+  }
+  return lines.join('\\n').trim();
+}
+
+function isLikelyInternalCodexJsonLog(value) {
+  const text = normalizeCodexJsonEventLine(value);
+  return text.startsWith('{') &&
+    /"type"\s*:\s*"item\.[^"]+"/.test(text) &&
+    /"item"\s*:|"command_execution"|"aggregated_output"/.test(text);
+}
+
+function normalizeCodexJsonEventLine(value) {
+  return String(value ?? '').trim().replace(/^[\u3002\s]+(?=\{)/, '');
+}
+
+function appendCollapsedInternalCodexJsonLog(value, state = defaultAttemptState) {
+  appendTaskLogEntry(
+    logPhase,
+    'text',
+    localizeMessage('internalCodexJsonCollapsed', 'Internal Codex event log collapsed.', {}),
+    String(value ?? ''),
+    buildAttemptLogExtra(state),
+  );
 }
 
 function handleCodexCompletionEvent(payloadType, state) {
@@ -2553,18 +3031,21 @@ function updatePlanTokenUsage(usage) {
         '# Implementation Plan',
         '',
         'Feature: ' + taskTitle,
-        'Description: ' + taskDescription,
         'Created: ' + now,
+        '',
+        '## Description',
+        '',
+        taskDescription,
         '',
       ].join('\\n');
     }
 
     const currentMetadata = readPlanMachineMetadata(content);
     const previousUsage = normalizePersistedTokenUsage(currentMetadata.tokenUsage);
-    tokenUsageEventCount += 1;
+    const nextStepsExecuted = getNextTokenUsageStepCount(previousUsage, usage);
     const incoming = {
       ...usage,
-      stepsExecuted: Math.max((previousUsage?.stepsExecuted ?? 0) + 1, tokenUsageEventCount),
+      stepsExecuted: nextStepsExecuted,
       sessionId: usage.sessionId || previousUsage?.sessionId,
     };
     const nextUsage = mergeTokenUsage(previousUsage, incoming);
@@ -2596,6 +3077,39 @@ function readPlanMachineMetadata(content) {
   } catch {
     return {};
   }
+}
+
+function getNextTokenUsageStepCount(previousUsage, usage) {
+  const previousSteps = previousUsage?.stepsExecuted ?? 0;
+  if (shouldCountTokenUsageStep(previousUsage, usage)) {
+    tokenUsageEventCount = Math.max(tokenUsageEventCount + 1, previousSteps + 1);
+  } else {
+    tokenUsageEventCount = Math.max(tokenUsageEventCount, previousSteps);
+  }
+  return tokenUsageEventCount || undefined;
+}
+
+function shouldCountTokenUsageStep(previousUsage, usage) {
+  if (!previousUsage) {
+    return true;
+  }
+
+  if (usage.sessionId && previousUsage.sessionId && usage.sessionId !== previousUsage.sessionId) {
+    return true;
+  }
+
+  return tokenUsageHasAdvanced(previousUsage, usage);
+}
+
+function tokenUsageHasAdvanced(previousUsage, usage) {
+  return [
+    'promptTokens',
+    'completionTokens',
+    'totalTokens',
+    'thinkingTokens',
+    'cacheReadTokens',
+    'cacheCreationTokens',
+  ].some((key) => (usage[key] ?? 0) > (previousUsage[key] ?? 0));
 }
 
 function normalizePersistedTokenUsage(value) {
@@ -2652,19 +3166,19 @@ function dropUndefinedTokenUsage(value) {
 
 function formatTokenUsageMessage(usage) {
   if (language === 'zh-CN') {
-    return '模型用量更新：请求 ' + (usage.stepsExecuted ?? 0) +
+    return '模型用量更新：模型轮次 ' + (usage.stepsExecuted ?? 0) +
       ' 次，输入 ' + (usage.promptTokens ?? 0) +
       '，输出 ' + (usage.completionTokens ?? 0) +
       '，总计 ' + (usage.totalTokens ?? 0) + ' tokens。';
   }
   if (language === 'fr') {
     return 'Utilisation du modele : ' + (usage.stepsExecuted ?? 0) +
-      ' requetes, entree ' + (usage.promptTokens ?? 0) +
+      ' etapes modele, entree ' + (usage.promptTokens ?? 0) +
       ', sortie ' + (usage.completionTokens ?? 0) +
       ', total ' + (usage.totalTokens ?? 0) + ' tokens.';
   }
   return 'Model usage updated: ' + (usage.stepsExecuted ?? 0) +
-    ' requests, input ' + (usage.promptTokens ?? 0) +
+    ' model steps, input ' + (usage.promptTokens ?? 0) +
     ', output ' + (usage.completionTokens ?? 0) +
     ', total ' + (usage.totalTokens ?? 0) + ' tokens.';
 }
@@ -2718,12 +3232,11 @@ async function validateStandardPlanArtifactQuality() {
   try {
     const moduleUrl = pathToFileURL(planQualityModulePath).href;
     const planQuality = await import(moduleUrl);
-    const contextJson = readOptionalJsonArtifact('context.json');
     const result = planQuality.validateAutocodeStandardPlanArtifacts({
       specMarkdown: readOptionalArtifact(artifacts.specFile),
       requirementsMarkdown: readOptionalArtifact(artifacts.requirements),
       tasksMarkdown: readOptionalArtifact(artifacts.tasks || 'tasks.md'),
-      contextJson,
+      contextMarkdown: readOptionalArtifact(artifacts.context || 'context.md'),
       requireSpecEvidence: phase === 'planning',
       requireRequirementsEvidence: phase === 'planning',
       requireTaskEvidence: true,
@@ -2746,18 +3259,6 @@ function readOptionalArtifact(fileName) {
     return readFileSync(join(specDir, fileName), 'utf8');
   } catch {
     return undefined;
-  }
-}
-
-function readOptionalJsonArtifact(fileName) {
-  const content = readOptionalArtifact(fileName);
-  if (!content) {
-    return undefined;
-  }
-  try {
-    return JSON.parse(content);
-  } catch {
-    return content;
   }
 }
 
@@ -2845,8 +3346,33 @@ function validatePlanningSchedulingMetadata() {
   return \`\${artifacts.implementationPlan} missing scheduling metadata: \${preview}\${errors.length > 8 ? '; ...' : ''}\`;
 }
 
+function compactArtifactValidationRetryBasePrompt(value) {
+  const text = String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim();
+  if (text.length <= VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS) {
+    return text;
+  }
+  const notice = '\\n\\n...[original prompt middle omitted for validation retry budget; reread referenced artifacts if exact omitted detail is required]...\\n\\n';
+  const budget = Math.max(0, VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS - notice.length);
+  const headBudget = Math.ceil(budget * 0.68);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return text.slice(0, headBudget).trimEnd() + notice + text.slice(-tailBudget).trimStart();
+}
+
+function compactArtifactValidationError(value) {
+  const text = String(value || '').replace(/\\s+/g, ' ').trim();
+  if (text.length <= VALIDATION_RETRY_ERROR_MAX_CHARS) {
+    return text;
+  }
+  const notice = ' ... [validation error middle omitted] ... ';
+  const budget = Math.max(0, VALIDATION_RETRY_ERROR_MAX_CHARS - notice.length);
+  const headBudget = Math.ceil(budget * 0.62);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return text.slice(0, headBudget).trimEnd() + notice + text.slice(-tailBudget).trimStart();
+}
+
 function buildArtifactValidationRetryPrompt(validationError) {
   const standardTasksMode = phase === 'spec' || phase === 'planning';
+  const compactValidationError = compactArtifactValidationError(validationError);
   const requiredOutputs = phase === 'spec'
     ? [
         \`- Write or repair \${specDir}/\${artifacts.specFile}.\`,
@@ -2863,7 +3389,7 @@ function buildArtifactValidationRetryPrompt(validationError) {
   const retryIntro = [
     '## Retry Required',
     '',
-    \`The previous CLI attempt exited successfully, but artifact validation failed: \${validationError}\`,
+    \`The previous CLI attempt exited successfully, but artifact validation failed: \${compactValidationError}\`,
     '',
     'Repair the missing or invalid artifact now. Write the file, not just an explanation.',
   ];
@@ -2875,14 +3401,14 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- Include at least one executable task numbered like 1.1, 1.2, or 2.1.',
     '- A top-level phase alone is not enough.',
     '- Each task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
-    '- Evidence must cite spec.md, requirements.md, context.json, project source/docs, existing project patterns, or verified official/industry references.',
-    '- Keep spec.md compact as a decision index; put detailed source evidence in context.json and cite it from tasks.md.',
+    '- Evidence must cite spec.md, requirements.md, context.md, project source/docs, existing project patterns, or verified official/industry references.',
+    '- Keep spec.md compact as a decision index; put detailed source evidence in context.md and cite it from tasks.md.',
     '- If this is a Request Changes retry, update only affected requirement/design/task sections and preserve unaffected content.',
     '- Use _Depends on: none_ only for root work. Use _Files to modify: none_ only for read-only validation.',
   ];
 
   return [
-    prompt,
+    compactArtifactValidationRetryBasePrompt(prompt),
     '',
     '---',
     '',
@@ -2959,8 +3485,11 @@ function updatePlanMetadata(input) {
         '# Implementation Plan',
         '',
         \`Feature: \${taskTitle}\`,
-        \`Description: \${taskDescription}\`,
         \`Created: \${input.updatedAt}\`,
+        '',
+        '## Description',
+        '',
+        taskDescription,
         '',
       ].join('\\n');
     }
@@ -3143,6 +3672,12 @@ function localizeMessage(key, fallback, values) {
       return '开始使用 ' + commandText + ' 执行 Autocode ' + phaseText + ' 规划任务。';
     case 'completed':
       return 'Autocode CLI 运行完成。';
+    case 'commandCompleted':
+      return '命令执行完成';
+    case 'commandFailed':
+      return '命令执行失败';
+    case 'internalCodexJsonCollapsed':
+      return 'Codex 内部事件日志已折叠。';
     default:
       return fallback;
   }

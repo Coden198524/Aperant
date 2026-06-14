@@ -1,7 +1,7 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { render, screen, waitFor } from '@testing-library/react';
+import { fireEvent, render, screen, waitFor } from '@testing-library/react';
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { Task, TaskLogStreamChunk, TaskLogs } from '../../../shared/types';
 import { TaskRuntimeLogs } from './TaskRuntimeLogs';
@@ -137,6 +137,20 @@ function createActiveEmptyTaskLogs(): TaskLogs {
   logs.phases.planning.completed_at = null;
   logs.phases.planning.entries = [];
   return logs;
+}
+
+function createCodexToolRouterJsonErrorLog(): string {
+  return [
+    '6',
+    '2026-06-14T03:32:26.118278Z ERROR codex_core::tools::router: error=Exit code: 1',
+    'Wall time: 0.4 seconds',
+    'Output:',
+    "ConvertFrom-Json : Invalid object passed in, ':' or '}' expected. (178): {",
+    '',
+    '  "task_id": "003-task",',
+    '  "purpose": "broken JSON,',
+    '}',
+  ].join('\n');
 }
 
 vi.mock('react-i18next', () => ({
@@ -456,6 +470,50 @@ describe('TaskRuntimeLogs', () => {
     await waitFor(() => {
       expect(screen.getByText(/OpenAI · GPT-5.5/)).toBeInTheDocument();
     });
+  });
+
+  it('collapses raw Codex JSON event logs by default', async () => {
+    const logs = createTaskLogs();
+    logs.phases.planning.entries = [
+      {
+        timestamp: '2026-01-01T00:00:00.500Z',
+        type: 'text',
+        phase: 'planning',
+        content: '。{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"git status --short","aggregated_output":" M package.json"}}',
+      },
+    ];
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: logs })) as typeof window.electronAPI.getTaskLogs;
+
+    render(<TaskRuntimeLogs task={createTask()} />);
+
+    expect(await screen.findByText('Internal Codex event log collapsed.')).toBeInTheDocument();
+    expect(screen.queryByText(/aggregated_output/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Expand log detail'));
+
+    expect(await screen.findByText(/aggregated_output/)).toBeInTheDocument();
+  });
+
+  it('collapses Codex tool router JSON parse errors by default', async () => {
+    const logs = createTaskLogs();
+    logs.phases.planning.entries = [
+      {
+        timestamp: '2026-01-01T00:00:00.500Z',
+        type: 'text',
+        phase: 'planning',
+        content: createCodexToolRouterJsonErrorLog(),
+      },
+    ];
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: logs })) as typeof window.electronAPI.getTaskLogs;
+
+    render(<TaskRuntimeLogs task={createTask()} />);
+
+    expect(await screen.findByText('PowerShell JSON parse failure log collapsed.')).toBeInTheDocument();
+    expect(screen.queryByText(/ConvertFrom-Json/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByLabelText('Expand log detail'));
+
+    expect(await screen.findByText(/ConvertFrom-Json/)).toBeInTheDocument();
   });
 
   it('falls back to task metadata model info before stream chunks arrive', async () => {

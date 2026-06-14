@@ -15,6 +15,7 @@ import type { ExtractedInsights, InsightExtractionConfig } from '../runners/insi
 import { extractSessionInsights } from '../runners/insight-extractor';
 import type { SessionResult } from '../session/types';
 import type { SubtaskInfo } from './build-orchestrator';
+import { summarizeSessionCompletion } from './completion-summary';
 import {
   countAutocodeCompletedSubtaskPlanSubtasks,
   countAutocodeSubtaskPlanSubtasks,
@@ -512,6 +513,18 @@ export async function iterateSubtasks(
       await finalizeAcceptedSubtask(config, subtask, subtaskInfo, result, attemptCounts, changedFilesForQuality);
     }
 
+    if (result.outcome !== 'completed' && !subtaskCompletedInPlan && isNonRetryableSessionResult(result)) {
+      stuckSubtasks.push(subtask.id);
+      const reason = `Non-retryable error: ${result.error?.message ?? result.outcome}`;
+      await markSubtaskFailed(config.specDir, subtask.id, reason, result);
+      if (config.sourceSpecDir) {
+        await syncPhasesToMain(config.specDir, config.sourceSpecDir);
+      }
+      await learnFromFailedSubtask(config, { ...subtaskInfo, status: 'stuck' }, result);
+      config.onSubtaskStuck?.(subtaskInfo, reason);
+      continue;
+    }
+
     // For errors, the subtask will be retried on next loop iteration
     // (implementation_plan.md status remains in_progress or pending)
 
@@ -789,7 +802,7 @@ async function ensureSubtaskMarkedCompleted(
     const plan = await loadImplementationPlan(specDir);
     if (!plan) return; // JSON corrupt beyond repair
     let updated = false;
-    const completionSummary = result ? summarizeSessionResult(result) : undefined;
+    const completionSummary = result ? summarizeSessionCompletion(result) : undefined;
 
     for (const phase of plan.phases) {
       for (const subtask of phase.subtasks) {
@@ -851,38 +864,6 @@ async function isSubtaskCompleted(
   return false;
 }
 
-function summarizeSessionResult(result: SessionResult): string | undefined {
-  const content = [...result.messages]
-    .reverse()
-    .find((message) => message.role === 'assistant' && message.content.trim())?.content;
-  if (!content) {
-    return undefined;
-  }
-
-  const tableSummary = extractCompletionSummaryTable(content);
-  if (tableSummary) {
-    return tableSummary;
-  }
-
-  const normalized = content
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/[#*_>\-[\]]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!normalized) {
-    return undefined;
-  }
-
-  const maxLength = 3000;
-  const compacted = normalized.length <= maxLength
-    ? normalized
-    : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
-
-  return formatCompletionSummaryTable(compacted, result);
-}
-
 function summarizeFailureResult(result: SessionResult, fallback: string): string {
   const finalAssistantText = [...result.messages]
     .reverse()
@@ -912,48 +893,8 @@ function createBlockedSessionResult(reason: string): SessionResult {
   };
 }
 
-function extractCompletionSummaryTable(content: string): string | undefined {
-  const lines = content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean);
-  const start = lines.findIndex((line, index) => {
-    const next = lines[index + 1] ?? '';
-    return /^\|\s*(Item|椤圭洰)\s*\|\s*(Details|璇︽儏)\s*\|$/i.test(line) &&
-      /^\|\s*:?-{3,}:?\s*\|\s*:?-{3,}:?\s*\|$/.test(next);
-  });
-
-  if (start < 0) {
-    return undefined;
-  }
-
-  const tableLines = lines
-    .slice(start)
-    .filter((line) => line.startsWith('|') && line.endsWith('|'));
-  return tableLines.length >= 3 ? tableLines.join('\n') : undefined;
-}
-
-function escapeMarkdownTableCell(value: string): string {
-  return value
-    .replace(/\r?\n/g, '<br>')
-    .replace(/\|/g, '\\|')
-    .trim();
-}
-
-function formatCompletionSummaryTable(summary: string, result: SessionResult): string {
-  const verification = [
-    `Session outcome: ${result.outcome}`,
-    `Steps: ${result.stepsExecuted ?? 0}`,
-    `Tools: ${result.toolCallCount ?? 0}`,
-  ].join('. ');
-
-  return [
-    '| Item | Details |',
-    '| --- | --- |',
-    `| What changed | ${escapeMarkdownTableCell(summary)} |`,
-    `| Verification | ${escapeMarkdownTableCell(verification)} |`,
-    '| Review notes | Review changed files, runtime output, and git diff before approval. |',
-  ].join('\n');
+function isNonRetryableSessionResult(result: SessionResult): boolean {
+  return result.error?.retryable === false;
 }
 
 async function markSubtaskInProgress(

@@ -19,6 +19,7 @@ export interface IdeationAPI {
   generateIdeation: (projectId: string, config: IdeationConfig) => void;
   refreshIdeation: (projectId: string, config: IdeationConfig) => void;
   stopIdeation: (projectId: string) => Promise<IPCResult>;
+  isIdeationRunning: (projectId: string) => Promise<IPCResult<{ isRunning: boolean }>>;
   updateIdeaStatus: (projectId: string, ideaId: string, status: IdeationStatus) => Promise<IPCResult>;
   convertIdeaToTask: (projectId: string, ideaId: string) => Promise<IPCResult<Task>>;
   dismissIdea: (projectId: string, ideaId: string) => Promise<IPCResult>;
@@ -35,7 +36,7 @@ export interface IdeationAPI {
     callback: (projectId: string, log: string) => void
   ) => IpcListenerCleanup;
   onIdeationComplete: (
-    callback: (projectId: string, session: IdeationSession) => void
+    callback: (projectId: string, session: IdeationSession | null) => void
   ) => IpcListenerCleanup;
   onIdeationError: (
     callback: (projectId: string, error: string) => void
@@ -67,6 +68,9 @@ export const createIdeationAPI = (): IdeationAPI => ({
 
   stopIdeation: (projectId: string): Promise<IPCResult> =>
     invokeIpc(IPC_CHANNELS.IDEATION_STOP, projectId),
+
+  isIdeationRunning: (projectId: string): Promise<IPCResult<{ isRunning: boolean }>> =>
+    invokeIpc(IPC_CHANNELS.IDEATION_IS_RUNNING, projectId),
 
   updateIdeaStatus: (projectId: string, ideaId: string, status: IdeationStatus): Promise<IPCResult> =>
     invokeIpc(IPC_CHANNELS.IDEATION_UPDATE_IDEA, projectId, ideaId, status),
@@ -101,7 +105,7 @@ export const createIdeationAPI = (): IdeationAPI => ({
     createIpcListener(IPC_CHANNELS.IDEATION_LOG, callback),
 
   onIdeationComplete: (
-    callback: (projectId: string, session: IdeationSession) => void
+    callback: (projectId: string, session: IdeationSession | null) => void
   ): IpcListenerCleanup =>
     createIpcListener(IPC_CHANNELS.IDEATION_COMPLETE, callback),
 

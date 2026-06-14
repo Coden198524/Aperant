@@ -63,12 +63,14 @@ const browserMockAPI: ElectronAPI = {
     success: true
   }),
 
-  generateRoadmap: (_projectId: string, _enableCompetitorAnalysis?: boolean, _refreshCompetitorAnalysis?: boolean) => {
+  generateRoadmap: async (_projectId: string, _enableCompetitorAnalysis?: boolean, _refreshCompetitorAnalysis?: boolean) => {
     console.warn('[Browser Mock] generateRoadmap called');
+    return { success: true };
   },
 
-  refreshRoadmap: (_projectId: string, _enableCompetitorAnalysis?: boolean, _refreshCompetitorAnalysis?: boolean) => {
+  refreshRoadmap: async (_projectId: string, _enableCompetitorAnalysis?: boolean, _refreshCompetitorAnalysis?: boolean) => {
     console.warn('[Browser Mock] refreshRoadmap called');
+    return { success: true };
   },
 
   updateFeatureStatus: async () => ({ success: true }),

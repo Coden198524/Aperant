@@ -182,6 +182,7 @@ describe('getCalibrationFactor', () => {
         relatedModules: ['auth', 'token'],
         projectId: 'my-project',
         sort: 'recency',
+        promptContextOnly: true,
       }),
     );
   });

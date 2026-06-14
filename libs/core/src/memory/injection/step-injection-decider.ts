@@ -15,6 +15,9 @@ import type {
 } from '../types.js';
 import type { Scratchpad } from '../observer/scratchpad.js';
 import type { AcuteCandidate } from '../types.js';
+import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer.js';
+import { selectMemoryContextItems } from './context-selection.js';
+import { compactMemoryInjectionText } from './text-compaction.js';
 
 // ============================================================
 // TYPES
@@ -24,10 +27,17 @@ export type RecentToolCallContext = AutocodeMemoryRuntimeRecentToolCallContext;
 export type StepInjection = AutocodeMemoryRuntimeStepInjection;
 
 const MAX_GOTCHA_INJECTION_MEMORIES = 2;
+const GOTCHA_SEARCH_CANDIDATE_LIMIT = MAX_GOTCHA_INJECTION_MEMORIES * 3;
 const MAX_MEMORY_ALERT_CHARS = 260;
-const MAX_SCRATCHPAD_REFLECTIONS = 3;
-const MAX_SCRATCHPAD_TEXT_CHARS = 140;
+const MAX_MEMORY_ALERT_FILE_REFS = 3;
+const MAX_MEMORY_ALERT_FILE_REF_CHARS = 36;
+const MAX_SCRATCHPAD_REFLECTIONS = 2;
+const MAX_SCRATCHPAD_TEXT_CHARS = 120;
+const MIN_SCRATCHPAD_REFLECTION_PRIORITY = 0.75;
 const MAX_SHORT_CIRCUIT_CHARS = 260;
+const MAX_SHORT_CIRCUIT_PATTERN_CHARS = 120;
+const BROAD_SEARCH_PATTERN_CHARS = 3;
+const SCRATCHPAD_MEMORY_ID_PREFIX = 'scratchpad:';
 
 // ============================================================
 // STEP INJECTION DECIDER
@@ -44,7 +54,7 @@ export class StepInjectionDecider {
    * Evaluate the current step context and decide if a memory injection is warranted.
    * Returns null if no injection is needed, or a StepInjection if one should be made.
    *
-   * Enforces a 50ms soft budget — if exceeded, still returns the result.
+   * Enforces a 50ms soft budget; if exceeded, still returns the result.
    */
   async decide(
     stepNumber: number,
@@ -57,34 +67,46 @@ export class StepInjectionDecider {
       const recentReads = recentContext.toolCalls
         .filter((t) => t.toolName === 'Read' || t.toolName === 'Edit')
         .map((t) => t.args.file_path as string)
+        .map(normalizeAccessedFilePath)
         .filter(Boolean);
 
       if (recentReads.length > 0) {
         const freshGotchas = await this.memoryService.search({
           types: ['gotcha', 'error_pattern', 'dead_end'],
-          relatedFiles: [...new Set(recentReads)],
-          limit: MAX_GOTCHA_INJECTION_MEMORIES,
+          relatedFiles: uniqueInOrder(recentReads),
+          limit: GOTCHA_SEARCH_CANDIDATE_LIMIT,
           minConfidence: 0.65,
           projectId: this.projectId,
+          promptContextOnly: true,
           filter: (m) => !recentContext.injectedMemoryIds.has(m.id),
         });
 
-        if (freshGotchas.length > 0) {
+        const eligibleGotchas = selectMemoryContextItems(
+          freshGotchas.filter((memory) => !recentContext.injectedMemoryIds.has(memory.id)),
+          {
+            maxItems: MAX_GOTCHA_INJECTION_MEMORIES,
+            minConfidence: 0.65,
+          },
+        );
+        if (eligibleGotchas.length > 0) {
           return {
-            content: this.formatGotchas(freshGotchas),
+            content: this.formatGotchas(eligibleGotchas),
             type: 'gotcha_injection',
-            memoryIds: freshGotchas.map((m) => m.id),
+            memoryIds: eligibleGotchas.map((m) => m.id),
           };
         }
       }
 
       // Trigger 2: New scratchpad entry from agent's record_memory call
-      const newEntries = this.scratchpad.getNewSince(stepNumber - 1);
+      const newEntries = this.scratchpad
+        .getNewSince(stepNumber - 1)
+        .filter((entry) => shouldInjectScratchpadEntry(entry))
+        .filter((entry) => !recentContext.injectedMemoryIds.has(getScratchpadInjectionId(entry)));
       if (newEntries.length > 0) {
         return {
           content: this.formatScratchpadEntries(newEntries),
           type: 'scratchpad_reflection',
-          memoryIds: [],
+          memoryIds: newEntries.slice(0, MAX_SCRATCHPAD_REFLECTIONS).map(getScratchpadInjectionId),
         };
       }
 
@@ -92,13 +114,20 @@ export class StepInjectionDecider {
       const recentSearches = recentContext.toolCalls
         .filter((t) => t.toolName === 'Grep' || t.toolName === 'Glob')
         .slice(-3);
+      const seenSearchPatterns = new Set<string>();
 
       for (const search of recentSearches) {
-        const pattern = (search.args.pattern ?? search.args.glob ?? '') as string;
-        if (!pattern) continue;
+        const pattern = normalizeSearchPattern((search.args.pattern ?? search.args.glob ?? '') as string);
+        if (!isPreciseSearchPattern(pattern)) continue;
+        if (seenSearchPatterns.has(pattern)) continue;
+        seenSearchPatterns.add(pattern);
 
-        const known = await this.memoryService.searchByPattern(pattern);
-        if (known && !recentContext.injectedMemoryIds.has(known.id)) {
+        const known = await this.memoryService.searchByPattern(pattern, { projectId: this.projectId });
+        if (
+          known &&
+          isMemoryEligibleForPromptContext(known) &&
+          !recentContext.injectedMemoryIds.has(known.id)
+        ) {
           return {
             content: `MEMORY CONTEXT: ${truncateText(known.content, MAX_SHORT_CIRCUIT_CHARS)}`,
             type: 'search_short_circuit',
@@ -109,7 +138,7 @@ export class StepInjectionDecider {
 
       return null;
     } catch {
-      // Gracefully return null on any failure — never disrupt the agent loop
+      // Gracefully return null on any failure; never disrupt the agent loop.
       return null;
     } finally {
       const elapsed = Number(process.hrtime.bigint() - start) / 1_000_000;
@@ -126,15 +155,12 @@ export class StepInjectionDecider {
   private formatGotchas(memories: Memory[]): string {
     const bullets = memories
       .map((m) => {
-        const fileContext =
-          m.relatedFiles.length > 0
-            ? ` (${m.relatedFiles.map((f) => f.split('/').pop()).join(', ')})`
-            : '';
+        const fileContext = formatFileRefs(m.relatedFiles);
         return `- [${m.type}]${fileContext}: ${truncateText(m.content, MAX_MEMORY_ALERT_CHARS)}`;
       })
       .join('\n');
 
-    return `MEMORY ALERT — Gotchas for files you just accessed:\n${bullets}`;
+    return `MEMORY ALERT - Gotchas for files you just accessed:\n${bullets}`;
   }
 
   private formatScratchpadEntries(entries: AcuteCandidate[]): string {
@@ -150,14 +176,71 @@ export class StepInjectionDecider {
       })
       .join('\n');
 
-    return `MEMORY REFLECTION — New observations recorded this step:\n${lines}`;
+    return `MEMORY REFLECTION - New observations recorded this step:\n${lines}`;
   }
 }
 
-function truncateText(text: string, maxChars: number): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
-  if (compact.length <= maxChars) {
-    return compact;
+function shouldInjectScratchpadEntry(entry: AcuteCandidate): boolean {
+  return entry.priority >= MIN_SCRATCHPAD_REFLECTION_PRIORITY &&
+    ['self_correction', 'error_retry', 'backtrack', 'context_token_spike', 'parallel_conflict']
+      .includes(entry.signalType);
+}
+
+function getScratchpadInjectionId(entry: AcuteCandidate): string {
+  return `${SCRATCHPAD_MEMORY_ID_PREFIX}${entry.signalType}:${entry.stepNumber}:${entry.capturedAt}`;
+}
+
+function normalizeAccessedFilePath(filePath: string): string {
+  return filePath
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/')
+    .trim();
+}
+
+function normalizeSearchPattern(pattern: string): string {
+  return pattern.trim();
+}
+
+function isPreciseSearchPattern(pattern: string): boolean {
+  const normalized = normalizeSearchPattern(pattern);
+  if (normalized.length < BROAD_SEARCH_PATTERN_CHARS) {
+    return false;
   }
-  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
+  if (normalized.length > MAX_SHORT_CIRCUIT_PATTERN_CHARS) {
+    return false;
+  }
+  if (/^[*?{}\[\]./\\]+$/.test(normalized)) {
+    return false;
+  }
+  if (/[*?{}\[\]]/.test(normalized)) {
+    return false;
+  }
+  if (normalized === '.' || normalized === './' || normalized === '/' || normalized === '**') {
+    return false;
+  }
+  return true;
+}
+
+function formatFileRefs(files: readonly string[]): string {
+  if (files.length === 0) {
+    return '';
+  }
+
+  const visible = files
+    .slice(0, MAX_MEMORY_ALERT_FILE_REFS)
+    .map((file) => truncateText(file.split(/[\\/]/).pop() || file, MAX_MEMORY_ALERT_FILE_REF_CHARS));
+  const omitted = files.length - visible.length;
+  if (omitted > 0) {
+    visible.push(`+${omitted} more`);
+  }
+
+  return ` (${visible.join(', ')})`;
+}
+
+function truncateText(text: string, maxChars: number): string {
+  return compactMemoryInjectionText(text, maxChars);
+}
+
+function uniqueInOrder(values: readonly string[]): string[] {
+  return [...new Set(values)];
 }

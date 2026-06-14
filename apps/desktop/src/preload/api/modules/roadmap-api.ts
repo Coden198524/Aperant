@@ -8,7 +8,7 @@ import type {
   Task,
   IPCResult
 } from '../../../shared/types';
-import { createIpcListener, invokeIpc, sendIpc, IpcListenerCleanup } from './ipc-utils';
+import { createIpcListener, invokeIpc, IpcListenerCleanup } from './ipc-utils';
 
 /**
  * Roadmap API operations
@@ -18,8 +18,8 @@ export interface RoadmapAPI {
   getRoadmap: (projectId: string) => Promise<IPCResult<Roadmap | null>>;
   getRoadmapStatus: (projectId: string) => Promise<IPCResult<{ isRunning: boolean }>>;
   saveRoadmap: (projectId: string, roadmap: Roadmap) => Promise<IPCResult>;
-  generateRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => void;
-  refreshRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => void;
+  generateRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => Promise<IPCResult>;
+  refreshRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => Promise<IPCResult>;
   stopRoadmap: (projectId: string) => Promise<IPCResult>;
   updateFeatureStatus: (
     projectId: string,
@@ -68,11 +68,11 @@ export const createRoadmapAPI = (): RoadmapAPI => ({
   saveRoadmap: (projectId: string, roadmap: Roadmap): Promise<IPCResult> =>
     invokeIpc(IPC_CHANNELS.ROADMAP_SAVE, projectId, roadmap),
 
-  generateRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean): void =>
-    sendIpc(IPC_CHANNELS.ROADMAP_GENERATE, projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis),
+  generateRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean): Promise<IPCResult> =>
+    invokeIpc(IPC_CHANNELS.ROADMAP_GENERATE, projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis),
 
-  refreshRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean): void =>
-    sendIpc(IPC_CHANNELS.ROADMAP_REFRESH, projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis),
+  refreshRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean): Promise<IPCResult> =>
+    invokeIpc(IPC_CHANNELS.ROADMAP_REFRESH, projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis),
 
   stopRoadmap: (projectId: string): Promise<IPCResult> =>
     invokeIpc(IPC_CHANNELS.ROADMAP_STOP, projectId),

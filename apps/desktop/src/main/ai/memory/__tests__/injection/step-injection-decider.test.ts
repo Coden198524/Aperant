@@ -100,14 +100,25 @@ describe('StepInjectionDecider', () => {
       expect(memoryService.search).toHaveBeenCalledWith(
         expect.objectContaining({
           types: expect.arrayContaining(['gotcha', 'error_pattern', 'dead_end']),
+          promptContextOnly: true,
         }),
       );
     });
 
     it('limits gotcha search and truncates long injected content', async () => {
-      const longContent = 'Long gotcha content '.repeat(80);
+      const longContent = `Long gotcha content ${'detail '.repeat(80)}GOTCHA_TAIL_OK`;
       vi.mocked(memoryService.search).mockResolvedValueOnce([
-        makeMemory({ id: 'long-gotcha', content: longContent }),
+        makeMemory({
+          id: 'long-gotcha',
+          content: longContent,
+          relatedFiles: [
+            '/src/auth/refresh-token-service-with-a-very-long-name.ts',
+            '/src/auth/session-store-with-a-very-long-name.ts',
+            '/src/auth/route-guard-with-a-very-long-name.ts',
+            '/src/auth/legacy-token-migration.ts',
+            '/src/auth/oauth-callback.ts',
+          ],
+        }),
       ]);
 
       const result = await decider.decide(5, {
@@ -120,10 +131,81 @@ describe('StepInjectionDecider', () => {
 
       expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
         relatedFiles: ['/src/auth.ts'],
-        limit: 2,
+        limit: 6,
+        promptContextOnly: true,
       }));
+      expect(result?.content).toContain('+2 more');
+      expect(result?.content).not.toContain('refresh-token-service-with-a-very-long-name.ts');
       expect(result?.content.length).toBeLessThan(longContent.length);
-      expect(result?.content).toContain('...');
+      expect(result?.content).toContain('middle omitted');
+      expect(result?.content).toContain('GOTCHA_TAIL_OK');
+    });
+
+    it('normalizes and deduplicates read paths before gotcha search', async () => {
+      await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Read', args: { file_path: ' src\\auth\\token.ts ' } },
+          { toolName: 'Read', args: { file_path: 'src/auth//token.ts' } },
+          { toolName: 'Edit', args: { file_path: 'src/auth/token.ts' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
+        relatedFiles: ['src/auth/token.ts'],
+        promptContextOnly: true,
+      }));
+    });
+
+    it('filters low-quality gotchas returned by the memory service before injecting', async () => {
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({ id: 'low', content: 'Low confidence gotcha should not inject.', confidence: 0.2 }),
+        makeMemory({ id: 'review', content: 'Pending review gotcha should not inject.', needsReview: true }),
+        makeMemory({ id: 'stale', content: 'Stale gotcha should not inject.', staleAt: '2000-01-01T00:00:00.000Z' }),
+        makeMemory({ id: 'good', content: 'Trusted gotcha should inject.' }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('gotcha_injection');
+      expect(result?.memoryIds).toEqual(['good']);
+      expect(result?.content).toContain('Trusted gotcha should inject.');
+      expect(result?.content).not.toContain('Low confidence gotcha');
+      expect(result?.content).not.toContain('Pending review gotcha');
+      expect(result?.content).not.toContain('Stale gotcha');
+    });
+
+    it('deduplicates near-duplicate gotchas before using the two injection slots', async () => {
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({
+          id: 'duplicate-low',
+          content: 'When editing auth refresh flow, update token cache before notifying listeners and keep retry guard enabled.',
+          confidence: 0.76,
+        }),
+        makeMemory({
+          id: 'duplicate-high',
+          content: 'When editing auth refresh flow update token cache before notifying listener and keep retry guard enabled.',
+          confidence: 0.92,
+        }),
+        makeMemory({
+          id: 'distinct',
+          content: 'Mock the OAuth clock before testing refresh retries.',
+          confidence: 0.82,
+        }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.memoryIds).toEqual(['duplicate-high', 'distinct']);
+      expect(result?.content).toContain('Mock the OAuth clock');
+      expect(result?.content).toContain('notifying listener and keep');
+      expect(result?.content).not.toContain('notifying listeners and keep');
     });
 
     it('skips already-injected memory IDs', async () => {
@@ -183,8 +265,89 @@ describe('StepInjectionDecider', () => {
 
       expect(result).not.toBeNull();
       expect(result?.type).toBe('scratchpad_reflection');
-      expect(result?.memoryIds).toHaveLength(0);
+      expect(result?.memoryIds[0]).toMatch(/^scratchpad:self_correction:4:/);
       expect(result?.content).toContain('MEMORY REFLECTION');
+    });
+
+    it('limits and truncates scratchpad reflections before injecting them', async () => {
+      const longText = `Use the source template instead ${'because '.repeat(80)}SCRATCHPAD_TAIL_OK`;
+      const capturedAt = Date.now();
+      scratchpad = makeScratchpad([
+        {
+          signalType: 'self_correction',
+          rawData: { triggeringText: longText },
+          priority: 0.9,
+          capturedAt,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'error_retry',
+          rawData: { triggeringText: 'Retry failed because the generated file was overwritten.' },
+          priority: 0.9,
+          capturedAt: capturedAt + 1,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'backtrack',
+          rawData: { triggeringText: 'Third scratchpad entry should be omitted.' },
+          priority: 0.9,
+          capturedAt: capturedAt + 2,
+          stepNumber: 4,
+        },
+      ]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('scratchpad_reflection');
+      expect(result?.memoryIds).toHaveLength(2);
+      expect(result?.content).toContain('Use the source template instead');
+      expect(result?.content).toContain('Retry failed');
+      expect(result?.content).not.toContain('Third scratchpad entry');
+      expect(result?.content).toContain('SCRATCHPAD_TAIL_OK');
+      expect(result?.content).toContain('middle omitted');
+    });
+
+    it('skips low-priority scratchpad entries to avoid noisy injections', async () => {
+      const newEntry: AcuteCandidate = {
+        signalType: 'config_touch',
+        rawData: { triggeringText: 'Touched a common config file' },
+        priority: 0.5,
+        capturedAt: Date.now(),
+        stepNumber: 4,
+      };
+      scratchpad = makeScratchpad([newEntry]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+    });
+
+    it('does not inject the same scratchpad entry twice', async () => {
+      const capturedAt = Date.now();
+      const newEntry: AcuteCandidate = {
+        signalType: 'self_correction',
+        rawData: { triggeringText: 'Actually the method is called differently' },
+        priority: 0.9,
+        capturedAt,
+        stepNumber: 4,
+      };
+      scratchpad = makeScratchpad([newEntry]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set([`scratchpad:self_correction:4:${capturedAt}`]),
+      });
+
+      expect(result).toBeNull();
     });
 
     it('passes stepNumber - 1 to getNewSince', async () => {
@@ -225,9 +388,27 @@ describe('StepInjectionDecider', () => {
       expect(result?.type).toBe('search_short_circuit');
       expect(result?.memoryIds).toContain('grep-match');
       expect(result?.content).toContain('MEMORY CONTEXT');
+      expect(memoryService.searchByPattern).toHaveBeenCalledWith('useCallback', { projectId: 'proj-1' });
     });
 
-    it('returns search_short_circuit when Glob pattern matches', async () => {
+    it('preserves the tail when compacting search short-circuit memories', async () => {
+      const known = makeMemory({
+        id: 'grep-match',
+        content: `Use the callback-specific fixture ${'search detail '.repeat(80)}SHORT_CIRCUIT_TAIL_OK`,
+      });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'useCallback' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('search_short_circuit');
+      expect(result?.content).toContain('middle omitted');
+      expect(result?.content).toContain('SHORT_CIRCUIT_TAIL_OK');
+    });
+
+    it('skips broad Glob patterns for search_short_circuit', async () => {
       const known = makeMemory({ id: 'glob-match' });
       vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
 
@@ -236,7 +417,8 @@ describe('StepInjectionDecider', () => {
         injectedMemoryIds: new Set(),
       });
 
-      expect(result?.type).toBe('search_short_circuit');
+      expect(result).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
     });
 
     it('skips search_short_circuit if memory is already injected', async () => {
@@ -260,6 +442,32 @@ describe('StepInjectionDecider', () => {
       expect(memoryService.searchByPattern).not.toHaveBeenCalled();
     });
 
+    it('skips overly long Grep patterns to avoid noisy memory lookups', async () => {
+      await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'specific '.repeat(40) } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+    });
+
+    it('does not short-circuit with low-quality pattern matches', async () => {
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(
+        makeMemory({
+          id: 'low-quality-match',
+          content: 'Low confidence pattern match should not inject.',
+          confidence: 0.2,
+        }),
+      );
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'useCallback' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+    });
+
     it('only checks last 3 Grep/Glob calls', async () => {
       vi.mocked(memoryService.searchByPattern).mockResolvedValue(null);
 
@@ -276,6 +484,29 @@ describe('StepInjectionDecider', () => {
 
       // Should only check the last 3: pat3, pat4, pat5
       expect(memoryService.searchByPattern).toHaveBeenCalledTimes(3);
+      expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
+        ['pat3', { projectId: 'proj-1' }],
+        ['pat4', { projectId: 'proj-1' }],
+        ['pat5', { projectId: 'proj-1' }],
+      ]);
+    });
+
+    it('deduplicates repeated recent Grep and Glob patterns before memory lookup', async () => {
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(null);
+
+      await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: 'useCallback' } },
+          { toolName: 'Grep', args: { pattern: ' useCallback ' } },
+          { toolName: 'Glob', args: { glob: 'auth-refresh' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
+        ['useCallback', { projectId: 'proj-1' }],
+        ['auth-refresh', { projectId: 'proj-1' }],
+      ]);
     });
   });
 

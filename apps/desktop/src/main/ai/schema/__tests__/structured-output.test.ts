@@ -176,6 +176,23 @@ describe('buildValidationRetryPrompt', () => {
     expect(prompt).toContain('"id"');
     expect(prompt).toContain('not a plain string');
   });
+
+  it('keeps retry prompts compact for verbose errors and schema hints', () => {
+    const prompt = buildValidationRetryPrompt(
+      'plan.json',
+      Array.from(
+        { length: 12 },
+        (_, index) => `error ${index}: ${'nested validation details '.repeat(30)}`,
+      ),
+      `{ "schema": "${'large schema hint '.repeat(220)}" }`,
+    );
+
+    expect(prompt).toContain('... 4 more error(s) omitted');
+    expect(prompt).toContain('truncated');
+    expect(prompt).not.toContain('error 11');
+    expect(prompt).toContain('Rewrite corrected JSON');
+    expect(prompt.length).toBeLessThan(5_000);
+  });
 });
 
 describe('end-to-end: validation 鈫?retry 鈫?self-correction', () => {

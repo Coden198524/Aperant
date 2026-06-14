@@ -203,6 +203,90 @@ describe('MemoryServiceImpl', () => {
       expect(memoriesArgs).toContain(JSON.stringify(['a.ts', 'b.ts']));
     });
 
+    it('normalizes relatedFiles before storage, FTS indexing, and embedding', async () => {
+      await service.store({
+        type: 'gotcha',
+        content: 'Normalize related file paths once at the storage boundary',
+        projectId: 'proj-001',
+        relatedFiles: [
+          ' src\\auth\\token.ts ',
+          './src/auth//token.ts',
+          'src/auth/session.ts/',
+          '',
+        ],
+      });
+
+      const batchArgs = mockBatch.mock.calls[0][0];
+      const memoriesArgs = batchArgs[0].args;
+      const ftsArgs = batchArgs[1].args;
+      const storedRelatedFiles = JSON.parse(memoriesArgs[5] as string) as string[];
+      const embeddingText = mockEmbed.mock.calls[0][0] as string;
+
+      expect(storedRelatedFiles).toEqual(['src/auth/token.ts', 'src/auth/session.ts']);
+      expect(ftsArgs[3]).toBe('src/auth/token.ts src/auth/session.ts');
+      expect(embeddingText).toContain('Files: src/auth/token.ts, src/auth/session.ts');
+    });
+
+    it('compacts oversized memory content and metadata before storage and embedding', async () => {
+      const longContent = `MEMORY_HEAD\n${'verbose implementation detail\n'.repeat(120)}MEMORY_TAIL`;
+      const longCitation = `CITATION_HEAD ${'citation detail '.repeat(120)} CITATION_TAIL`;
+      const longContextPrefix = `PREFIX_HEAD ${'context detail '.repeat(80)} PREFIX_TAIL`;
+
+      await service.store({
+        type: 'gotcha',
+        content: longContent,
+        projectId: 'proj-001',
+        tags: [
+          'auth',
+          'auth',
+          ...Array.from({ length: 30 }, (_, index) => `tag-${index}-${'x'.repeat(80)}`),
+        ],
+        relatedFiles: Array.from(
+          { length: 30 },
+          (_, index) => `src/very/deep/path/${index}/${'file-name-segment-'.repeat(20)}tail-${index}.ts`,
+        ),
+        relatedModules: Array.from(
+          { length: 20 },
+          (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
+        ),
+        citationText: longCitation,
+        contextPrefix: longContextPrefix,
+      });
+
+      const batchArgs = mockBatch.mock.calls[0][0];
+      const memoriesArgs = batchArgs[0].args;
+      const ftsArgs = batchArgs[1].args;
+      const storedContent = memoriesArgs[2] as string;
+      const storedTags = JSON.parse(memoriesArgs[4] as string) as string[];
+      const storedRelatedFiles = JSON.parse(memoriesArgs[5] as string) as string[];
+      const storedRelatedModules = JSON.parse(memoriesArgs[6] as string) as string[];
+      const storedCitation = memoriesArgs[19] as string;
+      const storedContextPrefix = memoriesArgs[23] as string;
+      const embeddingText = mockEmbed.mock.calls[0][0] as string;
+
+      expect(storedContent.length).toBeLessThanOrEqual(2000);
+      expect(storedContent).toContain('MEMORY_HEAD');
+      expect(storedContent).toContain('MEMORY_TAIL');
+      expect(storedContent).toContain('memory middle omitted before storage');
+      expect(ftsArgs[1]).toBe(storedContent);
+      expect(embeddingText).toContain(storedContent);
+      expect(embeddingText).not.toContain('verbose implementation detail\n'.repeat(120));
+
+      expect(storedTags).toHaveLength(20);
+      expect(new Set(storedTags).size).toBe(storedTags.length);
+      expect(storedTags.every((tag) => tag.length <= 64)).toBe(true);
+      expect(storedRelatedFiles).toHaveLength(24);
+      expect(storedRelatedFiles.every((file) => file.length <= 220)).toBe(true);
+      expect(storedRelatedModules).toHaveLength(16);
+      expect(storedRelatedModules.every((module) => module.length <= 96)).toBe(true);
+      expect(storedCitation.length).toBeLessThanOrEqual(1000);
+      expect(storedCitation).toContain('CITATION_HEAD');
+      expect(storedCitation).toContain('CITATION_TAIL');
+      expect(storedContextPrefix.length).toBeLessThanOrEqual(600);
+      expect(storedContextPrefix).toContain('PREFIX_HEAD');
+      expect(storedContextPrefix).toContain('PREFIX_TAIL');
+    });
+
     it('reuses an exact active duplicate without embedding or inserting again', async () => {
       mockExecute
         .mockResolvedValueOnce({ rows: [{ id: 'existing-memory-id' }] })
@@ -306,6 +390,83 @@ describe('MemoryServiceImpl', () => {
       expect(results[0].id).toBe('active');
     });
 
+    it('filters query results to prompt-eligible memories when requested', async () => {
+      const trusted = makeMemoryResult({ id: 'trusted', content: 'Trusted memory should remain.' });
+      const lowConfidence = makeMemoryResult({
+        id: 'low-confidence',
+        content: 'Low confidence memory should be omitted.',
+        confidence: 0.2,
+      });
+      const pendingReview = makeMemoryResult({
+        id: 'pending-review',
+        content: 'Pending review memory should be omitted.',
+        needsReview: true,
+      });
+      const stale = makeMemoryResult({
+        id: 'stale',
+        content: 'Stale memory should be omitted.',
+        staleAt: '2000-01-01T00:00:00.000Z',
+      });
+      const verified = makeMemoryResult({
+        id: 'verified',
+        content: 'Verified memory should remain.',
+        confidence: 0.2,
+        needsReview: true,
+        userVerified: true,
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [trusted, lowConfidence, pendingReview, stale, verified],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'auth memory',
+        projectId: 'proj-001',
+        promptContextOnly: true,
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['trusted', 'verified']);
+    });
+
+    it('fetches extra query candidates for prompt-context searches before applying the final limit', async () => {
+      const lowConfidence = makeMemoryResult({
+        id: 'low-confidence',
+        content: 'Low confidence memory should be skipped before limiting.',
+        confidence: 0.2,
+      });
+      const pendingReview = makeMemoryResult({
+        id: 'pending-review',
+        content: 'Pending review memory should be skipped before limiting.',
+        needsReview: true,
+      });
+      const trusted = makeMemoryResult({ id: 'trusted', content: 'Trusted memory should remain.' });
+      const verified = makeMemoryResult({
+        id: 'verified',
+        content: 'Verified memory should remain.',
+        confidence: 0.2,
+        needsReview: true,
+        userVerified: true,
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [lowConfidence, pendingReview, trusted, verified],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'auth memory',
+        projectId: 'proj-001',
+        limit: 2,
+        promptContextOnly: true,
+      });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('auth memory', {
+        phase: 'explore',
+        projectId: 'proj-001',
+        maxResults: 10,
+      });
+      expect(results.map((memory) => memory.id)).toEqual(['trusted', 'verified']);
+    });
+
     it('applies custom filter callback', async () => {
       const mem1 = makeMemoryResult({ id: 'mem1', type: 'gotcha' });
       const mem2 = makeMemoryResult({ id: 'mem2', type: 'decision' });
@@ -357,6 +518,77 @@ describe('MemoryServiceImpl', () => {
       });
 
       expect(results.map((memory) => memory.id)).toEqual(['matching']);
+    });
+
+    it('matches query related-file filters across absolute and relative path variants', async () => {
+      const matching = makeMemoryResult({
+        id: 'matching',
+        type: 'gotcha',
+        relatedFiles: ['src/auth/token.ts'],
+      });
+      const wrongFile = makeMemoryResult({
+        id: 'wrong-file',
+        type: 'gotcha',
+        relatedFiles: ['src/auth/session.ts'],
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [wrongFile, matching],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'token gotcha',
+        projectId: 'proj-001',
+        relatedFiles: ['E:\\Work\\Project\\src\\auth\\token.ts'],
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['matching']);
+    });
+
+    it('fetches extra query candidates before applying structural filters and final limit', async () => {
+      const wrongType = makeMemoryResult({
+        id: 'wrong-type',
+        type: 'decision',
+        relatedFiles: ['src/auth/token.ts'],
+        relatedModules: ['auth'],
+      });
+      const wrongModule = makeMemoryResult({
+        id: 'wrong-module',
+        type: 'gotcha',
+        relatedFiles: ['src/billing.ts'],
+        relatedModules: ['billing'],
+      });
+      const matchingOne = makeMemoryResult({
+        id: 'matching-one',
+        type: 'gotcha',
+        relatedFiles: ['src/auth/token.ts'],
+        relatedModules: ['auth'],
+      });
+      const matchingTwo = makeMemoryResult({
+        id: 'matching-two',
+        type: 'gotcha',
+        relatedFiles: ['src/auth/session.ts'],
+        relatedModules: ['auth'],
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [wrongType, wrongModule, matchingOne, matchingTwo],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'token gotcha',
+        projectId: 'proj-001',
+        types: ['gotcha'],
+        relatedModules: ['auth'],
+        limit: 2,
+      });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('token gotcha', {
+        phase: 'explore',
+        projectId: 'proj-001',
+        maxResults: 10,
+      });
+      expect(results.map((memory) => memory.id)).toEqual(['matching-one', 'matching-two']);
     });
   });
 
@@ -426,6 +658,115 @@ describe('MemoryServiceImpl', () => {
       expect(sql).toContain('confidence DESC');
     });
 
+    it('filters direct-search results to prompt-eligible memories when requested', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({ id: 'trusted', content: 'Trusted memory should remain.' }),
+          makeMemoryRow({
+            id: 'low-confidence',
+            content: 'Low confidence memory should be omitted.',
+            confidence: 0.2,
+          }),
+          makeMemoryRow({
+            id: 'pending-review',
+            content: 'Pending review memory should be omitted.',
+            needs_review: 1,
+          }),
+          makeMemoryRow({
+            id: 'stale',
+            content: 'Stale memory should be omitted.',
+            stale_at: '2000-01-01T00:00:00.000Z',
+          }),
+          makeMemoryRow({
+            id: 'verified',
+            content: 'Verified memory should remain.',
+            confidence: 0.2,
+            needs_review: 1,
+            user_verified: 1,
+          }),
+        ],
+      });
+
+      const results = await service.search({
+        projectId: 'proj-001',
+        promptContextOnly: true,
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['trusted', 'verified']);
+    });
+
+    it('fetches extra direct-search candidates for prompt-context searches before applying the final limit', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'low-confidence',
+            content: 'Low confidence memory should be skipped before limiting.',
+            confidence: 0.2,
+          }),
+          makeMemoryRow({
+            id: 'pending-review',
+            content: 'Pending review memory should be skipped before limiting.',
+            needs_review: 1,
+          }),
+          makeMemoryRow({ id: 'trusted', content: 'Trusted memory should remain.' }),
+          makeMemoryRow({
+            id: 'verified',
+            content: 'Verified memory should remain.',
+            confidence: 0.2,
+            needs_review: 1,
+            user_verified: 1,
+          }),
+        ],
+      });
+
+      const results = await service.search({
+        projectId: 'proj-001',
+        limit: 2,
+        promptContextOnly: true,
+      });
+
+      const directSearchArgs = mockExecute.mock.calls[0][0].args as unknown[];
+      expect(directSearchArgs[directSearchArgs.length - 1]).toBe(10);
+      expect(results.map((memory) => memory.id)).toEqual(['trusted', 'verified']);
+    });
+
+    it('fetches extra direct-search candidates before applying related-file filters and final limit', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({ id: 'wrong-file-1', related_files: '["src/other-a.ts"]' }),
+          makeMemoryRow({ id: 'wrong-file-2', related_files: '["src/other-b.ts"]' }),
+          makeMemoryRow({ id: 'matching-one', related_files: '["src/auth/token.ts"]' }),
+          makeMemoryRow({ id: 'matching-two', related_files: '["src/auth/token.ts"]' }),
+        ],
+      });
+
+      const results = await service.search({
+        projectId: 'proj-001',
+        relatedFiles: ['src/auth/token.ts'],
+        limit: 2,
+      });
+
+      const directSearchArgs = mockExecute.mock.calls[0][0].args as unknown[];
+      expect(directSearchArgs[directSearchArgs.length - 1]).toBe(10);
+      expect(results.map((memory) => memory.id)).toEqual(['matching-one', 'matching-two']);
+    });
+
+    it('matches direct related-file filters across absolute and relative path variants', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({ id: 'matching', related_files: '["E:\\\\Work\\\\Project\\\\src\\\\auth\\\\token.ts"]' }),
+          makeMemoryRow({ id: 'wrong-file', related_files: '["src/auth/session.ts"]' }),
+        ],
+      });
+
+      const results = await service.search({
+        projectId: 'proj-001',
+        relatedFiles: ['./src/auth/token.ts'],
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['matching']);
+    });
+
     it('returns empty array if db fails', async () => {
       mockExecute.mockRejectedValueOnce(new Error('DB down'));
 
@@ -461,6 +802,20 @@ describe('MemoryServiceImpl', () => {
 
       expect(result).not.toBeNull();
       expect(result?.id).toBe('mem-001');
+      const bm25Args = mockExecute.mock.calls[0][0].args as unknown[];
+      expect(bm25Args[bm25Args.length - 1]).toBe(6);
+    });
+
+    it('passes projectId to BM25 pattern search when provided', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [{ id: 'mem-001', bm25_score: -1.5 }],
+      });
+      mockExecute.mockResolvedValueOnce({ rows: [makeMemoryRow()] });
+
+      await service.searchByPattern('typescript testing', { projectId: 'project-patterns' });
+
+      const bm25Args = mockExecute.mock.calls[0][0].args as unknown[];
+      expect(bm25Args).toEqual(['typescript testing', 'project-patterns', 6]);
     });
 
     it('returns null if the fetched memory is deprecated', async () => {
@@ -473,6 +828,52 @@ describe('MemoryServiceImpl', () => {
       const result = await service.searchByPattern('test');
 
       expect(result).toBeNull();
+    });
+
+    it('returns null for memories that are not eligible for prompt context', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [{ id: 'mem-001', bm25_score: -1.5 }],
+      });
+      mockExecute.mockResolvedValueOnce({
+        rows: [makeMemoryRow({
+          confidence: 0.2,
+          content: 'Low confidence pattern should not be injected.',
+        })],
+      });
+
+      const result = await service.searchByPattern('low confidence pattern');
+
+      expect(result).toBeNull();
+    });
+
+    it('falls through to the next BM25 candidate when the top match is not prompt-eligible', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          { id: 'low-confidence', bm25_score: -2.0 },
+          { id: 'trusted', bm25_score: -1.7 },
+        ],
+      });
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'trusted',
+            content: 'Trusted pattern should be injected.',
+            confidence: 0.9,
+          }),
+          makeMemoryRow({
+            id: 'low-confidence',
+            content: 'Low confidence pattern should not be injected.',
+            confidence: 0.2,
+          }),
+        ],
+      });
+
+      const result = await service.searchByPattern('auth pattern');
+
+      expect(result?.id).toBe('trusted');
+      expect(result?.content).toBe('Trusted pattern should be injected.');
+      const fetchArgs = mockExecute.mock.calls[1][0].args as unknown[];
+      expect(fetchArgs).toEqual(['low-confidence', 'trusted']);
     });
   });
 
@@ -535,6 +936,91 @@ describe('MemoryServiceImpl', () => {
       const results = await service.searchWorkflowRecipe('task', { limit: 3 });
 
       expect(results).toHaveLength(3);
+    });
+
+    it('passes projectId to workflow recipe retrieval', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [],
+        formattedContext: '',
+      });
+
+      await service.searchWorkflowRecipe('task', { limit: 2, projectId: 'proj-recipes' });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('task', {
+        phase: 'implement',
+        projectId: 'proj-recipes',
+        maxResults: 10,
+      });
+    });
+
+    it('fetches extra workflow candidates before applying type and prompt-context filters', async () => {
+      const nonRecipe = makeMemoryResult({ id: 'not-recipe', type: 'gotcha' });
+      const lowConfidenceRecipe = makeMemoryResult({
+        id: 'recipe-low',
+        type: 'workflow_recipe',
+        content: 'Low confidence recipe should not be used.',
+        confidence: 0.2,
+      });
+      const trustedRecipe = makeMemoryResult({
+        id: 'recipe-trusted',
+        type: 'workflow_recipe',
+        content: 'Trusted recipe should be used.',
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [nonRecipe, lowConfidenceRecipe, trustedRecipe],
+        formattedContext: '',
+      });
+
+      const results = await service.searchWorkflowRecipe('task', { limit: 1, projectId: 'proj-recipes' });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('task', {
+        phase: 'implement',
+        projectId: 'proj-recipes',
+        maxResults: 9,
+      });
+      expect(results.map((memory) => memory.id)).toEqual(['recipe-trusted']);
+    });
+
+    it('filters workflow recipes that are not eligible for prompt context', async () => {
+      const good = makeMemoryResult({
+        id: 'recipe-good',
+        type: 'workflow_recipe',
+        content: 'Trusted recipe should remain.',
+      });
+      const lowConfidence = makeMemoryResult({
+        id: 'recipe-low',
+        type: 'workflow_recipe',
+        content: 'Low confidence recipe should not be used.',
+        confidence: 0.2,
+      });
+      const pendingReview = makeMemoryResult({
+        id: 'recipe-review',
+        type: 'workflow_recipe',
+        content: 'Pending review recipe should not be used.',
+        needsReview: true,
+      });
+      const stale = makeMemoryResult({
+        id: 'recipe-stale',
+        type: 'workflow_recipe',
+        content: 'Stale recipe should not be used.',
+        staleAt: '2000-01-01T00:00:00.000Z',
+      });
+      const verified = makeMemoryResult({
+        id: 'recipe-verified',
+        type: 'workflow_recipe',
+        content: 'Verified recipe should remain.',
+        confidence: 0.2,
+        needsReview: true,
+        userVerified: true,
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [good, lowConfidence, pendingReview, stale, verified],
+        formattedContext: '',
+      });
+
+      const results = await service.searchWorkflowRecipe('task', { limit: 5 });
+
+      expect(results.map((memory) => memory.id)).toEqual(['recipe-good', 'recipe-verified']);
     });
 
     it('returns empty array on pipeline failure', async () => {

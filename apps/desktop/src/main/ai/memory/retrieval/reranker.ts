@@ -12,6 +12,8 @@
 const OLLAMA_BASE_URL = 'http://localhost:11434';
 const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 const QWEN3_RERANKER_MODEL = 'qwen3-reranker:0.6b';
+const MAX_RERANK_QUERY_CHARS = 300;
+const MAX_RERANK_DOCUMENT_CHARS = 1200;
 
 export type RerankerProvider = 'ollama' | 'cohere' | 'none';
 
@@ -82,20 +84,26 @@ export class Reranker {
     candidates: RerankerCandidate[],
     topK: number = 8,
   ): Promise<RerankerResult[]> {
-    if (this.provider === 'none' || candidates.length <= topK) {
+    const boundedTopK = Math.max(0, topK);
+    if (boundedTopK === 0 || candidates.length === 0) {
+      return [];
+    }
+    if (this.provider === 'none' || candidates.length <= boundedTopK) {
       return candidates
-        .slice(0, topK)
+        .slice(0, boundedTopK)
         .map((c, i) => ({
           memoryId: c.memoryId,
           score: 1 - i / Math.max(candidates.length, 1),
         }));
     }
 
+    const compactQuery = compactRerankerText(query, MAX_RERANK_QUERY_CHARS, { preserveTail: true });
+    const compactCandidates = compactRerankerCandidates(candidates);
     if (this.provider === 'ollama') {
-      return this.rerankOllama(query, candidates, topK);
+      return this.rerankOllama(compactQuery, compactCandidates, boundedTopK);
     }
 
-    return this.rerankCohere(query, candidates, topK);
+    return this.rerankCohere(compactQuery, compactCandidates, boundedTopK);
   }
 
   // ============================================================
@@ -227,6 +235,13 @@ export class Reranker {
 // PROMPT HELPERS
 // ============================================================
 
+function compactRerankerCandidates(candidates: RerankerCandidate[]): RerankerCandidate[] {
+  return candidates.map((candidate) => ({
+    ...candidate,
+    content: compactRerankerText(candidate.content, MAX_RERANK_DOCUMENT_CHARS, { preserveTail: true }),
+  }));
+}
+
 function buildQwen3RerankerPrompt(query: string, document: string): string {
   return [
     '<|im_start|>system',
@@ -239,4 +254,27 @@ function buildQwen3RerankerPrompt(query: string, document: string): string {
     '<|im_start|>assistant',
     '<think>',
   ].join('\n');
+}
+
+function compactRerankerText(
+  text: string,
+  maxChars: number,
+  options: { preserveTail?: boolean } = {},
+): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  if (!options.preserveTail) {
+    return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+
+  const marker = ' ... [middle omitted] ... ';
+  if (maxChars <= marker.length + 24) {
+    return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+  const budget = maxChars - marker.length;
+  const headBudget = Math.ceil(budget * 0.62);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return `${compact.slice(0, headBudget).trimEnd()}${marker}${compact.slice(-tailBudget).trimStart()}`;
 }

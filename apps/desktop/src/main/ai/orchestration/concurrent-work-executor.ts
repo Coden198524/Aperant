@@ -36,6 +36,7 @@ import {
   loadGeneratedFilesForCritique,
   type ChangedFileSnapshot,
 } from './changed-files';
+import { summarizeSessionCompletion } from './completion-summary';
 import type { CritiqueResult } from './self-critique';
 import type { IncrementalValidationResult } from './incremental-validation';
 import {
@@ -459,7 +460,7 @@ async function executeWorkItemWithRetries(
 
     if (effectiveSessionResult.outcome === 'completed') {
       await planWriter(() => updateWorkItemStatuses(config, [
-        { id: item.id, summary: summarizeSessionResult(effectiveSessionResult) },
+        { id: item.id, summary: summarizeSessionCompletion(effectiveSessionResult) },
       ], 'completed', runtime));
       await learnFromCompletedWorkItem(config, item, effectiveSessionResult);
       return {
@@ -477,6 +478,11 @@ async function executeWorkItemWithRetries(
         blocked: [],
         sessionResult: { outcome: 'cancelled' } as SessionResult,
       };
+    }
+
+    if (isNonRetryableSessionResult(effectiveSessionResult)) {
+      log(`[ConcurrentWorkExecutor] Not retrying ${item.id}: ${effectiveSessionResult.error?.message ?? effectiveSessionResult.outcome}`);
+      break;
     }
 
     if (attempt < config.maxRetries) {
@@ -687,6 +693,10 @@ function createCancelledSessionResult(durationMs = 0): SessionResult {
     durationMs,
     toolCallCount: 0,
   };
+}
+
+function isNonRetryableSessionResult(result: SessionResult): boolean {
+  return result.error?.retryable === false;
 }
 
 async function collectChangedFileBaseline(projectDir: string): Promise<ChangedFileSnapshot> {
@@ -1305,33 +1315,6 @@ function summarizeWorkItemResults(results: WorkItemResult[]): WorkItemResult {
   return summarizeAutocodeWorkItemResults(results, { outcome: 'completed' } as SessionResult);
 }
 
-function summarizeSessionResult(result: SessionResult): string | undefined {
-  const content = [...(result.messages ?? [])]
-    .reverse()
-    .find((message) => message.role === 'assistant' && message.content.trim())?.content;
-  if (!content) {
-    return undefined;
-  }
-
-  const normalized = content
-    .replace(/```[\s\S]*?```/g, ' ')
-    .replace(/`([^`]+)`/g, '$1')
-    .replace(/[#*_>\-[\]]/g, ' ')
-    .replace(/\s+/g, ' ')
-    .trim();
-
-  if (!normalized) {
-    return undefined;
-  }
-
-  const maxLength = 3000;
-  const compacted = normalized.length <= maxLength
-    ? normalized
-    : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
-
-  return formatCompletionSummaryTable(compacted, result);
-}
-
 function summarizeFailureResult(result: SessionResult): string {
   const reason = result.error?.message
     ?? `Session ended with outcome: ${result.outcome}`;
@@ -1355,22 +1338,6 @@ function escapeMarkdownTableCell(value: string): string {
     .replace(/\r?\n/g, '<br>')
     .replace(/\|/g, '\\|')
     .trim();
-}
-
-function formatCompletionSummaryTable(summary: string, result: SessionResult): string {
-  const verification = [
-    `Session outcome: ${result.outcome}`,
-    `Steps: ${result.stepsExecuted ?? 0}`,
-    `Tools: ${result.toolCallCount ?? 0}`,
-  ].join('. ');
-
-  return [
-    '| Item | Details |',
-    '| --- | --- |',
-    `| What changed | ${escapeMarkdownTableCell(summary)} |`,
-    `| Verification | ${escapeMarkdownTableCell(verification)} |`,
-    '| Review notes | Review changed files, runtime output, and git diff before approval. |',
-  ].join('\n');
 }
 
 function stringifyVerification(value: unknown): string | undefined {

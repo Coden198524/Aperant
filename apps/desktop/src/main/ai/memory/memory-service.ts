@@ -20,7 +20,25 @@ import type {
 import type { EmbeddingService } from './embedding-service';
 import { buildMemoryContextualText } from './embedding-service';
 import { searchBM25 } from './retrieval/bm25-search';
+import { isMemoryEligibleForPromptContext } from './retrieval/context-packer';
 import type { RetrievalPipeline } from './retrieval/pipeline';
+
+const MEMORY_STORE_CONTENT_MAX_CHARS = 2_000;
+const MEMORY_STORE_CITATION_TEXT_MAX_CHARS = 1_000;
+const MEMORY_STORE_CONTEXT_PREFIX_MAX_CHARS = 600;
+const MEMORY_STORE_TAG_LIMIT = 20;
+const MEMORY_STORE_TAG_MAX_CHARS = 64;
+const MEMORY_STORE_RELATED_FILE_LIMIT = 24;
+const MEMORY_STORE_RELATED_FILE_MAX_CHARS = 220;
+const MEMORY_STORE_RELATED_MODULE_LIMIT = 16;
+const MEMORY_STORE_RELATED_MODULE_MAX_CHARS = 96;
+const MEMORY_STORE_OMISSION_MARKER = ' ... [memory middle omitted before storage] ... ';
+const DEFAULT_QUERY_SEARCH_RESULT_LIMIT = 8;
+const DEFAULT_DIRECT_SEARCH_RESULT_LIMIT = 50;
+const FILTERED_SEARCH_CANDIDATE_MULTIPLIER = 4;
+const FILTERED_SEARCH_CANDIDATE_EXTRA = 8;
+const FILTERED_SEARCH_CANDIDATE_CAP = 50;
+const PATTERN_SEARCH_CANDIDATE_LIMIT = 6;
 
 // ============================================================
 // ROW MAPPING HELPER
@@ -79,6 +97,61 @@ function rowToMemory(row: Record<string, unknown>): Memory {
   };
 }
 
+function getMemorySearchResultLimit(filters: MemorySearchFilters): number {
+  return Math.max(
+    0,
+    filters.limit ?? (filters.query ? DEFAULT_QUERY_SEARCH_RESULT_LIMIT : DEFAULT_DIRECT_SEARCH_RESULT_LIMIT),
+  );
+}
+
+function getMemorySearchCandidateLimit(filters: MemorySearchFilters): number {
+  const resultLimit = getMemorySearchResultLimit(filters);
+  if (!shouldExpandMemorySearchCandidates(filters) || resultLimit <= 0) {
+    return resultLimit;
+  }
+
+  const expandedLimit = Math.max(
+    resultLimit * FILTERED_SEARCH_CANDIDATE_MULTIPLIER,
+    resultLimit + FILTERED_SEARCH_CANDIDATE_EXTRA,
+  );
+  const cap = Math.max(resultLimit, FILTERED_SEARCH_CANDIDATE_CAP);
+  return Math.min(expandedLimit, cap);
+}
+
+function shouldExpandMemorySearchCandidates(filters: MemorySearchFilters): boolean {
+  if (filters.promptContextOnly || filters.filter) {
+    return true;
+  }
+
+  if (filters.query) {
+    return Boolean(
+      filters.types?.length ||
+      filters.sources?.length ||
+      filters.scope ||
+      filters.relatedFiles?.length ||
+      filters.relatedModules?.length ||
+      filters.minConfidence !== undefined ||
+      filters.excludeDeprecated,
+    );
+  }
+
+  return Boolean(filters.relatedFiles?.length || filters.relatedModules?.length);
+}
+
+function getWorkflowRecipeSearchCandidateLimit(limit: number): number {
+  const safeLimit = Math.max(0, limit);
+  if (safeLimit <= 0) {
+    return 0;
+  }
+  return Math.min(
+    Math.max(
+      safeLimit * FILTERED_SEARCH_CANDIDATE_MULTIPLIER,
+      safeLimit + FILTERED_SEARCH_CANDIDATE_EXTRA,
+    ),
+    Math.max(safeLimit, FILTERED_SEARCH_CANDIDATE_CAP),
+  );
+}
+
 // ============================================================
 // MEMORY SERVICE IMPLEMENTATION
 // ============================================================
@@ -96,7 +169,9 @@ export class MemoryServiceImpl implements MemoryService {
    * Returns the generated memory ID.
    */
   async store(entry: MemoryRecordEntry): Promise<string> {
-    const existingId = await this.findExistingMemoryId(entry);
+    const normalizedEntry = normalizeMemoryRecordEntryForStorage(entry);
+
+    const existingId = await this.findExistingMemoryId(normalizedEntry);
     if (existingId) {
       await this.updateAccessCount(existingId);
       return existingId;
@@ -105,42 +180,42 @@ export class MemoryServiceImpl implements MemoryService {
     const id = crypto.randomUUID();
     const now = new Date().toISOString();
 
-    const tags = JSON.stringify(entry.tags ?? []);
-    const relatedFiles = JSON.stringify(entry.relatedFiles ?? []);
-    const relatedModules = JSON.stringify(entry.relatedModules ?? []);
+    const tags = JSON.stringify(normalizedEntry.tags ?? []);
+    const relatedFiles = JSON.stringify(normalizedEntry.relatedFiles ?? []);
+    const relatedModules = JSON.stringify(normalizedEntry.relatedModules ?? []);
     const provenanceSessionIds = JSON.stringify([]);
     const relations = JSON.stringify([]);
-    const workUnitRef = entry.workUnitRef ? JSON.stringify(entry.workUnitRef) : null;
+    const workUnitRef = normalizedEntry.workUnitRef ? JSON.stringify(normalizedEntry.workUnitRef) : null;
 
     try {
       // Build a temporary Memory-like object to generate contextual embedding
       const memoryForEmbedding: Memory = {
         id,
-        type: entry.type,
-        content: entry.content,
-        confidence: entry.confidence ?? 0.8,
-        tags: entry.tags ?? [],
-        relatedFiles: entry.relatedFiles ?? [],
-        relatedModules: entry.relatedModules ?? [],
+        type: normalizedEntry.type,
+        content: normalizedEntry.content,
+        confidence: normalizedEntry.confidence ?? 0.8,
+        tags: normalizedEntry.tags ?? [],
+        relatedFiles: normalizedEntry.relatedFiles ?? [],
+        relatedModules: normalizedEntry.relatedModules ?? [],
         createdAt: now,
         lastAccessedAt: now,
         accessCount: 0,
-        scope: entry.scope ?? 'global',
-        source: entry.source ?? 'agent_explicit',
-        sessionId: entry.sessionId ?? '',
+        scope: normalizedEntry.scope ?? 'global',
+        source: normalizedEntry.source ?? 'agent_explicit',
+        sessionId: normalizedEntry.sessionId ?? '',
         provenanceSessionIds: [],
-        projectId: entry.projectId,
-        workUnitRef: entry.workUnitRef,
-        methodology: entry.methodology,
-        decayHalfLifeDays: entry.decayHalfLifeDays,
-        needsReview: entry.needsReview,
-        pinned: entry.pinned,
-        citationText: entry.citationText,
-        chunkType: entry.chunkType,
-        chunkStartLine: entry.chunkStartLine,
-        chunkEndLine: entry.chunkEndLine,
-        contextPrefix: entry.contextPrefix,
-        trustLevelScope: entry.trustLevelScope,
+        projectId: normalizedEntry.projectId,
+        workUnitRef: normalizedEntry.workUnitRef,
+        methodology: normalizedEntry.methodology,
+        decayHalfLifeDays: normalizedEntry.decayHalfLifeDays,
+        needsReview: normalizedEntry.needsReview,
+        pinned: normalizedEntry.pinned,
+        citationText: normalizedEntry.citationText,
+        chunkType: normalizedEntry.chunkType,
+        chunkStartLine: normalizedEntry.chunkStartLine,
+        chunkEndLine: normalizedEntry.chunkEndLine,
+        contextPrefix: normalizedEntry.contextPrefix,
+        trustLevelScope: normalizedEntry.trustLevelScope,
       };
 
       const contextualText = buildMemoryContextualText(memoryForEmbedding);
@@ -171,31 +246,31 @@ export class MemoryServiceImpl implements MemoryService {
           )`,
           args: [
             id,
-            entry.type,
-            entry.content,
-            entry.confidence ?? 0.8,
+            normalizedEntry.type,
+            normalizedEntry.content,
+            normalizedEntry.confidence ?? 0.8,
             tags,
             relatedFiles,
             relatedModules,
             now,
             now,
-            entry.sessionId ?? null,
-            entry.scope ?? 'global',
+            normalizedEntry.sessionId ?? null,
+            normalizedEntry.scope ?? 'global',
             workUnitRef,
-            entry.methodology ?? null,
-            entry.source ?? 'agent_explicit',
+            normalizedEntry.methodology ?? null,
+            normalizedEntry.source ?? 'agent_explicit',
             relations,
-            entry.decayHalfLifeDays ?? null,
+            normalizedEntry.decayHalfLifeDays ?? null,
             provenanceSessionIds,
-            entry.needsReview ? 1 : 0,
-            entry.pinned ? 1 : 0,
-            entry.citationText ?? null,
-            entry.chunkType ?? null,
-            entry.chunkStartLine ?? null,
-            entry.chunkEndLine ?? null,
-            entry.contextPrefix ?? null,
-            entry.trustLevelScope ?? 'personal',
-            entry.projectId,
+            normalizedEntry.needsReview ? 1 : 0,
+            normalizedEntry.pinned ? 1 : 0,
+            normalizedEntry.citationText ?? null,
+            normalizedEntry.chunkType ?? null,
+            normalizedEntry.chunkStartLine ?? null,
+            normalizedEntry.chunkEndLine ?? null,
+            normalizedEntry.contextPrefix ?? null,
+            normalizedEntry.trustLevelScope ?? 'personal',
+            normalizedEntry.projectId,
             embeddingModelId,
           ],
         },
@@ -205,9 +280,9 @@ export class MemoryServiceImpl implements MemoryService {
                 VALUES (?, ?, ?, ?)`,
           args: [
             id,
-            entry.content,
-            (entry.tags ?? []).join(' '),
-            (entry.relatedFiles ?? []).join(' '),
+            normalizedEntry.content,
+            (normalizedEntry.tags ?? []).join(' '),
+            (normalizedEntry.relatedFiles ?? []).join(' '),
           ],
         },
         // Insert into memory_embeddings table
@@ -239,7 +314,7 @@ export class MemoryServiceImpl implements MemoryService {
         const result = await this.retrievalPipeline.search(filters.query, {
           phase: filters.phase ?? 'explore',
           projectId: filters.projectId ?? '',
-          maxResults: filters.limit ?? 8,
+          maxResults: getMemorySearchCandidateLimit(filters),
         });
         memories = result.memories;
       } else {
@@ -259,6 +334,10 @@ export class MemoryServiceImpl implements MemoryService {
         memories = memories.filter((m) => !m.deprecated);
       }
 
+      if (filters.promptContextOnly) {
+        memories = memories.filter(isMemoryEligibleForPromptContext);
+      }
+
       // Apply custom filter callback
       if (filters.filter) {
         memories = memories.filter(filters.filter);
@@ -274,9 +353,12 @@ export class MemoryServiceImpl implements MemoryService {
       }
       // 'relevance' sort is preserved from pipeline order
 
-      // Apply limit after all filtering
-      if (filters.limit !== undefined && memories.length > filters.limit) {
-        memories = memories.slice(0, filters.limit);
+      // Apply limit after all filtering. Query searches have an implicit default
+      // limit from the retrieval pipeline, so preserve that even when we fetch
+      // extra prompt-context candidates for quality filtering.
+      const resultLimit = getMemorySearchResultLimit(filters);
+      if (memories.length > resultLimit) {
+        memories = memories.slice(0, resultLimit);
       }
 
       return memories;
@@ -291,19 +373,38 @@ export class MemoryServiceImpl implements MemoryService {
    * Returns the single best match or null.
    * Used for fast lookups (e.g., StepInjectionDecider).
    */
-  async searchByPattern(pattern: string): Promise<Memory | null> {
+  async searchByPattern(pattern: string, opts?: { projectId?: string }): Promise<Memory | null> {
     try {
-      const results = await searchBM25(this.db, pattern, '', 1);
+      const results = await searchBM25(
+        this.db,
+        pattern,
+        opts?.projectId ?? '',
+        PATTERN_SEARCH_CANDIDATE_LIMIT,
+      );
       if (results.length === 0) return null;
 
-      const memoryId = results[0].memoryId;
+      const memoryIds = results.map((result) => result.memoryId);
+      const placeholders = memoryIds.map(() => '?').join(', ');
       const row = await this.db.execute({
-        sql: 'SELECT * FROM memories WHERE id = ? AND deprecated = 0',
-        args: [memoryId],
+        sql: `SELECT * FROM memories WHERE id IN (${placeholders}) AND deprecated = 0`,
+        args: memoryIds,
       });
 
       if (row.rows.length === 0) return null;
-      return rowToMemory(row.rows[0] as Record<string, unknown>);
+      const memoriesById = new Map(
+        row.rows.map((memoryRow) => {
+          const memory = rowToMemory(memoryRow as Record<string, unknown>);
+          return [memory.id, memory] as const;
+        }),
+      );
+
+      for (const result of results) {
+        const memory = memoriesById.get(result.memoryId);
+        if (memory && isMemoryEligibleForPromptContext(memory)) {
+          return memory;
+        }
+      }
+      return null;
     } catch (error) {
       console.error('[MemoryService] searchByPattern failed:', error);
       return null;
@@ -332,18 +433,20 @@ export class MemoryServiceImpl implements MemoryService {
    */
   async searchWorkflowRecipe(
     taskDescription: string,
-    opts?: { limit?: number },
+    opts?: { limit?: number; projectId?: string },
   ): Promise<Memory[]> {
     try {
       const limit = opts?.limit ?? 5;
       const result = await this.retrievalPipeline.search(taskDescription, {
         phase: 'implement',
-        projectId: '',
-        maxResults: limit * 3, // Fetch extra to allow for type filtering
+        projectId: opts?.projectId ?? '',
+        maxResults: getWorkflowRecipeSearchCandidateLimit(limit),
       });
 
       // Filter to workflow_recipe type
-      const recipes = result.memories.filter((m) => m.type === 'workflow_recipe');
+      const recipes = result.memories.filter((m) =>
+        m.type === 'workflow_recipe' && isMemoryEligibleForPromptContext(m)
+      );
       return recipes.slice(0, limit);
     } catch (error) {
       console.error('[MemoryService] searchWorkflowRecipe failed:', error);
@@ -461,7 +564,7 @@ export class MemoryServiceImpl implements MemoryService {
           ? 'confidence DESC'
           : 'last_accessed_at DESC';
 
-    const limit = filters.limit ?? 50;
+    const limit = getMemorySearchCandidateLimit(filters);
 
     const sql = `SELECT * FROM memories WHERE ${conditions.join(' AND ')} ORDER BY ${orderBy} LIMIT ?`;
     args.push(limit);
@@ -484,10 +587,10 @@ export class MemoryServiceImpl implements MemoryService {
       if (filters.scope && memory.scope !== filters.scope) {
         return false;
       }
-      if (filters.relatedFiles?.length && !hasOverlap(memory.relatedFiles, filters.relatedFiles)) {
+      if (filters.relatedFiles?.length && !hasRelatedFileOverlap(memory.relatedFiles, filters.relatedFiles)) {
         return false;
       }
-      if (filters.relatedModules?.length && !hasOverlap(memory.relatedModules, filters.relatedModules)) {
+      if (filters.relatedModules?.length && !hasNormalizedOverlap(memory.relatedModules, filters.relatedModules)) {
         return false;
       }
       return true;
@@ -513,11 +616,158 @@ export class MemoryServiceImpl implements MemoryService {
   }
 }
 
-function hasOverlap(values: string[], expected: string[]): boolean {
+function hasNormalizedOverlap(values: string[], expected: string[]): boolean {
   const normalized = new Set(values.map(normalizeFilterValue));
   return expected.some((value) => normalized.has(normalizeFilterValue(value)));
 }
 
+function hasRelatedFileOverlap(values: string[], expected: string[]): boolean {
+  const normalizedValues = values.map(normalizeFilterPath).filter(Boolean);
+  const normalizedExpected = expected.map(normalizeFilterPath).filter(Boolean);
+
+  return normalizedExpected.some((expectedPath) =>
+    normalizedValues.some((valuePath) => pathsReferToSameFile(valuePath, expectedPath)),
+  );
+}
+
 function normalizeFilterValue(value: string): string {
-  return value.replace(/\\/g, '/').toLowerCase();
+  return value.replace(/\\/g, '/').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function normalizeFilterPath(value: string): string {
+  let normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/').trim().toLowerCase();
+  while (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  return normalized.replace(/\/$/, '');
+}
+
+function pathsReferToSameFile(left: string, right: string): boolean {
+  if (left === right) {
+    return true;
+  }
+  return left.endsWith(`/${right}`) || right.endsWith(`/${left}`);
+}
+
+function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryRecordEntry {
+  return {
+    ...entry,
+    content: compactMemoryStorageText(entry.content, MEMORY_STORE_CONTENT_MAX_CHARS),
+    tags: compactMemoryStringList(entry.tags, MEMORY_STORE_TAG_LIMIT, MEMORY_STORE_TAG_MAX_CHARS),
+    relatedFiles: compactMemoryPathList(
+      entry.relatedFiles,
+      MEMORY_STORE_RELATED_FILE_LIMIT,
+      MEMORY_STORE_RELATED_FILE_MAX_CHARS,
+    ),
+    relatedModules: compactMemoryStringList(
+      entry.relatedModules,
+      MEMORY_STORE_RELATED_MODULE_LIMIT,
+      MEMORY_STORE_RELATED_MODULE_MAX_CHARS,
+    ),
+    citationText: compactOptionalMemoryStorageText(entry.citationText, MEMORY_STORE_CITATION_TEXT_MAX_CHARS),
+    contextPrefix: compactOptionalMemoryStorageText(entry.contextPrefix, MEMORY_STORE_CONTEXT_PREFIX_MAX_CHARS),
+  };
+}
+
+function compactOptionalMemoryStorageText(value: string | undefined, maxChars: number): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return compactMemoryStorageText(value, maxChars);
+}
+
+function compactMemoryStorageText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
+  if (maxChars <= 0 || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const marker = MEMORY_STORE_OMISSION_MARKER;
+  if (marker.length >= maxChars - 2) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const budget = maxChars - marker.length;
+  const headChars = Math.ceil(budget * 0.55);
+  const tailChars = Math.max(0, budget - headChars);
+  return [
+    normalized.slice(0, headChars).trimEnd(),
+    marker,
+    tailChars > 0 ? normalized.slice(-tailChars).trimStart() : '',
+  ].join('');
+}
+
+function compactMemoryStringList(
+  values: string[] | undefined,
+  limit: number,
+  maxItemChars: number,
+): string[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+
+  const compacted = values
+    .map((value) => compactMemoryListItem(value, maxItemChars))
+    .filter((value) => value.length > 0);
+
+  return Array.from(new Set(compacted)).slice(0, Math.max(0, limit));
+}
+
+function compactMemoryPathList(
+  values: string[] | undefined,
+  limit: number,
+  maxItemChars: number,
+): string[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const compacted: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeMemoryPathListItem(value);
+    if (!normalized) {
+      continue;
+    }
+
+    const compactedPath = compactMemoryListItem(normalized, maxItemChars);
+    const key = normalizeFilterPath(compactedPath);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    compacted.push(compactedPath);
+    if (compacted.length >= Math.max(0, limit)) {
+      break;
+    }
+  }
+
+  return compacted;
+}
+
+function normalizeMemoryPathListItem(value: string): string {
+  let normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  while (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  while (normalized.length > 1 && normalized.endsWith('/') && !/^[A-Za-z]:\/$/.test(normalized)) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized;
+}
+
+function compactMemoryListItem(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (maxChars <= 0 || normalized.length <= maxChars) {
+    return normalized;
+  }
+  const marker = '...[omitted]...';
+  const budget = maxChars - marker.length;
+  if (budget <= 0) {
+    return normalized.slice(0, maxChars);
+  }
+  const headChars = Math.ceil(budget * 0.6);
+  const tailChars = Math.max(0, budget - headChars);
+  return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
 }

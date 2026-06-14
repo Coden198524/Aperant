@@ -1,12 +1,14 @@
-﻿import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
 import { describe, expect, it, vi } from 'vitest';
 import {
+  AUTOCODE_TASK_ARTIFACTS,
   loadAutocodeImplementationPlan,
   loadAutocodeTaskRequirementsSync,
   saveAutocodeTaskRequirementsSync,
+  stringifyAutocodeContextMarkdown,
   stringifyAutocodeImplementationPlanMarkdown,
 } from '@autocode/core';
 
@@ -14,8 +16,10 @@ import {
   buildWriteToolJsonRetryPrompt,
   isWriteToolJsonFailure,
   SpecOrchestrator,
+  type SpecPromptContext,
   type SpecPhase,
   type SpecPhaseResult,
+  type SpecSessionRunConfig,
 } from './spec-orchestrator';
 import { MMO_AGENT_PROFILE } from '../config/project-agent-profile';
 
@@ -27,7 +31,7 @@ const TEST_CONTEXT_EVIDENCE = {
   confidence: 'high',
 };
 
-const TEST_TASK_EVIDENCE = 'context.json src/App.tsx lines 1-20; spec.md Requirements; requirements.md Acceptance Criteria';
+const TEST_TASK_EVIDENCE = 'context.md src/App.tsx lines 1-20; spec.md Requirements; requirements.md Acceptance Criteria';
 
 async function saveTasksSource(specDir: string, plan: Record<string, unknown>): Promise<void> {
   const planWithEvidence = addTaskEvidence(plan);
@@ -40,6 +44,29 @@ async function saveTasksSource(specDir: string, plan: Record<string, unknown>): 
 
 function evidenceSources(): Array<typeof TEST_CONTEXT_EVIDENCE> {
   return [{ ...TEST_CONTEXT_EVIDENCE }];
+}
+
+async function writeValidContextArtifact(
+  specDir: string,
+  taskDescription = 'Refactor local task execution flow',
+): Promise<void> {
+  await writeFile(
+    join(specDir, AUTOCODE_TASK_ARTIFACTS.context),
+    stringifyAutocodeContextMarkdown({
+      task_description: taskDescription,
+      scoped_services: [],
+      architecture_summary: 'Local codebase change.',
+      files_to_modify: [],
+      files_to_reference: [],
+      design_patterns: [],
+      implementation_notes: ['Reuse existing patterns.'],
+      risks: [],
+      verification_suggestions: ['Run tests.'],
+      evidence_sources: evidenceSources(),
+      created_at: '2026-05-13T00:00:00.000Z',
+    }),
+    'utf-8',
+  );
 }
 
 function addTaskEvidence(plan: Record<string, unknown>): Record<string, unknown> {
@@ -66,23 +93,7 @@ async function writeValidStandardArtifacts(
   specDir: string,
   taskDescription = 'Refactor local task execution flow',
 ): Promise<void> {
-  await writeFile(
-    join(specDir, 'context.json'),
-    JSON.stringify({
-      task_description: taskDescription,
-      scoped_services: [],
-      architecture_summary: 'Local codebase change.',
-      files_to_modify: [],
-      files_to_reference: [],
-      design_patterns: [],
-      implementation_notes: ['Reuse existing patterns.'],
-      risks: [],
-      verification_suggestions: ['Run tests.'],
-      evidence_sources: evidenceSources(),
-      created_at: '2026-05-13T00:00:00.000Z',
-    }, null, 2),
-    'utf-8',
-  );
+  await writeValidContextArtifact(specDir, taskDescription);
 
   saveAutocodeTaskRequirementsSync(specDir, {
     task_description: taskDescription,
@@ -149,13 +160,14 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     expect(prompt).toContain('Write input shape');
   });
 
-  it('tells context retries to return final JSON instead of using Write', () => {
+  it('tells context retries to write Markdown instead of returning JSON', () => {
     const prompt = buildWriteToolJsonRetryPrompt('discovery', 'E:\\Work\\Project\\.autocode\\specs\\001-task');
 
-    expect(prompt).toContain('RETURN context.json AS FINAL JSON');
-    expect(prompt).toContain('Target file: E:/Work/Project/.autocode/specs/001-task/context.json');
-    expect(prompt).toContain('files_to_modify');
-    expect(prompt).not.toContain('Write input shape');
+    expect(prompt).toContain('RETRY WRITE WITH VALID INPUT');
+    expect(prompt).toContain('E:/Work/Project/.autocode/specs/001-task/context.md');
+    expect(prompt).toContain('write concise Markdown');
+    expect(prompt).toContain('Write input shape');
+    expect(prompt).not.toContain('AS FINAL JSON');
     expect(prompt).not.toContain('\\');
   });
 
@@ -168,6 +180,118 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     expect(prompt).toContain('task_description');
     expect(prompt).not.toContain('Write input shape');
     expect(prompt).not.toContain('\\');
+  });
+
+  it('stores compact prior phase summaries instead of carrying full long artifacts', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const contextMarkdown = [
+      '# Project Context',
+      '',
+      '## Architecture Summary',
+      '',
+      '- Renderer owns UI hydration.',
+      '- Main process owns orchestration and IPC.',
+      ...Array.from(
+        { length: 180 },
+        (_, index) => `- Tail detail ${index}: ${'implementation evidence and repeated analysis '.repeat(5)}`,
+      ),
+    ].join('\n');
+
+    try {
+      await writeFile(join(specDir, AUTOCODE_TASK_ARTIFACTS.context), contextMarkdown, 'utf-8');
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Improve planning context carryover.',
+        useAiAssessment: false,
+        generatePrompt: vi.fn(async () => 'Run phase.'),
+        runSession: vi.fn(async () => ({
+          outcome: 'completed' as const,
+          stepsExecuted: 1,
+          usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+          messages: [],
+          toolCallCount: 0,
+          durationMs: 1,
+        })),
+      });
+
+      const capturePhaseOutput = (orchestrator as unknown as {
+        capturePhaseOutput: (phase: SpecPhase) => Promise<void>;
+      }).capturePhaseOutput.bind(orchestrator);
+      await capturePhaseOutput('discovery');
+
+      const summaries = (orchestrator as unknown as {
+        phaseSummaries: Record<string, string>;
+      }).phaseSummaries;
+      const summary = summaries[AUTOCODE_TASK_ARTIFACTS.context];
+
+      expect(summary).toContain('Compact phase output summary');
+      expect(summary).toContain('Architecture Summary');
+      expect(summary).toContain('Renderer owns UI hydration');
+      expect(summary).toContain('phase output middle omitted');
+      expect(summary).toContain('Tail detail 179');
+      expect(summary.length).toBeLessThanOrEqual(2_600);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
+  });
+
+  it('passes project documentation reference without legacy projectIndex prompt fields', async () => {
+    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
+    const projectDocsReference = '## Project Documentation Reference\n\n- Source: .autocode/project-docs/index.md';
+    const generatePrompt = vi.fn(async (
+      _agentType: string,
+      _phase: SpecPhase,
+      _context: SpecPromptContext,
+    ) => 'Return requirements JSON.');
+    const runSession = vi.fn(async (_config: SpecSessionRunConfig) => ({
+      outcome: 'completed' as const,
+      stepsExecuted: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [],
+      toolCallCount: 0,
+      durationMs: 1,
+      structuredOutput: {
+        task_description: 'Improve the planner.',
+        workflow_type: 'refactor',
+        services_involved: [],
+        user_requirements: ['Improve the planner.'],
+        acceptance_criteria: ['Planner remains traceable.'],
+        constraints: ['Keep project documentation as Markdown.'],
+        evidence_sources: [TEST_TASK_EVIDENCE],
+        standards_references: ['Project documentation reference'],
+        assumptions: [],
+        created_at: '2026-05-13T00:00:00.000Z',
+      },
+    }));
+
+    try {
+      const orchestrator = new SpecOrchestrator({
+        specDir,
+        projectDir: specDir,
+        taskDescription: 'Improve the planner.',
+        useAiAssessment: false,
+        projectDocsReference,
+        generatePrompt,
+        runSession,
+      });
+
+      const runPhase = (orchestrator as unknown as {
+        runPhase: (phase: SpecPhase, phaseNumber: number, totalPhases: number) => Promise<SpecPhaseResult>;
+      }).runPhase.bind(orchestrator);
+
+      const result = await runPhase('requirements', 1, 1);
+      const promptContext = generatePrompt.mock.calls[0][2] as unknown as Record<string, unknown>;
+      const sessionConfig = runSession.mock.calls[0][0] as unknown as Record<string, unknown>;
+
+      expect(result.success).toBe(true);
+      expect(promptContext.projectDocsReference).toBe(projectDocsReference);
+      expect(sessionConfig.projectDocsReference).toBe(projectDocsReference);
+      expect(Object.hasOwn(promptContext, 'projectIndex')).toBe(false);
+      expect(Object.hasOwn(sessionConfig, 'projectIndex')).toBe(false);
+    } finally {
+      await rm(specDir, { recursive: true, force: true });
+    }
   });
 
   it('writes fallback requirements after retries when completed sessions create no file', async () => {
@@ -215,61 +339,6 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('writes discovery context from final JSON text when no file is created', async () => {
-    const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
-    const context = {
-      task_description: 'Create a small local dashboard',
-      scoped_services: [],
-      architecture_summary: 'Empty static web project.',
-      files_to_modify: [{
-        path: 'index.html',
-        reason: 'Main page',
-        change_needed: 'Create the dashboard UI and script',
-      }],
-      files_to_reference: [],
-      design_patterns: [],
-      implementation_notes: ['Use plain HTML, CSS, and JavaScript.'],
-      risks: ['Manual browser verification is required.'],
-      verification_suggestions: ['Open index.html in a browser.'],
-      evidence_sources: evidenceSources(),
-      standards_references: [],
-      assumptions: [],
-      created_at: '2026-05-13T00:00:00.000Z',
-    };
-    const runSession = vi.fn(async () => ({
-      outcome: 'completed' as const,
-      stepsExecuted: 1,
-      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-      messages: [{ role: 'assistant' as const, content: JSON.stringify(context) }],
-      toolCallCount: 0,
-      durationMs: 1,
-    }));
-
-    try {
-      const orchestrator = new SpecOrchestrator({
-        specDir,
-        projectDir: specDir,
-        taskDescription: 'Create a small local dashboard',
-        useAiAssessment: false,
-        generatePrompt: vi.fn(async () => 'Return context JSON.'),
-        runSession,
-      });
-
-      const runPhase = (orchestrator as unknown as {
-        runPhase: (phase: SpecPhase, phaseNumber: number, totalPhases: number) => Promise<SpecPhaseResult>;
-      }).runPhase.bind(orchestrator);
-
-      const result = await runPhase('discovery', 1, 1);
-      const written = JSON.parse(await readFile(join(specDir, 'context.json'), 'utf-8'));
-
-      expect(result).toEqual({ phase: 'discovery', success: true, errors: [], retries: 0 });
-      expect(written).toEqual(context);
-      expect(runSession).toHaveBeenCalledTimes(1);
-    } finally {
-      await rm(specDir, { recursive: true, force: true });
-    }
-  });
-
   it('writes fallback discovery context after retries when completed sessions create no file', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
     const runSession = vi.fn(async () => ({
@@ -287,7 +356,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         projectDir: specDir,
         taskDescription: 'Create a Windows-style calculator page',
         useAiAssessment: false,
-        generatePrompt: vi.fn(async () => 'Return context JSON.'),
+        generatePrompt: vi.fn(async () => 'Write context Markdown.'),
         runSession,
       });
 
@@ -296,51 +365,37 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }).runPhase.bind(orchestrator);
 
       const result = await runPhase('discovery', 1, 1);
-      const context = JSON.parse(await readFile(join(specDir, 'context.json'), 'utf-8'));
+      const context = await readFile(join(specDir, AUTOCODE_TASK_ARTIFACTS.context), 'utf-8');
 
       expect(result).toEqual({ phase: 'discovery', success: true, errors: [], retries: 2 });
-      expect(context.task_description).toBe('Create a Windows-style calculator page');
-      expect(context.scoped_services).toEqual([]);
-      expect(context.files_to_modify).toEqual([]);
-      expect(context.implementation_notes[0]).toContain('task description');
-      expect(context.risks[0]).toContain('Discovery fallback');
+      expect(context).toContain('# Project Context');
+      expect(context).toContain('Create a Windows-style calculator page');
+      expect(context).toContain('Discovery fallback');
+      expect(context).toContain('## Evidence Sources');
       expect(runSession).toHaveBeenCalledTimes(3);
+      const firstRunCall = runSession.mock.calls[0] as unknown[] | undefined;
+      const firstRunConfig = firstRunCall?.[0] as { outputSchema?: unknown } | undefined;
+      expect(firstRunConfig?.outputSchema).toBeUndefined();
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }
   });
 
-  it('normalizes loose discovery JSON before writing context output', async () => {
+  it('compacts oversized task descriptions in fallback spec artifacts', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
-    const looseContext = {
-      project_root: 'E:/Work/Test/aitest',
-      task: 'Create a web project dashboard',
-      tech_stack: {
-        detected: 'none',
-        recommended: 'HTML5 Canvas + CSS + JavaScript',
-      },
-      architecture_summary: 'Empty project; create a static web tool.',
-      files_to_modify: [
-        'E:/Work/Test/aitest/index.html',
-        'E:/Work/Test/aitest/styles.css',
-        'E:/Work/Test/aitest/main.js',
-      ],
-      files_to_reference: [],
-      scoped_services: [],
-      design_patterns: [
-        'HTML5 Canvas rendering',
-        'DOM event handling',
-      ],
-      implementation_notes: ['Use native HTML, CSS, and JavaScript.'],
-      risks: ['Manual browser verification is required.'],
-      verification_suggestions: ['Open index.html to verify.'],
-      evidence_sources: evidenceSources(),
-    };
+    const longTaskDescription = [
+      'Opening artifact rule: keep app-owned structured data as JSON.',
+      ...Array.from(
+        { length: 260 },
+        (_, index) => `Large fallback task context ${index}: ${'repeated pasted diagnostic text '.repeat(6)}`,
+      ),
+      'Closing artifact rule: convert only model-readable prose references to Markdown.',
+    ].join('\n');
     const runSession = vi.fn(async () => ({
       outcome: 'completed' as const,
-      stepsExecuted: 1,
-      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-      messages: [{ role: 'assistant' as const, content: JSON.stringify(looseContext) }],
+      stepsExecuted: 0,
+      usage: { promptTokens: 0, completionTokens: 0, totalTokens: 0 },
+      messages: [],
       toolCallCount: 0,
       durationMs: 1,
     }));
@@ -349,34 +404,32 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       const orchestrator = new SpecOrchestrator({
         specDir,
         projectDir: specDir,
-        taskDescription: 'Create a web project dashboard',
+        taskDescription: longTaskDescription,
         useAiAssessment: false,
-        generatePrompt: vi.fn(async () => 'Return context JSON.'),
+        generatePrompt: vi.fn(async () => 'Run phase.'),
         runSession,
       });
-
       const runPhase = (orchestrator as unknown as {
         runPhase: (phase: SpecPhase, phaseNumber: number, totalPhases: number) => Promise<SpecPhaseResult>;
       }).runPhase.bind(orchestrator);
 
-      const result = await runPhase('discovery', 1, 1);
-      const written = JSON.parse(await readFile(join(specDir, 'context.json'), 'utf-8'));
+      await runPhase('requirements', 1, 2);
+      await runPhase('discovery', 2, 2);
 
-      expect(result).toEqual({ phase: 'discovery', success: true, errors: [], retries: 0 });
-      expect(written.task_description).toBe('Create a web project dashboard');
-      expect(written.files_to_modify[0]).toEqual({
-        path: 'E:/Work/Test/aitest/index.html',
-        reason: 'Relevant file for the requested change',
-        change_needed: 'Create or update this file to implement the task',
-      });
-      expect(written.design_patterns[0]).toEqual({
-        name: 'HTML5 Canvas rendering',
-        existing_usage: 'Not detected',
-        files: [],
-        guidance: 'HTML5 Canvas rendering',
-      });
-      expect(written.created_at).toEqual(expect.any(String));
-      expect(runSession).toHaveBeenCalledTimes(1);
+      const requirements = loadAutocodeTaskRequirementsSync(specDir);
+      const context = await readFile(join(specDir, AUTOCODE_TASK_ARTIFACTS.context), 'utf-8');
+      expect(requirements).not.toBeNull();
+      if (!requirements) throw new Error('requirements.md was not written');
+
+      expect(requirements.task_description).toContain('Opening artifact rule');
+      expect(requirements.task_description).toContain('task description middle omitted for artifact budget');
+      expect(requirements.task_description).toContain('Closing artifact rule');
+      expect(requirements.task_description).not.toContain('Large fallback task context 160');
+      expect(requirements.user_requirements?.[0]).toContain('task description middle omitted for artifact budget');
+      expect(context).toContain('Opening artifact rule');
+      expect(context).toContain('task description middle omitted for artifact budget');
+      expect(context).toContain('Closing artifact rule');
+      expect(context).not.toContain('Large fallback task context 160');
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }
@@ -435,21 +488,36 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
     }
   });
 
-  it('normalizes loose research JSON before writing research output', async () => {
+  it('accepts Markdown research output written by the research agent', async () => {
     const specDir = await mkdtemp(join(tmpdir(), 'autocode-spec-'));
-    const looseResearch = {
-      recommended_approach: 'No external dependency is required; follow the existing project structure.',
-      validation_plan: ['Run the smallest available project check.'],
-      risks: ['Manual review may be needed if no automated check exists.'],
-    };
-    const runSession = vi.fn(async () => ({
-      outcome: 'completed' as const,
-      stepsExecuted: 1,
-      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-      messages: [{ role: 'assistant' as const, content: JSON.stringify(looseResearch) }],
-      toolCallCount: 0,
-      durationMs: 1,
-    }));
+    const runSession = vi.fn(async () => {
+      await writeFile(
+        join(specDir, AUTOCODE_TASK_ARTIFACTS.research),
+        [
+          '# Research',
+          '',
+          '## Integrations Researched',
+          '- None required.',
+          '',
+          '## Recommendations',
+          '- No external dependency is required; follow the existing project structure.',
+          '- Run the smallest available project check.',
+          '',
+          '## Unverified Claims',
+          '- Manual review may be needed if no automated check exists (risk: low): Not independently verified during this phase.',
+          '',
+        ].join('\n'),
+        'utf-8',
+      );
+      return {
+        outcome: 'completed' as const,
+        stepsExecuted: 1,
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+        messages: [],
+        toolCallCount: 1,
+        durationMs: 1,
+      };
+    });
 
     try {
       const orchestrator = new SpecOrchestrator({
@@ -457,7 +525,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
         projectDir: specDir,
         taskDescription: 'Create a small local utility',
         useAiAssessment: false,
-        generatePrompt: vi.fn(async () => 'Return research JSON.'),
+        generatePrompt: vi.fn(async () => 'Write research Markdown.'),
         runSession,
       });
 
@@ -466,20 +534,12 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }).runPhase.bind(orchestrator);
 
       const result = await runPhase('research', 1, 1);
-      const written = JSON.parse(await readFile(join(specDir, 'research.json'), 'utf-8'));
+      const written = await readFile(join(specDir, AUTOCODE_TASK_ARTIFACTS.research), 'utf-8');
 
       expect(result).toEqual({ phase: 'research', success: true, errors: [], retries: 0 });
-      expect(written.integrations_researched).toEqual([]);
-      expect(written.recommendations).toEqual([
-        'No external dependency is required; follow the existing project structure.',
-        'Run the smallest available project check.',
-      ]);
-      expect(written.unverified_claims).toEqual([{
-        claim: 'Manual review may be needed if no automated check exists.',
-        reason: 'Not independently verified during this phase',
-        risk_level: 'low',
-      }]);
-      expect(written.created_at).toEqual(expect.any(String));
+      expect(written).toContain('# Research');
+      expect(written).toContain('No external dependency is required');
+      expect(written).toContain('## Unverified Claims');
       expect(runSession).toHaveBeenCalledTimes(1);
     } finally {
       await rm(specDir, { recursive: true, force: true });
@@ -493,26 +553,12 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       phases.push(config.specPhase);
 
       if (config.specPhase === 'discovery' || config.specPhase === 'context') {
+        await writeValidContextArtifact(specDir);
         return {
           outcome: 'completed' as const,
           stepsExecuted: 1,
           usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
-          messages: [{
-            role: 'assistant' as const,
-            content: JSON.stringify({
-              task_description: 'Refactor local task execution flow',
-              scoped_services: [],
-              architecture_summary: 'Local codebase change.',
-              files_to_modify: [],
-              files_to_reference: [],
-              design_patterns: [],
-              implementation_notes: ['Reuse existing patterns.'],
-              risks: [],
-              verification_suggestions: ['Run tests.'],
-              evidence_sources: evidenceSources(),
-              created_at: '2026-05-13T00:00:00.000Z',
-            }),
-          }],
+          messages: [],
           toolCallCount: 0,
           durationMs: 1,
         };
@@ -1023,14 +1069,14 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(spec).toContain('文档分析任务');
       expect(plan.workflow_type).toBe('documentation');
       expect(plan.documentation_depth).toBeTruthy();
-      expect(plan.document_outputs?.outline).toBe('doc_outline.json');
-      expect(plan.document_outputs?.evidence_index).toBe('evidence_index.json');
+      expect(plan.document_outputs?.outline).toBe('doc_outline.md');
+      expect(plan.document_outputs?.evidence_index).toBe('evidence_index.md');
       expect(plan.phases[0].subtasks[0].files_to_create).toEqual(expect.arrayContaining([
-        'doc_outline.json',
-        'evidence_index.json',
+        'doc_outline.md',
+        'evidence_index.md',
       ]));
-      expect(plan.phases[0].subtasks[0].description).toContain('doc_outline.json');
-      expect(plan.phases[0].subtasks[0].description).toContain('evidence_index.json');
+      expect(plan.phases[0].subtasks[0].description).toContain('doc_outline.md');
+      expect(plan.phases[0].subtasks[0].description).toContain('evidence_index.md');
       expect(plan.phases).toHaveLength(1);
       expect(plan.phases[0].name).toBe('运行工作包');
       expect(plan.phases[0].subtasks).toHaveLength(1);
@@ -1078,8 +1124,8 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(plan.workflow_type).toBe('documentation');
       expect(subtask.files_to_create).toEqual([
         'docs/analysis.md',
-        'doc_outline.json',
-        'evidence_index.json',
+        'doc_outline.md',
+        'evidence_index.md',
       ]);
       expect(subtask.pattern_files).toContain('CMakeLists.txt');
       expect(subtask.pattern_files).toContain('src/main.cpp');
@@ -1591,6 +1637,7 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       }
 
       if (config.specPhase === 'discovery') {
+        await writeValidContextArtifact(specDir, 'Analyze MMO source systems and gameplay.');
         return {
           outcome: 'completed' as const,
           stepsExecuted: 1,
@@ -1598,19 +1645,6 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
           messages: [],
           toolCallCount: 0,
           durationMs: 1,
-          structuredOutput: {
-            task_description: 'Analyze MMO source systems and gameplay.',
-            scoped_services: ['client', 'server', 'database'],
-            architecture_summary: 'Large C++/Lua MMO with engine, server, network, and data layers.',
-            files_to_modify: [],
-            files_to_reference: [],
-            design_patterns: [],
-            implementation_notes: ['Document systems.'],
-            risks: ['Broad analysis scope.'],
-            verification_suggestions: ['Review generated docs.'],
-            evidence_sources: evidenceSources(),
-            created_at: '2026-05-20T00:00:00.000Z',
-          },
         };
       }
 

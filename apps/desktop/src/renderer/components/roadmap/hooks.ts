@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { useRoadmapStore, loadRoadmap, generateRoadmap, refreshRoadmap, stopRoadmap } from '../../stores/roadmap-store';
 import { useTaskStore } from '../../stores/task-store';
 import type { RoadmapFeature } from '../../../shared/types';
@@ -125,14 +125,39 @@ export function useFeatureDelete(projectId: string) {
 export function useRoadmapGeneration(projectId: string) {
   const competitorAnalysis = useRoadmapStore((state) => state.competitorAnalysis);
   const [pendingAction, setPendingAction] = useState<'generate' | 'refresh' | null>(null);
+  const pendingActionRef = useRef<'generate' | 'refresh' | null>(null);
   const [showCompetitorDialog, setShowCompetitorDialog] = useState(false);
   const [showExistingAnalysisDialog, setShowExistingAnalysisDialog] = useState(false);
 
   // Check if we have existing competitor analysis
   const hasExistingAnalysis = !!competitorAnalysis;
 
+  const setRoadmapAction = (action: 'generate' | 'refresh') => {
+    pendingActionRef.current = action;
+    setPendingAction(action);
+  };
+
+  const consumeRoadmapAction = (): 'generate' | 'refresh' | null => {
+    const action = pendingActionRef.current ?? pendingAction;
+    pendingActionRef.current = null;
+    setPendingAction(null);
+    return action;
+  };
+
+  const startRoadmapAction = (
+    action: 'generate' | 'refresh' | null,
+    enableCompetitorAnalysis: boolean,
+    refreshCompetitorAnalysis?: boolean
+  ) => {
+    if (action === 'generate') {
+      void generateRoadmap(projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis);
+    } else if (action === 'refresh') {
+      void refreshRoadmap(projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis);
+    }
+  };
+
   const handleGenerate = () => {
-    setPendingAction('generate');
+    setRoadmapAction('generate');
     if (hasExistingAnalysis) {
       setShowExistingAnalysisDialog(true);
     } else {
@@ -141,7 +166,7 @@ export function useRoadmapGeneration(projectId: string) {
   };
 
   const handleRefresh = () => {
-    setPendingAction('refresh');
+    setRoadmapAction('refresh');
     if (hasExistingAnalysis) {
       setShowExistingAnalysisDialog(true);
     } else {
@@ -151,54 +176,29 @@ export function useRoadmapGeneration(projectId: string) {
 
   // Handler for "Yes, Enable Analysis" (new competitor analysis)
   const handleCompetitorDialogAccept = () => {
-    if (pendingAction === 'generate') {
-      generateRoadmap(projectId, true); // Enable competitor analysis
-    } else if (pendingAction === 'refresh') {
-      refreshRoadmap(projectId, true); // Enable competitor analysis
-    }
-    setPendingAction(null);
+    startRoadmapAction(consumeRoadmapAction(), true);
   };
 
   // Handler for "No, Skip Analysis"
   const handleCompetitorDialogDecline = () => {
-    if (pendingAction === 'generate') {
-      generateRoadmap(projectId, false); // Disable competitor analysis
-    } else if (pendingAction === 'refresh') {
-      refreshRoadmap(projectId, false); // Disable competitor analysis
-    }
-    setPendingAction(null);
+    startRoadmapAction(consumeRoadmapAction(), false);
   };
 
   // Handler for "Use existing analysis" - reuses saved competitor data
   const handleUseExistingAnalysis = () => {
     // Enable competitor analysis but don't force refresh - backend will use existing if available
-    if (pendingAction === 'generate') {
-      generateRoadmap(projectId, true, false); // enableCompetitorAnalysis=true, refreshCompetitorAnalysis=false
-    } else if (pendingAction === 'refresh') {
-      refreshRoadmap(projectId, true, false); // enableCompetitorAnalysis=true, refreshCompetitorAnalysis=false
-    }
-    setPendingAction(null);
+    startRoadmapAction(consumeRoadmapAction(), true, false);
   };
 
   // Handler for "Run new analysis" - performs fresh web searches
   const handleRunNewAnalysis = () => {
     // Enable competitor analysis AND force refresh to run fresh web searches
-    if (pendingAction === 'generate') {
-      generateRoadmap(projectId, true, true); // enableCompetitorAnalysis=true, refreshCompetitorAnalysis=true
-    } else if (pendingAction === 'refresh') {
-      refreshRoadmap(projectId, true, true); // enableCompetitorAnalysis=true, refreshCompetitorAnalysis=true
-    }
-    setPendingAction(null);
+    startRoadmapAction(consumeRoadmapAction(), true, true);
   };
 
   // Handler for "Skip analysis"
   const handleSkipAnalysis = () => {
-    if (pendingAction === 'generate') {
-      generateRoadmap(projectId, false);
-    } else if (pendingAction === 'refresh') {
-      refreshRoadmap(projectId, false);
-    }
-    setPendingAction(null);
+    startRoadmapAction(consumeRoadmapAction(), false);
   };
 
   const handleStop = async () => {

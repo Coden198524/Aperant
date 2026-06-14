@@ -17,4 +17,31 @@ describe('spec phase prompt mapping', () => {
     expect(prompt).toContain('do NOT rewrite the whole file with Write');
     expect(prompt).toContain('single concise Markdown checklist');
   });
+
+  it('keeps JSON-to-Markdown guidance scoped to prose artifacts', () => {
+    const toolJsonPrompt = readFileSync(
+      join(process.cwd(), 'prompts', 'partials', 'tool_call_json_formatting.md'),
+      'utf-8',
+    );
+    const specPrompt = readFileSync(join(process.cwd(), 'prompts', 'spec_orchestrator_agentic.md'), 'utf-8');
+    const plannerPrompt = readFileSync(join(process.cwd(), 'prompts', 'planner.md'), 'utf-8');
+
+    expect(toolJsonPrompt).toContain('keep app-owned configuration tables/files, manifests, settings, state, app-parsed indexes, metadata');
+    expect(toolJsonPrompt).toContain('even when the model creates, reads, or updates the content');
+    expect(toolJsonPrompt).toContain('app-parsed structured outputs as JSON/JSONL');
+    expect(toolJsonPrompt).toContain('Do not convert JSON config/tables just because they are mentioned in prompts');
+    expect(toolJsonPrompt).toContain('Convert only pure prose/reference artifacts');
+    expect(toolJsonPrompt).toContain('package.json');
+    expect(toolJsonPrompt).toContain('tsconfig.json');
+    expect(specPrompt).toContain('task_metadata.json');
+    expect(specPrompt).toContain('change_requests.jsonl');
+    expect(specPrompt).toContain('prompt_profile.json');
+    expect(specPrompt).toContain('roadmap.json');
+    expect(specPrompt).toContain('roadmap_discovery.json');
+    expect(specPrompt).toContain('ideation.json');
+    expect(specPrompt).toContain('downstream UI/runtime code parses the output');
+    expect(specPrompt).toContain('Do not convert JSON configuration tables or app-owned structured data merely because a model prompt references them');
+    expect(plannerPrompt).toContain('configuration files/tables, manifests, state, active indexes, metadata, and JSONL audit files remain JSON/JSONL even when the model reads or updates them');
+    expect(plannerPrompt).toContain('Only pure model-readable prose/reference artifacts should move from JSON to Markdown');
+  });
 });

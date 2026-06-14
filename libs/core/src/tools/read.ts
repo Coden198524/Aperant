@@ -8,7 +8,7 @@ export const AGGRESSIVE_READ_LINE_LIMIT = 120;
 export const LARGE_TEXT_FILE_BYTES = 512 * 1024;
 export const LARGE_TEXT_DEFAULT_LINE_LIMIT = 200;
 export const TASK_LOG_SUMMARY_BYTES = 256 * 1024;
-export const MAX_READ_LINE_LENGTH = 2000;
+export const MAX_READ_LINE_LENGTH = 1000;
 export const LEGACY_TEXT_ENCODINGS = ['gb18030', 'big5', 'shift_jis', 'windows-1252'] as const;
 
 export const READ_IMAGE_EXTENSIONS = [
@@ -25,6 +25,8 @@ export const READ_IMAGE_EXTENSIONS = [
 export const READ_PDF_EXTENSION = '.pdf';
 
 const READ_IMAGE_EXTENSION_SET: ReadonlySet<string> = new Set(READ_IMAGE_EXTENSIONS);
+const READ_LONG_LINE_OMISSION_MARKER = ' ... [line middle omitted] ... ';
+const READ_LONG_LINE_HEAD_RATIO = 0.6;
 
 export type ReadWorkflowMode = 'aggressive' | 'balanced' | string | undefined;
 
@@ -102,13 +104,27 @@ export function formatWithLineNumbers(content: string, offset: number): string {
   return lines
     .map((line, index) => {
       const lineNum = String(offset + index + 1).padStart(padWidth, ' ');
-      const truncated =
-        line.length > MAX_READ_LINE_LENGTH
-          ? `${line.slice(0, MAX_READ_LINE_LENGTH)}... (truncated)`
-          : line;
-      return `${lineNum}\t${truncated}`;
+      return `${lineNum}\t${compactReadLine(line, MAX_READ_LINE_LENGTH)}`;
     })
     .join('\n');
+}
+
+function compactReadLine(line: string, maxLength: number): string {
+  if (line.length <= maxLength) {
+    return line;
+  }
+  if (maxLength <= READ_LONG_LINE_OMISSION_MARKER.length + 2) {
+    return line.slice(0, maxLength);
+  }
+
+  const budget = maxLength - READ_LONG_LINE_OMISSION_MARKER.length;
+  const headLength = Math.ceil(budget * READ_LONG_LINE_HEAD_RATIO);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    line.slice(0, headLength).trimEnd(),
+    READ_LONG_LINE_OMISSION_MARKER,
+    tailLength > 0 ? line.slice(-tailLength).trimStart() : '',
+  ].join('');
 }
 
 function countMatches(text: string, pattern: RegExp): number {

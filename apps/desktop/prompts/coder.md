@@ -18,7 +18,7 @@ Implement exactly one pending subtask at a time.
 ## Start
 
 1. Read `implementation_plan.md`.
-2. Read `spec.md` and `context.json` only as needed for the current subtask.
+2. Read `spec.md` and `context.md` only as needed for the current subtask.
 3. Select the first pending subtask whose dependencies are complete.
 4. Use the subtask `_Evidence:` references as the preferred expansion path; read only those artifacts/files and nearby patterns before editing.
 5. If `HUMAN_INPUT.md` exists, treat it as required feedback for this run.

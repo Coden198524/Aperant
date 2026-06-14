@@ -27,7 +27,7 @@ Include:
 
 ## Constraints
 - Judge against the spec, not personal preferences.
-- Evidence-bound acceptance criteria are mandatory: if a task cites `spec.md`, `requirements.md`, `context.json`, `research.json`, source/docs, or official standards, verify the implementation against that cited source.
+- Evidence-bound acceptance criteria are mandatory: if a task cites `spec.md`, `requirements.md`, `context.md`, `research.md`, source/docs, or official standards, verify the implementation against that cited source.
 - Fix only issues required for the spec or obvious regressions.
 - Keep reports concise and actionable.
 

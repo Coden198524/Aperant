@@ -39,7 +39,11 @@ import { tryLoadPrompt } from '../prompts/prompt-loader';
 const MAX_RETRIES = 3;
 
 /** Maximum agentic steps per phase */
-const MAX_STEPS_PER_PHASE = 30;
+export const ROADMAP_MAX_STEPS_PER_PHASE = 24;
+export const ROADMAP_PRESERVED_FEATURES_PROMPT_MAX = 40;
+export const ROADMAP_PRESERVED_FEATURE_TITLE_MAX_CHARS = 120;
+export const ROADMAP_PRESERVED_FEATURE_ID_MAX_CHARS = 80;
+const ROADMAP_PRESERVED_FEATURES_HEAD_RATIO = 0.65;
 
 const DISCOVERY_REQUIRED_FIELDS = ['project_name', 'target_audience', 'product_vision'] as const;
 
@@ -104,6 +108,66 @@ function extractJsonObjectFromText(text: string): Record<string, unknown> | null
   }
 
   return null;
+}
+
+function limitPromptText(value: unknown, maxChars: number, fallback: string): string {
+  const text = typeof value === 'string' && value.trim() ? value.trim() : fallback;
+  if (text.length <= maxChars) {
+    return text;
+  }
+
+  const marker = ' ... [middle omitted] ... ';
+  const budget = maxChars - marker.length;
+  if (budget <= 0) {
+    return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+
+  const headChars = Math.ceil(budget * ROADMAP_PRESERVED_FEATURES_HEAD_RATIO);
+  const tailChars = Math.max(0, budget - headChars);
+  return `${text.slice(0, headChars).trimEnd()}${marker}${text.slice(-tailChars).trimStart()}`;
+}
+
+function selectPreservedFeaturesForPrompt(
+  preservedFeatures: Record<string, unknown>[],
+): Record<string, unknown>[] {
+  if (preservedFeatures.length <= ROADMAP_PRESERVED_FEATURES_PROMPT_MAX) {
+    return preservedFeatures;
+  }
+
+  const headCount = Math.ceil(ROADMAP_PRESERVED_FEATURES_PROMPT_MAX * ROADMAP_PRESERVED_FEATURES_HEAD_RATIO);
+  const tailCount = Math.max(0, ROADMAP_PRESERVED_FEATURES_PROMPT_MAX - headCount);
+  return [
+    ...preservedFeatures.slice(0, headCount),
+    ...preservedFeatures.slice(preservedFeatures.length - tailCount),
+  ];
+}
+
+function buildPreservedFeaturesPromptSection(preservedFeatures: Record<string, unknown>[]): string {
+  if (preservedFeatures.length === 0) {
+    return '';
+  }
+
+  const visibleFeatures = selectPreservedFeaturesForPrompt(preservedFeatures);
+  const preservedInfo = visibleFeatures
+    .map((feature) => {
+      const id = limitPromptText(feature.id, ROADMAP_PRESERVED_FEATURE_ID_MAX_CHARS, 'unknown');
+      const title = limitPromptText(feature.title, ROADMAP_PRESERVED_FEATURE_TITLE_MAX_CHARS, 'Untitled');
+      const status = typeof feature.status === 'string' && feature.status.trim()
+        ? ` [${limitPromptText(feature.status, 32, 'status')}]`
+        : '';
+      return `  - ${id}: ${title}${status}`;
+    })
+    .join('\n');
+  const omitted = preservedFeatures.length > visibleFeatures.length
+    ? `\n  - ... ${preservedFeatures.length - visibleFeatures.length} middle existing feature(s) omitted from the prompt budget.`
+    : '';
+
+  return `\n**EXISTING FEATURES TO PRESERVE**:
+The following ${preservedFeatures.length} features already exist and will be preserved.
+Only ${visibleFeatures.length} sampled from the start and end are summarized here to control prompt size.
+Generate new complementary features without duplicating these:
+${preservedInfo}${omitted}
+`;
 }
 
 function buildFallbackDiscovery(
@@ -446,16 +510,7 @@ async function runFeaturesPhase(
   const loadedFeaturesPrompt = tryLoadPrompt('roadmap_features');
 
   for (let attempt = 0; attempt < MAX_RETRIES; attempt++) {
-    let preservedSection = '';
-    if (preservedFeatures.length > 0) {
-      const preservedInfo = preservedFeatures
-        .map((f) => `  - ${(f as Record<string, string>).id ?? 'unknown'}: ${(f as Record<string, string>).title ?? 'Untitled'}`)
-        .join('\n');
-      preservedSection = `\n**EXISTING FEATURES TO PRESERVE**:
-The following ${preservedFeatures.length} features already exist and will be preserved.
-Generate new complementary features without duplicating these:
-${preservedInfo}\n`;
-    }
+    const preservedSection = buildPreservedFeaturesPromptSection(preservedFeatures);
     const languageInstruction = getRoadmapLanguageInstruction(language);
     const featuresContextBlock = `\n\n---\n\n## CONTEXT (injected by runner)\n\n**Discovery File**: ${discoveryFile}\n**Project Documentation Index**: ${projectDocsIndexFile}\n**Output File**: ${roadmapFile}\n${preservedSection}${languageInstruction}\n\nUse the project documentation index when it exists. If it is missing or incomplete, inspect source files directly. Use the paths above when reading input files and writing output. Write the complete roadmap JSON to the Output File path.`;
 
@@ -678,7 +733,7 @@ export async function runRoadmapGeneration(
     systemPrompt: '',
     modelShorthand,
     thinkingLevel,
-    maxSteps: MAX_STEPS_PER_PHASE,
+    maxSteps: ROADMAP_MAX_STEPS_PER_PHASE,
     tools,
   });
 

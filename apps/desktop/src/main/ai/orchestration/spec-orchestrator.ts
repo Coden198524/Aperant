@@ -24,10 +24,11 @@ import {
   AUTOCODE_TASK_ARTIFACTS,
   buildAutocodePlanQualityRetryPrompt,
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
+  formatAutocodeRetryErrorLines,
   isAutocodeProjectDataPath,
-  normalizeAutocodeContextEvidenceSources,
   saveAutocodeImplementationPlan,
   saveAutocodeTaskRequirementsSync,
+  stringifyAutocodeContextMarkdown,
   stringifyAutocodeImplementationPlanMarkdown,
   validateAutocodeStandardPlanArtifacts,
   type Phase,
@@ -42,10 +43,8 @@ import {
   buildValidationRetryPrompt,
   loadImplementationPlanFromFiles,
   saveImplementationPlanToFiles,
-  SpecContextOutputSchema,
   RequirementsOutputSchema,
   type RequirementsOutput,
-  ResearchOutputSchema,
   type SpecContextOutput,
   type ResearchOutput,
 } from '../schema';
@@ -55,7 +54,7 @@ import type { WorkflowConfig } from './workflow-config';
 import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
 import {
   inferAutocodeSpecComplexityFallback,
-  parseAutocodeProjectIndexSummary,
+  parseAutocodeProjectDocsReferenceSummary,
   selectAutocodeSpecPhases,
   shouldForceSplitAutocodeImplementationPlan,
   shouldRunAutocodeSpecResearchPhase,
@@ -68,8 +67,18 @@ import {
 /** Maximum retries for a single phase (configurable via WorkflowConfig) */
 const MAX_PHASE_RETRIES = 2;
 
-/** Maximum characters of a single phase output to carry forward */
-const MAX_PHASE_OUTPUT_SIZE = 12_000;
+/** Maximum characters of a single phase output summary to carry forward. */
+const MAX_PHASE_OUTPUT_SIZE = 2_600;
+const PHASE_OUTPUT_EXCERPT_MAX_CHARS = 900;
+const PHASE_OUTPUT_LINE_MAX_CHARS = 220;
+const PHASE_OUTPUT_HEADING_LIMIT = 8;
+const PHASE_OUTPUT_BULLET_LIMIT = 14;
+const PHASE_OUTPUT_PARAGRAPH_LIMIT = 3;
+const PHASE_OUTPUT_JSON_ARRAY_LIMIT = 6;
+const PHASE_OUTPUT_JSON_OBJECT_KEY_LIMIT = 18;
+const SPEC_ARTIFACT_TASK_DESCRIPTION_MAX_CHARS = 4_000;
+const SPEC_ARTIFACT_TASK_DESCRIPTION_COMPACTION_NOTICE =
+  '\n\n...[task description middle omitted for artifact budget; read task metadata if exact omitted detail is required]...\n\n';
 
 // =============================================================================
 // Types
@@ -144,7 +153,7 @@ const PHASE_AGENT_MAP: Record<SpecPhase, AgentType> = {
  * Complexity assessment runs BEFORE these phases as the gating step.
  *
  * - SIMPLE: skip discovery & requirements entirely; the internal quick_spec phase writes a light Standard plan.
- * - STANDARD: discovery builds context.json, requirements gathers formal reqs,
+ * - STANDARD: discovery builds context.md, requirements gathers formal reqs,
  *   then spec_writing + planning. 'context' phase removed (redundant with discovery).
  * - COMPLEX: full pipeline including research and self-critique.
  */
@@ -177,11 +186,11 @@ const GAME_MMO_DOCUMENTATION_FOCUS = [
 
 /** Maps each phase to the output files it typically produces */
 const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
-  discovery: ['context.json'],
+  discovery: [AUTOCODE_TASK_ARTIFACTS.context],
   requirements: [AUTOCODE_TASK_ARTIFACTS.requirements],
   complexity_assessment: ['complexity_assessment.json'],
-  research: ['research.json'],
-  context: ['context.json'],
+  research: [AUTOCODE_TASK_ARTIFACTS.research],
+  context: [AUTOCODE_TASK_ARTIFACTS.context],
   spec_writing: ['spec.md'],
   self_critique: ['spec.md'],
   planning: [AUTOCODE_TASK_ARTIFACTS.tasks],
@@ -189,10 +198,7 @@ const PHASE_OUTPUTS: Partial<Record<SpecPhase, string[]>> = {
 };
 
 const STRUCTURED_JSON_PHASE_OUTPUTS: Partial<Record<SpecPhase, string>> = {
-  discovery: 'context.json',
   requirements: AUTOCODE_TASK_ARTIFACTS.requirements,
-  research: 'research.json',
-  context: 'context.json',
 };
 
 /** State file name for tracking spec creation progress */
@@ -218,7 +224,9 @@ export interface SpecOrchestratorConfig {
   complexityOverride?: ComplexityTier;
   /** Whether to use AI for complexity assessment (default: true) */
   useAiAssessment?: boolean;
-  /** Pre-generated project index JSON content (injected into all phases) */
+  /** Generated project documentation reference text injected into all phases. */
+  projectDocsReference?: string;
+  /** @deprecated Use projectDocsReference. */
   projectIndex?: string;
   /** CLI model override */
   cliModel?: string;
@@ -292,8 +300,8 @@ export interface SpecPromptContext {
   taskDescription?: string;
   /** Complexity tier (after assessment) */
   complexity?: ComplexityTier;
-  /** Pre-generated project index (JSON string) */
-  projectIndex?: string;
+  /** Generated project documentation reference text. */
+  projectDocsReference?: string;
   /** Accumulated outputs from prior phases (filename → content) */
   priorPhaseOutputs?: Record<string, string>;
   /** Retry attempt number (0 = first try) */
@@ -317,8 +325,8 @@ export interface SpecSessionRunConfig {
   cliThinking?: string;
   /** Accumulated outputs from prior phases (filename → content) for kickoff enrichment */
   priorPhaseOutputs?: Record<string, string>;
-  /** Pre-generated project index (JSON string) */
-  projectIndex?: string;
+  /** Generated project documentation reference text for kickoff enrichment. */
+  projectDocsReference?: string;
   /** Optional Zod schema for structured output (uses AI SDK Output.object()) */
   outputSchema?: ZodSchema;
 }
@@ -410,13 +418,13 @@ function hasExecutableSubtasks(plan: MinimalImplementationPlan | null): boolean 
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
 }
 
-function isEmptyOrUnstructuredProjectIndex(projectIndex: string | undefined): boolean {
-  if (!projectIndex) {
+function isSparseProjectDocsReference(projectDocsReference: string | undefined): boolean {
+  if (!projectDocsReference) {
     return false;
   }
 
   try {
-    const parsed = JSON.parse(projectIndex) as {
+    const parsed = JSON.parse(projectDocsReference) as {
       services?: Record<string, unknown>;
       infrastructure?: Record<string, unknown>;
     };
@@ -428,9 +436,9 @@ function isEmptyOrUnstructuredProjectIndex(projectIndex: string | undefined): bo
       : 0;
     return services === 0 && infrastructure === 0;
   } catch {
-    return projectIndex.trim().length > 0 &&
-      projectIndex.length < 512 &&
-      !/(package\.json|requirements\.txt|cargo\.toml|go\.mod|pom\.xml|build\.gradle)/i.test(projectIndex);
+    return projectDocsReference.trim().length > 0 &&
+      projectDocsReference.length < 512 &&
+      !/(project-docs|index\.md|package\.json|requirements\.txt|cargo\.toml|go\.mod|pom\.xml|build\.gradle)/i.test(projectDocsReference);
   }
 }
 
@@ -490,6 +498,33 @@ function normalizeTaskDescription(taskDescription: string | undefined): string {
   const normalized = taskOnly || trimmed;
 
   return normalized.length > 1200 ? `${normalized.slice(0, 1200)}...` : normalized;
+}
+
+function compactSpecArtifactTaskDescription(taskDescription: string | undefined): string {
+  const normalized = (taskDescription ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (!normalized) {
+    return 'Create the requested software change.';
+  }
+  if (normalized.length <= SPEC_ARTIFACT_TASK_DESCRIPTION_MAX_CHARS) {
+    return normalized;
+  }
+
+  const budget = Math.max(
+    0,
+    SPEC_ARTIFACT_TASK_DESCRIPTION_MAX_CHARS - SPEC_ARTIFACT_TASK_DESCRIPTION_COMPACTION_NOTICE.length,
+  );
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return [
+    normalized.slice(0, headBudget).trimEnd(),
+    SPEC_ARTIFACT_TASK_DESCRIPTION_COMPACTION_NOTICE,
+    normalized.slice(-tailBudget).trimStart(),
+  ].join('');
 }
 
 function oneLine(value: string, maxLength: number): string {
@@ -555,7 +590,7 @@ const DOCUMENTATION_ENTRY_FILE_NAMES = [
   'game', 'engine', 'core',
 ];
 
-const DOCUMENTATION_SUPPORT_FILES = ['doc_outline.json', 'evidence_index.json'];
+const DOCUMENTATION_SUPPORT_FILES = ['doc_outline.md', 'evidence_index.md'];
 
 const SOURCE_FILE_EXTENSIONS = new Set([
   '.ts',
@@ -1000,8 +1035,8 @@ function getDocumentationQualityGuidance(
   if (language === 'zh-CN') {
     return [
       `文档深度：${depth}。`,
-      '先写 `doc_outline.json`：包含文档类型、目标读者、章节列表、每节要回答的问题、预计引用的文件。',
-      '再写 `evidence_index.json`：记录已阅读文件、每个关键结论的证据文件、推断项和未确认项。',
+      '先写 `doc_outline.md`：包含文档类型、目标读者、章节列表、每节要回答的问题、预计引用的文件。',
+      '再写 `evidence_index.md`：记录已阅读文件、每个关键结论的证据文件、推断项和未确认项。',
       `最后写 \`${outputFile}\`：按大纲生成结构化 Markdown。`,
       '最终 Markdown 必须包含：概览、范围、关键文件/模块、核心流程、数据/状态流、边界与风险、未确认项。',
       '关键结论要标明来源文件；事实、推断、风险要分开写。',
@@ -1011,8 +1046,8 @@ function getDocumentationQualityGuidance(
 
   return [
     `Documentation depth: ${depth}.`,
-    'First write `doc_outline.json` with document type, audience, sections, questions each section answers, and planned source references.',
-    'Then write `evidence_index.json` with files read, evidence-backed claims, inferred claims, and open questions.',
+    'First write `doc_outline.md` with document type, audience, sections, questions each section answers, and planned source references.',
+    'Then write `evidence_index.md` with files read, evidence-backed claims, inferred claims, and open questions.',
     `Finally write \`${outputFile}\` as structured Markdown from the outline and evidence.`,
     'Final Markdown must include: overview, scope, key files/modules, core flows, data/state flow, boundaries and risks, and open questions.',
     'Mark source files for important claims; separate facts, inferences, and risks.',
@@ -1076,14 +1111,14 @@ function buildSourceDocumentationStandardLightPlan(
   const phaseName = isChinese ? '\u6587\u6863\u5206\u6790' : 'Documentation analysis';
   const title = isChinese ? '\u5206\u6790\u6e90\u7801\u5e76\u751f\u6210\u6587\u6863' : 'Analyze source and generate documentation';
   const outputHint = isChinese
-    ? `\u751f\u6210\u6216\u66f4\u65b0\u7528\u6237\u8981\u6c42\u7684 Markdown \u6587\u6863\u3002\u672a\u6307\u5b9a\u8f93\u51fa\u6587\u4ef6\u65f6\u4f7f\u7528 ${outputFile}\u3002\u540c\u65f6\u751f\u6210 doc_outline.json \u548c evidence_index.json\u3002`
-    : `Create or update the requested Markdown document. When no output file is specified, use ${outputFile}. Also create doc_outline.json and evidence_index.json.`;
+    ? `\u751f\u6210\u6216\u66f4\u65b0\u7528\u6237\u8981\u6c42\u7684 Markdown \u6587\u6863\u3002\u672a\u6307\u5b9a\u8f93\u51fa\u6587\u4ef6\u65f6\u4f7f\u7528 ${outputFile}\u3002\u540c\u65f6\u751f\u6210 doc_outline.md \u548c evidence_index.md\u3002`
+    : `Create or update the requested Markdown document. When no output file is specified, use ${outputFile}. Also create doc_outline.md and evidence_index.md.`;
   const readRule = isChinese
-    ? '\u53ea\u505a\u6587\u6863\u5206\u6790\uff0c\u4e0d\u4fee\u6539\u4ea7\u54c1\u4ee3\u7801\u3002\u5148\u7528\u9879\u76ee\u7d22\u5f15\u548c\u7528\u6237\u6307\u5b9a\u6587\u4ef6\u5b9a\u4f4d\u8303\u56f4\uff0c\u518d\u6cbf\u5165\u53e3\u3001\u516c\u5171\u63a5\u53e3\u3001\u914d\u7f6e\u548c\u6838\u5fc3\u8c03\u7528\u94fe\u6269\u5c55\u8bc1\u636e\u3002'
-    : 'This is documentation analysis only; do not modify product code. Use the project index and user-specified files to narrow scope, then expand evidence through entry points, public interfaces, configuration, and core call chains.';
+    ? '\u53ea\u505a\u6587\u6863\u5206\u6790\uff0c\u4e0d\u4fee\u6539\u4ea7\u54c1\u4ee3\u7801\u3002\u5148\u7528\u9879\u76ee\u6587\u6863\u53c2\u8003\u548c\u7528\u6237\u6307\u5b9a\u6587\u4ef6\u5b9a\u4f4d\u8303\u56f4\uff0c\u518d\u6cbf\u5165\u53e3\u3001\u516c\u5171\u63a5\u53e3\u3001\u914d\u7f6e\u548c\u6838\u5fc3\u8c03\u7528\u94fe\u6269\u5c55\u8bc1\u636e\u3002'
+    : 'This is documentation analysis only; do not modify product code. Use the project documentation reference and user-specified files to narrow scope, then expand evidence through entry points, public interfaces, configuration, and core call chains.';
   const verificationRun = isChinese
-    ? `\u786e\u8ba4 ${outputFile}\u3001doc_outline.json \u548c evidence_index.json \u5df2\u751f\u6210\uff0cMarkdown \u5305\u542b\u7ed3\u6784\u5316\u6e90\u7801\u5206\u6790\u3001\u8bc1\u636e\u6587\u4ef6\u3001\u6d41\u7a0b/\u6570\u636e\u6d41\u548c\u672a\u786e\u8ba4\u9879\u3002\u4e0d\u8981\u4e3a\u7eaf\u6587\u6863\u4efb\u52a1\u8fd0\u884c\u7f16\u8bd1\u6216 QA\u3002`
-    : `Confirm ${outputFile}, doc_outline.json, and evidence_index.json exist, and the Markdown contains structured source analysis, evidence files, flows/data flow, and open questions. Do not run build or QA for documentation-only tasks.`;
+    ? `\u786e\u8ba4 ${outputFile}\u3001doc_outline.md \u548c evidence_index.md \u5df2\u751f\u6210\uff0cMarkdown \u5305\u542b\u7ed3\u6784\u5316\u6e90\u7801\u5206\u6790\u3001\u8bc1\u636e\u6587\u4ef6\u3001\u6d41\u7a0b/\u6570\u636e\u6d41\u548c\u672a\u786e\u8ba4\u9879\u3002\u4e0d\u8981\u4e3a\u7eaf\u6587\u6863\u4efb\u52a1\u8fd0\u884c\u7f16\u8bd1\u6216 QA\u3002`
+    : `Confirm ${outputFile}, doc_outline.md, and evidence_index.md exist, and the Markdown contains structured source analysis, evidence files, flows/data flow, and open questions. Do not run build or QA for documentation-only tasks.`;
   const profileSpecLines = isGameMmoDocumentation
     ? isChinese
       ? [
@@ -1104,7 +1139,7 @@ function buildSourceDocumentationStandardLightPlan(
         '',
         '## \u8303\u56f4',
         `- \u8f93\u51fa Markdown \u6587\u6863\uff1a\`${outputFile}\`\u3002`,
-        '- \u8f93\u51fa\u652f\u6491\u6587\u4ef6\uff1a`doc_outline.json`\u3001`evidence_index.json`\u3002',
+        '- \u8f93\u51fa\u652f\u6491\u6587\u4ef6\uff1a`doc_outline.md`\u3001`evidence_index.md`\u3002',
         `- \u6587\u6863\u6df1\u5ea6\uff1a${documentationDepth}\u3002`,
         '- \u9605\u8bfb\u8db3\u591f\u7684\u5173\u952e\u6e90\u7801\u6587\u4ef6\uff0c\u652f\u6301\u7ed3\u8bba\u53ef\u8ffd\u6eaf\u3002',
         '- \u4e0d\u505a\u4ea7\u54c1\u4ee3\u7801\u6539\u52a8\u3002',
@@ -1126,7 +1161,7 @@ function buildSourceDocumentationStandardLightPlan(
         '',
         '## Scope',
         `- Output Markdown documentation: \`${outputFile}\`.`,
-        '- Output support files: `doc_outline.json`, `evidence_index.json`.',
+        '- Output support files: `doc_outline.md`, `evidence_index.md`.',
         `- Documentation depth: ${documentationDepth}.`,
         '- Read enough key source files to make conclusions traceable.',
         '- Do not change product code.',
@@ -1170,7 +1205,7 @@ function buildSourceDocumentationStandardLightPlan(
               files_to_create: [outputFile, ...DOCUMENTATION_SUPPORT_FILES],
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
-              evidence: 'spec.md documentation scope; project source files; evidence_index.json',
+              evidence: 'spec.md documentation scope; project source files; evidence_index.md',
               verification: {
                 type: 'manual',
                 run: verificationRun,
@@ -1187,8 +1222,8 @@ function buildSourceDocumentationStandardLightPlan(
         : undefined,
       document_outputs: {
         final_markdown: outputFile,
-        outline: 'doc_outline.json',
-        evidence_index: 'evidence_index.json',
+        outline: 'doc_outline.md',
+        evidence_index: 'evidence_index.md',
       },
       source_task: {
         original_request: task,
@@ -1265,8 +1300,14 @@ export function buildWriteToolJsonRetryPrompt(phase: SpecPhase, specDir: string)
         'For spec.md, write a compact 20-60 line version first.',
         'Do not copy large context blocks, full source files, long code blocks, or large tables into spec.md.',
       ]
+    : phase === 'discovery' || phase === 'context'
+      ? [
+          `For ${AUTOCODE_TASK_ARTIFACTS.context}, write concise Markdown with sections: Task, Scoped Services, Architecture Summary, Files To Modify, Files To Reference, Design Patterns, Implementation Notes, Risks, Verification Suggestions, Standards References, Assumptions, Evidence Sources.`,
+          'Evidence Sources must be Markdown bullets that cite exact files, symbols, lines, project docs, or verified references.',
+          'Do not write JSON for project context.',
+        ]
     : [
-        'Keep JSON or markdown content concise and include only information needed by the next phase.',
+        'Keep the required file content concise; use JSON only for app-parsed structured files and Markdown for prose/reference artifacts.',
       ];
 
   return [
@@ -1296,8 +1337,8 @@ function buildStructuredJsonOutputRetryPrompt(
   const phaseGuidance: Partial<Record<SpecPhase, string[]>> = {
     discovery: [
       'Summarize only the files and patterns directly relevant to the task.',
-      'Include files_to_modify, files_to_reference, scoped_services, design_patterns, evidence_sources, standards_references, assumptions, implementation_notes, risks, and verification_suggestions.',
-      'For context.json, evidence_sources must be objects with path, optional symbol, optional lines, proves, and confidence.',
+      `Include ${AUTOCODE_TASK_ARTIFACTS.context} sections for files to modify, files to reference, scoped services, design patterns, evidence sources, standards references, assumptions, implementation notes, risks, and verification suggestions.`,
+      `For ${AUTOCODE_TASK_ARTIFACTS.context}, Evidence Sources must be Markdown bullets with path, optional symbol, optional lines, what it proves, and confidence.`,
       'Every major architecture or pattern claim must be backed by evidence_sources; put uncertain claims in assumptions instead of presenting them as fact.',
     ],
     context: [
@@ -1311,14 +1352,16 @@ function buildStructuredJsonOutputRetryPrompt(
     ],
     research: [
       'Include concise verified findings only; link to sources instead of copying documentation.',
-      'Keep code snippets out of JSON unless they are one-line API examples.',
+      'Keep code snippets out unless they are one-line API examples.',
     ],
   };
 
   const finalJsonTarget = fileName === AUTOCODE_TASK_ARTIFACTS.requirements
     ? `${fileName} data`
+    : fileName === AUTOCODE_TASK_ARTIFACTS.research
+      ? `${fileName} data`
     : fileName;
-  const diskFormat = fileName === AUTOCODE_TASK_ARTIFACTS.requirements
+  const diskFormat = fileName === AUTOCODE_TASK_ARTIFACTS.requirements || fileName === AUTOCODE_TASK_ARTIFACTS.research
     ? 'Markdown'
     : 'JSON';
 
@@ -1343,20 +1386,15 @@ function buildStructuredJsonOutputRetryPrompt(
 
 function getStructuredJsonOutputSchema(phase: SpecPhase): ZodSchema | undefined {
   switch (phase) {
-    case 'discovery':
-    case 'context':
-      return SpecContextOutputSchema;
     case 'requirements':
       return RequirementsOutputSchema;
-    case 'research':
-      return ResearchOutputSchema;
     default:
       return undefined;
   }
 }
 
 function isAutocodePlanQualityError(error: string): boolean {
-  return /too large|Evidence|evidence_sources|context\.json|requirements\.md|spec\.md|tasks\.md/i.test(error);
+  return /too large|Evidence|evidence_sources|context\.md|requirements\.md|spec\.md|tasks\.md/i.test(error);
 }
 
 async function writeStructuredJsonOutput(
@@ -1368,7 +1406,258 @@ async function writeStructuredJsonOutput(
     saveAutocodeTaskRequirementsSync(specDir, data as never);
     return;
   }
+  if (fileName === AUTOCODE_TASK_ARTIFACTS.research) {
+    await writeFile(join(specDir, fileName), stringifyResearchMarkdown(data), 'utf-8');
+    return;
+  }
   await writeFile(join(specDir, fileName), `${JSON.stringify(data, null, 2)}\n`, 'utf-8');
+}
+
+function stringifyResearchMarkdown(data: unknown): string {
+  const research = data && typeof data === 'object' && !Array.isArray(data)
+    ? data as Partial<ResearchOutput>
+    : {};
+  const lines: string[] = ['# Research', ''];
+
+  const integrations = Array.isArray(research.integrations_researched)
+    ? research.integrations_researched
+    : [];
+  lines.push('## Integrations Researched', '');
+  if (integrations.length === 0) {
+    lines.push('- None required.', '');
+  } else {
+    integrations.forEach((integration) => {
+      lines.push(`### ${singleLineMarkdown(integration.name) || 'Integration'}`, '');
+      lines.push(`- Type: ${singleLineMarkdown(integration.type) || 'unknown'}`);
+      const pkg = integration.verified_package;
+      if (pkg) {
+        lines.push(`- Package: ${singleLineMarkdown(pkg.name) || 'unknown'} (${singleLineMarkdown(pkg.version) || 'unknown'})`);
+        lines.push(`- Install: ${singleLineMarkdown(pkg.install_command) || 'unknown'}`);
+        lines.push(`- Verified: ${pkg.verified ? 'yes' : 'no'}`);
+      }
+      const api = integration.api_patterns;
+      if (api) {
+        addMarkdownBullets(lines, 'Imports', api.imports);
+        lines.push(`- Initialization: ${singleLineMarkdown(api.initialization) || 'unknown'}`);
+        addMarkdownBullets(lines, 'Key functions', api.key_functions);
+        lines.push(`- Verified against: ${singleLineMarkdown(api.verified_against) || 'unknown'}`);
+      }
+      const config = integration.configuration;
+      if (config) {
+        addMarkdownBullets(lines, 'Environment variables', config.env_vars);
+        addMarkdownBullets(lines, 'Config files', config.config_files);
+        addMarkdownBullets(lines, 'Dependencies', config.dependencies);
+      }
+      addMarkdownBullets(lines, 'Gotchas', integration.gotchas);
+      addMarkdownBullets(lines, 'Sources', integration.research_sources);
+      lines.push('');
+    });
+  }
+
+  lines.push('## Recommendations', '');
+  addPlainBullets(lines, research.recommendations, 'No extra recommendations.');
+
+  lines.push('## Unverified Claims', '');
+  const claims = Array.isArray(research.unverified_claims) ? research.unverified_claims : [];
+  if (claims.length === 0) {
+    lines.push('- None.', '');
+  } else {
+    claims.forEach((claim) => {
+      lines.push(`- ${singleLineMarkdown(claim.claim)} (${claim.risk_level || 'medium'}): ${singleLineMarkdown(claim.reason)}`);
+    });
+    lines.push('');
+  }
+
+  if (research.created_at) {
+    lines.push('## Metadata', '', `- Created At: ${singleLineMarkdown(research.created_at)}`, '');
+  }
+
+  return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+}
+
+function addMarkdownBullets(lines: string[], label: string, values: unknown): void {
+  const items = Array.isArray(values)
+    ? values.map(singleLineMarkdown).filter(Boolean)
+    : [];
+  if (items.length > 0) {
+    lines.push(`- ${label}: ${items.join('; ')}`);
+  }
+}
+
+function addPlainBullets(lines: string[], values: unknown, emptyText: string): void {
+  const items = Array.isArray(values)
+    ? values.map(singleLineMarkdown).filter(Boolean)
+    : [];
+  if (items.length === 0) {
+    lines.push(`- ${emptyText}`, '');
+    return;
+  }
+  lines.push(...items.map((item) => `- ${item}`), '');
+}
+
+function singleLineMarkdown(value: unknown): string {
+  if (typeof value === 'string') {
+    return value.replace(/\s+/g, ' ').trim();
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  return '';
+}
+
+function compactPhaseOutputForCarryover(fileName: string, content: string): string {
+  const normalized = content.replace(/\r\n/g, '\n').trim();
+  if (normalized.length <= MAX_PHASE_OUTPUT_SIZE) {
+    return normalized;
+  }
+
+  if (fileName.endsWith('.json')) {
+    const jsonSummary = summarizePhaseOutputJson(normalized);
+    if (jsonSummary) {
+      return limitPhaseOutputText(jsonSummary);
+    }
+  }
+
+  const headings: string[] = [];
+  const bullets: string[] = [];
+  const paragraphs: string[] = [];
+  let inFence = false;
+
+  for (const rawLine of normalized.split('\n')) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      continue;
+    }
+    if (/^#{1,4}\s+\S/.test(line)) {
+      pushCompactPhaseLine(
+        headings,
+        line.replace(/^#{1,4}\s+/, ''),
+        PHASE_OUTPUT_HEADING_LIMIT,
+      );
+      continue;
+    }
+    if (/^(?:[-*+]|\d+[.)])\s+\S/.test(line)) {
+      pushCompactPhaseLine(
+        bullets,
+        line.replace(/^(?:[-*+]|\d+[.)])\s+/, ''),
+        PHASE_OUTPUT_BULLET_LIMIT,
+      );
+      continue;
+    }
+    if (line.length >= 28) {
+      pushCompactPhaseLine(paragraphs, line, PHASE_OUTPUT_PARAGRAPH_LIMIT);
+    }
+  }
+
+  const lines = [
+    `Compact phase output summary for ${fileName}. Read the artifact directly for exact wording or omitted detail.`,
+    '',
+    'Content excerpt:',
+    limitPhaseOutputText(
+      normalized,
+      '\n...[phase output middle omitted; read artifact if needed]...\n',
+      PHASE_OUTPUT_EXCERPT_MAX_CHARS,
+    ),
+    '',
+  ];
+  appendCompactPhaseSection(lines, 'Key headings', headings);
+  appendCompactPhaseSection(lines, 'Selected bullets', bullets);
+  appendCompactPhaseSection(lines, 'Selected notes', paragraphs);
+
+  if (headings.length === 0 && bullets.length === 0 && paragraphs.length === 0) {
+    lines.push(limitPhaseOutputText(normalized, '\n...[truncated; read artifact if needed]'));
+  }
+
+  return limitPhaseOutputText(lines.join('\n').trimEnd());
+}
+
+function summarizePhaseOutputJson(content: string): string | null {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    const summary = summarizePhaseJsonValue(parsed);
+    return [
+      'Compact JSON phase output summary. Read the artifact directly for exact values.',
+      JSON.stringify(summary, null, 2),
+    ].join('\n');
+  } catch {
+    return null;
+  }
+}
+
+function summarizePhaseJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const items = value.slice(0, PHASE_OUTPUT_JSON_ARRAY_LIMIT).map(summarizePhaseJsonValue);
+    return value.length > items.length
+      ? [...items, `... ${value.length - items.length} more item(s)`]
+      : items;
+  }
+  if (!value || typeof value !== 'object') {
+    return typeof value === 'string'
+      ? compactPhaseLine(value)
+      : value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  const entries = Object.entries(record);
+  for (const [key, item] of entries.slice(0, PHASE_OUTPUT_JSON_OBJECT_KEY_LIMIT)) {
+    result[key] = summarizePhaseJsonValue(item);
+  }
+  const omitted = entries.length - Object.keys(result).length;
+  if (omitted > 0) {
+    result.__omitted_keys = omitted;
+  }
+  return result;
+}
+
+function appendCompactPhaseSection(lines: string[], title: string, items: string[]): void {
+  if (items.length === 0) {
+    return;
+  }
+  lines.push(`## ${title}`, '', ...items.map((item) => `- ${item}`), '');
+}
+
+function pushCompactPhaseLine(target: string[], value: string, limit: number): void {
+  if (target.length >= limit) {
+    return;
+  }
+  const compact = compactPhaseLine(value);
+  if (compact && !target.includes(compact)) {
+    target.push(compact);
+  }
+}
+
+function compactPhaseLine(value: string): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= PHASE_OUTPUT_LINE_MAX_CHARS) {
+    return normalized;
+  }
+  return limitPhaseOutputText(normalized, ' ... [middle omitted] ... ', PHASE_OUTPUT_LINE_MAX_CHARS);
+}
+
+function limitPhaseOutputText(
+  value: string,
+  suffix = '\n...[compact phase output truncated; read artifact if needed]',
+  maxChars = MAX_PHASE_OUTPUT_SIZE,
+): string {
+  const normalized = value.trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  const budget = Math.max(0, maxChars - suffix.length);
+  if (budget <= 0) {
+    return normalized.slice(0, maxChars);
+  }
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return `${normalized.slice(0, headBudget).trimEnd()}${suffix}${normalized.slice(-tailBudget).trimStart()}`;
 }
 
 function getLastAssistantText(result: SessionResult): string | null {
@@ -1426,44 +1715,11 @@ function normalizeStructuredJsonOutput(
   taskDescription?: string,
 ): unknown {
   switch (phase) {
-    case 'discovery':
-    case 'context':
-      return normalizeSpecContextOutput(value);
     case 'requirements':
       return normalizeRequirementsOutput(value, taskDescription);
-    case 'research':
-      return normalizeResearchOutput(value);
     default:
       return value;
   }
-}
-
-function normalizeSpecContextOutput(value: unknown): SpecContextOutput | unknown {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) {
-    return value;
-  }
-
-  const record = value as Record<string, unknown>;
-  return {
-    task_description: stringFrom(record.task_description, record.task, record.taskDescription, record.summary),
-    scoped_services: stringArrayFrom(record.scoped_services, record.services_involved, record.services),
-    architecture_summary: stringFrom(record.architecture_summary, record.architecture, record.current_state, record.summary, record.tech_stack),
-    files_to_modify: normalizeFileModifications(record.files_to_modify, record.filesToModify, record.likely_files_to_create),
-    files_to_reference: normalizeFileReferences(record.files_to_reference, record.filesToReference, record.pattern_files),
-    design_patterns: normalizeDesignPatterns(record.design_patterns, record.patterns),
-    evidence_sources: normalizeAutocodeContextEvidenceSources([
-      ...toArray(record.evidence_sources),
-      ...toArray(record.evidence),
-      ...toArray(record.sources),
-      ...toArray(record.source_references),
-    ]),
-    standards_references: stringArrayFrom(record.standards_references, record.standards, record.industry_standards, record.official_docs),
-    assumptions: stringArrayFrom(record.assumptions, record.inferred_claims, record.unknowns),
-    implementation_notes: stringArrayFrom(record.implementation_notes, record.notes, record.notes_for_next_phase),
-    risks: stringArrayFrom(record.risks, record.risk_notes),
-    verification_suggestions: stringArrayFrom(record.verification_suggestions, record.validation_strategy, record.recommended_checks),
-    created_at: stringFrom(record.created_at, record.createdAt) || new Date().toISOString(),
-  };
 }
 
 function stringFrom(...values: unknown[]): string {
@@ -1517,71 +1773,6 @@ function toStringArray(value: unknown): string[] {
   return value.map(stringifyCompact).filter(Boolean);
 }
 
-function toArray(value: unknown): unknown[] {
-  return Array.isArray(value) ? value : value === undefined || value === null || value === '' ? [] : [value];
-}
-
-function normalizeFileModifications(...values: unknown[]): SpecContextOutput['files_to_modify'] {
-  const items = firstArray(values);
-  return items.map((item) => {
-    if (typeof item === 'string') {
-      return {
-        path: item,
-        reason: 'Relevant file for the requested change',
-        change_needed: 'Create or update this file to implement the task',
-      };
-    }
-    const record = isRecord(item) ? item : {};
-    const pathValue = stringFrom(record.path, record.file, record.file_path, record.name);
-    return {
-      path: pathValue,
-      reason: stringFrom(record.reason, record.purpose, record.description) || 'Relevant file for the requested change',
-      change_needed: stringFrom(record.change_needed, record.changeNeeded, record.action, record.status) || 'Create or update this file to implement the task',
-    };
-  }).filter((item) => item.path);
-}
-
-function normalizeFileReferences(...values: unknown[]): SpecContextOutput['files_to_reference'] {
-  const items = firstArray(values);
-  return items.map((item) => {
-    if (typeof item === 'string') {
-      return {
-        path: item,
-        reason: 'Reference file for existing patterns',
-        pattern: 'Review relevant implementation patterns',
-      };
-    }
-    const record = isRecord(item) ? item : {};
-    const pathValue = stringFrom(record.path, record.file, record.file_path, record.name);
-    return {
-      path: pathValue,
-      reason: stringFrom(record.reason, record.purpose, record.description) || 'Reference file for existing patterns',
-      pattern: stringFrom(record.pattern, record.guidance, record.existing_usage) || 'Review relevant implementation patterns',
-    };
-  }).filter((item) => item.path);
-}
-
-function normalizeDesignPatterns(...values: unknown[]): SpecContextOutput['design_patterns'] {
-  const items = firstArray(values);
-  return items.map((item) => {
-    if (typeof item === 'string') {
-      return {
-        name: item,
-        existing_usage: 'Not detected',
-        files: [],
-        guidance: item,
-      };
-    }
-    const record = isRecord(item) ? item : {};
-    const name = stringFrom(record.name, record.pattern, record.title, record.guidance);
-    return {
-      name,
-      existing_usage: stringFrom(record.existing_usage, record.existingUsage, record.usage) || 'Not detected',
-      files: stringArrayFrom(record.files, record.paths),
-      guidance: stringFrom(record.guidance, record.description, record.reason) || name,
-    };
-  }).filter((item) => item.name);
-}
 
 function firstArray(values: unknown[]): unknown[] {
   for (const value of values) {
@@ -1605,15 +1796,18 @@ function normalizeRequirementsOutput(
   }
 
   const record = value as Record<string, unknown>;
-  const taskDescription = stringFrom(record.task_description, record.task, record.taskDescription, record.summary) ||
-    normalizeTaskDescription(fallbackTaskDescription);
+  const taskDescription = compactSpecArtifactTaskDescription(
+    stringFrom(record.task_description, record.task, record.taskDescription, record.summary) ||
+      normalizeTaskDescription(fallbackTaskDescription),
+  );
   return {
     task_description: taskDescription,
     workflow_type: isInvestigationTaskDescription(normalizeTaskDescription(taskDescription).toLowerCase())
       ? 'investigation'
       : normalizeWorkflowType(record.workflow_type, record.workflowType, record.type),
     services_involved: stringArrayFrom(record.services_involved, record.scoped_services, record.services),
-    user_requirements: stringArrayFrom(record.user_requirements, record.requirements, record.functional_requirements, taskDescription),
+    user_requirements: stringArrayFrom(record.user_requirements, record.requirements, record.functional_requirements, taskDescription)
+      .map((item) => compactSpecArtifactTaskDescription(item)),
     acceptance_criteria: stringArrayFrom(record.acceptance_criteria, record.acceptanceCriteria, record.success_criteria, record.validation_scenarios),
     constraints: stringArrayFrom(record.constraints, record.non_functional_requirements, record.risks),
     evidence_sources: stringArrayFrom(record.evidence_sources, record.evidence, record.sources, record.source_references),
@@ -1758,7 +1952,7 @@ function buildFallbackRequirementsOutput(
   taskDescription?: string,
   complexity?: ComplexityTier,
 ): RequirementsOutput {
-  const description = taskDescription?.trim() || 'Create the requested software change.';
+  const description = compactSpecArtifactTaskDescription(taskDescription);
   return {
     task_description: description,
     workflow_type: inferRequirementsWorkflowType(description, complexity),
@@ -1779,7 +1973,7 @@ function buildFallbackRequirementsOutput(
 }
 
 function buildFallbackContextOutput(taskDescription?: string): SpecContextOutput {
-  const description = taskDescription?.trim() || 'Create the requested software change.';
+  const description = compactSpecArtifactTaskDescription(taskDescription);
   return {
     task_description: description,
     scoped_services: [],
@@ -1799,7 +1993,7 @@ function buildFallbackContextOutput(taskDescription?: string): SpecContextOutput
       'Inspect only files directly relevant to the implementation before editing.',
     ],
     risks: [
-      'Discovery fallback was used because the model did not produce context.json.',
+      `Discovery fallback was used because the model did not produce ${AUTOCODE_TASK_ARTIFACTS.context}.`,
     ],
     verification_suggestions: [
       'Run the smallest available project-specific verification, or document a manual check if no automated check exists.',
@@ -1811,9 +2005,9 @@ function buildFallbackContextOutput(taskDescription?: string): SpecContextOutput
 function shouldRunResearchPhase(
   assessment: ComplexityAssessment | null,
   taskDescription?: string,
-  projectIndex?: string,
+  projectDocsReference?: string,
 ): boolean {
-  return shouldRunAutocodeSpecResearchPhase(assessment, taskDescription, projectIndex);
+  return shouldRunAutocodeSpecResearchPhase(assessment, taskDescription, projectDocsReference);
 }
 
 function isInvestigationTaskDescription(text: string): boolean {
@@ -1848,10 +2042,10 @@ interface MmoAssessmentHints {
 
 function inferMmoAssessmentHints(
   taskDescription: string | undefined,
-  projectIndex: string | undefined,
+  projectDocsReference: string | undefined,
 ): MmoAssessmentHints {
   const taskText = normalizeTaskDescription(taskDescription).toLowerCase();
-  const projectText = (projectIndex ?? '').toLowerCase();
+  const projectText = (projectDocsReference ?? '').toLowerCase();
   const combinedText = `${taskText}\n${projectText}`;
   const signals: string[] = [];
 
@@ -1889,37 +2083,37 @@ function inferMmoAssessmentHints(
 
 function inferComplexityFallback(
   taskDescription: string,
-  projectIndex: string | undefined,
+  projectDocsReference: string | undefined,
   workflowConfig: WorkflowConfig,
 ): FallbackComplexityAssessment {
   return inferAutocodeSpecComplexityFallback({
     taskDescription,
-    projectIndex,
+    projectDocsReference,
     workflowConfig,
   });
 }
 
-function parseProjectIndexSummary(projectIndex: string | undefined): {
+function parseProjectDocsReferenceSummary(projectDocsReference: string | undefined): {
   serviceCount: number;
   languageCount: number;
   infrastructureCount: number;
   hasLargeProjectSignal: boolean;
 } {
-  return parseAutocodeProjectIndexSummary(projectIndex);
+  return parseAutocodeProjectDocsReferenceSummary(projectDocsReference);
 }
 
 function selectSpecPhases(
   complexity: ComplexityTier,
   assessment: ComplexityAssessment | null,
   taskDescription: string | undefined,
-  projectIndex: string | undefined,
+  projectDocsReference: string | undefined,
   workflowConfig: WorkflowConfig,
 ): SpecPhase[] {
   return selectAutocodeSpecPhases({
     complexity,
     assessment,
     taskDescription,
-    projectIndex,
+    projectDocsReference,
     workflowConfig,
   }) as SpecPhase[];
 }
@@ -1942,7 +2136,7 @@ function buildPlanStructuredOutputValidationRetryPrompt(
     'The previous tasks.md was missing, invalid, or could not be converted into runtime work packages.',
     '',
     '### Errors',
-    ...errors.map((error) => `- ${error}`),
+    ...formatAutocodeRetryErrorLines(errors),
     '',
   ];
 
@@ -1988,6 +2182,9 @@ export class SpecOrchestrator extends EventEmitter {
   constructor(config: SpecOrchestratorConfig) {
     super();
     this.config = config;
+    if (this.config.projectDocsReference === undefined && this.config.projectIndex !== undefined) {
+      this.config.projectDocsReference = this.config.projectIndex;
+    }
     this.config.agentProfile ??= GENERAL_AGENT_PROFILE;
 
     // Apply workflow configuration defaults
@@ -2039,7 +2236,7 @@ export class SpecOrchestrator extends EventEmitter {
    * Run the full spec creation pipeline.
    *
    * Phase progression:
-   * 1. Complexity assessment — gate the workflow (uses task description + project index)
+   * 1. Complexity assessment — gate the workflow (uses task description + project docs reference)
    * 2. Phases based on complexity tier (SIMPLE skips discovery/requirements entirely)
    *
    * After each phase, output files are captured and injected into subsequent phases
@@ -2086,7 +2283,7 @@ export class SpecOrchestrator extends EventEmitter {
         // Fast-path heuristic: catch obviously simple tasks before expensive AI assessment
         const heuristicResult = this.assessComplexityHeuristic(
           this.config.taskDescription ?? '',
-          this.config.projectIndex,
+          this.config.projectDocsReference,
         );
         if (heuristicResult) {
           complexity = heuristicResult;
@@ -2176,7 +2373,7 @@ export class SpecOrchestrator extends EventEmitter {
         complexity,
         this.assessment,
         this.config.taskDescription,
-        this.config.projectIndex,
+        this.config.projectDocsReference,
         this.config.workflowConfig!,
       );
 
@@ -2255,7 +2452,7 @@ export class SpecOrchestrator extends EventEmitter {
    */
   private assessComplexityHeuristic(
     taskDescription: string,
-    projectIndex?: string,
+    projectDocsReference?: string,
   ): ComplexityTier | null {
     const task = normalizeTaskDescription(taskDescription);
     const desc = task.toLowerCase().trim();
@@ -2279,7 +2476,7 @@ export class SpecOrchestrator extends EventEmitter {
       }
     }
 
-    const hasSimpleProject = isEmptyOrUnstructuredProjectIndex(projectIndex);
+    const hasSimpleProject = isSparseProjectDocsReference(projectDocsReference);
     const hasCreateIntent = /\b(create|build|implement|add|make|develop|generate|write)\b|创建|新建|实现|开发|编写|生成|制作/.test(desc);
     const hasSingleDeliverableSignal = /\b(local|standalone|single|small|simple|static|demo|prototype|app|application|tool|utility|page|site|script|program|game)\b|本地|单个|简单|小型|静态|演示|应用|工具|页面|脚本|程序|游戏/.test(desc);
     const hasComplexSignal = hasTaskExternalResearchSignal(desc) ||
@@ -2302,7 +2499,7 @@ export class SpecOrchestrator extends EventEmitter {
   private buildFallbackComplexityAssessment(reason: string): ComplexityAssessment {
     const fallbackComplexity = inferComplexityFallback(
       this.config.taskDescription ?? '',
-      this.config.projectIndex,
+      this.config.projectDocsReference,
       this.config.workflowConfig!,
     );
 
@@ -2320,7 +2517,7 @@ export class SpecOrchestrator extends EventEmitter {
       return;
     }
 
-    const hints = inferMmoAssessmentHints(this.config.taskDescription, this.config.projectIndex);
+    const hints = inferMmoAssessmentHints(this.config.taskDescription, this.config.projectDocsReference);
     if (hints.signals.length === 0) {
       return;
     }
@@ -2384,7 +2581,7 @@ export class SpecOrchestrator extends EventEmitter {
 
     const fallback = inferComplexityFallback(
       this.config.taskDescription ?? '',
-      this.config.projectIndex,
+      this.config.projectDocsReference,
       this.config.workflowConfig!,
     );
 
@@ -2449,7 +2646,7 @@ export class SpecOrchestrator extends EventEmitter {
         phaseName: phase,
         taskDescription: this.config.taskDescription,
         complexity: this.assessment?.complexity,
-        projectIndex: this.config.projectIndex,
+        projectDocsReference: this.config.projectDocsReference,
         priorPhaseOutputs: phaseOutputs,
         attemptCount: attempt,
         // Carry both schema and tool-use retry context (at most one is set at a time)
@@ -2458,9 +2655,9 @@ export class SpecOrchestrator extends EventEmitter {
       // Clear single-use retry context
       toolUseRetryContext = undefined;
 
-      // Discovery/context-style JSON files are compact enough for structured
-      // output. Implementation plans can be very large, so planner phases write
-      // plan files directly with the Write tool and validate them from disk.
+      // Small structured phases can use constrained final JSON and are then
+      // persisted as Markdown when appropriate. Planner phases write files
+      // directly with the Write tool because task lists can be large.
       const isPlanningPhase = phase === 'planning' || phase === 'quick_spec';
       const structuredJsonFile = STRUCTURED_JSON_PHASE_OUTPUTS[phase];
       const outputSchema = getStructuredJsonOutputSchema(phase);
@@ -2477,7 +2674,7 @@ export class SpecOrchestrator extends EventEmitter {
         cliModel: this.config.cliModel,
         cliThinking: this.config.cliThinking,
         priorPhaseOutputs: phaseOutputs,
-        projectIndex: this.config.projectIndex,
+        projectDocsReference: this.config.projectDocsReference,
         ...(outputSchema ? { outputSchema } : {}),
       });
 
@@ -2488,7 +2685,7 @@ export class SpecOrchestrator extends EventEmitter {
       }
 
       if (result.outcome === 'completed' || result.outcome === 'max_steps' || result.outcome === 'context_window') {
-        // Compact structured JSON phases are persisted here; plan files are written by the planner.
+        // Structured phases are persisted here; plan files are written by the planner.
         if (structuredJsonFile && result.structuredOutput) {
           try {
             const normalized = normalizeStructuredJsonOutput(
@@ -2547,25 +2744,25 @@ export class SpecOrchestrator extends EventEmitter {
 
           if (
             (phase === 'discovery' || phase === 'context') &&
-            missingFiles.includes('context.json') &&
+            missingFiles.includes(AUTOCODE_TASK_ARTIFACTS.context) &&
             attempt >= maxPhaseRetries
           ) {
             try {
-              await writeStructuredJsonOutput(
-                this.config.specDir,
-                'context.json',
-                buildFallbackContextOutput(this.config.taskDescription),
+              await writeFile(
+                join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.context),
+                stringifyAutocodeContextMarkdown(buildFallbackContextOutput(this.config.taskDescription)),
+                'utf-8',
               );
               const remainingMissing = await this.validatePhaseOutputs(phase);
               if (remainingMissing.length === 0) {
-                this.emitTyped('log', 'Wrote fallback context.json from task description');
+                this.emitTyped('log', `Wrote fallback ${AUTOCODE_TASK_ARTIFACTS.context} from task description`);
                 errors.pop();
                 const phaseResult: SpecPhaseResult = { phase, success: true, errors: [], retries: attempt };
                 this.emitTyped('phase-complete', phase, phaseResult);
                 return phaseResult;
               }
             } catch (fallbackErr) {
-              this.emitTyped('log', `Failed to write fallback context.json: ${fallbackErr}`);
+              this.emitTyped('log', `Failed to write fallback ${AUTOCODE_TASK_ARTIFACTS.context}: ${fallbackErr}`);
             }
           }
 
@@ -2681,7 +2878,7 @@ export class SpecOrchestrator extends EventEmitter {
       totalPhases: 1,
       phaseName: 'complexity_assessment',
       taskDescription: this.config.taskDescription,
-      projectIndex: this.config.projectIndex,
+      projectDocsReference: this.config.projectDocsReference,
       attemptCount: 0,
     });
 
@@ -2699,7 +2896,7 @@ export class SpecOrchestrator extends EventEmitter {
       abortSignal: this.config.abortSignal,
       cliModel: this.config.cliModel,
       cliThinking: this.config.cliThinking,
-      projectIndex: this.config.projectIndex,
+      projectDocsReference: this.config.projectDocsReference,
       outputSchema: ComplexityAssessmentOutputSchema,
     });
 
@@ -2896,7 +3093,7 @@ export class SpecOrchestrator extends EventEmitter {
     const specMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.specFile);
     const requirementsMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.requirements);
     const tasksMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.tasks);
-    const contextJson = await this.readOptionalJsonArtifact('context.json');
+    const contextMarkdown = await this.readOptionalArtifact(AUTOCODE_TASK_ARTIFACTS.context);
 
     const shouldValidate = (
       phase === 'discovery' ||
@@ -2912,8 +3109,8 @@ export class SpecOrchestrator extends EventEmitter {
     }
 
     const result = validateAutocodeStandardPlanArtifacts({
-      contextJson: phase === 'discovery' || phase === 'context' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
-        ? contextJson
+      contextMarkdown: phase === 'discovery' || phase === 'context' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
+        ? contextMarkdown
         : undefined,
       requirementsMarkdown: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
         ? requirementsMarkdown
@@ -2939,18 +3136,6 @@ export class SpecOrchestrator extends EventEmitter {
       return await readFile(join(this.config.specDir, fileName), 'utf-8');
     } catch {
       return null;
-    }
-  }
-
-  private async readOptionalJsonArtifact(fileName: string): Promise<unknown> {
-    const content = await this.readOptionalArtifact(fileName);
-    if (!content) {
-      return undefined;
-    }
-    try {
-      return JSON.parse(content);
-    } catch {
-      return content;
     }
   }
 
@@ -3145,9 +3330,7 @@ export class SpecOrchestrator extends EventEmitter {
         const filePath = join(this.config.specDir, fileName);
         const content = await readFile(filePath, 'utf-8');
         if (content.trim()) {
-          this.phaseSummaries[fileName] = content.length > MAX_PHASE_OUTPUT_SIZE
-            ? content.slice(0, MAX_PHASE_OUTPUT_SIZE) + '\n... (truncated)'
-            : content;
+          this.phaseSummaries[fileName] = compactPhaseOutputForCarryover(fileName, content);
         }
       } catch {
         // File may not exist if phase didn't produce it — that's fine

@@ -8,7 +8,7 @@ Create or refine `tasks.md` for a large online game task. Do not implement sourc
 {{mmo_quality_bar}}
 
 ## Process
-1. Read `requirements.md`, `spec.md`, `context.json`, project index, and existing tasks if present.
+1. Read `requirements.md`, `spec.md`, `context.md`, project documentation reference, and existing tasks if present.
 2. Inspect only files needed to understand architecture and local patterns.
 3. Ground every system decision in project source, project docs, existing content/data patterns, or verified official/industry references.
 4. Write executable phases and subtasks with file hints, dependencies, evidence notes, and verification.

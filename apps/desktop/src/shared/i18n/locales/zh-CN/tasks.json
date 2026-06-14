@@ -239,6 +239,20 @@
     "showMore": "显示更多",
     "showLess": "显示更少"
   },
+  "detail": {
+    "requestsShort": "\u8f6e\u6b21",
+    "requests": "\u6a21\u578b\u8f6e\u6b21\uff08\u5de5\u5177\u5faa\u73af\u6b65\u6570\uff09",
+    "promptTokensShort": "\u8f93\u5165",
+    "promptTokens": "\u8f93\u5165 Token",
+    "completionTokensShort": "\u8f93\u51fa",
+    "completionTokens": "\u8f93\u51fa Token",
+    "totalTokensShort": "\u5408\u8ba1",
+    "totalTokens": "\u5408\u8ba1 Token",
+    "tokensLabel": "Token",
+    "thinkingTokens": "\u601d\u8003 Token",
+    "cacheReadTokens": "\u7f13\u5b58\u8bfb\u53d6 Token",
+    "cacheCreationTokens": "\u7f13\u5b58\u5199\u5165 Token"
+  },
   "images": {
     "removeImageAriaLabel": "移除图像 {{filename}}",
     "pasteHint": "提示：直接使用 {{shortcut}} 粘贴屏幕截图以添加参考图像。"
@@ -515,6 +529,33 @@
     "modelWorkingDescription": "大模型正在工作，开始回复后会在这里显示输出。",
     "jumpToLatest": "最新",
     "streamChunkCount": "{{count}} 个片段",
+    "collapsedLog": "已折叠",
+    "expandDetail": "展开日志详情",
+    "collapseDetail": "收起日志详情",
+    "internalEventCollapsed": "Codex 内部事件日志已折叠。",
+    "codexToolErrorCollapsed": "Codex 工具错误日志已折叠。",
+    "codexJsonParseErrorCollapsed": "PowerShell JSON 解析失败日志已折叠。",
+    "more": "更多",
+    "less": "收起",
+    "showOutput": "显示输出",
+    "hideOutput": "隐藏输出",
+    "modelTooltip": "模型：{{model}}",
+    "thinkingTooltip": "思考：{{thinking}}",
+    "thinkingLabels": {
+      "low": "低",
+      "medium": "中",
+      "high": "高",
+      "xhigh": "极高"
+    },
+    "toolLabels": {
+      "reading": "读取",
+      "searchingFiles": "搜索文件",
+      "searchingCode": "搜索代码",
+      "editing": "编辑",
+      "writing": "写入",
+      "running": "运行",
+      "command": "命令"
+    },
     "phaseLabels": {
       "planning": "生成计划",
       "coding": "编写代码",

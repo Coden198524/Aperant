@@ -100,15 +100,21 @@ describe('JinaBrowseProvider', () => {
     await expect(provider.browse('https://example.com/missing')).rejects.toThrow('404');
   });
 
-  it('should truncate content exceeding max length', async () => {
-    const longContent = 'X'.repeat(150_000);
+  it('should compact long content with head and tail context', async () => {
+    const longContent = [
+      'CONTENT_HEAD',
+      'X'.repeat(40_000),
+      'CONTENT_TAIL',
+    ].join('\n');
     mockFetch.mockResolvedValueOnce(mockFetchResponse(longContent));
 
     const provider = new JinaBrowseProvider();
     const result = await provider.browse('https://example.com');
 
-    expect(result.content.length).toBeLessThan(150_000);
-    expect(result.content).toContain('[Content truncated');
+    expect(result.content.length).toBeLessThan(longContent.length);
+    expect(result.content).toContain('CONTENT_HEAD');
+    expect(result.content).toContain('CONTENT_TAIL');
+    expect(result.content).toContain('[Content middle omitted for context budget]');
   });
 
   it('should pass timeout via AbortController', async () => {

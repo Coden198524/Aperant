@@ -37,7 +37,13 @@ vi.mock('../../tools/build-registry', () => ({
 // Import after mocking
 // =============================================================================
 
-import { runIdeation, IDEATION_TYPES, IDEATION_TYPE_LABELS } from '../ideation';
+import {
+  IDEATION_MAX_IDEAS_PER_TYPE,
+  IDEATION_MAX_STEPS,
+  runIdeation,
+  IDEATION_TYPES,
+  IDEATION_TYPE_LABELS,
+} from '../ideation';
 import type { IdeationConfig, IdeationStreamEvent } from '../ideation';
 
 // =============================================================================
@@ -51,7 +57,7 @@ function makeMockClient() {
     model: fakeModel,
     systemPrompt: '',
     tools: {},
-    maxSteps: 30,
+    maxSteps: IDEATION_MAX_STEPS,
   };
 }
 
@@ -138,6 +144,7 @@ describe('runIdeation', () => {
     const clientArgs = mockCreateSimpleClient.mock.calls[0][0];
     expect(clientArgs.modelShorthand).toBe('sonnet');
     expect(clientArgs.thinkingLevel).toBe('medium');
+    expect(clientArgs.maxSteps).toBe(IDEATION_MAX_STEPS);
   });
 
   it('accepts custom modelShorthand and thinkingLevel', async () => {
@@ -302,5 +309,49 @@ describe('runIdeation', () => {
     const streamArgs = mockStreamText.mock.calls[0][0];
     const systemPrompt = streamArgs.system as string;
     expect(systemPrompt).toContain('10');
+  });
+
+  it('caps oversized maxIdeasPerType before prompting', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    await runIdeation(baseConfig({ maxIdeasPerType: 999 }));
+
+    const streamArgs = mockStreamText.mock.calls[0][0];
+    const systemPrompt = streamArgs.system as string;
+    expect(systemPrompt).toContain(`**Max Ideas**: ${IDEATION_MAX_IDEAS_PER_TYPE}`);
+    expect(systemPrompt).toContain(`Generate at most ${IDEATION_MAX_IDEAS_PER_TYPE} ideas.`);
+    expect(streamArgs.prompt).toContain(`up to ${IDEATION_MAX_IDEAS_PER_TYPE}`);
+    expect(systemPrompt).not.toContain('999');
+  });
+
+  it('injects Simplified Chinese language instructions for zh-CN', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    await runIdeation(baseConfig({ language: 'zh-CN' }));
+
+    const streamArgs = mockStreamText.mock.calls[0][0];
+    const systemPrompt = streamArgs.system as string;
+    expect(systemPrompt).toContain('Write every user-facing JSON string value in Simplified Chinese');
+    expect(systemPrompt).toContain('title');
+    expect(systemPrompt).toContain('description');
+    expect(streamArgs.prompt).toContain('简体中文');
+    expect(streamArgs.prompt).toContain('代码改进');
+  });
+
+  it('passes language instructions through providerOptions for Responses API models', async () => {
+    mockCreateSimpleClient.mockResolvedValue({
+      ...makeMockClient(),
+      model: { modelId: 'gpt-5-test' },
+    });
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    await runIdeation(baseConfig({ language: 'zh-CN' }));
+
+    const streamArgs = mockStreamText.mock.calls[0][0];
+    expect(streamArgs.system).toBeUndefined();
+    expect(streamArgs.providerOptions.openai.instructions).toContain(
+      'Write every user-facing JSON string value in Simplified Chinese',
+    );
+    expect(streamArgs.prompt).toContain('简体中文');
   });
 });

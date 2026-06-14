@@ -318,6 +318,26 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
     task.tokenUsage?.cacheCreationTokens,
     t,
   ]);
+  const tokenUsageSourceLabel = task.tokenUsage?.estimated
+    ? t('tasks:detail.tokenUsageEstimated', { defaultValue: 'Estimated usage' })
+    : t('tasks:detail.tokenUsageProviderReported', { defaultValue: 'Provider-reported usage' });
+  const tokenUsageBadgeLabel = task.tokenUsage?.estimated
+    ? t('tasks:detail.tokenUsageEstimatedShort', { defaultValue: 'Estimated' })
+    : t('tasks:detail.tokenUsageProviderShort', { defaultValue: 'Provider' });
+  const tokenUsageCostPolicy = t('tasks:detail.tokenUsageCostPolicy', {
+    defaultValue:
+      'Cost estimates are not shown until a versioned provider pricing policy is configured. Reconcile token counts against provider billing.',
+  });
+  const tokenUsageTitle = task.tokenUsage?.totalTokens
+    ? [
+        buildTokenHoverTitle(
+          t('tasks:detail.totalTokens', { defaultValue: 'Total Tokens' }),
+          task.tokenUsage.totalTokens
+        ),
+        tokenUsageSourceLabel,
+        tokenUsageCostPolicy,
+      ].join('\n')
+    : undefined;
 
   const markdownComponents = useMemo<Components>(() => ({
     img: ({ src, alt }) => {
@@ -430,13 +450,13 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
           {task.tokenUsage?.totalTokens ? (
             <span
               className="flex items-center gap-1.5"
-              title={buildTokenHoverTitle(
-                t('tasks:detail.totalTokens', { defaultValue: 'Total Tokens' }),
-                task.tokenUsage.totalTokens
-              )}
+              title={tokenUsageTitle}
             >
               <Gauge className="h-3 w-3" />
               {t('tasks:detail.tokensLabel', { defaultValue: 'Tokens' })} {formatTokenCount(task.tokenUsage.totalTokens)}
+              <Badge variant="outline" className="h-5 px-1.5 text-[10px]">
+                {tokenUsageBadgeLabel}
+              </Badge>
             </span>
           ) : null}
           <span className="flex items-center gap-1.5">
@@ -449,21 +469,31 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
       </div>
 
       {tokenStatItems.length > 0 ? (
-        <div className="grid gap-2 md:grid-cols-3">
-          {tokenStatItems.map((stat) => (
-            <div
-              key={stat.key}
-              className="rounded-lg border border-border bg-muted/20 px-3 py-2"
-              title={buildTokenHoverTitle(stat.label, stat.value)}
-            >
-              <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
-                {stat.label}
+        <div className="space-y-2">
+          <div className="grid gap-2 md:grid-cols-3">
+            {tokenStatItems.map((stat) => (
+              <div
+                key={stat.key}
+                className="rounded-lg border border-border bg-muted/20 px-3 py-2"
+                title={buildTokenHoverTitle(stat.label, stat.value)}
+              >
+                <div className="text-[11px] uppercase tracking-wide text-muted-foreground">
+                  {stat.label}
+                </div>
+                <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
+                  {formatTokenCount(stat.value)}
+                </div>
               </div>
-              <div className="mt-1 text-sm font-semibold text-foreground tabular-nums">
-                {formatTokenCount(stat.value)}
-              </div>
-            </div>
-          ))}
+            ))}
+          </div>
+          <div className="rounded-lg border border-border bg-muted/20 px-3 py-2 text-xs text-muted-foreground">
+            <span className="font-medium text-foreground">
+              {t('tasks:detail.tokenUsageCostLabel', { defaultValue: 'Cost estimate' })}:
+            </span>{' '}
+            {t('tasks:detail.tokenUsageCostUnavailable', { defaultValue: 'Not configured' })}
+            <span className="mx-2 text-border">|</span>
+            {tokenUsageSourceLabel}. {tokenUsageCostPolicy}
+          </div>
         </div>
       ) : null}
 

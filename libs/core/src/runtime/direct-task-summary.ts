@@ -2,6 +2,12 @@ import { basename } from 'node:path';
 import type { AutocodeSessionResult } from './agent-session-types.js';
 
 export type AutocodeDirectSummaryLanguage = 'zh-CN' | 'fr' | string | undefined;
+export const AUTOCODE_DIRECT_FINAL_TEXT_MAX_CHARS = 4_000;
+export const AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS = 2_000;
+const DIRECT_FINAL_TEXT_TRUNCATION_MARKER =
+  '\n\n...[direct final response middle omitted for summary budget; inspect runtime logs if exact omitted detail is required]...\n\n';
+const DIRECT_TASK_DESCRIPTION_TRUNCATION_MARKER =
+  '\n...[direct task middle omitted for summary budget; inspect task metadata if exact omitted detail is required]...\n';
 
 export interface AutocodeDirectCodingQualityMetrics {
   mode: 'direct';
@@ -143,12 +149,14 @@ export function formatAutocodeDirectQualityLine(
 export function formatAutocodeDirectQualityAppendix(
   language: AutocodeDirectSummaryLanguage,
   quality?: AutocodeDirectCodingQualityMetrics,
+  result?: AutocodeSessionResult,
 ): string {
   const labels = getAutocodeDirectSummaryLabels(language);
   return [
     `| ${labels.item} | ${labels.details} |`,
     '| --- | --- |',
     `| ${labels.changedFiles} | ${escapeAutocodeMarkdownTableCell(formatAutocodeChangedFilesForSummary(quality?.changedFiles ?? []))} |`,
+    `| ${labels.verification} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectSessionEvidenceLine(language, result))} |`,
     `| ${labels.quality} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectQualityLine(language, quality))} |`,
     `| ${labels.reviewNotes} | ${escapeAutocodeMarkdownTableCell(localizeAutocodeDirectSummaryText(language, 'Direct mode has no staged QA pass; review the git diff before approval.', 'Direct 模式没有阶段化 QA 通过结论；批准前请检查 Git diff。', 'Le mode direct n a pas de validation QA par etapes ; relisez le diff Git avant approbation.'))} |`,
   ].join('\n');
@@ -158,9 +166,9 @@ export function buildAutocodeDirectCompletionSummary(
   input: BuildAutocodeDirectCompletionSummaryInput,
 ): string {
   const finalText = getAutocodeFinalAssistantText(input.result, input.streamedText);
-  const qualityAppendix = formatAutocodeDirectQualityAppendix(input.language, input.quality);
+  const qualityAppendix = formatAutocodeDirectQualityAppendix(input.language, input.quality, input.result);
   if (finalText) {
-    return `${finalText}\n\n${qualityAppendix}`.trim();
+    return `${limitAutocodeDirectFinalText(finalText)}\n\n${qualityAppendix}`.trim();
   }
 
   const outcome = input.result?.outcome ?? 'unknown';
@@ -185,7 +193,7 @@ export function buildAutocodeDirectCompletionSummary(
     '| --- | --- |',
     `| ${labels.whatChanged} | ${escapeAutocodeMarkdownTableCell(localizeAutocodeDirectSummaryText(input.language, `Direct model session finished for ${basename(input.specDir)}.`, `Direct 模式已完成：${basename(input.specDir)}。`, `Session en mode direct terminee pour ${basename(input.specDir)}.`))} |`,
     `| ${labels.changedFiles} | ${escapeAutocodeMarkdownTableCell(formatAutocodeChangedFilesForSummary(input.quality?.changedFiles ?? []))} |`,
-    `| ${labels.verification} | ${escapeAutocodeMarkdownTableCell(localizeAutocodeDirectSummaryText(input.language, `Session outcome: ${outcome}. Steps: ${input.result?.stepsExecuted ?? 0}. Tools: ${input.result?.toolCallCount ?? 0}.`, `会话结果：${outcome}。步骤：${input.result?.stepsExecuted ?? 0}。工具调用：${input.result?.toolCallCount ?? 0}。`, `Resultat de session : ${outcome}. Etapes : ${input.result?.stepsExecuted ?? 0}. Outils : ${input.result?.toolCallCount ?? 0}.`))} |`,
+    `| ${labels.verification} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectSessionEvidenceLine(input.language, input.result))} |`,
     `| ${labels.quality} | ${escapeAutocodeMarkdownTableCell(formatAutocodeDirectQualityLine(input.language, input.quality))} |`,
     `| ${labels.reviewNotes} | ${escapeAutocodeMarkdownTableCell(reviewNote)} |`,
   ].join('\n');
@@ -197,15 +205,85 @@ export function buildAutocodeDirectCompletionSummaryV2(
   return buildAutocodeDirectCompletionSummary(input);
 }
 
+function limitAutocodeDirectFinalText(value: string): string {
+  const normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (normalized.length <= AUTOCODE_DIRECT_FINAL_TEXT_MAX_CHARS) {
+    return normalized;
+  }
+  const budget = Math.max(0, AUTOCODE_DIRECT_FINAL_TEXT_MAX_CHARS - DIRECT_FINAL_TEXT_TRUNCATION_MARKER.length);
+  const headLength = Math.ceil(budget * 0.65);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    DIRECT_FINAL_TEXT_TRUNCATION_MARKER,
+    normalized.slice(-tailLength).trimStart(),
+  ].join('');
+}
+
+function formatAutocodeDirectSessionEvidenceLine(
+  language: AutocodeDirectSummaryLanguage,
+  result?: AutocodeSessionResult,
+): string {
+  if (!result) {
+    return localizeAutocodeDirectSummaryText(
+      language,
+      'Session outcome unavailable. Tokens: unavailable.',
+      'Session outcome unavailable. Tokens: unavailable.',
+      'Resultat de session indisponible. Tokens : indisponibles.',
+    );
+  }
+
+  const base = localizeAutocodeDirectSummaryText(
+    language,
+    `Session outcome: ${result.outcome}. Steps: ${result.stepsExecuted ?? 0}. Tools: ${result.toolCallCount ?? 0}.`,
+    `Session outcome: ${result.outcome}. Steps: ${result.stepsExecuted ?? 0}. Tools: ${result.toolCallCount ?? 0}.`,
+    `Resultat de session : ${result.outcome}. Etapes : ${result.stepsExecuted ?? 0}. Outils : ${result.toolCallCount ?? 0}.`,
+  );
+  const usage = formatAutocodeDirectTokenUsage(result.usage);
+  return usage ? `${base} ${usage}` : `${base} Tokens: unavailable.`;
+}
+
+function formatAutocodeDirectTokenUsage(usage: AutocodeSessionResult['usage'] | undefined): string | null {
+  if (!usage || usage.totalTokens <= 0) {
+    return null;
+  }
+  const estimated = usage.estimated ? ', estimated' : '';
+  return `Tokens: ${usage.totalTokens} total (${usage.promptTokens} prompt, ${usage.completionTokens} completion${estimated}).`;
+}
+
 export function extractAutocodeDirectTaskDescription(input: {
   initialMessages?: Array<{ content?: string }>;
   specDir: string;
 }): string {
-  const initialMessage = input.initialMessages?.[0]?.content?.trim();
+  const initialMessage = input.initialMessages?.[0]?.content
+    ?.replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
   if (initialMessage) {
-    return initialMessage.length > 2000 ? `${initialMessage.slice(0, 2000)}...` : initialMessage;
+    return limitAutocodeDirectTaskDescription(initialMessage);
   }
   return `Direct model execution for ${basename(input.specDir)}`;
+}
+
+function limitAutocodeDirectTaskDescription(value: string): string {
+  if (value.length <= AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS) {
+    return value;
+  }
+  const budget = Math.max(0, AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS - DIRECT_TASK_DESCRIPTION_TRUNCATION_MARKER.length);
+  const headLength = Math.ceil(budget * 0.65);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    value.slice(0, headLength).trimEnd(),
+    DIRECT_TASK_DESCRIPTION_TRUNCATION_MARKER,
+    value.slice(-tailLength).trimStart(),
+  ].join('');
 }
 
 export function extractAutocodeDirectFilePathFromToolArgs(

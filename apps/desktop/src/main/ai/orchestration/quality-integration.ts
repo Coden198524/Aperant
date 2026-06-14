@@ -13,7 +13,7 @@ import type { MemoryService } from '@autocode/core';
 import type { ProjectType } from '../../../shared/types';
 import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
-import { loadAutocodeImplementationPlanSync } from '@autocode/core';
+import { compactAutocodeRetryLine, loadAutocodeImplementationPlanSync } from '@autocode/core';
 import {
   AUTOCODE_DEFAULT_QUALITY_CONFIG,
   createAutocodeQualityConfig,
@@ -25,7 +25,7 @@ import {
   validateAutocodeDocumentationMarkdown,
   validateAutocodeGameMmoCodingSummary,
   validateAutocodeGameMmoDocumentationSupportContent,
-  validateAutocodeJsonDocumentObject,
+  validateAutocodeMarkdownSupportDocument,
 } from '@autocode/core/runtime/agent-quality-integration';
 
 // Import all quality improvement modules
@@ -74,6 +74,9 @@ export interface QualityConfig {
 const DEFAULT_CONFIG: Required<Omit<QualityConfig, 'memoryService' | 'projectId' | 'projectType'>> = {
   ...AUTOCODE_DEFAULT_QUALITY_CONFIG,
 };
+
+export const QUALITY_SESSION_SUMMARY_MAX_CHARS = 6_000;
+export const QUALITY_ISSUE_MAX_CHARS = 360;
 
 // =============================================================================
 // Main Integration Functions
@@ -200,7 +203,7 @@ export async function validateSubtaskQuality(
 
     if (!validationResult.passed) {
       const criticalFailures = validationResult.failures.filter(f => f.severity === 'error');
-      issues.push(...criticalFailures.map(f => `${f.type}: ${f.message}`));
+      issues.push(...criticalFailures.map(f => compactQualityIssue(`${f.type}: ${f.message}`)));
     }
   }
 
@@ -208,9 +211,7 @@ export async function validateSubtaskQuality(
   // Note: This would require access to generated files, which we don't have here
   // Self-critique should be run within the agent session itself
   if (appliedConfig.projectType === 'game-mmo') {
-    const summary = sessionResult.messages.map((message) => (
-      typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
-    )).join('\n');
+    const summary = compactQualitySessionSummary(sessionResult.messages);
     issues.push(...validateAutocodeGameMmoCodingSummary(subtask, summary));
   }
 
@@ -254,7 +255,7 @@ export async function runPreQAQualityChecks(
     if (smokeTestResult.shouldReturnToCoding) {
       const criticalIssues = smokeTestResult.issues
         .filter(i => i.severity === 'critical')
-        .map(i => `${i.check}: ${i.output.split('\n')[0]}`);
+        .map(i => compactQualityIssue(`${i.check}: ${i.output.split('\n')[0]}`));
 
       return {
         shouldProceedToQA: false,
@@ -269,9 +270,33 @@ export async function runPreQAQualityChecks(
   };
 }
 
-function readJsonFile(filePath: string): Record<string, unknown> | null {
+export function compactQualityIssue(value: string): string {
+  return compactAutocodeRetryLine(value, QUALITY_ISSUE_MAX_CHARS);
+}
+
+export function compactQualitySessionSummary(messages: SessionResult['messages']): string {
+  const summary = messages.map((message) => (
+    typeof message.content === 'string' ? message.content : JSON.stringify(message.content)
+  )).join('\n');
+  return compactQualityMultiline(summary, QUALITY_SESSION_SUMMARY_MAX_CHARS);
+}
+
+function compactQualityMultiline(value: string, maxChars: number): string {
+  const normalized = value.replace(/\r\n/g, '\n').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const marker = `\n...[quality summary truncated, ${normalized.length} chars total]...\n`;
+  const budget = Math.max(0, maxChars - marker.length);
+  const headLength = Math.floor(budget * 0.45);
+  const tailLength = budget - headLength;
+  return `${normalized.slice(0, headLength).trimEnd()}${marker}${normalized.slice(normalized.length - tailLength).trimStart()}`;
+}
+
+function readTextFile(filePath: string): string | null {
   try {
-    return JSON.parse(readFileSync(filePath, 'utf-8')) as Record<string, unknown>;
+    return readFileSync(filePath, 'utf-8');
   } catch {
     return null;
   }
@@ -305,141 +330,10 @@ function getDocumentationOutputs(plan: Record<string, unknown>): {
 
   return {
     finalMarkdown: markdownFromPlan || 'docs/analysis.md',
-    outline: typeof outputs.outline === 'string' ? outputs.outline : 'doc_outline.json',
-    evidenceIndex: typeof outputs.evidence_index === 'string' ? outputs.evidence_index : 'evidence_index.json',
+    outline: typeof outputs.outline === 'string' ? outputs.outline : 'doc_outline.md',
+    evidenceIndex: typeof outputs.evidence_index === 'string' ? outputs.evidence_index : 'evidence_index.md',
     base: outputs.base === 'project' ? 'project' : 'spec',
   };
-}
-
-function validateJsonDocument(filePath: string, requiredKeys: string[]): string[] {
-  const issues: string[] = [];
-  const parsed = readJsonFile(filePath);
-  if (!parsed) {
-    return [`documentation: ${filePath} is missing or invalid JSON`];
-  }
-  for (const key of requiredKeys) {
-    if (!(key in parsed)) {
-      issues.push(`documentation: ${filePath} is missing "${key}"`);
-    }
-  }
-  return issues;
-}
-
-function isGameMmoDocumentationPlan(plan: Record<string, unknown>): boolean {
-  return plan.project_type === 'game-mmo' ||
-    plan.documentation_profile === 'game-mmo-source' ||
-    stringArray(plan.documentation_focus).some((item) => /\b(gameplay|client\/engine|server authority|network sync|anti-cheat|live operations)\b/i.test(item));
-}
-
-function hasAnyTerm(text: string, terms: RegExp[]): boolean {
-  return terms.some((term) => term.test(text));
-}
-
-function jsonText(value: unknown): string {
-  return JSON.stringify(value ?? '').toLowerCase();
-}
-
-function validateGameMmoDocumentationSupportFiles(
-  outlinePath: string,
-  evidencePath: string,
-  outputPath: string,
-): string[] {
-  const issues: string[] = [];
-  const outline = readJsonFile(outlinePath);
-  const evidence = readJsonFile(evidencePath);
-  const outlineText = jsonText(outline);
-  const evidenceText = jsonText(evidence);
-
-  const outlineChecks: Array<{ label: string; terms: RegExp[] }> = [
-    {
-      label: 'system matrix or system inventory section',
-      terms: [/\bsystem matrix\b/i, /\bsystem inventory\b/i, /\b系统矩阵\b/, /\b系统清单\b/],
-    },
-    {
-      label: 'cross-end flow, protocol, or sequence section',
-      terms: [/\bcross[-\s]?end\b/i, /\bprotocol\b/i, /\bsequence\b/i, /\bclient.*server\b/i, /\b跨端\b/, /\b协议\b/, /\b时序\b/],
-    },
-    {
-      label: 'data lifecycle, persistence, config, or content pipeline section',
-      terms: [/\bdata lifecycle\b/i, /\bpersist/i, /\bconfig/i, /\bcontent pipeline\b/i, /\b数据生命周期\b/, /\b持久化\b/, /\b配置\b/, /\b内容管线\b/],
-    },
-    {
-      label: 'risk review section covering performance/security/liveops',
-      terms: [/\brisks?\b/i, /\bperformance\b/i, /\bsecurity\b/i, /\bliveops\b/i, /\b风险\b/, /\b性能\b/, /\b安全\b/, /\b运营\b/],
-    },
-  ];
-
-  for (const check of outlineChecks) {
-    if (!hasAnyTerm(outlineText, check.terms)) {
-      issues.push(`documentation: ${outputPath} outline should include MMO ${check.label}`);
-    }
-  }
-
-  const evidenceChecks: Array<{ label: string; terms: RegExp[] }> = [
-    {
-      label: 'client or engine evidence',
-      terms: [/\bclient\b/i, /\bengine\b/i, /\brender/i, /\banimation\b/i, /\basset\b/i, /\b客户端\b/, /\b引擎\b/, /\b渲染\b/],
-    },
-    {
-      label: 'server authority or network evidence',
-      terms: [/\bserver\b/i, /\bauthorit/i, /\bnetwork\b/i, /\bprotocol\b/i, /\bsync\b/i, /\b服务端\b/, /\b权威\b/, /\b网络\b/, /\b协议\b/],
-    },
-    {
-      label: 'data/config/persistence/tooling evidence',
-      terms: [/\bdata\b/i, /\bconfig/i, /\bpersist/i, /\bsave\b/i, /\btool/i, /\bgm\b/i, /\b配置\b/, /\b数据\b/, /\b持久化\b/, /\b工具\b/],
-    },
-  ];
-
-  for (const check of evidenceChecks) {
-    if (!hasAnyTerm(evidenceText, check.terms)) {
-      issues.push(`documentation: ${outputPath} evidence index should include MMO ${check.label}`);
-    }
-  }
-
-  return issues;
-}
-
-function validateGameMmoDocumentation(markdown: string, outputPath: string): string[] {
-  const issues: string[] = [];
-  const checks: Array<{ label: string; terms: RegExp[] }> = [
-    {
-      label: 'gameplay systems/progression/combat/quests/economy',
-      terms: [/\bgameplay\b/i, /\bcombat\b/i, /\bquest\b/i, /\bprogression\b/i, /\beconomy\b/i, /玩法|战斗|任务|成长|经济|装备|物品/],
-    },
-    {
-      label: 'client, engine, rendering, animation, assets, or world streaming',
-      terms: [/\bclient\b/i, /\bengine\b/i, /\brender/i, /\banimation\b/i, /\basset\b/i, /\bstreaming\b/i, /客户端|引擎|渲染|动画|资源|场景|地图|世界/],
-    },
-    {
-      label: 'server authority, network sync, replication, protocol, prediction, or reconciliation',
-      terms: [/\bserver\b/i, /\bauthorit/i, /\bnetwork\b/i, /\bsync\b/i, /\breplication\b/i, /\bprotocol\b/i, /\bprediction\b/i, /\breconciliation\b/i, /服务端|权威|网络|同步|协议|广播|预测|校正/],
-    },
-    {
-      label: 'data/config/content pipeline, persistence, save state, account, GM, editor, or tooling',
-      terms: [/\bdata\b/i, /\bconfig/i, /\bcontent\b/i, /\bpersist/i, /\bsave\b/i, /\baccount\b/i, /\bGM\b/, /\beditor\b/i, /\btool/i, /配置|数据|持久化|存档|账号|工具|编辑器|后台/],
-    },
-    {
-      label: 'performance, security, anti-cheat, telemetry, live operations, or release risk',
-      terms: [/\bperformance\b/i, /\bframe\b/i, /\blatency\b/i, /\bsecurity\b/i, /\banti[-\s]?cheat\b/i, /\btelemetry\b/i, /\bliveops\b/i, /\brelease\b/i, /性能|帧|延迟|安全|反作弊|埋点|运营|发布/],
-    },
-  ];
-
-  for (const check of checks) {
-    if (!hasAnyTerm(markdown, check.terms)) {
-      issues.push(`documentation: ${outputPath} should cover MMO ${check.label}`);
-    }
-  }
-
-  const hasProfessionalStructure = /\bmatrix\b|\bsequence\b|\blifecycle\b|\bstate machine\b|\bprotocol\b|\bdata lifecycle\b|系统矩阵|时序|生命周期|状态机|协议|数据流转/i.test(markdown);
-  if (!hasProfessionalStructure) {
-    issues.push(`documentation: ${outputPath} should include MMO professional structures such as system matrices, sequence flows, state machines, protocol/config tables, or data lifecycles`);
-  }
-
-  if (markdown.trim().length < 1600) {
-    issues.push(`documentation: ${outputPath} is too short for MMO source documentation`);
-  }
-
-  return issues;
 }
 
 function isDocumentationSubtask(subtask: SubtaskInfo): boolean {
@@ -449,7 +343,7 @@ function isDocumentationSubtask(subtask: SubtaskInfo): boolean {
     ...(subtask.filesToModify ?? []),
   ].join(' ').toLowerCase();
   return /\b(documentation|document|docs|markdown|source analysis)\b/.test(text) ||
-    /文档|源码分析|代码分析/.test(text);
+    /\u6587\u6863|\u6e90\u7801\u5206\u6790|\u4ee3\u7801\u5206\u6790/.test(text);
 }
 
 function isGameMmoRiskRelevantSubtask(subtask: SubtaskInfo): boolean {
@@ -460,7 +354,7 @@ function isGameMmoRiskRelevantSubtask(subtask: SubtaskInfo): boolean {
   ].join(' ').toLowerCase();
 
   return /\b(server|client|network|protocol|sync|replication|prediction|reconciliation|database|persistence|save|account|economy|inventory|combat|quest|skill|item|engine|render|animation|asset|streaming|performance|security|anti[-\s]?cheat|telemetry|liveops|gm|tool|editor|build|release)\b/i.test(text) ||
-    /服务端|客户端|网络|协议|同步|数据库|持久化|存档|账号|经济|背包|战斗|任务|技能|物品|引擎|渲染|动画|资源|性能|安全|反作弊|运营|工具|编辑器|构建|发布/.test(text);
+    /\u670d\u52a1\u7aef|\u5ba2\u6237\u7aef|\u7f51\u7edc|\u534f\u8bae|\u540c\u6b65|\u6570\u636e\u5e93|\u6301\u4e45\u5316|\u5b58\u6863|\u8d26\u53f7|\u7ecf\u6d4e|\u80cc\u5305|\u6218\u6597|\u4efb\u52a1|\u6280\u80fd|\u7269\u54c1|\u5f15\u64ce|\u6e32\u67d3|\u52a8\u753b|\u8d44\u6e90|\u6027\u80fd|\u5b89\u5168|\u53cd\u4f5c\u5f0a|\u8fd0\u8425|\u5de5\u5177|\u7f16\u8f91\u5668|\u6784\u5efa|\u53d1\u5e03/.test(text);
 }
 
 function validateGameMmoCodingSummary(subtask: SubtaskInfo, sessionResult: SessionResult): string[] {
@@ -481,9 +375,9 @@ function validateGameMmoCodingSummary(subtask: SubtaskInfo, sessionResult: Sessi
 
   const lower = summary.toLowerCase();
   const issues: string[] = [];
-  const hasVerification = /\bverification\b|\bverified\b|\btest\b|\bbuild\b|\btypecheck\b|\bsmoke\b|\bmanual\b|验证|测试|构建|检查/.test(lower);
-  const hasMmoRiskLanguage = /\bserver authority\b|\bnetwork sync\b|\bpersistence\b|\bdata safety\b|\bperformance\b|\bsecurity\b|\banti[-\s]?cheat\b|\bliveops\b|\btooling\b|\bcontent pipeline\b|服务端|权威|网络|同步|持久化|数据|性能|安全|反作弊|运营|工具/.test(lower);
-  const hasBoundaryLanguage = /\bclient\b|\bserver\b|\bauthoritative\b|\btrust boundary\b|\bprotocol\b|\bconfig\b|\bsave\b|\bruntime owner\b|客户端|服务端|权威|边界|协议|配置|存档|运行时/.test(lower);
+  const hasVerification = /\bverification\b|\bverified\b|\btest\b|\bbuild\b|\btypecheck\b|\bsmoke\b|\bmanual\b/.test(lower);
+  const hasMmoRiskLanguage = /\bserver authority\b|\bnetwork sync\b|\bpersistence\b|\bdata safety\b|\bperformance\b|\bsecurity\b|\banti[-\s]?cheat\b|\bliveops\b|\btooling\b|\bcontent pipeline\b|\u670d\u52a1\u7aef|\u6743\u5a01|\u7f51\u7edc|\u540c\u6b65|\u6301\u4e45\u5316|\u6570\u636e|\u6027\u80fd|\u5b89\u5168|\u53cd\u4f5c\u5f0a|\u8fd0\u8425|\u5de5\u5177/.test(lower);
+  const hasBoundaryLanguage = /\bclient\b|\bserver\b|\bauthoritative\b|\btrust boundary\b|\bprotocol\b|\bconfig\b|\bsave\b|\bruntime owner\b/.test(lower);
 
   if (!hasVerification) {
     issues.push('mmo-quality: completion summary should state verification run or exact verification limitation');
@@ -517,11 +411,11 @@ function runDocumentationQualityGate(
   const outlinePath = join(outputBaseDir, outputs.outline);
   const evidencePath = join(outputBaseDir, outputs.evidenceIndex);
   const markdownPath = join(outputBaseDir, outputs.finalMarkdown);
-  const outline = readJsonFile(outlinePath);
-  const evidence = readJsonFile(evidencePath);
+  const outline = readTextFile(outlinePath);
+  const evidence = readTextFile(evidencePath);
 
-  issues.push(...validateAutocodeJsonDocumentObject(outline, outlinePath, ['document_type', 'audience', 'sections']));
-  issues.push(...validateAutocodeJsonDocumentObject(evidence, evidencePath, ['files_read', 'evidence_backed_claims', 'open_questions']));
+  issues.push(...validateAutocodeMarkdownSupportDocument(outline, outlinePath, [/document type|document_type/i, /audience/i, /section/i]));
+  issues.push(...validateAutocodeMarkdownSupportDocument(evidence, evidencePath, [/files? read|source|evidence/i, /claims?|conclusion/i, /open questions?|risk/i]));
   if (isGameMmoDocumentation) {
     issues.push(...validateAutocodeGameMmoDocumentationSupportContent(outline, evidence, outputs.finalMarkdown));
   }

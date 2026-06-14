@@ -62,6 +62,14 @@ export function useIdeation(projectId: string, options: UseIdeationOptions = {})
     return cleanup;
   }, [projectId]);
 
+  useEffect(() => {
+    setSelectedIdea((current) => {
+      if (!current) return null;
+
+      return session?.ideas.find((idea) => idea.id === current.id) ?? null;
+    });
+  }, [session]);
+
   const handleGenerate = async () => {
     if (hasToken === false) {
       toast({

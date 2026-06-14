@@ -27,7 +27,7 @@ export interface TaskSpecContent {
   spec?: string; // Content of spec.md
   requirements?: Record<string, unknown>; // Parsed requirements.md
   qaReport?: string; // Content of qa_report.md
-  implementationPlan?: ImplementationPlan; // Parsed implementation_plan.json
+  implementationPlan?: ImplementationPlan; // Parsed implementation_plan.md
   error?: string; // Error message if loading failed
 }
 

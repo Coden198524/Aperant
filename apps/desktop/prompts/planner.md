@@ -5,7 +5,7 @@ Create one upstream `tasks.md` for the current spec. The runtime derives `implem
 ## Contract
 
 - Use the Write tool to create `tasks.md` in the spec directory.
-- The task list is Markdown checklist text, not JSON.
+- The task list is Markdown checklist text, not JSON; app-owned configuration files/tables, manifests, state, active indexes, metadata, and JSONL audit files remain JSON/JSONL even when the model reads or updates them. Only pure model-readable prose/reference artifacts should move from JSON to Markdown.
 - Do not create split plan files.
 - Do not write or edit `implementation_plan.md`; the runtime owns that downstream file.
 - Do not modify project source, config, or git state.
@@ -21,7 +21,7 @@ Read the provided context first. Read files from disk only when needed.
 
 - `requirements.md`: user request and workflow type.
 - `spec.md`: scope, success criteria, files, services.
-- `context.json`: relevant files, patterns, risks.
+- `context.md`: relevant files, patterns, risks.
 - `project-docs/index.md`: generated project documentation index, structure, commands, and important docs.
 - `HUMAN_INPUT.md`: required plan-review feedback when present.
 - `change_requests.jsonl`: same-task iteration audit trail when present.
@@ -32,7 +32,7 @@ If `HUMAN_INPUT.md` exists, treat this as an iteration of the same Standard task
 
 - Investigate enough existing code to match local architecture. Prefer targeted Grep/Glob/Read over broad scans.
 - Reuse existing module boundaries, helpers, conventions, and design patterns.
-- Every phase and executable subtask must be grounded in `spec.md`, `requirements.md`, `context.json`, project source/docs, or verified standards. Do not create tasks from generic model assumptions.
+- Every phase and executable subtask must be grounded in `spec.md`, `requirements.md`, `context.md`, project source/docs, or verified standards. Do not create tasks from generic model assumptions.
 - When a task depends on a framework/API/security/accessibility/gameplay/networking convention, cite the project source path or official/industry reference in the task guidance.
 - If evidence is missing, add a discovery/validation task or record an assumption; do not turn the assumption into implementation work.
 - Introduce a named pattern only when it removes real complexity.

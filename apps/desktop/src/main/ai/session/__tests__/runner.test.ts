@@ -246,6 +246,56 @@ describe('runAgentSession', () => {
     expect(result.usage.estimated).toBe(true);
   });
 
+  it('injects context-window warning once when prompt usage approaches the limit', async () => {
+    let warningPrompt: { system?: string } | undefined;
+    let repeatedPrompt: { system?: string } | undefined;
+
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        yield { type: 'finish-step', usage: { inputTokens: 810, outputTokens: 5 } };
+        warningPrompt = await args.prepareStep({ stepNumber: 2 });
+        repeatedPrompt = await args.prepareStep({ stepNumber: 3 });
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 810, outputTokens: 5 }),
+    }));
+
+    const result = await runAgentSession(createMockConfig({ contextWindowLimit: 1000, maxSteps: 10 }));
+
+    expect(result.outcome).toBe('completed');
+    expect(warningPrompt?.system).toContain('Context window is near limit');
+    expect(warningPrompt?.system).toContain('Finish the current task and commit progress');
+    expect(repeatedPrompt).toEqual({});
+  });
+
+  it('returns context_window when prompt usage exceeds the hard continuation threshold', async () => {
+    let abortObserved = false;
+
+    mockStreamText.mockImplementation((args: {
+      abortSignal: AbortSignal;
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        yield { type: 'finish-step', usage: { inputTokens: 890, outputTokens: 5 } };
+        await args.prepareStep({ stepNumber: 2 });
+        abortObserved = args.abortSignal.aborted;
+        throw new DOMException('aborted', 'AbortError');
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 890, outputTokens: 5 }),
+    }));
+
+    const result = await runAgentSession(createMockConfig({ contextWindowLimit: 1000, maxSteps: 10 }));
+
+    expect(abortObserved).toBe(true);
+    expect(result.outcome).toBe('context_window');
+    expect(result.stepsExecuted).toBe(1);
+    expect(result.usage.promptTokens).toBe(890);
+    expect(result.usage.completionTokens).toBe(5);
+  });
+
   it('tracks completed subtasks from update_subtask_status tool results', async () => {
     mockStreamText.mockReturnValue(
       createMockStreamResult(
@@ -492,6 +542,193 @@ describe('runAgentSession', () => {
     const callArgs = mockStreamText.mock.calls[0][0];
     expect(callArgs.system).toBe('Be helpful');
     expect(callArgs.tools).toBe(tools);
+  });
+
+  it('caps active memory injections per session', async () => {
+    const proxy = {
+      requestStepInjection: vi.fn().mockResolvedValue({
+        type: 'gotcha_injection',
+        content: 'MEMORY ALERT - compact reminder',
+        memoryIds: ['memory-1'],
+      }),
+      onStepComplete: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolResult: vi.fn(),
+      onReasoning: vi.fn(),
+    };
+
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        for (const stepNumber of [6, 12, 18, 24, 30]) {
+          await args.prepareStep({ stepNumber });
+        }
+        yield { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } };
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 10, outputTokens: 5 }),
+    }));
+
+    await runAgentSession(createMockConfig({ maxSteps: 40 }), {
+      memoryContext: {
+        proxy: proxy as unknown as NonNullable<RunnerOptions['memoryContext']>['proxy'],
+      },
+    });
+
+    expect(proxy.requestStepInjection).toHaveBeenCalledTimes(3);
+    expect(proxy.requestStepInjection).toHaveBeenNthCalledWith(1, 6, expect.any(Object));
+    expect(proxy.requestStepInjection).toHaveBeenNthCalledWith(2, 12, expect.any(Object));
+    expect(proxy.requestStepInjection).toHaveBeenNthCalledWith(3, 18, expect.any(Object));
+    expect(proxy.onStepComplete).toHaveBeenCalledTimes(5);
+  });
+
+  it('skips active memory injection during warmup and interval windows', async () => {
+    const proxy = {
+      requestStepInjection: vi.fn().mockResolvedValue({
+        type: 'gotcha_injection',
+        content: 'MEMORY ALERT - compact reminder',
+        memoryIds: ['memory-1'],
+      }),
+      onStepComplete: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolResult: vi.fn(),
+      onReasoning: vi.fn(),
+    };
+
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        for (const stepNumber of [1, 5, 6, 11, 12]) {
+          await args.prepareStep({ stepNumber });
+        }
+        yield { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } };
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 10, outputTokens: 5 }),
+    }));
+
+    await runAgentSession(createMockConfig({ maxSteps: 15 }), {
+      memoryContext: {
+        proxy: proxy as unknown as NonNullable<RunnerOptions['memoryContext']>['proxy'],
+      },
+    });
+
+    expect(proxy.requestStepInjection).toHaveBeenCalledTimes(2);
+    expect(proxy.requestStepInjection).toHaveBeenNthCalledWith(1, 6, expect.any(Object));
+    expect(proxy.requestStepInjection).toHaveBeenNthCalledWith(2, 12, expect.any(Object));
+    expect(proxy.onStepComplete).toHaveBeenCalledTimes(5);
+  });
+
+  it('skips active memory injection when context-window usage is tight', async () => {
+    const proxy = {
+      requestStepInjection: vi.fn().mockResolvedValue({
+        type: 'gotcha_injection',
+        content: 'MEMORY ALERT - compact reminder',
+        memoryIds: ['memory-1'],
+      }),
+      onStepComplete: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolResult: vi.fn(),
+      onReasoning: vi.fn(),
+    };
+
+    let stepPrompt: { system?: string } | undefined;
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        yield { type: 'finish-step', usage: { inputTokens: 600, outputTokens: 5 } };
+        stepPrompt = await args.prepareStep({ stepNumber: 6 });
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 600, outputTokens: 5 }),
+    }));
+
+    await runAgentSession(createMockConfig({ contextWindowLimit: 1000, maxSteps: 10 }), {
+      memoryContext: {
+        proxy: proxy as unknown as NonNullable<RunnerOptions['memoryContext']>['proxy'],
+      },
+    });
+
+    expect(proxy.requestStepInjection).not.toHaveBeenCalled();
+    expect(proxy.onStepComplete).toHaveBeenCalledWith(6);
+    expect(stepPrompt).toEqual({});
+  });
+
+  it('batches memory reasoning deltas until step finish', async () => {
+    const proxy = {
+      requestStepInjection: vi.fn().mockResolvedValue(null),
+      onStepComplete: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolResult: vi.fn(),
+      onReasoning: vi.fn(),
+    };
+
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        await args.prepareStep({ stepNumber: 1 });
+        yield { type: 'reasoning-delta', delta: 'First thought.' };
+        yield { type: 'reasoning-delta', delta: 'Second thought.' };
+        yield { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } };
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 10, outputTokens: 5 }),
+    }));
+
+    await runAgentSession(createMockConfig(), {
+      memoryContext: {
+        proxy: proxy as unknown as NonNullable<RunnerOptions['memoryContext']>['proxy'],
+      },
+    });
+
+    expect(proxy.onReasoning).toHaveBeenCalledTimes(1);
+    expect(proxy.onReasoning).toHaveBeenCalledWith('First thought. Second thought.', 1);
+  });
+
+  it('flushes buffered memory reasoning before requesting step injection', async () => {
+    const proxy = {
+      requestStepInjection: vi.fn().mockResolvedValue(null),
+      onStepComplete: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolResult: vi.fn(),
+      onReasoning: vi.fn(),
+    };
+
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        await args.prepareStep({ stepNumber: 1 });
+        yield {
+          type: 'reasoning-delta',
+          delta: 'Correction: previous path is generated; inspect the source template instead.',
+        };
+        await args.prepareStep({ stepNumber: 6 });
+        yield { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } };
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 10, outputTokens: 5 }),
+    }));
+
+    await runAgentSession(createMockConfig({ maxSteps: 8 }), {
+      memoryContext: {
+        proxy: proxy as unknown as NonNullable<RunnerOptions['memoryContext']>['proxy'],
+      },
+    });
+
+    expect(proxy.onReasoning).toHaveBeenCalledTimes(1);
+    expect(proxy.onReasoning).toHaveBeenCalledWith(
+      'Correction: previous path is generated; inspect the source template instead.',
+      1,
+    );
+    expect(proxy.requestStepInjection).toHaveBeenCalledTimes(1);
+    expect(proxy.onReasoning.mock.invocationCallOrder[0]).toBeLessThan(
+      proxy.requestStepInjection.mock.invocationCallOrder[0],
+    );
   });
 
   it('should repair double-encoded Write tool JSON when content is present', async () => {

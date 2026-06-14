@@ -21,6 +21,9 @@ import { applyGraphNeighborhoodBoost } from './graph-boost';
 import { Reranker } from './reranker';
 import { packContext } from './context-packer';
 
+export const MAX_RETRIEVAL_QUERY_CHARS = 800;
+const RETRIEVAL_QUERY_OMISSION_MARKER = ' ... [query middle omitted for retrieval budget] ... ';
+
 // ============================================================
 // TYPES
 // ============================================================
@@ -56,13 +59,14 @@ export class RetrievalPipeline {
    * @param config - Phase, project, and context configuration
    */
   async search(query: string, config: RetrievalConfig): Promise<RetrievalResult> {
-    const queryType = detectQueryType(query, config.recentToolCalls);
+    const compactQuery = compactRetrievalQuery(query);
+    const queryType = detectQueryType(compactQuery, config.recentToolCalls);
     const weights = QUERY_TYPE_WEIGHTS[queryType];
 
     // Stage 1: Parallel candidate generation from all three paths
     const [bm25Results, denseResults, graphResults] = await Promise.all([
-      searchBM25(this.db, query, config.projectId, 20),
-      searchDense(this.db, query, this.embeddingService, config.projectId, 256, 30),
+      searchBM25(this.db, compactQuery, config.projectId, 20),
+      searchDense(this.db, compactQuery, this.embeddingService, config.projectId, 256, 30),
       searchGraph(this.db, config.recentFiles ?? [], config.projectId, 15),
     ]);
 
@@ -103,7 +107,7 @@ export class RetrievalPipeline {
     // Stage 3: Cross-encoder reranking (top 20 → top maxResults)
     const maxResults = config.maxResults ?? 8;
     const reranked = await this.reranker.rerank(
-      query,
+      compactQuery,
       memories.map((m) => ({
         memoryId: m.id,
         content: `[${m.type}] ${m.relatedFiles.join(', ')}: ${m.content}`,
@@ -202,4 +206,25 @@ export class RetrievalPipeline {
       methodology: (row.methodology as string | null) ?? undefined,
     };
   }
+}
+
+export function compactRetrievalQuery(query: string): string {
+  const normalized = query.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= MAX_RETRIEVAL_QUERY_CHARS) {
+    return normalized;
+  }
+
+  const marker = RETRIEVAL_QUERY_OMISSION_MARKER;
+  if (marker.length >= MAX_RETRIEVAL_QUERY_CHARS - 2) {
+    return normalized.slice(0, MAX_RETRIEVAL_QUERY_CHARS);
+  }
+
+  const budget = MAX_RETRIEVAL_QUERY_CHARS - marker.length;
+  const headChars = Math.ceil(budget * 0.62);
+  const tailChars = Math.max(0, budget - headChars);
+  return [
+    normalized.slice(0, headChars).trimEnd(),
+    marker,
+    tailChars > 0 ? normalized.slice(-tailChars).trimStart() : '',
+  ].join('');
 }

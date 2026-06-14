@@ -64,12 +64,58 @@ vi.mock('../subtask-iterator', () => ({
   iterateSubtasks: (...args: unknown[]) => mockIterateSubtasks(...args),
 }));
 
-import { BuildOrchestrator } from '../build-orchestrator';
+import { BuildOrchestrator, formatPreQAReturnToCodingReason } from '../build-orchestrator';
 import { MMO_AGENT_PROFILE } from '../../config/project-agent-profile';
 import type { SessionResult } from '../../session/types';
 import type { ExecutionPhase } from '../../../../shared/constants/phase-protocol';
 
-function makePlan(statuses: string[]): string {
+const STANDARD_SPEC_MD = [
+  '# Test task',
+  '',
+  '## Evidence',
+  '',
+  '- spec.md test fixture proves task scope.',
+  '',
+  '## Requirements',
+  '',
+  '- Evidence: spec.md test fixture.',
+  '',
+].join('\n');
+const STANDARD_REQUIREMENTS_MD = [
+  '# Requirements',
+  '',
+  '## Evidence Sources',
+  '',
+  '- spec.md test fixture proves requirements.',
+  '',
+].join('\n');
+const STANDARD_CONTEXT_MD = [
+  '# Project Context',
+  '',
+  '## Files To Modify',
+  '',
+  '- src/file-1.ts',
+  '',
+  '## Evidence Sources',
+  '',
+  '- spec.md - test fixture proves context.',
+  '',
+].join('\n');
+
+function readStandardArtifactOrReject(filePath: string): Promise<string> {
+  if (filePath.endsWith('spec.md')) {
+    return Promise.resolve(STANDARD_SPEC_MD);
+  }
+  if (filePath.endsWith('requirements.md')) {
+    return Promise.resolve(STANDARD_REQUIREMENTS_MD);
+  }
+  if (filePath.endsWith('context.md')) {
+    return Promise.resolve(STANDARD_CONTEXT_MD);
+  }
+  return Promise.reject(new Error('ENOENT'));
+}
+
+function makePlan(statuses: string[], withSchedulingMetadata = true): string {
   return JSON.stringify({
     phases: [
       {
@@ -79,10 +125,21 @@ function makePlan(statuses: string[]): string {
           id: `subtask-${index + 1}`,
           description: `Subtask ${index + 1}`,
           status,
+          ...(withSchedulingMetadata
+            ? {
+                depends_on: [],
+                evidence: `spec.md Subtask ${index + 1}`,
+                verification: { type: 'manual', run: 'Run focused check' },
+              }
+            : {}),
         })),
       },
     ],
   });
+}
+
+function makePlanWithoutSchedulingMetadata(statuses: string[]): string {
+  return makePlan(statuses, false);
 }
 
 function makeSessionResult(outcome: SessionResult['outcome']): SessionResult {
@@ -123,6 +180,7 @@ function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
     if (withSchedulingMetadata) {
       lines.push(`    - _Files to modify: src/file-${index + 1}.ts_`);
       lines.push(`    - _Depends on: ${index === 0 ? 'none' : `1.${index}`}_`);
+      lines.push(`    - _Evidence: spec.md Subtask ${index + 1}_`);
       lines.push('    - _Verification: Run focused check_');
     }
     lines.push('');
@@ -131,22 +189,7 @@ function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
 }
 
 function makePlanWithSchedulingMetadata(statuses: string[]): string {
-  return JSON.stringify({
-    phases: [
-      {
-        id: 'phase-1',
-        name: 'phase-1',
-        subtasks: statuses.map((status, index) => ({
-          id: `subtask-${index + 1}`,
-          description: `Subtask ${index + 1}`,
-          status,
-          files_to_modify: [`src/file-${index + 1}.ts`],
-          depends_on: [],
-          verification: { type: 'manual', run: 'Run focused check' },
-        })),
-      },
-    ],
-  });
+  return makePlan(statuses, true);
 }
 
 function makeAggressiveOrchestrator(runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'))): BuildOrchestrator {
@@ -197,6 +240,21 @@ describe('BuildOrchestrator QA recovery', () => {
     mockIterateSubtasks.mockReset();
   });
 
+  it('compacts long pre-QA failure details before returning to coding', () => {
+    const issues = Array.from({ length: 12 }, (_, index) => (
+      `quality-check-${index + 1}: ${'very long command output with repeated diagnostics '.repeat(20)}`
+    ));
+
+    const reason = formatPreQAReturnToCodingReason(issues, 1, 2);
+
+    expect(reason).toContain('Pre-QA quality checks failed (attempt 1/2)');
+    expect(reason).toContain('quality-check-1');
+    expect(reason).toContain('6 more error(s) omitted');
+    expect(reason).toContain('[truncated');
+    expect(reason).not.toContain('quality-check-12');
+    expect(reason.length).toBeLessThanOrEqual(1_800);
+  });
+
   it('continues coding instead of failing when subtasks remain after a coding pass', async () => {
     let codingRuns = 0;
 
@@ -217,7 +275,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
@@ -266,7 +324,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const generatePrompt = vi.fn().mockResolvedValue('base coder prompt');
@@ -319,7 +377,7 @@ describe('BuildOrchestrator QA recovery', () => {
           ? Promise.resolve('Status: PASSED')
           : Promise.reject(new Error('ENOENT'));
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
@@ -342,6 +400,39 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.finalPhase).toBe('complete');
   });
 
+  it('retries QA reviewer without running fixer when the QA verdict is unknown', async () => {
+    let reviewerRuns = 0;
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.md')) {
+        return Promise.resolve(makePlan(['completed']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        if (reviewerRuns === 0) {
+          return Promise.reject(new Error('ENOENT'));
+        }
+        return Promise.resolve(reviewerRuns >= 2 ? 'Status: PASSED' : '# QA Report\n\nReviewer forgot status.');
+      }
+      return readStandardArtifactOrReject(path);
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'qa_reviewer') {
+        reviewerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = makeOrchestrator(runSession);
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'qa_reviewer')).toHaveLength(2);
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'qa_fixer')).toHaveLength(0);
+    expect(mockUnlink.mock.calls.map(([filePath]) => String(filePath).replace(/\\/g, '/')))
+      .toContain('/spec/qa_report.md');
+  });
+
   it('does not rerun QA when an existing complete plan already has a passed QA report', async () => {
     mockReadFile.mockImplementation((path: string) => {
       if (path.endsWith('implementation_plan.md')) {
@@ -350,7 +441,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
@@ -394,7 +485,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve(reviewerRuns >= 2 ? 'Status: PASSED' : 'Status: FAILED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
@@ -452,7 +543,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
@@ -482,7 +573,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('implementation_plan.md')) {
         return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
     mockIterateSubtasks.mockImplementation(async () => {
       codingRuns++;
@@ -515,7 +606,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('implementation_plan.md')) {
         return Promise.resolve(makePlan(['pending']));
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'));
@@ -562,7 +653,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
@@ -611,7 +702,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
@@ -652,7 +743,7 @@ describe('BuildOrchestrator QA recovery', () => {
       }
       if (path.endsWith('implementation_plan.md')) {
         if (plannerRuns <= 1) {
-          return Promise.resolve(makePlan(['pending']));
+          return Promise.resolve(makePlanWithoutSchedulingMetadata(['pending']));
         }
         return Promise.resolve(codingRuns > 0
           ? makePlanWithSchedulingMetadata(['completed'])
@@ -661,7 +752,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
@@ -670,7 +761,6 @@ describe('BuildOrchestrator QA recovery', () => {
       }
       return makeSessionResult('completed');
     });
-    const logs: string[] = [];
     const orchestrator = new BuildOrchestrator({
       specDir: '/spec',
       projectDir: '/project',
@@ -684,7 +774,6 @@ describe('BuildOrchestrator QA recovery', () => {
       generatePrompt: vi.fn().mockResolvedValue('prompt'),
       runSession,
     });
-    orchestrator.on('log', (message) => logs.push(message));
 
     const outcome = await orchestrator.run();
 
@@ -692,7 +781,6 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.finalPhase).toBe('planning');
     expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(2);
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
-    expect(logs.some((log) => log.includes('missing _Depends on'))).toBe(true);
   });
 
   it('uses MMO profile agents for planning and QA phases', async () => {
@@ -722,7 +810,7 @@ describe('BuildOrchestrator QA recovery', () => {
       if (path.endsWith('qa_report.md')) {
         return Promise.resolve('Status: PASSED');
       }
-      return Promise.reject(new Error('ENOENT'));
+      return readStandardArtifactOrReject(path);
     });
 
     const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {

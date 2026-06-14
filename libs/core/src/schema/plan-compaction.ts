@@ -25,7 +25,7 @@ export const PLAN_COMPACTION_LIMITS: PlanCompactionLimits = {
   maxPhaseNameChars: 120,
   maxSubtaskTitleChars: 120,
   maxSubtaskDescriptionChars: 700,
-  maxSubtaskCompletionSummaryChars: 3000,
+  maxSubtaskCompletionSummaryChars: 1200,
   maxFileRefsPerList: 12,
   maxFilePathChars: 240,
   maxVerificationRunChars: 300,
@@ -62,6 +62,8 @@ type CompactVerification = {
   scenario?: string;
 };
 
+const PLAN_TEXT_COMPACTION_NOTICE = ' ... [plan middle omitted for context budget] ... ';
+
 function mergeLimits(options?: PlanCompactionOptions): PlanCompactionLimits {
   return {
     ...PLAN_COMPACTION_LIMITS,
@@ -69,11 +71,19 @@ function mergeLimits(options?: PlanCompactionOptions): PlanCompactionLimits {
   };
 }
 
-function compactText(value: unknown, maxChars: number, fallback = ''): string {
+function compactText(
+  value: unknown,
+  maxChars: number,
+  fallback = '',
+  options: { preserveTail?: boolean } = {},
+): string {
   const text = typeof value === 'string' ? value : fallback;
   const normalized = text.replace(/\s+/g, ' ').trim();
   if (normalized.length <= maxChars) {
     return normalized;
+  }
+  if (options.preserveTail) {
+    return limitHeadTailText(normalized, maxChars);
   }
   if (maxChars <= 3) {
     return normalized.slice(0, maxChars);
@@ -81,7 +91,12 @@ function compactText(value: unknown, maxChars: number, fallback = ''): string {
   return `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
 }
 
-function compactMultilineText(value: unknown, maxChars: number, fallback = ''): string {
+function compactMultilineText(
+  value: unknown,
+  maxChars: number,
+  fallback = '',
+  options: { preserveTail?: boolean } = {},
+): string {
   const text = typeof value === 'string' ? value : fallback;
   const normalized = text
     .replace(/\r\n/g, '\n')
@@ -91,10 +106,102 @@ function compactMultilineText(value: unknown, maxChars: number, fallback = ''): 
   if (normalized.length <= maxChars) {
     return normalized;
   }
+  if (options.preserveTail) {
+    return limitHeadTailText(normalized, maxChars);
+  }
   if (maxChars <= 3) {
     return normalized.slice(0, maxChars);
   }
   return `${normalized.slice(0, maxChars - 3).trimEnd()}...`;
+}
+
+function limitHeadTailText(value: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+  if (maxChars <= PLAN_TEXT_COMPACTION_NOTICE.length + 2) {
+    return value.slice(0, maxChars);
+  }
+
+  const budget = maxChars - PLAN_TEXT_COMPACTION_NOTICE.length;
+  const headLength = Math.ceil(budget * 0.65);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    value.slice(0, headLength).trimEnd(),
+    PLAN_TEXT_COMPACTION_NOTICE,
+    value.slice(-tailLength).trimStart(),
+  ].join('');
+}
+
+function compactCompletionSummary(value: unknown, maxChars: number): string {
+  const text = typeof value === 'string' ? value : '';
+  const normalized = text
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+  if (!normalized) {
+    return '';
+  }
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const lines = normalized.split('\n').map((line) => line.trim()).filter(Boolean);
+  const leadingTableLines: string[] = [];
+  for (const line of lines) {
+    if (!line.startsWith('|') || !line.endsWith('|')) {
+      break;
+    }
+    leadingTableLines.push(line);
+  }
+  if (leadingTableLines.length >= 3) {
+    const extraText = lines.slice(leadingTableLines.length).join(' ');
+    const tableBudget = extraText ? Math.max(700, maxChars - 180) : maxChars;
+    const perLineLimit = Math.max(120, Math.floor((tableBudget - leadingTableLines.length + 1) / leadingTableLines.length));
+    const compactedTable = leadingTableLines
+      .map((line) => compactTableLine(line, perLineLimit))
+      .join('\n');
+    if (!extraText) {
+      return compactedTable.length <= maxChars
+        ? compactedTable
+        : `${compactedTable.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+    }
+    const remaining = maxChars - compactedTable.length - 1;
+    if (remaining <= 20) {
+      return compactedTable.length <= maxChars
+        ? compactedTable
+        : `${compactedTable.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+    }
+    return `${compactedTable}\n${compactText(extraText, remaining, '', { preserveTail: true })}`;
+  }
+
+  return compactMultilineText(normalized, maxChars, '', { preserveTail: true });
+}
+
+function compactTableLine(line: string, maxChars: number): string {
+  if (line.length <= maxChars) {
+    return line;
+  }
+
+  const cells = line
+    .split('|')
+    .slice(1, -1)
+    .map((cell) => cell.trim());
+  if (cells.length <= 1) {
+    return `${line.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+
+  const firstCell = cells[0];
+  const detail = cells.slice(1).join(' | ');
+  const availableForDetail = Math.max(20, maxChars - firstCell.length - 10);
+  const compactedDetail = detail.length <= availableForDetail
+    ? detail
+    : limitHeadTailText(detail, availableForDetail);
+  return `| ${firstCell} | ${compactedDetail} |`;
 }
 
 function toStringArray(value: unknown, maxItems: number, maxChars: number): string[] {
@@ -150,7 +257,7 @@ function compactVerification(value: unknown, limits: PlanCompactionLimits): Comp
   }
 
   if (typeof value === 'string') {
-    const run = compactText(value, limits.maxVerificationRunChars);
+    const run = compactText(value, limits.maxVerificationRunChars, '', { preserveTail: true });
     return run ? { type: 'manual', run } : undefined;
   }
 
@@ -163,8 +270,10 @@ function compactVerification(value: unknown, limits: PlanCompactionLimits): Comp
   const run = compactText(
     record.run ?? record.command ?? record.instructions ?? record.expected ?? record.expected_outcome,
     limits.maxVerificationRunChars,
+    '',
+    { preserveTail: true },
   );
-  const scenario = compactText(record.scenario ?? record.description, limits.maxVerificationRunChars);
+  const scenario = compactText(record.scenario ?? record.description, limits.maxVerificationRunChars, '', { preserveTail: true });
 
   return {
     type,
@@ -215,6 +324,7 @@ function compactSubtask(
     subtask.description,
     limits.maxSubtaskDescriptionChars,
     title,
+    { preserveTail: true },
   );
   const patternFiles = toStringArray(
     rawSubtask.pattern_files ?? rawSubtask.patterns_from ?? rawSubtask.files_to_reference,
@@ -224,7 +334,7 @@ function compactSubtask(
   const dependsOn = toStringArray(rawSubtask.depends_on, limits.maxSubtasksPerPhase, 80);
   const verification = compactVerification(subtask.verification ?? rawSubtask.verification, limits);
   const completionSummary = subtask.status === 'completed'
-    ? compactMultilineText(
+    ? compactCompletionSummary(
         rawSubtask.completion_summary
           ?? rawSubtask.completionSummary
           ?? rawSubtask.completed_summary
@@ -233,7 +343,7 @@ function compactSubtask(
         limits.maxSubtaskCompletionSummaryChars,
       )
     : '';
-  const notes = compactText(rawSubtask.notes, limits.maxSubtaskDescriptionChars);
+  const notes = compactText(rawSubtask.notes, limits.maxSubtaskDescriptionChars, '', { preserveTail: true });
 
   return {
     id: compactText(subtask.id, 80, `${phaseIndex + 1}-${subtaskIndex + 1}`),

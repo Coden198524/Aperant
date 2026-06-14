@@ -4,7 +4,7 @@
 Find performance optimization ideas supported by existing code evidence.
 
 ## Process
-1. Read project index, performance-sensitive code paths, configs, and ideation context.
+1. Read project documentation index, performance-sensitive code paths, configs, and ideation context.
 2. Focus on hot paths, redundant work, heavy rendering, slow IO, unnecessary network calls, or missing caching.
 3. Avoid speculative optimizations without code evidence.
 4. Suggest 3 to Max Ideas items.

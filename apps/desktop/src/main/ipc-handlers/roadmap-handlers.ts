@@ -42,6 +42,15 @@ function getFeatureSettings(): { model?: string; thinkingLevel?: string } {
   return getActiveProviderFeatureSettings('roadmap');
 }
 
+function buildRoadmapConfig(): RoadmapConfig {
+  const featureSettings = getFeatureSettings();
+  return {
+    model: featureSettings.model,
+    thinkingLevel: featureSettings.thinkingLevel,
+    language: getAppLanguage(),
+  };
+}
+
 function toDesktopTask(coreTask: AutocodeTask, projectId: string): Task {
   return {
     id: coreTask.id,
@@ -66,6 +75,71 @@ export function registerRoadmapHandlers(
   agentManager: AgentManager,
   getMainWindow: () => BrowserWindow | null
 ): void {
+  const startRoadmapGeneration = (
+    projectId: string,
+    refresh: boolean,
+    enableCompetitorAnalysis?: boolean,
+    refreshCompetitorAnalysis?: boolean
+  ): IPCResult => {
+    const config = buildRoadmapConfig();
+
+    debugLog(refresh ? "[Roadmap Handler] Refresh request:" : "[Roadmap Handler] Generate request:", {
+      projectId,
+      enableCompetitorAnalysis,
+      refreshCompetitorAnalysis,
+      config,
+    });
+
+    const mainWindow = getMainWindow();
+    if (!mainWindow) {
+      debugError("[Roadmap Handler] Cannot start roadmap generation: main window not available");
+      return { success: false, error: "Main window not available" };
+    }
+
+    const project = projectStore.getProject(projectId);
+    if (!project) {
+      debugError("[Roadmap Handler] Project not found:", projectId);
+      safeSendToRenderer(
+        getMainWindow,
+        IPC_CHANNELS.ROADMAP_ERROR,
+        projectId,
+        "Project not found"
+      );
+      return { success: false, error: "Project not found" };
+    }
+
+    try {
+      debugLog("[Roadmap Handler] Starting agent manager generation:", {
+        projectId,
+        projectPath: project.path,
+        refresh,
+        config,
+      });
+
+      agentManager.startRoadmapGeneration(
+        projectId,
+        project.path,
+        refresh,
+        enableCompetitorAnalysis ?? false,
+        refreshCompetitorAnalysis ?? false,
+        config
+      );
+
+      safeSendToRenderer(getMainWindow, IPC_CHANNELS.ROADMAP_PROGRESS, projectId, {
+        phase: "analyzing",
+        progress: 10,
+        message: refresh ? "Refreshing roadmap..." : "Analyzing project structure...",
+      } as RoadmapGenerationStatus);
+
+      return { success: true };
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Failed to start roadmap generation";
+      debugError("[Roadmap Handler] Failed to start roadmap generation:", error);
+      safeSendToRenderer(getMainWindow, IPC_CHANNELS.ROADMAP_ERROR, projectId, message);
+      return { success: false, error: message };
+    }
+  };
+
   // ============================================
   // Roadmap Operations
   // ============================================
@@ -222,123 +296,34 @@ export function registerRoadmapHandlers(
     }
   );
 
-  ipcMain.on(
+  ipcMain.handle(
     IPC_CHANNELS.ROADMAP_GENERATE,
-    (
+    async (
       _,
       projectId: string,
       enableCompetitorAnalysis?: boolean,
       refreshCompetitorAnalysis?: boolean
-    ) => {
-      // Get feature settings for roadmap
-      const featureSettings = getFeatureSettings();
-      const config: RoadmapConfig = {
-        model: featureSettings.model,
-        thinkingLevel: featureSettings.thinkingLevel,
-        language: getAppLanguage(),
-      };
-
-      debugLog("[Roadmap Handler] Generate request:", {
-        projectId,
-        enableCompetitorAnalysis,
-        refreshCompetitorAnalysis,
-        config,
-      });
-
-      const mainWindow = getMainWindow();
-      if (!mainWindow) return;
-
-      const project = projectStore.getProject(projectId);
-      if (!project) {
-        debugError("[Roadmap Handler] Project not found:", projectId);
-        safeSendToRenderer(
-          getMainWindow,
-          IPC_CHANNELS.ROADMAP_ERROR,
-          projectId,
-          "Project not found"
-        );
-        return;
-      }
-
-      debugLog("[Roadmap Handler] Starting agent manager generation:", {
-        projectId,
-        projectPath: project.path,
-        config,
-      });
-
-      // Start roadmap generation via agent manager
-      agentManager.startRoadmapGeneration(
-        projectId,
-        project.path,
-        false, // refresh (not a refresh operation)
-        enableCompetitorAnalysis ?? false,
-        refreshCompetitorAnalysis ?? false,
-        config
-      );
-
-      // Send initial progress
-      safeSendToRenderer(getMainWindow, IPC_CHANNELS.ROADMAP_PROGRESS, projectId, {
-        phase: "analyzing",
-        progress: 10,
-        message: "Analyzing project structure...",
-      } as RoadmapGenerationStatus);
-    }
+    ): Promise<IPCResult> => startRoadmapGeneration(
+      projectId,
+      false,
+      enableCompetitorAnalysis,
+      refreshCompetitorAnalysis
+    )
   );
 
-  ipcMain.on(
+  ipcMain.handle(
     IPC_CHANNELS.ROADMAP_REFRESH,
-    (
+    async (
       _,
       projectId: string,
       enableCompetitorAnalysis?: boolean,
       refreshCompetitorAnalysis?: boolean
-    ) => {
-      // Get feature settings for roadmap
-      const featureSettings = getFeatureSettings();
-      const config: RoadmapConfig = {
-        model: featureSettings.model,
-        thinkingLevel: featureSettings.thinkingLevel,
-        language: getAppLanguage(),
-      };
-
-      debugLog("[Roadmap Handler] Refresh request:", {
-        projectId,
-        enableCompetitorAnalysis,
-        refreshCompetitorAnalysis,
-        config,
-      });
-
-      const mainWindow = getMainWindow();
-      if (!mainWindow) return;
-
-      const project = projectStore.getProject(projectId);
-      if (!project) {
-        safeSendToRenderer(
-          getMainWindow,
-          IPC_CHANNELS.ROADMAP_ERROR,
-          projectId,
-          "Project not found"
-        );
-        return;
-      }
-
-      // Start roadmap regeneration with refresh flag
-      agentManager.startRoadmapGeneration(
-        projectId,
-        project.path,
-        true, // refresh (this is a refresh operation)
-        enableCompetitorAnalysis ?? false,
-        refreshCompetitorAnalysis ?? false,
-        config
-      );
-
-      // Send initial progress
-      safeSendToRenderer(getMainWindow, IPC_CHANNELS.ROADMAP_PROGRESS, projectId, {
-        phase: "analyzing",
-        progress: 10,
-        message: "Refreshing roadmap...",
-      } as RoadmapGenerationStatus);
-    }
+    ): Promise<IPCResult> => startRoadmapGeneration(
+      projectId,
+      true,
+      enableCompetitorAnalysis,
+      refreshCompetitorAnalysis
+    )
   );
 
   ipcMain.handle(IPC_CHANNELS.ROADMAP_STOP, async (_, projectId: string): Promise<IPCResult> => {

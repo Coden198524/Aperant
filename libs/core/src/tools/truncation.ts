@@ -8,9 +8,12 @@
 
 import { randomUUID } from 'node:crypto';
 
-export const TOOL_OUTPUT_MAX_LINES = 2000;
+export const TOOL_OUTPUT_MAX_LINES = 800;
 export const TOOL_OUTPUT_MAX_BYTES = 50_000;
 export const SAFETY_NET_MAX_BYTES = 100_000;
+const TOOL_OUTPUT_TRUNCATION_HEAD_RATIO = 0.65;
+const TOOL_OUTPUT_LINE_OMISSION_MARKER_PREFIX = '[... ';
+const TOOL_OUTPUT_BYTE_OMISSION_MARKER = '\n[Output middle omitted for byte budget]\n';
 
 export interface ToolOutputTruncationPlan {
   content: string;
@@ -55,10 +58,10 @@ export function planToolOutputTruncation(
     };
   }
 
-  const truncatedLines = lines.slice(0, maxLines);
+  const truncatedLines = selectHeadTailOutputLines(lines, maxLines);
   let content = truncatedLines.join('\n');
   if (Buffer.byteLength(content, 'utf-8') > maxBytes) {
-    content = content.slice(0, maxBytes);
+    content = truncateUtf8HeadTailText(content, maxBytes);
   }
 
   return {
@@ -66,9 +69,79 @@ export function planToolOutputTruncation(
     wasTruncated: true,
     originalSize: bytes,
     lineCount: lines.length,
-    displayedLineCount: Math.min(lines.length, maxLines),
+    displayedLineCount: content ? content.split('\n').length : 0,
     sanitizedToolName: sanitizeToolOutputName(toolName),
   };
+}
+
+function selectHeadTailOutputLines(lines: string[], maxLines: number): string[] {
+  if (maxLines <= 0) {
+    return [];
+  }
+  if (lines.length <= maxLines) {
+    return lines;
+  }
+  if (maxLines === 1) {
+    return [`${TOOL_OUTPUT_LINE_OMISSION_MARKER_PREFIX}${lines.length} line(s) omitted ...]`];
+  }
+
+  const budget = maxLines - 1;
+  const headCount = Math.ceil(budget * TOOL_OUTPUT_TRUNCATION_HEAD_RATIO);
+  const tailCount = Math.max(0, budget - headCount);
+  return [
+    ...lines.slice(0, headCount),
+    `${TOOL_OUTPUT_LINE_OMISSION_MARKER_PREFIX}${lines.length - headCount - tailCount} line(s) omitted ...]`,
+    ...(tailCount > 0 ? lines.slice(-tailCount) : []),
+  ];
+}
+
+function truncateUtf8HeadTailText(value: string, maxBytes: number): string {
+  if (maxBytes <= 0) {
+    return '';
+  }
+  if (Buffer.byteLength(value, 'utf-8') <= maxBytes) {
+    return value;
+  }
+
+  const markerBytes = Buffer.byteLength(TOOL_OUTPUT_BYTE_OMISSION_MARKER, 'utf-8');
+  if (markerBytes >= maxBytes - 2) {
+    return fitUtf8Segment(value, maxBytes, 'head');
+  }
+
+  const budget = maxBytes - markerBytes;
+  const headBytes = Math.ceil(budget * TOOL_OUTPUT_TRUNCATION_HEAD_RATIO);
+  const tailBytes = Math.max(0, budget - headBytes);
+  return [
+    fitUtf8Segment(value, headBytes, 'head').trimEnd(),
+    TOOL_OUTPUT_BYTE_OMISSION_MARKER,
+    fitUtf8Segment(value, tailBytes, 'tail').trimStart(),
+  ].join('');
+}
+
+function fitUtf8Segment(value: string, maxBytes: number, side: 'head' | 'tail'): string {
+  if (maxBytes <= 0) {
+    return '';
+  }
+
+  const chars = Array.from(value);
+  let low = 0;
+  let high = chars.length;
+  let best = '';
+
+  while (low <= high) {
+    const count = Math.floor((low + high) / 2);
+    const candidate = side === 'head'
+      ? chars.slice(0, count).join('')
+      : chars.slice(chars.length - count).join('');
+    if (Buffer.byteLength(candidate, 'utf-8') <= maxBytes) {
+      best = candidate;
+      low = count + 1;
+    } else {
+      high = count - 1;
+    }
+  }
+
+  return best;
 }
 
 export function buildToolOutputTruncationContent(
@@ -85,7 +158,7 @@ export function buildToolOutputTruncationContent(
 
   const hint = [
     '',
-    `[Output truncated: ${plan.lineCount} lines / ${plan.originalSize} bytes -> showing first ${plan.displayedLineCount} lines]`,
+    `[Output truncated: ${plan.lineCount} lines / ${plan.originalSize} bytes -> showing ${plan.displayedLineCount} preview lines from head/tail]`,
     `[Full output saved to: ${options.spilloverPath}]`,
     '[Hint: Use the Read tool to view the full output, or narrow your search pattern for more specific results]',
   ].join('\n');

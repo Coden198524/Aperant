@@ -45,6 +45,10 @@ interface ImplementationPlan {
   phases?: PlanPhase[];
 }
 
+const MAX_PHASE_SUMMARY_LINES = 12;
+const MAX_NEXT_SUBTASK_DESCRIPTION_CHARS = 360;
+const TEXT_OMISSION_MARKER = ' ... [middle omitted] ... ';
+
 // ---------------------------------------------------------------------------
 // Tool Definition
 // ---------------------------------------------------------------------------
@@ -114,14 +118,17 @@ export const getBuildProgressTool = Tool.define({
       `  In Progress: ${stats.in_progress}\n` +
       `  Pending: ${stats.pending}\n` +
       `  Failed: ${stats.failed}\n\n` +
-      `Phases:\n${phasesSummary.join('\n')}`;
+      `Phases:\n${formatPhaseSummaryLines(phasesSummary)}`;
 
     if (nextSubtask) {
       result +=
         `\n\nNext subtask to work on:\n` +
         `  ID: ${nextSubtask.id ?? 'unknown'}\n` +
         `  Phase: ${nextSubtask.phase ?? 'unknown'}\n` +
-        `  Description: ${nextSubtask.description ?? 'No description'}`;
+        `  Description: ${compactBuildProgressText(
+          nextSubtask.description ?? 'No description',
+          MAX_NEXT_SUBTASK_DESCRIPTION_CHARS,
+        )}`;
     } else if (stats.completed === stats.total && stats.total > 0) {
       result += '\n\nAll subtasks completed! Build is ready for QA.';
     }
@@ -129,3 +136,37 @@ export const getBuildProgressTool = Tool.define({
     return result;
   },
 });
+
+function formatPhaseSummaryLines(lines: string[]): string {
+  if (lines.length <= MAX_PHASE_SUMMARY_LINES) {
+    return lines.join('\n');
+  }
+
+  const budget = MAX_PHASE_SUMMARY_LINES - 1;
+  const headCount = Math.ceil(budget * 0.6);
+  const tailCount = Math.max(0, budget - headCount);
+  return [
+    ...lines.slice(0, headCount),
+    `  ... ${lines.length - headCount - tailCount} phase(s) omitted ...`,
+    ...(tailCount > 0 ? lines.slice(-tailCount) : []),
+  ].join('\n');
+}
+
+function compactBuildProgressText(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  if (maxChars <= TEXT_OMISSION_MARKER.length + 2) {
+    return compact.slice(0, maxChars);
+  }
+
+  const budget = maxChars - TEXT_OMISSION_MARKER.length;
+  const headChars = Math.ceil(budget * 0.6);
+  const tailChars = Math.max(0, budget - headChars);
+  return [
+    compact.slice(0, headChars).trimEnd(),
+    TEXT_OMISSION_MARKER,
+    tailChars > 0 ? compact.slice(-tailChars).trimStart() : '',
+  ].join('');
+}

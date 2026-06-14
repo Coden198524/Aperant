@@ -11,9 +11,9 @@
  */
 
 import type { BrowseOptions, BrowseProvider, BrowseResult } from './types';
+import { compactBrowseContent } from './content-compaction';
 
 const DEFAULT_TIMEOUT = 30_000;
-const MAX_CONTENT_LENGTH = 100_000;
 
 export class JinaBrowseProvider implements BrowseProvider {
   readonly name = 'jina';
@@ -43,7 +43,7 @@ export class JinaBrowseProvider implements BrowseProvider {
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
 
-      let content = await response.text();
+      const content = await response.text();
 
       // Extract title from markdown if present (Jina returns "Title: ..." as first line)
       let title: string | undefined;
@@ -52,11 +52,7 @@ export class JinaBrowseProvider implements BrowseProvider {
         title = titleMatch[1].trim();
       }
 
-      if (content.length > MAX_CONTENT_LENGTH) {
-        content = `${content.slice(0, MAX_CONTENT_LENGTH)}\n\n[Content truncated — ${content.length} characters total]`;
-      }
-
-      return { url, content, title };
+      return { url, content: compactBrowseContent(content), title };
     } finally {
       clearTimeout(timeoutId);
     }

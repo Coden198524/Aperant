@@ -104,6 +104,27 @@ describe('WorkerObserverProxy', () => {
       );
     });
 
+    it('compacts large tool call arguments before posting observation IPC', () => {
+      proxy.onToolCall('Write', {
+        file_path: '/src/generated.ts',
+        content: 'x'.repeat(5_000),
+        old_string: 'old'.repeat(1_000),
+        new_string: 'new'.repeat(1_000),
+        command: `npm test ${'--workspace apps/desktop '.repeat(30)}`,
+        unexpected_payload: 'should not be retained',
+      }, 4);
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        args: Record<string, unknown>;
+      };
+      expect(sentMsg.args.file_path).toBe('/src/generated.ts');
+      expect(sentMsg.args).not.toHaveProperty('content');
+      expect(sentMsg.args).not.toHaveProperty('old_string');
+      expect(sentMsg.args).not.toHaveProperty('new_string');
+      expect(sentMsg.args).not.toHaveProperty('unexpected_payload');
+      expect(String(sentMsg.args.command)).toHaveLength(240);
+    });
+
     it('onToolResult posts a memory:tool-result message', () => {
       proxy.onToolResult('Read', 'file contents', 3);
 
@@ -117,6 +138,23 @@ describe('WorkerObserverProxy', () => {
       );
     });
 
+    it('compacts large tool results while preserving diagnostic text and tail output', () => {
+      const result = [
+        'noise '.repeat(300),
+        'Error: build failed because module was missing',
+        'tail '.repeat(300),
+        'FINAL_EXIT_CODE_1_SHOULD_BE_PRESERVED',
+      ].join(' ');
+      proxy.onToolResult('Bash', result, 5);
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        result: string;
+      };
+      expect(sentMsg.result.length).toBeLessThanOrEqual(1_200);
+      expect(sentMsg.result).toContain('Error: build failed');
+      expect(sentMsg.result).toContain('FINAL_EXIT_CODE_1_SHOULD_BE_PRESERVED');
+    });
+
     it('onReasoning posts a memory:reasoning message', () => {
       proxy.onReasoning('I should check the imports first.', 2);
 
@@ -127,6 +165,19 @@ describe('WorkerObserverProxy', () => {
           stepNumber: 2,
         }),
       );
+    });
+
+    it('compacts long reasoning text while preserving correction signals', () => {
+      const reasoning = [
+        'thinking '.repeat(300),
+        'Correction: this file is generated, so I should edit the source template instead.',
+        'tail '.repeat(300),
+      ].join(' ');
+      proxy.onReasoning(reasoning, 6);
+
+      const sentMsg = mockPort.sentMessages[0] as { text: string };
+      expect(sentMsg.text.length).toBeLessThanOrEqual(900);
+      expect(sentMsg.text).toContain('Correction: this file is generated');
     });
 
     it('onStepComplete posts a memory:step-complete message', () => {
@@ -163,6 +214,55 @@ describe('WorkerObserverProxy', () => {
 
       expect(result).toHaveLength(1);
       expect(result[0].content).toBe('Use refreshToken() before API calls');
+    });
+
+    it('compacts verbose search filters before posting IPC requests', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:search-result',
+        requestId,
+        memories: [],
+      }));
+
+      const query = `SEARCH_HEAD ${'verbose query detail '.repeat(120)} SEARCH_TAIL`;
+      await proxy.searchMemory({
+        query,
+        projectId: 'proj-1',
+        relatedFiles: [
+          'src/auth/token.ts',
+          ' src\\auth\\token.ts ',
+          'src/auth//token.ts',
+          ...Array.from(
+            { length: 20 },
+            (_, index) => `src/very/deep/path/${index}/${'file-name-segment-'.repeat(18)}tail-${index}.ts`,
+          ),
+        ],
+        relatedModules: Array.from(
+          { length: 20 },
+          (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
+        ),
+        filter: () => true,
+      });
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        filters: {
+          query?: string;
+          relatedFiles?: string[];
+          relatedModules?: string[];
+          filter?: unknown;
+        };
+      };
+
+      expect(sentMsg.filters.query?.length).toBeLessThanOrEqual(800);
+      expect(sentMsg.filters.query).toContain('SEARCH_HEAD');
+      expect(sentMsg.filters.query).toContain('SEARCH_TAIL');
+      expect(sentMsg.filters.query).toContain('memory search middle omitted before IPC');
+      expect(sentMsg.filters.relatedFiles).toHaveLength(16);
+      expect(new Set(sentMsg.filters.relatedFiles).size).toBe(sentMsg.filters.relatedFiles?.length);
+      expect(sentMsg.filters.relatedFiles?.[0]).toBe('src/auth/token.ts');
+      expect(sentMsg.filters.relatedFiles?.every((file) => file.length <= 180)).toBe(true);
+      expect(sentMsg.filters.relatedModules).toHaveLength(12);
+      expect(sentMsg.filters.relatedModules?.every((module) => module.length <= 96)).toBe(true);
+      expect(sentMsg.filters).not.toHaveProperty('filter');
     });
 
     it('returns empty array on error response', async () => {
@@ -202,6 +302,69 @@ describe('WorkerObserverProxy', () => {
       });
 
       expect(id).toBe('new-mem-123');
+    });
+
+    it('compacts verbose memory entries before posting record IPC requests', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:stored',
+        requestId,
+        id: 'new-mem-456',
+      }));
+
+      await proxy.recordMemory({
+        type: 'gotcha',
+        content: `MEMORY_HEAD ${'verbose memory detail '.repeat(160)} MEMORY_TAIL`,
+        projectId: 'proj-1',
+        tags: [
+          'auth',
+          'auth',
+          ...Array.from({ length: 30 }, (_, index) => `tag-${index}-${'x'.repeat(80)}`),
+        ],
+        relatedFiles: Array.from(
+          { length: 30 },
+          (_, index) => index === 0
+            ? ' src\\auth\\token.ts '
+            : index === 1
+              ? 'src/auth//token.ts'
+              : `src/very/deep/path/${index}/${'file-name-segment-'.repeat(20)}tail-${index}.ts`,
+        ),
+        relatedModules: Array.from(
+          { length: 20 },
+          (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
+        ),
+        citationText: `CITATION_HEAD ${'citation detail '.repeat(120)} CITATION_TAIL`,
+        contextPrefix: `PREFIX_HEAD ${'context detail '.repeat(80)} PREFIX_TAIL`,
+      });
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        entry: {
+          content: string;
+          tags?: string[];
+          relatedFiles?: string[];
+          relatedModules?: string[];
+          citationText?: string;
+          contextPrefix?: string;
+        };
+      };
+
+      expect(sentMsg.entry.content.length).toBeLessThanOrEqual(2000);
+      expect(sentMsg.entry.content).toContain('MEMORY_HEAD');
+      expect(sentMsg.entry.content).toContain('MEMORY_TAIL');
+      expect(sentMsg.entry.content).toContain('memory record middle omitted before IPC');
+      expect(sentMsg.entry.tags).toHaveLength(20);
+      expect(new Set(sentMsg.entry.tags).size).toBe(sentMsg.entry.tags?.length);
+      expect(sentMsg.entry.tags?.every((tag) => tag.length <= 64)).toBe(true);
+      expect(sentMsg.entry.relatedFiles).toHaveLength(24);
+      expect(sentMsg.entry.relatedFiles?.[0]).toBe('src/auth/token.ts');
+      expect(sentMsg.entry.relatedFiles?.every((file) => file.length <= 220)).toBe(true);
+      expect(sentMsg.entry.relatedModules).toHaveLength(16);
+      expect(sentMsg.entry.relatedModules?.every((module) => module.length <= 96)).toBe(true);
+      expect(sentMsg.entry.citationText?.length).toBeLessThanOrEqual(1000);
+      expect(sentMsg.entry.citationText).toContain('CITATION_HEAD');
+      expect(sentMsg.entry.citationText).toContain('CITATION_TAIL');
+      expect(sentMsg.entry.contextPrefix?.length).toBeLessThanOrEqual(600);
+      expect(sentMsg.entry.contextPrefix).toContain('PREFIX_HEAD');
+      expect(sentMsg.entry.contextPrefix).toContain('PREFIX_TAIL');
     });
 
     it('returns null on error response', async () => {

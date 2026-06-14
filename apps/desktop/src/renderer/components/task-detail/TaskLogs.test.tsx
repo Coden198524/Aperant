@@ -1,14 +1,17 @@
 // @vitest-environment jsdom
 
 import '@testing-library/jest-dom/vitest';
-import { render, screen } from '@testing-library/react';
+import { fireEvent, render, screen } from '@testing-library/react';
 import { describe, expect, it, vi } from 'vitest';
 import type { Task, TaskLogs as TaskLogsData } from '../../../shared/types';
 import { TaskLogs } from './TaskLogs';
 
 vi.mock('react-i18next', () => ({
   useTranslation: () => ({
-    t: (key: string, params?: Record<string, unknown>) => {
+    t: (key: string, params?: Record<string, unknown> | string) => {
+      if (typeof params === 'string') {
+        return params;
+      }
       if (typeof params?.defaultValue === 'string') {
         return params.defaultValue
           .replace('{{count}}', String(params.count ?? ''))
@@ -80,6 +83,20 @@ function createPhaseLogs(): TaskLogsData {
   };
 }
 
+function createCodexToolRouterJsonErrorLog(): string {
+  return [
+    '6',
+    '2026-06-14T03:32:26.118278Z ERROR codex_core::tools::router: error=Exit code: 1',
+    'Wall time: 0.4 seconds',
+    'Output:',
+    "ConvertFrom-Json : Invalid object passed in, ':' or '}' expected. (178): {",
+    '',
+    '  "task_id": "003-task",',
+    '  "purpose": "broken JSON,',
+    '}',
+  ].join('\n');
+}
+
 describe('TaskLogs', () => {
   it('does not show runtime logs in the logs tab', () => {
     render(
@@ -99,5 +116,71 @@ describe('TaskLogs', () => {
     expect(screen.queryByText('Runtime')).not.toBeInTheDocument();
     expect(screen.queryByText('Starting QA validation loop')).not.toBeInTheDocument();
     expect(screen.queryByText('Running qa_reviewer session (session=1)')).not.toBeInTheDocument();
+  });
+
+  it('collapses raw Codex JSON event logs in the logs tab', () => {
+    const phaseLogs = createPhaseLogs();
+    phaseLogs.phases.planning.entries = [
+      {
+        timestamp: '2026-04-14T00:00:01Z',
+        type: 'text',
+        phase: 'planning',
+        content: '。{"type":"item.completed","item":{"id":"item_2","type":"command_execution","command":"git status --short","aggregated_output":" M package.json"}}',
+      },
+    ];
+
+    render(
+      <TaskLogs
+        task={createTask()}
+        phaseLogs={phaseLogs}
+        isLoadingLogs={false}
+        expandedPhases={new Set(['planning'])}
+        isStuck={false}
+        logsEndRef={{ current: null }}
+        logsContainerRef={{ current: null }}
+        onLogsScroll={() => {}}
+        onTogglePhase={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('Internal Codex event log collapsed.')).toBeInTheDocument();
+    expect(screen.queryByText(/aggregated_output/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('More'));
+
+    expect(screen.getByText(/aggregated_output/)).toBeInTheDocument();
+  });
+
+  it('collapses Codex tool router JSON parse errors in the logs tab', () => {
+    const phaseLogs = createPhaseLogs();
+    phaseLogs.phases.planning.entries = [
+      {
+        timestamp: '2026-04-14T00:00:01Z',
+        type: 'text',
+        phase: 'planning',
+        content: createCodexToolRouterJsonErrorLog(),
+      },
+    ];
+
+    render(
+      <TaskLogs
+        task={createTask()}
+        phaseLogs={phaseLogs}
+        isLoadingLogs={false}
+        expandedPhases={new Set(['planning'])}
+        isStuck={false}
+        logsEndRef={{ current: null }}
+        logsContainerRef={{ current: null }}
+        onLogsScroll={() => {}}
+        onTogglePhase={() => {}}
+      />,
+    );
+
+    expect(screen.getByText('PowerShell JSON parse failure log collapsed.')).toBeInTheDocument();
+    expect(screen.queryByText(/ConvertFrom-Json/)).not.toBeInTheDocument();
+
+    fireEvent.click(screen.getByText('More'));
+
+    expect(screen.getByText(/ConvertFrom-Json/)).toBeInTheDocument();
   });
 });

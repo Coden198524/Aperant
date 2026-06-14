@@ -1017,8 +1017,11 @@ export function App() {
                     />
                   </ErrorBoundary>
                 )}
-                {activeView === 'ideation' && (activeProjectId || selectedProjectId) && (
-                  <Ideation projectId={activeProjectId || selectedProjectId!} onGoToTask={handleGoToTask} />
+                {/* Keep Ideation mounted while hidden so in-progress generation state is preserved across navigation. */}
+                {(activeProjectId || selectedProjectId) && (
+                  <div className={activeView === 'ideation' ? 'h-full' : 'hidden'}>
+                    <Ideation projectId={activeProjectId || selectedProjectId!} onGoToTask={handleGoToTask} />
+                  </div>
                 )}
                 {activeView === 'insights' && (activeProjectId || selectedProjectId) && (
                   <Insights projectId={activeProjectId || selectedProjectId!} />

@@ -7,21 +7,21 @@ export const zhCNIdeationRoadmapOverrides = {
   ideation: {
     converting: '\u8f6c\u6362\u4e2d...',
     convertToTask: '\u8f6c\u4e3a Auto-Build \u4efb\u52a1',
-    dismissIdea: '\u5ffd\u7565\u60f3\u6cd5',
+    dismissIdea: '\u5ffd\u7565\u521b\u610f',
     description: '\u63cf\u8ff0',
     rationale: '\u7406\u7531',
     goToTask: '\u8f6c\u5230\u4efb\u52a1',
     conversionFailed: '\u8f6c\u6362\u5931\u8d25',
-    conversionFailedDescription: '\u65e0\u6cd5\u5c06\u60f3\u6cd5\u8f6c\u6362\u4e3a\u4efb\u52a1',
+    conversionFailedDescription: '\u65e0\u6cd5\u5c06\u521b\u610f\u8f6c\u6362\u4e3a\u4efb\u52a1',
     conversionError: '\u8f6c\u6362\u51fa\u9519',
-    conversionErrorDescription: '\u8f6c\u6362\u60f3\u6cd5\u65f6\u53d1\u751f\u9519\u8bef',
+    conversionErrorDescription: '\u8f6c\u6362\u521b\u610f\u65f6\u53d1\u751f\u9519\u8bef',
     header: {
-      ideaCount: '{{count}} \u4e2a\u60f3\u6cd5',
-      description: '\u57fa\u4e8e\u4f60\u7684\u9879\u76ee\u4e0a\u4e0b\u6587\u7531 AI \u751f\u6210\u7684\u529f\u80fd\u60f3\u6cd5'
+      ideaCount: '{{count}} \u4e2a\u521b\u610f',
+      description: '\u57fa\u4e8e\u4f60\u7684\u9879\u76ee\u4e0a\u4e0b\u6587\u7531 AI \u751f\u6210\u7684\u529f\u80fd\u521b\u610f'
     },
     actions: {
       addMore: '\u6dfb\u52a0\u66f4\u591a',
-      generateIdeas: '\u751f\u6210\u60f3\u6cd5'
+      generateIdeas: '\u751f\u6210\u521b\u610f'
     },
     filters: {
       code: '\u4ee3\u7801',
@@ -31,39 +31,39 @@ export const zhCNIdeationRoadmapOverrides = {
       performance: '\u6027\u80fd'
     },
     empty: {
-      title: '\u6682\u65e0\u60f3\u6cd5',
+      title: '\u6682\u65e0\u521b\u610f',
       description:
-        '\u57fa\u4e8e\u9879\u76ee\u4e0a\u4e0b\u6587\u3001\u73b0\u6709\u6a21\u5f0f\u548c\u76ee\u6807\u7528\u6237\uff0c\u751f\u6210 AI \u9a71\u52a8\u7684\u529f\u80fd\u60f3\u6cd5\u3002',
+        '\u57fa\u4e8e\u9879\u76ee\u4e0a\u4e0b\u6587\u3001\u73b0\u6709\u6a21\u5f0f\u548c\u76ee\u6807\u7528\u6237\uff0c\u751f\u6210 AI \u9a71\u52a8\u7684\u529f\u80fd\u521b\u610f\u3002',
       enabledTypes: '\u5df2\u542f\u7528\u7684\u521b\u610f\u7c7b\u578b',
-      noVisibleIdeas: '\u6ca1\u6709\u53ef\u663e\u793a\u7684\u60f3\u6cd5'
+      noVisibleIdeas: '\u6ca1\u6709\u53ef\u663e\u793a\u7684\u521b\u610f'
     },
     dialogs: {
       config: {
         title: '\u521b\u610f\u914d\u7f6e',
-        description: '\u914d\u7f6e\u8981\u751f\u6210\u7684\u60f3\u6cd5\u7c7b\u578b',
+        description: '\u914d\u7f6e\u8981\u751f\u6210\u7684\u521b\u610f\u7c7b\u578b',
         typesTitle: '\u521b\u610f\u7c7b\u578b',
         contextTitle: '\u4e0a\u4e0b\u6587\u6765\u6e90',
         includeRoadmap: '\u5305\u542b\u8def\u7ebf\u56fe\u4e0a\u4e0b\u6587',
         includeKanban: '\u5305\u542b Kanban \u4e0a\u4e0b\u6587'
       },
       addMore: {
-        title: '\u6dfb\u52a0\u66f4\u591a\u60f3\u6cd5',
+        title: '\u6dfb\u52a0\u66f4\u591a\u521b\u610f',
         description:
-          '\u9009\u62e9\u8981\u989d\u5916\u751f\u6210\u7684\u521b\u610f\u7c7b\u578b\uff0c\u5df2\u6709\u60f3\u6cd5\u4f1a\u88ab\u4fdd\u7559\u3002',
+          '\u9009\u62e9\u8981\u989d\u5916\u751f\u6210\u7684\u521b\u610f\u7c7b\u578b\uff0c\u5df2\u6709\u521b\u610f\u4f1a\u88ab\u4fdd\u7559\u3002',
         noneLeftTitle: '\u4f60\u5df2\u7ecf\u751f\u6210\u4e86\u6240\u6709\u521b\u610f\u7c7b\u578b\uff01',
         noneLeftDescription:
-          '\u4f7f\u7528\u201c\u91cd\u65b0\u751f\u6210\u201d\u53ef\u4ee5\u5237\u65b0\u5f53\u524d\u7684\u60f3\u6cd5\u3002',
+          '\u4f7f\u7528\u201c\u91cd\u65b0\u751f\u6210\u201d\u53ef\u4ee5\u5237\u65b0\u5f53\u524d\u7684\u521b\u610f\u3002',
         generateTypes: '\u751f\u6210 {{count}} \u79cd\u7c7b\u578b'
       }
     },
     generation: {
-      title: '\u751f\u6210\u60f3\u6cd5\u4e2d',
+      title: '\u751f\u6210\u521b\u610f\u4e2d',
       completeCount: '\u5df2\u5b8c\u6210 {{completed}}/{{total}}',
       hideLogs: '\u9690\u85cf\u65e5\u5fd7',
       showLogs: '\u663e\u793a\u65e5\u5fd7',
       waitingToStart: '\u7b49\u5f85\u5f00\u59cb...',
-      failedCategory: '\u8be5\u5206\u7c7b\u7684\u60f3\u6cd5\u751f\u6210\u5931\u8d25',
-      emptyCategory: '\u8be5\u5206\u7c7b\u672a\u751f\u6210\u4efb\u4f55\u60f3\u6cd5'
+      failedCategory: '\u8be5\u5206\u7c7b\u7684\u521b\u610f\u751f\u6210\u5931\u8d25',
+      emptyCategory: '\u8be5\u5206\u7c7b\u672a\u751f\u6210\u4efb\u4f55\u521b\u610f'
     },
     types: {
       code_improvements: {

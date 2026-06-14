@@ -102,8 +102,34 @@ describe('Grep Tool', () => {
       baseContext,
     ) as string;
 
-    expect(result).toContain('/test/project/src/index.ts');
-    expect(result).toContain('/test/project/src/utils.ts');
+    expect(result).toContain('src/index.ts');
+    expect(result).toContain('src/utils.ts');
+    expect(result).not.toContain('/test/project/src');
+  });
+
+  it('should relativize content-mode rg output while preserving line numbers and text', async () => {
+    setupRg('/test/project/src/auth.ts:10:const auth = true;\n', '', 0);
+
+    const result = await grepTool.config.execute(
+      { pattern: 'auth', output_mode: 'content' },
+      baseContext,
+    ) as string;
+
+    expect(result).toBe('src/auth.ts:10:const auth = true;');
+  });
+
+  it('should compact long content-mode rg lines while preserving the tail', async () => {
+    setupRg(`/test/project/src/generated.ts:1:HEAD_${'middle_'.repeat(300)}TAIL_SENTINEL\n`, '', 0);
+
+    const result = await grepTool.config.execute(
+      { pattern: 'HEAD', output_mode: 'content' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('src/generated.ts:1:HEAD_');
+    expect(result).toContain('[line middle omitted]');
+    expect(result).toContain('TAIL_SENTINEL');
+    expect(result).not.toContain('/test/project/src/generated.ts');
   });
 
   it('should return "No matches found" when rg exits with code 1 and no stderr', async () => {
@@ -244,7 +270,11 @@ describe('Grep Tool', () => {
   });
 
   it('should truncate output exceeding MAX_OUTPUT_LENGTH', async () => {
-    const longOutput = '/test/project/file.ts\n'.repeat(2000);
+    const longOutput = [
+      '/test/project/first-match.ts',
+      ...Array.from({ length: 2000 }, (_, index) => `/test/project/middle-${index}.ts`),
+      '/test/project/final-match-sentinel.ts',
+    ].join('\n');
     setupRg(longOutput, '', 0);
 
     const result = await grepTool.config.execute(
@@ -253,6 +283,9 @@ describe('Grep Tool', () => {
     ) as string;
 
     expect(result).toContain('[Output truncated');
+    expect(result).toContain('first-match.ts');
+    expect(result).toContain('final-match-sentinel.ts');
+    expect(result).not.toContain('/test/project/middle-');
     expect(result.length).toBeLessThan(longOutput.length);
   });
 

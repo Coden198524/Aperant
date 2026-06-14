@@ -29,6 +29,7 @@ import {
 } from '@autocode/core/runtime/agent-validation-feedback';
 
 const execFileAsync = promisify(execFile);
+export const INCREMENTAL_VALIDATION_OUTPUT_MAX_CHARS = 6_000;
 
 // =============================================================================
 // Types
@@ -208,7 +209,7 @@ async function checkSyntax(config: SubtaskValidationConfig): Promise<ValidationC
       type: 'syntax',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: error.stdout || error.stderr || error.message,
+      output: compactValidationOutput(error.stdout || error.stderr || error.message),
     };
   }
 }
@@ -261,7 +262,7 @@ async function checkTypes(config: SubtaskValidationConfig): Promise<ValidationCh
       type: 'type',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: error.stdout || error.stderr || error.message,
+      output: compactValidationOutput(error.stdout || error.stderr || error.message),
     };
   }
 }
@@ -292,7 +293,7 @@ async function checkSecurity(config: SubtaskValidationConfig): Promise<Validatio
         type: 'security',
         passed: false,
         durationMs: Date.now() - startTime,
-        output: issues.join('\n'),
+        output: compactValidationOutput(issues.join('\n')),
       };
     }
 
@@ -308,7 +309,7 @@ async function checkSecurity(config: SubtaskValidationConfig): Promise<Validatio
       type: 'security',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: error.message,
+      output: compactValidationOutput(error.message),
     };
   }
 }
@@ -350,7 +351,7 @@ async function checkPatternCompliance(config: SubtaskValidationConfig): Promise<
         type: 'pattern',
         passed: false,
         durationMs: Date.now() - startTime,
-        output: issues.join('\n'),
+        output: compactValidationOutput(issues.join('\n')),
       };
     }
 
@@ -366,7 +367,7 @@ async function checkPatternCompliance(config: SubtaskValidationConfig): Promise<
       type: 'pattern',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: error.message,
+      output: compactValidationOutput(error.message),
     };
   }
 }
@@ -436,7 +437,7 @@ async function checkRelatedTests(config: SubtaskValidationConfig): Promise<Valid
       type: 'test',
       passed: false,
       durationMs: Date.now() - startTime,
-      output: error.stdout || error.stderr || error.message,
+      output: compactValidationOutput(error.stdout || error.stderr || error.message),
     };
   }
 }
@@ -491,6 +492,24 @@ async function fileExists(path: string): Promise<boolean> {
   } catch {
     return false;
   }
+}
+
+export function compactValidationOutput(value: unknown): string {
+  const normalized = String(value ?? '').replace(/\r\n/g, '\n').trim();
+  if (normalized.length <= INCREMENTAL_VALIDATION_OUTPUT_MAX_CHARS) {
+    return normalized;
+  }
+
+  const marker = `\n\n...[validation output truncated, ${normalized.length} chars total]...\n\n`;
+  const budget = Math.max(0, INCREMENTAL_VALIDATION_OUTPUT_MAX_CHARS - marker.length);
+  const headLength = Math.floor(budget * 0.7);
+  const tailLength = budget - headLength;
+
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    marker,
+    normalized.slice(Math.max(0, normalized.length - tailLength)).trimStart(),
+  ].join('');
 }
 
 /**

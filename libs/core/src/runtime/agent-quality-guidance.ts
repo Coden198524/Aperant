@@ -40,6 +40,12 @@ export interface AutocodePatternInjectionResult {
   successCases: Array<{ description: string; similarity: number }>;
 }
 
+const AUTOCODE_CHECKLIST_ISSUE_MAX_CHARS = 180;
+const AUTOCODE_CHECKLIST_PREVENTION_MAX_CHARS = 220;
+const AUTOCODE_CHECKLIST_REFERENCE_MAX_CHARS = 96;
+const AUTOCODE_CHECKLIST_REFERENCE_LIMIT = 5;
+const AUTOCODE_CHECKLIST_TEXT_HEAD_RATIO = 0.65;
+
 export function classifyAutocodeBuildFailure(error: string): AutocodeBuildFailureType {
   const lower = error.toLowerCase();
 
@@ -161,10 +167,10 @@ export function formatAutocodeChecklistForPrompt(checklist: AutocodePreImplement
   if (critical.length > 0) {
     lines.push('### Critical Issues\n');
     for (const item of critical) {
-      lines.push(`**${item.issue}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
-      lines.push(`- Prevention: ${item.prevention}`);
+      lines.push(`**${formatChecklistIssue(item)}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
+      lines.push(`- Prevention: ${formatChecklistPrevention(item)}`);
       if (item.references) {
-        lines.push(`- References: ${item.references.join(', ')}`);
+        lines.push(`- References: ${formatChecklistReferences(item.references)}`);
       }
       lines.push('');
     }
@@ -173,8 +179,8 @@ export function formatAutocodeChecklistForPrompt(checklist: AutocodePreImplement
   if (high.length > 0) {
     lines.push('### High Priority Issues\n');
     for (const item of high) {
-      lines.push(`**${item.issue}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
-      lines.push(`- Prevention: ${item.prevention}`);
+      lines.push(`**${formatChecklistIssue(item)}** (${(item.likelihood * 100).toFixed(0)}% likely)`);
+      lines.push(`- Prevention: ${formatChecklistPrevention(item)}`);
       lines.push('');
     }
   }
@@ -182,7 +188,7 @@ export function formatAutocodeChecklistForPrompt(checklist: AutocodePreImplement
   if (medium.length > 0 && medium.length <= 3) {
     lines.push('### Medium Priority Issues:\n');
     for (const item of medium) {
-      lines.push(`- ${item.issue}: ${item.prevention}`);
+      lines.push(`- ${formatChecklistIssue(item)}: ${formatChecklistPrevention(item)}`);
     }
     lines.push('');
   }
@@ -190,7 +196,7 @@ export function formatAutocodeChecklistForPrompt(checklist: AutocodePreImplement
   if (checklist.filesToReview.length > 0) {
     lines.push('### Files to Review Before Implementing:\n');
     for (const file of checklist.filesToReview.slice(0, 5)) {
-      lines.push(`- ${file}`);
+      lines.push(`- ${limitAutocodeChecklistText(file, AUTOCODE_CHECKLIST_REFERENCE_MAX_CHARS)}`);
     }
     lines.push('');
   }
@@ -216,12 +222,12 @@ export function formatAutocodeCompactChecklistForPrompt(
   if (importantItems.length > 0) {
     lines.push('- Before editing, prevent:');
     for (const item of importantItems) {
-      lines.push(`  - ${item.issue}: ${item.prevention}`);
+      lines.push(`  - ${formatChecklistIssue(item)}: ${formatChecklistPrevention(item)}`);
     }
   }
 
   if (reviewFiles.length > 0) {
-    lines.push(`- Review first: ${reviewFiles.join(', ')}`);
+    lines.push(`- Review first: ${formatChecklistReferences(reviewFiles)}`);
   }
 
   lines.push('- Keep this checklist in mind; do not restate it in the final answer.');
@@ -245,6 +251,49 @@ export function formatAutocodeCategory(category: string): string {
     .split('_')
     .map((word) => word.charAt(0).toUpperCase() + word.slice(1))
     .join(' ');
+}
+
+function formatChecklistIssue(item: AutocodeChecklistItem): string {
+  return limitAutocodeChecklistText(item.issue, AUTOCODE_CHECKLIST_ISSUE_MAX_CHARS);
+}
+
+function formatChecklistPrevention(item: AutocodeChecklistItem): string {
+  return limitAutocodeChecklistText(item.prevention, AUTOCODE_CHECKLIST_PREVENTION_MAX_CHARS);
+}
+
+function formatChecklistReferences(references: string[]): string {
+  const compact = references
+    .slice(0, AUTOCODE_CHECKLIST_REFERENCE_LIMIT)
+    .map((reference) => limitAutocodeChecklistText(reference, AUTOCODE_CHECKLIST_REFERENCE_MAX_CHARS));
+  const omitted = references.length - compact.length;
+  if (omitted > 0) {
+    compact.push(`... ${omitted} more`);
+  }
+  return compact.join(', ');
+}
+
+function limitAutocodeChecklistText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  if (maxChars <= 3) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const marker = '... [checklist middle omitted] ...';
+  if (marker.length >= maxChars - 2) {
+    return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+
+  const budget = maxChars - marker.length;
+  const headLength = Math.ceil(budget * AUTOCODE_CHECKLIST_TEXT_HEAD_RATIO);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    marker,
+    tailLength > 0 ? normalized.slice(-tailLength).trimStart() : '',
+  ].join('');
 }
 
 export function formatAutocodePatternInjectionSummary(result: AutocodePatternInjectionResult): string {

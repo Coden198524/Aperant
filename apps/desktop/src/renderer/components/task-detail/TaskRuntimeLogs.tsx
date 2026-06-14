@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import ReactMarkdown, { type Components } from 'react-markdown';
 import remarkGfm from 'remark-gfm';
-import { ArrowDownToLine, Bot } from 'lucide-react';
+import { ArrowDownToLine, Bot, ChevronDown, ChevronRight } from 'lucide-react';
 import { PROVIDER_REGISTRY } from '@shared/constants/providers';
 import { getProviderModelLabel } from '@shared/utils/model-display';
 import { cn } from '../../lib/utils';
@@ -12,7 +12,11 @@ import type { PhaseModelConfig } from '../../../shared/types/settings';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
 import {
   buildDisplayLogEntries,
+  findCodexToolRouterErrorLog,
   formatLogMarkdownForDisplay,
+  isPowerShellJsonParseFailureLog,
+  isRawCodexInternalEventLog,
+  normalizeRawCodexInternalEventLog,
   type DisplayTaskLogEntry,
 } from './task-log-display';
 import { Button } from '../ui/button';
@@ -81,6 +85,15 @@ const INITIAL_RENDERED_MODEL_ENTRIES = 250;
 const LOG_RENDER_BATCH_SIZE = 250;
 const LOAD_MORE_SCROLL_THRESHOLD = 96;
 const GLOBAL_LOG_SCOPE: TaskRuntimeLogScope = { type: 'global' };
+const MODEL_OUTPUT_LINK_CLASS = [
+  'break-all rounded-sm px-0.5 font-semibold underline decoration-sky-500/45 underline-offset-2',
+  'text-sky-700 hover:text-sky-800 hover:decoration-sky-700',
+  'dark:text-sky-300 dark:decoration-sky-300/55 dark:hover:text-sky-200'
+].join(' ');
+const MODEL_OUTPUT_INLINE_CODE_CLASS = [
+  'rounded border border-sky-500/25 bg-sky-50 px-1 py-0.5 font-mono text-[11px] font-medium text-sky-800',
+  'dark:border-sky-300/25 dark:bg-sky-400/10 dark:text-sky-100'
+].join(' ');
 
 function isConcurrentRuntimeTask(task: Task): boolean {
   const concurrency = task.metadata?.runtimeConcurrency;
@@ -188,7 +201,7 @@ const modelMarkdownComponents: Components = {
     </ol>
   ),
   li: ({ children }) => (
-    <li className="pl-1 leading-relaxed marker:text-primary">
+    <li className="pl-1 leading-relaxed marker:text-sky-600 dark:marker:text-sky-300">
       {children}
     </li>
   ),
@@ -212,7 +225,7 @@ const modelMarkdownComponents: Components = {
       href={href}
       target="_blank"
       rel="noreferrer"
-      className="break-all text-primary underline-offset-2 hover:underline"
+      className={MODEL_OUTPUT_LINK_CLASS}
     >
       {children}
     </a>
@@ -222,7 +235,7 @@ const modelMarkdownComponents: Components = {
 
     if (isInline) {
       return (
-        <code className="rounded border border-border bg-muted px-1 py-0.5 font-mono text-[11px] text-foreground" {...props}>
+        <code className={MODEL_OUTPUT_INLINE_CODE_CLASS} {...props}>
           {children}
         </code>
       );
@@ -666,6 +679,46 @@ function getToolDisplay(entry: DisplayTaskLogEntry): { name: string; input: stri
       : 'done';
 
   return { name, input, status };
+}
+
+function getCollapsedLogDetail(
+  entry: DisplayTaskLogEntry,
+  t: ReturnType<typeof useTranslation>['t'],
+): { summary: string; detail: string; defaultCollapsed: boolean } | null {
+  if (isRawCodexInternalEventLog(entry.content)) {
+    return {
+      summary: t('tasks:logs.internalEventCollapsed', {
+        defaultValue: 'Internal Codex event log collapsed.',
+      }),
+      detail: entry.detail || normalizeRawCodexInternalEventLog(entry.content),
+      defaultCollapsed: true,
+    };
+  }
+
+  const toolRouterErrorDetail = findCodexToolRouterErrorLog(entry.content, entry.detail);
+  if (toolRouterErrorDetail) {
+    return {
+      summary: isPowerShellJsonParseFailureLog(toolRouterErrorDetail)
+        ? t('tasks:logs.codexJsonParseErrorCollapsed', {
+            defaultValue: 'PowerShell JSON parse failure log collapsed.',
+          })
+        : t('tasks:logs.codexToolErrorCollapsed', {
+            defaultValue: 'Codex tool error log collapsed.',
+          }),
+      detail: toolRouterErrorDetail,
+      defaultCollapsed: true,
+    };
+  }
+
+  if (entry.collapsed || entry.detail) {
+    return {
+      summary: entry.content,
+      detail: entry.detail || entry.content,
+      defaultCollapsed: entry.collapsed !== false,
+    };
+  }
+
+  return null;
 }
 
 function getToolName(entry: TaskLogEntry): string {
@@ -1116,6 +1169,12 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
   const visibleContent = useTypewriterText(entry.content, isStreaming);
   const markdownContent = formatLogMarkdownForDisplay(visibleContent);
   const isError = entry.type === 'error';
+  const collapsedDetail = getCollapsedLogDetail(entry, t);
+  const [isExpanded, setIsExpanded] = useState(() => collapsedDetail ? !collapsedDetail.defaultCollapsed : true);
+
+  useEffect(() => {
+    setIsExpanded(collapsedDetail ? !collapsedDetail.defaultCollapsed : true);
+  }, [entry.timestamp, entry.content, entry.detail, entry.collapsed, collapsedDetail?.defaultCollapsed]);
 
   if (entry.type === 'tool_start' || entry.type === 'tool_end') {
     const tool = getToolDisplay(entry);
@@ -1123,43 +1182,101 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
     return (
       <div
         className={cn(
-          'flex min-w-0 items-center gap-2 rounded-md border border-border bg-card px-3 py-1.5 font-mono text-[11px] leading-relaxed text-foreground shadow-sm',
+          'rounded-md border border-border bg-card px-3 py-1.5 font-mono text-[11px] leading-relaxed text-foreground shadow-sm',
           isLatest && styles.latest
         )}
       >
-        <span className={cn('shrink-0', styles.prompt)}>{'>'}</span>
-        <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase', styles.chip)}>
-          tool
-        </span>
-        <span
-          className={cn(
-            'shrink-0 font-medium',
-            tool.status === 'error'
-              ? 'text-destructive'
-              : tool.status === 'done'
-                ? 'text-success'
-                : 'text-info'
+        <div className="flex min-w-0 items-center gap-2">
+          {collapsedDetail ? (
+            <button
+              type="button"
+              className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+              aria-label={isExpanded
+                ? t('tasks:logs.collapseDetail', { defaultValue: 'Collapse log detail' })
+                : t('tasks:logs.expandDetail', { defaultValue: 'Expand log detail' })}
+              onClick={() => setIsExpanded(value => !value)}
+            >
+              {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+            </button>
+          ) : (
+            <span className={cn('shrink-0', styles.prompt)}>{'>'}</span>
           )}
-        >
-          {tool.name}
-        </span>
-        {tool.input && (
-          <span className="min-w-0 truncate text-muted-foreground" title={tool.input}>
-            {tool.input}
+          <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase', styles.chip)}>
+            tool
           </span>
-        )}
-        <span
-          className={cn(
-            'ml-auto shrink-0 text-[10px]',
-            tool.status === 'error'
-              ? 'text-destructive'
-              : tool.status === 'done'
-                ? 'text-success'
-                : 'text-muted-foreground'
+          <span
+            className={cn(
+              'shrink-0 font-medium',
+              tool.status === 'error'
+                ? 'text-destructive'
+                : tool.status === 'done'
+                  ? 'text-success'
+                  : 'text-info'
+            )}
+          >
+            {tool.name}
+          </span>
+          {tool.input && (
+            <span className="min-w-0 truncate text-muted-foreground" title={tool.input}>
+              {tool.input}
+            </span>
           )}
-        >
-          {tool.status}
-        </span>
+          <span
+            className={cn(
+              'ml-auto shrink-0 text-[10px]',
+              tool.status === 'error'
+                ? 'text-destructive'
+                : tool.status === 'done'
+                  ? 'text-success'
+                  : 'text-muted-foreground'
+            )}
+          >
+            {tool.status}
+          </span>
+        </div>
+        {collapsedDetail && isExpanded && (
+          <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted/40 p-2 text-[11px] leading-relaxed text-muted-foreground">
+            {collapsedDetail.detail}
+          </pre>
+        )}
+      </div>
+    );
+  }
+
+  if (collapsedDetail) {
+    return (
+      <div
+        className={cn(
+          'group relative overflow-hidden rounded-md border border-border bg-card px-3 py-2.5 shadow-sm',
+          isLatest && styles.latest,
+          isError && 'border-destructive/40 bg-destructive/5'
+        )}
+      >
+        <div className={cn('pointer-events-none absolute inset-y-2 left-0 w-0.5 rounded-r-full', styles.rail)} />
+        <div className="relative flex min-w-0 items-center gap-2 font-mono text-[10px] leading-none text-muted-foreground">
+          <button
+            type="button"
+            className="flex h-5 w-5 shrink-0 items-center justify-center rounded border border-border text-muted-foreground hover:bg-accent hover:text-foreground"
+            aria-label={isExpanded
+              ? t('tasks:logs.collapseDetail', { defaultValue: 'Collapse log detail' })
+              : t('tasks:logs.expandDetail', { defaultValue: 'Expand log detail' })}
+            onClick={() => setIsExpanded(value => !value)}
+          >
+            {isExpanded ? <ChevronDown className="h-3.5 w-3.5" /> : <ChevronRight className="h-3.5 w-3.5" />}
+          </button>
+          {timeLabel && <span className="shrink-0 tabular-nums text-muted-foreground">{timeLabel}</span>}
+          <span className={cn('shrink-0 rounded border px-1.5 py-0.5', styles.chip)}>
+            {t('tasks:logs.collapsedLog', { defaultValue: 'collapsed' })}
+          </span>
+          <span className="min-w-0 truncate text-[11px] font-medium text-foreground">
+            {collapsedDetail.summary}
+          </span>
+        </div>
+        {isExpanded && (
+          <pre className="relative mt-2 max-h-80 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted/40 p-2 font-mono text-[11px] leading-relaxed text-muted-foreground">
+            {collapsedDetail.detail}
+          </pre>
+        )}
       </div>
     );
   }

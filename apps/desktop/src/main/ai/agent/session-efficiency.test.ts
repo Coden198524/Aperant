@@ -111,8 +111,8 @@ describe('session-efficiency', () => {
 
     expect(message).toContain('Quality comes first');
     expect(message).toContain('reading all product source files is acceptable');
-    expect(message).toContain('doc_outline.json');
-    expect(message).toContain('evidence_index.json');
+    expect(message).toContain('doc_outline.md');
+    expect(message).toContain('evidence_index.md');
     expect(message).toContain('Every major conclusion');
     expect(message).toContain('data/state flow');
     expect(message).toContain('Do not pre-create the parent directory with Bash unless Write fails');
@@ -135,7 +135,7 @@ describe('session-efficiency', () => {
         title: 'Analyze MMO source documentation',
         description: 'Generate professional MMO source documentation.',
         filesToModify: [],
-        filesToCreate: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
+        filesToCreate: ['docs/analysis.md', 'doc_outline.md', 'evidence_index.md'],
         patternFiles: ['GameServer.cpp', 'Client/Game.cpp'],
       },
     );

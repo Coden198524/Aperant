@@ -314,10 +314,70 @@ describe('compactImplementationPlan', () => {
       phases: Array<{ subtasks: Array<{ completion_summary?: string }> }>;
     };
     const summary = compacted.phases[0].subtasks[0].completion_summary ?? '';
-    expect(summary.length).toBeGreaterThan(700);
-    expect(summary.length).toBeLessThanOrEqual(3000);
+    expect(summary.length).toBeGreaterThan(500);
+    expect(summary.length).toBeLessThanOrEqual(1200);
     expect(summary).toContain('| What changed |');
     expect(summary).toContain('\n| Verification |');
+  });
+
+  it('preserves tail constraints when compacting long plan fields', () => {
+    const longPlanField = (head: string, tail: string) => `${head} ${'middle details '.repeat(80)} ${tail}`;
+    const rawPlan = {
+      feature: 'Tail-preserving plan compaction',
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Phase 1',
+          subtasks: [
+            {
+              id: 's1',
+              title: 'Preserve constraints',
+              description: longPlanField('Start by reducing prompt noise.', 'DESCRIPTION_TAIL_MUST_REMAIN'),
+              status: 'completed',
+              verification: {
+                type: 'manual',
+                run: longPlanField('Run the focused test.', 'VERIFICATION_TAIL_MUST_REMAIN'),
+                scenario: longPlanField('Inspect the resulting prompt.', 'SCENARIO_TAIL_MUST_REMAIN'),
+              },
+              notes: longPlanField('Developer note starts here.', 'NOTES_TAIL_MUST_REMAIN'),
+              completion_summary: longPlanField('Completed summary starts here.', 'SUMMARY_TAIL_MUST_REMAIN'),
+            },
+          ],
+        },
+      ],
+    };
+
+    const result = compactImplementationPlan(rawPlan, {
+      maxSubtaskDescriptionChars: 180,
+      maxVerificationRunChars: 160,
+      maxSubtaskCompletionSummaryChars: 220,
+    });
+
+    expect(result).not.toBeNull();
+    if (!result) {
+      throw new Error('Expected plan compaction to succeed');
+    }
+
+    const compacted = result.plan as {
+      phases: Array<{
+        subtasks: Array<{
+          description: string;
+          notes?: string;
+          completion_summary?: string;
+          verification?: { run?: string; scenario?: string };
+        }>;
+      }>;
+    };
+    const subtask = compacted.phases[0].subtasks[0];
+    expect(subtask.description).toContain('[plan middle omitted for context budget]');
+    expect(subtask.description).toContain('DESCRIPTION_TAIL_MUST_REMAIN');
+    expect(subtask.verification?.run).toContain('VERIFICATION_TAIL_MUST_REMAIN');
+    expect(subtask.verification?.scenario).toContain('SCENARIO_TAIL_MUST_REMAIN');
+    expect(subtask.notes).toContain('NOTES_TAIL_MUST_REMAIN');
+    expect(subtask.completion_summary).toContain('SUMMARY_TAIL_MUST_REMAIN');
+    expect(subtask.description.length).toBeLessThanOrEqual(180);
+    expect(subtask.verification?.run?.length).toBeLessThanOrEqual(160);
+    expect(subtask.completion_summary?.length).toBeLessThanOrEqual(220);
   });
 });
 

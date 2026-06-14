@@ -246,19 +246,20 @@ export const ALLOWED_IMAGE_TYPES_DISPLAY = 'PNG, JPEG, GIF, WebP';
 export const ATTACHMENTS_DIR = 'attachments';
 
 // ============================================
-// JSON Error Markers
+// Plan Parse Error Markers
 // ============================================
 
 /**
- * Marker prefix for task descriptions that failed JSON parsing.
+ * Marker prefix for task descriptions that failed plan parsing.
  * Format: __JSON_ERROR__:<error message>
- * Used in project-store.ts when loading tasks with malformed implementation_plan.json
+ * The prefix is kept for compatibility with existing renderer checks.
+ * Used in project-store.ts when loading tasks with malformed implementation_plan.md.
  */
 export const JSON_ERROR_PREFIX = '__JSON_ERROR__:';
 
 /**
- * Marker suffix for task titles that have JSON parsing errors.
+ * Marker suffix for task titles that have plan parsing errors.
  * Appended to spec directory name, replaced with i18n suffix at render time.
- * Used in project-store.ts when loading tasks with malformed implementation_plan.json
+ * Used in project-store.ts when loading tasks with malformed implementation_plan.md.
  */
 export const JSON_ERROR_TITLE_SUFFIX = '__JSON_ERROR_SUFFIX__';

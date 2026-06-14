@@ -165,6 +165,31 @@ describe('executeConcurrentWorkItems', () => {
     expect(getPlanState().phases[0].subtasks.every((subtask) => subtask.status === 'completed')).toBe(true);
   });
 
+  it('stores compact completion summaries for completed concurrent work items', async () => {
+    const { getPlanState } = setupPlanState(['a.ts']);
+    const longSummary = [
+      'Implemented the task detail summary surface.',
+      'Added structured rows for changed files, verification, and reviewer notes.',
+      'Preserved enough detail for manual audit without forcing reviewers to inspect raw logs.',
+    ].join(' ').repeat(8);
+
+    const runWorkItemSession = vi.fn().mockResolvedValue({
+      ...makeSessionResult('completed'),
+      messages: [
+        { role: 'assistant', content: longSummary },
+      ],
+    });
+
+    const result = await executeConcurrentWorkItems(createConfig({ workers: 1, runWorkItemSession }));
+    const summary = (getPlanState().phases[0].subtasks[0] as { completion_summary?: string }).completion_summary;
+
+    expect(result.success).toBe(true);
+    expect(summary).toContain('| What changed |');
+    expect(summary).toContain('manual audit');
+    expect(summary).toContain('Tokens: 150 total (100 prompt, 50 completion)');
+    expect(summary?.length).toBeLessThanOrEqual(1200);
+  });
+
   it('serializes work items that touch the same file', async () => {
     setupPlanState(['shared.ts', 'shared.ts']);
     let active = 0;
@@ -388,6 +413,33 @@ describe('executeConcurrentWorkItems', () => {
     expect(result.totalFailed).toBe(1);
     expect(getPlanState().phases[0].subtasks[0].status).toBe('failed');
     expect((getPlanState().phases[0].subtasks[0] as { notes?: string }).notes).toContain('boom');
+  });
+
+  it('does not retry work items after a non-retryable session error', async () => {
+    const { getPlanState } = setupPlanState(['a.ts']);
+    const logs: string[] = [];
+    const runWorkItemSession = vi.fn().mockResolvedValue({
+      ...makeSessionResult('error'),
+      error: {
+        code: 'billing_error',
+        message: 'billing quota exceeded',
+        retryable: false,
+      },
+    });
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      maxRetries: 3,
+      runWorkItemSession,
+      onLog: (message) => logs.push(message),
+    }));
+
+    expect(result.success).toBe(false);
+    expect(result.totalFailed).toBe(1);
+    expect(runWorkItemSession).toHaveBeenCalledTimes(1);
+    expect(getPlanState().phases[0].subtasks[0].status).toBe('failed');
+    expect((getPlanState().phases[0].subtasks[0] as { notes?: string }).notes)
+      .toContain('billing quota exceeded');
+    expect(logs.some((message) => message.includes('Not retrying work-1'))).toBe(true);
   });
 
   it('records failed work item memory even when failure status persistence fails', async () => {

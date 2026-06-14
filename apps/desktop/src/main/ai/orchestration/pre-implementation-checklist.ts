@@ -21,6 +21,16 @@ import {
   formatAutocodeChecklistSummary,
   formatAutocodeCompactChecklistForPrompt,
 } from '@autocode/core/runtime/agent-quality-guidance';
+import {
+  isMemoryEligibleForPromptContext,
+} from '../memory/retrieval/context-packer';
+import { compactHeadTailSingleLineText } from './prompt-compaction';
+
+export const PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX = 5;
+export const PRE_IMPLEMENTATION_GOTCHA_ITEMS_MAX = 12;
+export const PRE_IMPLEMENTATION_GOTCHAS_FILE_MAX_CHARS = 16_000;
+export const PRE_IMPLEMENTATION_CHECKLIST_TEXT_MAX_CHARS = 240;
+export const PRE_IMPLEMENTATION_FILES_TO_REVIEW_MAX = 20;
 
 // =============================================================================
 // Types
@@ -137,7 +147,7 @@ export async function generatePreImplementationChecklist(
   return {
     subtaskId: config.subtask.id,
     items,
-    filesToReview: [...new Set(filesToReview)], // Deduplicate
+    filesToReview: [...new Set(filesToReview)].slice(0, PRE_IMPLEMENTATION_FILES_TO_REVIEW_MAX),
     riskLevel,
     generatedAt: new Date().toISOString(),
   };
@@ -159,16 +169,21 @@ async function analyzeHistoricalFailures(
     const failures = await memoryService.search({
       query: subtaskDescription,
       types: ['error_pattern', 'gotcha'],
-      limit: 5,
+      limit: 10,
+      excludeDeprecated: true,
+      promptContextOnly: true,
     });
 
-    return failures.map((failure) => ({
-      category: 'historical_failure' as const,
-      priority: 'high' as const,
-      issue: failure.content,
-      prevention: `Review similar past failures and avoid the same mistakes`,
-      likelihood: failure.confidence,
-    }));
+    return failures
+      .filter(isMemoryEligibleForPromptContext)
+      .slice(0, PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX)
+      .map((failure) => ({
+        category: 'historical_failure' as const,
+        priority: 'high' as const,
+        issue: limitChecklistText(failure.content, PRE_IMPLEMENTATION_CHECKLIST_TEXT_MAX_CHARS),
+        prevention: `Review similar past failures and avoid the same mistakes`,
+        likelihood: failure.confidence,
+      }));
   } catch (error) {
     console.error('Failed to retrieve historical failures:', error);
     return [];
@@ -313,14 +328,20 @@ function analyzeFileTypes(filesToModify: string[], filesToCreate: string[]): Che
 async function loadProjectGotchas(specDir: string): Promise<ChecklistItem[]> {
   try {
     const gotchasPath = join(specDir, 'memory', 'gotchas.md');
-    const content = await readFile(gotchasPath, 'utf-8');
+    const rawContent = await readFile(gotchasPath, 'utf-8');
+    const content = rawContent.length <= PRE_IMPLEMENTATION_GOTCHAS_FILE_MAX_CHARS
+      ? rawContent
+      : rawContent.slice(0, PRE_IMPLEMENTATION_GOTCHAS_FILE_MAX_CHARS);
 
     const items: ChecklistItem[] = [];
     const lines = content.split('\n');
 
     for (const line of lines) {
+      if (items.length >= PRE_IMPLEMENTATION_GOTCHA_ITEMS_MAX) {
+        break;
+      }
       if (line.trim().startsWith('- ')) {
-        const gotcha = line.slice(2).trim();
+        const gotcha = limitChecklistText(line.slice(2).trim(), PRE_IMPLEMENTATION_CHECKLIST_TEXT_MAX_CHARS);
         items.push({
           category: 'gotcha',
           priority: 'high',
@@ -465,4 +486,8 @@ export function formatCompactChecklistForPrompt(
  */
 export function formatChecklistSummary(checklist: PreImplementationChecklist): string {
   return formatAutocodeChecklistSummary(checklist);
+}
+
+function limitChecklistText(value: string, maxChars: number): string {
+  return compactHeadTailSingleLineText(value, maxChars);
 }

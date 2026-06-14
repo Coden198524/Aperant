@@ -21,7 +21,7 @@ Fix spec-pipeline validation errors.
 - Must preserve the user task.
 - Fix missing or malformed fields by editing the smallest affected section.
 
-`context.json`:
+`context.md`:
 
 - Must include `task_description`.
 - Optional arrays and objects may be compact.

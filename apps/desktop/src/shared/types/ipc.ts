@@ -13,7 +13,6 @@ import type {
   CreateProjectFolderResult,
   FileNode,
   ProjectContextData,
-  ProjectIndex,
   MemorySystemStatus,
   ContextSearchResult,
   RendererMemory,
@@ -484,8 +483,8 @@ export interface ElectronAPI {
   getRoadmapStatus: (projectId: string) => Promise<IPCResult<{ isRunning: boolean }>>;
   saveRoadmap: (projectId: string, roadmap: Roadmap) => Promise<IPCResult>;
   saveCompetitorAnalysis: (projectId: string, competitorAnalysis: CompetitorAnalysis) => Promise<IPCResult>;
-  generateRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => void;
-  refreshRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => void;
+  generateRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => Promise<IPCResult>;
+  refreshRoadmap: (projectId: string, enableCompetitorAnalysis?: boolean, refreshCompetitorAnalysis?: boolean) => Promise<IPCResult>;
   stopRoadmap: (projectId: string) => Promise<IPCResult>;
   updateFeatureStatus: (
     projectId: string,
@@ -518,7 +517,6 @@ export interface ElectronAPI {
 
   // Context operations
   getProjectContext: (projectId: string) => Promise<IPCResult<ProjectContextData>>;
-  refreshProjectIndex: (projectId: string) => Promise<IPCResult<ProjectIndex>>;
   getMemoryStatus: (projectId: string) => Promise<IPCResult<MemorySystemStatus>>;
   searchMemories: (projectId: string, query: string) => Promise<IPCResult<ContextSearchResult[]>>;
   getRecentMemories: (projectId: string, limit?: number) => Promise<IPCResult<RendererMemory[]>>;
@@ -787,6 +785,7 @@ export interface ElectronAPI {
   generateIdeation: (projectId: string, config: IdeationConfig) => void;
   refreshIdeation: (projectId: string, config: IdeationConfig) => void;
   stopIdeation: (projectId: string) => Promise<IPCResult>;
+  isIdeationRunning: (projectId: string) => Promise<IPCResult<{ isRunning: boolean }>>;
   updateIdeaStatus: (projectId: string, ideaId: string, status: IdeationStatus) => Promise<IPCResult>;
   convertIdeaToTask: (projectId: string, ideaId: string) => Promise<IPCResult<Task>>;
   dismissIdea: (projectId: string, ideaId: string) => Promise<IPCResult>;
@@ -803,7 +802,7 @@ export interface ElectronAPI {
     callback: (projectId: string, log: string) => void
   ) => () => void;
   onIdeationComplete: (
-    callback: (projectId: string, session: IdeationSession) => void
+    callback: (projectId: string, session: IdeationSession | null) => void
   ) => () => void;
   onIdeationError: (
     callback: (projectId: string, error: string) => void

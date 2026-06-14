@@ -41,6 +41,7 @@ import {
   getAutocodeImplementationPlanLanguageRequirement,
 } from '@autocode/core/runtime/agent-language';
 import {
+  buildAutocodeAgenticSpecOrchestratorKickoffMessage,
   buildAutocodeAgentKickoffMessage,
   buildAutocodeFallbackPrompt,
   buildAutocodeSpecKickoffMessage,
@@ -113,7 +114,9 @@ import {
 } from '../schema/plan-shards';
 import { buildAggressiveCoderPrompt } from './aggressive-coder-prompt';
 import { resolveProjectAgentProfile } from '../config/project-agent-profile';
+import { extractSpecTaskDescriptionFromInitialMessages } from './task-description';
 import { WorkerObserverProxy } from '../memory/ipc/worker-observer-proxy';
+import { isMemoryEligibleForPromptContext } from '../memory/retrieval/context-packer';
 import { createRecordMemoryTool, createSearchMemoryTool } from '../memory/tools';
 import {
   collectFilesChangedSinceBaseline,
@@ -332,16 +335,21 @@ function createWorkerMemoryService(
       return id ?? `memory-unavailable-${Date.now()}`;
     },
     search: async (filters: MemorySearchFilters): Promise<Memory[]> => {
-      return proxy.searchMemory(withProject(filters));
+      const scoped = withProject(filters);
+      return proxy.searchMemory({
+        ...scoped,
+        promptContextOnly: scoped.promptContextOnly ?? true,
+      });
     },
-    searchByPattern: async (pattern: string): Promise<Memory | null> => {
+    searchByPattern: async (pattern: string, opts?: { projectId?: string }): Promise<Memory | null> => {
       const memories = await proxy.searchMemory({
         query: pattern,
-        projectId: fallbackProjectId,
+        projectId: opts?.projectId ?? fallbackProjectId,
         limit: 1,
         excludeDeprecated: true,
+        promptContextOnly: true,
       });
-      return memories[0] ?? null;
+      return memories.find(isMemoryEligibleForPromptContext) ?? null;
     },
     insertUserTaught: async (content: string, projectId: string, tags: string[]): Promise<string> => {
       const id = await proxy.recordMemory({
@@ -354,15 +362,21 @@ function createWorkerMemoryService(
       });
       return id ?? `memory-unavailable-${Date.now()}`;
     },
-    searchWorkflowRecipe: async (taskDescription: string, opts?: { limit?: number }): Promise<Memory[]> => {
+    searchWorkflowRecipe: async (
+      taskDescription: string,
+      opts?: { limit?: number; projectId?: string },
+    ): Promise<Memory[]> => {
       const memories = await proxy.searchMemory({
         query: taskDescription,
-        projectId: fallbackProjectId,
+        projectId: opts?.projectId ?? fallbackProjectId,
         types: ['workflow_recipe'],
         limit: opts?.limit ?? 3,
         excludeDeprecated: true,
+        promptContextOnly: true,
       });
-      return memories.filter((memory) => memory.type === 'workflow_recipe');
+      return memories.filter((memory) =>
+        memory.type === 'workflow_recipe' && isMemoryEligibleForPromptContext(memory)
+      );
     },
     updateAccessCount: async (): Promise<void> => {},
     deprecateMemory: async (): Promise<void> => {},
@@ -2093,16 +2107,11 @@ async function runSpecOrchestrator(
   toolContext: ToolContext,
   registry: ToolRegistry,
 ): Promise<void> {
-  // Extract the task description from the first user message
-  const taskDescription = session.initialMessages?.[0]?.content
-    ? typeof session.initialMessages[0].content === 'string'
-      ? session.initialMessages[0].content
-      : 'Create the specification as described in your system prompt.'
-    : 'Create the specification as described in your system prompt.';
+  const taskDescription = extractSpecTaskDescriptionFromInitialMessages(session.initialMessages);
 
   postLog(`Starting SpecOrchestrator pipeline (complexity-first phase routing)`);
 
-  // Generate project index BEFORE any agent runs – gives all phases project context
+  // Load project documentation BEFORE any agent runs so all phases share stable context.
   let projectDocsReference: string | undefined;
   if (isAggressiveWorkflow(session)) {
     postLog('Aggressive workflow enabled: skipping project documentation context injection');
@@ -2125,7 +2134,7 @@ async function runSpecOrchestrator(
     complexityOverride: isAggressiveWorkflow(session) ? 'simple' : undefined,
     useAiAssessment: !isAggressiveWorkflow(session),
     workflowConfig: getWorkflowConfigFromMode(session.workflowMode),
-    projectIndex: projectDocsReference,
+    projectDocsReference,
     language: session.language,
     abortSignal: abortController.signal,
     agentProfile: resolveProjectAgentProfile(session.projectType),
@@ -2152,7 +2161,7 @@ async function runSpecOrchestrator(
         runConfig.projectDir,
         taskDescription,
         runConfig.priorPhaseOutputs,
-        runConfig.projectIndex,
+        runConfig.projectDocsReference,
         runConfig.specPhase,
         session.language,
       );
@@ -2263,12 +2272,7 @@ async function runAgenticSpecOrchestrator(
   toolContext: ToolContext,
   registry: ToolRegistry,
 ): Promise<void> {
-  // Extract task description
-  const taskDescription = session.initialMessages?.[0]?.content
-    ? typeof session.initialMessages[0].content === 'string'
-      ? session.initialMessages[0].content
-      : 'Create the specification as described in your system prompt.'
-    : 'Create the specification as described in your system prompt.';
+  const taskDescription = extractSpecTaskDescriptionFromInitialMessages(session.initialMessages);
 
   postLog('Starting Agentic SpecOrchestrator (AI-driven pipeline via SpawnSubagent)');
 
@@ -2309,20 +2313,13 @@ async function runAgenticSpecOrchestrator(
   // Load the agentic orchestrator prompt
   const systemPrompt = await assemblePrompt('spec_orchestrator_agentic', session);
 
-  // Build the kickoff message
-  const promptSpecDir = formatPathForPrompt(session.specDir);
-  const promptProjectDir = formatPathForPrompt(session.projectDir);
-  const kickoffParts = [
-    `Create a complete specification for the following task:\n\n${taskDescription}\n`,
-    `\nSpec directory: ${promptSpecDir}`,
-    `\nProject directory: ${promptProjectDir}`,
-  ];
-
-  if (projectDocsReference) {
-    kickoffParts.push(`\n\n${projectDocsReference}`);
-  }
-
-  const kickoffMessage = kickoffParts.join('');
+  // Build the kickoff message through the shared helper so context budgets stay consistent.
+  const kickoffMessage = buildAutocodeAgenticSpecOrchestratorKickoffMessage({
+    taskDescription,
+    specDir: session.specDir,
+    projectDir: session.projectDir,
+    projectDocsReference,
+  });
 
   // Resolve context window and tools
   const contextWindowLimit = getModelContextWindow(session.modelId);
@@ -2420,7 +2417,7 @@ function buildSpecKickoffMessage(
   projectDir: string,
   taskDescription: string,
   priorPhaseOutputs?: Record<string, string>,
-  projectIndex?: string,
+  projectDocsReference?: string,
   specPhase?: string,
   language?: SerializableSessionConfig['language'],
 ): string {
@@ -2430,7 +2427,7 @@ function buildSpecKickoffMessage(
     projectDir,
     taskDescription,
     priorPhaseOutputs,
-    projectIndex,
+    projectDocsReference,
     specPhase,
     language,
   });

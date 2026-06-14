@@ -9,6 +9,7 @@
  */
 
 import * as fs from 'node:fs';
+import { readOAuthErrorMessage } from '../auth/oauth-error';
 
 // =============================================================================
 // Debug Logging
@@ -123,13 +124,7 @@ async function refreshOAuthToken(
   debugLog('Token refresh response', { status: response.status, ok: response.ok });
 
   if (!response.ok) {
-    let errorMessage = `HTTP ${response.status}`;
-    try {
-      const errorData = await response.json() as Record<string, string>;
-      errorMessage = errorData.error_description ?? errorData.error ?? errorMessage;
-    } catch {
-      // Ignore parse errors
-    }
+    const errorMessage = await readOAuthErrorMessage(response);
     debugLog('Token refresh failed', { error: errorMessage });
     return null;
   }

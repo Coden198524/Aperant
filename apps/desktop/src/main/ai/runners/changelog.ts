@@ -66,6 +66,14 @@ export interface ChangelogResult {
 // Prompt Building
 // =============================================================================
 
+export const CHANGELOG_TASKS_MAX = 60;
+export const CHANGELOG_TASK_TITLE_MAX_CHARS = 160;
+export const CHANGELOG_TASK_DESCRIPTION_MAX_CHARS = 500;
+export const CHANGELOG_COMMITS_MAX_CHARS = 4_000;
+export const CHANGELOG_PREVIOUS_CHANGELOG_MAX_CHARS = 1_500;
+export const CHANGELOG_PROJECT_NAME_MAX_CHARS = 120;
+export const CHANGELOG_VERSION_MAX_CHARS = 80;
+
 const SYSTEM_PROMPT = `Write clear, professional changelogs.
 
 Rules:
@@ -78,32 +86,63 @@ Rules:
 
 Output only changelog markdown.`;
 
+function normalizePromptText(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function limitPromptText(value: string, maxChars: number): string {
+  const normalized = normalizePromptText(value);
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const suffix = `... [truncated, ${normalized.length} chars total]`;
+  const budget = Math.max(0, maxChars - suffix.length);
+  return `${normalized.slice(0, budget).trimEnd()}${suffix}`;
+}
+
+function formatChangelogTask(task: ChangelogTask): string {
+  let entry = `- **${limitPromptText(task.title, CHANGELOG_TASK_TITLE_MAX_CHARS)}**`;
+  if (task.category) entry += ` [${limitPromptText(task.category, 40)}]`;
+  if (task.issueNumber) entry += ` (#${task.issueNumber})`;
+  const description = limitPromptText(task.description, CHANGELOG_TASK_DESCRIPTION_MAX_CHARS);
+  if (description) {
+    entry += `\n  ${description}`;
+  }
+  return entry;
+}
+
 /**
  * Build the user prompt for changelog generation based on source mode.
  */
 function buildChangelogPrompt(config: ChangelogConfig): string {
   const parts: string[] = [];
-  parts.push(`Generate a changelog entry for **${config.projectName}** ${config.version}.`);
+  parts.push(
+    `Generate a changelog entry for **${limitPromptText(config.projectName, CHANGELOG_PROJECT_NAME_MAX_CHARS)}** ${limitPromptText(config.version, CHANGELOG_VERSION_MAX_CHARS)}.`,
+  );
 
   if (config.sourceMode === 'tasks' && config.tasks && config.tasks.length > 0) {
     parts.push('\n## Completed Tasks\n');
-    for (const task of config.tasks) {
-      let entry = `- **${task.title}**`;
-      if (task.category) entry += ` [${task.category}]`;
-      if (task.issueNumber) entry += ` (#${task.issueNumber})`;
-      entry += `\n  ${task.description}`;
-      parts.push(entry);
+    for (const task of config.tasks.slice(0, CHANGELOG_TASKS_MAX)) {
+      parts.push(formatChangelogTask(task));
+    }
+    if (config.tasks.length > CHANGELOG_TASKS_MAX) {
+      parts.push(`- ... ${config.tasks.length - CHANGELOG_TASKS_MAX} additional completed tasks omitted from the prompt budget.`);
     }
   } else if (config.commits) {
     parts.push(`\n## Git ${config.sourceMode === 'branch-diff' ? 'Branch Diff' : 'History'}\n`);
     parts.push('```');
-    parts.push(config.commits.slice(0, 5000));
+    parts.push(limitPromptText(config.commits, CHANGELOG_COMMITS_MAX_CHARS));
     parts.push('```');
   }
 
   if (config.previousChangelog) {
     parts.push('\n## Previous Changelog (for style reference)\n');
-    parts.push(config.previousChangelog.slice(0, 2000));
+    parts.push(limitPromptText(config.previousChangelog, CHANGELOG_PREVIOUS_CHANGELOG_MAX_CHARS));
   }
 
   parts.push('\nOutput only this version\'s changelog markdown.');

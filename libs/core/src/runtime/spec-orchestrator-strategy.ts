@@ -89,7 +89,7 @@ export function hasAutocodeProjectExternalResearchSignal(text: string): boolean 
 export function shouldRunAutocodeSpecResearchPhase(
   assessment: AutocodeComplexityAssessmentLike | null | undefined,
   taskDescription?: string,
-  projectIndex?: string,
+  projectDocsReference?: string,
 ): boolean {
   if (assessment?.needs_research === true) {
     return true;
@@ -103,13 +103,15 @@ export function shouldRunAutocodeSpecResearchPhase(
     return true;
   }
 
-  return hasAutocodeProjectExternalResearchSignal((projectIndex ?? '').toLowerCase());
+  return hasAutocodeProjectExternalResearchSignal((projectDocsReference ?? '').toLowerCase());
 }
 
 export function selectAutocodeSpecPhases(input: {
   complexity: AutocodeSpecComplexityTier;
   assessment?: AutocodeComplexityAssessmentLike | null;
   taskDescription?: string;
+  projectDocsReference?: string;
+  /** @deprecated Use projectDocsReference. */
   projectIndex?: string;
   workflowConfig: AutocodeSpecWorkflowConfigLike;
 }): AutocodeSpecPhase[] {
@@ -123,7 +125,7 @@ export function selectAutocodeSpecPhases(input: {
   const needsResearch = shouldRunAutocodeSpecResearchPhase(
     input.assessment,
     input.taskDescription,
-    input.projectIndex,
+    input.projectDocsReference ?? input.projectIndex,
   );
   const researchIndex = phases.indexOf('research');
 
@@ -159,7 +161,7 @@ export function shouldForceSplitAutocodeImplementationPlan(
     workflowConfig?.specCreationMode === 'phased';
 }
 
-export function parseAutocodeProjectIndexSummary(projectIndex: string | undefined): {
+export function parseAutocodeProjectDocsReferenceSummary(projectDocsReference: string | undefined): {
   serviceCount: number;
   languageCount: number;
   infrastructureCount: number;
@@ -172,12 +174,12 @@ export function parseAutocodeProjectIndexSummary(projectIndex: string | undefine
     hasLargeProjectSignal: false,
   };
 
-  if (!projectIndex?.trim()) {
+  if (!projectDocsReference?.trim()) {
     return summary;
   }
 
   try {
-    const parsed = JSON.parse(projectIndex) as Record<string, unknown>;
+    const parsed = JSON.parse(projectDocsReference) as Record<string, unknown>;
     const services = isRecord(parsed.services) ? parsed.services : {};
     summary.serviceCount = Object.keys(services).length;
 
@@ -206,7 +208,7 @@ export function parseAutocodeProjectIndexSummary(projectIndex: string | undefine
     const totalCount = Number(project.totalFileCount ?? project.total_file_count ?? sourceSummary.total_file_count ?? parsed.totalFileCount ?? parsed.total_file_count ?? 0);
     summary.hasLargeProjectSignal = project.size === 'large' || sourceCount >= 250 || totalCount >= 1500;
   } catch {
-    const text = projectIndex.toLowerCase();
+    const text = projectDocsReference.toLowerCase();
     summary.hasLargeProjectSignal = /"size"\s*:\s*"large"|sourcefilecount"\s*:\s*[3-9]\d\d|source_file_count"\s*:\s*[3-9]\d\d|totalfilecount"\s*:\s*[2-9]\d{3,}|total_file_count"\s*:\s*[2-9]\d{3,}/.test(text);
     summary.infrastructureCount = (text.match(/ci_workflows|docker|workflow|pipeline|deployment/g) ?? []).length;
   }
@@ -214,14 +216,22 @@ export function parseAutocodeProjectIndexSummary(projectIndex: string | undefine
   return summary;
 }
 
+/** @deprecated Use parseAutocodeProjectDocsReferenceSummary. */
+export function parseAutocodeProjectIndexSummary(projectIndex: string | undefined): ReturnType<typeof parseAutocodeProjectDocsReferenceSummary> {
+  return parseAutocodeProjectDocsReferenceSummary(projectIndex);
+}
+
 export function inferAutocodeSpecComplexityFallback(input: {
   taskDescription: string;
+  projectDocsReference?: string;
+  /** @deprecated Use projectDocsReference. */
   projectIndex?: string;
   workflowConfig: AutocodeSpecWorkflowConfigLike;
 }): AutocodeFallbackComplexityAssessment {
   const taskText = normalizeAutocodeSpecTaskDescription(input.taskDescription).toLowerCase();
-  const projectText = (input.projectIndex ?? '').toLowerCase();
-  const parsedIndex = parseAutocodeProjectIndexSummary(input.projectIndex);
+  const projectDocsReference = input.projectDocsReference ?? input.projectIndex;
+  const projectText = (projectDocsReference ?? '').toLowerCase();
+  const parsedProjectReference = parseAutocodeProjectDocsReferenceSummary(projectDocsReference);
   const signals: string[] = [];
 
   const hasBroadChangeIntent = /(\bmigrate|\bmigration|\bport\b|\bremove\b|\bdelete\b|\breplace\b|\brewrite\b|\brefactor\b|\brework\b|\bredesign\b|\brestructure\b|\bswitch\b|\bconvert\b|\bdeprecate\b|\bdrop\b|\bphase[-\s]?out\b|\u8fc1\u79fb|\u79fb\u9664|\u5220\u9664|\u66ff\u6362|\u91cd\u5199|\u91cd\u6784|\u6539\u9020|\u91cd\u65b0\u8bbe\u8ba1|\u5207\u6362|\u8f6c\u6362|\u5e9f\u5f03|\u4e0b\u7ebf)/i.test(taskText);
@@ -247,22 +257,22 @@ export function inferAutocodeSpecComplexityFallback(input: {
     signals.push(`${affectedAreaCount} affected areas`);
   }
 
-  if (parsedIndex.serviceCount >= 3) signals.push(`${parsedIndex.serviceCount} services`);
-  if (parsedIndex.languageCount >= 3) signals.push(`${parsedIndex.languageCount} languages`);
-  if (parsedIndex.infrastructureCount >= 2) signals.push(`${parsedIndex.infrastructureCount} infrastructure signals`);
-  if (parsedIndex.hasLargeProjectSignal) signals.push('large project profile');
+  if (parsedProjectReference.serviceCount >= 3) signals.push(`${parsedProjectReference.serviceCount} services`);
+  if (parsedProjectReference.languageCount >= 3) signals.push(`${parsedProjectReference.languageCount} languages`);
+  if (parsedProjectReference.infrastructureCount >= 2) signals.push(`${parsedProjectReference.infrastructureCount} infrastructure signals`);
+  if (parsedProjectReference.hasLargeProjectSignal) signals.push('large project profile');
 
   const isConservative = input.workflowConfig.optimizationLevel === 'conservative' ||
     input.workflowConfig.specCreationMode === 'phased' ||
     input.workflowConfig.qualityChecks?.enableSelfCritique === true;
-  const hasLargeProjectContext = parsedIndex.hasLargeProjectSignal ||
-    parsedIndex.serviceCount >= 3 ||
-    parsedIndex.languageCount >= 3 ||
-    parsedIndex.infrastructureCount >= 2 ||
+  const hasLargeProjectContext = parsedProjectReference.hasLargeProjectSignal ||
+    parsedProjectReference.serviceCount >= 3 ||
+    parsedProjectReference.languageCount >= 3 ||
+    parsedProjectReference.infrastructureCount >= 2 ||
     /\bmonorepo\b|\u5927\u578b|\u591a\u6a21\u5757|\u591a\u670d\u52a1|\u591a\u5e73\u53f0/.test(projectText);
   const hasComplexTaskShape = hasBroadChangeIntent && affectedAreaCount >= 3;
-  const hasLargeMultiSubsystemProject = parsedIndex.hasLargeProjectSignal &&
-    (parsedIndex.languageCount >= 3 || parsedIndex.infrastructureCount >= 2 || parsedIndex.serviceCount >= 2);
+  const hasLargeMultiSubsystemProject = parsedProjectReference.hasLargeProjectSignal &&
+    (parsedProjectReference.languageCount >= 3 || parsedProjectReference.infrastructureCount >= 2 || parsedProjectReference.serviceCount >= 2);
   const hasEngineOrPlatformSurface = /(\bengine\b|\brenderer\b|\bcompiler\b|\bshader\b|\bruntime\b|\bkernel\b|\bplatform\b|\bframework\b|\bsdk\b|\bplugin\b|\bcross[-\s]?platform\b)/i.test(taskText) ||
     /(\bengine\b|\brenderer\b|\bcompiler\b|\bshader\b|\bruntime\b|\bkernel\b|\bplatform\b|\bframework\b|\bsdk\b|\bplugin\b|\bcross[-\s]?platform\b)/i.test(projectText);
 
@@ -276,7 +286,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
       complexity: 'complex',
       confidence: 0.78,
       reasoning: `local fallback detected conservative broad change in large multi-subsystem project (${signals.join(', ')})`,
-      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, input.projectIndex),
+      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
       needs_self_critique: true,
     };
   }
@@ -286,7 +296,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
       complexity: 'complex',
       confidence: 0.75,
       reasoning: `local fallback detected ${signals.join(', ')}`,
-      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, input.projectIndex),
+      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
       needs_self_critique: true,
     };
   }
@@ -296,7 +306,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
       complexity: 'standard',
       confidence: 0.65,
       reasoning: `local fallback detected ${signals.join(', ') || 'moderate scope'}`,
-      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, input.projectIndex),
+      needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
       needs_self_critique: isConservative,
     };
   }
@@ -307,7 +317,7 @@ export function inferAutocodeSpecComplexityFallback(input: {
     reasoning: signals.length > 0
       ? `local fallback detected ${signals.join(', ')}`
       : 'local fallback did not find enough signal for complex routing',
-    needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, input.projectIndex),
+    needs_research: shouldRunAutocodeSpecResearchPhase(null, input.taskDescription, projectDocsReference),
     needs_self_critique: false,
   };
 }

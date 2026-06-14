@@ -4,7 +4,7 @@
 Find UI/UX improvements grounded in existing screens, components, and workflows.
 
 ## Process
-1. Read `project-docs/index.md` and `ideation_context.json`.
+1. Read `project-docs/index.md` and `ideation_context.md`.
 2. Inspect relevant UI components, routes, state, and screenshots if available.
 3. Avoid duplicates and purely speculative product ideas.
 4. Suggest 3 to Max Ideas improvements that fit the current UI.

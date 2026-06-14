@@ -19,7 +19,7 @@ Read, in this order:
 
 1. `spec.md`
 2. `implementation_plan.md`
-3. `context.json`
+3. `context.md`
 4. `project-docs/index.md`
 5. changed files from the branch diff
 
@@ -30,7 +30,7 @@ Use the current base branch from injected context. If unavailable, inspect the r
 - All planned subtasks are completed or explicitly out of scope.
 - Every acceptance criterion is implemented.
 - Every revised or implemented task satisfies the acceptance criteria bound by its `_Evidence:` references in `tasks.md`.
-- Evidence references in `tasks.md` trace to `spec.md`, `requirements.md`, `context.json`, `research.json`, project source/docs, or official/industry references; vague evidence is not enough for approval.
+- Evidence references in `tasks.md` trace to `spec.md`, `requirements.md`, `context.md`, `research.md`, project source/docs, or official/industry references; vague evidence is not enough for approval.
 - Touched behavior has a targeted verification result.
 - Existing architecture and local patterns are preserved.
 - Security, permissions, persistence, file IO, external calls, and user input are safe where relevant.

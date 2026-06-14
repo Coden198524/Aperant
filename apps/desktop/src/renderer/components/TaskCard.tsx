@@ -230,8 +230,8 @@ export const TaskCard = memo(function TaskCard({
     return [
       {
         key: 'requests',
-        label: t('detail.requestsShort', { defaultValue: '请求' }),
-        title: t('detail.requests', { defaultValue: 'AI 请求次数' }),
+        label: t('detail.requestsShort', { defaultValue: 'Steps' }),
+        title: t('detail.requests', { defaultValue: 'Model steps' }),
         value: String(stepsExecuted),
         variant: 'secondary' as const,
       },

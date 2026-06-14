@@ -1,3 +1,4 @@
+import { useEffect, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { ChevronRight, ExternalLink, Lightbulb, Loader2, Play, X } from 'lucide-react';
 import { Button } from '../ui/button';
@@ -33,13 +34,119 @@ interface IdeaDetailPanelProps {
   isConverting?: boolean;
 }
 
+const DETAIL_PANEL_WIDTH_STORAGE_KEY = 'ideation-detail-panel-width';
+const DEFAULT_DETAIL_PANEL_WIDTH = 480;
+const MIN_DETAIL_PANEL_WIDTH = 360;
+const MAX_DETAIL_PANEL_WIDTH = 720;
+const DETAIL_PANEL_SIDE_MARGIN = 56;
+
+function getMaxDetailPanelWidth(): number {
+  if (typeof window === 'undefined') {
+    return MAX_DETAIL_PANEL_WIDTH;
+  }
+
+  return Math.max(
+    MIN_DETAIL_PANEL_WIDTH,
+    Math.min(MAX_DETAIL_PANEL_WIDTH, window.innerWidth - DETAIL_PANEL_SIDE_MARGIN)
+  );
+}
+
+function clampDetailPanelWidth(width: number): number {
+  return Math.max(MIN_DETAIL_PANEL_WIDTH, Math.min(width, getMaxDetailPanelWidth()));
+}
+
+function loadDetailPanelWidth(): number {
+  if (typeof window === 'undefined') {
+    return DEFAULT_DETAIL_PANEL_WIDTH;
+  }
+
+  const saved = Number(localStorage.getItem(DETAIL_PANEL_WIDTH_STORAGE_KEY));
+  if (Number.isFinite(saved) && saved > 0) {
+    return clampDetailPanelWidth(saved);
+  }
+
+  return clampDetailPanelWidth(DEFAULT_DETAIL_PANEL_WIDTH);
+}
+
 export function IdeaDetailPanel({ idea, onClose, onConvert, onGoToTask, onDismiss, isConverting }: IdeaDetailPanelProps) {
   const { t } = useTranslation('common');
+  const [panelWidth, setPanelWidth] = useState(loadDetailPanelWidth);
+  const resizeStateRef = useRef<{ startX: number; startWidth: number } | null>(null);
   const isDismissed = idea.status === 'dismissed';
-  const isConverted = idea.status === 'converted';
+  const isArchived = idea.status === 'archived';
+  const isConverted = idea.status === 'converted' || (isArchived && Boolean(idea.taskId));
+  const canActOnIdea = !isDismissed && !isArchived && !isConverted;
+
+  useEffect(() => {
+    const handleWindowResize = () => {
+      setPanelWidth((width) => {
+        const next = clampDetailPanelWidth(width);
+        localStorage.setItem(DETAIL_PANEL_WIDTH_STORAGE_KEY, String(Math.round(next)));
+        return next;
+      });
+    };
+
+    window.addEventListener('resize', handleWindowResize);
+    return () => window.removeEventListener('resize', handleWindowResize);
+  }, []);
+
+  useEffect(() => {
+    return () => {
+      resizeStateRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+    };
+  }, []);
+
+  const handleResizeStart = (event: React.PointerEvent<HTMLDivElement>) => {
+    event.preventDefault();
+    event.stopPropagation();
+
+    resizeStateRef.current = {
+      startX: event.clientX,
+      startWidth: panelWidth,
+    };
+    document.body.style.cursor = 'ew-resize';
+    document.body.style.userSelect = 'none';
+
+    const handlePointerMove = (moveEvent: PointerEvent) => {
+      const resizeState = resizeStateRef.current;
+      if (!resizeState) return;
+
+      setPanelWidth(clampDetailPanelWidth(resizeState.startWidth - (moveEvent.clientX - resizeState.startX)));
+    };
+
+    const handlePointerUp = () => {
+      resizeStateRef.current = null;
+      document.body.style.cursor = '';
+      document.body.style.userSelect = '';
+      setPanelWidth((width) => {
+        const next = clampDetailPanelWidth(width);
+        localStorage.setItem(DETAIL_PANEL_WIDTH_STORAGE_KEY, String(Math.round(next)));
+        return next;
+      });
+      window.removeEventListener('pointermove', handlePointerMove);
+      window.removeEventListener('pointerup', handlePointerUp);
+      window.removeEventListener('pointercancel', handlePointerUp);
+    };
+
+    window.addEventListener('pointermove', handlePointerMove);
+    window.addEventListener('pointerup', handlePointerUp);
+    window.addEventListener('pointercancel', handlePointerUp);
+  };
 
   return (
-    <div className="fixed inset-y-0 right-0 w-96 bg-card border-l border-border shadow-lg flex flex-col z-50">
+    <div
+      className="fixed inset-y-0 right-0 bg-card border-l border-border shadow-lg flex flex-col z-50"
+      style={{ width: `${panelWidth}px`, maxWidth: `calc(100vw - ${DETAIL_PANEL_SIDE_MARGIN}px)` }}
+    >
+      <div
+        className="absolute inset-y-0 -left-2 z-20 w-3 cursor-ew-resize touch-none transition-colors hover:bg-primary/20 active:bg-primary/25"
+        role="separator"
+        aria-orientation="vertical"
+        aria-label={t('common:accessibility.resizePanelAriaLabel', { defaultValue: '调整详情面板宽度' })}
+        onPointerDown={handleResizeStart}
+      />
       {/* Header */}
       <div className="shrink-0 p-4 border-b border-border electron-no-drag">
         <div className="flex items-start justify-between">
@@ -90,7 +197,7 @@ export function IdeaDetailPanel({ idea, onClose, onConvert, onGoToTask, onDismis
       </div>
 
       {/* Actions */}
-      {!isDismissed && !isConverted && (
+      {canActOnIdea && (
         <div className="shrink-0 p-4 border-t border-border space-y-2">
           <Button className="w-full" onClick={() => onConvert(idea)} disabled={isConverting}>
             {isConverting ? (

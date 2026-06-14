@@ -68,6 +68,14 @@ export function registerIdeationHandlers(
     stopIdeationGeneration(event, projectId, agentManager, getMainWindow())
   );
 
+  ipcMain.handle(
+    IPC_CHANNELS.IDEATION_IS_RUNNING,
+    async (_, projectId: string) => ({
+      success: true,
+      data: { isRunning: agentManager.isIdeationRunning(projectId) },
+    })
+  );
+
   // Task conversion
   ipcMain.handle(IPC_CHANNELS.IDEATION_CONVERT_TO_TASK, convertIdeaToTask);
 
@@ -101,7 +109,7 @@ export function registerIdeationHandlers(
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.IDEATION_TYPE_FAILED, projectId, ideationType);
   };
 
-  const handleIdeationComplete = (projectId: string, session: IdeationSession): void => {
+  const handleIdeationComplete = (projectId: string, session: IdeationSession | null): void => {
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.IDEATION_COMPLETE, projectId, session);
   };
 

@@ -43,6 +43,28 @@ describe('StepMemoryState', () => {
       expect(paths).not.toContain('/file-0.ts');
       expect(paths).toContain('/file-20.ts');
     });
+
+    it('stores only compact memory-relevant tool arguments', () => {
+      const longCommand = `npm test ${'--workspace apps/desktop '.repeat(30)}FINAL_COMMAND_TAIL`;
+      state.recordToolCall('Write', {
+        file_path: '/src/generated.ts',
+        content: 'x'.repeat(5_000),
+        old_string: 'old'.repeat(1_000),
+        new_string: 'new'.repeat(1_000),
+        command: longCommand,
+        unexpected_payload: 'should not be retained',
+      });
+
+      const args = state.getRecentContext(1).toolCalls[0].args;
+      expect(args.file_path).toBe('/src/generated.ts');
+      expect(args).not.toHaveProperty('content');
+      expect(args).not.toHaveProperty('old_string');
+      expect(args).not.toHaveProperty('new_string');
+      expect(args).not.toHaveProperty('unexpected_payload');
+      expect(String(args.command)).toHaveLength(240);
+      expect(String(args.command)).toContain('middle omitted');
+      expect(String(args.command)).toContain('FINAL_COMMAND_TAIL');
+    });
   });
 
   describe('getRecentContext()', () => {
@@ -60,6 +82,63 @@ describe('StepMemoryState', () => {
       }
       const ctx = state.getRecentContext(3);
       expect(ctx.toolCalls).toHaveLength(3);
+    });
+
+    it('deduplicates repeated tool calls while keeping the newest unique context', () => {
+      state.recordToolCall('Read', { file_path: '/src/auth.ts' });
+      state.recordToolCall('Read', { file_path: '/src/auth.ts' });
+      state.recordToolCall('Grep', { pattern: 'refreshToken' });
+      state.recordToolCall('Grep', { pattern: 'refreshToken' });
+      state.recordToolCall('Edit', { file_path: '/src/auth.ts' });
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Read', args: { file_path: '/src/auth.ts' } },
+        { toolName: 'Grep', args: { pattern: 'refreshToken' } },
+        { toolName: 'Edit', args: { file_path: '/src/auth.ts' } },
+      ]);
+    });
+
+    it('uses normalized compact args for dedupe signatures', () => {
+      state.recordToolCall('Read', {
+        file_path: '/src/auth.ts',
+        content: 'first ignored payload',
+      });
+      state.recordToolCall('Read', {
+        content: 'second ignored payload',
+        file_path: '/src/auth.ts',
+      });
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toHaveLength(1);
+      expect(ctx.toolCalls[0].args).toEqual({ file_path: '/src/auth.ts' });
+    });
+
+    it('normalizes equivalent file paths before recent-context dedupe', () => {
+      state.recordToolCall('Read', { file_path: ' src\\auth\\token.ts ' });
+      state.recordToolCall('Read', { file_path: 'src/auth//token.ts' });
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Read', args: { file_path: 'src/auth/token.ts' } },
+      ]);
+    });
+
+    it('trims search patterns before recent-context dedupe', () => {
+      state.recordToolCall('Grep', { pattern: ' useCallback ' });
+      state.recordToolCall('Grep', { pattern: 'useCallback' });
+      state.recordToolCall('Glob', { glob: ' auth-refresh ' });
+      state.recordToolCall('Glob', { glob: 'auth-refresh' });
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Grep', args: { pattern: 'useCallback' } },
+        { toolName: 'Glob', args: { glob: 'auth-refresh' } },
+      ]);
     });
 
     it('returns fewer entries if fewer have been recorded', () => {

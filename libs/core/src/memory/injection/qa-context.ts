@@ -5,9 +5,13 @@
  */
 
 import type { Memory, MemoryService } from '../types.js';
+import { selectMemoryContextItems } from './context-selection.js';
+import { compactMemoryInjectionText } from './text-compaction.js';
 
-const MAX_QA_MEMORY_ITEM_CHARS = 300;
-const MAX_QA_MEMORY_CONTEXT_CHARS = 2200;
+const MAX_QA_MEMORY_ITEM_CHARS = 240;
+const MAX_QA_MEMORY_CONTEXT_CHARS = 1700;
+const MAX_QA_MEMORY_FILE_REFS = 3;
+const MAX_QA_MEMORY_FILE_REF_CHARS = 48;
 
 export async function buildQaSessionContext(
   specDescription: string,
@@ -23,6 +27,7 @@ export async function buildQaSessionContext(
         limit: 4,
         sort: 'recency',
         projectId,
+        promptContextOnly: true,
       }),
       memoryService.search({
         types: ['error_pattern'],
@@ -30,14 +35,16 @@ export async function buildQaSessionContext(
         limit: 3,
         minConfidence: 0.6,
         projectId,
+        promptContextOnly: true,
       }),
       memoryService.search({
         types: ['requirement'],
         relatedModules: relevantModules,
         limit: 3,
         projectId,
+        promptContextOnly: true,
       }),
-      memoryService.searchWorkflowRecipe(specDescription, { limit: 1 }),
+      memoryService.searchWorkflowRecipe(specDescription, { limit: 1, projectId }),
     ]);
 
     return formatQaSections({ e2eObservations, errorPatterns, requirements, recipes });
@@ -55,32 +62,55 @@ interface QaSections {
 
 function formatQaSections(sections: QaSections): string {
   const parts: string[] = [];
+  const seenFingerprints = new Set<string>();
+  const seenContents: string[] = [];
+  const requirements = selectMemoryContextItems(sections.requirements, {
+    maxItems: 2,
+    minConfidence: 0.6,
+    seenContents,
+    seenFingerprints,
+  });
+  const errorPatterns = selectMemoryContextItems(sections.errorPatterns, {
+    maxItems: 2,
+    minConfidence: 0.6,
+    seenContents,
+    seenFingerprints,
+  });
+  const e2eObservations = selectMemoryContextItems(sections.e2eObservations, {
+    maxItems: 2,
+    minConfidence: 0.55,
+    seenContents,
+    seenFingerprints,
+  });
+  const recipes = selectMemoryContextItems(sections.recipes, {
+    maxItems: 1,
+    minConfidence: 0.55,
+    seenContents,
+    seenFingerprints,
+  });
 
-  if (sections.requirements.length > 0) {
-    const items = sections.requirements.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+  if (requirements.length > 0) {
+    const items = requirements.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
     parts.push(`KNOWN REQUIREMENTS - Constraints to validate:\n${items}`);
   }
 
-  if (sections.errorPatterns.length > 0) {
-    const items = sections.errorPatterns
+  if (errorPatterns.length > 0) {
+    const seenErrorPatternFiles = new Set<string>();
+    const items = errorPatterns
       .map((m) => {
-        const fileRef =
-          m.relatedFiles.length > 0
-            ? ` [${m.relatedFiles.map((f) => f.split('/').pop()).join(', ')}]`
-            : '';
-        return `- ${formatMemoryContent(m)}${fileRef}`;
+        return `- ${formatMemoryContent(m)}${formatRelatedFileRefs(m.relatedFiles, seenErrorPatternFiles)}`;
       })
       .join('\n');
     parts.push(`ERROR PATTERNS - Known failure modes:\n${items}`);
   }
 
-  if (sections.e2eObservations.length > 0) {
-    const items = sections.e2eObservations.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+  if (e2eObservations.length > 0) {
+    const items = e2eObservations.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
     parts.push(`E2E OBSERVATIONS - Historical test behavior:\n${items}`);
   }
 
-  if (sections.recipes.length > 0) {
-    const items = sections.recipes.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+  if (recipes.length > 0) {
+    const items = recipes.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
     parts.push(`VALIDATION WORKFLOW - Proven QA approach:\n${items}`);
   }
 
@@ -98,10 +128,76 @@ function formatMemoryContent(memory: Memory): string {
   return truncateText(memory.content, MAX_QA_MEMORY_ITEM_CHARS);
 }
 
-function truncateText(text: string, maxChars: number): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
+function formatRelatedFileRefs(relatedFiles: string[], seenFiles: Set<string>): string {
+  if (relatedFiles.length === 0) {
+    return '';
+  }
+
+  const uniqueUnseenFiles = uniqueFilePaths(relatedFiles)
+    .filter((filePath) => !seenFiles.has(normalizeFilePathForDedupe(filePath)));
+  const displayedFiles = uniqueUnseenFiles
+    .slice(0, MAX_QA_MEMORY_FILE_REFS)
+    .map((filePath) => ({
+      filePath,
+      fileName: formatRelatedFileName(filePath),
+    }))
+    .filter((file) => Boolean(file.fileName));
+
+  for (const file of displayedFiles) {
+    seenFiles.add(normalizeFilePathForDedupe(file.filePath));
+  }
+
+  const fileNames = displayedFiles
+    .map((file) => file.fileName)
+    .filter(Boolean);
+
+  if (fileNames.length === 0) {
+    return '';
+  }
+
+  const omittedSuffix = uniqueUnseenFiles.length > displayedFiles.length ? ', ...' : '';
+  return ` [${fileNames.join(', ')}${omittedSuffix}]`;
+}
+
+function formatRelatedFileName(filePath: string): string {
+  const fileName = filePath.split(/[\\/]/).filter(Boolean).pop()?.trim() ?? '';
+  return compactFileName(fileName, MAX_QA_MEMORY_FILE_REF_CHARS);
+}
+
+function compactFileName(fileName: string, maxChars: number): string {
+  const compact = fileName.replace(/\s+/g, ' ').trim();
   if (compact.length <= maxChars) {
     return compact;
   }
-  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
+  if (maxChars <= 3) {
+    return compact.slice(0, maxChars);
+  }
+
+  const marker = '...';
+  const budget = maxChars - marker.length;
+  const headChars = Math.ceil(budget * 0.45);
+  const tailChars = budget - headChars;
+  return `${compact.slice(0, headChars)}${marker}${compact.slice(-tailChars)}`;
+}
+
+function normalizeFilePathForDedupe(filePath: string): string {
+  return filePath.replace(/\\/g, '/').replace(/\s+/g, ' ').trim().toLowerCase();
+}
+
+function uniqueFilePaths(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeFilePathForDedupe(value);
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+    seen.add(normalized);
+    unique.push(value.trim());
+  }
+  return unique;
+}
+
+function truncateText(text: string, maxChars: number): string {
+  return compactMemoryInjectionText(text, maxChars);
 }

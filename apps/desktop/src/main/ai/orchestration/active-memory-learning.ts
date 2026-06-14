@@ -5,7 +5,7 @@
  * service writes.
  */
 
-import { readFile, mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, open, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import {
   buildAutocodeWorkUnitOutcomeMemoryEntry,
@@ -14,8 +14,12 @@ import {
 import {
   createAutocodeExtractedKnowledge,
   extractAutocodeCodePatternsFromContent,
+  formatAutocodeCodePatternMemory,
+  formatAutocodeFailurePatternMemory,
   formatAutocodeKnowledgeSummary,
+  formatAutocodeSuccessPatternMemory,
   generateAutocodeLearningSessionId,
+  isAutocodeSessionMetricInsight,
   mapAutocodeSessionOutcome,
   summarizeAutocodeSessionForMemory,
   type AutocodeCodePattern,
@@ -46,6 +50,12 @@ export type SuccessPattern = AutocodeSuccessPattern;
 export type FailurePattern = AutocodeFailureLearningPattern;
 export type CodePattern = AutocodeCodePattern;
 
+export const ACTIVE_MEMORY_CODE_PATTERN_FILES_MAX = 5;
+export const ACTIVE_MEMORY_CODE_PATTERN_FILE_MAX_BYTES = 32_000;
+
+const MODULE_SPECIFIC_INSIGHT_PATTERN =
+  /(?:^|[\s`'"])(?:[\w.-]+[\\/][\w./-]+|[\w.-]+\.(?:ts|tsx|js|jsx|mjs|cjs|py|cs|cpp|h|md|json)\b)|\b(module|component|service|store|hook|api|ipc|renderer|preload)\b|模块|组件|服务|状态|接口|渲染|主进程|预加载/i;
+
 export async function extractAndStoreKnowledge(config: LearningConfig): Promise<ExtractedKnowledge> {
   const knowledge = createAutocodeExtractedKnowledge({
     sessionResult: config.sessionResult,
@@ -71,9 +81,9 @@ async function extractCodePatterns(config: LearningConfig): Promise<CodePattern[
     ...(config.subtask.filesToCreate ?? []),
   ];
 
-  for (const file of filesToAnalyze.slice(0, 5)) {
+  for (const file of filesToAnalyze.slice(0, ACTIVE_MEMORY_CODE_PATTERN_FILES_MAX)) {
     try {
-      const content = await readFile(join(config.projectDir, file), 'utf-8');
+      const content = await readCodePatternFileSample(config.projectDir, file);
       patterns.push(...extractAutocodeCodePatternsFromContent(content, file));
     } catch {
       // Skip files that cannot be read.
@@ -83,12 +93,42 @@ async function extractCodePatterns(config: LearningConfig): Promise<CodePattern[
   return patterns;
 }
 
+export async function readCodePatternFileSample(projectDir: string, file: string): Promise<string> {
+  const filePath = join(projectDir, file);
+  const handle = await open(filePath, 'r');
+  try {
+    const stats = await handle.stat();
+    if (stats.size <= ACTIVE_MEMORY_CODE_PATTERN_FILE_MAX_BYTES) {
+      return await handle.readFile({ encoding: 'utf-8' });
+    }
+
+    const marker = `\n\n/* ... [active memory file sample truncated, ${stats.size} bytes total] ... */\n\n`;
+    const headBytes = Math.floor(ACTIVE_MEMORY_CODE_PATTERN_FILE_MAX_BYTES * 0.55);
+    const tailBytes = ACTIVE_MEMORY_CODE_PATTERN_FILE_MAX_BYTES - headBytes;
+    const headBuffer = Buffer.alloc(headBytes);
+    const tailBuffer = Buffer.alloc(tailBytes);
+
+    const head = await handle.read(headBuffer, 0, headBytes, 0);
+    const tailStart = Math.max(0, stats.size - tailBytes);
+    const tail = await handle.read(tailBuffer, 0, tailBytes, tailStart);
+
+    return [
+      headBuffer.subarray(0, head.bytesRead).toString('utf-8'),
+      marker,
+      tailBuffer.subarray(0, tail.bytesRead).toString('utf-8'),
+    ].join('');
+  } finally {
+    await handle.close();
+  }
+}
+
 async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConfig): Promise<void> {
   if (!config.memoryService) {
     return;
   }
 
   try {
+    const longTermInsights = knowledge.insights.filter((insight) => shouldStoreModuleInsight(insight, knowledge));
     await config.memoryService.store(buildAutocodeWorkUnitOutcomeMemoryEntry({
       projectId: config.projectId,
       sessionId: knowledge.sessionId,
@@ -97,7 +137,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
       outcome: mapAutocodeSessionOutcome(config.sessionResult.outcome),
       phase: 'coding',
       source: 'desktop-worker',
-      summary: summarizeAutocodeSessionForMemory(knowledge),
+      summary: summarizeAutocodeSessionForMemory({ ...knowledge, insights: longTermInsights }),
       error: config.sessionResult.error?.message,
       relatedFiles: knowledge.keyFiles,
       completedAt: knowledge.timestamp,
@@ -107,7 +147,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
       for (const pattern of knowledge.successPatterns) {
         await config.memoryService.store({
           type: 'pattern',
-          content: JSON.stringify(pattern),
+          content: formatAutocodeSuccessPatternMemory(pattern),
           confidence: pattern.confidence,
           tags: ['success', config.subtask.id],
           relatedFiles: knowledge.keyFiles,
@@ -121,7 +161,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
       for (const pattern of knowledge.failurePatterns) {
         await config.memoryService.store({
           type: 'error_pattern',
-          content: JSON.stringify(pattern),
+          content: formatAutocodeFailurePatternMemory(pattern),
           confidence: pattern.confidence,
           tags: ['failure', config.subtask.id],
           relatedFiles: knowledge.keyFiles,
@@ -135,7 +175,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
       for (const pattern of knowledge.codePatterns) {
         await config.memoryService.store({
           type: 'pattern',
-          content: JSON.stringify(pattern),
+          content: formatAutocodeCodePatternMemory(pattern),
           confidence: 0.7,
           tags: [pattern.category, pattern.language],
           relatedFiles: [pattern.sourceFile],
@@ -145,7 +185,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
       }
     }
 
-    for (const insight of knowledge.insights) {
+    for (const insight of longTermInsights) {
       await config.memoryService.store({
         type: 'module_insight',
         content: insight,
@@ -161,6 +201,19 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
   } catch (error) {
     console.error('Failed to store knowledge to memory:', error);
   }
+}
+
+function shouldStoreModuleInsight(insight: string, knowledge: ExtractedKnowledge): boolean {
+  const text = insight.trim();
+  if (!text) {
+    return false;
+  }
+
+  if (isAutocodeSessionMetricInsight(text)) {
+    return false;
+  }
+
+  return knowledge.keyFiles.length > 0 || MODULE_SPECIFIC_INSIGHT_PATTERN.test(text);
 }
 
 async function storeToLocalHistory(knowledge: ExtractedKnowledge, specDir: string): Promise<void> {

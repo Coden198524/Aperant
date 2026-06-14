@@ -14,12 +14,12 @@ import { AgentState } from './agent-state';
 import type { AgentEvents } from './agent-events';
 import { AgentProcessManager } from './agent-process';
 import { RoadmapConfig } from './types';
-import type { IdeationConfig, Idea } from '../../shared/types';
+import type { IdeationConfig, Idea, IdeationSession } from '../../shared/types';
 import { detectRateLimit, createSDKRateLimitInfo } from '../rate-limit-detector';
 import { debugLog, debugError } from '../../shared/utils/debug-logger';
 import { transformIdeaFromSnakeCase, transformSessionFromSnakeCase } from '../ipc-handlers/ideation/transformers';
 import { transformRoadmapFromSnakeCase } from '../ipc-handlers/roadmap/transformers';
-import type { RawIdea } from '../ipc-handlers/ideation/types';
+import type { RawIdea, RawIdeationData } from '../ipc-handlers/ideation/types';
 import { debounce } from '../utils/debounce';
 import { writeFileWithRetry } from '../utils/atomic-file';
 import { runIdeation, IDEATION_TYPES } from '../ai/runners/ideation';
@@ -29,6 +29,150 @@ import type { RoadmapStreamEvent } from '../ai/runners/roadmap';
 import { resolvePromptsDir } from '../ai/prompts/prompt-loader';
 import { getActiveProviderFeatureSettings } from '../ipc-handlers/feature-settings-helper';
 import { projectStore } from '../project-store';
+
+const IDEATION_TYPE_PROGRESS_LABELS_ZH_CN: Record<IdeationType, string> = {
+  code_improvements: '代码改进',
+  ui_ux_improvements: 'UI/UX 改进',
+  documentation_gaps: '文档完善',
+  security_hardening: '安全加固',
+  performance_optimizations: '性能优化',
+  code_quality: '代码质量',
+};
+
+function shouldUseSimplifiedChinese(language: string | undefined): boolean {
+  return language?.trim().toLowerCase().replace(/_/g, '-').startsWith('zh') === true;
+}
+
+function getIdeationTypeProgressLabel(type: IdeationType, language: string | undefined): string {
+  if (shouldUseSimplifiedChinese(language)) {
+    return IDEATION_TYPE_PROGRESS_LABELS_ZH_CN[type];
+  }
+  return type;
+}
+
+function getIdeationStartMessage(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '开始生成创意...'
+    : 'Starting ideation generation...';
+}
+
+function getIdeationTypeGeneratingMessage(type: IdeationType, language: string | undefined): string {
+  const typeLabel = getIdeationTypeProgressLabel(type, language);
+  return shouldUseSimplifiedChinese(language)
+    ? `正在生成${typeLabel}创意...`
+    : `Generating ${typeLabel} ideas...`;
+}
+
+function getIdeationTypeStartLog(type: IdeationType, language: string | undefined): string {
+  const typeLabel = getIdeationTypeProgressLabel(type, language);
+  return shouldUseSimplifiedChinese(language)
+    ? `开始生成${typeLabel}创意...`
+    : `Starting ${typeLabel}...`;
+}
+
+function getIdeationCompleteMessage(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '创意生成完成'
+    : 'Ideation generation complete';
+}
+
+function getValidIdeationTypes(types: unknown[] | undefined): IdeationType[] {
+  if (!Array.isArray(types)) return [];
+  return types.filter((type): type is IdeationType =>
+    typeof type === 'string' && IDEATION_TYPES.includes(type as IdeationType)
+  );
+}
+
+async function readRawIdeationFile(filePath: string): Promise<RawIdeationData | null> {
+  if (!existsSync(filePath)) return null;
+  const content = await fsPromises.readFile(filePath, 'utf-8');
+  return JSON.parse(content) as RawIdeationData;
+}
+
+async function readRawIdeasForType(
+  projectPath: string,
+  dataDirName: string | undefined,
+  ideationType: IdeationType
+): Promise<RawIdea[]> {
+  const typeFilePath = getAutocodeIdeationTypeIdeasPath(projectPath, ideationType, dataDirName);
+  if (!existsSync(typeFilePath)) return [];
+
+  const content = await fsPromises.readFile(typeFilePath, 'utf-8');
+  const data: Record<string, RawIdea[]> = JSON.parse(content);
+  return Array.isArray(data[ideationType]) ? data[ideationType] : [];
+}
+
+async function persistIdeationSessionFromTypeFiles({
+  projectId,
+  projectPath,
+  dataDirName,
+  config,
+  completedTypes,
+}: {
+  projectId: string;
+  projectPath: string;
+  dataDirName: string | undefined;
+  config: IdeationConfig;
+  completedTypes: IdeationType[];
+}): Promise<IdeationSession> {
+  const ideationFilePath = getAutocodeIdeationFilePath(projectPath, dataDirName);
+  const existingRawSession = await readRawIdeationFile(ideationFilePath);
+  const completedTypeSet = new Set<IdeationType>(completedTypes);
+
+  const newIdeas: RawIdea[] = [];
+  for (const ideationType of completedTypes) {
+    try {
+      newIdeas.push(...await readRawIdeasForType(projectPath, dataDirName, ideationType));
+    } catch (err) {
+      debugError('[Agent Queue] Failed to merge type ideas:', { ideationType, err });
+    }
+  }
+
+  const existingIdeas = config.append
+    ? (existingRawSession?.ideas || []).filter((idea) => !completedTypeSet.has(idea.type as IdeationType))
+    : [];
+  const existingEnabledTypes = getValidIdeationTypes(
+    existingRawSession?.config?.enabled_types || existingRawSession?.config?.enabledTypes
+  );
+  const requestedTypes = config.enabledTypes.length > 0
+    ? config.enabledTypes
+    : [...IDEATION_TYPES];
+  const enabledTypes = config.append
+    ? Array.from(new Set<IdeationType>([...existingEnabledTypes, ...requestedTypes]))
+    : requestedTypes;
+  const now = new Date().toISOString();
+  const rawSession: RawIdeationData = {
+    id: existingRawSession?.id || `ideation-${Date.now()}`,
+    project_id: projectId,
+    config: {
+      enabled_types: enabledTypes,
+      include_roadmap_context: config.includeRoadmapContext
+        ?? existingRawSession?.config?.include_roadmap_context
+        ?? existingRawSession?.config?.includeRoadmapContext
+        ?? true,
+      include_kanban_context: config.includeKanbanContext
+        ?? existingRawSession?.config?.include_kanban_context
+        ?? existingRawSession?.config?.includeKanbanContext
+        ?? true,
+      max_ideas_per_type: config.maxIdeasPerType
+        || existingRawSession?.config?.max_ideas_per_type
+        || existingRawSession?.config?.maxIdeasPerType
+        || 5,
+    },
+    ideas: [...existingIdeas, ...newIdeas],
+    project_context: existingRawSession?.project_context || {
+      existing_features: [],
+      tech_stack: [],
+      planned_features: [],
+    },
+    generated_at: existingRawSession?.generated_at || now,
+    updated_at: now,
+  };
+
+  mkdirSync(getAutocodeIdeationDir(projectPath, dataDirName), { recursive: true });
+  await writeFileWithRetry(ideationFilePath, JSON.stringify(rawSession, null, 2), { encoding: 'utf-8' });
+  return transformSessionFromSnakeCase(rawSession, projectId);
+}
 
 /**
  * Queue management for ideation and roadmap generation
@@ -227,6 +371,7 @@ export class AgentQueueManager {
       ? config.enabledTypes
       : [...IDEATION_TYPES];
     const totalTypes = enabledTypes.length;
+    const language = config.language;
 
     // Resolve prompts directory using the proper prompt-loader utility
     // which handles both dev (apps/desktop/prompts/) and production (resourcesPath/prompts/)
@@ -239,7 +384,7 @@ export class AgentQueueManager {
     this.emitter.emit('ideation-progress', projectId, {
       phase: 'analyzing',
       progress: 10,
-      message: 'Starting ideation generation...',
+      message: getIdeationStartMessage(language),
       completedTypes: []
     });
 
@@ -254,10 +399,14 @@ export class AgentQueueManager {
       this.emitter.emit('ideation-progress', projectId, {
         phase: 'generating',
         progress: typeProgress,
-        message: `Generating ${ideationType} ideas...`,
+        message: getIdeationTypeGeneratingMessage(ideationType as IdeationType, language),
         completedTypes: Array.from(completedTypes)
       });
-      this.emitter.emit('ideation-log', projectId, `Starting ${ideationType}...`);
+      this.emitter.emit(
+        'ideation-log',
+        projectId,
+        getIdeationTypeStartLog(ideationType as IdeationType, language)
+      );
 
       try {
         const result = await runIdeation(
@@ -270,6 +419,7 @@ export class AgentQueueManager {
             modelShorthand: (config.model || 'sonnet') as ModelShorthand,
             thinkingLevel: (config.thinkingLevel || 'medium') as ThinkingLevel,
             maxIdeasPerType: config.maxIdeasPerType || 5,
+            language,
             abortSignal: abortController.signal,
           },
           (event: IdeationStreamEvent) => {
@@ -331,23 +481,21 @@ export class AgentQueueManager {
     this.emitter.emit('ideation-progress', projectId, {
       phase: 'complete',
       progress: 100,
-      message: 'Ideation generation complete',
+      message: getIdeationCompleteMessage(language),
       completedTypes: Array.from(completedTypes)
     });
 
-    // Load and emit the complete ideation session
+    // Merge per-type result files into the persisted ideation session and emit it.
     try {
-      const ideationFilePath = getAutocodeIdeationFilePath(projectPath, dataDirName);
-      if (existsSync(ideationFilePath)) {
-        const content = await fsPromises.readFile(ideationFilePath, 'utf-8');
-        const rawSession = JSON.parse(content);
-        const session = transformSessionFromSnakeCase(rawSession, projectId);
-        debugLog('[Agent Queue] Loaded ideation session:', { totalIdeas: session.ideas?.length || 0 });
-        this.emitter.emit('ideation-complete', projectId, session);
-      } else {
-        debugLog('[Agent Queue] ideation.json not found, individual type files used');
-        this.emitter.emit('ideation-complete', projectId, null);
-      }
+      const session = await persistIdeationSessionFromTypeFiles({
+        projectId,
+        projectPath,
+        dataDirName,
+        config,
+        completedTypes: Array.from(completedTypes) as IdeationType[],
+      });
+      debugLog('[Agent Queue] Persisted ideation session:', { totalIdeas: session.ideas?.length || 0 });
+      this.emitter.emit('ideation-complete', projectId, session);
     } catch (err) {
       debugError('[Agent Queue] Failed to load ideation session:', err);
       this.emitter.emit('ideation-error', projectId,

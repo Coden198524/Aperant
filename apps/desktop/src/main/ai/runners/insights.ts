@@ -94,6 +94,12 @@ export type InsightsStreamEvent =
   | { type: 'tool-end'; name: string }
   | { type: 'error'; error: string };
 
+export const INSIGHTS_PROJECT_DOCS_REFERENCE_MAX_BYTES = 6_000;
+export const INSIGHTS_HISTORY_MAX_MESSAGES = 8;
+export const INSIGHTS_HISTORY_MAX_CHARS = 4_000;
+export const INSIGHTS_HISTORY_MESSAGE_MAX_CHARS = 700;
+export const INSIGHTS_CURRENT_MESSAGE_MAX_CHARS = 6_000;
+
 function isResponsesApiModel(modelId: string | undefined): boolean {
   if (!modelId) return false;
   return (
@@ -121,7 +127,7 @@ function loadProjectContext(projectDir: string, dataDirName?: string): string {
   const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
     projectRoot: projectDir,
     dataDirName,
-    maxBytes: 12_000,
+    maxBytes: INSIGHTS_PROJECT_DOCS_REFERENCE_MAX_BYTES,
   });
   if (projectDocsReference) {
     contextParts.push(projectDocsReference);
@@ -241,14 +247,7 @@ export async function runInsightsQuery(
 
   const systemPrompt = buildSystemPrompt(projectDir, dataDirName);
 
-  // Build conversation context from history
-  let fullPrompt = message;
-  if (history.length > 0) {
-    const conversationContext = history
-      .map((msg) => `${msg.role === 'user' ? 'User' : 'Assistant'}: ${msg.content}`)
-      .join('\n\n');
-    fullPrompt = `Previous conversation:\n${conversationContext}\n\nCurrent question: ${message}`;
-  }
+  const fullPrompt = buildInsightsPrompt(message, history);
 
   // Create tool context for read-only tools
   const toolContext: ToolContext = {
@@ -340,6 +339,86 @@ export async function runInsightsQuery(
 // =============================================================================
 // Helpers
 // =============================================================================
+
+function buildInsightsPrompt(message: string, history: InsightsMessage[]): string {
+  const currentMessage = compactCurrentMessage(message);
+  if (history.length === 0) {
+    return currentMessage;
+  }
+
+  const recentHistory = history.slice(-INSIGHTS_HISTORY_MAX_MESSAGES);
+  const conversationContext = buildCompactConversationContext(recentHistory);
+  const historyLabel = history.length > recentHistory.length
+    ? `up to ${recentHistory.length} most recent of ${history.length} messages`
+    : 'recent messages';
+
+  return `Previous conversation (${historyLabel}, compacted):\n${conversationContext}\n\nCurrent question: ${currentMessage}`;
+}
+
+function buildCompactConversationContext(history: InsightsMessage[]): string {
+  const formatted = history.map((msg) => (
+    `${msg.role === 'user' ? 'User' : 'Assistant'}: ${compactHistoryMessage(msg.content)}`
+  ));
+  const kept: string[] = [];
+  let omitted = 0;
+
+  for (let index = formatted.length - 1; index >= 0; index -= 1) {
+    const next = [formatted[index], ...kept].join('\n\n');
+    if (next.length <= INSIGHTS_HISTORY_MAX_CHARS || kept.length === 0) {
+      kept.unshift(formatted[index]);
+      continue;
+    }
+    omitted = index + 1;
+    break;
+  }
+
+  const body = kept.join('\n\n');
+  return omitted > 0
+    ? `...[${omitted} older or verbose message(s) omitted]\n\n${body}`
+    : body;
+}
+
+function compactHistoryMessage(content: string): string {
+  const normalized = normalizePromptText(content);
+  return limitPromptText(
+    normalized,
+    INSIGHTS_HISTORY_MESSAGE_MAX_CHARS,
+    ' ... [history middle omitted] ... ',
+  );
+}
+
+function compactCurrentMessage(content: string): string {
+  const normalized = normalizePromptText(content);
+  if (normalized.length <= INSIGHTS_CURRENT_MESSAGE_MAX_CHARS) {
+    return normalized;
+  }
+
+  const marker = `\n\n...[current question truncated, ${normalized.length} chars total]...\n\n`;
+  const budget = Math.max(0, INSIGHTS_CURRENT_MESSAGE_MAX_CHARS - marker.length);
+  const headBudget = Math.ceil(budget * 0.45);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return `${normalized.slice(0, headBudget).trimEnd()}${marker}${normalized.slice(-tailBudget).trimStart()}`;
+}
+
+function normalizePromptText(value: string): string {
+  return String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function limitPromptText(value: string, maxChars: number, suffix: string): string {
+  if (value.length <= maxChars) {
+    return value;
+  }
+  const budget = maxChars - suffix.length;
+  if (budget <= 0) {
+    return value.slice(0, maxChars);
+  }
+  const headChars = Math.ceil(budget * 0.62);
+  const tailChars = budget - headChars;
+  return `${value.slice(0, headChars).trimEnd()}${suffix}${value.slice(-tailChars).trimStart()}`;
+}
 
 /**
  * Extract a brief description from tool call args for UI display.

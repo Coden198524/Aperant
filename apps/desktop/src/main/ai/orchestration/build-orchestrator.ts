@@ -11,7 +11,7 @@
  * defined in phase-protocol.ts.
  */
 
-import { readFile, unlink } from 'node:fs/promises';
+import { readFile, unlink, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { EventEmitter } from 'events';
 
@@ -31,10 +31,13 @@ import {
   buildAutocodePlanningStructuredOutputValidationRetryPrompt,
   buildAutocodeRuntimeImplementationPlanFromTasksMarkdown,
   buildAutocodeStandardTasksValidationRetryPrompt,
+  compactAutocodeRetryText,
   formatAutocodeCodingRecoveryHints,
+  formatAutocodeRetryErrorLines,
   isAutocodeImplementationPlanFileFailure,
   isAutocodeWriteToolPlanOutputFailure,
   summarizeAutocodeCodingAttemptFailure,
+  stringifyAutocodeContextMarkdown,
   validateAutocodeStandardPlanArtifacts,
   validateAutocodePlanningSchedulingMetadata,
   type AutocodeTaskRuntimeConcurrencyResolved,
@@ -63,6 +66,9 @@ import { getRetryLimits, DEFAULT_WORKFLOW_CONFIG } from './workflow-config';
 
 /** Delay between iterations when auto-continuing (ms) */
 const AUTO_CONTINUE_DELAY_MS = 500;
+const PRE_QA_RETURN_ISSUE_LIMIT = 6;
+const PRE_QA_RETURN_ISSUE_MAX_CHARS = 240;
+const PRE_QA_RETURN_REASON_MAX_CHARS = 1_800;
 
 function hasExecutableSubtasks(plan: ImplementationPlan | null): boolean {
   return plan?.phases?.some((phase) => Array.isArray(phase.subtasks) && phase.subtasks.length > 0) ?? false;
@@ -89,6 +95,29 @@ function hasSubtaskCompletionEvidence(subtask: PlanSubtask): boolean {
 
   return typeof subtask.completion_summary === 'string' &&
     subtask.completion_summary.trim().length > 0;
+}
+
+export function formatPreQAReturnToCodingReason(
+  issues: readonly string[],
+  attempt: number,
+  maxAttempts: number,
+): string {
+  const normalizedIssues = issues
+    .map((issue) => issue.replace(/\s+/g, ' ').trim())
+    .filter(Boolean);
+  const visibleIssues = normalizedIssues.length > 0
+    ? normalizedIssues
+    : ['Quality checks reported failure without details.'];
+  const issuesSummary = formatAutocodeRetryErrorLines(visibleIssues, {
+    maxErrors: PRE_QA_RETURN_ISSUE_LIMIT,
+    maxCharsPerError: PRE_QA_RETURN_ISSUE_MAX_CHARS,
+    bulletPrefix: '',
+  }).join('; ');
+
+  return compactAutocodeRetryText(
+    `Pre-QA quality checks failed (attempt ${attempt}/${maxAttempts}) - ${issuesSummary}. Fix these issues before QA review.`,
+    PRE_QA_RETURN_REASON_MAX_CHARS,
+  );
 }
 
 // =============================================================================
@@ -269,6 +298,91 @@ function isDocumentationWorkflow(plan: ImplementationPlan | null): boolean {
   const feature = plan?.feature?.toLowerCase() ?? '';
   return /\b(documentation|document|docs|markdown|source analysis)\b/i.test(feature) ||
     /(\u6587\u6863|\u6e90\u7801\u5206\u6790|\u4ee3\u7801\u5206\u6790)/.test(feature);
+}
+
+function asRecord(value: unknown): Record<string, unknown> | null {
+  return value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : null;
+}
+
+function stringFrom(value: unknown): string {
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function stringArrayFrom(value: unknown): string[] {
+  return Array.isArray(value)
+    ? value.map(stringFrom).filter(Boolean)
+    : [];
+}
+
+function isProjectDocumentationTaskMetadata(value: unknown): boolean {
+  const metadata = asRecord(value);
+  if (!metadata) {
+    return false;
+  }
+
+  return metadata.sourceType === 'project_docs' ||
+    typeof metadata.projectDocumentType === 'string' ||
+    typeof metadata.projectDocumentOutputDir === 'string' ||
+    Array.isArray(metadata.projectDocumentOutputs);
+}
+
+function buildFallbackProjectDocumentationContext(metadata: Record<string, unknown>): Record<string, unknown> {
+  const outputDir = stringFrom(metadata.projectDocumentOutputDir) || '.autocode/project-docs';
+  const outputs = stringArrayFrom(metadata.projectDocumentOutputs);
+  const documentType = stringFrom(metadata.projectDocumentType) || 'full';
+  const language = stringFrom(metadata.language) || 'en';
+  const supportOutputs = [
+    `${outputDir}/doc_outline.md`,
+    `${outputDir}/evidence_index.md`,
+  ];
+  const filesToModify = [...outputs, ...supportOutputs];
+  const evidenceSources = [
+    'task_metadata.json project documentation metadata',
+    'requirements.md project documentation requirements',
+    'spec.md project documentation scope',
+  ];
+
+  return {
+    task_description: stringFrom(metadata.taskTitle) || 'Generate project documentation reference pack',
+    workflow_type: 'documentation',
+    project_documentation: {
+      document_type: documentType,
+      language,
+      output_dir: outputDir,
+      outputs: filesToModify.map((path) => ({ path })),
+      future_usage: ['spec-phase-context', 'coding-phase-context'],
+    },
+    files_to_modify: filesToModify,
+    files_to_reference: [
+      'README*',
+      'package.json',
+      'src/**/*',
+      'apps/**/*',
+      'libs/**/*',
+      'docs/**/*',
+    ],
+    implementation_notes: [
+      'Fallback context for a project documentation task.',
+      'Documentation generation must cite source files or mark claims as inference.',
+    ],
+    risks: [
+      `Fallback context was generated because ${AUTOCODE_TASK_ARTIFACTS.context} was missing.`,
+    ],
+    verification_suggestions: [
+      `Confirm ${supportOutputs[0]} is structured Markdown.`,
+      `Confirm ${supportOutputs[1]} is structured Markdown.`,
+      'Confirm generated Markdown cites source/evidence files.',
+    ],
+    evidence_sources: evidenceSources.map((source) => ({
+      path: source,
+      proves: source,
+      confidence: 'medium',
+    })),
+    assumptions: [],
+    created_at: new Date().toISOString(),
+  };
 }
 
 interface PlanPhase {
@@ -523,22 +637,49 @@ export class BuildOrchestrator extends EventEmitter {
   private async validateStandardPlanArtifactQuality(
     tasksMarkdown?: string,
   ): Promise<string[]> {
-    const [specMarkdown, requirementsMarkdown, contextJson] = await Promise.all([
+    const [specMarkdown, requirementsMarkdown, rawContextMarkdown] = await Promise.all([
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.specFile),
       this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.requirements),
-      this.readOptionalJsonPlanArtifact('context.json'),
+      this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.context),
     ]);
+    const contextMarkdown = await this.ensureProjectDocumentationContextArtifact(rawContextMarkdown);
     const result = validateAutocodeStandardPlanArtifacts({
       specMarkdown,
       requirementsMarkdown,
       tasksMarkdown: tasksMarkdown ?? await this.readOptionalPlanArtifact(AUTOCODE_TASK_ARTIFACTS.tasks),
-      contextJson,
+      contextMarkdown,
       requireSpecEvidence: true,
       requireRequirementsEvidence: true,
       requireTaskEvidence: true,
       requireContextEvidence: true,
     });
     return result.errors;
+  }
+
+  private async ensureProjectDocumentationContextArtifact(contextMarkdown: string | null): Promise<string | null> {
+    if (contextMarkdown !== undefined && contextMarkdown !== null) {
+      return contextMarkdown;
+    }
+
+    const metadata = asRecord(await this.readOptionalJsonPlanArtifact(AUTOCODE_TASK_ARTIFACTS.taskMetadata));
+    if (!metadata || !isProjectDocumentationTaskMetadata(metadata)) {
+      return contextMarkdown;
+    }
+
+    const fallbackContext = buildFallbackProjectDocumentationContext(metadata);
+    try {
+      const fallbackMarkdown = stringifyAutocodeContextMarkdown(fallbackContext);
+      await writeFile(
+        join(this.config.specDir, AUTOCODE_TASK_ARTIFACTS.context),
+        fallbackMarkdown,
+        'utf-8',
+      );
+      this.emitTyped('log', `Wrote fallback ${AUTOCODE_TASK_ARTIFACTS.context} for project documentation task`);
+      return fallbackMarkdown;
+    } catch (error) {
+      this.emitTyped('log', `Failed to write fallback project documentation ${AUTOCODE_TASK_ARTIFACTS.context}: ${error}`);
+      return contextMarkdown;
+    }
   }
 
   private async readOptionalPlanArtifact(fileName: string): Promise<string | null> {
@@ -1001,7 +1142,14 @@ export class BuildOrchestrator extends EventEmitter {
         return { success: true };
       }
 
-      if ((qaStatus === 'failed' || qaStatus === 'unknown') && cycle < maxQACycles - 1) {
+      if (qaStatus === 'unknown' && cycle < maxQACycles - 1) {
+        this.emitTyped('log', `QA status unknown - retrying reviewer without fixer (cycle ${cycle + 1}/${maxQACycles})`);
+        await this.resetQAReport();
+        this.transitionPhase('qa_review', 'Re-running QA review for a clear verdict');
+        continue;
+      }
+
+      if (qaStatus === 'failed' && cycle < maxQACycles - 1) {
         this.emitTyped('log', `QA ${qaStatus} - running fixer (cycle ${cycle + 1}/${maxQACycles})`);
         // Run QA fixer — mark qa_review completed BEFORE transitioning to qa_fixing
         // (the phase protocol requires qa_review in completedPhases for the transition)
@@ -1079,9 +1227,12 @@ export class BuildOrchestrator extends EventEmitter {
         this.qaReturnToCodingCount = 0;
       } else {
         this.qaReturnToCodingCount++;
-        const issuesSummary = preQAResult.issues.join('; ');
         return this.resumeCodingFromQA(
-          `Pre-QA quality checks failed (attempt ${this.qaReturnToCodingCount}/${this.MAX_QA_RETURNS}) - ${issuesSummary}. Fix these issues before QA review.`
+          formatPreQAReturnToCodingReason(
+            preQAResult.issues,
+            this.qaReturnToCodingCount,
+            this.MAX_QA_RETURNS,
+          ),
         );
       }
     } else {

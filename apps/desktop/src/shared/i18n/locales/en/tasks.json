@@ -220,6 +220,20 @@
     "showMore": "Show more",
     "showLess": "Show less"
   },
+  "detail": {
+    "requestsShort": "Steps",
+    "requests": "Model steps",
+    "promptTokensShort": "Input",
+    "promptTokens": "Input Tokens",
+    "completionTokensShort": "Output",
+    "completionTokens": "Output Tokens",
+    "totalTokensShort": "Total",
+    "totalTokens": "Total Tokens",
+    "tokensLabel": "Tokens",
+    "thinkingTokens": "Thinking Tokens",
+    "cacheReadTokens": "Cache Read Tokens",
+    "cacheCreationTokens": "Cache Write Tokens"
+  },
   "images": {
     "removeImageAriaLabel": "Remove image {{filename}}",
     "pasteHint": "Tip: Paste screenshots directly with {{shortcut}} to add reference images."
@@ -447,7 +461,34 @@
     "modelWorking": "Working...",
     "modelWorkingDescription": "The model is active. Output will appear here when it starts responding.",
     "jumpToLatest": "Latest",
-    "streamChunkCount": "{{count}} chunks"
+    "streamChunkCount": "{{count}} chunks",
+    "collapsedLog": "collapsed",
+    "expandDetail": "Expand log detail",
+    "collapseDetail": "Collapse log detail",
+    "internalEventCollapsed": "Internal Codex event log collapsed.",
+    "codexToolErrorCollapsed": "Codex tool error log collapsed.",
+    "codexJsonParseErrorCollapsed": "PowerShell JSON parse failure log collapsed.",
+    "more": "More",
+    "less": "Less",
+    "showOutput": "Show output",
+    "hideOutput": "Hide output",
+    "modelTooltip": "Model: {{model}}",
+    "thinkingTooltip": "Thinking: {{thinking}}",
+    "thinkingLabels": {
+      "low": "Low",
+      "medium": "Med",
+      "high": "High",
+      "xhigh": "XHigh"
+    },
+    "toolLabels": {
+      "reading": "Reading",
+      "searchingFiles": "Searching files",
+      "searchingCode": "Searching code",
+      "editing": "Editing",
+      "writing": "Writing",
+      "running": "Running",
+      "command": "Command"
+    }
   },
   "bulkPR": {
     "selectAllInColumn": "Select all tasks in column",

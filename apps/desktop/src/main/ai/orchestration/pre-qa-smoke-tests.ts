@@ -28,6 +28,7 @@ import {
 import { scanFiles } from '../security/secret-scanner';
 
 const execAsync = promisify(exec);
+export const PRE_QA_SMOKE_OUTPUT_MAX_CHARS = 6_000;
 
 // =============================================================================
 // Types
@@ -216,13 +217,13 @@ export async function runPreQASmokeTests(
         name: check.name,
         passed: false,
         durationMs: 0,
-        stderr: result.reason?.message || 'Check crashed',
+        stderr: compactSmokeOutput(result.reason?.message || 'Check crashed'),
       });
       issues.push({
         type: check.type,
         check: check.name,
         severity: check.severity,
-        output: result.reason?.message || 'Check crashed',
+        output: compactSmokeOutput(result.reason?.message || 'Check crashed'),
       });
     }
   }
@@ -259,13 +260,13 @@ export async function runPreQASmokeTests(
         name: check.name,
         passed: false,
         durationMs: 0,
-        stderr: errorMsg,
+        stderr: compactSmokeOutput(errorMsg),
       });
       issues.push({
         type: check.type,
         check: check.name,
         severity: check.severity,
-        output: errorMsg,
+        output: compactSmokeOutput(errorMsg),
       });
     }
   }
@@ -317,8 +318,8 @@ async function runCheck(check: SmokeCheck, projectDir: string): Promise<CheckRes
       name: check.name,
       passed: true,
       durationMs: Date.now() - startTime,
-      stdout,
-      stderr,
+      stdout: compactSmokeOutput(stdout),
+      stderr: compactSmokeOutput(stderr),
       exitCode: 0,
     };
   } catch (error: any) {
@@ -326,8 +327,8 @@ async function runCheck(check: SmokeCheck, projectDir: string): Promise<CheckRes
       name: check.name,
       passed: false,
       durationMs: Date.now() - startTime,
-      stdout: error.stdout || '',
-      stderr: error.stderr || error.message || '',
+      stdout: compactSmokeOutput(error.stdout || ''),
+      stderr: compactSmokeOutput(error.stderr || error.message || ''),
       exitCode: error.code || 1,
     };
   }
@@ -348,8 +349,8 @@ async function runProjectTestCheck(projectDir: string): Promise<CheckResult> {
       name: 'unit_tests_project',
       passed: true,
       durationMs: Date.now() - startTime,
-      stdout,
-      stderr,
+      stdout: compactSmokeOutput(stdout),
+      stderr: compactSmokeOutput(stderr),
       exitCode: 0,
     };
   } catch (error: any) {
@@ -357,8 +358,8 @@ async function runProjectTestCheck(projectDir: string): Promise<CheckResult> {
       name: 'unit_tests_project',
       passed: false,
       durationMs: Date.now() - startTime,
-      stdout: error.stdout || '',
-      stderr: error.stderr || error.message || '',
+      stdout: compactSmokeOutput(error.stdout || ''),
+      stderr: compactSmokeOutput(error.stderr || error.message || ''),
       exitCode: error.code || 1,
     };
   }
@@ -563,4 +564,22 @@ async function hasBiomeConfig(projectDir: string): Promise<boolean> {
  */
 export function formatSmokeTestResults(result: SmokeTestResult): string {
   return formatAutocodeSmokeTestResults(result);
+}
+
+export function compactSmokeOutput(value: unknown): string {
+  const normalized = String(value ?? '').replace(/\r\n/g, '\n').trim();
+  if (normalized.length <= PRE_QA_SMOKE_OUTPUT_MAX_CHARS) {
+    return normalized;
+  }
+
+  const marker = `\n\n...[smoke output truncated, ${normalized.length} chars total]...\n\n`;
+  const budget = Math.max(0, PRE_QA_SMOKE_OUTPUT_MAX_CHARS - marker.length);
+  const headLength = Math.floor(budget * 0.7);
+  const tailLength = budget - headLength;
+
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    marker,
+    normalized.slice(Math.max(0, normalized.length - tailLength)).trimStart(),
+  ].join('');
 }

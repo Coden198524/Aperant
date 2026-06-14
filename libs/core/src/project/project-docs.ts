@@ -1,6 +1,7 @@
 import { existsSync, readFileSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS, normalizeAutocodeProjectDataDirName } from '../tasks/artifacts.js';
+import { stringifyAutocodeContextMarkdown } from '../tasks/plan-quality.js';
 import {
   createAutocodeTask,
   listAutocodeTasks,
@@ -61,6 +62,8 @@ export interface AutocodeProjectDocumentationTaskPlan {
   title: string;
   description: string;
   specMarkdown: string;
+  contextData: Record<string, unknown>;
+  contextMarkdown: string;
   implementationPlan: MutableAutocodePlan;
   metadata: AutocodeTaskMetadata;
   requirements: AutocodeTaskRequirements;
@@ -86,6 +89,7 @@ export interface BuildAutocodeProjectDocsReferencePromptInput {
   projectRoot: string;
   dataDirName?: string;
   maxBytes?: number;
+  language?: string;
 }
 
 export const AUTOCODE_PROJECT_DOC_TYPES: readonly AutocodeProjectDocType[] = [
@@ -146,7 +150,7 @@ const INDEX_OUTPUT: Omit<AutocodeProjectDocumentOutput, 'relativePath' | 'absolu
   purpose: 'Index the generated project documentation pack and explain how future spec and coding agents should use it.',
 };
 
-const AUTOCODE_PROJECT_DOC_DEFINITIONS_ZH: readonly AutocodeProjectDocDefinition[] = [
+const AUTOCODE_PROJECT_DOC_DEFINITIONS_ZH_READABLE: readonly AutocodeProjectDocDefinition[] = [
   {
     type: 'product',
     title: '产品文档',
@@ -191,7 +195,7 @@ const AUTOCODE_PROJECT_DOC_DEFINITIONS_ZH: readonly AutocodeProjectDocDefinition
   },
 ] as const;
 
-const INDEX_OUTPUT_ZH: Omit<AutocodeProjectDocumentOutput, 'relativePath' | 'absolutePath'> = {
+const INDEX_OUTPUT_ZH_READABLE: Omit<AutocodeProjectDocumentOutput, 'relativePath' | 'absolutePath'> = {
   type: 'index',
   title: '项目文档索引',
   purpose: '索引生成的项目文档包，并说明后续需求分析和编码 Agent 应如何使用这些文档。',
@@ -204,8 +208,13 @@ const REFERENCE_FILE_ORDER = [
   AUTOCODE_PROJECT_DOCS_PRODUCT_FILE_NAME,
 ] as const;
 
-const DEFAULT_REFERENCE_MAX_BYTES = 12_000;
-const PER_FILE_REFERENCE_MAX_BYTES = 2_400;
+const DEFAULT_REFERENCE_MAX_BYTES = 4_200;
+const PER_FILE_REFERENCE_MAX_BYTES = 900;
+const PROJECT_DOC_REFERENCE_SOURCE_READ_MAX_BYTES = 40_000;
+const PROJECT_DOC_REFERENCE_HEADING_LIMIT = 8;
+const PROJECT_DOC_REFERENCE_BULLET_LIMIT = 10;
+const PROJECT_DOC_REFERENCE_PARAGRAPH_LIMIT = 3;
+const PROJECT_DOC_REFERENCE_LINE_MAX_BYTES = 180;
 type ProjectDocsLanguage = 'en' | 'zh-CN';
 
 export function isAutocodeProjectDocType(value: string): value is AutocodeProjectDocType {
@@ -263,6 +272,7 @@ export function buildAutocodeProjectDocumentationTaskPlan(
     ...metadataBase,
     runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency(metadataBase),
   };
+  const evidenceSources = buildProjectDocsEvidenceSources(outputs, outline, evidenceIndex);
   const requirements: AutocodeTaskRequirements = {
     workflow_type: 'documentation',
     task_description: description,
@@ -272,6 +282,7 @@ export function buildAutocodeProjectDocumentationTaskPlan(
         ? '除文件名、命令、代码标识符和必要英文专有名词外，所有生成的 Markdown 正文、标题、表格说明和总结必须使用简体中文。'
         : 'Write generated Markdown prose, headings, table descriptions, and summaries in English unless project source evidence requires quoted identifiers.',
     ],
+    evidence_sources: evidenceSources,
     project_documentation: {
       document_type: documentType,
       language,
@@ -285,10 +296,24 @@ export function buildAutocodeProjectDocumentationTaskPlan(
     },
   };
 
+  const contextData = buildProjectDocsContextData({
+    description,
+    documentType,
+    language,
+    outputDir,
+    outputs,
+    outline,
+    evidenceIndex,
+    evidenceSources,
+    now: input.now,
+  });
+
   return {
     title,
     description,
     specMarkdown: buildProjectDocsSpecMarkdown(title, description, outputs, language),
+    contextData,
+    contextMarkdown: stringifyAutocodeContextMarkdown(contextData),
     implementationPlan: buildProjectDocsImplementationPlan({
       title,
       description,
@@ -299,6 +324,7 @@ export function buildAutocodeProjectDocumentationTaskPlan(
       finalMarkdown,
       outline,
       evidenceIndex,
+      evidenceSources,
       now: input.now,
     }),
     metadata,
@@ -330,6 +356,7 @@ export function createAutocodeProjectDocumentationTask(
     now: input.now,
     prepareSpecArtifacts: ({ specDir }) => {
       writeFileSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.specFile), `${plan.specMarkdown.trimEnd()}\n`, 'utf8');
+      writeFileSync(join(specDir, AUTOCODE_TASK_ARTIFACTS.context), `${plan.contextMarkdown.trimEnd()}\n`, 'utf8');
       return {
         metadata: plan.metadata,
         requirements: plan.requirements,
@@ -361,6 +388,7 @@ export function collectAutocodeProjectDocsReferences(
     return [];
   }
 
+  const language = resolveProjectDocsLanguage(input.language);
   const outputDir = getAutocodeProjectDocsRelativeDir(input.dataDirName);
   const references: AutocodeProjectDocsReference[] = [];
   let remainingBytes = maxBytes;
@@ -375,13 +403,19 @@ export function collectAutocodeProjectDocsReferences(
       continue;
     }
 
-    const content = readLimitedTextFile(absolutePath, Math.min(PER_FILE_REFERENCE_MAX_BYTES, remainingBytes));
+    const rawContent = readLimitedTextFile(absolutePath, PROJECT_DOC_REFERENCE_SOURCE_READ_MAX_BYTES);
+    const content = compactProjectDocReferenceContent(
+      rawContent,
+      relativePath,
+      language,
+      Math.min(PER_FILE_REFERENCE_MAX_BYTES, remainingBytes),
+    );
     if (!content.trim()) {
       continue;
     }
 
     references.push({
-      title: titleFromProjectDocFileName(fileName),
+      title: titleFromProjectDocFileName(fileName, language),
       relativePath,
       content,
     });
@@ -399,12 +433,35 @@ export function buildAutocodeProjectDocsReferencePrompt(
     return '';
   }
 
-  const lines = [
-    '## Project Documentation Reference',
-    '',
-    'Use these generated project documents as stable context for specs and coding. Prefer them for product intent, architecture boundaries, conventions, verification commands, and known risks. If a document conflicts with source code, trust source code and note the drift.',
-    '',
-  ];
+  const language = resolveProjectDocsLanguage(input.language);
+  const availablePaths = collectAutocodeProjectDocsReferencePaths(input);
+  if (isChineseProjectDocsLanguage(language)) {
+    return buildAutocodeProjectDocsReferencePromptZh(references, availablePaths);
+  }
+  const lines = language === 'zh-CN'
+    ? [
+        '## 项目文档参考',
+        '',
+        '将这些已生成的项目文档作为规格和编码的稳定上下文。优先用它们理解产品意图、架构边界、约定、验证命令和已知风险。如果文档与源码冲突，请以源码为准并说明差异。',
+        '',
+      ]
+    : [
+        '## Project Documentation Reference',
+        '',
+        'Use these generated project documents as stable context for specs and coding. Prefer them for product intent, architecture boundaries, conventions, verification commands, and known risks. If a document conflicts with source code, trust source code and note the drift.',
+        'This is an index summary, not the full documentation. Read the referenced Markdown file directly when exact wording or deeper detail is needed.',
+        '',
+      ];
+
+  if (availablePaths.length > 0) {
+    lines.push(language === 'zh-CN'
+      ? '\u53ef\u7528\u6587\u6863\uff1a'
+      : 'Available documents:');
+    for (const reference of availablePaths) {
+      lines.push(`- ${reference.relativePath}`);
+    }
+    lines.push('');
+  }
 
   for (const reference of references) {
     lines.push(`### ${reference.title} (${reference.relativePath})`);
@@ -413,6 +470,57 @@ export function buildAutocodeProjectDocsReferencePrompt(
   }
 
   return lines.join('\n').trimEnd();
+}
+
+function buildAutocodeProjectDocsReferencePromptZh(
+  references: AutocodeProjectDocsReference[],
+  availablePaths: Array<Pick<AutocodeProjectDocsReference, 'title' | 'relativePath'>>,
+): string {
+  const lines = [
+    '## 项目文档参考',
+    '',
+    '将这些已生成的项目文档作为规格和编码的稳定上下文。优先用它们理解产品意图、架构边界、约定、验证命令和已知风险。',
+    '这是索引摘要，不是完整文档。需要精确表述或更深细节时，请直接读取引用的 Markdown 文件。如果文档与源码冲突，请以源码为准并说明差异。',
+    '',
+  ];
+
+  if (availablePaths.length > 0) {
+    lines.push('可用文档：');
+    for (const reference of availablePaths) {
+      lines.push(`- ${reference.relativePath}`);
+    }
+    lines.push('');
+  }
+
+  for (const reference of references) {
+    lines.push(`### ${reference.title} (${reference.relativePath})`);
+    lines.push(reference.content.trim());
+    lines.push('');
+  }
+
+  return lines.join('\n').trimEnd();
+}
+
+function collectAutocodeProjectDocsReferencePaths(
+  input: BuildAutocodeProjectDocsReferencePromptInput,
+): Array<Pick<AutocodeProjectDocsReference, 'title' | 'relativePath'>> {
+  const language = resolveProjectDocsLanguage(input.language);
+  const outputDir = getAutocodeProjectDocsRelativeDir(input.dataDirName);
+  const references: Array<Pick<AutocodeProjectDocsReference, 'title' | 'relativePath'>> = [];
+
+  for (const fileName of REFERENCE_FILE_ORDER) {
+    const relativePath = joinRelativePath(outputDir, fileName);
+    const absolutePath = join(input.projectRoot, relativePath);
+    if (!existsSync(absolutePath)) {
+      continue;
+    }
+    references.push({
+      title: titleFromProjectDocFileName(fileName, language),
+      relativePath,
+    });
+  }
+
+  return references;
 }
 
 function buildDocumentOutputs(
@@ -452,21 +560,8 @@ function buildProjectDocsTaskDescription(
   outputDir: string,
   language: ProjectDocsLanguage,
 ): string {
-  if (language === 'zh-CN') {
-    return [
-      `为后续需求分析和编码上下文生成${documentType === 'full' ? '完整项目文档包' : `${projectDocTypeLabel(documentType, language)}项目文档`}。`,
-      '',
-      '这是纯文档任务。不要修改产品源码。',
-      `请将输出写入 \`${outputDir}\`。`,
-      '',
-      '必须生成的输出：',
-      ...outputs.map((output) => `- \`${output.relativePath}\`：${output.purpose}`),
-      `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME)}\`：JSON 大纲，包含 document_type、audience、sections 和 source references。`,
-      `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME)}\`：JSON 证据索引，包含 files_read、evidence_backed_claims、inferred_claims、risks 和 open_questions。`,
-      '',
-      '除文件名、命令、代码标识符和必要英文专有名词外，所有生成的 Markdown 正文、标题、表格说明和总结必须使用简体中文。',
-      '关键结论必须基于源码文件证据；如果属于推断，必须明确标注为推断。需要覆盖产品意图、架构、约定、验证命令、风险和待确认问题。',
-    ].join('\n');
+  if (isChineseProjectDocsLanguage(language)) {
+    return buildProjectDocsTaskDescriptionZh(documentType, outputs, outputDir);
   }
 
   return [
@@ -477,10 +572,34 @@ function buildProjectDocsTaskDescription(
     '',
     'Required outputs:',
     ...outputs.map((output) => `- \`${output.relativePath}\`: ${output.purpose}`),
-    `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME)}\`: JSON outline with document_type, audience, sections, and source references.`,
-    `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME)}\`: JSON evidence index with files_read, evidence_backed_claims, inferred_claims, risks, and open_questions.`,
+    `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME)}\`: Markdown outline with document type, audience, sections, and source references.`,
+    `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME)}\`: Markdown evidence index with files read, evidence-backed claims, inferred claims, risks, and open questions.`,
     '',
     'Ground major claims in source files or mark them as inference. Include product intent, architecture, conventions, verification commands, risks, and open questions.',
+  ].join('\n');
+}
+
+function buildProjectDocsTaskDescriptionZh(
+  documentType: AutocodeProjectDocType,
+  outputs: AutocodeProjectDocumentOutput[],
+  outputDir: string,
+): string {
+  const docLabel = documentType === 'full'
+    ? '完整项目文档包'
+    : `${projectDocTypeLabel(documentType, 'zh-CN')}项目文档`;
+  return [
+    `为后续需求分析和编码上下文生成${docLabel}。`,
+    '',
+    '这是纯文档任务。不要修改产品源码。',
+    `请将输出写入 \`${outputDir}\`。`,
+    '',
+    '必须生成的输出：',
+    ...outputs.map((output) => `- \`${output.relativePath}\`：${output.purpose}`),
+    `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME)}\`：Markdown 大纲，包含文档类型、目标读者、章节、每节回答的问题和预计引用的源文件。`,
+    `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME)}\`：Markdown 证据索引，包含已阅读文件、有证据支持的结论、推断项、风险和开放问题。`,
+    '',
+    '除文件名、命令、代码标识符和必要英文专有名词外，所有生成的 Markdown 正文、标题、表格说明和总结必须使用简体中文。',
+    '关键结论必须基于源码文件证据；如果属于推断，必须明确标注为推断。需要覆盖产品意图、架构、约定、验证命令、风险和待确认问题。',
   ].join('\n');
 }
 
@@ -491,27 +610,8 @@ function buildProjectDocsSpecMarkdown(
   language: ProjectDocsLanguage,
 ): string {
   const docRows = outputs.map((output) => `| ${output.type} | \`${output.relativePath}\` | ${output.purpose} |`);
-  if (language === 'zh-CN') {
-    return [
-      `# ${title}`,
-      '',
-      '## 目标',
-      description,
-      '',
-      '## 输出',
-      '| 类型 | 路径 | 用途 |',
-      '| --- | --- | --- |',
-      ...docRows,
-      '',
-      '## 质量要求',
-      '- 文档必须基于源码证据生成，不能写成通用猜测。',
-      '- 每个关键结论都要引用文件路径，或明确标注为推断。',
-      '- 后续需求分析可以用这些文档界定需求范围、依赖关系和验收标准。',
-      '- 后续编码会话可以用这些文档定位入口、遵循约定并选择验证命令。',
-      '- 本任务不得修改产品源码。',
-      '- 除文件名、命令、代码标识符和必要英文专有名词外，所有生成的 Markdown 正文、标题、表格说明和总结必须使用简体中文。',
-      '',
-    ].join('\n');
+  if (isChineseProjectDocsLanguage(language)) {
+    return buildProjectDocsSpecMarkdownZh(title, description, docRows);
   }
 
   return [
@@ -535,6 +635,33 @@ function buildProjectDocsSpecMarkdown(
   ].join('\n');
 }
 
+function buildProjectDocsSpecMarkdownZh(
+  title: string,
+  description: string,
+  docRows: string[],
+): string {
+  return [
+    `# ${title}`,
+    '',
+    '## 目标',
+    description,
+    '',
+    '## 输出',
+    '| 类型 | 路径 | 用途 |',
+    '| --- | --- | --- |',
+    ...docRows,
+    '',
+    '## 质量要求',
+    '- 文档必须基于源码证据生成，不能写成通用猜测。',
+    '- 每个关键结论都要引用文件路径，或明确标注为推断。',
+    '- 后续需求分析可以用这些文档界定需求范围、依赖关系和验收标准。',
+    '- 后续编码会话可以用这些文档定位入口、遵循约定并选择验证命令。',
+    '- 本任务不得修改产品源码。',
+    '- 除文件名、命令、代码标识符和必要英文专有名词外，所有生成的 Markdown 正文、标题、表格说明和总结必须使用简体中文。',
+    '',
+  ].join('\n');
+}
+
 function buildProjectDocsImplementationPlan(input: {
   title: string;
   description: string;
@@ -545,8 +672,13 @@ function buildProjectDocsImplementationPlan(input: {
   finalMarkdown: string;
   outline: string;
   evidenceIndex: string;
+  evidenceSources: string[];
   now?: string;
 }): MutableAutocodePlan {
+  if (isChineseProjectDocsLanguage(input.language)) {
+    return buildProjectDocsImplementationPlanZh(input);
+  }
+
   const outputPaths = [
     ...input.outputs.map((output) => output.relativePath),
     input.outline,
@@ -607,6 +739,8 @@ function buildProjectDocsImplementationPlan(input: {
                 ].join('\n'),
             status: 'pending',
             files_to_create: outputPaths,
+            depends_on: [],
+            evidence: input.evidenceSources.join('; '),
             pattern_files: [
               'README*',
               'package.json',
@@ -667,6 +801,276 @@ function buildProjectDocsImplementationPlan(input: {
   };
 }
 
+function buildProjectDocsImplementationPlanZh(input: {
+  title: string;
+  description: string;
+  documentType: AutocodeProjectDocType;
+  language: ProjectDocsLanguage;
+  outputDir: string;
+  outputs: AutocodeProjectDocumentOutput[];
+  finalMarkdown: string;
+  outline: string;
+  evidenceIndex: string;
+  evidenceSources: string[];
+  now?: string;
+}): MutableAutocodePlan {
+  const outputPaths = [
+    ...input.outputs.map((output) => output.relativePath),
+    input.outline,
+    input.evidenceIndex,
+  ];
+  const documentDefinitions = input.documentType === 'full'
+    ? [...AUTOCODE_PROJECT_DOC_DEFINITIONS_ZH_READABLE]
+    : [getAutocodeProjectDocDefinition(input.documentType, 'zh-CN')];
+  const sectionRequirements = documentDefinitions.flatMap((definition) => [
+    `${definition.title}（${definition.fileName}），面向${definition.audience}：`,
+    ...definition.requiredSections.map((section) => `  - ${section}`),
+  ]);
+
+  return {
+    feature: input.title,
+    description: input.description,
+    workflow_type: 'documentation',
+    status: 'pending',
+    planStatus: 'pending',
+    created_at: input.now,
+    updated_at: input.now,
+    phases: [
+      {
+        id: '1',
+        name: '项目文档',
+        depends_on: [],
+        subtasks: [
+          {
+            id: '1.1',
+            title: '生成项目文档参考包',
+            description: [
+              '分析仓库并生成所需的项目文档。',
+              '',
+              '优先从 README、package/build 清单、入口点、公开接口、配置、测试和已有文档开始阅读，只在必要时扩展范围。',
+              '',
+              '必须覆盖的文档内容：',
+              ...sectionRequirements,
+              '',
+              '索引文档必须链接已生成的文档，并说明后续需求分析/编码会话应如何使用它们。',
+              '只允许创建或更新列出的文档输出。',
+              '除文件名、命令、代码标识符和必要英文专有名词外，所有生成的 Markdown 正文、标题、表格说明和总结必须使用简体中文。',
+            ].join('\n'),
+            status: 'pending',
+            files_to_create: outputPaths,
+            depends_on: [],
+            evidence: input.evidenceSources.join('; '),
+            pattern_files: [
+              'README*',
+              'package.json',
+              'apps/*/package.json',
+              'libs/*/package.json',
+              'src/**/*',
+              'apps/**/*',
+              'libs/**/*',
+              'docs/**/*',
+            ],
+            verification: {
+              type: 'manual',
+              run: `确认 ${input.finalMarkdown}、${input.outline} 和 ${input.evidenceIndex} 已存在；生成的 Markdown 使用简体中文，引用源码/证据文件，覆盖流程或状态/数据流转，并列出风险或待确认问题。`,
+            },
+          },
+        ],
+      },
+    ],
+    documentation_depth: 'architecture',
+    documentation_profile: 'project-reference',
+    documentation_focus: [
+      '产品意图',
+      '架构边界',
+      '技术约定',
+      '需求阶段上下文',
+      '编码阶段上下文',
+      '验证命令',
+      '风险和待确认问题',
+      '简体中文文档输出',
+    ],
+    document_outputs: {
+      base: 'project',
+      final_markdown: input.finalMarkdown,
+      outline: input.outline,
+      evidence_index: input.evidenceIndex,
+      markdown_files: input.outputs.map((output) => output.relativePath),
+    },
+    source_task: {
+      kind: 'project-documentation',
+      document_type: input.documentType,
+      output_dir: input.outputDir,
+      future_usage: ['spec-phase-context', 'coding-phase-context'],
+    },
+  };
+}
+
+function buildProjectDocsEvidenceSources(
+  outputs: AutocodeProjectDocumentOutput[],
+  outline: string,
+  evidenceIndex: string,
+): string[] {
+  return [
+    'spec.md project documentation scope',
+    'requirements.md project documentation requirements',
+    ...outputs.map((output) => `${output.relativePath} planned project documentation output`),
+    `${outline} planned documentation outline output`,
+    `${evidenceIndex} planned evidence index output`,
+    'project source/docs read during documentation generation',
+  ];
+}
+
+function buildProjectDocsContextData(input: {
+  description: string;
+  documentType: AutocodeProjectDocType;
+  language: ProjectDocsLanguage;
+  outputDir: string;
+  outputs: AutocodeProjectDocumentOutput[];
+  outline: string;
+  evidenceIndex: string;
+  evidenceSources: string[];
+  now?: string;
+}): Record<string, unknown> {
+  if (isChineseProjectDocsLanguage(input.language)) {
+    return buildProjectDocsContextDataZh(input);
+  }
+
+  const markdownOutputs = input.outputs.map((output) => output.relativePath);
+  return {
+    task_description: input.description,
+    workflow_type: 'documentation',
+    project_documentation: {
+      document_type: input.documentType,
+      language: input.language,
+      output_dir: input.outputDir,
+      outputs: [
+        ...input.outputs.map((output) => ({
+          type: output.type,
+          path: output.relativePath,
+          purpose: output.purpose,
+        })),
+        {
+          type: 'outline',
+          path: input.outline,
+          purpose: 'Markdown outline for the generated project documentation pack.',
+        },
+        {
+          type: 'evidence_index',
+          path: input.evidenceIndex,
+          purpose: 'Markdown evidence index for source-backed documentation claims.',
+        },
+      ],
+      future_usage: ['spec-phase-context', 'coding-phase-context'],
+    },
+    files_to_modify: [...markdownOutputs, input.outline, input.evidenceIndex],
+    files_to_reference: [
+      'README*',
+      'package.json',
+      'apps/*/package.json',
+      'libs/*/package.json',
+      'src/**/*',
+      'apps/**/*',
+      'libs/**/*',
+      'docs/**/*',
+    ],
+    implementation_notes: [
+      'Documentation-only task. Do not modify product source code.',
+      'Read focused project evidence before writing the generated documentation pack.',
+      'Major claims must cite source files or be marked as inference.',
+    ],
+    risks: [
+      'Large repositories may require sampling; document uncovered areas as open questions.',
+      'Generated documentation can drift from source code and should be refreshed after major changes.',
+    ],
+    verification_suggestions: [
+      `Confirm ${input.outline} is structured Markdown.`,
+      `Confirm ${input.evidenceIndex} is structured Markdown.`,
+      'Confirm generated Markdown cites source/evidence files and lists risks or open questions.',
+    ],
+    evidence_sources: input.evidenceSources.map((source) => ({
+      path: source,
+      proves: source,
+      confidence: 'medium',
+    })),
+    assumptions: [],
+    created_at: input.now,
+  };
+}
+
+function buildProjectDocsContextDataZh(input: {
+  description: string;
+  documentType: AutocodeProjectDocType;
+  language: ProjectDocsLanguage;
+  outputDir: string;
+  outputs: AutocodeProjectDocumentOutput[];
+  outline: string;
+  evidenceIndex: string;
+  evidenceSources: string[];
+  now?: string;
+}): Record<string, unknown> {
+  const markdownOutputs = input.outputs.map((output) => output.relativePath);
+  return {
+    task_description: input.description,
+    workflow_type: 'documentation',
+    project_documentation: {
+      document_type: input.documentType,
+      language: input.language,
+      output_dir: input.outputDir,
+      outputs: [
+        ...input.outputs.map((output) => ({
+          type: output.type,
+          path: output.relativePath,
+          purpose: output.purpose,
+        })),
+        {
+          type: 'outline',
+          path: input.outline,
+          purpose: '生成项目文档包的 Markdown 大纲。',
+        },
+        {
+          type: 'evidence_index',
+          path: input.evidenceIndex,
+          purpose: '用于记录源码证据和文档结论来源的 Markdown 证据索引。',
+        },
+      ],
+      future_usage: ['spec-phase-context', 'coding-phase-context'],
+    },
+    files_to_modify: [...markdownOutputs, input.outline, input.evidenceIndex],
+    files_to_reference: [
+      'README*',
+      'package.json',
+      'apps/*/package.json',
+      'libs/*/package.json',
+      'src/**/*',
+      'apps/**/*',
+      'libs/**/*',
+      'docs/**/*',
+    ],
+    implementation_notes: [
+      '这是纯文档任务，不要修改产品源码。',
+      '先阅读聚焦的项目证据，再编写生成的项目文档包。',
+      '关键结论必须引用源码文件，或明确标注为推断。',
+    ],
+    risks: [
+      '大型仓库可能需要抽样阅读；未覆盖区域必须写入开放问题。',
+      '生成文档可能随源码演进而过期，重大变更后应刷新。',
+    ],
+    verification_suggestions: [
+      `确认 ${input.outline} 是结构化 Markdown。`,
+      `确认 ${input.evidenceIndex} 是结构化 Markdown。`,
+      '确认生成的 Markdown 引用源码/证据文件，并列出风险或开放问题。',
+    ],
+    evidence_sources: input.evidenceSources.map((source) => ({
+      path: source,
+      proves: source,
+      confidence: 'medium',
+    })),
+    assumptions: [],
+    created_at: input.now,
+  };
+}
+
 function normalizeProjectDocType(value: AutocodeProjectDocType | undefined): AutocodeProjectDocType {
   const normalized = value ?? 'full';
   if (!isAutocodeProjectDocType(normalized)) {
@@ -686,30 +1090,31 @@ function resolveProjectDocsLanguage(language?: string): ProjectDocsLanguage {
   return normalized?.startsWith('zh') ? 'zh-CN' : 'en';
 }
 
+function isChineseProjectDocsLanguage(language: ProjectDocsLanguage): boolean {
+  return language === 'zh-CN';
+}
+
 function getAutocodeProjectDocDefinitions(language?: string): readonly AutocodeProjectDocDefinition[] {
   return resolveProjectDocsLanguage(language) === 'zh-CN'
-    ? AUTOCODE_PROJECT_DOC_DEFINITIONS_ZH
+    ? AUTOCODE_PROJECT_DOC_DEFINITIONS_ZH_READABLE
     : AUTOCODE_PROJECT_DOC_DEFINITIONS;
 }
 
 function getProjectDocsIndexOutput(language: ProjectDocsLanguage): Omit<AutocodeProjectDocumentOutput, 'relativePath' | 'absolutePath'> {
-  return language === 'zh-CN' ? INDEX_OUTPUT_ZH : INDEX_OUTPUT;
+  return language === 'zh-CN' ? INDEX_OUTPUT_ZH_READABLE : INDEX_OUTPUT;
 }
 
 function projectDocTypeLabel(documentType: AutocodeProjectDocType, language: ProjectDocsLanguage): string {
   if (language !== 'zh-CN') {
     return documentType;
   }
-  switch (documentType) {
-    case 'full':
-      return '完整';
-    case 'product':
-      return '产品';
-    case 'architecture':
-      return '架构';
-    case 'technical':
-      return '技术';
-  }
+  const labels: Record<AutocodeProjectDocType, string> = {
+    full: '完整',
+    product: '产品',
+    architecture: '架构',
+    technical: '技术',
+  };
+  return labels[documentType];
 }
 
 function normalizeProjectRelativePath(value: string, name: string): string {
@@ -734,11 +1139,10 @@ function joinRelativePath(base: string, fileName: string): string {
 }
 
 function defaultProjectDocsTitle(documentType: AutocodeProjectDocType, language: ProjectDocsLanguage): string {
-  if (language === 'zh-CN') {
-    if (documentType === 'full') {
-      return '生成项目文档参考包';
-    }
-    return `生成${projectDocTypeLabel(documentType, language)}项目文档`;
+  if (isChineseProjectDocsLanguage(language)) {
+    return documentType === 'full'
+      ? '生成项目文档参考包'
+      : `生成${projectDocTypeLabel(documentType, language)}项目文档`;
   }
 
   if (documentType === 'full') {
@@ -757,13 +1161,186 @@ function requireNonEmpty(value: string, name: string): string {
 
 function readLimitedTextFile(filePath: string, maxBytes: number): string {
   const content = readFileSync(filePath, 'utf8');
+  return limitUtf8Text(content, maxBytes, '\n...[truncated]');
+}
+
+function compactProjectDocReferenceContent(
+  content: string,
+  relativePath: string,
+  language: ProjectDocsLanguage,
+  maxBytes: number,
+): string {
+  const normalized = normalizeReferenceMarkdown(content);
+  if (Buffer.byteLength(normalized, 'utf8') <= maxBytes) {
+    return normalized;
+  }
+
+  const headings: string[] = [];
+  const bullets: string[] = [];
+  const paragraphs: string[] = [];
+  let inFence = false;
+
+  for (const rawLine of normalized.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      continue;
+    }
+
+    if (/^#{1,4}\s+\S/.test(line)) {
+      pushUnique(headings, line.replace(/^#{1,4}\s+/, ''));
+      continue;
+    }
+    if (/^(?:[-*+]|\d+[.)])\s+\S/.test(line)) {
+      pushUnique(bullets, line.replace(/^(?:[-*+]|\d+[.)])\s+/, ''));
+      continue;
+    }
+    if (line.length >= 36) {
+      pushUnique(paragraphs, line);
+    }
+  }
+
+  const compactLines = [
+    language === 'zh-CN'
+      ? '> \u7d27\u51d1\u6458\u5f55\uff1b\u9700\u8981\u5b8c\u6574\u539f\u6587\u65f6\uff0c\u8bf7\u7cbe\u786e\u8bfb\u53d6\u6b64\u6587\u6863\u3002'
+      : '> Compact excerpt; read this document directly when exact wording or deeper detail is needed.',
+    `> Source: ${relativePath}`,
+    '',
+  ];
+
+  appendReferenceSection(
+    compactLines,
+    language === 'zh-CN' ? '\u5173\u952e\u6807\u9898' : 'Key headings',
+    selectHeadTailItems(headings, PROJECT_DOC_REFERENCE_HEADING_LIMIT),
+  );
+  appendReferenceSection(
+    compactLines,
+    language === 'zh-CN' ? '\u6458\u8981' : 'Selected notes',
+    selectHeadTailItems(paragraphs, PROJECT_DOC_REFERENCE_PARAGRAPH_LIMIT),
+  );
+  appendReferenceSection(
+    compactLines,
+    language === 'zh-CN' ? '\u5173\u952e\u8981\u70b9' : 'Selected bullets',
+    selectHeadTailItems(bullets, PROJECT_DOC_REFERENCE_BULLET_LIMIT),
+  );
+
+  if (headings.length === 0 && bullets.length === 0 && paragraphs.length === 0) {
+    compactLines.push(limitUtf8Text(normalized, Math.max(0, maxBytes - 80), '\n...[truncated]'));
+  }
+
+  return limitUtf8Text(
+    compactLines.join('\n').trimEnd(),
+    maxBytes,
+    `\n...[compact reference truncated; read ${relativePath}]`,
+  );
+}
+
+function normalizeReferenceMarkdown(content: string): string {
+  return content
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function appendReferenceSection(lines: string[], title: string, items: readonly string[]): void {
+  if (items.length === 0) {
+    return;
+  }
+  lines.push(`${title}:`);
+  for (const item of items) {
+    lines.push(`- ${limitUtf8Text(item, PROJECT_DOC_REFERENCE_LINE_MAX_BYTES, '...')}`);
+  }
+  lines.push('');
+}
+
+function selectHeadTailItems(items: readonly string[], limit: number): string[] {
+  if (limit <= 0) {
+    return [];
+  }
+  if (items.length <= limit) {
+    return [...items];
+  }
+  if (limit === 1) {
+    return [items[0]];
+  }
+
+  const headCount = Math.ceil(limit * 0.6);
+  const tailCount = Math.max(0, limit - headCount);
+  return [
+    ...items.slice(0, headCount),
+    ...items.slice(items.length - tailCount),
+  ];
+}
+
+function pushUnique(items: string[], value: string): void {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized || items.includes(normalized)) {
+    return;
+  }
+  items.push(normalized);
+}
+
+function limitUtf8Text(content: string, maxBytes: number, suffix: string): string {
+  if (maxBytes <= 0) {
+    return '';
+  }
   if (Buffer.byteLength(content, 'utf8') <= maxBytes) {
     return content;
   }
-  return `${content.slice(0, maxBytes)}\n...[truncated]`;
+
+  const suffixBytes = Buffer.byteLength(suffix, 'utf8');
+  const contentBudget = Math.max(0, maxBytes - suffixBytes);
+  if (contentBudget <= 0) {
+    return takeUtf8Prefix(content, maxBytes);
+  }
+
+  const headBudget = Math.ceil(contentBudget * 0.65);
+  const tailBudget = Math.max(0, contentBudget - headBudget);
+  return `${takeUtf8Prefix(content, headBudget).trimEnd()}${suffix}${takeUtf8Suffix(content, tailBudget).trimStart()}`;
 }
 
-function titleFromProjectDocFileName(fileName: string): string {
+function takeUtf8Prefix(content: string, maxBytes: number): string {
+  let low = 0;
+  let high = content.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(content.slice(0, mid), 'utf8') <= maxBytes) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return content.slice(0, low);
+}
+
+function takeUtf8Suffix(content: string, maxBytes: number): string {
+  let low = 0;
+  let high = content.length;
+  while (low < high) {
+    const mid = Math.ceil((low + high) / 2);
+    if (Buffer.byteLength(content.slice(content.length - mid), 'utf8') <= maxBytes) {
+      low = mid;
+    } else {
+      high = mid - 1;
+    }
+  }
+  return content.slice(content.length - low);
+}
+
+function titleFromProjectDocFileName(fileName: string, language: ProjectDocsLanguage = 'en'): string {
+  if (isChineseProjectDocsLanguage(language)) {
+    if (fileName === AUTOCODE_PROJECT_DOCS_INDEX_FILE_NAME) return '项目文档索引';
+    if (fileName === AUTOCODE_PROJECT_DOCS_PRODUCT_FILE_NAME) return '产品文档';
+    if (fileName === AUTOCODE_PROJECT_DOCS_ARCHITECTURE_FILE_NAME) return '架构文档';
+    if (fileName === AUTOCODE_PROJECT_DOCS_TECHNICAL_FILE_NAME) return '技术文档';
+  }
+
   if (fileName === AUTOCODE_PROJECT_DOCS_INDEX_FILE_NAME) return 'Project Documentation Index';
   const definition = AUTOCODE_PROJECT_DOC_DEFINITIONS.find((item) => item.fileName === fileName);
   return definition?.title ?? fileName;

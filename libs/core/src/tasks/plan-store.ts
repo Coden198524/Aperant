@@ -16,6 +16,8 @@ import type {
 
 export type AutocodePlanMarkdownStatus = 'pending' | 'in_progress' | 'completed' | 'blocked' | 'failed';
 
+const MAX_AUTOCODE_PLAN_NOTE_FIELD_CHARS = 1200;
+
 export type AutocodePlanUpdateResult = MutableAutocodePlan | void | false | null;
 export type AutocodePlanUpdater = (
   plan: MutableAutocodePlan,
@@ -85,6 +87,7 @@ const MACHINE_META_KEYS = [
   'qa_stats',
   'direct_execution',
   'source_task',
+  'services_involved',
   'documentation_depth',
   'project_type',
   'documentation_profile',
@@ -106,6 +109,7 @@ export function resolveAutocodePlanSpecDir(specDirOrPlanPath: string): string {
 export function parseAutocodeImplementationPlanMarkdown(content: string): MutableAutocodePlan {
   const plan: MutableAutocodePlan = { phases: [] };
   const items: ParsedPlanItem[] = [];
+  let descriptionSectionLines: string[] | null = null;
   let current: ParsedPlanItem | undefined;
 
   for (const rawLine of content.replace(/\r\n/g, '\n').split('\n')) {
@@ -144,6 +148,16 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
       continue;
     }
 
+    if (!current && /^##\s+Description\s*$/i.test(line.trim())) {
+      descriptionSectionLines = [];
+      continue;
+    }
+
+    if (!current && descriptionSectionLines) {
+      descriptionSectionLines.push(line);
+      continue;
+    }
+
     const metadata = parsePlanMetadataLine(line);
     if (metadata && !current) {
       plan[metadata.key] = metadata.value;
@@ -171,6 +185,13 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
     }
   }
 
+  const descriptionSection = normalizeMarkdownSectionText(descriptionSectionLines);
+  if (descriptionSection) {
+    plan.description = descriptionSection;
+  } else if (typeof plan.description === 'string') {
+    plan.description = expandLegacyInlineDescriptionMarkdown(plan.description, plan.feature);
+  }
+
   plan.phases = buildPlanPhases(items);
   applySubtaskMachineMetadata(plan);
   return plan;
@@ -179,7 +200,6 @@ export function parseAutocodeImplementationPlanMarkdown(content: string): Mutabl
 export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocodePlan): string {
   const lines: string[] = ['# Implementation Plan', ''];
   addMetadataLine(lines, 'Feature', plan.feature);
-  addMetadataLine(lines, 'Description', plan.description);
   addMetadataLine(lines, 'Workflow', plan.workflow_type);
   addMetadataLine(lines, 'Status', plan.status ?? plan.planStatus);
   addMetadataLine(lines, 'Review Reason', plan.reviewReason);
@@ -193,6 +213,8 @@ export function stringifyAutocodeImplementationPlanMarkdown(plan: MutableAutocod
   if (lines[lines.length - 1] !== '') {
     lines.push('');
   }
+
+  addMarkdownSection(lines, 'Description', plan.description);
 
   const phases = Array.isArray(plan.phases) ? plan.phases : [];
   for (const [phaseIndex, phase] of phases.entries()) {
@@ -378,10 +400,10 @@ export function updateAutocodePlanSubtask(
       }
       subtask.status = normalizeMarkdownStatus(input.status);
       if (input.notes) {
-        subtask.notes = input.notes;
+        subtask.notes = compactStoredPlanNoteField(input.notes);
       }
       if (subtask.status === 'completed') {
-        const summary = input.completionSummary || input.notes;
+        const summary = compactStoredPlanNoteField(input.completionSummary || input.notes);
         if (summary) {
           subtask.completion_summary = summary;
           subtask.notes = summary;
@@ -533,9 +555,12 @@ function collectSubtaskMachineMetadata(plan: MutableAutocodePlan): Record<string
         'requirements',
         'evidence',
         'verification',
+        'service',
       ]) {
         if (subtask[key] !== undefined) {
-          fields[key] = subtask[key];
+          fields[key] = key === 'completion_summary' || key === 'notes'
+            ? compactStoredPlanNoteField(subtask[key])
+            : subtask[key];
         }
       }
       if (Object.keys(fields).length > 0) {
@@ -578,6 +603,7 @@ function applySubtaskMachineMetadata(plan: MutableAutocodePlan): void {
         'depends_on',
         'requirements',
         'verification',
+        'service',
       ]) {
         if (fieldRecord[key] !== undefined) {
           subtask[key] = fieldRecord[key];
@@ -720,8 +746,9 @@ function planItemToSubtask(item: ParsedPlanItem): MutableAutocodePlanSubtask {
   if (item.evidence || item.hasEvidenceField) subtask.evidence = item.evidence ?? '';
   if (item.verification) subtask.verification = { type: 'manual', run: item.verification };
   if (item.completion) {
-    subtask.completion_summary = item.completion;
-    subtask.notes = item.completion;
+    const completion = compactStoredPlanNoteField(item.completion);
+    subtask.completion_summary = completion;
+    subtask.notes = completion;
   }
   if (item.startedAt) subtask.started_at = item.startedAt;
   if (item.completedAt) subtask.completed_at = item.completedAt;
@@ -757,6 +784,23 @@ function addMetadataLine(lines: string[], label: string, value: unknown): void {
   const text = stringifyPlanValue(value);
   if (text) {
     lines.push(`${label}: ${compactInlineMarkdownField(text)}`);
+  }
+}
+
+function addMarkdownSection(lines: string[], heading: string, value: unknown): void {
+  const text = stringifyPlanValue(value);
+  if (!text) {
+    return;
+  }
+
+  if (lines[lines.length - 1] !== '') {
+    lines.push('');
+  }
+  lines.push(`## ${heading}`);
+  lines.push('');
+  lines.push(...text.replace(/\r\n/g, '\n').split('\n'));
+  if (lines[lines.length - 1] !== '') {
+    lines.push('');
   }
 }
 
@@ -827,6 +871,64 @@ function stringifyVerification(value: unknown): string {
 
 function compactInlineMarkdownField(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
+}
+
+function compactStoredPlanNoteField(value: unknown): string {
+  const text = stringifyPlanValue(value).trim();
+  if (text.length <= MAX_AUTOCODE_PLAN_NOTE_FIELD_CHARS) {
+    return text;
+  }
+  return `${text.slice(0, Math.max(0, MAX_AUTOCODE_PLAN_NOTE_FIELD_CHARS - 3)).trimEnd()}...`;
+}
+
+function normalizeMarkdownSectionText(lines: string[] | null): string {
+  if (!lines) {
+    return '';
+  }
+
+  const normalized = lines.map((line) => line.trimEnd());
+  while (normalized.length > 0 && !normalized[0].trim()) {
+    normalized.shift();
+  }
+  while (normalized.length > 0 && !normalized[normalized.length - 1].trim()) {
+    normalized.pop();
+  }
+  return normalized.join('\n').trim();
+}
+
+function expandLegacyInlineDescriptionMarkdown(description: string, feature: unknown): string {
+  let text = description.trim();
+  if (!text || text.includes('\n')) {
+    return text;
+  }
+
+  const featureText = stringifyPlanValue(feature);
+  if (featureText && text.startsWith(`# ${featureText} `)) {
+    text = `# ${featureText}\n\n${text.slice(featureText.length + 3).trimStart()}`;
+  }
+
+  const knownHeadings = [
+    'Rationale',
+    'Category',
+    'Current State',
+    'Proposed Change',
+    'User Benefit',
+    'Affected Components',
+  ];
+  for (const heading of knownHeadings) {
+    const pattern = new RegExp(`\\s+##\\s+${escapeRegExp(heading)}\\s+`, 'g');
+    text = text.replace(pattern, `\n\n## ${heading}\n\n`);
+  }
+
+  text = text.replace(
+    /[ \t]+-\s+(?=(?:src|apps|libs|packages|tests|guides|\.github|\.autocode|package(?:\.json)?|[A-Za-z0-9_.-]+\/))/g,
+    '\n- ',
+  );
+  return text.trim();
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
 function arrayFromUnknown(value: unknown): string[] {

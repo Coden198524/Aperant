@@ -59,7 +59,7 @@ export function useSettings() {
         applyTheme(settings.theme);
         return true;
       } else {
-        setError('Failed to save settings');
+        setError(useSettingsStore.getState().error || 'Failed to save settings');
         return false;
       }
     } catch (err) {

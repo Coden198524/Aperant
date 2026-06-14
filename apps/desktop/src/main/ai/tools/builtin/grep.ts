@@ -18,6 +18,7 @@ import {
   formatGrepFallbackResults,
   isProbablyBinaryBuffer,
   matchesSearchType,
+  relativizeSearchOutputPaths,
   shouldSkipSearchDir,
   toPortableSearchPath,
   truncateSearchOutput,
@@ -239,7 +240,7 @@ export const grepTool = Tool.define({
 
     if (exitCode === 127) {
       const fallbackOutput = await runBuiltinSearch(input, resolvedPath, context.abortSignal);
-      return truncateSearchOutput(fallbackOutput);
+      return truncateSearchOutput(relativizeSearchOutputPaths(fallbackOutput, context.projectDir));
     }
 
     // Exit code 1 means no matches (not an error for rg)
@@ -255,6 +256,6 @@ export const grepTool = Tool.define({
       return 'No matches found';
     }
 
-    return truncateSearchOutput(stdout).trimEnd();
+    return truncateSearchOutput(relativizeSearchOutputPaths(stdout, context.projectDir)).trimEnd();
   },
 });

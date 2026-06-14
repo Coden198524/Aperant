@@ -1069,6 +1069,29 @@ async function reconcileLinkedFeatures(projectId: string, roadmap: Roadmap): Pro
   }
 }
 
+function buildRoadmapStartStatus(message: string): RoadmapGenerationStatus {
+  const now = new Date();
+  return {
+    phase: 'analyzing',
+    progress: 0,
+    message,
+    startedAt: now,
+    lastActivityAt: now
+  };
+}
+
+function markRoadmapGenerationStarting(projectId: string, message: string): void {
+  const store = useRoadmapStore.getState();
+  store.setCurrentProjectId(projectId);
+  store.setGenerationStatus(buildRoadmapStartStatus(message));
+}
+
+function waitForRoadmapStartPaint(): Promise<void> {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, 0);
+  });
+}
+
 // Helper functions for loading roadmap
 export async function loadRoadmap(projectId: string): Promise<void> {
   const store = useRoadmapStore.getState();
@@ -1112,12 +1135,23 @@ export async function loadRoadmap(projectId: string): Promise<void> {
       });
     }
   } else {
-    // Generation is not running - reset to idle
-    store.setGenerationStatus({
-      phase: 'idle',
-      progress: 0,
-      message: ''
-    });
+    // Generation is not running according to the initial status query. If the user
+    // started generation while this load was in flight, keep the newer local state.
+    const latestState = useRoadmapStore.getState();
+    const latestPhase = latestState.generationStatus.phase;
+    const hasNewerLocalGeneration =
+      latestState.currentProjectId === projectId &&
+      latestPhase !== 'idle' &&
+      latestPhase !== 'complete' &&
+      latestPhase !== 'error';
+
+    if (!hasNewerLocalGeneration) {
+      store.setGenerationStatus({
+        phase: 'idle',
+        progress: 0,
+        message: ''
+      });
+    }
   }
 
   const result = await window.electronAPI.getRoadmap(projectId);
@@ -1153,36 +1187,68 @@ export function generateRoadmap(
   projectId: string,
   enableCompetitorAnalysis?: boolean,
   refreshCompetitorAnalysis?: boolean
-): void {
+): Promise<void> {
   // Debug logging
   if (window.DEBUG) {
     console.log('[Roadmap] Starting generation:', { projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis });
   }
 
-  useRoadmapStore.getState().setGenerationStatus({
-    phase: 'analyzing',
-    progress: 0,
-    message: 'Starting roadmap generation...'
-  });
-  window.electronAPI.generateRoadmap(projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis);
+  markRoadmapGenerationStarting(projectId, 'Starting roadmap generation...');
+
+  return waitForRoadmapStartPaint()
+    .then(() => window.electronAPI.generateRoadmap(projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis))
+    .then((result) => {
+      if (result.success) return;
+
+      useRoadmapStore.getState().setGenerationStatus({
+        phase: 'error',
+        progress: 0,
+        message: 'Failed to start roadmap generation',
+        error: result.error || 'Failed to start roadmap generation'
+      });
+    })
+    .catch((error) => {
+      useRoadmapStore.getState().setGenerationStatus({
+        phase: 'error',
+        progress: 0,
+        message: 'Failed to start roadmap generation',
+        error: error instanceof Error ? error.message : 'Failed to start roadmap generation'
+      });
+    });
 }
 
 export function refreshRoadmap(
   projectId: string,
   enableCompetitorAnalysis?: boolean,
   refreshCompetitorAnalysis?: boolean
-): void {
+): Promise<void> {
   // Debug logging
   if (window.DEBUG) {
     console.log('[Roadmap] Starting refresh:', { projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis });
   }
 
-  useRoadmapStore.getState().setGenerationStatus({
-    phase: 'analyzing',
-    progress: 0,
-    message: 'Refreshing roadmap...'
-  });
-  window.electronAPI.refreshRoadmap(projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis);
+  markRoadmapGenerationStarting(projectId, 'Refreshing roadmap...');
+
+  return waitForRoadmapStartPaint()
+    .then(() => window.electronAPI.refreshRoadmap(projectId, enableCompetitorAnalysis, refreshCompetitorAnalysis))
+    .then((result) => {
+      if (result.success) return;
+
+      useRoadmapStore.getState().setGenerationStatus({
+        phase: 'error',
+        progress: 0,
+        message: 'Failed to refresh roadmap',
+        error: result.error || 'Failed to refresh roadmap'
+      });
+    })
+    .catch((error) => {
+      useRoadmapStore.getState().setGenerationStatus({
+        phase: 'error',
+        progress: 0,
+        message: 'Failed to refresh roadmap',
+        error: error instanceof Error ? error.message : 'Failed to refresh roadmap'
+      });
+    });
 }
 
 export async function stopRoadmap(projectId: string): Promise<boolean> {

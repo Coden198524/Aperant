@@ -279,7 +279,7 @@ ${(feature.acceptance_criteria || []).map((c: string) => `- [ ] ${c}`).join('\n'
         const specDir = path.join(specsDir, specId);
         mkdirSync(specDir, { recursive: true });
 
-        // Create initial implementation_plan.json
+        // Create initial implementation_plan.md
         const now = new Date().toISOString();
         const implementationPlan = {
           feature: feature.title,

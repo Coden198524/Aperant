@@ -9,12 +9,24 @@ import type {
   IdeationSummary
 } from '../../shared/types';
 import { DEFAULT_IDEATION_CONFIG } from '../../shared/constants';
+import i18n from '../../shared/i18n';
+import { useSettingsStore } from './settings-store';
 
 const GENERATION_TIMEOUT_MS = 5 * 60 * 1000;
 /** Maximum number of log entries to retain in memory for debugging */
 const MAX_LOG_ENTRIES = 500;
 
 const generationTimeoutIds = new Map<string, ReturnType<typeof setTimeout>>();
+let ideationListenersCleanup: (() => void) | null = null;
+
+const IDEATION_LOG_TYPE_LABELS_ZH_CN: Record<IdeationType, string> = {
+  code_improvements: '代码改进',
+  ui_ux_improvements: 'UI/UX 改进',
+  documentation_gaps: '文档完善',
+  security_hardening: '安全加固',
+  performance_optimizations: '性能优化',
+  code_quality: '代码质量',
+};
 
 function clearGenerationTimeout(projectId: string): void {
   const timeoutId = generationTimeoutIds.get(projectId);
@@ -22,6 +34,257 @@ function clearGenerationTimeout(projectId: string): void {
     clearTimeout(timeoutId);
     generationTimeoutIds.delete(projectId);
   }
+}
+
+function getCurrentIdeationLanguage(): string {
+  const settingsState = useSettingsStore.getState();
+  const settingsLanguage = settingsState.hasLoadedSettings
+    ? settingsState.settings.language
+    : undefined;
+  const uiLanguage = i18n.resolvedLanguage || i18n.language;
+  return shouldUseSimplifiedChinese(uiLanguage)
+    ? uiLanguage
+    : settingsLanguage || uiLanguage || 'en';
+}
+
+function shouldUseSimplifiedChinese(language: string | undefined): boolean {
+  return language?.trim().toLowerCase().replace(/_/g, '-').startsWith('zh') === true;
+}
+
+function withCurrentLanguage(config: IdeationConfig): IdeationConfig {
+  return {
+    ...config,
+    language: getCurrentIdeationLanguage()
+  };
+}
+
+function isIdeationType(value: string): value is IdeationType {
+  return value in IDEATION_LOG_TYPE_LABELS_ZH_CN;
+}
+
+function getIdeationLogTypeLabel(value: string): string {
+  return isIdeationType(value) ? IDEATION_LOG_TYPE_LABELS_ZH_CN[value] : value;
+}
+
+export function translateIdeationLogMessage(log: string, language?: string): string {
+  if (!shouldUseSimplifiedChinese(language || getCurrentIdeationLanguage())) {
+    return log;
+  }
+
+  if (log === 'Starting ideation generation in parallel...') {
+    return '开始并行生成创意...';
+  }
+  if (log === 'Starting ideation generation...') {
+    return '开始生成创意...';
+  }
+  if (log === 'Refreshing ideation in parallel...') {
+    return '开始并行刷新创意...';
+  }
+  if (log === 'Ideation generation complete!' || log === 'Ideation generation complete' || log === 'Ideation complete') {
+    return '创意生成完成';
+  }
+  if (log === 'Stopping ideation generation...') {
+    return '正在停止创意生成...';
+  }
+  if (log === 'Ideation generation stopped' || log === 'Generation stopped') {
+    return '创意生成已停止';
+  }
+  if (log === 'Process already stopped') {
+    return '生成进程已停止';
+  }
+  if (log === 'Generation timed out. Some ideas may have been generated - check the results.') {
+    return '生成超时。部分创意可能已经生成，请检查结果。';
+  }
+
+  let match = log.match(/^Generating (\d+) ideation types in parallel\.\.\.$/);
+  if (match) {
+    return `正在并行生成 ${match[1]} 类创意...`;
+  }
+
+  match = log.match(/^Refreshing (\d+) ideation types in parallel\.\.\.$/);
+  if (match) {
+    return `正在刷新 ${match[1]} 类创意...`;
+  }
+
+  match = log.match(/^Adding (\d+) new ideation types\.\.\.$/);
+  if (match) {
+    return `正在添加 ${match[1]} 类新创意...`;
+  }
+
+  match = log.match(/^Generating (\d+) additional ideation types\.\.\.$/);
+  if (match) {
+    return `正在生成 ${match[1]} 类新增创意...`;
+  }
+
+  match = log.match(/^Starting ([a-z_]+)\.\.\.$/);
+  if (match) {
+    return `开始生成${getIdeationLogTypeLabel(match[1])}创意...`;
+  }
+
+  match = log.match(/^Generating ([a-z_]+) ideas\.\.\.$/);
+  if (match) {
+    return `正在生成${getIdeationLogTypeLabel(match[1])}创意...`;
+  }
+
+  match = log.match(/^(\d+)\/(\d+) ideation types complete$/);
+  if (match) {
+    return `${match[1]}/${match[2]} 类创意已完成`;
+  }
+
+  match = log.match(/^([a-z_]+) completed with (\d+) ideas$/);
+  if (match) {
+    return `${getIdeationLogTypeLabel(match[1])}已生成 ${match[2]} 条创意`;
+  }
+
+  match = log.match(/^([a-z_]+) failed$/);
+  if (match) {
+    return `${getIdeationLogTypeLabel(match[1])}生成失败`;
+  }
+
+  if (log.startsWith('Error: ')) {
+    return `错误：${log.slice('Error: '.length)}`;
+  }
+
+  return log;
+}
+
+function getGenerateStartLog(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '开始并行生成创意...'
+    : 'Starting ideation generation in parallel...';
+}
+
+function getGenerateStartMessage(count: number, language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? `正在生成 ${count} 类创意...`
+    : `Generating ${count} ideation types in parallel...`;
+}
+
+function getRefreshStartLog(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '开始并行刷新创意...'
+    : 'Refreshing ideation in parallel...';
+}
+
+function getRefreshStartMessage(count: number, language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? `正在刷新 ${count} 类创意...`
+    : `Refreshing ${count} ideation types in parallel...`;
+}
+
+function getAppendStartLog(count: number, language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? `正在添加 ${count} 类新创意...`
+    : `Adding ${count} new ideation types...`;
+}
+
+function getAppendStartMessage(count: number, language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? `正在生成 ${count} 类新增创意...`
+    : `Generating ${count} additional ideation types...`;
+}
+
+function getGenerationTimedOutError(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '生成超时。部分创意可能已经生成，请检查结果。'
+    : 'Generation timed out. Some ideas may have been generated - check the results.';
+}
+
+function getStoppingGenerationLog(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '正在停止创意生成...'
+    : 'Stopping ideation generation...';
+}
+
+function getGenerationStoppedMessage(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '创意生成已停止'
+    : 'Generation stopped';
+}
+
+function getGenerationCompleteMessage(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '创意生成完成'
+    : 'Ideation complete';
+}
+
+function getGenerationCompleteLog(language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? '创意生成完成'
+    : 'Ideation generation complete!';
+}
+
+function getTypeCompleteMessage(completedCount: number, totalTypes: number, language: string | undefined): string {
+  return shouldUseSimplifiedChinese(language)
+    ? `${completedCount}/${totalTypes} 类创意已完成`
+    : `${completedCount}/${totalTypes} ideation types complete`;
+}
+
+async function getBackendIdeationRunning(projectId: string): Promise<boolean> {
+  try {
+    const api = window.electronAPI as typeof window.electronAPI & {
+      isIdeationRunning?: (projectId: string) => Promise<{ success: boolean; data?: { isRunning: boolean } }>;
+    };
+    if (!api.isIdeationRunning) return false;
+    const result = await api.isIdeationRunning(projectId);
+    return result.success === true && result.data?.isRunning === true;
+  } catch {
+    return false;
+  }
+}
+
+function getEnabledTypesForSession(session: IdeationSession | null, config: IdeationConfig): IdeationType[] {
+  const enabledTypes = session?.config?.enabledTypes?.length
+    ? session.config.enabledTypes
+    : config.enabledTypes;
+  return enabledTypes.length > 0 ? enabledTypes : [...DEFAULT_IDEATION_CONFIG.enabledTypes] as IdeationType[];
+}
+
+function buildRunningTypeStates(
+  enabledTypes: IdeationType[],
+  session: IdeationSession | null,
+  existingStates: Record<IdeationType, IdeationTypeState>
+): Record<IdeationType, IdeationTypeState> {
+  const nextStates = { ...initialTypeStates };
+  const typesWithIdeas = new Set((session?.ideas || []).map((idea) => idea.type));
+
+  for (const type of enabledTypes) {
+    if (existingStates[type] === 'completed' || typesWithIdeas.has(type)) {
+      nextStates[type] = 'completed';
+    } else if (existingStates[type] === 'failed') {
+      nextStates[type] = 'failed';
+    } else {
+      nextStates[type] = 'generating';
+    }
+  }
+
+  return nextStates;
+}
+
+function restoreRunningIdeation(projectId: string, loadedSession: IdeationSession | null): void {
+  const state = useIdeationStore.getState();
+  if (state.currentProjectId !== projectId) return;
+
+  const session = loadedSession || state.session;
+  const enabledTypes = getEnabledTypesForSession(session, state.config);
+  const typeStates = buildRunningTypeStates(enabledTypes, session, state.typeStates);
+  const completedCount = enabledTypes.filter((type) => typeStates[type] === 'completed').length;
+  const totalTypes = enabledTypes.length;
+  const language = getCurrentIdeationLanguage();
+
+  useIdeationStore.setState({
+    isGenerating: true,
+    ...(session ? { session } : {}),
+    ...(session?.config ? { config: { ...state.config, ...session.config, enabledTypes } } : {}),
+    typeStates,
+    generationStatus: {
+      phase: 'generating',
+      progress: totalTypes > 0 ? Math.max(5, Math.round((completedCount / totalTypes) * 100)) : 10,
+      message: completedCount > 0
+        ? getTypeCompleteMessage(completedCount, totalTypes, language)
+        : getGenerateStartMessage(totalTypes, language),
+    },
+  });
 }
 
 export type IdeationTypeState = 'pending' | 'generating' | 'completed' | 'failed';
@@ -376,16 +639,30 @@ export async function loadIdeation(projectId: string): Promise<void> {
   // Set the current project ID (this clears state if switching projects)
   store.setCurrentProjectId(projectId);
 
-  if (store.isGenerating) {
+  if (useIdeationStore.getState().isGenerating) {
     return;
   }
 
-  const result = await window.electronAPI.getIdeation(projectId);
+  const [result, backendIsRunning] = await Promise.all([
+    window.electronAPI.getIdeation(projectId),
+    getBackendIdeationRunning(projectId),
+  ]);
 
   // Check again after async operation to handle race condition
   const currentState = useIdeationStore.getState();
-  if (currentState.isGenerating || currentState.currentProjectId !== projectId) {
+  if (currentState.currentProjectId !== projectId) {
     // Project changed during async operation, ignore result
+    return;
+  }
+
+  const loadedSession = result.success && result.data ? result.data : null;
+
+  if (backendIsRunning) {
+    restoreRunningIdeation(projectId, loadedSession);
+    return;
+  }
+
+  if (currentState.isGenerating) {
     return;
   }
 
@@ -398,7 +675,8 @@ export async function loadIdeation(projectId: string): Promise<void> {
 
 export function generateIdeation(projectId: string): void {
   const store = useIdeationStore.getState();
-  const config = store.config;
+  const config = withCurrentLanguage(store.config);
+  store.setCurrentProjectId(projectId);
 
   if (window.DEBUG) {
     console.log('[Ideation] Starting generation:', {
@@ -406,7 +684,8 @@ export function generateIdeation(projectId: string): void {
       enabledTypes: config.enabledTypes,
       includeRoadmapContext: config.includeRoadmapContext,
       includeKanbanContext: config.includeKanbanContext,
-      maxIdeasPerType: config.maxIdeasPerType
+      maxIdeasPerType: config.maxIdeasPerType,
+      language: config.language
     });
   }
 
@@ -416,11 +695,11 @@ export function generateIdeation(projectId: string): void {
   store.clearSession();
   store.setIsGenerating(true);
   store.initializeTypeStates(config.enabledTypes);
-  store.addLog('Starting ideation generation in parallel...');
+  store.addLog(getGenerateStartLog(config.language));
   store.setGenerationStatus({
     phase: 'generating',
     progress: 0,
-    message: `Generating ${config.enabledTypes.length} ideation types in parallel...`
+    message: getGenerateStartMessage(config.enabledTypes.length, config.language)
   });
 
   const timeoutId = setTimeout(() => {
@@ -436,9 +715,9 @@ export function generateIdeation(projectId: string): void {
         phase: 'error',
         progress: 0,
         message: '',
-        error: 'Generation timed out. Some ideas may have been generated - check the results.'
+        error: getGenerationTimedOutError(getCurrentIdeationLanguage())
       });
-      currentState.addLog('⚠ Generation timed out');
+      currentState.addLog(getGenerationTimedOutError(getCurrentIdeationLanguage()));
     }
   }, GENERATION_TIMEOUT_MS);
   generationTimeoutIds.set(projectId, timeoutId);
@@ -448,6 +727,7 @@ export function generateIdeation(projectId: string): void {
 
 export async function stopIdeation(projectId: string): Promise<boolean> {
   const store = useIdeationStore.getState();
+  const language = getCurrentIdeationLanguage();
 
   // Debug logging
   if (window.DEBUG) {
@@ -455,11 +735,11 @@ export async function stopIdeation(projectId: string): Promise<boolean> {
   }
 
   store.setIsGenerating(false);
-  store.addLog('Stopping ideation generation...');
+  store.addLog(getStoppingGenerationLog(language));
   store.setGenerationStatus({
     phase: 'idle',
     progress: 0,
-    message: 'Generation stopped'
+    message: getGenerationStoppedMessage(language)
   });
 
   const result = await window.electronAPI.stopIdeation(projectId);
@@ -471,9 +751,9 @@ export async function stopIdeation(projectId: string): Promise<boolean> {
 
   if (!result.success) {
     // Backend couldn't find/stop the process (likely already finished/crashed)
-    store.addLog('Process already stopped');
+    store.addLog(translateIdeationLogMessage('Process already stopped', language));
   } else {
-    store.addLog('Ideation generation stopped');
+    store.addLog(translateIdeationLogMessage('Ideation generation stopped', language));
   }
 
   return result.success;
@@ -481,7 +761,8 @@ export async function stopIdeation(projectId: string): Promise<boolean> {
 
 export async function refreshIdeation(projectId: string): Promise<void> {
   const store = useIdeationStore.getState();
-  const config = store.config;
+  const config = withCurrentLanguage(store.config);
+  store.setCurrentProjectId(projectId);
 
   await window.electronAPI.stopIdeation(projectId);
 
@@ -489,11 +770,11 @@ export async function refreshIdeation(projectId: string): Promise<void> {
   store.clearSession();
   store.setIsGenerating(true);
   store.initializeTypeStates(config.enabledTypes);
-  store.addLog('Refreshing ideation in parallel...');
+  store.addLog(getRefreshStartLog(config.language));
   store.setGenerationStatus({
     phase: 'generating',
     progress: 0,
-    message: `Refreshing ${config.enabledTypes.length} ideation types in parallel...`
+    message: getRefreshStartMessage(config.enabledTypes.length, config.language)
   });
   window.electronAPI.refreshIdeation(projectId, config);
 }
@@ -546,7 +827,8 @@ export async function deleteMultipleIdeasForProject(projectId: string, ideaIds: 
  */
 export function appendIdeation(projectId: string, typesToAdd: IdeationType[]): void {
   const store = useIdeationStore.getState();
-  const config = store.config;
+  const config = withCurrentLanguage(store.config);
+  store.setCurrentProjectId(projectId);
 
   store.clearLogs();
   store.setIsGenerating(true);
@@ -557,11 +839,11 @@ export function appendIdeation(projectId: string, typesToAdd: IdeationType[]): v
   });
   store.initializeTypeStates(typesToAdd);
 
-  store.addLog(`Adding ${typesToAdd.length} new ideation types...`);
+  store.addLog(getAppendStartLog(typesToAdd.length, config.language));
   store.setGenerationStatus({
     phase: 'generating',
     progress: 0,
-    message: `Generating ${typesToAdd.length} additional ideation types...`
+    message: getAppendStartMessage(typesToAdd.length, config.language)
   });
 
   const appendConfig = {
@@ -641,6 +923,10 @@ export function isUIUXIdea(idea: Idea): idea is Idea & { type: 'ui_ux_improvemen
 
 // IPC listener setup - call this once when the app initializes
 export function setupIdeationListeners(): () => void {
+  if (ideationListenersCleanup) {
+    return () => {};
+  }
+
   const store = useIdeationStore.getState;
 
   // Helper to check if event is for the current project
@@ -674,7 +960,7 @@ export function setupIdeationListeners(): () => void {
   // Listen for log messages
   const unsubLog = window.electronAPI.onIdeationLog((projectId, log) => {
     if (!isCurrentProject(projectId)) return;
-    store().addLog(log);
+    store().addLog(translateIdeationLogMessage(log, getCurrentIdeationLanguage()));
   });
 
   // Listen for individual ideation type completion (streaming)
@@ -699,7 +985,7 @@ export function setupIdeationListeners(): () => void {
       }
 
       store().addIdeasForType(ideationType, ideas);
-      store().addLog(`✓ ${ideationType} completed with ${ideas.length} ideas`);
+      store().addLog(translateIdeationLogMessage(`${ideationType} completed with ${ideas.length} ideas`, getCurrentIdeationLanguage()));
 
       // Update progress based on completed types
       // Calculate with the expected state since React 18 batches state updates.
@@ -722,7 +1008,7 @@ export function setupIdeationListeners(): () => void {
       store().setGenerationStatus({
         phase: 'generating',
         progress,
-        message: `${completedCount}/${totalTypes} ideation types complete`
+        message: getTypeCompleteMessage(completedCount, totalTypes, getCurrentIdeationLanguage())
       });
     }
   );
@@ -739,7 +1025,7 @@ export function setupIdeationListeners(): () => void {
       }
 
       store().setTypeState(ideationType as IdeationType, 'failed');
-      store().addLog(`✗ ${ideationType} failed`);
+      store().addLog(translateIdeationLogMessage(`${ideationType} failed`, getCurrentIdeationLanguage()));
     }
   );
 
@@ -752,11 +1038,13 @@ export function setupIdeationListeners(): () => void {
       return;
     }
 
+    const language = getCurrentIdeationLanguage();
+
     if (window.DEBUG) {
       console.log('[Ideation] Generation complete:', {
         projectId,
-        totalIdeas: session.ideas.length,
-        ideaTypes: session.ideas.reduce((acc, idea) => {
+        totalIdeas: session?.ideas.length || 0,
+        ideaTypes: (session?.ideas || []).reduce((acc, idea) => {
           acc[idea.type] = (acc[idea.type] || 0) + 1;
           return acc;
         }, {} as Record<string, number>)
@@ -766,14 +1054,16 @@ export function setupIdeationListeners(): () => void {
     clearGenerationTimeout(projectId);
 
     store().setIsGenerating(false);
-    store().setSession(session);
+    if (session) {
+      store().setSession(session);
+    }
     store().resetGeneratingTypes('completed');
     store().setGenerationStatus({
       phase: 'complete',
       progress: 100,
-      message: 'Ideation complete'
+      message: getGenerationCompleteMessage(language)
     });
-    store().addLog('Ideation generation complete!');
+    store().addLog(getGenerationCompleteLog(language));
   });
 
   const unsubError = window.electronAPI.onIdeationError((projectId, error) => {
@@ -794,7 +1084,7 @@ export function setupIdeationListeners(): () => void {
       message: '',
       error
     });
-    store().addLog(`Error: ${error}`);
+    store().addLog(translateIdeationLogMessage(`Error: ${error}`, getCurrentIdeationLanguage()));
   });
 
   const unsubStopped = window.electronAPI.onIdeationStopped((projectId) => {
@@ -812,12 +1102,12 @@ export function setupIdeationListeners(): () => void {
     store().setGenerationStatus({
       phase: 'idle',
       progress: 0,
-      message: 'Generation stopped'
+      message: getGenerationStoppedMessage(getCurrentIdeationLanguage())
     });
-    store().addLog('Ideation generation stopped');
+    store().addLog(getGenerationStoppedMessage(getCurrentIdeationLanguage()));
   });
 
-  return () => {
+  ideationListenersCleanup = () => {
     for (const [projectId] of generationTimeoutIds) {
       clearGenerationTimeout(projectId);
     }
@@ -829,5 +1119,11 @@ export function setupIdeationListeners(): () => void {
     unsubComplete();
     unsubError();
     unsubStopped();
+    ideationListenersCleanup = null;
   };
+
+  // Keep ideation listeners alive across page navigation. Generation continues in
+  // the main process while this page is unmounted, so removing these listeners
+  // would drop partial results and completion events.
+  return () => {};
 }

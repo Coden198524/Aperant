@@ -9,13 +9,13 @@ Create a compact Standard spec and upstream task list for a simple, low-risk tas
 - Write only spec files. Do not change project source, config, or git state.
 - Keep output short. No research, no broad repository scan, no long examples.
 - Follow injected output-language requirements.
-- Use Markdown for `tasks.md`, not JSON.
+- Use Markdown for `tasks.md`, not JSON; app-owned configuration files/tables, manifests, state, active indexes, metadata, and JSONL audit files remain JSON/JSONL even when the model reads or updates them. Only pure model-readable prose/reference artifacts should move from JSON to Markdown.
 
 {{tool_call_json_formatting}}
 
 ## Process
 
-1. Read the task description and provided project index.
+1. Read the task description and provided project documentation reference.
 2. Read only the specific project files needed to identify the likely change.
 3. Decide whether to reuse an existing local pattern or state that no new pattern is needed.
 4. Write `spec.md`.

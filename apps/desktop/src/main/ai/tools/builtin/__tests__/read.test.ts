@@ -110,6 +110,20 @@ describe('Read Tool', () => {
     expect(lines[2]).toMatch(/^\s*3\tgamma/);
   });
 
+  it('should compact very long lines while preserving the tail', async () => {
+    setupTextFile(`HEAD_${'head_'.repeat(260)}MIDDLE_SHOULD_BE_OMITTED${'tail_'.repeat(260)}TAIL_SENTINEL`);
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/project/generated.json' },
+      baseContext,
+    ) as string;
+
+    expect(result).toMatch(/^\s*1\tHEAD_/);
+    expect(result).toContain('[line middle omitted]');
+    expect(result).toContain('TAIL_SENTINEL');
+    expect(result).not.toContain('MIDDLE_SHOULD_BE_OMITTED');
+  });
+
   it('should respect offset and limit parameters', async () => {
     const content = 'line1\nline2\nline3\nline4\nline5';
     setupTextFile(content);

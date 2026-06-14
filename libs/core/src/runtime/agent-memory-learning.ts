@@ -62,6 +62,21 @@ export interface AutocodeCodePattern {
   sourceFile: string;
 }
 
+const AUTOCODE_MEMORY_DESCRIPTION_MAX_CHARS = 240;
+const AUTOCODE_MEMORY_FIELD_MAX_CHARS = 320;
+const AUTOCODE_MEMORY_DECISION_MAX_CHARS = 180;
+const AUTOCODE_MEMORY_TOOL_MAX_CHARS = 64;
+const AUTOCODE_MEMORY_CODE_MAX_CHARS = 420;
+const AUTOCODE_MEMORY_SUMMARY_MAX_CHARS = 900;
+const AUTOCODE_MEMORY_LIST_LIMIT = 5;
+const AUTOCODE_SESSION_METRIC_INSIGHT_PATTERNS = [
+  /^(?:Summary:\s*)?Efficient token usage\b/i,
+  /^(?:Summary:\s*)?High token usage per step\b/i,
+  /^(?:Summary:\s*)?Completed quickly with few steps\b/i,
+  /^(?:Summary:\s*)?Many steps required\b/i,
+  /^(?:Summary:\s*)?Used diverse set of tools\b/i,
+] as const;
+
 export function createAutocodeExtractedKnowledge(
   input: AutocodeCreateExtractedKnowledgeInput,
 ): AutocodeExtractedKnowledge {
@@ -94,11 +109,12 @@ export function extractAutocodeSuccessPatterns(
 
   return [
     {
-      description: input.subtask.description,
-      approach: analyzeAutocodeApproach(toolCalls),
-      whyItWorked: analyzeAutocodeWhyItWorked(input),
+      description: limitAutocodeLearningText(input.subtask.description, AUTOCODE_MEMORY_DESCRIPTION_MAX_CHARS),
+      approach: limitAutocodeLearningText(analyzeAutocodeApproach(toolCalls), AUTOCODE_MEMORY_FIELD_MAX_CHARS),
+      whyItWorked: limitAutocodeLearningText(analyzeAutocodeWhyItWorked(input), AUTOCODE_MEMORY_FIELD_MAX_CHARS),
       keyDecisions: extractAutocodeKeyDecisions(input.sessionResult.messages),
-      effectiveTools: identifyAutocodeEffectiveTools(toolCalls),
+      effectiveTools: identifyAutocodeEffectiveTools(toolCalls)
+        .map((tool) => limitAutocodeLearningText(tool, AUTOCODE_MEMORY_TOOL_MAX_CHARS)),
       confidence: 0.8,
     },
   ];
@@ -117,11 +133,14 @@ export function extractAutocodeFailurePatterns(
 
   return [
     {
-      description: input.subtask.description,
-      errorType: error.code,
-      rootCause,
-      prevention: generateAutocodeFailurePreventionAdvice(error, rootCause),
-      attemptedApproach: analyzeAutocodeApproach(toolCalls),
+      description: limitAutocodeLearningText(input.subtask.description, AUTOCODE_MEMORY_DESCRIPTION_MAX_CHARS),
+      errorType: limitAutocodeLearningText(error.code, AUTOCODE_MEMORY_TOOL_MAX_CHARS),
+      rootCause: limitAutocodeLearningText(rootCause, AUTOCODE_MEMORY_FIELD_MAX_CHARS),
+      prevention: limitAutocodeLearningText(
+        generateAutocodeFailurePreventionAdvice(error, rootCause),
+        AUTOCODE_MEMORY_FIELD_MAX_CHARS,
+      ),
+      attemptedApproach: limitAutocodeLearningText(analyzeAutocodeApproach(toolCalls), AUTOCODE_MEMORY_FIELD_MAX_CHARS),
       confidence: 0.7,
     },
   ];
@@ -191,24 +210,35 @@ export function extractAutocodeKeyDecisions(messages: readonly AutocodeSessionMe
       continue;
     }
 
-    const content = message.content.toLowerCase();
+    const content = message.content;
+    const lower = content.toLowerCase();
 
-    if (content.includes('decided to') || content.includes('chose to')) {
-      const sentence = content.split('.').find((part) => part.includes('decided') || part.includes('chose'));
+    if (lower.includes('decided to') || lower.includes('chose to')) {
+      const sentence = content
+        .split(/[.!?]\s/)
+        .find((part) => {
+          const partLower = part.toLowerCase();
+          return partLower.includes('decided') || partLower.includes('chose');
+        });
       if (sentence) {
-        decisions.push(sentence.trim());
+        decisions.push(limitAutocodeLearningText(sentence, AUTOCODE_MEMORY_DECISION_MAX_CHARS));
       }
     }
 
-    if (content.includes('approach:') || content.includes('strategy:')) {
-      const sentence = content.split('\n').find((part) => part.includes('approach') || part.includes('strategy'));
-      if (sentence) {
-        decisions.push(sentence.trim());
+    if (lower.includes('approach:') || lower.includes('strategy:')) {
+      const line = content
+        .split(/\r?\n/)
+        .find((part) => {
+          const partLower = part.toLowerCase();
+          return partLower.includes('approach:') || partLower.includes('strategy:');
+        });
+      if (line) {
+        decisions.push(limitAutocodeLearningText(line, AUTOCODE_MEMORY_DECISION_MAX_CHARS));
       }
     }
   }
 
-  return decisions.slice(0, 5);
+  return Array.from(new Set(decisions)).slice(0, AUTOCODE_MEMORY_LIST_LIMIT);
 }
 
 export function identifyAutocodeEffectiveTools(toolCalls: readonly string[]): string[] {
@@ -234,14 +264,6 @@ export function analyzeAutocodeWhyItWorked(input: AutocodeLearningAnalysisInput)
 
   if (input.sessionResult.outcome === 'completed') {
     reasons.push('Implementation passed all verification checks');
-  }
-
-  if (input.sessionResult.usage.totalTokens < 50000) {
-    reasons.push('Efficient implementation with minimal token usage');
-  }
-
-  if (input.sessionResult.stepsExecuted < 20) {
-    reasons.push('Completed in few steps without excessive retries');
   }
 
   return reasons.join('; ') || 'Standard successful implementation';
@@ -277,7 +299,7 @@ export function analyzeAutocodeFailureLearningRootCause(
     return 'Insufficient context gathering - should have read more files';
   }
 
-  return error.message || 'Unknown root cause';
+  return limitAutocodeLearningText(error.message || 'Unknown root cause', AUTOCODE_MEMORY_FIELD_MAX_CHARS);
 }
 
 export function generateAutocodeFailurePreventionAdvice(
@@ -336,6 +358,11 @@ export function extractAutocodeInsights(input: AutocodeLearningAnalysisInput): s
   return insights;
 }
 
+export function isAutocodeSessionMetricInsight(insight: string): boolean {
+  const text = insight.trim();
+  return AUTOCODE_SESSION_METRIC_INSIGHT_PATTERNS.some((pattern) => pattern.test(text));
+}
+
 export function identifyAutocodeKeyFiles(input: Pick<AutocodeLearningAnalysisInput, 'subtask'>): string[] {
   const keyFiles: string[] = [];
 
@@ -375,13 +402,55 @@ export function summarizeAutocodeSessionForMemory(
   const parts = [
     knowledge.successPatterns?.[0]?.description,
     knowledge.successPatterns?.[0]?.approach,
+    knowledge.failurePatterns?.[0]?.rootCause,
     knowledge.failurePatterns?.[0]?.prevention,
-    knowledge.insights[0],
-  ].filter(Boolean);
+    knowledge.insights.find((insight) => !isAutocodeSessionMetricInsight(insight)),
+  ]
+    .filter(Boolean)
+    .map((part) => limitAutocodeLearningText(String(part), AUTOCODE_MEMORY_FIELD_MAX_CHARS));
 
   return parts.length > 0
-    ? parts.join('\n')
+    ? limitAutocodeLearningText(parts.join('\n'), AUTOCODE_MEMORY_SUMMARY_MAX_CHARS)
     : `Completed work unit ${knowledge.subtaskId} with outcome ${knowledge.outcome}.`;
+}
+
+export function formatAutocodeSuccessPatternMemory(pattern: AutocodeSuccessPattern): string {
+  const lines = [
+    `Success pattern: ${limitAutocodeLearningText(pattern.description, AUTOCODE_MEMORY_DESCRIPTION_MAX_CHARS)}`,
+    `Approach: ${limitAutocodeLearningText(pattern.approach, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+    `Why it worked: ${limitAutocodeLearningText(pattern.whyItWorked, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+  ];
+  const decisions = pattern.keyDecisions.slice(0, 3)
+    .map((decision) => limitAutocodeLearningText(decision, AUTOCODE_MEMORY_DECISION_MAX_CHARS));
+  if (decisions.length > 0) {
+    lines.push(`Key decisions: ${decisions.join('; ')}`);
+  }
+  const tools = pattern.effectiveTools.slice(0, AUTOCODE_MEMORY_LIST_LIMIT)
+    .map((tool) => limitAutocodeLearningText(tool, AUTOCODE_MEMORY_TOOL_MAX_CHARS));
+  if (tools.length > 0) {
+    lines.push(`Effective tools: ${tools.join(', ')}`);
+  }
+  return limitAutocodeLearningText(lines.join('\n'), AUTOCODE_MEMORY_SUMMARY_MAX_CHARS);
+}
+
+export function formatAutocodeFailurePatternMemory(pattern: AutocodeFailureLearningPattern): string {
+  return limitAutocodeLearningText([
+    `Failure pattern: ${limitAutocodeLearningText(pattern.description, AUTOCODE_MEMORY_DESCRIPTION_MAX_CHARS)}`,
+    `Error type: ${limitAutocodeLearningText(pattern.errorType, AUTOCODE_MEMORY_TOOL_MAX_CHARS)}`,
+    `Root cause: ${limitAutocodeLearningText(pattern.rootCause, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+    `Prevention: ${limitAutocodeLearningText(pattern.prevention, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+    `Attempted approach: ${limitAutocodeLearningText(pattern.attemptedApproach, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+  ].join('\n'), AUTOCODE_MEMORY_SUMMARY_MAX_CHARS);
+}
+
+export function formatAutocodeCodePatternMemory(pattern: AutocodeCodePattern): string {
+  return limitAutocodeLearningText([
+    `Code pattern: ${limitAutocodeLearningText(pattern.name, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+    `Category: ${pattern.category}`,
+    `Use case: ${limitAutocodeLearningText(pattern.useCase, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+    `Source: ${limitAutocodeLearningText(pattern.sourceFile, AUTOCODE_MEMORY_FIELD_MAX_CHARS)}`,
+    `Code: ${limitAutocodeLearningText(pattern.code, AUTOCODE_MEMORY_CODE_MAX_CHARS)}`,
+  ].join('\n'), AUTOCODE_MEMORY_SUMMARY_MAX_CHARS);
 }
 
 export function generateAutocodeLearningSessionId(
@@ -479,4 +548,19 @@ function detectAutocodeCodeLanguage(file: string): string {
 
 function stringifyAutocodeMessageContent(content: AutocodeSessionMessage['content'] | unknown): string {
   return typeof content === 'string' ? content : JSON.stringify(content);
+}
+
+function limitAutocodeLearningText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  const marker = ' ... [truncated] ... ';
+  const budget = maxChars - marker.length;
+  if (budget <= 0) {
+    return normalized.slice(0, maxChars);
+  }
+  const headChars = Math.ceil(budget * 0.6);
+  const tailChars = budget - headChars;
+  return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
 }

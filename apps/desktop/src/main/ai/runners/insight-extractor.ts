@@ -5,7 +5,7 @@
  * Extracts structured insights from completed coding sessions using Vercel AI SDK.
  * See apps/desktop/src/main/ai/runners/insight-extractor.ts for the TypeScript implementation.
  *
- * Runs after each session to capture rich, actionable knowledge for the memory system.
+ * Runs after source-backed sessions to capture rich, actionable knowledge for the memory system.
  * Falls back to generic insights if extraction fails (never blocks the build).
  *
  * Uses `createSimpleClient()` with no tools (single-turn text generation).
@@ -29,10 +29,22 @@ import { ExtractedInsightsOutputSchema } from '../schema/output';
 const DEFAULT_MODEL: ModelShorthand = 'haiku';
 
 /** Maximum diff size to send to the LLM */
-const MAX_DIFF_CHARS = 15000;
+export const INSIGHT_EXTRACTION_DIFF_MAX_CHARS = 10_000;
+
+/** Maximum changed file paths to include in the LLM prompt */
+export const INSIGHT_EXTRACTION_CHANGED_FILES_MAX = 50;
+
+/** Maximum commit message text to include in the LLM prompt */
+export const INSIGHT_EXTRACTION_COMMIT_MESSAGES_MAX_CHARS = 2_000;
+
+/** Maximum subtask description text to include in the LLM prompt */
+export const INSIGHT_EXTRACTION_SUBTASK_DESCRIPTION_MAX_CHARS = 1_200;
 
 /** Maximum attempt history entries to include */
-const MAX_ATTEMPTS_TO_INCLUDE = 3;
+export const INSIGHT_EXTRACTION_ATTEMPTS_MAX = 3;
+
+/** Maximum text per previous attempt field */
+export const INSIGHT_EXTRACTION_ATTEMPT_FIELD_MAX_CHARS = 500;
 
 // =============================================================================
 // Types
@@ -117,16 +129,16 @@ const SYSTEM_PROMPT =
  */
 function buildExtractionPrompt(config: InsightExtractionConfig): string {
   const attemptHistory = formatAttemptHistory(config.attemptHistory);
-  const changedFiles =
-    config.changedFiles.length > 0
-      ? config.changedFiles.map((f) => `- ${f}`).join('\n')
-      : '(No files changed)';
-
-  // Truncate diff if too large
-  let diff = config.diff;
-  if (diff.length > MAX_DIFF_CHARS) {
-    diff = `${diff.slice(0, MAX_DIFF_CHARS)}\n\n... (truncated, ${diff.length} chars total)`;
-  }
+  const changedFiles = formatChangedFiles(config.changedFiles);
+  const subtaskDescription = limitPromptText(
+    config.subtaskDescription,
+    INSIGHT_EXTRACTION_SUBTASK_DESCRIPTION_MAX_CHARS,
+  );
+  const commitMessages = limitPromptText(
+    config.commitMessages || '(No commit messages)',
+    INSIGHT_EXTRACTION_COMMIT_MESSAGES_MAX_CHARS,
+  );
+  const diff = limitPromptText(config.diff || '(No diff available)', INSIGHT_EXTRACTION_DIFF_MAX_CHARS);
 
   return `Extract structured insights from this coding session.
 Return JSON with: file_insights, patterns_discovered, gotchas_discovered, approach_outcome, recommendations.
@@ -135,7 +147,7 @@ Return JSON with: file_insights, patterns_discovered, gotchas_discovered, approa
 
 ### Subtask
 - **ID**: ${config.subtaskId}
-- **Description**: ${config.subtaskDescription}
+- **Description**: ${subtaskDescription}
 - **Session Number**: ${config.sessionNum}
 - **Outcome**: ${config.success ? 'SUCCESS' : 'FAILED'}
 
@@ -143,7 +155,7 @@ Return JSON with: file_insights, patterns_discovered, gotchas_discovered, approa
 ${changedFiles}
 
 ### Commit Messages
-${config.commitMessages}
+${commitMessages}
 
 ### Git Diff
 \`\`\`diff
@@ -164,17 +176,49 @@ function formatAttemptHistory(attempts: AttemptRecord[]): string {
     return '(First attempt - no previous history)';
   }
 
-  const recent = attempts.slice(-MAX_ATTEMPTS_TO_INCLUDE);
+  const recent = attempts.slice(-INSIGHT_EXTRACTION_ATTEMPTS_MAX);
   return recent
     .map((attempt, i) => {
       const status = attempt.success ? 'SUCCESS' : 'FAILED';
-      let line = `**Attempt ${i + 1}** (${status}): ${attempt.approach}`;
+      let line = `**Attempt ${i + 1}** (${status}): ${limitPromptText(
+        attempt.approach,
+        INSIGHT_EXTRACTION_ATTEMPT_FIELD_MAX_CHARS,
+      )}`;
       if (attempt.error) {
-        line += `\n  Error: ${attempt.error}`;
+        line += `\n  Error: ${limitPromptText(attempt.error, INSIGHT_EXTRACTION_ATTEMPT_FIELD_MAX_CHARS)}`;
       }
       return line;
     })
     .join('\n');
+}
+
+function formatChangedFiles(files: string[]): string {
+  if (files.length === 0) {
+    return '(No files changed)';
+  }
+
+  const visible = files.slice(0, INSIGHT_EXTRACTION_CHANGED_FILES_MAX);
+  const lines = visible.map((file) => `- ${file}`);
+  const omitted = files.length - visible.length;
+  if (omitted > 0) {
+    lines.push(`- ... ${omitted} more file(s) omitted`);
+  }
+  return lines.join('\n');
+}
+
+function limitPromptText(value: string, maxChars: number): string {
+  const normalized = String(value ?? '').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  const marker = `\n\n... [truncated middle, ${normalized.length} chars total] ...\n\n`;
+  const budget = maxChars - marker.length;
+  if (budget <= 0) {
+    return normalized.slice(0, maxChars);
+  }
+  const headChars = Math.ceil(budget * 0.65);
+  const tailChars = budget - headChars;
+  return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
 }
 
 // =============================================================================
@@ -197,7 +241,12 @@ function parseInsights(responseText: string): Record<string, unknown> | null {
  * Return generic insights when extraction fails or is disabled.
  * Mirrors Python's `_get_generic_insights()`.
  */
-function getGenericInsights(subtaskId: string, success: boolean): ExtractedInsights {
+function getGenericInsights(
+  subtaskId: string,
+  success: boolean,
+  sessionNum = 0,
+  changedFiles: string[] = [],
+): ExtractedInsights {
   return {
     file_insights: [],
     patterns_discovered: [],
@@ -211,10 +260,18 @@ function getGenericInsights(subtaskId: string, success: boolean): ExtractedInsig
     },
     recommendations: [],
     subtask_id: subtaskId,
-    session_num: 0,
+    session_num: sessionNum,
     success,
-    changed_files: [],
+    changed_files: changedFiles,
   };
+}
+
+function hasInsightExtractionSource(config: InsightExtractionConfig): boolean {
+  if (config.changedFiles.some((file) => file.trim().length > 0)) {
+    return true;
+  }
+
+  return config.diff.trim().length > 0;
 }
 
 // =============================================================================
@@ -241,6 +298,10 @@ export async function extractSessionInsights(
     modelShorthand = DEFAULT_MODEL,
     thinkingLevel = 'low',
   } = config;
+
+  if (!hasInsightExtractionSource(config)) {
+    return getGenericInsights(subtaskId, success, sessionNum, changedFiles);
+  }
 
   try {
     const prompt = buildExtractionPrompt(config);
@@ -296,8 +357,8 @@ export async function extractSessionInsights(
       };
     }
 
-    return getGenericInsights(subtaskId, success);
+    return getGenericInsights(subtaskId, success, sessionNum, changedFiles);
   } catch {
-    return getGenericInsights(subtaskId, success);
+    return getGenericInsights(subtaskId, success, sessionNum, changedFiles);
   }
 }

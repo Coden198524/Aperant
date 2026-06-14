@@ -35,6 +35,7 @@ import {
 } from '@autocode/core';
 import { QASignoffSchema, validateStructuredOutput } from '../schema';
 import type { SessionResult } from '../session/types';
+import { compactHeadTailSingleLineText } from './prompt-compaction';
 
 // =============================================================================
 // Constants
@@ -48,6 +49,11 @@ const MAX_CONSECUTIVE_ERRORS = 3;
 
 /** Number of times an issue must recur before escalation */
 const RECURRING_ISSUE_THRESHOLD = 3;
+const QA_HISTORY_MAX_ISSUES_PER_ITERATION = 8;
+const QA_ISSUE_TITLE_MAX_CHARS = 180;
+const QA_ISSUE_LOCATION_MAX_CHARS = 220;
+const QA_ISSUE_DESCRIPTION_MAX_CHARS = 420;
+const QA_ISSUE_FIX_MAX_CHARS = 420;
 
 // =============================================================================
 // Types
@@ -529,6 +535,7 @@ export class QALoop extends EventEmitter {
     try {
       const plan = await loadAutocodeImplementationPlan(this.config.specDir) as {
         qa_iteration_history?: QAIterationRecord[];
+        qa_signoff?: QASignoff;
         qa_stats?: Record<string, unknown>;
       } | null;
 
@@ -537,7 +544,14 @@ export class QALoop extends EventEmitter {
       if (!plan.qa_iteration_history) {
         plan.qa_iteration_history = [];
       }
-      plan.qa_iteration_history.push(record);
+      plan.qa_iteration_history.push(compactQAIterationRecord(record));
+
+      if (plan.qa_signoff && typeof plan.qa_signoff === 'object' && !Array.isArray(plan.qa_signoff)) {
+        const qaSignoff = plan.qa_signoff as QASignoff;
+        if (Array.isArray(qaSignoff.issues_found)) {
+          qaSignoff.issues_found = compactQAIssuesForPlan(qaSignoff.issues_found);
+        }
+      }
 
       // Update summary stats
       plan.qa_stats = {
@@ -639,4 +653,38 @@ export class QALoop extends EventEmitter {
   ): void {
     this.emit(event, ...args);
   }
+}
+
+function compactQAIterationRecord(record: QAIterationRecord): QAIterationRecord {
+  return {
+    ...record,
+    issues: compactQAIssuesForPlan(record.issues),
+  };
+}
+
+function compactQAIssuesForPlan(issues: QAIssue[]): QAIssue[] {
+  const visible = issues.slice(0, QA_HISTORY_MAX_ISSUES_PER_ITERATION).map(compactQAIssueForPlan);
+  const omitted = issues.length - visible.length;
+  if (omitted > 0) {
+    visible.push({
+      type: 'warning',
+      title: `... ${omitted} more QA issue(s) omitted from plan history`,
+      description: 'Read qa_report.md or rerun QA for full details if needed.',
+    });
+  }
+  return visible;
+}
+
+function compactQAIssueForPlan(issue: QAIssue): QAIssue {
+  return {
+    ...(issue.type ? { type: issue.type } : {}),
+    title: compactSingleLine(issue.title, QA_ISSUE_TITLE_MAX_CHARS),
+    ...(issue.location ? { location: compactSingleLine(issue.location, QA_ISSUE_LOCATION_MAX_CHARS) } : {}),
+    ...(issue.description ? { description: compactSingleLine(issue.description, QA_ISSUE_DESCRIPTION_MAX_CHARS) } : {}),
+    ...(issue.fix_required ? { fix_required: compactSingleLine(issue.fix_required, QA_ISSUE_FIX_MAX_CHARS) } : {}),
+  };
+}
+
+function compactSingleLine(value: string, maxChars: number): string {
+  return compactHeadTailSingleLineText(value, maxChars);
 }

@@ -257,8 +257,8 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     lines.push(`- Ignore generated or dependency directories such as ${formatAutocodeIgnoredDirNamesForPrompt()}.`);
     lines.push('- Quality comes first: read enough relevant source files to support traceable conclusions. For small projects, reading all product source files is acceptable after excluding generated directories.');
     lines.push('- Start with listed hints, manifests, entry files, and public interfaces, then expand through imports/includes/build manifests until the architecture, main behavior, data/state flow, and important boundaries are covered.');
-    lines.push('- First write `doc_outline.json` with document type, target audience, sections, questions each section answers, and planned source references.');
-    lines.push('- Then write `evidence_index.json` with files read, evidence-backed claims, inferred claims, risks, and open questions. Every major conclusion in the final document should map to evidence or be marked as inference.');
+    lines.push('- First write `doc_outline.md` with document type, target audience, sections, questions each section answers, and planned source references.');
+    lines.push('- Then write `evidence_index.md` with files read, evidence-backed claims, inferred claims, risks, and open questions. Every major conclusion in the final document should map to evidence or be marked as inference.');
     lines.push('- Then write the final Markdown document from the outline and evidence index.');
     lines.push('- The final Markdown must include overview, scope, key files/modules, core flows, data/state flow, boundaries/risks, and open questions. Use file paths for important claims.');
     if (gameMmoDocumentation) {
@@ -268,7 +268,7 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
       lines.push('- Prefer system matrices, cross-end sequence flows, data lifecycle sections, state-machine notes, protocol/config evidence tables, and performance/security callouts.');
     }
     lines.push('- Avoid duplicate whole-file reads. Summarize relationships instead of copying source, and only include short code excerpts when they materially improve the document.');
-    lines.push('- For documentation outputs, call Write directly for `doc_outline.json`, `evidence_index.json`, and the target Markdown file. Do not pre-create the parent directory with Bash unless Write fails because the directory is missing.');
+    lines.push('- For documentation outputs, call Write directly for `doc_outline.md`, `evidence_index.md`, and the target Markdown file. Do not pre-create the parent directory with Bash unless Write fails because the directory is missing.');
     lines.push('- After Write succeeds, do not read generated files back. Treat successful Write results as verification; use at most one simple existence check only if a tool result is ambiguous.');
     lines.push('- Write structured Markdown with tables, layered headings, flow lists, and small Mermaid diagrams where useful. Avoid long prose and avoid embedding large code excerpts.');
   }

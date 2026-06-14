@@ -81,25 +81,28 @@ export function getAutocodeDocumentationOutputs(plan: Record<string, unknown>): 
 
   return {
     finalMarkdown: markdownFromPlan || 'docs/analysis.md',
-    outline: typeof outputs.outline === 'string' ? outputs.outline : 'doc_outline.json',
-    evidenceIndex: typeof outputs.evidence_index === 'string' ? outputs.evidence_index : 'evidence_index.json',
+    outline: typeof outputs.outline === 'string' ? outputs.outline : 'doc_outline.md',
+    evidenceIndex: typeof outputs.evidence_index === 'string' ? outputs.evidence_index : 'evidence_index.md',
     base: outputs.base === 'project' ? 'project' : 'spec',
   };
 }
 
-export function validateAutocodeJsonDocumentObject(
-  parsed: Record<string, unknown> | null,
+export function validateAutocodeMarkdownSupportDocument(
+  content: string | null,
   filePath: string,
-  requiredKeys: readonly string[],
+  requiredTerms: readonly RegExp[],
 ): string[] {
-  if (!parsed) {
-    return [`documentation: ${filePath} is missing or invalid JSON`];
+  if (!content?.trim()) {
+    return [`documentation: ${filePath} is missing or empty`];
   }
 
   const issues: string[] = [];
-  for (const key of requiredKeys) {
-    if (!(key in parsed)) {
-      issues.push(`documentation: ${filePath} is missing "${key}"`);
+  if (!/^#\s+/m.test(content) && !/^##\s+/m.test(content)) {
+    issues.push(`documentation: ${filePath} needs Markdown headings`);
+  }
+  for (const term of requiredTerms) {
+    if (!term.test(content)) {
+      issues.push(`documentation: ${filePath} is missing expected topic ${term.source}`);
     }
   }
   return issues;
@@ -114,13 +117,13 @@ export function isAutocodeGameMmoDocumentationPlan(plan: Record<string, unknown>
 }
 
 export function validateAutocodeGameMmoDocumentationSupportContent(
-  outline: Record<string, unknown> | null,
-  evidence: Record<string, unknown> | null,
+  outline: string | null,
+  evidence: string | null,
   outputPath: string,
 ): string[] {
   const issues: string[] = [];
-  const outlineText = toLowerJsonText(outline);
-  const evidenceText = toLowerJsonText(evidence);
+  const outlineText = (outline ?? '').toLowerCase();
+  const evidenceText = (evidence ?? '').toLowerCase();
 
   const outlineChecks: Array<{ label: string; terms: RegExp[] }> = [
     {

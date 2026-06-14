@@ -215,6 +215,20 @@
     "showMore": "Afficher plus",
     "showLess": "Afficher moins"
   },
+  "detail": {
+    "requestsShort": "Etapes",
+    "requests": "Etapes modele",
+    "promptTokensShort": "Entree",
+    "promptTokens": "Tokens d'entree",
+    "completionTokensShort": "Sortie",
+    "completionTokens": "Tokens de sortie",
+    "totalTokensShort": "Total",
+    "totalTokens": "Total Tokens",
+    "tokensLabel": "Tokens",
+    "thinkingTokens": "Tokens de raisonnement",
+    "cacheReadTokens": "Tokens lus du cache",
+    "cacheCreationTokens": "Tokens ecrits en cache"
+  },
   "images": {
     "removeImageAriaLabel": "Supprimer l'image {{filename}}",
     "pasteHint": "Astuce : Collez des captures d'écran directement avec {{shortcut}} pour ajouter des images de référence."
@@ -410,7 +424,34 @@
     "entriesCount": "({{count}} entrées)",
     "modelOutputLive": "Direct",
     "jumpToLatest": "Dernier",
-    "streamChunkCount": "{{count}} fragments"
+    "streamChunkCount": "{{count}} fragments",
+    "collapsedLog": "replié",
+    "expandDetail": "Développer le détail du journal",
+    "collapseDetail": "Replier le détail du journal",
+    "internalEventCollapsed": "Journal d'événement interne Codex replié.",
+    "codexToolErrorCollapsed": "Journal d'erreur d'outil Codex replie.",
+    "codexJsonParseErrorCollapsed": "Journal d'echec d'analyse JSON PowerShell replie.",
+    "more": "Plus",
+    "less": "Moins",
+    "showOutput": "Afficher la sortie",
+    "hideOutput": "Masquer la sortie",
+    "modelTooltip": "Modèle : {{model}}",
+    "thinkingTooltip": "Raisonnement : {{thinking}}",
+    "thinkingLabels": {
+      "low": "Bas",
+      "medium": "Moy.",
+      "high": "Élevé",
+      "xhigh": "Très élevé"
+    },
+    "toolLabels": {
+      "reading": "Lecture",
+      "searchingFiles": "Recherche de fichiers",
+      "searchingCode": "Recherche dans le code",
+      "editing": "Modification",
+      "writing": "Écriture",
+      "running": "Exécution",
+      "command": "Commande"
+    }
   },
   "bulkPR": {
     "selectAllInColumn": "Sélectionner toutes les tâches de la colonne",

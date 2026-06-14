@@ -1,8 +1,11 @@
 export const DEFAULT_BASH_TIMEOUT_MS = 120_000;
 export const MAX_BASH_TIMEOUT_MS = 600_000;
 export const BASH_MAX_OUTPUT_LENGTH = 30_000;
+export const BASH_MAX_OUTPUT_LINE_LENGTH = 1000;
 export const AGGRESSIVE_BASH_MAX_OUTPUT_LENGTH = 8_000;
 export const AGGRESSIVE_BASH_MAX_STDERR_LENGTH = 6_000;
+const BASH_OUTPUT_TRUNCATION_HEAD_RATIO = 0.65;
+const BASH_LINE_OMISSION_MARKER = ' ... [line middle omitted] ... ';
 
 export interface BashExecutionResult {
   command: string;
@@ -24,10 +27,15 @@ export function truncateBashOutput(
   output: string,
   maxLength: number = BASH_MAX_OUTPUT_LENGTH,
 ): string {
-  if (output.length <= maxLength) {
-    return output;
+  const compactOutput = compactBashOutputLines(output, BASH_MAX_OUTPUT_LINE_LENGTH);
+  if (compactOutput.length <= maxLength) {
+    return compactOutput;
   }
-  return `${output.slice(0, maxLength)}\n\n[Output truncated - ${output.length} characters total]`;
+  return truncateHeadTailText(
+    compactOutput,
+    maxLength,
+    `\n\n[Output truncated - ${output.length} characters total; showing head and tail]\n\n`,
+  );
 }
 
 export function truncateCompilerOutput(output: string, maxLength: number): string {
@@ -49,10 +57,90 @@ export function truncateCompilerOutput(output: string, maxLength: number): strin
     );
   });
   const compact = diagnosticLines.length > 0
-    ? diagnosticLines.slice(0, 20).join('\n')
-    : lines.slice(0, 80).join('\n');
+    ? selectHeadTailLines(diagnosticLines, 20).join('\n')
+    : selectHeadTailLines(lines, 80).join('\n');
 
-  return `${compact.slice(0, maxLength)}\n\n[Compiler output truncated - ${output.length} characters total. Re-run with a narrower command if more detail is needed.]`;
+  return appendTruncationNotice(
+    compactBashOutputLines(compact, BASH_MAX_OUTPUT_LINE_LENGTH),
+    maxLength,
+    `\n\n[Compiler output truncated - ${output.length} characters total; showing diagnostic head and tail. Re-run with a narrower command if more detail is needed.]`,
+  );
+}
+
+function compactBashOutputLines(output: string, maxLineLength: number): string {
+  return output
+    .split('\n')
+    .map((line) => compactBashOutputLine(line, maxLineLength))
+    .join('\n');
+}
+
+function compactBashOutputLine(line: string, maxLength: number): string {
+  if (line.length <= maxLength) {
+    return line;
+  }
+  if (maxLength <= BASH_LINE_OMISSION_MARKER.length + 2) {
+    return line.slice(0, maxLength);
+  }
+
+  const budget = maxLength - BASH_LINE_OMISSION_MARKER.length;
+  const headLength = Math.ceil(budget * BASH_OUTPUT_TRUNCATION_HEAD_RATIO);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    line.slice(0, headLength).trimEnd(),
+    BASH_LINE_OMISSION_MARKER,
+    tailLength > 0 ? line.slice(-tailLength).trimStart() : '',
+  ].join('');
+}
+
+function selectHeadTailLines(lines: string[], maxLines: number): string[] {
+  if (lines.length <= maxLines) {
+    return lines;
+  }
+
+  const budget = Math.max(1, maxLines - 1);
+  const headCount = Math.ceil(budget * BASH_OUTPUT_TRUNCATION_HEAD_RATIO);
+  const tailCount = Math.max(0, budget - headCount);
+  return [
+    ...lines.slice(0, headCount),
+    `[... ${lines.length - headCount - tailCount} line(s) omitted ...]`,
+    ...(tailCount > 0 ? lines.slice(-tailCount) : []),
+  ];
+}
+
+function truncateHeadTailText(value: string, maxLength: number, marker: string): string {
+  if (maxLength <= 0) {
+    return '';
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  if (marker.length >= maxLength - 2) {
+    return value.slice(0, maxLength);
+  }
+
+  const budget = maxLength - marker.length;
+  const headLength = Math.ceil(budget * BASH_OUTPUT_TRUNCATION_HEAD_RATIO);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    value.slice(0, headLength).trimEnd(),
+    marker,
+    tailLength > 0 ? value.slice(-tailLength).trimStart() : '',
+  ].join('');
+}
+
+function appendTruncationNotice(value: string, maxLength: number, notice: string): string {
+  if (maxLength <= 0) {
+    return '';
+  }
+  if (notice.length >= maxLength - 2) {
+    return notice.slice(0, maxLength);
+  }
+
+  const contentBudget = maxLength - notice.length;
+  const content = value.length <= contentBudget
+    ? value
+    : truncateHeadTailText(value, contentBudget, '\n[Diagnostic middle omitted]\n');
+  return `${content.trimEnd()}${notice}`;
 }
 
 export function isCompilerCommand(command: string): boolean {

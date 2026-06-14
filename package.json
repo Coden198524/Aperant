@@ -36,7 +36,9 @@
     "package": "cd apps/desktop && npm run package",
     "package:mac": "cd apps/desktop && npm run package:mac",
     "package:win": "cd apps/desktop && npm run package:win",
-    "package:linux": "cd apps/desktop && npm run package:linux"
+    "package:linux": "cd apps/desktop && npm run package:linux",
+    "verify:commercial": "cd apps/desktop && npm run verify:commercial",
+    "test:commercial-readiness": "cd apps/desktop && npm run test:commercial-readiness"
   },
   "engines": {
     "node": ">=24.0.0",

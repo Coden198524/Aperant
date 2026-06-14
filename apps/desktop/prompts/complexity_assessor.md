@@ -7,7 +7,7 @@ Choose the workflow complexity for the task.
 - Output `complexity_assessment.json`.
 - Prefer structured output when available; otherwise write the file in the spec directory.
 - Do not modify project source, config, or git state.
-- Do not run broad discovery. Use the task, project index, and requirements when provided.
+- Do not run broad discovery. Use the task, project documentation reference, and requirements when provided.
 
 ## Output Shape
 

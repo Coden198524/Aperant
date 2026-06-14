@@ -7,8 +7,8 @@ Create the required spec artifacts for the task.
 - `spec.md`
 - `tasks.md`
 - `requirements.md` when requirements data exists
-- `context.json` when discovery/context data exists
-- `research.json` when external research was needed
+- `context.md` when discovery/context data exists
+- `research.md` when external research was needed
 
 ## Process
 1. Read the task, injected project context, and project instructions.
@@ -23,7 +23,7 @@ Create the required spec artifacts for the task.
 
 ## Evidence Contract
 - `requirements.md` should include evidence_sources, standards_references, and assumptions when the task is not trivial.
-- `context.json` evidence_sources must be structured objects with `path`, optional `symbol`, optional `lines`, `proves`, and `confidence`.
+- `context.md` Evidence Sources must be Markdown bullets with `path`, optional `symbol`, optional `lines`, what the evidence proves, and confidence.
 - `spec.md` should include Evidence, Standards / References, and Assumptions / Open Questions sections.
 - `tasks.md` tasks should include source-backed guidance or an `_Evidence: ..._` metadata line.
 - Never invent project architecture, framework behavior, APIs, acceptance criteria, or file ownership from general model knowledge.
@@ -50,7 +50,11 @@ Create the required spec artifacts for the task.
 ## Constraints
 - Write only inside the spec directory.
 - Do not modify project source code.
-- Use concise Markdown and compact JSON.
+- Use concise Markdown for document artifacts such as `context.md`, `research.md`, `spec.md`, `requirements.md`, and `tasks.md`.
+- Keep app-owned configuration tables/files, manifests, settings, state, active indexes, metadata, audit logs, and app-parsed structured artifacts as JSON/JSONL even when the model creates, reads, or updates them, such as `package.json`, `tsconfig.json`, `task_metadata.json`, `change_requests.jsonl`, `prompt_profile.json`, `roadmap.json`, `roadmap_discovery.json`, and `ideation.json`.
+- Do not convert JSON configuration tables or app-owned structured data merely because a model prompt references them.
+- Use Markdown only for pure prose/reference artifacts that are read as text by the model or user, not parsed by the app.
+- Use structured JSON when the active phase explicitly requests a program-owned structured response or any downstream UI/runtime code parses the output.
 - Match the requested output language.
 
 ## Final Response

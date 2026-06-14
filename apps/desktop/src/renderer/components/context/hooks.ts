@@ -1,7 +1,6 @@
 import { useEffect } from 'react';
 import {
   loadProjectContext,
-  refreshProjectIndex,
   searchMemories
 } from '../../stores/context-store';
 
@@ -11,12 +10,6 @@ export function useProjectContext(projectId: string) {
       loadProjectContext(projectId);
     }
   }, [projectId]);
-}
-
-export function useRefreshIndex(projectId: string) {
-  return async () => {
-    await refreshProjectIndex(projectId);
-  };
 }
 
 export function useMemorySearch(projectId: string) {

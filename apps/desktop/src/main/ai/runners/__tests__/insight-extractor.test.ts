@@ -37,7 +37,15 @@ vi.mock('../../schema/output', () => ({
 // Import after mocking
 // =============================================================================
 
-import { extractSessionInsights } from '../insight-extractor';
+import {
+  INSIGHT_EXTRACTION_ATTEMPT_FIELD_MAX_CHARS,
+  INSIGHT_EXTRACTION_ATTEMPTS_MAX,
+  INSIGHT_EXTRACTION_CHANGED_FILES_MAX,
+  INSIGHT_EXTRACTION_COMMIT_MESSAGES_MAX_CHARS,
+  INSIGHT_EXTRACTION_DIFF_MAX_CHARS,
+  INSIGHT_EXTRACTION_SUBTASK_DESCRIPTION_MAX_CHARS,
+  extractSessionInsights,
+} from '../insight-extractor';
 import type { InsightExtractionConfig } from '../insight-extractor';
 import { parseLLMJson } from '../../schema/structured-output';
 
@@ -187,6 +195,23 @@ describe('extractSessionInsights', () => {
     expect(result.approach_outcome.approach_used).toContain('sub-fallback');
   });
 
+  it('skips AI extraction when there are no changed files or diff source', async () => {
+    const result = await extractSessionInsights(baseConfig({
+      subtaskId: 'sub-empty',
+      sessionNum: 7,
+      diff: '',
+      changedFiles: [],
+      commitMessages: '',
+    }));
+
+    expect(result.subtask_id).toBe('sub-empty');
+    expect(result.session_num).toBe(7);
+    expect(result.changed_files).toEqual([]);
+    expect(result.file_insights).toEqual([]);
+    expect(mockCreateSimpleClient).not.toHaveBeenCalled();
+    expect(mockGenerateText).not.toHaveBeenCalled();
+  });
+
   it('returns generic insights when generateText throws', async () => {
     mockGenerateText.mockRejectedValue(new Error('API unavailable'));
 
@@ -255,8 +280,8 @@ describe('extractSessionInsights', () => {
     expect(callArgs.prompt).toContain('Fix login regression');
   });
 
-  it('truncates diff when it exceeds 15000 chars', async () => {
-    const longDiff = '+' + 'a'.repeat(20_000);
+  it('truncates diff when it exceeds the insight extraction budget while preserving the tail', async () => {
+    const longDiff = `+${'a'.repeat(20_000)}\n+DIFF TAIL OK`;
 
     await extractSessionInsights(baseConfig({ diff: longDiff }));
 
@@ -264,6 +289,8 @@ describe('extractSessionInsights', () => {
     const prompt = callArgs.prompt as string;
     // The prompt must mention truncation and not contain all 20k chars of diff
     expect(prompt).toContain('truncated');
+    expect(prompt).toContain('DIFF TAIL OK');
+    expect(prompt.length).toBeLessThan(INSIGHT_EXTRACTION_DIFF_MAX_CHARS + 2_500);
   });
 
   it('includes changed files in the prompt', async () => {
@@ -273,6 +300,42 @@ describe('extractSessionInsights', () => {
 
     const callArgs = mockGenerateText.mock.calls[0][0];
     expect(callArgs.prompt).toContain('src/login.ts');
+  });
+
+  it('caps changed files included in the prompt', async () => {
+    const changedFiles = Array.from(
+      { length: INSIGHT_EXTRACTION_CHANGED_FILES_MAX + 5 },
+      (_, index) => `src/file-${index}.ts`,
+    );
+
+    await extractSessionInsights(baseConfig({ changedFiles }));
+
+    const callArgs = mockGenerateText.mock.calls[0][0];
+    const prompt = callArgs.prompt as string;
+    expect(prompt).toContain(`src/file-${INSIGHT_EXTRACTION_CHANGED_FILES_MAX - 1}.ts`);
+    expect(prompt).not.toContain(`src/file-${INSIGHT_EXTRACTION_CHANGED_FILES_MAX}.ts`);
+    expect(prompt).toContain('more file(s) omitted');
+  });
+
+  it('truncates verbose metadata fields before insight extraction', async () => {
+    await extractSessionInsights(
+      baseConfig({
+        subtaskDescription: `${'description '.repeat(300)}DESCRIPTION TAIL OK`,
+        commitMessages: `${'commit message '.repeat(400)}COMMIT TAIL OK`,
+      }),
+    );
+
+    const callArgs = mockGenerateText.mock.calls[0][0];
+    const prompt = callArgs.prompt as string;
+    expect(prompt).toContain('truncated');
+    expect(prompt).toContain('DESCRIPTION TAIL OK');
+    expect(prompt).toContain('COMMIT TAIL OK');
+    expect(prompt.length).toBeLessThan(
+      INSIGHT_EXTRACTION_SUBTASK_DESCRIPTION_MAX_CHARS +
+      INSIGHT_EXTRACTION_COMMIT_MESSAGES_MAX_CHARS +
+      INSIGHT_EXTRACTION_DIFF_MAX_CHARS +
+      2_500,
+    );
   });
 
   it('includes attempt history in the prompt when provided', async () => {
@@ -288,6 +351,29 @@ describe('extractSessionInsights', () => {
     const callArgs = mockGenerateText.mock.calls[0][0];
     expect(callArgs.prompt).toContain('patch method');
     expect(callArgs.prompt).toContain('full rewrite');
+  });
+
+  it('keeps only recent compact previous attempts', async () => {
+    const attempts = Array.from({ length: INSIGHT_EXTRACTION_ATTEMPTS_MAX + 2 }, (_, index) => ({
+      success: false,
+      approach: `attempt-${index} ${'approach detail '.repeat(80)} APPROACH TAIL ${index}`,
+      error: `error-${index} ${'error detail '.repeat(80)} ERROR TAIL ${index}`,
+    }));
+
+    await extractSessionInsights(baseConfig({ attemptHistory: attempts }));
+
+    const callArgs = mockGenerateText.mock.calls[0][0];
+    const prompt = callArgs.prompt as string;
+    expect(prompt).not.toContain('attempt-0');
+    expect(prompt).not.toContain('error-0');
+    expect(prompt).toContain(`attempt-${attempts.length - 1}`);
+    expect(prompt).toContain(`error-${attempts.length - 1}`);
+    expect(prompt).toContain(`APPROACH TAIL ${attempts.length - 1}`);
+    expect(prompt).toContain(`ERROR TAIL ${attempts.length - 1}`);
+    expect(prompt).toContain('truncated');
+    expect(prompt.length).toBeLessThan(
+      INSIGHT_EXTRACTION_ATTEMPTS_MAX * INSIGHT_EXTRACTION_ATTEMPT_FIELD_MAX_CHARS * 2 + 4_000,
+    );
   });
 
   it('passes output schema configuration to generateText', async () => {

@@ -1,6 +1,6 @@
 # Context Handlers Module
 
-This directory contains the refactored context-related IPC handlers for the Autocode UI application. The handlers manage project context, memory systems (both file-based and Graphiti/LadybugDB), and project index operations.
+This directory contains the refactored context-related IPC handlers for the Autocode UI application. The handlers manage project context and memory systems (both file-based and Graphiti/LadybugDB).
 
 ## Architecture
 
@@ -55,20 +55,18 @@ Handlers for retrieving and searching memories (both file-based and LadybugDB).
 - Semantic search support (when Graphiti is available)
 
 #### `project-context-handlers.ts` (199 lines)
-Handlers for project context and index operations.
+Handlers for project context and legacy index compatibility.
 
 **Exports:**
 - `registerProjectContextHandlers(getMainWindow)` - Register IPC handlers
 
 **IPC Channels:**
-- `CONTEXT_GET` - Get full project context (index, memory status, recent memories)
-- `CONTEXT_REFRESH_INDEX` - Refresh project index by running analyzer
+- `CONTEXT_GET` - Get full project context (legacy index placeholder, memory status, recent memories)
 
 **Features:**
-- Project index loading and caching
 - Graphiti state detection from specs
 - Memory status aggregation
-- Analyzer script execution for index regeneration
+- Project documentation migration messaging
 
 #### `index.ts` (21 lines)
 Main entry point that aggregates all context handlers.

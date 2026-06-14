@@ -66,6 +66,25 @@ const CONFIG_FILE_PATTERNS = [
   'tailwind.config',
 ];
 
+const SCRATCHPAD_ERROR_TRACKED_TOOLS = new Set(['Bash', 'Edit', 'Write']);
+const SCRATCHPAD_ERROR_SIGNAL_PATTERN = /\b(error|failed|failure|exception|traceback)\b/i;
+const SCRATCHPAD_ERROR_TEXT_MAX_CHARS = 4_000;
+const SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS = 1_800;
+const SCRATCHPAD_ERROR_OBJECT_KEY_LIMIT = 10;
+const SCRATCHPAD_ERROR_OBJECT_KEYS = [
+  'error',
+  'message',
+  'reason',
+  'status',
+  'exit_code',
+  'exitCode',
+  'code',
+  'stderr',
+  'stdout',
+  'output',
+  'summary',
+];
+
 /**
  * Returns true if the file path is a recognized config file.
  */
@@ -83,7 +102,7 @@ export function isConfigFile(filePath: string): boolean {
  * file paths, line numbers, and timestamps, then hashing.
  */
 export function computeErrorFingerprint(errorMessage: string): string {
-  const normalized = errorMessage
+  const normalized = compactScratchpadErrorFingerprintInput(errorMessage)
     // Strip absolute file paths
     .replace(/\/[^\s:'"]+/g, '<path>')
     // Strip relative paths
@@ -205,12 +224,12 @@ export class Scratchpad {
     }
 
     // Track errors from Bash/other tool failures
-    if (
-      (toolName === 'Bash' || toolName === 'Edit' || toolName === 'Write') &&
-      typeof result === 'string' &&
-      result.toLowerCase().includes('error')
-    ) {
-      const fingerprint = computeErrorFingerprint(result);
+    if (SCRATCHPAD_ERROR_TRACKED_TOOLS.has(toolName)) {
+      const errorText = summarizeScratchpadToolResultErrorText(result);
+      if (!errorText) {
+        return;
+      }
+      const fingerprint = computeErrorFingerprint(errorText);
       const count = (this.analytics.errorFingerprints.get(fingerprint) ?? 0) + 1;
       this.analytics.errorFingerprints.set(fingerprint, count);
     }
@@ -369,4 +388,98 @@ export class Scratchpad {
       peakContextTokens: this.analytics.peakContextTokens,
     };
   }
+}
+
+function summarizeScratchpadToolResultErrorText(result: unknown): string | undefined {
+  const text = compactScratchpadToolResultText(result);
+  if (!text) {
+    return undefined;
+  }
+  return SCRATCHPAD_ERROR_SIGNAL_PATTERN.test(text) || hasScratchpadFailureStatus(result)
+    ? text
+    : undefined;
+}
+
+function compactScratchpadToolResultText(result: unknown): string {
+  if (typeof result === 'string') {
+    return compactScratchpadTextSample(result, SCRATCHPAD_ERROR_TEXT_MAX_CHARS);
+  }
+  if (typeof result === 'number' || typeof result === 'boolean' || result === null) {
+    return String(result);
+  }
+  if (Array.isArray(result)) {
+    return result
+      .slice(0, SCRATCHPAD_ERROR_OBJECT_KEY_LIMIT)
+      .map((item) => compactScratchpadToolResultText(item))
+      .filter(Boolean)
+      .join(' ');
+  }
+  if (typeof result !== 'object') {
+    return '';
+  }
+
+  const record = result as Record<string, unknown>;
+  const entries = SCRATCHPAD_ERROR_OBJECT_KEYS
+    .filter((key) => key in record)
+    .slice(0, SCRATCHPAD_ERROR_OBJECT_KEY_LIMIT)
+    .map((key) => `${key}: ${compactScratchpadToolResultText(record[key])}`)
+    .filter((part) => part.length > 0);
+  if (entries.length > 0) {
+    return compactScratchpadTextSample(entries.join(' '), SCRATCHPAD_ERROR_TEXT_MAX_CHARS);
+  }
+
+  return Object.entries(record)
+    .slice(0, SCRATCHPAD_ERROR_OBJECT_KEY_LIMIT)
+    .map(([key, value]) => `${key}: ${compactScratchpadToolResultText(value)}`)
+    .filter((part) => part.length > 0)
+    .join(' ');
+}
+
+function compactScratchpadTextSample(text: string, maxChars: number): string {
+  if (text.length <= maxChars) {
+    return normalizeScratchpadInlineText(text);
+  }
+
+  const marker = ' ... [middle omitted] ... ';
+  const head = normalizeScratchpadInlineText(text.slice(0, SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS));
+  const tail = normalizeScratchpadInlineText(text.slice(-SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS));
+  return `${head}${marker}${tail}`.slice(0, maxChars).trim();
+}
+
+function compactScratchpadErrorFingerprintInput(text: string): string {
+  const sampled = compactScratchpadTextSample(text, SCRATCHPAD_ERROR_TEXT_MAX_CHARS);
+  const signalIndex = sampled.search(SCRATCHPAD_ERROR_SIGNAL_PATTERN);
+  if (signalIndex < 0) {
+    return sampled;
+  }
+
+  const windowStart = Math.max(0, signalIndex - 160);
+  const windowEnd = Math.min(sampled.length, signalIndex + 2_000);
+  return sampled.slice(windowStart, windowEnd).trim();
+}
+
+function normalizeScratchpadInlineText(text: string): string {
+  return text.replace(/\s+/g, ' ').trim();
+}
+
+function hasScratchpadFailureStatus(result: unknown): boolean {
+  if (!result || typeof result !== 'object' || Array.isArray(result)) {
+    return false;
+  }
+  const record = result as Record<string, unknown>;
+  const exitCode = record.exit_code ?? record.exitCode ?? record.code;
+  if (typeof exitCode === 'number') {
+    return exitCode !== 0;
+  }
+  if (typeof exitCode === 'string') {
+    const parsed = Number(exitCode);
+    return Number.isFinite(parsed) && parsed !== 0;
+  }
+  if (typeof record.ok === 'boolean') {
+    return !record.ok;
+  }
+  if (typeof record.status === 'string') {
+    return /fail|error|exception/i.test(record.status);
+  }
+  return false;
 }

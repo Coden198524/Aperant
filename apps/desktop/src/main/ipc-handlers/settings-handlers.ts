@@ -17,7 +17,7 @@ import type {
 import { AgentManager } from '../agent';
 import type { BrowserWindow } from 'electron';
 import { setUpdateChannel, setUpdateChannelWithDowngradeCheck } from '../app-updater';
-import { getSettingsPath, readSettingsFile } from '../settings-utils';
+import { getSettingsPath, readSettingsFile, writeSettingsFile } from '../settings-utils';
 import { resetMemoryService } from './context/memory-service-factory';
 import { initializeLocalMemoryDatabase } from '../ai/memory/db';
 import { configureTools, getToolPath, getToolInfo, isPathFromWrongPlatform, preWarmToolCache } from '../cli-tool-manager';
@@ -28,6 +28,17 @@ import { loadProfilesFile } from '../utils/profile-manager';
 import { loadProfileStore } from '../claude-profile/profile-storage';
 
 const settingsPath = getSettingsPath();
+
+const MEMORY_SETTING_KEYS: Array<keyof AppSettings> = [
+  'memoryEnabled',
+  'memoryEmbeddingProvider',
+  'globalOpenAIApiKey',
+  'globalGoogleApiKey',
+  'memoryVoyageApiKey',
+  'memoryAzureApiKey',
+  'ollamaBaseUrl',
+  'memoryOllamaEmbeddingModel',
+];
 
 function normalizeThemeSettings(settings: Partial<AppSettings>): boolean {
   const mutableSettings = settings as Partial<AppSettings> & Record<string, unknown>;
@@ -466,6 +477,10 @@ export function registerSettingsHandlers(
         });
       }
 
+      if (typeof settings.language === 'string') {
+        setAppLanguage(settings.language);
+      }
+
       return { success: true, data: settings as AppSettings };
     }
   );
@@ -495,11 +510,20 @@ export function registerSettingsHandlers(
           }
         }
 
-        if (newSettings.memoryEnabled === true) {
-          await initializeLocalMemoryDatabase();
+        writeSettingsFile(newSettings as unknown as Record<string, unknown>);
+
+        if (typeof newSettings.language === 'string') {
+          setAppLanguage(newSettings.language);
         }
 
-        writeFileSync(settingsPath, JSON.stringify(newSettings, null, 2), 'utf-8');
+        const memorySettingsChanged = MEMORY_SETTING_KEYS.some((key) =>
+          settings[key] !== undefined && settings[key] !== currentSettings[key]
+        );
+        if (newSettings.memoryEnabled === true && memorySettingsChanged) {
+          initializeLocalMemoryDatabase().catch((error) => {
+            console.warn('[SETTINGS_SAVE] Failed to initialize local memory database after settings save:', error);
+          });
+        }
 
         // Apply Python path if changed
         if (settings.pythonPath || settings.autoBuildPath) {
@@ -532,14 +556,7 @@ export function registerSettingsHandlers(
 
         // Reset memory service singleton when memory-related settings change
         if (
-          settings.memoryEmbeddingProvider !== undefined ||
-          settings.memoryEnabled !== undefined ||
-          settings.globalOpenAIApiKey !== undefined ||
-          settings.globalGoogleApiKey !== undefined ||
-          settings.memoryVoyageApiKey !== undefined ||
-          settings.memoryAzureApiKey !== undefined ||
-          settings.ollamaBaseUrl !== undefined ||
-          settings.memoryOllamaEmbeddingModel !== undefined
+          memorySettingsChanged
         ) {
           resetMemoryService();
         }

@@ -1,0 +1,167 @@
+import { describe, expect, it } from 'vitest';
+
+import {
+  AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS,
+  buildAutocodeAgenticSpecOrchestratorKickoffMessage,
+  buildAutocodeSpecKickoffMessage,
+} from './agent-kickoff.js';
+
+describe('buildAutocodeSpecKickoffMessage', () => {
+  it('compacts oversized task descriptions while preserving head and tail requirements', () => {
+    const longTaskDescription = [
+      'Opening requirement: keep configuration tables as JSON.',
+      ...Array.from(
+        { length: 260 },
+        (_, index) => `Noisy pasted log line ${index}: ${'irrelevant terminal output '.repeat(5)}`,
+      ),
+      'Closing requirement: pure model-only reference artifacts should use Markdown.',
+    ].join('\n');
+
+    const message = buildAutocodeSpecKickoffMessage({
+      agentType: 'spec_discovery',
+      specPhase: 'discovery',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      taskDescription: longTaskDescription,
+    });
+
+    expect(message).toContain('Opening requirement: keep configuration tables as JSON.');
+    expect(message).toContain('task description middle omitted for prompt budget');
+    expect(message).toContain('Closing requirement: pure model-only reference artifacts should use Markdown.');
+    expect(message).not.toContain('Noisy pasted log line 160');
+    expect(message.length).toBeLessThan(AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS + 3_500);
+  });
+
+  it('compacts large prior phase outputs before injecting kickoff context', () => {
+    const contextMarkdown = [
+      '# Project Context',
+      '',
+      '## Architecture',
+      '',
+      '- Renderer owns UI state.',
+      '- Main process owns IPC.',
+      ...Array.from(
+        { length: 200 },
+        (_, index) => `- Tail detail ${index}: ${'implementation evidence '.repeat(5)}`,
+      ),
+    ].join('\n');
+    const researchMarkdown = [
+      '# Research',
+      '',
+      '## Findings',
+      '',
+      ...Array.from(
+        { length: 160 },
+        (_, index) => `Long paragraph ${index} ${'external API constraint '.repeat(8)}`,
+      ),
+    ].join('\n');
+    const largeJson = JSON.stringify({
+      items: Array.from({ length: 60 }, (_, index) => ({
+        id: index,
+        description: 'long structured model output '.repeat(8),
+      })),
+    }, null, 2);
+
+    const message = buildAutocodeSpecKickoffMessage({
+      agentType: 'planner',
+      specPhase: 'planning',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Plan a change.',
+      priorPhaseOutputs: {
+        'context.md': contextMarkdown,
+        'research.md': researchMarkdown,
+        'large.json': largeJson,
+      },
+    });
+
+    expect(message).toContain('## CONTEXT FROM PRIOR PHASES');
+    expect(message).toContain('### context.md');
+    expect(message).toContain('Compact excerpt of context.md');
+    expect(message).toContain('Architecture');
+    expect(message).toContain('Renderer owns UI state');
+    expect(message).toContain('prior output middle omitted');
+    expect(message).toContain('Tail detail 199');
+    expect(message).toContain('Compact JSON summary');
+    expect(message.length).toBeLessThan(14_000);
+  });
+
+  it('caps oversized project documentation references in spec phase kickoff', () => {
+    const projectDocsReference = [
+      '## Project Documentation Reference',
+      '',
+      'Use these generated docs as source of truth.',
+      '',
+      '### Architecture (.autocode/project-docs/architecture.md)',
+      '- Renderer owns UI state.',
+      '- Main process owns filesystem and IPC.',
+      ...Array.from(
+        { length: 240 },
+        (_, index) => `- Architecture detail ${index}: ${'project documentation evidence '.repeat(6)}`,
+      ),
+    ].join('\n');
+
+    const message = buildAutocodeSpecKickoffMessage({
+      agentType: 'spec_writer',
+      specPhase: 'spec_writing',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Write a spec.',
+      projectDocsReference,
+    });
+
+    expect(message).toContain('## Project Documentation Reference');
+    expect(message).toContain('Compact excerpt');
+    expect(message).toContain('Renderer owns UI state');
+    expect(message).toContain('project docs reference middle omitted');
+    expect(message).toContain('Architecture detail 239');
+    expect(message.length).toBeLessThan(8_500);
+  });
+
+  it('caps oversized project documentation references in agentic orchestrator kickoff', () => {
+    const projectDocsReference = [
+      '## Project Documentation Reference',
+      '',
+      ...Array.from(
+        { length: 220 },
+        (_, index) => `- Product detail ${index}: ${'workflow and architecture note '.repeat(6)}`,
+      ),
+    ].join('\n');
+
+    const message = buildAutocodeAgenticSpecOrchestratorKickoffMessage({
+      taskDescription: 'Create a complete spec.',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      projectDocsReference,
+    });
+
+    expect(message).toContain('## Project Documentation Reference');
+    expect(message).toContain('Compact excerpt');
+    expect(message).toContain('project docs reference middle omitted');
+    expect(message).toContain('Product detail 219');
+    expect(message.length).toBeLessThan(7_000);
+  });
+
+  it('compacts oversized task descriptions in agentic orchestrator kickoff', () => {
+    const longTaskDescription = [
+      'First business rule: keep app-owned structured outputs as JSON.',
+      ...Array.from(
+        { length: 260 },
+        (_, index) => `Large middle detail ${index}: ${'duplicated diagnostic text '.repeat(5)}`,
+      ),
+      'Final business rule: convert only model-readable prose references to Markdown.',
+    ].join('\n');
+
+    const message = buildAutocodeAgenticSpecOrchestratorKickoffMessage({
+      taskDescription: longTaskDescription,
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+    });
+
+    expect(message).toContain('First business rule: keep app-owned structured outputs as JSON.');
+    expect(message).toContain('task description middle omitted for prompt budget');
+    expect(message).toContain('Final business rule: convert only model-readable prose references to Markdown.');
+    expect(message).not.toContain('Large middle detail 160');
+    expect(message.length).toBeLessThan(AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS + 800);
+  });
+});

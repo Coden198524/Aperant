@@ -51,6 +51,8 @@ export interface SerializableSessionConfig {
   projectDir: string;
   /** Project data directory name (for generated docs, specs, roadmap, env files). */
   dataDirName?: string;
+  /** Generated project documentation reference text for AI kickoff/context injection. */
+  projectDocsReference?: string;
   /** Source project dir in main project (for worktree read/search access) */
   sourceProjectDir?: string;
   /** Source spec dir in main project (for worktree → main sync during execution) */

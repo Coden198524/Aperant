@@ -3,6 +3,8 @@ export const AUTOCODE_LEGACY_PROJECT_DATA_DIR_NAME = '.auto-claude';
 export const AUTOCODE_SPECS_DIR_NAME = 'specs';
 
 export const AUTOCODE_TASK_ARTIFACTS = {
+  context: 'context.md',
+  research: 'research.md',
   tasks: 'tasks.md',
   implementationPlan: 'implementation_plan.md',
   specFile: 'spec.md',
@@ -11,6 +13,7 @@ export const AUTOCODE_TASK_ARTIFACTS = {
   taskLogs: 'task_logs.jsonl',
   directSummary: 'direct_summary.md',
   directSession: 'direct_session.json',
+  critiqueReport: 'critique_report.md',
   qaReport: 'qa_report.md',
   runResult: 'autocode-run-result.json',
 } as const;

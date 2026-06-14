@@ -6,6 +6,10 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdirSync, mkdtempSync, writeFileSync, rmSync, existsSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import {
+  stringifyAutocodeImplementationPlanMarkdown,
+  type MutableAutocodePlan,
+} from '@autocode/core';
 
 // Test directories - created securely with mkdtempSync to prevent TOCTOU attacks
 let TEST_DIR: string;
@@ -89,6 +93,14 @@ function createIncompletePlan(): object {
   };
 }
 
+function writeTestPlan(plan: object): void {
+  const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.md');
+  writeFileSync(
+    planPath,
+    stringifyAutocodeImplementationPlanMarkdown(plan as MutableAutocodePlan),
+  );
+}
+
 // Setup test directories with secure temp directory
 function setupTestDirs(): void {
   // Create secure temp directory with random suffix
@@ -120,17 +132,16 @@ describe('Task Lifecycle Integration', () => {
   });
 
   describe('Spec completion to subtask loading', () => {
-    it('should load subtasks from implementation_plan.json after spec completion', async () => {
-      // Create implementation_plan.json with full subtask data
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
+    it('should load subtasks from implementation_plan.md after spec completion', async () => {
+      // Create implementation_plan.md with full subtask data
       const plan = createTestPlan();
-      writeFileSync(planPath, JSON.stringify(plan, null, 2));
+      writeTestPlan(plan);
 
       // Import preload script to get electronAPI
       await import('../../preload/index');
       const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
 
-      // Mock IPC response for getTasks (loads implementation_plan.json)
+      // Mock IPC response for getTasks (loads implementation_plan.md)
       mockIpcRenderer.invoke.mockResolvedValueOnce({
         success: true,
         data: [
@@ -180,10 +191,9 @@ describe('Task Lifecycle Integration', () => {
     });
 
     it('should handle incomplete plan data with empty phases array', async () => {
-      // Create implementation_plan.json with incomplete data (empty phases)
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
+      // Create implementation_plan.md with incomplete data (empty phases)
       const incompletePlan = createIncompletePlan();
-      writeFileSync(planPath, JSON.stringify(incompletePlan, null, 2));
+      writeTestPlan(incompletePlan);
 
       await import('../../preload/index');
       const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;
@@ -291,10 +301,9 @@ describe('Task Lifecycle Integration', () => {
     });
 
     it('should handle task resume by reloading implementation plan', async () => {
-      // Create implementation_plan.json
-      const planPath = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
+      // Create implementation_plan.md
       const plan = createTestPlan();
-      writeFileSync(planPath, JSON.stringify(plan, null, 2));
+      writeTestPlan(plan);
 
       await import('../../preload/index');
       const electronAPI = exposedApis['electronAPI'] as Record<string, unknown>;

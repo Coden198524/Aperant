@@ -4,9 +4,9 @@ Review and fix `spec.md` before implementation.
 
 ## Contract
 
-- Read provided `spec.md`, `requirements.md`, `context.json`, and `research.json` when present.
+- Read provided `spec.md`, `requirements.md`, `context.md`, and `research.md` when present.
 - If fixes are needed, edit only the affected section of `spec.md`.
-- Write `critique_report.json` in the spec directory.
+- Write `critique_report.md` in the spec directory.
 - Do not modify project source, config, or git state.
 - Do not rewrite a large spec with one Write call.
 
@@ -31,24 +31,23 @@ Use additional tools only to verify specific claims.
 - Preserve valid content.
 - Do not add long rationale or copied source.
 
-## critique_report.json
+## critique_report.md
 
-```json
-{
-  "issues_found": [
-    {
-      "severity": "high|medium|low",
-      "location": "section or line reference",
-      "issue": "Short issue",
-      "fix": "What changed"
-    }
-  ],
-  "spec_updated": true,
-  "summary": "Short summary"
-}
+```markdown
+# Critique Report
+
+## Summary
+- Spec updated: yes|no
+- Issue count: 0
+
+## Issues Found
+- Severity: high|medium|low
+  - Location: section or line reference
+  - Issue: Short issue
+  - Fix: What changed
 ```
 
-If no issues are found, write an empty `issues_found` array with `spec_updated: false`.
+If no issues are found, write `Issue count: 0` and `Spec updated: no`.
 
 ## Final Response
 

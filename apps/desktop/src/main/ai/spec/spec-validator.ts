@@ -23,7 +23,6 @@ import {
   saveAutocodeImplementationPlanSync,
 } from '@autocode/core';
 import { createSimpleClient } from '../client/factory';
-import { safeParseJson } from '../../utils/json-repair';
 
 // ---------------------------------------------------------------------------
 // Schemas (ported from schemas.py)
@@ -49,9 +48,6 @@ const SUBTASK_REQUIRED_FIELDS = ['id', 'description', 'status'];
 const SUBTASK_STATUS_VALUES = ['pending', 'in_progress', 'completed', 'blocked', 'failed'];
 
 const VERIFICATION_TYPES = ['command', 'api', 'browser', 'component', 'e2e', 'manual', 'none'];
-
-const CONTEXT_REQUIRED_FIELDS = ['task_description'];
-const CONTEXT_RECOMMENDED_FIELDS = ['files_to_modify', 'files_to_reference', 'scoped_services'];
 
 const SPEC_REQUIRED_SECTIONS = [
   'Overview',
@@ -310,7 +306,7 @@ export function validatePrereqs(specDir: string): ValidationResult {
 }
 
 /**
- * Validate context.json exists and has required structure.
+ * Validate context.md exists and has required structure.
  * Ported from: ContextValidator in context_validator.py
  */
 export function validateContext(specDir: string): ValidationResult {
@@ -318,37 +314,30 @@ export function validateContext(specDir: string): ValidationResult {
   const warnings: string[] = [];
   const fixes: string[] = [];
 
-  const contextFile = join(specDir, 'context.json');
+  const contextFile = join(specDir, AUTOCODE_TASK_ARTIFACTS.context);
 
   let raw: string;
   try {
     raw = readFileSync(contextFile, 'utf-8');
   } catch (err: unknown) {
     if ((err as NodeJS.ErrnoException).code === 'ENOENT') {
-      errors.push('context.json not found');
-      fixes.push('Regenerate context.json');
-      return { valid: false, checkpoint: 'context', errors, warnings, fixes };
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.context} not found`);
+      fixes.push(`Regenerate ${AUTOCODE_TASK_ARTIFACTS.context}`);
+      return { valid: errors.length === 0, checkpoint: 'context', errors, warnings, fixes };
     }
     throw err;
   }
-  const context = safeParseJson<Record<string, unknown>>(raw);
-  if (!context) {
-    errors.push('context.json is invalid JSON');
-    fixes.push('Regenerate context.json or fix JSON syntax');
-    return { valid: false, checkpoint: 'context', errors, warnings, fixes };
-  }
 
-  for (const field of CONTEXT_REQUIRED_FIELDS) {
-    if (!(field in context)) {
-      errors.push(`Missing required field: ${field}`);
-      fixes.push(`Add '${field}' to context.json`);
-    }
+  if (!/^#\s+Project Context\b/im.test(raw)) {
+    warnings.push(`${AUTOCODE_TASK_ARTIFACTS.context} should start with "# Project Context"`);
   }
-
-  for (const field of CONTEXT_RECOMMENDED_FIELDS) {
-    if (!(field in context) || !context[field]) {
-      warnings.push(`Missing recommended field: ${field}`);
-    }
+  if (!/^##\s+Task\b/im.test(raw)) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.context} missing "## Task" section`);
+    fixes.push(`Add a Task section to ${AUTOCODE_TASK_ARTIFACTS.context}`);
+  }
+  if (!/^##\s+Evidence Sources\b/im.test(raw)) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.context} missing "## Evidence Sources" section`);
+    fixes.push(`Add source bullets to ${AUTOCODE_TASK_ARTIFACTS.context}`);
   }
 
   return { valid: errors.length === 0, checkpoint: 'context', errors, warnings, fixes };
@@ -637,7 +626,7 @@ const VALIDATION_FIXER_SYSTEM_PROMPT = `Fix validation errors in Auto-Build spec
 Principle: read the error, understand the schema, fix only the invalid file content.
 
 Schemas:
-- context.json requires: task_description (string)
+- context.md requires: # Project Context, ## Task, and ## Evidence Sources
 - implementation_plan.md requires checklist Markdown that parses to feature, workflow_type, and phases with subtasks
 - Each subtask requires: id (string), description (string), status (string: pending|in_progress|completed|blocked|failed)
 - spec.md requires sections: ## Overview, ## Workflow Type, ## Task Scope, ## Estimated Manual Effort, ## Success Criteria
@@ -646,7 +635,7 @@ Rules:
 1. Read the file before fixing it.
 2. Make minimal changes; do not restructure valid data.
 3. Preserve existing valid content.
-4. Ensure fixed output is valid JSON or Markdown.
+4. Ensure fixed output is valid Markdown.
 5. Fix and verify one error class at a time.`;
 
 /**
@@ -731,9 +720,9 @@ function buildFixerPrompt(specDir: string, checkpoint: string, errors: string[])
   const fileContents: string[] = [];
 
   if (checkpoint === 'context') {
-    const cf = join(specDir, 'context.json');
+    const cf = join(specDir, AUTOCODE_TASK_ARTIFACTS.context);
     try {
-      fileContents.push(`## context.json (current):\n\`\`\`json\n${readFileSync(cf, 'utf-8')}\n\`\`\``);
+      fileContents.push(`## ${AUTOCODE_TASK_ARTIFACTS.context} (current):\n\`\`\`markdown\n${readFileSync(cf, 'utf-8')}\n\`\`\``);
     } catch { /* ignore */ }
   } else if (checkpoint === 'spec') {
     const sf = join(specDir, 'spec.md');

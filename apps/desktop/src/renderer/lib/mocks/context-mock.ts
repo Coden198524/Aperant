@@ -14,11 +14,6 @@ export const contextMock = {
     }
   }),
 
-  refreshProjectIndex: async () => ({
-    success: false,
-    error: 'Not available in browser mock'
-  }),
-
   getMemoryStatus: async () => ({
     success: true,
     data: {

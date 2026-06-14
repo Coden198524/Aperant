@@ -226,9 +226,9 @@ export interface WorkUnitResult {
 export interface MemoryService {
   store(entry: MemoryRecordEntry): Promise<string>;
   search(filters: MemorySearchFilters): Promise<Memory[]>;
-  searchByPattern(pattern: string): Promise<Memory | null>;
+  searchByPattern(pattern: string, opts?: { projectId?: string }): Promise<Memory | null>;
   insertUserTaught(content: string, projectId: string, tags: string[]): Promise<string>;
-  searchWorkflowRecipe(taskDescription: string, opts?: { limit?: number }): Promise<Memory[]>;
+  searchWorkflowRecipe(taskDescription: string, opts?: { limit?: number; projectId?: string }): Promise<Memory[]>;
   updateAccessCount(memoryId: string): Promise<void>;
   deprecateMemory(memoryId: string): Promise<void>;
   verifyMemory(memoryId: string): Promise<void>;
@@ -298,6 +298,7 @@ export interface MemorySearchFilters {
   limit?: number;
   sort?: 'relevance' | 'recency' | 'confidence';
   excludeDeprecated?: boolean;
+  promptContextOnly?: boolean;
   filter?: (memory: Memory) => boolean;
 }
 

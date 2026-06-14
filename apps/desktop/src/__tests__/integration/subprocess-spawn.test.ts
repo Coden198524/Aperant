@@ -9,6 +9,20 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { EventEmitter } from 'events';
 import type { AgentExecutorConfig } from '../../main/ai/agent/types';
 
+vi.mock('child_process', async (importOriginal) => {
+  const actual = await importOriginal<typeof import('child_process')>();
+
+  return {
+    ...actual,
+    execSync: vi.fn((command: string) => {
+      if (command.includes('git branch --show-current')) {
+        return 'feature/test\n';
+      }
+      return '';
+    }),
+  };
+});
+
 // =============================================================================
 // Mock WorkerBridge
 // =============================================================================
@@ -348,8 +362,8 @@ describe('WorkerBridge Spawn Integration', () => {
       const manager = new AgentManager();
       expect(manager.getRunningTasks()).toHaveLength(0);
 
-      await manager.startSpecCreation('task-1', '/project', 'Test 1');
-      await manager.startTaskExecution('task-2', '/project', 'spec-001');
+      await manager.startSpecCreation('task-1', '/project-a', 'Test 1');
+      await manager.startTaskExecution('task-2', '/project-b', 'spec-001');
 
       expect(manager.getRunningTasks()).toHaveLength(2);
       expect(manager.getRunningTasks()).toContain('task-1');
@@ -360,8 +374,8 @@ describe('WorkerBridge Spawn Integration', () => {
       const { AgentManager } = await import('../../main/agent');
 
       const manager = new AgentManager();
-      await manager.startSpecCreation('task-1', '/project', 'Test 1');
-      await manager.startTaskExecution('task-2', '/project', 'spec-001');
+      await manager.startSpecCreation('task-1', '/project-a', 'Test 1');
+      await manager.startTaskExecution('task-2', '/project-b', 'spec-001');
 
       expect(manager.getRunningTasks()).toHaveLength(2);
 

@@ -1,4 +1,4 @@
-﻿import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -7,12 +7,53 @@ import {
   type MutableAutocodePlan,
 } from '@autocode/core';
 
-import { runPreQASmokeTests } from '../pre-qa-smoke-tests';
-import { runPreQAQualityChecks, validateSubtaskQuality } from '../quality-integration';
+import {
+  PRE_QA_SMOKE_OUTPUT_MAX_CHARS,
+  compactSmokeOutput,
+  runPreQASmokeTests,
+} from '../pre-qa-smoke-tests';
+import {
+  QUALITY_SESSION_SUMMARY_MAX_CHARS,
+  compactQualitySessionSummary,
+  runPreQAQualityChecks,
+  validateSubtaskQuality,
+} from '../quality-integration';
 import type { SessionResult } from '../../session/types';
 
 async function writeImplementationPlan(specDir: string, plan: Record<string, unknown>): Promise<void> {
   await saveAutocodeImplementationPlan(specDir, plan as MutableAutocodePlan);
+}
+
+function documentationOutlineMarkdown(sections: string[]): string {
+  return [
+    '# Documentation Outline',
+    '',
+    '## Document Type',
+    'source-analysis',
+    '',
+    '## Audience',
+    'developer',
+    '',
+    '## Sections',
+    ...sections.map((section) => `- ${section}`),
+    '',
+  ].join('\n');
+}
+
+function evidenceIndexMarkdown(files: string[], claims: string[], openQuestions: string[]): string {
+  return [
+    '# Evidence Index',
+    '',
+    '## Files Read',
+    ...files.map((file) => `- ${file}`),
+    '',
+    '## Evidence-Backed Claims',
+    ...claims.map((claim) => `- ${claim}`),
+    '',
+    '## Open Questions',
+    ...openQuestions.map((question) => `- ${question}`),
+    '',
+  ].join('\n');
 }
 
 describe('pre-QA smoke tests', () => {
@@ -27,6 +68,39 @@ describe('pre-QA smoke tests', () => {
   afterEach(async () => {
     await rm(projectDir, { recursive: true, force: true });
     await rm(specDir, { recursive: true, force: true });
+  });
+
+  it('compacts oversized smoke check output with head and tail context', () => {
+    const output = [
+      'SMOKE_OUTPUT_HEAD',
+      'x'.repeat(PRE_QA_SMOKE_OUTPUT_MAX_CHARS * 2),
+      'SMOKE_OUTPUT_TAIL',
+    ].join('\n');
+
+    const compacted = compactSmokeOutput(output);
+
+    expect(compacted.length).toBeLessThanOrEqual(PRE_QA_SMOKE_OUTPUT_MAX_CHARS);
+    expect(compacted).toContain('SMOKE_OUTPUT_HEAD');
+    expect(compacted).toContain('SMOKE_OUTPUT_TAIL');
+    expect(compacted).toContain('smoke output truncated');
+  });
+
+  it('compacts quality session summaries with tail context for downstream quality gates', () => {
+    const compacted = compactQualitySessionSummary([{
+      role: 'assistant',
+      content: [
+        'QUALITY_SESSION_HEAD',
+        'x'.repeat(QUALITY_SESSION_SUMMARY_MAX_CHARS * 2),
+        'Verification: ran targeted combat replication smoke check.',
+        'Server authority, network sync, security, and performance risks reviewed.',
+        'QUALITY_SESSION_TAIL',
+      ].join('\n'),
+    }]);
+
+    expect(compacted.length).toBeLessThanOrEqual(QUALITY_SESSION_SUMMARY_MAX_CHARS);
+    expect(compacted).toContain('QUALITY_SESSION_HEAD');
+    expect(compacted).toContain('QUALITY_SESSION_TAIL');
+    expect(compacted).toContain('quality summary truncated');
   });
 
   it('passes secret scanning in a non-git project without shell grep', async () => {
@@ -81,8 +155,8 @@ describe('pre-QA smoke tests', () => {
       workflow_type: 'documentation',
       document_outputs: {
         final_markdown: 'docs/analysis.md',
-        outline: 'doc_outline.json',
-        evidence_index: 'evidence_index.json',
+        outline: 'doc_outline.md',
+        evidence_index: 'evidence_index.md',
       },
       phases: [{
         id: '1',
@@ -92,7 +166,7 @@ describe('pre-QA smoke tests', () => {
           title: 'Write docs',
           description: 'Write documentation',
           status: 'completed',
-          files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
+          files_to_create: ['docs/analysis.md', 'doc_outline.md', 'evidence_index.md'],
         }],
       }],
     });
@@ -102,8 +176,8 @@ describe('pre-QA smoke tests', () => {
     const result = await runPreQAQualityChecks({}, projectDir, specDir);
 
     expect(result.shouldProceedToQA).toBe(false);
-    expect(result.issues.join('\n')).toContain('doc_outline.json');
-    expect(result.issues.join('\n')).toContain('evidence_index.json');
+    expect(result.issues.join('\n')).toContain('doc_outline.md');
+    expect(result.issues.join('\n')).toContain('evidence_index.md');
   });
 
   it('passes documentation workflows with outline, evidence, and structured markdown', async () => {
@@ -112,8 +186,8 @@ describe('pre-QA smoke tests', () => {
       workflow_type: 'documentation',
       document_outputs: {
         final_markdown: 'docs/analysis.md',
-        outline: 'doc_outline.json',
-        evidence_index: 'evidence_index.json',
+        outline: 'doc_outline.md',
+        evidence_index: 'evidence_index.md',
       },
       phases: [{
         id: '1',
@@ -123,20 +197,16 @@ describe('pre-QA smoke tests', () => {
           title: 'Write docs',
           description: 'Write documentation',
           status: 'completed',
-          files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
+          files_to_create: ['docs/analysis.md', 'doc_outline.md', 'evidence_index.md'],
         }],
       }],
     });
-    await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
-      document_type: 'source-analysis',
-      audience: 'developer',
-      sections: ['Overview', 'Core flow', 'Risks'],
-    }), 'utf-8');
-    await writeFile(join(specDir, 'evidence_index.json'), JSON.stringify({
-      files_read: ['src/main.ts'],
-      evidence_backed_claims: [{ claim: 'Main flow starts in src/main.ts', files: ['src/main.ts'] }],
-      open_questions: ['Runtime configuration needs confirmation'],
-    }), 'utf-8');
+    await writeFile(join(specDir, 'doc_outline.md'), documentationOutlineMarkdown(['Overview', 'Core flow', 'Risks']), 'utf-8');
+    await writeFile(join(specDir, 'evidence_index.md'), evidenceIndexMarkdown(
+      ['src/main.ts'],
+      ['Main flow starts in src/main.ts. Source: src/main.ts'],
+      ['Runtime configuration needs confirmation'],
+    ), 'utf-8');
     await mkdir(join(specDir, 'docs'), { recursive: true });
     await writeFile(join(specDir, 'docs', 'analysis.md'), [
       '# Source Analysis',
@@ -180,8 +250,8 @@ describe('pre-QA smoke tests', () => {
       documentation_profile: 'game-mmo-source',
       document_outputs: {
         final_markdown: 'docs/analysis.md',
-        outline: 'doc_outline.json',
-        evidence_index: 'evidence_index.json',
+        outline: 'doc_outline.md',
+        evidence_index: 'evidence_index.md',
       },
       phases: [{
         id: '1',
@@ -191,20 +261,16 @@ describe('pre-QA smoke tests', () => {
           title: 'Write MMO docs',
           description: 'Write documentation',
           status: 'completed',
-          files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
+          files_to_create: ['docs/analysis.md', 'doc_outline.md', 'evidence_index.md'],
         }],
       }],
     });
-    await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
-      document_type: 'source-analysis',
-      audience: 'game engineer',
-      sections: ['Overview', 'Core flow', 'Risks'],
-    }), 'utf-8');
-    await writeFile(join(specDir, 'evidence_index.json'), JSON.stringify({
-      files_read: ['src/main.cpp'],
-      evidence_backed_claims: [{ claim: 'Startup flow exists', files: ['src/main.cpp'] }],
-      open_questions: ['Runtime ownership needs confirmation'],
-    }), 'utf-8');
+    await writeFile(join(specDir, 'doc_outline.md'), documentationOutlineMarkdown(['Overview', 'Core flow', 'Risks']), 'utf-8');
+    await writeFile(join(specDir, 'evidence_index.md'), evidenceIndexMarkdown(
+      ['src/main.cpp'],
+      ['Startup flow exists. Source: src/main.cpp'],
+      ['Runtime ownership needs confirmation'],
+    ), 'utf-8');
     await mkdir(join(specDir, 'docs'), { recursive: true });
     await writeFile(join(specDir, 'docs', 'analysis.md'), [
       '# MMO Source Analysis',
@@ -244,8 +310,8 @@ describe('pre-QA smoke tests', () => {
       documentation_profile: 'game-mmo-source',
       document_outputs: {
         final_markdown: 'docs/analysis.md',
-        outline: 'doc_outline.json',
-        evidence_index: 'evidence_index.json',
+        outline: 'doc_outline.md',
+        evidence_index: 'evidence_index.md',
       },
       phases: [{
         id: '1',
@@ -255,23 +321,20 @@ describe('pre-QA smoke tests', () => {
           title: 'Write MMO docs',
           description: 'Write documentation',
           status: 'completed',
-          files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
+          files_to_create: ['docs/analysis.md', 'doc_outline.md', 'evidence_index.md'],
         }],
       }],
     });
-    await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
-      document_type: 'mmo-source-analysis',
-      audience: 'game engineer',
-      sections: ['System matrix', 'Cross-end sequence', 'Data lifecycle', 'Risks'],
-    }), 'utf-8');
-    await writeFile(join(specDir, 'evidence_index.json'), JSON.stringify({
-      files_read: ['Server/Combat.cpp', 'Client/CombatView.cpp', 'Config/Items.xml', 'Tools/GMTool.cs'],
-      evidence_backed_claims: [
-        { claim: 'Server authority owns combat resolution', files: ['Server/Combat.cpp'] },
-        { claim: 'Client rendering presents combat effects', files: ['Client/CombatView.cpp'] },
+    await writeFile(join(specDir, 'doc_outline.md'), documentationOutlineMarkdown(['System matrix', 'Cross-end sequence', 'Data lifecycle', 'Risks']), 'utf-8');
+    await writeFile(join(specDir, 'evidence_index.md'), evidenceIndexMarkdown(
+      ['Server/Combat.cpp', 'Client/CombatView.cpp', 'Config/Items.xml', 'Tools/GMTool.cs'],
+      [
+        'Server authority owns combat resolution. Source: Server/Combat.cpp',
+        'Client rendering presents combat effects. Source: Client/CombatView.cpp',
+        'Config data and tooling evidence are present. Source: Config/Items.xml, Tools/GMTool.cs',
       ],
-      open_questions: ['Replication tick rate needs runtime confirmation'],
-    }), 'utf-8');
+      ['Replication tick rate needs runtime confirmation'],
+    ), 'utf-8');
     await mkdir(join(specDir, 'docs'), { recursive: true });
     await writeFile(join(specDir, 'docs', 'analysis.md'), [
       '# MMO Source Analysis',
@@ -329,8 +392,8 @@ describe('pre-QA smoke tests', () => {
       documentation_profile: 'game-mmo-source',
       document_outputs: {
         final_markdown: 'docs/analysis.md',
-        outline: 'doc_outline.json',
-        evidence_index: 'evidence_index.json',
+        outline: 'doc_outline.md',
+        evidence_index: 'evidence_index.md',
       },
       phases: [{
         id: '1',
@@ -340,20 +403,16 @@ describe('pre-QA smoke tests', () => {
           title: 'Write MMO docs',
           description: 'Write documentation',
           status: 'completed',
-          files_to_create: ['docs/analysis.md', 'doc_outline.json', 'evidence_index.json'],
+          files_to_create: ['docs/analysis.md', 'doc_outline.md', 'evidence_index.md'],
         }],
       }],
     });
-    await writeFile(join(specDir, 'doc_outline.json'), JSON.stringify({
-      document_type: 'mmo-source-analysis',
-      audience: 'game engineer',
-      sections: ['Overview', 'Files', 'Risks'],
-    }), 'utf-8');
-    await writeFile(join(specDir, 'evidence_index.json'), JSON.stringify({
-      files_read: ['README.md'],
-      evidence_backed_claims: [{ claim: 'Project has source files', files: ['README.md'] }],
-      open_questions: ['Need details'],
-    }), 'utf-8');
+    await writeFile(join(specDir, 'doc_outline.md'), documentationOutlineMarkdown(['Overview', 'Files', 'Risks']), 'utf-8');
+    await writeFile(join(specDir, 'evidence_index.md'), evidenceIndexMarkdown(
+      ['README.md'],
+      ['Project has source files. Source: README.md'],
+      ['Need details'],
+    ), 'utf-8');
     await mkdir(join(specDir, 'docs'), { recursive: true });
     await writeFile(join(specDir, 'docs', 'analysis.md'), [
       '# MMO Source Analysis',
@@ -450,5 +509,45 @@ describe('pre-QA smoke tests', () => {
 
     expect(passed.passed).toBe(true);
     expect(passed.issues).toEqual([]);
+  });
+
+  it('keeps MMO completion checks accurate when useful summary appears after long logs', async () => {
+    const result: SessionResult = {
+      outcome: 'completed',
+      stepsExecuted: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{
+        role: 'assistant',
+        content: [
+          'Verbose command output follows.',
+          'x'.repeat(QUALITY_SESSION_SUMMARY_MAX_CHARS * 2),
+          'Verification: ran targeted combat replication smoke check.',
+          'Server authority remains on the server; client only sends intent.',
+          'Network sync/protocol compatibility and reconciliation were reviewed.',
+          'Residual MMO risks: persistence/data n/a, performance latency budget unchanged, security anti-cheat trust boundary preserved, tools/content pipeline n/a, liveops/release n/a.',
+        ].join('\n'),
+      }],
+      durationMs: 1,
+      toolCallCount: 1,
+    };
+
+    const validation = await validateSubtaskQuality(
+      {
+        id: '2-1',
+        description: 'Update server combat replication and client reconciliation.',
+        filesToModify: ['Server/Combat.cpp', 'Client/CombatPrediction.cpp'],
+        status: 'pending',
+      },
+      result,
+      {
+        projectType: 'game-mmo',
+        enableIncrementalValidation: false,
+      },
+      projectDir,
+      specDir,
+    );
+
+    expect(validation.passed).toBe(true);
+    expect(validation.issues).toEqual([]);
   });
 });

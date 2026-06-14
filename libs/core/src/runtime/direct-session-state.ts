@@ -3,6 +3,12 @@ import { dirname, join } from 'node:path';
 
 export const AUTOCODE_DIRECT_SESSION_STATE_FILE = 'direct_session.json';
 export const AUTOCODE_DIRECT_SESSION_STATE_VERSION = 1;
+export const AUTOCODE_DIRECT_SESSION_LATEST_SUMMARY_MAX_CHARS = 1_200;
+export const AUTOCODE_DIRECT_SESSION_ORIGINAL_REQUEST_MAX_CHARS = 4_000;
+const LATEST_SUMMARY_TRUNCATION_MARKER =
+  '\n...[direct session summary middle omitted for continuation budget; inspect runtime logs if exact omitted detail is required]...\n';
+const ORIGINAL_REQUEST_TRUNCATION_MARKER =
+  '\n...[original request middle omitted for state budget; inspect task metadata if exact omitted detail is required]...\n';
 
 export interface AutocodeDirectSessionState {
   version: typeof AUTOCODE_DIRECT_SESSION_STATE_VERSION;
@@ -59,6 +65,14 @@ export function resolveAutocodeDirectSessionState(
   return null;
 }
 
+export function compactAutocodeDirectSessionLatestSummary(value: string | undefined): string | undefined {
+  return limitHeadTailString(
+    value,
+    AUTOCODE_DIRECT_SESSION_LATEST_SUMMARY_MAX_CHARS,
+    LATEST_SUMMARY_TRUNCATION_MARKER,
+  );
+}
+
 function normalizeAutocodeDirectSessionState(value: unknown): AutocodeDirectSessionState | null {
   if (!value || typeof value !== 'object') {
     return null;
@@ -93,8 +107,12 @@ function normalizeAutocodeDirectSessionState(value: unknown): AutocodeDirectSess
 function trimAutocodeDirectSessionState(state: AutocodeDirectSessionState): AutocodeDirectSessionState {
   return {
     ...state,
-    originalRequest: limitString(state.originalRequest, 4_000),
-    latestSummary: limitString(state.latestSummary, 4_000),
+    originalRequest: limitHeadTailString(
+      state.originalRequest,
+      AUTOCODE_DIRECT_SESSION_ORIGINAL_REQUEST_MAX_CHARS,
+      ORIGINAL_REQUEST_TRUNCATION_MARKER,
+    ),
+    latestSummary: compactAutocodeDirectSessionLatestSummary(state.latestSummary),
     changedFiles: Array.from(new Set((state.changedFiles ?? []).filter(Boolean))).slice(0, 100),
   };
 }
@@ -103,9 +121,29 @@ function readString(value: unknown): string | undefined {
   return typeof value === 'string' && value.trim() ? value.trim() : undefined;
 }
 
-function limitString(value: string | undefined, maxLength: number): string | undefined {
+function limitHeadTailString(value: string | undefined, maxLength: number, marker: string): string | undefined {
   if (!value) {
     return undefined;
   }
-  return value.length > maxLength ? `${value.slice(0, maxLength)}\n...[truncated]` : value;
+  const normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (!normalized) {
+    return undefined;
+  }
+  if (normalized.length <= maxLength) {
+    return normalized;
+  }
+
+  const budget = Math.max(0, maxLength - marker.length);
+  const headLength = Math.ceil(budget * 0.65);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    marker,
+    normalized.slice(-tailLength).trimStart(),
+  ].join('');
 }

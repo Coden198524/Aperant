@@ -1,34 +1,25 @@
-import { RefreshCw, AlertCircle, FolderTree } from 'lucide-react';
+import { FolderTree } from 'lucide-react';
 import { useTranslation } from 'react-i18next';
-import { Button } from '../ui/button';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Badge } from '../ui/badge';
 import { ScrollArea } from '../ui/scroll-area';
-import { Tooltip, TooltipContent, TooltipTrigger } from '../ui/tooltip';
-import { cn } from '../../lib/utils';
 import { ServiceCard } from './ServiceCard';
 import { InfoItem } from './InfoItem';
 import type { ProjectIndex } from '../../../shared/types';
 
 interface ProjectIndexTabProps {
   projectIndex: ProjectIndex | null;
-  indexLoading: boolean;
-  indexError: string | null;
-  onRefresh: () => void;
 }
 
 export function ProjectIndexTab({
   projectIndex,
-  indexLoading,
-  indexError,
-  onRefresh
 }: ProjectIndexTabProps) {
   const { t } = useTranslation('common');
 
   return (
     <ScrollArea className="h-full">
       <div className="p-6 space-y-6">
-        {/* Header with refresh */}
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-lg font-semibold text-foreground">
@@ -40,64 +31,20 @@ export function ProjectIndexTab({
               })}
             </p>
           </div>
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="outline"
-                size="sm"
-                onClick={onRefresh}
-                disabled={indexLoading}
-              >
-                <RefreshCw className={cn('h-4 w-4 mr-2', indexLoading && 'animate-spin')} />
-                {t('context.projectIndex.refresh', { defaultValue: 'Refresh' })}
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent>
-              {t('context.projectIndex.refreshTooltip', {
-                defaultValue: 'Re-analyze project structure'
-              })}
-            </TooltipContent>
-          </Tooltip>
         </div>
 
-        {/* Error state */}
-        {indexError && (
-          <div className="flex items-center gap-3 p-4 rounded-lg bg-destructive/10 text-destructive">
-            <AlertCircle className="h-5 w-5 shrink-0" />
-            <div>
-              <p className="font-medium">
-                {t('context.projectIndex.loadFailed', {
-                  defaultValue: 'Failed to load project index'
-                })}
-              </p>
-              <p className="text-sm opacity-80">{indexError}</p>
-            </div>
-          </div>
-        )}
-
-        {/* Loading state */}
-        {indexLoading && !projectIndex && (
-          <div className="flex items-center justify-center py-12">
-            <RefreshCw className="h-8 w-8 animate-spin text-muted-foreground" />
-          </div>
-        )}
-
         {/* No index state */}
-        {!indexLoading && !projectIndex && !indexError && (
+        {!projectIndex && (
           <div className="flex flex-col items-center justify-center py-12 text-center">
             <FolderTree className="h-12 w-12 text-muted-foreground mb-4" />
             <h3 className="text-lg font-medium text-foreground">
-              {t('context.projectIndex.emptyTitle', { defaultValue: 'No Project Index Found' })}
+              {t('context.projectIndex.emptyTitle', { defaultValue: 'Project Index Removed' })}
             </h3>
             <p className="text-sm text-muted-foreground mt-2 max-w-sm">
               {t('context.projectIndex.emptyDescription', {
-                defaultValue: 'Click the Refresh button to analyze your project structure and create an index.'
+                defaultValue: 'Project structure context is now provided by the project documentation pack.'
               })}
             </p>
-            <Button onClick={onRefresh} className="mt-4">
-              <RefreshCw className="h-4 w-4 mr-2" />
-              {t('context.projectIndex.analyzeProject', { defaultValue: 'Analyze Project' })}
-            </Button>
           </div>
         )}
 

@@ -4,10 +4,10 @@ Append new work to an existing completed plan.
 
 ## Contract
 
-- Read `FOLLOWUP_REQUEST.md`, `spec.md`, `implementation_plan.md`, `context.json`, and `project-docs/index.md` when available.
+- Read `FOLLOWUP_REQUEST.md`, `spec.md`, `implementation_plan.md`, `context.md`, and `project-docs/index.md` when available.
 - Preserve existing phases, subtasks, statuses, notes, and completion summaries.
 - Append new Markdown checklist phases to `implementation_plan.md`.
-- Do not write JSON.
+- Do not write JSON for the plan append; leave existing app-owned configuration files/tables, manifests, state, active indexes, metadata, and JSONL audit files untouched. They remain JSON/JSONL even when the model reads or updates them in other phases.
 - Do not modify project source, config, or git state.
 - Follow injected output-language requirements for newly added planning text.
 

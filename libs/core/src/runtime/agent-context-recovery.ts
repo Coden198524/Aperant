@@ -53,6 +53,15 @@ export interface AutocodeRecoverySubtask {
   dependsOn?: string[];
 }
 
+const AUTOCODE_RECOVERY_TEXT_MAX_CHARS = 360;
+const AUTOCODE_RECOVERY_ERROR_MAX_CHARS = 280;
+const AUTOCODE_RECOVERY_FILE_MAX_CHARS = 120;
+const AUTOCODE_RECOVERY_FILE_LIMIT = 12;
+const AUTOCODE_RECOVERY_HISTORY_LIMIT = 3;
+const AUTOCODE_RECOVERY_MODIFICATIONS_MAX_CHARS = 1600;
+const AUTOCODE_RECOVERY_ALTERNATIVE_LIMIT = 3;
+const AUTOCODE_RECOVERY_TRUNCATION_HEAD_RATIO = 0.65;
+
 export async function analyzeAutocodeFailureAndRecover(
   subtask: AutocodeRecoverySubtask,
   failureHistory: AutocodeFailureRecord[],
@@ -145,10 +154,15 @@ export function analyzeAutocodeFailureRootCause(
   subtask: Pick<AutocodeRecoverySubtask, 'description'>,
 ): string {
   const latestFailure = history[history.length - 1];
+  const description = limitAutocodeRecoveryText(subtask.description, AUTOCODE_RECOVERY_TEXT_MAX_CHARS);
+  const latestError = limitAutocodeRecoveryText(
+    latestFailure?.error ?? 'No error message',
+    AUTOCODE_RECOVERY_ERROR_MAX_CHARS,
+  );
 
   switch (pattern) {
     case 'missing_context':
-      return `Agent lacks necessary context to implement "${subtask.description}". May need to read more related files or understand dependencies better.`;
+      return `Agent lacks necessary context to implement "${description}". May need to read more related files or understand dependencies better.`;
     case 'pattern_mismatch':
       return 'Generated code does not follow established patterns. Agent may not have properly studied the pattern files or misunderstood the conventions.';
     case 'verification_failure':
@@ -160,7 +174,7 @@ export function analyzeAutocodeFailureRootCause(
     case 'tool_error':
       return 'Tool execution failed. May be a permission issue, invalid command, or tool limitation.';
     default:
-      return `Unknown failure cause. Error: ${latestFailure?.error ?? 'No error message'}`;
+      return `Unknown failure cause. Error: ${latestError}`;
   }
 }
 
@@ -208,18 +222,19 @@ export function expandAutocodeContextStrategy(
       additionalFiles.push(`${dir}/utils.ts`);
     }
   }
+  const compactAdditionalFiles = compactAutocodeRecoveryFiles([...new Set(additionalFiles)]);
 
   return {
     type: 'expand_context',
     description: 'Load additional related files to understand the full context',
-    additionalFiles: [...new Set(additionalFiles)],
+    additionalFiles: compactAdditionalFiles,
     promptModifications: `
 ## EXPANDED CONTEXT
 
 Your previous attempt failed due to missing context. Before implementing:
 
 1. **Read these additional files** to understand the full picture:
-${additionalFiles.map((file) => `   - ${file}`).join('\n')}
+${compactAdditionalFiles.map((file) => `   - ${file}`).join('\n')}
 
 2. **Understand the relationships** between files
 3. **Check for dependencies** and imports
@@ -234,7 +249,9 @@ Only after reading and understanding the context, proceed with implementation.
 export function templateAutocodeModeStrategy(
   subtask: Pick<AutocodeRecoverySubtask, 'patternFiles'>,
 ): AutocodeRecoveryStrategy {
-  const template = subtask.patternFiles?.[0];
+  const template = subtask.patternFiles?.[0]
+    ? limitAutocodeRecoveryText(subtask.patternFiles[0], AUTOCODE_RECOVERY_FILE_MAX_CHARS)
+    : undefined;
 
   return {
     type: 'template_mode',
@@ -283,6 +300,9 @@ Only after understanding the verification, implement the code to pass it.
 export function revalidateAutocodeDependenciesStrategy(
   subtask: Pick<AutocodeRecoverySubtask, 'dependsOn'>,
 ): AutocodeRecoveryStrategy {
+  const compactDependencies = (subtask.dependsOn ?? [])
+    .slice(0, AUTOCODE_RECOVERY_FILE_LIMIT)
+    .map((dependency) => limitAutocodeRecoveryText(dependency, AUTOCODE_RECOVERY_FILE_MAX_CHARS));
   return {
     type: 'revalidate_dependencies',
     description: 'Check that dependent subtasks are truly complete',
@@ -293,7 +313,7 @@ export function revalidateAutocodeDependenciesStrategy(
 Your previous attempt failed due to dependency issues. Before proceeding:
 
 1. **Verify dependent subtasks** are truly complete:
-${subtask.dependsOn?.map((dependency) => `   - ${dependency}`).join('\n') ?? '   (none)'}
+${compactDependencies.length > 0 ? compactDependencies.map((dependency) => `   - ${dependency}`).join('\n') : '   (none)'}
 
 2. **Check their outputs** - do they provide what you need?
 3. **Test the dependencies** - run them to ensure they work
@@ -331,6 +351,14 @@ export function seekAutocodeHelpStrategy(
   subtask: Pick<AutocodeRecoverySubtask, 'id' | 'description'>,
   history: readonly AutocodeFailureRecord[],
 ): AutocodeRecoveryStrategy {
+  const compactDescription = limitAutocodeRecoveryText(subtask.description, AUTOCODE_RECOVERY_TEXT_MAX_CHARS);
+  const compactHistory = history
+    .slice(-AUTOCODE_RECOVERY_HISTORY_LIMIT)
+    .map((item, index) => {
+      const error = limitAutocodeRecoveryText(item.error ?? 'No error message', AUTOCODE_RECOVERY_ERROR_MAX_CHARS);
+      return `${index + 1}. attempt ${item.attempt} ${item.outcome}: ${error}`;
+    });
+  const omitted = Math.max(0, history.length - AUTOCODE_RECOVERY_HISTORY_LIMIT);
   return {
     type: 'seek_help',
     description: 'Escalate to human - this subtask needs manual intervention',
@@ -340,10 +368,10 @@ export function seekAutocodeHelpStrategy(
 After ${history.length} attempts, this subtask cannot be completed automatically.
 
 **Subtask**: ${subtask.id}
-**Description**: ${subtask.description}
+**Description**: ${compactDescription}
 
 **Failure history**:
-${history.map((item, index) => `${index + 1}. ${item.outcome}: ${item.error ?? 'No error message'}`).join('\n')}
+${omitted > 0 ? `- ${omitted} earlier attempt(s) omitted.\n` : ''}${compactHistory.join('\n')}
 
 Please document:
 1. What you tried
@@ -388,16 +416,17 @@ export function formatAutocodeFailureAnalysis(analysis: AutocodeFailureAnalysis)
 
   lines.push('## Failure Analysis\n');
   lines.push(`**Pattern**: ${analysis.pattern}`);
-  lines.push(`**Root Cause**: ${analysis.rootCause}\n`);
+  lines.push(`**Root Cause**: ${limitAutocodeRecoveryText(analysis.rootCause, AUTOCODE_RECOVERY_TEXT_MAX_CHARS)}\n`);
 
   lines.push('### Recommended Recovery Strategy\n');
   lines.push(`**Type**: ${analysis.strategy.type}`);
-  lines.push(`**Description**: ${analysis.strategy.description}`);
+  lines.push(`**Description**: ${limitAutocodeRecoveryText(analysis.strategy.description, AUTOCODE_RECOVERY_TEXT_MAX_CHARS)}`);
   lines.push(`**Confidence**: ${(analysis.strategy.confidence * 100).toFixed(0)}%\n`);
 
   if (analysis.strategy.additionalFiles && analysis.strategy.additionalFiles.length > 0) {
     lines.push('**Additional Files to Load**:');
-    for (const file of analysis.strategy.additionalFiles.slice(0, 5)) {
+    const files = compactAutocodeRecoveryFiles(analysis.strategy.additionalFiles).slice(0, 5);
+    for (const file of files) {
       lines.push(`- ${file}`);
     }
     lines.push('');
@@ -405,20 +434,58 @@ export function formatAutocodeFailureAnalysis(analysis: AutocodeFailureAnalysis)
 
   if (analysis.alternatives.length > 0) {
     lines.push('### Alternative Strategies\n');
-    for (const alternative of analysis.alternatives) {
+    for (const alternative of analysis.alternatives.slice(0, AUTOCODE_RECOVERY_ALTERNATIVE_LIMIT)) {
       lines.push(
-        `- **${alternative.type}**: ${alternative.description} (${(alternative.confidence * 100).toFixed(0)}% confidence)`,
+        `- **${alternative.type}**: ${limitAutocodeRecoveryText(alternative.description, AUTOCODE_RECOVERY_TEXT_MAX_CHARS)} (${(alternative.confidence * 100).toFixed(0)}% confidence)`,
       );
     }
     lines.push('');
   }
 
   lines.push('### Modified Instructions\n');
-  lines.push(analysis.strategy.promptModifications);
+  lines.push(limitAutocodeRecoveryText(
+    analysis.strategy.promptModifications,
+    AUTOCODE_RECOVERY_MODIFICATIONS_MAX_CHARS,
+  ));
 
   return lines.join('\n');
 }
 
 export function formatAutocodeRecoverySummary(analysis: AutocodeFailureAnalysis): string {
-  return `Recovery Strategy: ${analysis.strategy.type} (${(analysis.strategy.confidence * 100).toFixed(0)}% confidence) - ${analysis.rootCause}`;
+  return `Recovery Strategy: ${analysis.strategy.type} (${(analysis.strategy.confidence * 100).toFixed(0)}% confidence) - ${limitAutocodeRecoveryText(analysis.rootCause, AUTOCODE_RECOVERY_TEXT_MAX_CHARS)}`;
+}
+
+function compactAutocodeRecoveryFiles(files: readonly string[]): string[] {
+  const compact = files
+    .slice(0, AUTOCODE_RECOVERY_FILE_LIMIT)
+    .map((file) => limitAutocodeRecoveryText(file, AUTOCODE_RECOVERY_FILE_MAX_CHARS));
+  const omitted = files.length - compact.length;
+  if (omitted > 0) {
+    compact.push(`... ${omitted} more`);
+  }
+  return compact;
+}
+
+function limitAutocodeRecoveryText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  if (maxChars <= 3) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const marker = `... [recovery middle omitted, ${normalized.length} chars total] ...`;
+  if (marker.length >= maxChars - 2) {
+    return `${normalized.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+
+  const budget = maxChars - marker.length;
+  const headLength = Math.ceil(budget * AUTOCODE_RECOVERY_TRUNCATION_HEAD_RATIO);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    marker,
+    tailLength > 0 ? normalized.slice(-tailLength).trimStart() : '',
+  ].join('');
 }

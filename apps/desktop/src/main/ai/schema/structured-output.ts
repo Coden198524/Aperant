@@ -21,6 +21,11 @@
 import type { ZodSchema, ZodError } from 'zod';
 import type { LanguageModel } from 'ai';
 import { readFile } from 'node:fs/promises';
+import {
+  AUTOCODE_RETRY_RAW_OUTPUT_MAX_CHARS,
+  compactAutocodeRetryText,
+  formatAutocodeRetryErrorLines,
+} from '@autocode/core';
 import { safeParseJson } from '../../utils/json-repair';
 import { writeFileAtomic } from '../../utils/atomic-file';
 
@@ -228,12 +233,12 @@ export function buildValidationRetryPrompt(
     `Rewrite \`${fileName}\`; it failed validation.`,
     ``,
     `### Errors`,
-    ...errors.map((e) => `- ${e}`),
+    ...formatAutocodeRetryErrorLines(errors),
     ``,
   ];
 
   if (schemaHint) {
-    lines.push(`### Schema`, schemaHint, ``);
+    lines.push(`### Schema`, compactAutocodeRetryText(schemaHint), ``);
   }
 
   lines.push(
@@ -305,13 +310,13 @@ export async function repairJsonWithLLM<T>(
         '',
         '## Current JSON',
         '```json',
-        rawContent,
+        compactAutocodeRetryText(rawContent, AUTOCODE_RETRY_RAW_OUTPUT_MAX_CHARS),
         '```',
         '',
         '## Validation Errors',
-        ...errors.map((e) => `- ${e}`),
+        ...formatAutocodeRetryErrorLines(errors),
         '',
-        ...(schemaHint ? ['## Schema', schemaHint, ''] : []),
+        ...(schemaHint ? ['## Schema', compactAutocodeRetryText(schemaHint), ''] : []),
         'Return only the corrected JSON object. Preserve existing data; fix structure only.',
       ].join('\n');
 

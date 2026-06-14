@@ -1,5 +1,6 @@
 import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import { parseAutocodeImplementationPlanMarkdown } from './plan-store.js';
+import { formatAutocodeRetryErrorLines } from '../text/compaction.js';
 
 export type AutocodeEvidenceConfidence = 'low' | 'medium' | 'high';
 
@@ -17,6 +18,7 @@ export interface AutocodePlanArtifactLimit {
 }
 
 export interface AutocodePlanQualityLimits {
+  context: AutocodePlanArtifactLimit;
   spec: AutocodePlanArtifactLimit;
   requirements: AutocodePlanArtifactLimit;
   tasks: AutocodePlanArtifactLimit;
@@ -26,7 +28,7 @@ export interface ValidateAutocodeStandardPlanArtifactsInput {
   specMarkdown?: string | null;
   requirementsMarkdown?: string | null;
   tasksMarkdown?: string | null;
-  contextJson?: unknown;
+  contextMarkdown?: string | null;
   limits?: Partial<AutocodePlanQualityLimits>;
   requireSpecEvidence?: boolean;
   requireRequirementsEvidence?: boolean;
@@ -41,6 +43,7 @@ export interface AutocodePlanQualityResult {
 }
 
 export const AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS: AutocodePlanQualityLimits = {
+  context: { maxLines: 220, maxChars: 18_000 },
   spec: { maxLines: 150, maxChars: 16_000 },
   requirements: { maxLines: 160, maxChars: 14_000 },
   tasks: { maxLines: 450, maxChars: 32_000 },
@@ -58,7 +61,7 @@ const EMPTY_EVIDENCE_TOKENS = new Set([
 ]);
 
 const TRACEABLE_EVIDENCE_PATTERN =
-  /\b(spec\.md|requirements\.md|context\.json|research\.json|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
+  /\b(spec\.md|requirements\.md|context\.md|research\.md|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
 
 export function validateAutocodeStandardPlanArtifacts(
   input: ValidateAutocodeStandardPlanArtifactsInput,
@@ -94,10 +97,11 @@ export function validateAutocodeStandardPlanArtifacts(
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} is missing.`);
   }
 
-  if (input.contextJson !== undefined && input.contextJson !== null) {
-    errors.push(...validateContextEvidence(input.contextJson, input.requireContextEvidence === true));
+  if (input.contextMarkdown !== undefined && input.contextMarkdown !== null) {
+    errors.push(...validateMarkdownSize(AUTOCODE_TASK_ARTIFACTS.context, input.contextMarkdown, limits.context));
+    errors.push(...validateContextMarkdownEvidence(input.contextMarkdown, input.requireContextEvidence === true));
   } else if (input.requireContextEvidence) {
-    errors.push('context.json is missing.');
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.context} is missing.`);
   }
 
   return {
@@ -114,7 +118,7 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     'The previous Standard planning artifacts failed quality validation.',
     '',
     'Errors:',
-    ...errors.map((error) => `- ${error}`),
+    ...formatAutocodeRetryErrorLines(errors),
     '',
     'Repair only the affected artifacts with the Write/Edit tools.',
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} as a compact decision index, not a full analysis dump.`,
@@ -188,6 +192,7 @@ function mergeAutocodePlanQualityLimits(
   overrides?: Partial<AutocodePlanQualityLimits>,
 ): AutocodePlanQualityLimits {
   return {
+    context: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.context, ...overrides?.context },
     spec: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.spec, ...overrides?.spec },
     requirements: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.requirements, ...overrides?.requirements },
     tasks: { ...AUTOCODE_STANDARD_PLAN_QUALITY_LIMITS.tasks, ...overrides?.tasks },
@@ -249,67 +254,207 @@ function validateTasksEvidence(tasksMarkdown: string): string[] {
       if (!isMeaningfulAutocodeEvidence(subtask.evidence)) {
         errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} missing _Evidence: ..._ metadata.`);
       } else if (!isTraceableAutocodeEvidence(subtask.evidence)) {
-        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has vague _Evidence_; cite spec.md, requirements.md, context.json, research.json, project source/docs, or official/industry references.`);
+        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has vague _Evidence_; cite spec.md, requirements.md, ${AUTOCODE_TASK_ARTIFACTS.context}, ${AUTOCODE_TASK_ARTIFACTS.research}, project source/docs, or official/industry references.`);
       }
     }
   }
   return errors;
 }
 
-function validateContextEvidence(contextJson: unknown, requireEvidence: boolean): string[] {
-  const context = parseContextObject(contextJson);
-  if (!context) {
-    return ['context.json is not a valid JSON object.'];
+export function stringifyAutocodeContextMarkdown(contextData: unknown): string {
+  const context = parseContextObject(contextData) ?? {};
+  const lines: string[] = ['# Project Context', ''];
+  const taskDescription = singleLine(context.task_description);
+  if (taskDescription) {
+    addSection(lines, 'Task', [taskDescription]);
   }
 
-  const rawEvidence = Array.isArray(context.evidence_sources) ? context.evidence_sources : [];
-  const evidence = normalizeAutocodeContextEvidenceSources(rawEvidence);
+  addSection(lines, 'Scoped Services', toBulletItems(context.scoped_services));
+
+  const architectureSummary = singleLine(context.architecture_summary);
+  if (architectureSummary) {
+    addSection(lines, 'Architecture Summary', [architectureSummary]);
+  }
+
+  addSection(lines, 'Files To Modify', formatFileModificationItems(context.files_to_modify));
+  addSection(lines, 'Files To Reference', formatFileReferenceItems(context.files_to_reference));
+  addSection(lines, 'Design Patterns', formatDesignPatternItems(context.design_patterns));
+  addSection(lines, 'Implementation Notes', toBulletItems(context.implementation_notes));
+  addSection(lines, 'Risks', toBulletItems(context.risks));
+  addSection(lines, 'Verification Suggestions', toBulletItems(context.verification_suggestions));
+  addSection(lines, 'Standards References', toBulletItems(context.standards_references));
+  addSection(lines, 'Assumptions', toBulletItems(context.assumptions));
+
+  const evidence = normalizeAutocodeContextEvidenceSources(
+    Array.isArray(context.evidence_sources) ? context.evidence_sources : [],
+  );
+  addSection(
+    lines,
+    'Evidence Sources',
+    evidence.map((item) => formatContextEvidenceSource(item)),
+  );
+
+  const createdAt = singleLine(context.created_at);
+  if (createdAt) {
+    addSection(lines, 'Metadata', [`Created At: ${createdAt}`]);
+  }
+
+  return `${lines.join('\n').replace(/\n{3,}/g, '\n\n').trimEnd()}\n`;
+}
+
+function validateContextMarkdownEvidence(contextMarkdown: string, requireEvidence: boolean): string[] {
+  const evidenceSection = getMarkdownSection(contextMarkdown, 'Evidence Sources');
   const errors: string[] = [];
-  if (requireEvidence && hasContextClaims(context) && evidence.length === 0) {
-    errors.push('context.json has architecture/file/pattern claims but no structured evidence_sources.');
+  if (requireEvidence && hasContextMarkdownClaims(contextMarkdown) && !/-\s+\S/.test(evidenceSection)) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.context} missing non-empty "Evidence Sources" section.`);
+    return errors;
   }
 
-  rawEvidence.forEach((item, index) => {
-    const normalized = normalizeAutocodeContextEvidenceSource(item);
-    if (!normalized) {
-      errors.push(`context.json evidence_sources[${index}] must include path and proves.`);
-      return;
-    }
-    if (!isMeaningfulAutocodeEvidence(normalized.proves)) {
-      errors.push(`context.json evidence_sources[${index}].proves is empty or vague.`);
+  const evidenceLines = evidenceSection
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => /^[-*]\s+\S/.test(line));
+  evidenceLines.forEach((line, index) => {
+    if (!isTraceableAutocodeEvidence(line)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.context} Evidence Sources item ${index + 1} is vague; cite a file, project doc, or verified reference.`);
     }
   });
-
   return errors;
 }
 
-function parseContextObject(value: unknown): Record<string, unknown> | null {
-  if (typeof value === 'string') {
-    try {
-      const parsed = JSON.parse(value);
-      return parsed && typeof parsed === 'object' && !Array.isArray(parsed)
-        ? parsed as Record<string, unknown>
-        : null;
-    } catch {
-      return null;
-    }
+function addSection(lines: string[], heading: string, items: string[]): void {
+  const normalized = items.map(singleLine).filter(Boolean);
+  if (normalized.length === 0) {
+    return;
   }
+
+  lines.push(`## ${heading}`, '');
+  if (normalized.length === 1 && !normalized[0].includes(':')) {
+    lines.push(normalized[0], '');
+    return;
+  }
+
+  lines.push(...normalized.map((item) => `- ${item}`), '');
+}
+
+function toBulletItems(value: unknown): string[] {
+  if (Array.isArray(value)) {
+    return value.map(stringifyContextMarkdownValue).filter(Boolean);
+  }
+  const text = stringifyContextMarkdownValue(value);
+  return text ? [text] : [];
+}
+
+function toArray(value: unknown): unknown[] {
+  if (Array.isArray(value)) {
+    return value;
+  }
+  if (value === undefined || value === null || value === '') {
+    return [];
+  }
+  return [value];
+}
+
+function formatFileModificationItems(value: unknown): string[] {
+  return toArray(value).map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return stringifyContextMarkdownValue(item);
+    }
+    const record = item as Record<string, unknown>;
+    const path = singleLine(record.path ?? record.file ?? record.file_path ?? record.name);
+    const reason = singleLine(record.reason ?? record.purpose ?? record.description);
+    const change = singleLine(record.change_needed ?? record.changeNeeded ?? record.action ?? record.status);
+    return [path, reason ? `reason: ${reason}` : '', change ? `change: ${change}` : '']
+      .filter(Boolean)
+      .join(' - ');
+  }).filter(Boolean);
+}
+
+function formatFileReferenceItems(value: unknown): string[] {
+  return toArray(value).map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return stringifyContextMarkdownValue(item);
+    }
+    const record = item as Record<string, unknown>;
+    const path = singleLine(record.path ?? record.file ?? record.file_path ?? record.name);
+    const reason = singleLine(record.reason ?? record.purpose ?? record.description);
+    const pattern = singleLine(record.pattern ?? record.guidance ?? record.existing_usage);
+    return [path, reason ? `reason: ${reason}` : '', pattern ? `pattern: ${pattern}` : '']
+      .filter(Boolean)
+      .join(' - ');
+  }).filter(Boolean);
+}
+
+function formatDesignPatternItems(value: unknown): string[] {
+  return toArray(value).map((item) => {
+    if (!item || typeof item !== 'object' || Array.isArray(item)) {
+      return stringifyContextMarkdownValue(item);
+    }
+    const record = item as Record<string, unknown>;
+    const name = singleLine(record.name ?? record.pattern ?? record.title);
+    const usage = singleLine(record.existing_usage ?? record.usage ?? record.location);
+    const guidance = singleLine(record.guidance ?? record.description ?? record.reason);
+    return [name, usage ? `usage: ${usage}` : '', guidance ? `guidance: ${guidance}` : '']
+      .filter(Boolean)
+      .join(' - ');
+  }).filter(Boolean);
+}
+
+function formatContextEvidenceSource(item: AutocodeContextEvidenceSource): string {
+  const detail = [
+    item.symbol ? `symbol: ${item.symbol}` : '',
+    item.lines ? `lines: ${item.lines}` : '',
+    `confidence: ${item.confidence}`,
+  ].filter(Boolean).join('; ');
+  return `${item.path}${detail ? ` (${detail})` : ''} - ${item.proves}`;
+}
+
+function hasContextMarkdownClaims(contextMarkdown: string): boolean {
+  return [
+    'Architecture Summary',
+    'Files To Modify',
+    'Files To Reference',
+    'Design Patterns',
+    'Implementation Notes',
+    'Risks',
+  ].some((heading) => {
+    const section = getMarkdownSection(contextMarkdown, heading);
+    return Boolean(section && /\S/.test(section));
+  });
+}
+
+function stringifyContextMarkdownValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return singleLine(value);
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (value === null || value === undefined) {
+    return '';
+  }
+  if (Array.isArray(value)) {
+    return value.map(stringifyContextMarkdownValue).filter(Boolean).join('; ');
+  }
+  if (typeof value === 'object') {
+    const record = value as Record<string, unknown>;
+    const preferred = singleLine(
+      record.path ??
+      record.name ??
+      record.title ??
+      record.proves ??
+      record.description ??
+      record.reason,
+    );
+    return preferred || JSON.stringify(value);
+  }
+  return '';
+}
+
+function parseContextObject(value: unknown): Record<string, unknown> | null {
   return value && typeof value === 'object' && !Array.isArray(value)
     ? value as Record<string, unknown>
     : null;
-}
-
-function hasContextClaims(context: Record<string, unknown>): boolean {
-  return Boolean(singleLine(context.architecture_summary)) ||
-    arrayHasItems(context.files_to_modify) ||
-    arrayHasItems(context.files_to_reference) ||
-    arrayHasItems(context.design_patterns) ||
-    arrayHasItems(context.implementation_notes) ||
-    arrayHasItems(context.risks);
-}
-
-function arrayHasItems(value: unknown): boolean {
-  return Array.isArray(value) && value.length > 0;
 }
 
 function hasSectionContent(markdown: string, heading: string): boolean {

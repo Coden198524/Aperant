@@ -4,6 +4,10 @@ import {
 } from './work-dependencies.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import { isTraceableAutocodeEvidence } from '../tasks/plan-quality.js';
+import {
+  compactAutocodeRetryLine,
+  formatAutocodeRetryErrorLines,
+} from '../text/compaction.js';
 import type { AutocodeTaskRuntimeConcurrencyResolved } from './concurrency.js';
 
 export const AUTOCODE_DEFAULT_RUNTIME_CONCURRENCY: AutocodeTaskRuntimeConcurrencyResolved = {
@@ -113,14 +117,14 @@ export function buildAutocodePlanningStructuredOutputRetryPrompt(errorMessage: s
   return [
     'RETRY TASKS WRITE',
     '',
-    `Previous Write call failed before execution: ${errorMessage}`,
+    `Previous Write call failed before execution: ${compactAutocodeRetryLine(errorMessage, 420)}`,
     '',
     `Retry by writing ${AUTOCODE_TASK_ARTIFACTS.tasks} with the Write tool.`,
     'Write checklist Markdown, not JSON. Each Write input is one object with file_path and content.',
     'Use forward slashes in file_path.',
     'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" with _Files_, _Depends on_, _Requirements_, _Evidence_, and _Verification_.',
     'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
-    'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.json, project source/docs, or verified official/industry references.',
+    'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.md, project source/docs, or verified official/industry references.',
     'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
     'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
     'For complex tasks, keep necessary tasks concise in the single Markdown file.',
@@ -135,13 +139,13 @@ export function buildAutocodePlanningStructuredOutputValidationRetryPrompt(error
     'The previous tasks.md could not be converted into a valid runtime plan.',
     '',
     'Errors:',
-    ...errors.map((error) => `- ${error}`),
+    ...formatAutocodeRetryErrorLines(errors),
     '',
     'Retry with the Write tool; do not paste the full task list into the final response.',
     'Use forward slashes in file_path.',
     `Rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
     'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
-    'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.json, project source/docs, or verified official/industry references.',
+    'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.md, project source/docs, or verified official/industry references.',
     'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
     'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
     'For complex tasks, keep descriptions concise instead of splitting files.',
@@ -156,12 +160,12 @@ export function buildAutocodeStandardTasksValidationRetryPrompt(errors: string[]
     'The previous Standard planning output could not be converted into runtime work packages.',
     '',
     'Errors:',
-    ...errors.map((error) => `- ${error}`),
+    ...formatAutocodeRetryErrorLines(errors),
     '',
     `Retry with the Write tool and rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks}, not ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}.`,
     'Use checklist Markdown with phase items such as "- [ ] 1. Phase" and task items such as "- [ ] 1.1 Task".',
     'Every executable task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
-    'Evidence must cite spec.md, requirements.md, context.json, project source/docs, existing project patterns, or verified official/industry references. Do not use "none" or vague guesses.',
+    'Evidence must cite spec.md, requirements.md, context.md, project source/docs, existing project patterns, or verified official/industry references. Do not use "none" or vague guesses.',
     'Use _Depends on: none_ only for root tasks. Add real dependencies for tasks that share files or consume prior outputs.',
     'Keep independent tasks dependency-free when they can run safely in parallel.',
   ].join('\n');

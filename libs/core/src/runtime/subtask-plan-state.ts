@@ -6,6 +6,8 @@ import {
   normalizeAutocodeWorkDependencyIds,
 } from './work-dependencies.js';
 
+export const AUTOCODE_SESSION_RESULT_SUMMARY_MAX_CHARS = 1_200;
+
 export interface AutocodeSubtaskPlan<TSubtask extends AutocodePlanSubtask = AutocodePlanSubtask> {
   phases: Array<AutocodeSubtaskPlanPhase<TSubtask>>;
 }
@@ -181,10 +183,7 @@ export function summarizeAutocodeSessionResult(
       .trim();
 
     if (normalized) {
-      const maxLength = 3000;
-      return normalized.length <= maxLength
-        ? normalized
-        : `${normalized.slice(0, maxLength - 3).trimEnd()}...`;
+      return shortenAutocodePromptText(normalized);
     }
   }
 
@@ -239,5 +238,73 @@ export function extractAutocodeCompletionSummaryTable(content: string): string |
     tableLines.push(line);
   }
 
-  return tableLines.length > 0 ? tableLines.join('\n') : undefined;
+  return tableLines.length > 0
+    ? compactAutocodeCompletionSummaryTable(tableLines.join('\n'))
+    : undefined;
+}
+
+function shortenAutocodePromptText(
+  value: string,
+  maxLength = AUTOCODE_SESSION_RESULT_SUMMARY_MAX_CHARS,
+): string {
+  const compact = value.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxLength) {
+    return compact;
+  }
+  const marker = ' ... [middle omitted] ... ';
+  const budget = maxLength - marker.length;
+  if (budget <= 0) {
+    return compact.slice(0, maxLength);
+  }
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return `${compact.slice(0, headBudget).trimEnd()}${marker}${compact.slice(-tailBudget).trimStart()}`;
+}
+
+function compactAutocodeCompletionSummaryTable(
+  table: string,
+  maxLength = AUTOCODE_SESSION_RESULT_SUMMARY_MAX_CHARS,
+): string {
+  if (table.length <= maxLength) {
+    return table;
+  }
+
+  const lines = table.split(/\r?\n/);
+  const fixedLineCount = Math.min(2, lines.length);
+  const fixedLines = lines.slice(0, fixedLineCount);
+  const bodyLines = lines.slice(fixedLineCount);
+  if (bodyLines.length === 0) {
+    return shortenAutocodePromptText(table, maxLength);
+  }
+
+  const fixedLength = fixedLines.join('\n').length + (fixedLines.length > 0 ? 1 : 0);
+  const perBodyLineBudget = Math.max(
+    96,
+    Math.floor((maxLength - fixedLength) / bodyLines.length) - 1,
+  );
+  const compacted = [
+    ...fixedLines,
+    ...bodyLines.map((line) => shortenAutocodeTableLine(line, perBodyLineBudget)),
+  ].join('\n');
+
+  return compacted.length <= maxLength
+    ? compacted
+    : shortenAutocodePromptText(compacted, maxLength);
+}
+
+function shortenAutocodeTableLine(line: string, maxLength: number): string {
+  if (line.length <= maxLength) {
+    return line;
+  }
+
+  const cells = line.split('|');
+  if (cells.length >= 4 && cells[0].trim() === '' && cells[cells.length - 1].trim() === '') {
+    const firstCell = cells[1].trim();
+    const rest = cells.slice(2, -1).join('|').trim();
+    const labelBudget = Math.min(36, Math.max(12, Math.floor(maxLength * 0.3)));
+    const valueBudget = Math.max(24, maxLength - labelBudget - 7);
+    return `| ${shortenAutocodePromptText(firstCell, labelBudget)} | ${shortenAutocodePromptText(rest, valueBudget)} |`;
+  }
+
+  return shortenAutocodePromptText(line, maxLength);
 }

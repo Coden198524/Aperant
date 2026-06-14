@@ -76,6 +76,7 @@ export interface RawIdea extends Record<string, unknown> {
 
 export interface RawIdeationData {
   id?: string;
+  project_id?: string;
   config?: {
     enabled_types?: string[];
     enabledTypes?: string[];

@@ -19,6 +19,17 @@ import {
   formatAutocodePatternInjectionSummary,
   shouldInjectAutocodePatterns,
 } from '@autocode/core/runtime/agent-quality-guidance';
+import {
+  isMemoryEligibleForPromptContext,
+} from '../memory/retrieval/context-packer';
+import { compactHeadTailSingleLineText } from './prompt-compaction';
+
+const MAX_SUCCESS_CASE_DESCRIPTION_CHARS = 160;
+const MAX_SUCCESS_CASE_IMPLEMENTATION_CHARS = 420;
+const MAX_SUCCESS_CASE_REASON_CHARS = 160;
+export const PATTERN_INJECTION_PATTERN_FILES_MAX = 4;
+export const PATTERN_INJECTION_PATTERNS_MAX = 8;
+const PATTERN_INJECTION_HEAD_RATIO = 0.65;
 
 // =============================================================================
 // Types
@@ -95,13 +106,19 @@ export async function enhanceCoderPrompt(
 
   // 1. Extract patterns from pattern files
   if (config.subtask.patternFiles && config.subtask.patternFiles.length > 0) {
-    for (const patternFile of config.subtask.patternFiles) {
+    const candidatePatterns: ExtractedPattern[] = [];
+    const selectedPatternFiles = selectHeadTailItems(
+      config.subtask.patternFiles,
+      PATTERN_INJECTION_PATTERN_FILES_MAX,
+    );
+    for (const patternFile of selectedPatternFiles) {
       const extracted = await extractPatternsFromFile(
         join(config.projectDir, patternFile),
         patternFile,
       );
-      patterns.push(...extracted);
+      candidatePatterns.push(...extracted);
     }
+    patterns.push(...selectHeadTailItems(candidatePatterns, PATTERN_INJECTION_PATTERNS_MAX));
   }
 
   // 2. Retrieve success cases from memory (if available)
@@ -301,16 +318,24 @@ async function retrieveSuccessCases(
     const searchResults = await memoryService.search({
       query: subtaskDescription,
       types: ['pattern'], // Use 'pattern' type instead of 'success_pattern'
-      limit: 3,
+      limit: 8,
+      excludeDeprecated: true,
+      promptContextOnly: true,
     });
 
-    return searchResults.map((result: any) => ({
-      subtaskId: result.tags?.find((t: string) => t.startsWith('subtask:'))?.slice(8) || 'unknown',
-      description: result.content || subtaskDescription,
-      implementation: result.content || 'No details available',
-      whyItWorked: 'Followed established patterns',
-      similarity: result.confidence || 0.7,
-    }));
+    return searchResults
+      .filter(isMemoryEligibleForPromptContext)
+      .slice(0, 3)
+      .map((result) => {
+        const content = result.content || subtaskDescription;
+        return {
+          subtaskId: result.tags?.find((tag) => tag.startsWith('subtask:'))?.slice(8) || 'unknown',
+          description: summarizeSuccessCase(content, subtaskDescription),
+          implementation: limitPromptText(content, MAX_SUCCESS_CASE_IMPLEMENTATION_CHARS),
+          whyItWorked: limitPromptText('Followed established patterns', MAX_SUCCESS_CASE_REASON_CHARS),
+          similarity: result.confidence || 0.7,
+        };
+      });
   } catch (error) {
     console.error('Failed to retrieve success cases from memory:', error);
     return [];
@@ -351,11 +376,12 @@ function buildInjectionBlock(
   // Add success cases
   if (successCases.length > 0) {
     lines.push('## Success Cases\n');
-    lines.push('Similar subtasks that passed QA:\n');
+    lines.push('Similar subtasks that passed QA. Treat these as compact signals, not full context:\n');
 
     for (let i = 0; i < successCases.length; i++) {
       const successCase = successCases[i];
-      lines.push(`### Success Case ${i + 1}: ${successCase.description}\n`);
+      lines.push(`### Success Case ${i + 1}: ${successCase.subtaskId}\n`);
+      lines.push(`**Signal**: ${successCase.description}\n`);
       lines.push(`**Approach**: ${successCase.implementation}\n`);
       lines.push(`**Why it worked**: ${successCase.whyItWorked}\n`);
       lines.push(`**Similarity to your task**: ${(successCase.similarity * 100).toFixed(0)}%\n`);
@@ -394,6 +420,37 @@ function injectIntoPrompt(basePrompt: string, injectionBlock: string): string {
  */
 function formatCategory(category: string): string {
   return formatAutocodeCategory(category);
+}
+
+function summarizeSuccessCase(content: string, fallback: string): string {
+  const firstMeaningfulLine = content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .find(Boolean);
+  return limitPromptText(firstMeaningfulLine || fallback, MAX_SUCCESS_CASE_DESCRIPTION_CHARS);
+}
+
+function limitPromptText(value: string, maxChars: number): string {
+  return compactHeadTailSingleLineText(value, maxChars);
+}
+
+function selectHeadTailItems<T>(items: readonly T[], limit: number): T[] {
+  if (limit <= 0) {
+    return [];
+  }
+  if (items.length <= limit) {
+    return [...items];
+  }
+  if (limit === 1) {
+    return [items[0]];
+  }
+
+  const headCount = Math.ceil(limit * PATTERN_INJECTION_HEAD_RATIO);
+  const tailCount = Math.max(0, limit - headCount);
+  return [
+    ...items.slice(0, headCount),
+    ...items.slice(items.length - tailCount),
+  ];
 }
 
 // =============================================================================

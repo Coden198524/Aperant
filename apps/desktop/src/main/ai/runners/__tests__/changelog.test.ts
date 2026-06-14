@@ -20,7 +20,13 @@ vi.mock('../../client/factory', () => ({
 // Import after mocking
 // =============================================================================
 
-import { generateChangelog } from '../changelog';
+import {
+  CHANGELOG_COMMITS_MAX_CHARS,
+  CHANGELOG_PREVIOUS_CHANGELOG_MAX_CHARS,
+  CHANGELOG_TASK_DESCRIPTION_MAX_CHARS,
+  CHANGELOG_TASKS_MAX,
+  generateChangelog,
+} from '../changelog';
 import type { ChangelogConfig } from '../changelog';
 
 // =============================================================================
@@ -130,17 +136,35 @@ describe('generateChangelog', () => {
     expect(prompt).toContain('feat: add login');
   });
 
-  it('truncates commits to 5000 chars', async () => {
+  it('truncates commits to the prompt budget', async () => {
     mockGenerateText.mockResolvedValue({ text: '## [1.0.0]' });
     const longCommits = 'x'.repeat(10_000);
 
     await generateChangelog(baseConfig({ sourceMode: 'branch-diff', commits: longCommits }));
 
     const prompt = mockGenerateText.mock.calls[0][0].prompt as string;
-    // The 'x'.repeat(10000) block should be truncated — prompt must not exceed
-    // 5000 'x' chars plus surrounding text
     const xCount = (prompt.match(/x/g) ?? []).length;
-    expect(xCount).toBeLessThanOrEqual(5000);
+    expect(xCount).toBeLessThanOrEqual(CHANGELOG_COMMITS_MAX_CHARS);
+    expect(prompt).toContain('truncated');
+  });
+
+  it('caps task count and per-task descriptions in prompt for tasks mode', async () => {
+    mockGenerateText.mockResolvedValue({ text: '## [1.0.0]' });
+    const tasks = Array.from({ length: CHANGELOG_TASKS_MAX + 5 }, (_, index) => ({
+      title: `Task ${index + 1}`,
+      description: index === 0 ? 'd'.repeat(2_000) : `Description ${index + 1}`,
+      category: 'feature',
+    }));
+
+    await generateChangelog(baseConfig({ tasks }));
+
+    const prompt = mockGenerateText.mock.calls[0][0].prompt as string;
+    expect(prompt).toContain(`Task ${CHANGELOG_TASKS_MAX}`);
+    expect(prompt).not.toContain(`Task ${CHANGELOG_TASKS_MAX + 1}`);
+    expect(prompt).toContain('5 additional completed tasks omitted');
+    const dCount = (prompt.match(/d/g) ?? []).length;
+    expect(dCount).toBeLessThanOrEqual(CHANGELOG_TASK_DESCRIPTION_MAX_CHARS + 80);
+    expect(prompt).toContain('truncated');
   });
 
   // ---------------------------------------------------------------------------
@@ -157,6 +181,17 @@ describe('generateChangelog', () => {
     const prompt = mockGenerateText.mock.calls[0][0].prompt as string;
     expect(prompt).toContain('Previous Changelog');
     expect(prompt).toContain('0.9.0');
+  });
+
+  it('truncates previousChangelog to the style-reference budget', async () => {
+    mockGenerateText.mockResolvedValue({ text: '## [1.0.0]' });
+
+    await generateChangelog(baseConfig({ previousChangelog: 'p'.repeat(5_000) }));
+
+    const prompt = mockGenerateText.mock.calls[0][0].prompt as string;
+    const pCount = (prompt.match(/p/g) ?? []).length;
+    expect(pCount).toBeLessThanOrEqual(CHANGELOG_PREVIOUS_CHANGELOG_MAX_CHARS);
+    expect(prompt).toContain('truncated');
   });
 
   // ---------------------------------------------------------------------------

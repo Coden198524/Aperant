@@ -15,26 +15,26 @@ function makeChineseMojibake(value) {
 
 function writeSmokeContext(specsPath, taskDescription) {
   writeFileSync(
-    join(specsPath, 'context.json'),
-    JSON.stringify({
-      task_description: taskDescription,
-      scoped_services: [],
-      architecture_summary: 'Smoke test task with generated CLI artifacts.',
-      files_to_modify: [],
-      files_to_reference: [],
-      design_patterns: [],
-      implementation_notes: ['Validate generated planning artifacts.'],
-      risks: [],
-      verification_suggestions: ['Run core smoke test.'],
-      evidence_sources: [{
-        path: 'libs/core/scripts/smoke-test.cjs',
-        symbol: 'smoke-test',
-        lines: '1-2600',
-        proves: 'Smoke test defines the expected CLI planning behavior.',
-        confidence: 'high',
-      }],
-      created_at: '2026-01-01T00:00:00.000Z',
-    }, null, 2),
+    join(specsPath, 'context.md'),
+    [
+      '# Project Context',
+      '',
+      '## Task',
+      taskDescription,
+      '',
+      '## Architecture Summary',
+      'Smoke test task with generated CLI artifacts.',
+      '',
+      '## Implementation Notes',
+      '- Validate generated planning artifacts.',
+      '',
+      '## Verification Suggestions',
+      '- Run core smoke test.',
+      '',
+      '## Evidence Sources',
+      '- libs/core/scripts/smoke-test.cjs (symbol: smoke-test; lines: 1-2600; confidence: high) - Smoke test defines the expected CLI planning behavior.',
+      '',
+    ].join('\n'),
     'utf8',
   );
 }
@@ -65,7 +65,7 @@ function writeSmokeRequirements(specsPath, taskDescription, evidenceLabel) {
       '',
       '## Evidence Sources',
       `- requirements.md ${evidenceLabel}`,
-      '- context.json libs/core/scripts/smoke-test.cjs',
+      '- context.md libs/core/scripts/smoke-test.cjs',
       '',
       '## Standards References',
       '- Project smoke-test conventions',
@@ -675,13 +675,13 @@ async function main() {
       proves: 'Settings are persisted through the shared store.',
       confidence: 'high',
     });
-    assert.equal(core.isTraceableAutocodeEvidence('context.json evidence src/settings.ts SettingsStore'), true);
+    assert.equal(core.isTraceableAutocodeEvidence('context.md evidence src/settings.ts SettingsStore'), true);
     const planQuality = core.validateAutocodeStandardPlanArtifacts({
       specMarkdown: [
         '# Specification: Settings',
         '',
         '## Design Notes',
-        '- Reuse settings store - Evidence: context.json src/settings.ts SettingsStore',
+        '- Reuse settings store - Evidence: context.md src/settings.ts SettingsStore',
         '',
         '## Requirements',
         '1. Persist settings',
@@ -689,7 +689,7 @@ async function main() {
         '   - Evidence: requirements.md Evidence Sources',
         '',
         '## Evidence',
-        '- context.json src/settings.ts SettingsStore',
+        '- context.md src/settings.ts SettingsStore',
       ].join('\n'),
       requirementsMarkdown: [
         '# Requirements',
@@ -704,13 +704,13 @@ async function main() {
         '',
         '  - [ ] 1.1 Persist settings',
         '    - _Depends on: none_',
-        '    - _Evidence: context.json src/settings.ts SettingsStore_',
+        '    - _Evidence: context.md src/settings.ts SettingsStore_',
         '    - _Verification: npm test -- settings_',
       ].join('\n'),
-      contextJson: {
+      contextMarkdown: core.stringifyAutocodeContextMarkdown({
         architecture_summary: 'Settings store owns persistence.',
         evidence_sources: structuredEvidence,
-      },
+      }),
       requireSpecEvidence: true,
       requireRequirementsEvidence: true,
       requireTaskEvidence: true,
@@ -917,9 +917,24 @@ async function main() {
       '.autocode/project-docs/technical.md',
     ]);
     assert.ok(projectDocsResult.plan.implementationPlan.document_outputs.markdown_files.includes('.autocode/project-docs/product.md'));
-    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.outline, '.autocode/project-docs/doc_outline.json');
-    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.evidence_index, '.autocode/project-docs/evidence_index.json');
+    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.outline, '.autocode/project-docs/doc_outline.md');
+    assert.equal(projectDocsResult.plan.implementationPlan.document_outputs.evidence_index, '.autocode/project-docs/evidence_index.md');
     const projectDocsPlanText = readFileSync(join(projectDocsResult.task.specsPath, 'implementation_plan.md'), 'utf8');
+    const projectDocsContext = readFileSync(join(projectDocsResult.task.specsPath, 'context.md'), 'utf8');
+    const projectDocsRequirements = readFileSync(join(projectDocsResult.task.specsPath, 'requirements.md'), 'utf8');
+    assert.match(projectDocsContext, /# Project Context/);
+    assert.match(projectDocsContext, /## Evidence Sources/);
+    assert.match(projectDocsRequirements, /## Evidence Sources/);
+    assert.match(projectDocsPlanText, /_Depends on: none_/);
+    assert.match(projectDocsPlanText, /_Evidence: .*spec\.md project documentation scope/);
+    assert.match(projectDocsPlanText, /_Verification: /);
+    assert.deepEqual(
+      core.validateAutocodePlanningSchedulingMetadata(projectDocsResult.plan.implementationPlan, {
+        runtimeConcurrency: projectDocsResult.task.metadata.runtimeConcurrency,
+        requireEvidence: true,
+      }),
+      [],
+    );
     assert.doesNotMatch(projectDocsPlanText, /spec-reference|coding-reference/i);
     assert.doesNotMatch(JSON.stringify(projectDocsResult.plan), /spec-reference|coding-reference/i);
 
@@ -952,6 +967,13 @@ async function main() {
     assert.match(projectDocsReference, /technical\.md/);
     assert.match(projectDocsReference, /product\.md/);
     assert.doesNotMatch(projectDocsReference, /spec-reference|coding-reference/i);
+    const zhProjectDocsReference = core.buildAutocodeProjectDocsReferencePrompt({
+      projectRoot,
+      dataDirName: '.autocode',
+      language: 'zh-CN',
+    });
+    assert.match(zhProjectDocsReference, /项目文档参考/);
+    assert.match(zhProjectDocsReference, /架构文档/);
     const referencedDocs = core.collectAutocodeProjectDocsReferences({ projectRoot, dataDirName: '.autocode' });
     assert.deepEqual(referencedDocs.map((reference) => reference.relativePath), [
       '.autocode/project-docs/index.md',
@@ -1329,7 +1351,10 @@ async function main() {
     assert.equal(planningRunPlan.command, 'codex');
     assert.ok(planningRunPlan.args.includes('--json'));
     assert.ok(planningRunPlan.args.includes('--dangerously-bypass-approvals-and-sandbox'));
-    assert.match(planningRunPlan.prompt, /Simplified Chinese/);
+    assert.match(planningRunPlan.prompt, /# Autocode 任务运行/);
+    assert.match(planningRunPlan.prompt, /## 必须生成的内容/);
+    assert.match(planningRunPlan.prompt, /创建或修复实施计划/);
+    assert.doesNotMatch(planningRunPlan.prompt, /## Required Output/);
     assert.match(planningRunPlan.prompt, /implementation_plan\.md/);
     const codexRunnerScript = readFileSync(planningRunPlan.runnerFilePath, 'utf8');
     assert.ok(codexRunnerScript.includes('processCodexJsonLine'));
@@ -1825,7 +1850,7 @@ async function main() {
     });
     assert.ok(
       codexUsageLogs.phases.planning.entries.some((entry) =>
-        entry.content.includes('\u6a21\u578b\u7528\u91cf\u66f4\u65b0\uff1a\u8bf7\u6c42 2 \u6b21') &&
+        entry.content.includes('\u6a21\u578b\u7528\u91cf\u66f4\u65b0\uff1a\u6a21\u578b\u8f6e\u6b21 2 \u6b21') &&
         entry.content.includes('\u603b\u8ba1 168 tokens'),
       ),
     );

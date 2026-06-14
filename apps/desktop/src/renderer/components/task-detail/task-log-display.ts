@@ -49,6 +49,10 @@ const NOISY_CODEX_DIAGNOSTIC_PATTERNS = [
   /WARN\s+codex_core_plugins::manifest:\s+ignoring interface\.defaultPrompt\[\d+\]:\s+prompt must be at most \d+ characters\b/i,
   /WARN\s+codex_core_skills::loader:\s+ignoring interface\.icon_(?:small|large):\s+icon path with '\.\.' must resolve under plugin assets\//i,
 ];
+const CODEX_TOOL_ROUTER_ERROR_PATTERN =
+  /\bERROR\s+codex_core::tools::router:\s+error=Exit code:\s*\d+/i;
+const POWERSHELL_JSON_PARSE_ERROR_PATTERN =
+  /ConvertFrom-Json\s*:\s*Invalid object passed in/i;
 
 function parseTimestamp(value: string): number | null {
   const parsed = Date.parse(value);
@@ -75,6 +79,33 @@ export function stripNoisyCodexDiagnostics(content: string): string {
     .join('\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+}
+
+export function normalizeRawCodexInternalEventLog(content: string): string {
+  const text = String(content ?? '').trim().replace(/^[\u3002\s]+(?=\{)/, '');
+  if (/^\u9286[\u4e00-\u9fff]?"type"\s*:/.test(text)) {
+    return text.replace(/^\u9286[\u4e00-\u9fff]?/, '{');
+  }
+  return text;
+}
+
+export function isRawCodexInternalEventLog(content: string): boolean {
+  const text = normalizeRawCodexInternalEventLog(content);
+  return text.startsWith('{') &&
+    /"type"\s*:\s*"item\.[^"]+"/.test(text) &&
+    /"item"\s*:|"command_execution"|"aggregated_output"/.test(text);
+}
+
+export function findCodexToolRouterErrorLog(content?: string, detail?: string): string | undefined {
+  const candidates = [content, detail]
+    .map(value => String(value ?? '').trim())
+    .filter(Boolean);
+
+  return candidates.find(value => CODEX_TOOL_ROUTER_ERROR_PATTERN.test(value));
+}
+
+export function isPowerShellJsonParseFailureLog(content: string): boolean {
+  return POWERSHELL_JSON_PARSE_ERROR_PATTERN.test(content);
 }
 
 function normalizeDisplayLogEntry(entry: TaskLogEntry): TaskLogEntry | null {

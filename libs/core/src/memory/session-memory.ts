@@ -14,6 +14,16 @@ export const AUTOCODE_SESSION_PATTERNS_FILE_NAME = 'patterns.md';
 
 export const AUTOCODE_NO_SESSION_MEMORY_MESSAGE = 'No session memory found. This appears to be the first session.';
 export const AUTOCODE_NO_SESSION_CONTEXT_MESSAGE = 'No session context available yet.';
+const AUTOCODE_SESSION_DISCOVERY_DESCRIPTION_MAX_CHARS = 220;
+const AUTOCODE_SESSION_DISCOVERY_PATH_MAX_CHARS = 180;
+const AUTOCODE_SESSION_DISCOVERY_STORED_DESCRIPTION_MAX_CHARS = 800;
+const AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_CHARS = 800;
+const AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_CHARS = 500;
+const AUTOCODE_SESSION_MARKDOWN_OMISSION_MARKER =
+  '\n...[session memory middle omitted; inspect memory files for exact omitted detail]...\n';
+const AUTOCODE_SESSION_STORED_OMISSION_MARKER =
+  '\n...[session memory entry middle omitted before storage]...\n';
+const AUTOCODE_SESSION_CONTEXT_HEAD_RATIO = 0.35;
 
 export interface AutocodeSessionDiscovery {
   description: string;
@@ -122,7 +132,10 @@ export function recordAutocodeSessionDiscovery(
     discovered_files: {
       ...map.discovered_files,
       [input.filePath]: {
-        description: input.description,
+        description: compactAutocodeSessionStoredText(
+          input.description,
+          AUTOCODE_SESSION_DISCOVERY_STORED_DESCRIPTION_MAX_CHARS,
+        ),
         category: input.category ?? 'general',
         discovered_at: timestamp,
       },
@@ -183,9 +196,19 @@ export function formatAutocodeGotchaMarkdownEntry(
   input: FormatAutocodeGotchaInput,
   now: Date = new Date(),
 ): string {
-  let entry = `\n## [${formatAutocodeGotchaTimestamp(now)}]\n${input.gotcha}`;
-  if (input.context) {
-    entry += `\n\n_Context: ${input.context}_`;
+  const gotcha = compactAutocodeSessionStoredText(
+    input.gotcha,
+    AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_CHARS,
+  );
+  const context = input.context
+    ? compactAutocodeSessionStoredText(
+        input.context,
+        AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_CHARS,
+      )
+    : '';
+  let entry = `\n## [${formatAutocodeGotchaTimestamp(now)}]\n${gotcha}`;
+  if (context) {
+    entry += `\n\n_Context: ${context}_`;
   }
   return `${entry}\n`;
 }
@@ -231,27 +254,62 @@ export function buildAutocodeSessionContext(input: BuildAutocodeSessionContextIn
   const maxMarkdownChars = input.maxMarkdownChars ?? 1000;
   const parts: string[] = [];
 
-  const discoveries = Object.entries(input.codebaseMap?.discovered_files ?? {});
+  const discoveries = selectRecentSessionDiscoveries(
+    Object.entries(input.codebaseMap?.discovered_files ?? {}),
+    maxDiscoveries,
+  );
   if (discoveries.length > 0) {
     parts.push('## Codebase Discoveries');
-    for (const [filePath, info] of discoveries.slice(0, maxDiscoveries)) {
-      parts.push(`- \`${filePath}\`: ${info.description || 'No description'}`);
+    for (const [filePath, info] of discoveries) {
+      const compactPath = compactAutocodeSessionContextText(
+        filePath,
+        AUTOCODE_SESSION_DISCOVERY_PATH_MAX_CHARS,
+      );
+      const compactDescription = compactAutocodeSessionContextText(
+        info.description || 'No description',
+        AUTOCODE_SESSION_DISCOVERY_DESCRIPTION_MAX_CHARS,
+      );
+      parts.push(`- \`${compactPath}\`: ${compactDescription}`);
     }
   }
 
   const gotchas = input.gotchasMarkdown?.trim() ? input.gotchasMarkdown : '';
   if (gotchas) {
     parts.push('\n## Gotchas');
-    parts.push(tailText(gotchas, maxMarkdownChars));
+    parts.push(compactAutocodeSessionContextText(gotchas, maxMarkdownChars));
   }
 
   const patterns = input.patternsMarkdown?.trim() ? input.patternsMarkdown : '';
   if (patterns) {
     parts.push('\n## Patterns');
-    parts.push(tailText(patterns, maxMarkdownChars));
+    parts.push(compactAutocodeSessionContextText(patterns, maxMarkdownChars));
   }
 
   return parts.length === 0 ? AUTOCODE_NO_SESSION_CONTEXT_MESSAGE : parts.join('\n');
+}
+
+function selectRecentSessionDiscoveries(
+  discoveries: Array<[string, AutocodeSessionDiscovery]>,
+  maxDiscoveries: number,
+): Array<[string, AutocodeSessionDiscovery]> {
+  if (maxDiscoveries <= 0) {
+    return [];
+  }
+
+  return discoveries
+    .map(([filePath, info], index) => ({
+      filePath,
+      info,
+      index,
+      timestamp: Date.parse(info.discovered_at),
+    }))
+    .sort((a, b) => {
+      const aTime = Number.isFinite(a.timestamp) ? a.timestamp : 0;
+      const bTime = Number.isFinite(b.timestamp) ? b.timestamp : 0;
+      return bTime - aTime || a.index - b.index;
+    })
+    .slice(0, maxDiscoveries)
+    .map((entry) => [entry.filePath, entry.info]);
 }
 
 function normalizeDiscoveredFiles(value: unknown): Record<string, AutocodeSessionDiscovery> {
@@ -309,9 +367,29 @@ function isMissingOrEmptyFile(filePath: string): boolean {
   }
 }
 
-function tailText(value: string, maxChars: number): string {
+function compactAutocodeSessionContextText(value: string, maxChars: number): string {
+  return compactAutocodeSessionText(value, maxChars, AUTOCODE_SESSION_MARKDOWN_OMISSION_MARKER);
+}
+
+function compactAutocodeSessionStoredText(value: string, maxChars: number): string {
+  return compactAutocodeSessionText(value, maxChars, AUTOCODE_SESSION_STORED_OMISSION_MARKER);
+}
+
+function compactAutocodeSessionText(value: string, maxChars: number, marker: string): string {
   if (maxChars <= 0 || value.length <= maxChars) {
     return value;
   }
-  return value.slice(-maxChars);
+
+  if (marker.length >= maxChars - 2) {
+    return value.slice(0, maxChars);
+  }
+
+  const budget = maxChars - marker.length;
+  const headChars = Math.ceil(budget * AUTOCODE_SESSION_CONTEXT_HEAD_RATIO);
+  const tailChars = Math.max(0, budget - headChars);
+  return [
+    value.slice(0, headChars).trimEnd(),
+    marker,
+    tailChars > 0 ? value.slice(-tailChars).trimStart() : '',
+  ].join('');
 }

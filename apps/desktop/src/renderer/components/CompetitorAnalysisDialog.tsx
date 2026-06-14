@@ -8,8 +8,6 @@ import {
   AlertDialogFooter,
   AlertDialogHeader,
   AlertDialogTitle,
-  AlertDialogAction,
-  AlertDialogCancel,
 } from './ui/alert-dialog';
 import { Button } from './ui/button';
 import { AddCompetitorDialog } from './AddCompetitorDialog';
@@ -40,14 +38,17 @@ export function CompetitorAnalysisDialog({
     }
   }, [open]);
 
-  const handleAccept = () => {
-    onAccept();
+  const runAfterClose = (callback: () => void) => {
     onOpenChange(false);
+    queueMicrotask(callback);
+  };
+
+  const handleAccept = () => {
+    runAfterClose(onAccept);
   };
 
   const handleDecline = () => {
-    onDecline();
-    onOpenChange(false);
+    runAfterClose(onDecline);
   };
 
   const handleCompetitorAdded = (_competitorId: string) => {
@@ -144,12 +145,12 @@ export function CompetitorAnalysisDialog({
           </div>
 
           <AlertDialogFooter>
-            <AlertDialogCancel onClick={handleDecline}>
+            <Button variant="outline" onClick={handleDecline}>
               {t('dialogs:competitorAnalysis.skipAnalysis', 'No, Skip Analysis')}
-            </AlertDialogCancel>
-            <AlertDialogAction onClick={handleAccept}>
+            </Button>
+            <Button onClick={handleAccept}>
               {t('dialogs:competitorAnalysis.enableAnalysis', 'Yes, Enable Analysis')}
-            </AlertDialogAction>
+            </Button>
           </AlertDialogFooter>
         </AlertDialogContent>
       </AlertDialog>

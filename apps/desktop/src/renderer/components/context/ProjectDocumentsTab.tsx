@@ -66,21 +66,21 @@ const PROJECT_DOCUMENTS: ProjectDocumentInfo[] = [
   },
   {
     id: 'outline',
-    fileName: 'doc_outline.json',
+    fileName: 'doc_outline.md',
     labelKey: 'context.projectDocuments.files.outline',
     defaultLabel: 'Outline',
     descriptionKey: 'context.projectDocuments.descriptions.outline',
     defaultDescription: 'Structured outline used by agents',
-    kind: 'json',
+    kind: 'markdown',
   },
   {
     id: 'evidence',
-    fileName: 'evidence_index.json',
+    fileName: 'evidence_index.md',
     labelKey: 'context.projectDocuments.files.evidence',
     defaultLabel: 'Evidence',
     descriptionKey: 'context.projectDocuments.descriptions.evidence',
     defaultDescription: 'Source references, claims, risks, and open questions',
-    kind: 'json',
+    kind: 'markdown',
   },
 ];
 

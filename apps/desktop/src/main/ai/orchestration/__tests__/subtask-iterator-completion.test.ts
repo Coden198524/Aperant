@@ -188,6 +188,9 @@ describe('iterateSubtasks completion gating', () => {
     expect(memory.subtaskId).toBe('s1');
     expect(memory.outcome).toBe('completed');
     expect(storedMemories.some((entry) => entry.type === 'work_unit_outcome')).toBe(true);
+    expect(storedMemories.some((entry) => entry.type === 'module_insight')).toBe(false);
+    expect(storedMemories.find((entry) => entry.type === 'work_unit_outcome')?.content)
+      .not.toContain('Efficient token usage');
   });
 
   it('accepts a model-updated completed status even when the session outcome is error', async () => {
@@ -229,6 +232,53 @@ describe('iterateSubtasks completion gating', () => {
     expect(result.completedSubtasks).toBe(1);
     expect(result.stuckSubtasks).toEqual([]);
     expect(updatedPlan.phases[0].subtasks[0].status).toBe('completed');
+  });
+
+  it('does not retry a subtask after a non-retryable session error', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+
+    let runs = 0;
+    const stuckReasons: string[] = [];
+    const result = await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 3,
+      autoContinueDelayMs: 0,
+      onSubtaskStuck: (_subtask, reason) => stuckReasons.push(reason),
+      runSubtaskSession: async () => {
+        runs++;
+        return {
+          ...makeResult('error'),
+          error: {
+            code: 'billing_error',
+            message: 'billing quota exceeded',
+            retryable: false,
+          },
+        };
+      },
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ status: string; notes?: string }> }>;
+    }>(specDir);
+
+    expect(runs).toBe(1);
+    expect(result.totalSubtasks).toBe(1);
+    expect(result.completedSubtasks).toBe(0);
+    expect(result.stuckSubtasks).toEqual(['s1']);
+    expect(stuckReasons[0]).toContain('Non-retryable error');
+    expect(updatedPlan.phases[0].subtasks[0].status).toBe('failed');
+    expect(updatedPlan.phases[0].subtasks[0].notes).toContain('billing quota exceeded');
   });
 
   it('trusts update_subtask_status completion evidence even if the plan was overwritten stale', async () => {
@@ -451,7 +501,49 @@ describe('iterateSubtasks completion gating', () => {
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).not.toContain('\\| Item \\| Details \\|');
   });
 
-  it('preserves long fallback completion summaries for human review', async () => {
+  it('preserves localized assistant completion tables without wrapping them again', async () => {
+    const plan = {
+      phases: [
+        {
+          name: 'phase-1',
+          subtasks: [
+            { id: 's1', title: 't', description: 'd', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    await savePlan(specDir, plan);
+
+    const table = [
+      '| 项目 | 详情 |',
+      '|---|---|',
+      '| 变更内容 | 已修复中文摘要识别。 |',
+      '| 验证 | 单测通过。 |',
+      '| 评审备注 | 可继续人工检查。 |',
+    ].join('\n');
+
+    await iterateSubtasks({
+      specDir,
+      projectDir: specDir,
+      maxRetries: 1,
+      autoContinueDelayMs: 0,
+      runSubtaskSession: async () => ({
+        ...makeResult('completed'),
+        messages: [
+          { role: 'assistant', content: table },
+        ],
+      }),
+    });
+
+    const updatedPlan = await loadPlan<{
+      phases: Array<{ subtasks: Array<{ completion_summary?: string }> }>;
+    }>(specDir);
+
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toBe(table);
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).not.toContain('Session outcome');
+  });
+
+  it('keeps fallback completion summaries compact for downstream QA context', async () => {
     const plan = {
       phases: [
         {
@@ -468,7 +560,9 @@ describe('iterateSubtasks completion gating', () => {
       'Implemented the complete task detail summary surface.',
       'Added structured rows for changed files, verification, and reviewer notes.',
       'Preserved enough detail for manual audit without forcing reviewers to inspect raw logs.',
-    ].join(' ').repeat(8);
+      'Verbose implementation detail '.repeat(80),
+      'FINAL PLAN SUMMARY TAIL OK',
+    ].join(' ');
 
     await iterateSubtasks({
       specDir,
@@ -488,7 +582,9 @@ describe('iterateSubtasks completion gating', () => {
     }>(specDir);
 
     expect(updatedPlan.phases[0].subtasks[0].completion_summary?.length).toBeGreaterThan(500);
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary?.length).toBeLessThanOrEqual(1200);
     expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('manual audit');
+    expect(updatedPlan.phases[0].subtasks[0].completion_summary).toContain('FINAL PLAN SUMMARY TAIL OK');
   });
 
   it('marks subtask in_progress and restamps executionPhase before coder session starts', async () => {

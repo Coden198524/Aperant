@@ -43,19 +43,21 @@ export function ExistingCompetitorAnalysisDialog({
     }
   }, [open]);
 
-  const handleUseExisting = () => {
-    onUseExisting();
+  const runAfterClose = (callback: () => void) => {
     onOpenChange(false);
+    queueMicrotask(callback);
+  };
+
+  const handleUseExisting = () => {
+    runAfterClose(onUseExisting);
   };
 
   const handleRunNew = () => {
-    onRunNew();
-    onOpenChange(false);
+    runAfterClose(onRunNew);
   };
 
   const handleSkip = () => {
-    onSkip();
-    onOpenChange(false);
+    runAfterClose(onSkip);
   };
 
   const formatDate = (date?: Date) => {

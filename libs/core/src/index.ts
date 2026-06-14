@@ -152,6 +152,9 @@ export {
   stringifyAutocodeSessionCodebaseMap,
   toAutocodeContextSearchResult,
   toAutocodeRendererMemory,
+  compactAutocodeMemoryRuntimeReasoningText,
+  compactAutocodeMemoryRuntimeToolArgs,
+  compactAutocodeMemoryRuntimeToolResult,
   toAutocodeMemoryRuntimeRecentContext,
   buildAutocodeWorkUnitOutcomeMemoryEntry,
   buildAutocodeWorkUnitOutcomeSessionInsight,
@@ -250,6 +253,7 @@ export {
 export {
   AGGRESSIVE_BASH_MAX_OUTPUT_LENGTH,
   AGGRESSIVE_BASH_MAX_STDERR_LENGTH,
+  BASH_MAX_OUTPUT_LINE_LENGTH,
   BASH_MAX_OUTPUT_LENGTH,
   DEFAULT_BASH_TIMEOUT_MS,
   MAX_BASH_TIMEOUT_MS,
@@ -335,6 +339,7 @@ export {
   GREP_DEFAULT_OUTPUT_MODE,
   GREP_MAX_FALLBACK_FILE_BYTES,
   GREP_MAX_FALLBACK_FILES,
+  GREP_MAX_OUTPUT_LINE_LENGTH,
   GREP_MAX_OUTPUT_LENGTH,
   SEARCH_EXCLUDED_DIRS,
   buildRipgrepArgs,
@@ -342,6 +347,7 @@ export {
   isProbablyBinaryBuffer,
   matchesSearchType,
   normalizeSearchPathSegments,
+  relativizeSearchOutputPaths,
   shouldExcludeSearchPath,
   shouldSkipSearchDir,
   summarizePathsByDirectory,
@@ -730,11 +736,15 @@ export {
   extractAutocodeKeyDecisions,
   extractAutocodeSuccessPatterns,
   extractAutocodeToolCallSequence,
+  formatAutocodeCodePatternMemory,
+  formatAutocodeFailurePatternMemory,
   formatAutocodeKnowledgeSummary,
+  formatAutocodeSuccessPatternMemory,
   generateAutocodeFailurePreventionAdvice,
   generateAutocodeLearningSessionId,
   identifyAutocodeEffectiveTools,
   identifyAutocodeKeyFiles,
+  isAutocodeSessionMetricInsight,
   mapAutocodeSessionOutcome,
   summarizeAutocodeSessionForMemory,
   type AutocodeCodePattern,
@@ -950,9 +960,13 @@ export {
 } from './runtime/subagent-plan.js';
 
 export {
+  AUTOCODE_PROMPT_HUMAN_INPUT_MAX_CHARS,
+  AUTOCODE_PROMPT_PROJECT_INSTRUCTIONS_MAX_CHARS,
+  AUTOCODE_PROMPT_RECOVERY_CONTEXT_MAX_CHARS,
   buildAutocodeDomainGuidanceHeader,
   buildAutocodeGitPushPolicyHeader,
   buildAutocodeSpecLocationHeader,
+  compactAutocodePromptContextSection,
   detectAutocodeProjectCapabilities,
   injectAutocodePromptContext,
   type AutocodeProjectCapabilities,
@@ -1018,6 +1032,7 @@ export {
 } from './runtime/quality-tier.js';
 
 export {
+  AUTOCODE_CONTINUATION_SUMMARY_MAX_CHARS,
   AUTOCODE_DEFAULT_MAX_CONTINUATIONS,
   AUTOCODE_MAX_SUMMARY_INPUT_CHARS,
   AUTOCODE_RAW_TRUNCATION_CHARS,
@@ -1026,6 +1041,8 @@ export {
   addAutocodeContinuationUsage,
   buildAutocodeContinuationPrompt,
   buildAutocodeSummaryPrompt,
+  limitAutocodeContinuationSummary,
+  limitAutocodeSerializedSummaryInput,
   limitAutocodeSummaryInput,
   rawTruncateAutocodeSessionMessages,
   runAutocodeContinuableSession,
@@ -1428,6 +1445,7 @@ export {
   isTraceableAutocodeEvidence,
   normalizeAutocodeContextEvidenceSource,
   normalizeAutocodeContextEvidenceSources,
+  stringifyAutocodeContextMarkdown,
   validateAutocodeStandardPlanArtifacts,
 } from './tasks/plan-quality.js';
 
@@ -1453,6 +1471,17 @@ export {
   decodeAutocodeCliOutputChunk,
   repairAutocodeChineseMojibakeText,
 } from './text/encoding.js';
+
+export {
+  AUTOCODE_RETRY_ERROR_LIMIT,
+  AUTOCODE_RETRY_ERROR_MAX_CHARS,
+  AUTOCODE_RETRY_RAW_OUTPUT_MAX_CHARS,
+  AUTOCODE_RETRY_TEXT_MAX_CHARS,
+  compactAutocodeRetryLine,
+  compactAutocodeRetryText,
+  formatAutocodeRetryErrorLines,
+  type FormatAutocodeRetryErrorLinesOptions,
+} from './text/compaction.js';
 
 export {
   AUTOCODE_CLI_COMMANDS,

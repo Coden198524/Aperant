@@ -4,7 +4,7 @@
  * Tests the complete recovery flow:
  * 1. Task execution with multiple subtasks
  * 2. Rate limit error during execution
- * 3. Subtask reset to pending in implementation_plan.json
+ * 3. Subtask reset to pending in implementation_plan.md
  * 4. IPC events emitted correctly
  * 5. Task resumes automatically
  * 6. Completed subtasks maintain their status
@@ -14,6 +14,12 @@ import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import { mkdtempSync, writeFileSync, readFileSync, rmSync, mkdirSync } from 'fs';
 import { tmpdir } from 'os';
 import path from 'path';
+import {
+  loadAutocodeImplementationPlanSync,
+  saveAutocodeImplementationPlanSync,
+  stringifyAutocodeImplementationPlanMarkdown,
+  type MutableAutocodePlan,
+} from '@autocode/core';
 
 // Test directories
 let TEST_DIR: string;
@@ -24,7 +30,7 @@ let PLAN_PATH: string;
 function setupTestDirs(): void {
   TEST_DIR = mkdtempSync(path.join(tmpdir(), 'rate-limit-recovery-test-'));
   TEST_SPEC_DIR = path.join(TEST_DIR, '.autocode/specs/001-test-feature');
-  PLAN_PATH = path.join(TEST_SPEC_DIR, 'implementation_plan.json');
+  PLAN_PATH = path.join(TEST_SPEC_DIR, 'implementation_plan.md');
   mkdirSync(TEST_SPEC_DIR, { recursive: true });
 }
 
@@ -98,9 +104,16 @@ function createMixedStatePlan() {
 }
 
 // Helper to read plan from file
-function readPlan() {
-  const content = readFileSync(PLAN_PATH, 'utf-8');
-  return JSON.parse(content);
+function readPlan(): Plan {
+  const plan = loadAutocodeImplementationPlanSync(PLAN_PATH);
+  if (!plan) {
+    throw new Error(`Failed to load test plan at ${PLAN_PATH}`);
+  }
+  return plan as unknown as Plan;
+}
+
+function writePlan(plan: MutableAutocodePlan): void {
+  saveAutocodeImplementationPlanSync(PLAN_PATH, plan);
 }
 
 // Types for plan structure
@@ -156,7 +169,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
     it('should reset in_progress subtask to pending when rate limit occurs', () => {
       // Setup: Create plan with in_progress subtask
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       // Verify initial state
       const initialPlan = readPlan();
@@ -177,7 +190,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
       }
 
       // Save updated plan
-      writeFileSync(PLAN_PATH, JSON.stringify(initialPlan, null, 2));
+      writePlan(initialPlan as unknown as MutableAutocodePlan);
 
       // Verify: subtask reset to pending
       const updatedPlan = readPlan();
@@ -190,7 +203,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
 
     it('should reset failed subtask to pending when recovery triggered', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       // Verify initial state
       const initialPlan = readPlan();
@@ -209,7 +222,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
         }
       }
 
-      writeFileSync(PLAN_PATH, JSON.stringify(initialPlan, null, 2));
+      writePlan(initialPlan as unknown as MutableAutocodePlan);
 
       // Verify: failed subtask reset
       const updatedPlan = readPlan();
@@ -221,7 +234,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
 
     it('should preserve completed subtasks during reset', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       // Get completed subtask before reset
       const initialPlan = readPlan();
@@ -241,7 +254,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
         }
       }
 
-      writeFileSync(PLAN_PATH, JSON.stringify(initialPlan, null, 2));
+      writePlan(initialPlan as unknown as MutableAutocodePlan);
 
       // Verify: completed subtask unchanged
       const updatedPlan = readPlan();
@@ -253,7 +266,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
 
     it('should reset all stuck subtasks across multiple phases', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       const initialPlan = readPlan();
 
@@ -279,7 +292,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
         }
       }
 
-      writeFileSync(PLAN_PATH, JSON.stringify(initialPlan, null, 2));
+      writePlan(initialPlan as unknown as MutableAutocodePlan);
 
       // Verify: all stuck subtasks reset
       const updatedPlan = readPlan();
@@ -300,7 +313,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
   describe('Task Resume After Recovery', () => {
     it('should allow task to resume with reset subtasks', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       // Reset stuck subtasks
       const updatedPlan = readPlan();
@@ -313,7 +326,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
           }
         }
       }
-      writeFileSync(PLAN_PATH, JSON.stringify(updatedPlan, null, 2));
+      writePlan(updatedPlan as unknown as MutableAutocodePlan);
 
       // Simulate get_next_subtask logic
       const resumedPlan = readPlan();
@@ -334,7 +347,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
 
     it('should maintain correct subtask order after reset', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       // Reset and collect pending subtasks
       const updatedPlan = readPlan();
@@ -347,7 +360,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
           }
         }
       }
-      writeFileSync(PLAN_PATH, JSON.stringify(updatedPlan, null, 2));
+      writePlan(updatedPlan as unknown as MutableAutocodePlan);
 
       const resumedPlan = readPlan();
       const allPendingSubtasks: string[] = [];
@@ -370,9 +383,9 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
   });
 
   describe('Atomic File Operations', () => {
-    it('should maintain valid JSON structure after reset', () => {
+    it('should maintain valid Markdown plan structure after reset', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       // Simulate reset
       const updatedPlan = readPlan();
@@ -388,11 +401,12 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
 
       // Write atomically (simulate atomic write)
       const tempPath = PLAN_PATH + '.tmp';
-      writeFileSync(tempPath, JSON.stringify(updatedPlan, null, 2));
+      const serialized = stringifyAutocodeImplementationPlanMarkdown(updatedPlan as unknown as MutableAutocodePlan);
+      writeFileSync(tempPath, serialized);
       rmSync(PLAN_PATH);
-      writeFileSync(PLAN_PATH, JSON.stringify(updatedPlan, null, 2));
+      writeFileSync(PLAN_PATH, serialized);
 
-      // Verify: plan is valid JSON
+      // Verify: plan is valid Markdown and can be parsed back into runtime state.
       expect(() => {
         const verifyPlan = readPlan();
         expect(verifyPlan.phases).toBeDefined();
@@ -402,7 +416,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
 
     it('should handle missing plan file gracefully', () => {
       // Don't create plan file
-      const missingPlanPath = path.join(TEST_SPEC_DIR, 'nonexistent_plan.json');
+      const missingPlanPath = path.join(TEST_SPEC_DIR, 'nonexistent_plan.md');
 
       // Simulate graceful handling
       let errorOccurred = false;
@@ -420,7 +434,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
   describe('Reset Count Tracking', () => {
     it('should count number of subtasks reset', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       const updatedPlan = readPlan();
       let resetCount = 0;
@@ -451,7 +465,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
         }
       }
 
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       const updatedPlan = readPlan();
       let resetCount = 0;
@@ -476,7 +490,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
         status: 'pending'
       };
 
-      writeFileSync(PLAN_PATH, JSON.stringify(emptyPlan, null, 2));
+      writePlan(emptyPlan as MutableAutocodePlan);
 
       const plan = readPlan();
       let resetCount = 0;
@@ -506,7 +520,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
         status: 'pending'
       };
 
-      writeFileSync(PLAN_PATH, JSON.stringify(planWithEmptyPhase, null, 2));
+      writePlan(planWithEmptyPhase as MutableAutocodePlan);
 
       const plan = readPlan();
       let resetCount = 0;
@@ -524,7 +538,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
 
     it('should preserve all subtask fields except status and timestamps', () => {
       const plan = createMixedStatePlan();
-      writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+      writePlan(plan);
 
       const initialPlan = readPlan();
       const originalSubtask = findSubtask(initialPlan, 'subtask-1-2')!;
@@ -543,7 +557,7 @@ describe('Rate Limit Subtask Recovery - End-to-End', () => {
         }
       }
 
-      writeFileSync(PLAN_PATH, JSON.stringify(initialPlan, null, 2));
+      writePlan(initialPlan as unknown as MutableAutocodePlan);
 
       const updatedPlan = readPlan();
       const resetSubtask = findSubtask(updatedPlan, 'subtask-1-2')!;
@@ -567,15 +581,15 @@ describe('Integration with Recovery Flow', () => {
     }
   });
 
-  it('should complete full recovery cycle: error → reset → resume', () => {
+  it('should complete full recovery cycle: error, reset, resume', () => {
     // Step 1: Task running with in_progress subtask
     const plan = createMixedStatePlan();
-    writeFileSync(PLAN_PATH, JSON.stringify(plan, null, 2));
+    writePlan(plan);
 
     const initialPlan = readPlan();
     expect(findSubtask(initialPlan, 'subtask-1-2')!.status).toBe('in_progress');
 
-    // Step 2: Rate limit error occurs → subtask reset
+    // Step 2: Rate limit error occurs, then the subtask is reset.
     for (const phase of initialPlan.phases) {
       for (const subtask of phase.subtasks) {
         if (subtask.status === 'in_progress' || subtask.status === 'failed') {
@@ -585,12 +599,12 @@ describe('Integration with Recovery Flow', () => {
         }
       }
     }
-    writeFileSync(PLAN_PATH, JSON.stringify(initialPlan, null, 2));
+    writePlan(initialPlan as unknown as MutableAutocodePlan);
 
     const resetPlan = readPlan();
     expect(findSubtask(resetPlan, 'subtask-1-2')!.status).toBe('pending');
 
-    // Step 3: Task resumes → finds next pending subtask
+    // Step 3: Task resumes and finds the next pending subtask.
     let nextSubtask: Subtask | null = null;
     for (const phase of resetPlan.phases) {
       const pending = phase.subtasks.find((s: Subtask) => s.status === 'pending');
@@ -603,10 +617,10 @@ describe('Integration with Recovery Flow', () => {
     expect(nextSubtask).toBeTruthy();
     expect(nextSubtask!.id).toBe('subtask-1-2');
 
-    // Step 4: Subtask execution starts → status updates to in_progress
+    // Step 4: Subtask execution starts and status updates to in_progress.
     nextSubtask!.status = 'in_progress';
     nextSubtask!.started_at = new Date().toISOString();
-    writeFileSync(PLAN_PATH, JSON.stringify(resetPlan, null, 2));
+    writePlan(resetPlan as unknown as MutableAutocodePlan);
 
     const resumedPlan = readPlan();
     expect(findSubtask(resumedPlan, 'subtask-1-2')!.status).toBe('in_progress');

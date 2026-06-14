@@ -36,6 +36,10 @@ export const IDEATION_TYPES = [
 
 export type IdeationType = (typeof IDEATION_TYPES)[number];
 
+export const IDEATION_MAX_STEPS = 18;
+export const IDEATION_MIN_IDEAS_PER_TYPE = 1;
+export const IDEATION_MAX_IDEAS_PER_TYPE = 10;
+
 /** Human-readable labels for ideation types */
 export const IDEATION_TYPE_LABELS: Record<IdeationType, string> = {
   code_improvements: 'Code Improvements',
@@ -44,6 +48,15 @@ export const IDEATION_TYPE_LABELS: Record<IdeationType, string> = {
   security_hardening: 'Security Hardening',
   performance_optimizations: 'Performance Optimizations',
   code_quality: 'Code Quality & Refactoring',
+};
+
+const IDEATION_TYPE_LABELS_ZH_CN: Record<IdeationType, string> = {
+  code_improvements: '代码改进',
+  ui_ux_improvements: 'UI/UX 改进',
+  documentation_gaps: '文档完善',
+  security_hardening: '安全加固',
+  performance_optimizations: '性能优化',
+  code_quality: '代码质量与重构',
 };
 
 /** Prompt file mapping per ideation type */
@@ -78,6 +91,8 @@ export interface IdeationConfig {
   thinkingLevel?: ThinkingLevel;
   /** Maximum ideas per type (defaults to 5) */
   maxIdeasPerType?: number;
+  /** User's preferred language for AI-generated content (e.g., 'en', 'zh-CN') */
+  language?: string;
   /** Abort signal for cancellation */
   abortSignal?: AbortSignal;
 }
@@ -113,6 +128,67 @@ function isResponsesApiModel(modelId: string | undefined): boolean {
   );
 }
 
+function shouldUseSimplifiedChinese(language: string | undefined): boolean {
+  return language?.trim().toLowerCase().replace(/_/g, '-').startsWith('zh') === true;
+}
+
+function getIdeationTypePromptLabel(ideationType: IdeationType, language: string | undefined): string {
+  if (shouldUseSimplifiedChinese(language)) {
+    return IDEATION_TYPE_LABELS_ZH_CN[ideationType];
+  }
+  return ideationType.replace(/_/g, ' ');
+}
+
+function getIdeationLanguageInstruction(language: string | undefined): string {
+  if (!shouldUseSimplifiedChinese(language)) return '';
+
+  return [
+    '',
+    '',
+    '## Language',
+    'Current app language: Simplified Chinese (`zh-CN`).',
+    'Write every user-facing JSON string value in Simplified Chinese, including idea `title`, `description`, `rationale`, implementation notes, risks, recommendations, user benefits, current states, proposed changes, and acceptance-style text.',
+    'Treat the final JSON file as invalid unless every generated user-facing text field is written in Simplified Chinese.',
+    'Keep JSON keys, enum values, IDs, file paths, commands, APIs, package names, and code identifiers unchanged.',
+    'Do not translate code snippets or quoted source text unless the source text is already Chinese.',
+  ].join('\n');
+}
+
+function getIdeationEfficiencyInstruction(maxIdeasPerType: number): string {
+  return [
+    '',
+    '',
+    '## Cost and Scope Control',
+    `Generate at most ${maxIdeasPerType} ideas.`,
+    'Read `project-docs/index.md` and `ideation_context.md` first when they exist.',
+    'Use targeted reads with limits instead of broad repository scans.',
+    'Do not re-read the same files unless a concrete idea needs one more detail.',
+    'Stop once every idea has enough source-backed evidence for a title, description, rationale, and affected area.',
+  ].join('\n');
+}
+
+function resolveMaxIdeasPerType(value: number | undefined): number {
+  const normalized = Number.isFinite(value) ? Math.floor(Number(value)) : 5;
+  return Math.min(
+    IDEATION_MAX_IDEAS_PER_TYPE,
+    Math.max(IDEATION_MIN_IDEAS_PER_TYPE, normalized),
+  );
+}
+
+function buildIdeationUserPrompt(
+  projectDir: string,
+  maxIdeasPerType: number,
+  ideationType: IdeationType,
+  language: string | undefined,
+): string {
+  if (shouldUseSimplifiedChinese(language)) {
+    const typeLabel = getIdeationTypePromptLabel(ideationType, language);
+    return `分析项目 ${projectDir}，生成最多 ${maxIdeasPerType} 条“${typeLabel}”创意。请使用可用工具探索代码库，然后将结果作为 JSON 文件写入输出目录。所有用户可见内容必须使用简体中文。`;
+  }
+
+  return `Analyze the project at ${projectDir} and generate up to ${maxIdeasPerType} ${ideationType.replace(/_/g, ' ')} ideas. Use the available tools to explore the codebase, then write your findings as a JSON file to the output directory.`;
+}
+
 // =============================================================================
 // Ideation Runner
 // =============================================================================
@@ -139,9 +215,11 @@ export async function runIdeation(
     ideationType,
     modelShorthand = 'sonnet',
     thinkingLevel = 'medium',
-    maxIdeasPerType = 5,
+    maxIdeasPerType: requestedMaxIdeasPerType = 5,
+    language,
     abortSignal,
   } = config;
+  const maxIdeasPerType = resolveMaxIdeasPerType(requestedMaxIdeasPerType);
 
   // Load prompt file
   const promptFile = IDEATION_TYPE_PROMPTS[ideationType];
@@ -170,6 +248,8 @@ export async function runIdeation(
   prompt += `\n\n---\n\n**Output Directory**: ${outputDir}\n`;
   prompt += `**Project Directory**: ${projectDir}\n`;
   prompt += `**Max Ideas**: ${maxIdeasPerType}\n`;
+  prompt += getIdeationEfficiencyInstruction(maxIdeasPerType);
+  prompt += getIdeationLanguageInstruction(language);
 
   // Create tool context for read-only tools
   const toolContext: ToolContext = {
@@ -189,7 +269,7 @@ export async function runIdeation(
     systemPrompt: '',
     modelShorthand,
     thinkingLevel,
-    maxSteps: 30,
+    maxSteps: IDEATION_MAX_STEPS,
     tools,
   });
 
@@ -198,7 +278,7 @@ export async function runIdeation(
   // Responses models require instructions via providerOptions, not system.
   const modelId = typeof client.model === 'string' ? client.model : client.model.modelId;
   const isResponsesModel = isResponsesApiModel(modelId);
-  const userPrompt = `Analyze the project at ${projectDir} and generate up to ${maxIdeasPerType} ${ideationType.replace(/_/g, ' ')} ideas. Use the available tools to explore the codebase, then write your findings as a JSON file to the output directory.`;
+  const userPrompt = buildIdeationUserPrompt(projectDir, maxIdeasPerType, ideationType, language);
 
   try {
     const result = streamText({

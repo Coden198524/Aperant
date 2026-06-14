@@ -5,7 +5,11 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
 import type { Client } from '@libsql/client';
 import { getInMemoryClient } from '../../db';
-import { RetrievalPipeline } from '../../retrieval/pipeline';
+import {
+  compactRetrievalQuery,
+  MAX_RETRIEVAL_QUERY_CHARS,
+  RetrievalPipeline,
+} from '../../retrieval/pipeline';
 import { Reranker } from '../../retrieval/reranker';
 import type { EmbeddingService } from '../../embedding-service';
 
@@ -63,6 +67,17 @@ afterEach(() => {
 });
 
 describe('RetrievalPipeline', () => {
+  it('compacts long retrieval queries while preserving head and tail constraints', () => {
+    const query = `AUTH_QUERY_HEAD ${'verbose task detail '.repeat(120)} AUTH_QUERY_TAIL`;
+
+    const compact = compactRetrievalQuery(query);
+
+    expect(compact.length).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_CHARS);
+    expect(compact).toContain('AUTH_QUERY_HEAD');
+    expect(compact).toContain('AUTH_QUERY_TAIL');
+    expect(compact).toContain('query middle omitted for retrieval budget');
+  });
+
   it('returns empty result for empty database', async () => {
     const embeddingService = makeMockEmbeddingService();
     const reranker = new Reranker('none');
@@ -177,6 +192,25 @@ describe('RetrievalPipeline', () => {
     });
 
     expect(embeddingService.embed).toHaveBeenCalled();
+  });
+
+  it('uses compact retrieval queries for dense search input', async () => {
+    const embeddingService = makeMockEmbeddingService();
+    const reranker = new Reranker('none');
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+    const query = `AUTH_QUERY_HEAD ${'verbose task detail '.repeat(120)} AUTH_QUERY_TAIL`;
+
+    await pipeline.search(query, {
+      phase: 'explore',
+      projectId: 'proj-a',
+    });
+
+    const embeddedQuery = vi.mocked(embeddingService.embed).mock.calls[0][0] as string;
+    expect(embeddedQuery.length).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_CHARS);
+    expect(embeddedQuery).toContain('AUTH_QUERY_HEAD');
+    expect(embeddedQuery).toContain('AUTH_QUERY_TAIL');
+    expect(embeddedQuery).toContain('query middle omitted for retrieval budget');
+    expect(embeddedQuery).not.toBe(query);
   });
 
   it('works with different phases', async () => {

@@ -457,7 +457,7 @@
           }
         }
 
-        // Create initial implementation_plan.json so task shows in kanban immediately
+        // Create initial implementation_plan.md so task shows in kanban immediately
         const initialPlan: ImplementationPlan = {
           feature: idea.title,
           description: idea.description,
@@ -1054,7 +1054,7 @@ ${idea.rationale}
           ...metadata
         };
 
-        // Create initial implementation_plan.json
+        // Create initial implementation_plan.md
         const now = new Date().toISOString();
         const implementationPlan = {
           feature: title,

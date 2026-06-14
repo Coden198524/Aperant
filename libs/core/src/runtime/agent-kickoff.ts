@@ -6,13 +6,31 @@ import {
   type AutocodeOutputLanguage,
 } from './agent-language.js';
 
+const PRIOR_PHASE_CONTEXT_TOTAL_MAX_CHARS = 10_000;
+const PRIOR_PHASE_CONTEXT_FILE_MAX_CHARS = 2_800;
+const PRIOR_PHASE_CONTEXT_LINE_MAX_CHARS = 220;
+const PRIOR_PHASE_CONTEXT_HEADING_LIMIT = 10;
+const PRIOR_PHASE_CONTEXT_BULLET_LIMIT = 18;
+const PRIOR_PHASE_CONTEXT_PARAGRAPH_LIMIT = 4;
+const PRIOR_PHASE_CONTEXT_EXCERPT_MAX_CHARS = 900;
+const PROJECT_DOCS_REFERENCE_MAX_CHARS = 6_000;
+const PROJECT_DOCS_REFERENCE_EXCERPT_MAX_CHARS = 1_200;
+const PROJECT_DOCS_REFERENCE_HEADING_LIMIT = 8;
+const PROJECT_DOCS_REFERENCE_BULLET_LIMIT = 16;
+const PROJECT_DOCS_REFERENCE_PARAGRAPH_LIMIT = 4;
+export const AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS = 4_000;
+const TASK_DESCRIPTION_COMPACTION_NOTICE =
+  '\n\n...[task description middle omitted for prompt budget; preserve visible requirements and inspect the source task if exact omitted detail is required]...\n\n';
+
 export interface BuildAutocodeSpecKickoffMessageInput {
   agentType: AgentType | string;
   specDir: string;
   projectDir: string;
   taskDescription: string;
   priorPhaseOutputs?: Record<string, string>;
-  /** @deprecated Carries generated project documentation reference text. */
+  /** Generated project documentation reference text from project-docs/index.md and related docs. */
+  projectDocsReference?: string;
+  /** @deprecated Use projectDocsReference. */
   projectIndex?: string;
   specPhase?: string;
   language?: AutocodeOutputLanguage;
@@ -50,27 +68,28 @@ export function buildAutocodeSpecKickoffMessage(
 ): string {
   const promptSpecDir = formatAutocodePathForPrompt(input.specDir);
   const promptProjectDir = formatAutocodePathForPrompt(input.projectDir);
+  const taskDescription = compactAutocodeKickoffTaskDescription(input.taskDescription);
   let baseMessage: string;
 
   if (input.specPhase === 'complexity_assessment') {
-    baseMessage = `Assess task complexity and return the complete complexity_assessment.json object for ${promptSpecDir}/complexity_assessment.json. Task: ${input.taskDescription}. Project root: ${promptProjectDir}. Classify as SIMPLE, STANDARD, or COMPLEX from task scope and project structure only. This is the first spec phase; spec.md and later spec files do not exist yet.`;
+    baseMessage = `Assess task complexity and return the complete complexity_assessment.json object for ${promptSpecDir}/complexity_assessment.json. Task: ${taskDescription}. Project root: ${promptProjectDir}. Classify as SIMPLE, STANDARD, or COMPLEX from task scope and project structure only. This is the first spec phase; spec.md and later spec files do not exist yet.`;
   } else {
     switch (input.agentType) {
       case 'spec_discovery':
-        baseMessage = `Analyze ${promptProjectDir} for architecture, stack, conventions, source evidence, and verification commands relevant to: ${input.taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use the project index first, run targeted discovery tools only for files or standards that directly affect the task, and omit transcripts, copied source, long analysis, and large optional sections. evidence_sources must be structured entries with path, optional symbol, optional lines, proves, and confidence.`;
+        baseMessage = `Analyze ${promptProjectDir} for architecture, stack, conventions, source evidence, and verification commands relevant to: ${taskDescription}. Use the Write tool to create ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.context} as concise Markdown. spec.md does not exist yet. Use the project documentation reference first, run targeted discovery tools only for files or standards that directly affect the task, and omit transcripts, copied source, long analysis, and large optional sections. Include sections for Task, Scoped Services, Architecture Summary, Files To Modify, Files To Reference, Design Patterns, Implementation Notes, Risks, Verification Suggestions, Assumptions, and Evidence Sources. Evidence Sources must be bullets with path, optional symbol/lines, what it proves, and confidence.`;
         break;
       case 'spec_gatherer':
-        baseMessage = `Gather evidence-backed requirements for: ${input.taskDescription}. Project root: ${promptProjectDir}. Return one compact JSON object for requirements.md; the orchestrator writes ${promptSpecDir}/requirements.md. spec.md does not exist yet. Derive requirements from the user request, provided context, targeted source evidence, and verified standards only; put missing details in assumptions. Include evidence_sources, standards_references, and assumptions. No prose or markdown fence outside the JSON.`;
+        baseMessage = `Gather evidence-backed requirements for: ${taskDescription}. Project root: ${promptProjectDir}. Return one compact JSON object for requirements.md; the orchestrator writes ${promptSpecDir}/requirements.md. spec.md does not exist yet. Derive requirements from the user request, provided context, targeted source evidence, and verified standards only; put missing details in assumptions. Include evidence_sources, standards_references, and assumptions. No prose or markdown fence outside the JSON.`;
         break;
       case 'spec_researcher':
-        baseMessage = `Research external dependencies, APIs, SDKs, platform rules, security/accessibility requirements, or integration constraints for: ${input.taskDescription}. Use task context, prior outputs, and project index first; read code in ${promptProjectDir} only when needed. Prefer official documentation, standards bodies, vendor docs, or project-local documentation. If no research is needed, return research.json with empty integrations_researched and unverified_claims plus concise recommendations. The orchestrator writes ${promptSpecDir}/research.json. Final response: one valid JSON object only.`;
+        baseMessage = `Research external dependencies, APIs, SDKs, platform rules, security/accessibility requirements, or integration constraints for: ${taskDescription}. Use task context, prior outputs, and project documentation reference first; read code in ${promptProjectDir} only when needed. Prefer official documentation, standards bodies, vendor docs, or project-local documentation. Use the Write tool to create ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.research} as concise Markdown. If no research is needed, still write ${AUTOCODE_TASK_ARTIFACTS.research} with "None required" and concise recommendations.`;
         break;
       case 'spec_writer':
-        baseMessage = `Write an evidence-backed spec.md for: ${input.taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep spec.md as a compact decision index, not a full analysis dump. Include proposal, requirements, design notes, touched files, acceptance checks, evidence, standards/references, assumptions, and risks.`;
+        baseMessage = `Write an evidence-backed spec.md for: ${taskDescription}. Target: ${promptSpecDir}/spec.md. Project root: ${promptProjectDir}. Use provided phase context as source of truth; read prior files only if missing. Keep spec.md as a compact decision index, not a full analysis dump. Include proposal, requirements, design notes, touched files, acceptance checks, evidence, standards/references, assumptions, and risks.`;
         break;
       case 'planner':
         baseMessage = [
-          `Create ${promptSpecDir}/tasks.md for: ${input.taskDescription}.`,
+          `Create ${promptSpecDir}/tasks.md for: ${taskDescription}.`,
           'Use provided phase context first; read only relevant spec.md sections if needed.',
           `Use Autocode Standard planning: update ${promptSpecDir}/spec.md with proposal/requirements/design/acceptance/risk sections when missing or stale.`,
           'Output concrete Autocode Markdown checklist tasks with source-backed guidance, dependencies, requirement links, evidence notes, and verification commands.',
@@ -82,13 +101,13 @@ export function buildAutocodeSpecKickoffMessage(
         baseMessage = `Review and critique the specification at ${promptSpecDir}/spec.md for completeness, clarity, and technical feasibility. Write your critique findings back to ${promptSpecDir}/spec.md with improvements.`;
         break;
       case 'spec_context':
-        baseMessage = `Gather project context for: ${input.taskDescription}. Return only the compact context.json object; the orchestrator writes ${promptSpecDir}/context.json. spec.md does not exist yet. Use narrow reads and omit transcripts, copied source, and long analysis.`;
+        baseMessage = `Gather project context for: ${taskDescription}. Use the Write tool to create ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.context} as concise Markdown. spec.md does not exist yet. Use narrow reads and omit transcripts, copied source, and long analysis. Include an Evidence Sources section with file/project-doc/standard citations.`;
         break;
       case 'spec_validation':
         baseMessage = `Validate that ${promptSpecDir}/spec.md and ${promptSpecDir}/implementation_plan.md are complete, consistent, and ready for implementation. Use targeted reads with limits; do not read entire large files unless required. Fix only blocking issues. If ${promptSpecDir}/spec.md already exists and needs corrections, use Edit for the smallest affected section instead of rewriting the whole file.`;
         break;
       default:
-        baseMessage = `Complete the Autocode Standard planning task described in your system prompt. Task: ${input.taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
+        baseMessage = `Complete the Autocode Standard planning task described in your system prompt. Task: ${taskDescription}. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
     }
   }
 
@@ -96,11 +115,9 @@ export function buildAutocodeSpecKickoffMessage(
   if (shouldAddStandardPlanningEvidenceContract(input.agentType, input.specPhase)) {
     contextSections.push(buildAutocodeStandardPlanningEvidenceContract(promptProjectDir, promptSpecDir));
   }
-  if (input.projectIndex) {
-    const projectDocsReference = input.projectIndex.trimStart().startsWith('## Project Documentation Reference')
-      ? input.projectIndex
-      : `## Project Documentation Reference\n\n${input.projectIndex}`;
-    contextSections.push(`\n\n${projectDocsReference}`);
+  const projectDocsReferenceInput = input.projectDocsReference ?? input.projectIndex;
+  if (projectDocsReferenceInput) {
+    contextSections.push(`\n\n${buildProjectDocsReferenceSection(projectDocsReferenceInput)}`);
   }
 
   const planLanguageRequirement = (input.agentType === 'planner' || input.specPhase === 'quick_spec')
@@ -112,14 +129,286 @@ export function buildAutocodeSpecKickoffMessage(
 
   if (input.priorPhaseOutputs && Object.keys(input.priorPhaseOutputs).length > 0) {
     contextSections.push('\n\n## CONTEXT FROM PRIOR PHASES\n\nThe following outputs from earlier spec phases are provided to avoid re-reading files:');
-    for (const [fileName, content] of Object.entries(input.priorPhaseOutputs)) {
-      const ext = fileName.endsWith('.json') ? 'json' : 'markdown';
-      contextSections.push(`\n### ${fileName}\n\n\`\`\`${ext}\n${content}\n\`\`\``);
-    }
+    contextSections.push(buildPriorPhaseOutputsSection(input.priorPhaseOutputs));
     contextSections.push('\nUse these outputs as your primary source of context. Only read additional project files if you need specific code patterns not covered above.');
   }
 
   return appendAutocodeLanguageRequirement(contextSections.join(''), input.language);
+}
+
+function buildProjectDocsReferenceSection(projectDocsReferenceInput: string): string {
+  const normalized = normalizePriorPhaseOutput(projectDocsReferenceInput);
+  const reference = hasProjectDocsReferenceHeading(normalized)
+    ? normalized
+    : `## Project Documentation Reference\n\n${normalized}`;
+  if (reference.length <= PROJECT_DOCS_REFERENCE_MAX_CHARS) {
+    return reference;
+  }
+
+  return compactProjectDocsReference(reference, PROJECT_DOCS_REFERENCE_MAX_CHARS);
+}
+
+function hasProjectDocsReferenceHeading(value: string): boolean {
+  return /^##\s+(?:Project Documentation Reference|项目文档参考)\b/i.test(value.trimStart());
+}
+
+function compactProjectDocsReference(content: string, maxChars: number): string {
+  const headings: string[] = [];
+  const bullets: string[] = [];
+  const paragraphs: string[] = [];
+  let inFence = false;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      continue;
+    }
+    if (/^#{1,4}\s+\S/.test(line)) {
+      pushCompactUnique(headings, line.replace(/^#{1,4}\s+/, ''), PROJECT_DOCS_REFERENCE_HEADING_LIMIT);
+      continue;
+    }
+    if (/^(?:[-*+]|\d+[.)])\s+\S/.test(line)) {
+      pushCompactUnique(bullets, line.replace(/^(?:[-*+]|\d+[.)])\s+/, ''), PROJECT_DOCS_REFERENCE_BULLET_LIMIT);
+      continue;
+    }
+    if (line.length >= 28) {
+      pushCompactUnique(paragraphs, line, PROJECT_DOCS_REFERENCE_PARAGRAPH_LIMIT);
+    }
+  }
+
+  const lines = [
+    '## Project Documentation Reference',
+    '',
+    '> Compact excerpt; generated project documentation exceeded the kickoff budget. Read `.autocode/project-docs/index.md` or the referenced Markdown files for exact detail.',
+    '',
+    'Reference excerpt:',
+    limitPromptText(
+      content,
+      Math.min(PROJECT_DOCS_REFERENCE_EXCERPT_MAX_CHARS, Math.max(0, maxChars - 320)),
+      '\n...[project docs reference middle omitted; read project-docs/index.md if needed]...\n',
+    ),
+    '',
+  ];
+  appendCompactSection(lines, 'Key headings', headings.filter((heading) => heading !== 'Project Documentation Reference'));
+  appendCompactSection(lines, 'Selected bullets', bullets);
+  appendCompactSection(lines, 'Selected notes', paragraphs);
+
+  if (headings.length === 0 && bullets.length === 0 && paragraphs.length === 0) {
+    lines.push(limitPromptText(content, Math.max(0, maxChars - 120), '\n...[project docs reference truncated; read project-docs/index.md if needed]'));
+  }
+
+  return limitPromptText(
+    lines.join('\n').trimEnd(),
+    maxChars,
+    '\n...[compact project docs reference truncated; read project-docs/index.md if needed]',
+  );
+}
+
+function buildPriorPhaseOutputsSection(priorPhaseOutputs: Record<string, string>): string {
+  const sections: string[] = [];
+  let remaining = PRIOR_PHASE_CONTEXT_TOTAL_MAX_CHARS;
+  let omitted = 0;
+
+  for (const [fileName, content] of Object.entries(priorPhaseOutputs)) {
+    const normalized = normalizePriorPhaseOutput(content);
+    if (!normalized) {
+      continue;
+    }
+
+    const sectionBudget = Math.min(PRIOR_PHASE_CONTEXT_FILE_MAX_CHARS, Math.max(0, remaining));
+    if (sectionBudget <= 240) {
+      omitted += 1;
+      continue;
+    }
+
+    const compact = compactPriorPhaseOutput(fileName, normalized, sectionBudget);
+    const ext = fileName.endsWith('.json') ? 'json' : 'markdown';
+    const section = `\n### ${fileName}\n\n\`\`\`${ext}\n${compact}\n\`\`\``;
+    sections.push(section);
+    remaining -= section.length;
+  }
+
+  if (omitted > 0) {
+    sections.push(`\n${omitted} prior output file(s) omitted from kickoff to stay within context budget. Read the exact artifact only if needed.`);
+  }
+
+  return sections.join('');
+}
+
+function compactPriorPhaseOutput(fileName: string, content: string, maxChars: number): string {
+  if (content.length <= maxChars) {
+    return content;
+  }
+
+  if (fileName.endsWith('.json')) {
+    const jsonSummary = summarizePriorPhaseJson(content, maxChars);
+    if (jsonSummary) {
+      return jsonSummary;
+    }
+  }
+
+  const headings: string[] = [];
+  const bullets: string[] = [];
+  const paragraphs: string[] = [];
+  let inFence = false;
+
+  for (const rawLine of content.split(/\r?\n/)) {
+    const line = rawLine.trim();
+    if (!line) {
+      continue;
+    }
+    if (/^```/.test(line)) {
+      inFence = !inFence;
+      continue;
+    }
+    if (inFence) {
+      continue;
+    }
+    if (/^#{1,4}\s+\S/.test(line)) {
+      pushCompactUnique(headings, line.replace(/^#{1,4}\s+/, ''), PRIOR_PHASE_CONTEXT_HEADING_LIMIT);
+      continue;
+    }
+    if (/^(?:[-*+]|\d+[.)])\s+\S/.test(line)) {
+      pushCompactUnique(bullets, line.replace(/^(?:[-*+]|\d+[.)])\s+/, ''), PRIOR_PHASE_CONTEXT_BULLET_LIMIT);
+      continue;
+    }
+    if (line.length >= 28) {
+      pushCompactUnique(paragraphs, line, PRIOR_PHASE_CONTEXT_PARAGRAPH_LIMIT);
+    }
+  }
+
+  const lines = [
+    `Compact excerpt of ${fileName}. Read the artifact directly for exact wording or omitted detail.`,
+    '',
+    'Content excerpt:',
+    limitPromptText(
+      content,
+      Math.min(PRIOR_PHASE_CONTEXT_EXCERPT_MAX_CHARS, Math.max(0, maxChars - 320)),
+      '\n...[prior output middle omitted; read artifact if needed]...\n',
+    ),
+    '',
+  ];
+  appendCompactSection(lines, 'Key headings', headings);
+  appendCompactSection(lines, 'Selected bullets', bullets);
+  appendCompactSection(lines, 'Selected notes', paragraphs);
+
+  if (headings.length === 0 && bullets.length === 0 && paragraphs.length === 0) {
+    lines.push(limitPromptText(content, Math.max(0, maxChars - 96), '\n...[truncated; read artifact if needed]'));
+  }
+
+  return limitPromptText(lines.join('\n').trimEnd(), maxChars, '\n...[compact prior output truncated; read artifact if needed]');
+}
+
+function summarizePriorPhaseJson(content: string, maxChars: number): string | null {
+  try {
+    const parsed = JSON.parse(content) as unknown;
+    const summary = summarizeJsonValue(parsed);
+    return limitPromptText(
+      `Compact JSON summary. Read the artifact directly for exact values.\n${JSON.stringify(summary, null, 2)}`,
+      maxChars,
+      '\n...[compact JSON summary truncated; read artifact if needed]',
+    );
+  } catch {
+    return null;
+  }
+}
+
+function summarizeJsonValue(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    const items = value.slice(0, 8).map(summarizeJsonValue);
+    return value.length > items.length
+      ? [...items, `... ${value.length - items.length} more item(s)`]
+      : items;
+  }
+  if (!value || typeof value !== 'object') {
+    return typeof value === 'string'
+      ? limitPromptText(value, PRIOR_PHASE_CONTEXT_LINE_MAX_CHARS, '...')
+      : value;
+  }
+
+  const record = value as Record<string, unknown>;
+  const result: Record<string, unknown> = {};
+  for (const [key, item] of Object.entries(record).slice(0, 24)) {
+    result[key] = summarizeJsonValue(item);
+  }
+  const omitted = Object.keys(record).length - Object.keys(result).length;
+  if (omitted > 0) {
+    result.__omitted_keys = omitted;
+  }
+  return result;
+}
+
+function normalizePriorPhaseOutput(content: string): string {
+  return String(content ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function appendCompactSection(lines: string[], title: string, items: readonly string[]): void {
+  if (items.length === 0) {
+    return;
+  }
+  lines.push(`${title}:`);
+  for (const item of items) {
+    lines.push(`- ${limitPromptText(item, PRIOR_PHASE_CONTEXT_LINE_MAX_CHARS, '...')}`);
+  }
+  lines.push('');
+}
+
+function pushCompactUnique(items: string[], value: string, limit: number): void {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (!normalized || items.includes(normalized) || items.length >= limit) {
+    return;
+  }
+  items.push(normalized);
+}
+
+function compactAutocodeKickoffTaskDescription(value: string): string {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (normalized.length <= AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS) {
+    return normalized;
+  }
+
+  const budget = Math.max(
+    0,
+    AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS - TASK_DESCRIPTION_COMPACTION_NOTICE.length,
+  );
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return [
+    normalized.slice(0, headBudget).trimEnd(),
+    TASK_DESCRIPTION_COMPACTION_NOTICE,
+    normalized.slice(-tailBudget).trimStart(),
+  ].join('');
+}
+
+function limitPromptText(value: string, maxChars: number, suffix: string): string {
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (value.length <= maxChars) {
+    return value;
+  }
+  const budget = Math.max(0, maxChars - suffix.length);
+  if (budget <= 0) {
+    return value.slice(0, maxChars);
+  }
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return `${value.slice(0, headBudget).trimEnd()}${suffix}${value.slice(-tailBudget).trimStart()}`;
 }
 
 function shouldAddStandardPlanningEvidenceContract(
@@ -160,7 +449,7 @@ function buildAutocodeStandardPlanningEvidenceContract(
     '- Do not invent framework behavior, APIs, product flows, file ownership, or acceptance criteria from general model knowledge.',
     '- If an external API, SDK, security rule, accessibility rule, protocol, game-networking pattern, or platform behavior matters, use verified official documentation or explicitly mark it as an assumption.',
     `- Record evidence in ${promptSpecDir}/requirements.md as evidence_sources, standards_references, and assumptions when those files are generated.`,
-    '- In context.json, evidence_sources must use structured entries: path, optional symbol, optional lines, proves, confidence.',
+    `- In ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.context}, keep project context as concise Markdown and include Evidence Sources bullets with path, optional symbol/lines, what the evidence proves, and confidence.`,
     '- In spec.md, include Evidence, Standards / References, and Assumptions sections when the task is not trivial; keep it compact as a decision index.',
     '- In tasks.md, each executable task should cite a source path, project pattern, requirement ID, or standards reference in its guidance or metadata.',
     '- If evidence is missing after targeted inspection, write an open question or assumption and plan a validation task; never fill the gap with a confident guess.',
@@ -398,21 +687,22 @@ export function buildAutocodeAgenticSpecOrchestratorKickoffMessage(input: {
   taskDescription: string;
   specDir: string;
   projectDir: string;
-  /** @deprecated Carries generated project documentation reference text. */
+  /** Generated project documentation reference text from project-docs/index.md and related docs. */
+  projectDocsReference?: string;
+  /** @deprecated Use projectDocsReference. */
   projectIndexContent?: string;
 }): string {
   const promptSpecDir = formatAutocodePathForPrompt(input.specDir);
   const promptProjectDir = formatAutocodePathForPrompt(input.projectDir);
+  const taskDescription = compactAutocodeKickoffTaskDescription(input.taskDescription);
   const parts = [
-    `Create a complete specification for the following task:\n\n${input.taskDescription}\n`,
+    `Create a complete specification for the following task:\n\n${taskDescription}\n`,
     `\nSpec directory: ${promptSpecDir}`,
     `\nProject directory: ${promptProjectDir}`,
   ];
-  if (input.projectIndexContent) {
-    const projectDocsReference = input.projectIndexContent.trimStart().startsWith('## Project Documentation Reference')
-      ? input.projectIndexContent
-      : `## Project Documentation Reference\n\n${input.projectIndexContent}`;
-    parts.push(`\n\n${projectDocsReference}`);
+  const projectDocsReferenceInput = input.projectDocsReference ?? input.projectIndexContent;
+  if (projectDocsReferenceInput) {
+    parts.push(`\n\n${buildProjectDocsReferenceSection(projectDocsReferenceInput)}`);
   }
   return parts.join('');
 }

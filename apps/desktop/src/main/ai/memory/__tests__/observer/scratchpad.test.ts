@@ -156,6 +156,38 @@ describe('Scratchpad', () => {
     });
   });
 
+  describe('recordToolResult', () => {
+    it('tracks repeated long tail errors without retaining full tool output', () => {
+      const longTailErrorA = [
+        'build output '.repeat(4_000),
+        'Error: Cannot find module "./auth" in /home/alice/project/src/main.ts:42',
+        'FINAL_EXIT_CODE_1',
+      ].join(' ');
+      const longTailErrorB = [
+        'build output '.repeat(4_000),
+        'Error: Cannot find module "./auth" in /home/bob/other-project/src/main.ts:99',
+        'FINAL_EXIT_CODE_1',
+      ].join(' ');
+
+      scratchpad.recordToolResult('Bash', longTailErrorA, 6);
+      scratchpad.recordToolResult('Bash', longTailErrorB, 7);
+
+      expect(scratchpad.analytics.errorFingerprints.size).toBe(1);
+      expect([...scratchpad.analytics.errorFingerprints.values()][0]).toBe(2);
+    });
+
+    it('tracks object-shaped failed tool results', () => {
+      scratchpad.recordToolResult('Bash', {
+        exit_code: 1,
+        message: 'Command failed',
+        stdout: 'noise '.repeat(2_000),
+        stderr: 'Error: dependency install failed in /tmp/project/package.json:12',
+      }, 8);
+
+      expect(scratchpad.analytics.errorFingerprints.size).toBe(1);
+    });
+  });
+
   describe('recordTokenUsage', () => {
     it('accumulates total tokens', () => {
       scratchpad.recordTokenUsage(1000);

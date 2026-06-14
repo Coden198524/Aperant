@@ -49,7 +49,7 @@ vi.mock('../../schema', () => ({
 }));
 
 import { QALoop } from '../qa-loop';
-import type { QALoopConfig, QASessionRunConfig } from '../qa-loop';
+import type { QAIssue, QALoopConfig, QASessionRunConfig } from '../qa-loop';
 import type { SessionResult } from '../../session/types';
 
 // ---------------------------------------------------------------------------
@@ -454,5 +454,59 @@ describe('QALoop', () => {
 
     expect(completedEvents).toHaveLength(1);
     expect((completedEvents[0] as { approved: boolean }).approved).toBe(true);
+  });
+
+  it('compacts QA iteration history persisted into the implementation plan', async () => {
+    const longIssue = {
+      title: `Rendering regression ${'title detail '.repeat(40)}TAIL_TITLE`,
+      type: 'critical' as const,
+      location: `src/renderer/App.tsx:${'location detail '.repeat(30)}TAIL_LOCATION`,
+      description: `The QA reviewer copied verbose test output ${'stack trace line '.repeat(120)}TAIL_DESCRIPTION`,
+      fix_required: `Apply a minimal fix ${'repair instruction '.repeat(120)}TAIL_FIX`,
+    };
+    const issues = [
+      longIssue,
+      ...Array.from({ length: 10 }, (_, index) => ({
+        title: `Additional issue ${index}`,
+        type: 'warning' as const,
+        description: `extra issue ${index}`,
+      })),
+    ];
+    const plan = {
+      phases: [{ subtasks: [{ status: 'completed' }] }],
+      qa_signoff: { status: 'rejected', issues_found: issues },
+    };
+    mockLoadAutocodeImplementationPlan.mockResolvedValue(plan);
+
+    const loop = new QALoop(makeConfig());
+    const recordIteration = (loop as unknown as {
+      recordIteration: (
+        iteration: number,
+        status: 'approved' | 'rejected' | 'error',
+        issues: QAIssue[],
+        durationMs: number,
+      ) => Promise<void>;
+    }).recordIteration.bind(loop);
+
+    await recordIteration(1, 'rejected', issues, 1234);
+
+    expect(mockSaveAutocodeImplementationPlan).toHaveBeenCalledTimes(1);
+    const savedPlan = mockSaveAutocodeImplementationPlan.mock.calls[0][1] as {
+      qa_iteration_history: Array<{ issues: Array<Record<string, string>> }>;
+      qa_signoff: { issues_found: Array<Record<string, string>> };
+    };
+    const savedHistoryIssueText = JSON.stringify(savedPlan.qa_iteration_history[0].issues);
+    const savedSignoffIssueText = JSON.stringify(savedPlan.qa_signoff.issues_found);
+
+    expect(savedPlan.qa_iteration_history[0].issues).toHaveLength(9);
+    expect(savedPlan.qa_signoff.issues_found).toHaveLength(9);
+    expect(savedHistoryIssueText).toContain('truncated');
+    expect(savedHistoryIssueText).toContain('3 more QA issue(s) omitted');
+    expect(savedHistoryIssueText).toContain('TAIL_TITLE');
+    expect(savedHistoryIssueText).toContain('TAIL_LOCATION');
+    expect(savedHistoryIssueText).toContain('TAIL_DESCRIPTION');
+    expect(savedHistoryIssueText).toContain('TAIL_FIX');
+    expect(savedSignoffIssueText).toContain('TAIL_DESCRIPTION');
+    expect(savedSignoffIssueText).toContain('TAIL_FIX');
   });
 });

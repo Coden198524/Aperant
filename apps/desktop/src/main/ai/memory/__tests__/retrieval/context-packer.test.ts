@@ -7,6 +7,9 @@ import {
   packContext,
   estimateTokens,
   DEFAULT_PACKING_CONFIG,
+  MAX_PACKED_MEMORY_CITATION_CHARS,
+  MAX_PACKED_MEMORY_CONTENT_CHARS,
+  MAX_PACKED_MEMORY_FILE_REF_CHARS,
 } from '../../retrieval/context-packer';
 import type { Memory } from '../../types';
 
@@ -102,7 +105,7 @@ describe('packContext', () => {
   });
 
   it('shows confidence warning for low-confidence memories', () => {
-    const memory = makeMemory({ confidence: 0.5 });
+    const memory = makeMemory({ confidence: 0.6 });
     const result = packContext([memory], 'implement');
 
     expect(result).toContain('confidence:');
@@ -145,14 +148,40 @@ describe('packContext', () => {
   });
 
   it('truncates very long memory content before packing', () => {
-    const longContent = `start ${'very long detail '.repeat(100)} end`;
+    const longContent = `start ${'very long detail '.repeat(100)} FINAL_MEMORY_TAIL_OK`;
     const result = packContext([
       makeMemory({ id: 'long-memory', content: longContent, type: 'gotcha' }),
     ], 'implement');
 
     expect(result).toContain('start');
+    expect(result).toContain('memory middle omitted');
+    expect(result).toContain('FINAL_MEMORY_TAIL_OK');
+    expect(result.length).toBeLessThan(MAX_PACKED_MEMORY_CONTENT_CHARS + 180);
+  });
+
+  it('truncates long citation and file metadata before packing', () => {
+    const longCitation = 'citation '.repeat(80);
+    const longFile = `src/${'deep/'.repeat(40)}middleware.ts`;
+    const result = packContext([
+      makeMemory({
+        id: 'long-meta-memory',
+        content: 'Short content',
+        type: 'gotcha',
+        citationText: longCitation,
+        relatedFiles: [longFile],
+      }),
+    ], 'implement');
+
+    expect(result).toContain('Short content');
+    expect(result).toContain('[^ Memory:');
     expect(result).toContain('...');
-    expect(result).not.toContain(' end');
+    expect(result).not.toContain(longCitation);
+    expect(result).not.toContain(longFile);
+    expect(result).toContain('middleware.ts');
+    const citationMatch = result.match(/\[\^ Memory: ([^\]]+)\]/);
+    expect(citationMatch?.[1].length).toBeLessThanOrEqual(MAX_PACKED_MEMORY_CITATION_CHARS);
+    const fileMatch = result.match(/\*\*Gotcha\*\* \(([^)]*)\)/);
+    expect(fileMatch?.[1].length).toBeLessThanOrEqual(MAX_PACKED_MEMORY_FILE_REF_CHARS);
   });
 
   it('includes memories from types in allocation map first', () => {

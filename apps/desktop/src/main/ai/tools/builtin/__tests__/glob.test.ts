@@ -1,5 +1,6 @@
 import path from 'node:path';
 import { describe, it, expect, vi, beforeEach } from 'vitest';
+import { GLOB_SUMMARY_SAMPLE_SIZE } from '@autocode/core';
 
 import { globTool } from '../glob';
 import type { ToolContext } from '../../types';
@@ -211,8 +212,10 @@ describe('Glob Tool', () => {
 
     expect(result).toContain('Glob matched 350 files');
     expect(result).toContain('Top directories:');
-    expect(result).toContain('First 50 recently modified files:');
-    expect(result).not.toContain('/test/project/src/feature349/file.ts');
+    expect(result).toContain(`First ${GLOB_SUMMARY_SAMPLE_SIZE} recently modified files:`);
+    expect(result).toContain('src/feature0/file.ts');
+    expect(result).not.toContain('/test/project/src/feature0/file.ts');
+    expect(result).not.toContain(`src/feature${GLOB_SUMMARY_SAMPLE_SIZE}/file.ts`);
   });
 
   it('summarizes medium result sets to keep model context compact', async () => {
@@ -225,8 +228,8 @@ describe('Glob Tool', () => {
     ) as string;
 
     expect(result).toContain('Glob matched 150 files');
-    expect(result).toContain('First 50 recently modified files:');
-    expect(result).not.toContain('/test/project/src/feature149/file.ts');
+    expect(result).toContain(`First ${GLOB_SUMMARY_SAMPLE_SIZE} recently modified files:`);
+    expect(result).not.toContain(`src/feature${GLOB_SUMMARY_SAMPLE_SIZE}/file.ts`);
   });
 
   it('should call assertPathContained for path security', async () => {

@@ -20,6 +20,17 @@ export interface AutocodeProjectCapabilities {
   has_database: boolean;
 }
 
+export const AUTOCODE_PROMPT_RECOVERY_CONTEXT_MAX_CHARS = 6_000;
+export const AUTOCODE_PROMPT_HUMAN_INPUT_MAX_CHARS = 6_000;
+export const AUTOCODE_PROMPT_PROJECT_INSTRUCTIONS_MAX_CHARS = 8_000;
+
+const PROMPT_RECOVERY_CONTEXT_COMPACTION_NOTICE =
+  '\n\n...[recovery context middle omitted for prompt budget; inspect recovery artifacts or logs for exact omitted detail]...\n\n';
+const PROMPT_HUMAN_INPUT_COMPACTION_NOTICE =
+  '\n\n...[human input middle omitted for prompt budget; read HUMAN_INPUT.md for exact omitted detail before making risky decisions]...\n\n';
+const PROMPT_PROJECT_INSTRUCTIONS_COMPACTION_NOTICE =
+  '\n\n...[project instructions middle omitted for prompt budget; read the project instruction file for exact omitted detail]...\n\n';
+
 function formatAutocodePromptPath(filePath: string | undefined): string | undefined {
   return filePath?.replace(/\\/g, '/');
 }
@@ -93,24 +104,39 @@ export function injectAutocodePromptContext(
     sections.push(specContext);
   }
 
-  if (context.recoveryContext) {
-    sections.push(context.recoveryContext);
+  const recoveryContext = compactAutocodePromptContextSection(
+    context.recoveryContext,
+    AUTOCODE_PROMPT_RECOVERY_CONTEXT_MAX_CHARS,
+    PROMPT_RECOVERY_CONTEXT_COMPACTION_NOTICE,
+  );
+  if (recoveryContext) {
+    sections.push(recoveryContext);
   }
 
-  if (context.humanInput) {
+  const humanInput = compactAutocodePromptContextSection(
+    context.humanInput,
+    AUTOCODE_PROMPT_HUMAN_INPUT_MAX_CHARS,
+    PROMPT_HUMAN_INPUT_COMPACTION_NOTICE,
+  );
+  if (humanInput) {
     sections.push(
       `## HUMAN INPUT (READ THIS FIRST!)\n\n` +
       `The human has left you instructions. READ AND FOLLOW THESE CAREFULLY:\n\n` +
-      `${context.humanInput}\n\n` +
+      `${humanInput}\n\n` +
       `After addressing this input, you may delete or clear the HUMAN_INPUT.md file.\n\n` +
       `---\n\n`,
     );
   }
 
-  if (context.projectInstructions) {
+  const projectInstructions = compactAutocodePromptContextSection(
+    context.projectInstructions,
+    AUTOCODE_PROMPT_PROJECT_INSTRUCTIONS_MAX_CHARS,
+    PROMPT_PROJECT_INSTRUCTIONS_COMPACTION_NOTICE,
+  );
+  if (projectInstructions) {
     sections.push(
       `## PROJECT INSTRUCTIONS\n\n` +
-      `${context.projectInstructions}\n\n` +
+      `${projectInstructions}\n\n` +
       `---\n\n`,
     );
   }
@@ -129,6 +155,31 @@ export function injectAutocodePromptContext(
 
   sections.push(promptTemplate);
   return sections.join('');
+}
+
+export function compactAutocodePromptContextSection(
+  value: string | null | undefined,
+  maxChars: number,
+  notice: string,
+): string {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (!normalized || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const budget = Math.max(0, maxChars - notice.length);
+  const headBudget = Math.ceil(budget * 0.65);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return [
+    normalized.slice(0, headBudget).trimEnd(),
+    notice,
+    normalized.slice(-tailBudget).trimStart(),
+  ].join('');
 }
 
 export function detectAutocodeProjectCapabilities(

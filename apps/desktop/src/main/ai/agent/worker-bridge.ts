@@ -16,6 +16,7 @@ import { fileURLToPath } from 'url';
 import { EventEmitter } from 'events';
 import { app } from 'electron';
 import {
+  repairAutocodeChineseMojibakeText,
   toAutocodeMemoryRuntimeRecentContext,
   type AutocodeMemoryRuntimeIpcResponse,
 } from '@autocode/core';
@@ -32,9 +33,22 @@ import type { SessionResult } from '../session/types';
 import { ProgressTracker } from '../session/progress-tracker';
 import { MemoryObserver } from '../memory/observer';
 import { StepInjectionDecider } from '../memory/injection';
-import type { MemoryIpcRequest, MemoryCandidate, SessionOutcome, SessionType } from '../memory/types';
+import type { Memory, MemoryIpcRequest, MemoryCandidate, SessionOutcome, SessionType } from '../memory/types';
 import type { MemoryToolIpcRequest, MemoryIpcMessage } from '../memory/ipc/worker-observer-proxy';
 import { debugLog } from '../../../shared/utils/debug-logger';
+
+const MEMORY_SEARCH_RESPONSE_CONTENT_MAX_CHARS = 900;
+const MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS = 300;
+const MEMORY_SEARCH_RESPONSE_TAG_LIMIT = 12;
+const MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS = 64;
+const MEMORY_SEARCH_RESPONSE_FILE_LIMIT = 12;
+const MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS = 180;
+const MEMORY_SEARCH_RESPONSE_MODULE_LIMIT = 10;
+const MEMORY_SEARCH_RESPONSE_MODULE_MAX_CHARS = 96;
+const MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT = 12;
+const MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS = 80;
+const MEMORY_SEARCH_RESPONSE_RELATION_LIMIT = 8;
+const MEMORY_SEARCH_RESPONSE_OMISSION_MARKER = ' ... [memory response middle omitted before IPC] ... ';
 
 // ESM-compatible __dirname
 const __filename = fileURLToPath(import.meta.url);
@@ -293,7 +307,7 @@ export class WorkerBridge extends EventEmitter {
         this.postMemoryResponse({
           type: 'memory:search-result',
           requestId: message.requestId,
-          memories,
+          memories: compactMemorySearchResponseMemories(memories),
         });
       })
       .catch((error) => {
@@ -376,7 +390,7 @@ export class WorkerBridge extends EventEmitter {
     const model = this.resolveStreamModel(message);
     const chunk: TaskLogStreamChunk = {
       type: 'text',
-      content: message.data.text,
+      content: repairAutocodeChineseMojibakeText(message.data.text),
       phase: message.phase ?? this.resolveCurrentLogPhase(),
       timestamp: new Date().toISOString(),
       ...(model ? { model } : {}),
@@ -397,13 +411,13 @@ export class WorkerBridge extends EventEmitter {
       const toolInput = this.extractToolInput(message.data.args);
       const chunk: TaskLogStreamChunk = {
         type: 'tool_start',
-        content: `[${message.data.toolName}] ${toolInput ?? ''}`.trim(),
+        content: repairAutocodeChineseMojibakeText(`[${message.data.toolName}] ${toolInput ?? ''}`.trim()),
         phase,
         timestamp,
         ...(model ? { model } : {}),
         tool: {
           name: message.data.toolName,
-          input: toolInput,
+          input: toolInput ? repairAutocodeChineseMojibakeText(toolInput) : toolInput,
         },
         tool_call_id: message.data.toolCallId,
         ...(message.subtaskId ? { subtask_id: message.subtaskId } : {}),
@@ -437,7 +451,7 @@ export class WorkerBridge extends EventEmitter {
     if (message.data.type === 'error') {
       const chunk: TaskLogStreamChunk = {
         type: 'error',
-        content: message.data.error.message,
+        content: repairAutocodeChineseMojibakeText(message.data.error.message),
         phase,
         timestamp,
         ...(model ? { model } : {}),
@@ -661,6 +675,128 @@ function mapSessionResultToMemoryOutcome(result: SessionResult): SessionOutcome 
     default:
       return 'failure';
   }
+}
+
+function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
+  return memories.map((memory) => ({
+    ...memory,
+    content: compactMemorySearchResponseText(
+      memory.content,
+      MEMORY_SEARCH_RESPONSE_CONTENT_MAX_CHARS,
+    ),
+    tags: compactMemorySearchResponseList(
+      memory.tags,
+      MEMORY_SEARCH_RESPONSE_TAG_LIMIT,
+      MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS,
+    ) ?? [],
+    relatedFiles: compactMemorySearchResponseList(
+      memory.relatedFiles,
+      MEMORY_SEARCH_RESPONSE_FILE_LIMIT,
+      MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS,
+    ) ?? [],
+    relatedModules: compactMemorySearchResponseList(
+      memory.relatedModules,
+      MEMORY_SEARCH_RESPONSE_MODULE_LIMIT,
+      MEMORY_SEARCH_RESPONSE_MODULE_MAX_CHARS,
+    ) ?? [],
+    provenanceSessionIds: compactMemorySearchResponseList(
+      memory.provenanceSessionIds,
+      MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+    ) ?? [],
+    impactedNodeIds: compactMemorySearchResponseList(
+      memory.impactedNodeIds,
+      MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+    ),
+    citationText: compactOptionalMemorySearchResponseText(memory.citationText),
+    contextPrefix: compactOptionalMemorySearchResponseText(memory.contextPrefix),
+    workUnitRef: memory.workUnitRef
+      ? {
+          ...memory.workUnitRef,
+          label: compactMemorySearchResponseText(
+            memory.workUnitRef.label,
+            MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS,
+          ),
+          hierarchy: compactMemorySearchResponseList(
+            memory.workUnitRef.hierarchy,
+            MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
+            MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+          ) ?? [],
+        }
+      : undefined,
+    relations: memory.relations
+      ?.slice(0, MEMORY_SEARCH_RESPONSE_RELATION_LIMIT)
+      .map((relation) => ({
+        ...relation,
+        targetFilePath: relation.targetFilePath
+          ? compactMemorySearchResponseText(
+              relation.targetFilePath,
+              MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS,
+            )
+          : relation.targetFilePath,
+      })),
+  }));
+}
+
+function compactOptionalMemorySearchResponseText(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return compactMemorySearchResponseText(value, MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS);
+}
+
+function compactMemorySearchResponseText(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (maxChars <= 0 || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const marker = MEMORY_SEARCH_RESPONSE_OMISSION_MARKER;
+  if (marker.length >= maxChars - 2) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const budget = maxChars - marker.length;
+  const headChars = Math.ceil(budget * 0.62);
+  const tailChars = Math.max(0, budget - headChars);
+  return [
+    normalized.slice(0, headChars).trimEnd(),
+    marker,
+    tailChars > 0 ? normalized.slice(-tailChars).trimStart() : '',
+  ].join('');
+}
+
+function compactMemorySearchResponseList(
+  values: string[] | undefined,
+  limit: number,
+  maxItemChars: number,
+): string[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+
+  const compacted = values
+    .map((value) => compactMemorySearchResponseListItem(value, maxItemChars))
+    .filter(Boolean);
+  return Array.from(new Set(compacted)).slice(0, Math.max(0, limit));
+}
+
+function compactMemorySearchResponseListItem(value: string, maxChars: number): string {
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  if (maxChars <= 0 || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const marker = '...[omitted]...';
+  const budget = maxChars - marker.length;
+  if (budget <= 0) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const headChars = Math.ceil(budget * 0.6);
+  const tailChars = Math.max(0, budget - headChars);
+  return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
 }
 
 function isMemoryIpcMessage(message: unknown): message is MemoryIpcMessage {

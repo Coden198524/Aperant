@@ -14,18 +14,24 @@ export const AUTOCODE_GITHUB_DIR_NAME = 'github';
 export const AUTOCODE_GITLAB_DIR_NAME = 'gitlab';
 export const AUTOCODE_YUNXIAO_DIR_NAME = 'yunxiao';
 
+// Program-owned configuration/state/structured data stays JSON because the app
+// parses it for routing, UI rendering, persistence, and integrations. This
+// includes model-produced outputs when the app consumes them as structured data.
 export const AUTOCODE_PROJECT_INDEX_FILE_NAME = 'project_index.json';
 export const AUTOCODE_PROJECT_ENV_FILE_NAME = '.env';
 export const AUTOCODE_GENERATION_PROGRESS_FILE_NAME = 'generation_progress.json';
 export const AUTOCODE_SPEC_NUMBER_LOCK_FILE_NAME = 'spec-numbering.lock';
 export const AUTOCODE_PROJECT_PROMPT_PROFILE_FILE_NAME = 'prompt_profile.json';
 export const AUTOCODE_GITHUB_TMP_COMMENT_BODY_FILE_NAME = 'tmp_comment_body.txt';
+
+// Pure model-readable prose/reference artifacts use Markdown to avoid brittle
+// parsing of LLM-authored JSON, especially for Chinese text.
 export const AUTOCODE_PROJECT_DOCS_INDEX_FILE_NAME = 'index.md';
 export const AUTOCODE_PROJECT_DOCS_PRODUCT_FILE_NAME = 'product.md';
 export const AUTOCODE_PROJECT_DOCS_ARCHITECTURE_FILE_NAME = 'architecture.md';
 export const AUTOCODE_PROJECT_DOCS_TECHNICAL_FILE_NAME = 'technical.md';
-export const AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME = 'doc_outline.json';
-export const AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME = 'evidence_index.json';
+export const AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME = 'doc_outline.md';
+export const AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME = 'evidence_index.md';
 
 export const AUTOCODE_ROADMAP_FILE_NAME = 'roadmap.json';
 export const AUTOCODE_ROADMAP_DISCOVERY_FILE_NAME = 'roadmap_discovery.json';
@@ -33,7 +39,7 @@ export const AUTOCODE_COMPETITOR_ANALYSIS_FILE_NAME = 'competitor_analysis.json'
 export const AUTOCODE_MANUAL_COMPETITORS_FILE_NAME = 'manual_competitors.json';
 
 export const AUTOCODE_IDEATION_FILE_NAME = 'ideation.json';
-export const AUTOCODE_IDEATION_CONTEXT_FILE_NAME = 'ideation_context.json';
+export const AUTOCODE_IDEATION_CONTEXT_FILE_NAME = 'ideation_context.md';
 
 export const AUTOCODE_INSIGHTS_CURRENT_SESSION_FILE_NAME = 'current_session.json';
 export const AUTOCODE_INSIGHTS_LEGACY_SESSION_FILE_NAME = 'session.json';

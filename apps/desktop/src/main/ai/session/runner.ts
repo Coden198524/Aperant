@@ -101,6 +101,9 @@ const POST_STREAM_TIMEOUT_MS = 10_000;
  *  (observed with OpenAI Codex via chatgpt.com/backend-api/codex/responses). */
 const STREAM_INACTIVITY_TIMEOUT_MS = 120_000; // 2 minutes - increased for complex planning tasks
 
+/** Buffer reasoning deltas before memory observation to avoid one IPC message per tiny stream chunk. */
+const MEMORY_REASONING_OBSERVATION_FLUSH_CHARS = 1_800;
+
 async function repairMalformedToolCall(options: {
   toolCall: LanguageModelV3ToolCall;
 }): Promise<LanguageModelV3ToolCall | null> {
@@ -307,6 +310,9 @@ const MEMORY_INJECTION_WARMUP_STEPS = 6;
 /** Minimum gap between memory injections. Keeps repeated reminders from bloating context. */
 const MEMORY_INJECTION_INTERVAL_STEPS = 6;
 
+/** Maximum active memory injections per session. Bounds cumulative context growth in long tool loops. */
+const MEMORY_INJECTION_MAX_PER_SESSION = 3;
+
 /** Stop active memory injection once the context window is moderately full. */
 const MEMORY_INJECTION_CONTEXT_THRESHOLD = 0.55;
 
@@ -413,7 +419,10 @@ async function executeStream(
   // Per-step state for memory injection (only allocated when memory is active)
   const stepMemoryState = memoryContext ? new StepMemoryState() : null;
   let lastMemoryInjectionStep = 0;
+  let memoryInjectionCount = 0;
   let currentStepNumber = 0;
+  let memoryReasoningBuffer = '';
+  let memoryReasoningBufferStep = 0;
   let writeToolInputFailureCount = 0;
   const writeToolInputFailureCallIds = new Set<string>();
   let writeToolInputCorrectionPrompt: string | undefined;
@@ -422,6 +431,35 @@ async function executeStream(
 
   // Convergence nudge: track whether we've already nudged the agent to wrap up
   let convergenceNudgeInjected = false;
+
+  const flushMemoryReasoningBuffer = () => {
+    if (!memoryContext || !stepMemoryState || !memoryReasoningBuffer.trim()) {
+      memoryReasoningBuffer = '';
+      return;
+    }
+    memoryContext.proxy.onReasoning(memoryReasoningBuffer, memoryReasoningBufferStep);
+    memoryReasoningBuffer = '';
+  };
+
+  const bufferMemoryReasoning = (text: string) => {
+    if (!memoryContext || !stepMemoryState) {
+      return;
+    }
+    const compact = text.replace(/\s+/g, ' ').trim();
+    if (!compact) {
+      return;
+    }
+    if (memoryReasoningBuffer && memoryReasoningBufferStep !== currentStepNumber) {
+      flushMemoryReasoningBuffer();
+    }
+    memoryReasoningBufferStep = currentStepNumber;
+    memoryReasoningBuffer = memoryReasoningBuffer
+      ? `${memoryReasoningBuffer} ${compact}`
+      : compact;
+    if (memoryReasoningBuffer.length >= MEMORY_REASONING_OBSERVATION_FLUSH_CHARS) {
+      flushMemoryReasoningBuffer();
+    }
+  };
 
   // Build the event callback that also feeds the progress tracker
   const emitEvent: SessionEventCallback = (event) => {
@@ -441,10 +479,11 @@ async function executeStream(
       memoryContext?.proxy.onToolResult(event.toolName, event.result, currentStepNumber);
     }
     if (stepMemoryState && event.type === 'thinking-delta' && event.text.trim()) {
-      memoryContext?.proxy.onReasoning(event.text, currentStepNumber);
+      bufferMemoryReasoning(event.text);
     }
     // Track prompt tokens for context window guard
     if (event.type === 'step-finish') {
+      flushMemoryReasoningBuffer();
       lastPromptTokens = event.usage.promptTokens;
       const usagePct = contextWindowLimit > 0
         ? ((lastPromptTokens / contextWindowLimit) * 100).toFixed(1)
@@ -541,6 +580,7 @@ async function executeStream(
     } : {}),
     experimental_repairToolCall: repairMalformedToolCall,
     prepareStep: async ({ stepNumber }) => {
+      flushMemoryReasoningBuffer();
       currentStepNumber = stepNumber;
       // Hard abort: if we're at 95%+ of context window, stop the session
       // so the continuation wrapper can checkpoint and resume.
@@ -618,6 +658,11 @@ async function executeStream(
           return systemMessage ? { system: systemMessage } : {};
         }
 
+        if (memoryInjectionCount >= MEMORY_INJECTION_MAX_PER_SESSION) {
+          memoryContext.proxy.onStepComplete(stepNumber);
+          return systemMessage ? { system: systemMessage } : {};
+        }
+
         const recentContext = stepMemoryState.getRecentContext(5);
         const injection = await memoryContext.proxy.requestStepInjection(
           stepNumber,
@@ -632,6 +677,7 @@ async function executeStream(
 
         stepMemoryState.markInjected(injection.memoryIds);
         lastMemoryInjectionStep = stepNumber;
+        memoryInjectionCount++;
 
         const combinedSystem = systemMessage
           ? `${systemMessage}\n\n${injection.content}`
@@ -769,6 +815,7 @@ async function executeStream(
     // Re-throw for classification in the outer try/catch
     throw error;
   } finally {
+    flushMemoryReasoningBuffer();
     if (streamInactivityTimer) clearTimeout(streamInactivityTimer);
   }
 

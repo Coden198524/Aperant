@@ -77,7 +77,23 @@ function normalizeLogText(value: unknown): string {
 
 function sanitizeLogText(value: unknown, maxLength = FIELD_MAX_CHARS): string {
   const normalized = normalizeLogText(value);
-  return normalized.length > maxLength ? normalized.slice(0, maxLength) : normalized;
+  return compactLogText(normalized, maxLength, '\n...[log middle omitted]...\n');
+}
+
+function compactLogText(value: string, maxLength: number, marker: string): string {
+  if (maxLength <= 0) {
+    return '';
+  }
+  if (value.length <= maxLength) {
+    return value;
+  }
+  const budget = maxLength - marker.length;
+  if (budget <= 0) {
+    return value.slice(0, maxLength);
+  }
+  const headLength = Math.ceil(budget * 0.65);
+  const tailLength = Math.max(0, budget - headLength);
+  return `${value.slice(0, headLength).trimEnd()}${marker}${value.slice(-tailLength).trimStart()}`;
 }
 
 function stringifyToolResult(result: unknown): string {
@@ -92,11 +108,7 @@ function stringifyToolResult(result: unknown): string {
 }
 
 function takeToolPreview(text: string): string {
-  const lines = text.split('\n');
-  const byLines = lines.slice(0, TOOL_DETAIL_PREVIEW_LINES).join('\n');
-  return byLines.length > TOOL_DETAIL_PREVIEW_CHARS
-    ? `${byLines.slice(0, TOOL_DETAIL_PREVIEW_CHARS)}\n... [preview truncated]`
-    : byLines;
+  return compactLogText(text, TOOL_DETAIL_PREVIEW_CHARS, '\n... [preview middle omitted] ...\n');
 }
 
 function summarizeToolResult(toolName: string, isError: boolean, result: unknown): string | undefined {
@@ -491,7 +503,7 @@ export class TaskLogWriter {
    */
   private extractToolInput(toolName: string, args: Record<string, unknown>): string | undefined {
     const truncate = (s: string, max = 200): string =>
-      s.length > max ? `${s.slice(0, max - 3)}...` : s;
+      compactLogText(s, max, ' ... [input middle omitted] ... ');
 
     switch (toolName) {
       case 'Read':

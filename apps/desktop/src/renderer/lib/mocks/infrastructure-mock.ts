@@ -127,6 +127,11 @@ export const infrastructureMock = {
 
   stopIdeation: async () => ({ success: true }),
 
+  isIdeationRunning: async () => ({
+    success: true,
+    data: { isRunning: false },
+  }),
+
   updateIdeaStatus: async () => ({ success: true }),
 
   convertIdeaToTask: async () => ({

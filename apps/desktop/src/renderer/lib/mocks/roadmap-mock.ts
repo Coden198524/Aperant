@@ -8,12 +8,14 @@ export const roadmapMock = {
     data: null
   }),
 
-  generateRoadmap: () => {
+  generateRoadmap: async () => {
     console.warn('[Browser Mock] generateRoadmap called');
+    return { success: true };
   },
 
-  refreshRoadmap: () => {
+  refreshRoadmap: async () => {
     console.warn('[Browser Mock] refreshRoadmap called');
+    return { success: true };
   },
 
   updateFeatureStatus: async () => ({ success: true }),

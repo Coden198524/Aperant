@@ -54,7 +54,6 @@ export interface ProjectAPI {
 
   // Context Operations
   getProjectContext: (projectId: string) => Promise<IPCResult<unknown>>;
-  refreshProjectIndex: (projectId: string) => Promise<IPCResult<unknown>>;
   getMemoryStatus: (projectId: string) => Promise<IPCResult<unknown>>;
   searchMemories: (projectId: string, query: string) => Promise<IPCResult<unknown>>;
   getRecentMemories: (projectId: string, limit?: number) => Promise<IPCResult<unknown>>;
@@ -211,9 +210,6 @@ export const createProjectAPI = (): ProjectAPI => ({
   // Context Operations
   getProjectContext: (projectId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_GET, projectId),
-
-  refreshProjectIndex: (projectId: string) =>
-    ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_REFRESH_INDEX, projectId),
 
   getMemoryStatus: (projectId: string) =>
     ipcRenderer.invoke(IPC_CHANNELS.CONTEXT_MEMORY_STATUS, projectId),

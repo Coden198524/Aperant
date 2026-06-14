@@ -13,7 +13,6 @@ import {
   buildAutocodeDefaultQAPrompt,
   buildAutocodeDefaultSpecPrompt,
   buildAutocodeDirectTaskExecutionMessages,
-  buildAutocodeProjectDocsReferencePrompt,
   buildAutocodeQAInitialMessages,
   buildAutocodeSessionRuntimeOptions,
   buildAutocodeTaskExecutionMessages,
@@ -80,6 +79,10 @@ export const __agentManagerTestUtils = {
   normalizeBaseBranch: normalizeAutocodeBaseBranch,
   resolveTaskBaseBranch,
 };
+
+const SPEC_INITIAL_TASK_DESCRIPTION_MAX_CHARS = 4_000;
+const SPEC_INITIAL_TASK_DESCRIPTION_TRUNCATION_MARKER =
+  '\n\n...[task description middle omitted for initial session budget; worker can inspect task metadata if exact omitted detail is required]...\n\n';
 /**
  * Check if the current Git branch is a main/trunk branch.
  * Main branches: main, master, develop, dev, trunk
@@ -97,6 +100,26 @@ function isMainBranch(projectPath: string): boolean {
     // Default to safe behavior (no push) if detection fails
     return true;
   }
+}
+
+function compactSpecInitialTaskDescription(value: string): string {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (normalized.length <= SPEC_INITIAL_TASK_DESCRIPTION_MAX_CHARS) {
+    return normalized;
+  }
+  const budget = Math.max(0, SPEC_INITIAL_TASK_DESCRIPTION_MAX_CHARS - SPEC_INITIAL_TASK_DESCRIPTION_TRUNCATION_MARKER.length);
+  const headLength = Math.ceil(budget * 0.65);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    normalized.slice(0, headLength).trimEnd(),
+    SPEC_INITIAL_TASK_DESCRIPTION_TRUNCATION_MARKER,
+    normalized.slice(-tailLength).trimStart(),
+  ].join('');
 }
 
 function gitRefExists(projectPath: string, ref: string): boolean {
@@ -685,14 +708,14 @@ export class AgentManager extends EventEmitter {
     }
 
     const sessionRuntime = this.buildSessionRuntimeOptions(workflowMode, projectPath, specAgentType);
-    const projectDocsReference = buildAutocodeProjectDocsReferencePrompt({
-      projectRoot: projectPath,
-      dataDirName: project?.autoBuildPath,
-    });
+    const initialTaskDescription = compactSpecInitialTaskDescription(taskDescription);
     const specInitialContent = [
-      `Task: ${taskDescription}\n\nProject directory: ${projectPath}${specDir ? `\nSpec directory: ${specDir}` : ''}${baseBranch ? `\nBase branch: ${baseBranch}` : ''}${metadata?.requireReviewBeforeCoding ? '\nRequire review before coding: true' : '\nAuto-approve: true'}`,
-      projectDocsReference,
-    ].filter(Boolean).join('\n\n');
+      `Task: ${initialTaskDescription}`,
+      `Project directory: ${projectPath}`,
+      ...(specDir ? [`Spec directory: ${specDir}`] : []),
+      ...(baseBranch ? [`Base branch: ${baseBranch}`] : []),
+      metadata?.requireReviewBeforeCoding ? 'Require review before coding: true' : 'Auto-approve: true',
+    ].join('\n');
 
     const sessionConfig: SerializableSessionConfig = {
       agentType: specAgentType,
@@ -1282,7 +1305,13 @@ export class AgentManager extends EventEmitter {
     refreshCompetitorAnalysis: boolean = false,
     config?: RoadmapConfig
   ): void {
-    this.queueManager.startRoadmapGeneration(projectId, projectPath, refresh, enableCompetitorAnalysis, refreshCompetitorAnalysis, config);
+    void this.queueManager
+      .startRoadmapGeneration(projectId, projectPath, refresh, enableCompetitorAnalysis, refreshCompetitorAnalysis, config)
+      .catch((error) => {
+        const message = error instanceof Error ? error.message : 'Failed to start roadmap generation';
+        console.error('[AgentManager] Roadmap generation failed to start:', error);
+        this.emit('roadmap-error', projectId, message);
+      });
   }
 
   /**

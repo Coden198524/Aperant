@@ -4,7 +4,7 @@
 Find practical security hardening ideas based on the current codebase.
 
 ## Process
-1. Read project index, dependency/config files, auth/data/network paths, and ideation context.
+1. Read project documentation index, dependency/config files, auth/data/network paths, and ideation context.
 2. Look for concrete hardening opportunities, not speculative vulnerability claims.
 3. Avoid duplicates and unrelated security wish lists.
 4. Suggest 3 to Max Ideas items.

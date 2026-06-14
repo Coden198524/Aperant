@@ -17,6 +17,18 @@ const CODE_EXTENSIONS = new Set([
   '.py', '.js', '.jsx', '.ts', '.tsx', '.vue', '.svelte',
   '.go', '.rs', '.rb', '.php',
 ]);
+export const SEARCH_MATCHING_LINE_MAX_CHARS = 100;
+export const SEARCH_FILE_READ_MAX_BYTES = 200_000;
+export const SEARCH_MAX_MATCHES = 20;
+const SEARCH_REFERENCE_MATCHES_MAX = 6;
+const SEARCH_MATCHING_LINES_PER_KEYWORD = 5;
+const SEARCH_MATCHING_LINES_PER_FILE = 5;
+const SEARCH_FILE_READ_HEAD_RATIO = 0.65;
+
+interface SearchableFileContent {
+  content: string;
+  sampled: boolean;
+}
 
 /** Recursively yield all code file paths under a directory. */
 function* iterCodeFiles(directory: string): Generator<string> {
@@ -56,23 +68,26 @@ export function searchService(
   projectDir: string,
 ): FileMatch[] {
   const matches: FileMatch[] = [];
+  const normalizedKeywords = keywords
+    .map((keyword) => keyword.trim().toLowerCase())
+    .filter(Boolean);
 
-  if (!fs.existsSync(serviceDir)) return matches;
+  if (!fs.existsSync(serviceDir) || normalizedKeywords.length === 0) return matches;
 
   for (const filePath of iterCodeFiles(serviceDir)) {
-    let content: string;
-    try {
-      content = fs.readFileSync(filePath, 'utf8');
-    } catch {
+    const searchable = readSearchableFileContent(filePath);
+    if (!searchable) {
       continue;
     }
+    const { content, sampled } = searchable;
 
     const contentLower = content.toLowerCase();
     let score = 0;
     const matchingKeywords: string[] = [];
     const matchingLines: Array<[number, string]> = [];
+    const lines = content.split('\n');
 
-    for (const keyword of keywords) {
+    for (const keyword of normalizedKeywords) {
       if (!contentLower.includes(keyword)) continue;
 
       // Count occurrences, capped at 10 per keyword
@@ -85,15 +100,13 @@ export function searchService(
       score += Math.min(count, 10);
       matchingKeywords.push(keyword);
 
-      // Collect up to 3 matching lines per keyword
-      const lines = content.split('\n');
-      let found = 0;
-      for (let i = 0; i < lines.length && found < 3; i++) {
+      const keywordLines: Array<[number, string]> = [];
+      for (let i = 0; i < lines.length; i++) {
         if (lines[i].toLowerCase().includes(keyword)) {
-          matchingLines.push([i + 1, lines[i].trim().slice(0, 100)]);
-          found++;
+          keywordLines.push([i + 1, compactSearchLine(lines[i])]);
         }
       }
+      matchingLines.push(...selectHeadTailMatchingLines(keywordLines, SEARCH_MATCHING_LINES_PER_KEYWORD));
     }
 
     if (score > 0) {
@@ -101,13 +114,143 @@ export function searchService(
       matches.push({
         path: relPath,
         service: serviceName,
-        reason: `Contains: ${matchingKeywords.join(', ')}`,
+        reason: `Contains: ${matchingKeywords.join(', ')}${sampled ? ' (head/tail file sample)' : ''}`,
         relevanceScore: score,
-        matchingLines: matchingLines.slice(0, 5),
+        matchingLines: selectHeadTailMatchingLines(matchingLines, SEARCH_MATCHING_LINES_PER_FILE),
       });
     }
   }
 
-  matches.sort((a, b) => b.relevanceScore - a.relevanceScore);
-  return matches.slice(0, 20);
+  return selectSearchMatches(matches);
+}
+
+function readSearchableFileContent(filePath: string): SearchableFileContent | null {
+  try {
+    const stat = fs.statSync(filePath);
+    if (stat.size <= SEARCH_FILE_READ_MAX_BYTES) {
+      return {
+        content: fs.readFileSync(filePath, 'utf8'),
+        sampled: false,
+      };
+    }
+
+    const marker = `\n[... search file middle omitted, ${stat.size} bytes total ...]\n`;
+    const markerBytes = Buffer.byteLength(marker, 'utf8');
+    const budget = Math.max(0, SEARCH_FILE_READ_MAX_BYTES - markerBytes);
+    if (budget <= 0) {
+      return { content: '', sampled: true };
+    }
+
+    const headBytes = Math.ceil(budget * SEARCH_FILE_READ_HEAD_RATIO);
+    const tailBytes = Math.max(0, budget - headBytes);
+    const file = fs.openSync(filePath, 'r');
+    try {
+      const headBuffer = Buffer.alloc(headBytes);
+      const headRead = fs.readSync(file, headBuffer, 0, headBytes, 0);
+      const tailBuffer = Buffer.alloc(tailBytes);
+      const tailStart = Math.max(0, stat.size - tailBytes);
+      const tailRead = fs.readSync(file, tailBuffer, 0, tailBytes, tailStart);
+      return {
+        content: `${headBuffer.subarray(0, headRead).toString('utf8')}${marker}${tailBuffer.subarray(0, tailRead).toString('utf8')}`,
+        sampled: true,
+      };
+    } finally {
+      fs.closeSync(file);
+    }
+  } catch {
+    return null;
+  }
+}
+
+function compactSearchLine(line: string): string {
+  const normalized = line.trim().replace(/\s+/g, ' ');
+  if (normalized.length <= SEARCH_MATCHING_LINE_MAX_CHARS) {
+    return normalized;
+  }
+
+  const marker = ' ... [line middle omitted] ... ';
+  const budget = SEARCH_MATCHING_LINE_MAX_CHARS - marker.length;
+  if (budget <= 0) {
+    return normalized.slice(0, SEARCH_MATCHING_LINE_MAX_CHARS);
+  }
+
+  const headChars = Math.ceil(budget * 0.6);
+  const tailChars = Math.max(0, budget - headChars);
+  return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
+}
+
+function selectHeadTailMatchingLines(
+  lines: Array<[number, string]>,
+  limit: number,
+): Array<[number, string]> {
+  const unique = lines.filter((line, index) => (
+    lines.findIndex((candidate) => candidate[0] === line[0]) === index
+  ));
+  if (limit <= 0) {
+    return [];
+  }
+  if (unique.length <= limit) {
+    return unique;
+  }
+
+  const headCount = Math.ceil(limit * 0.6);
+  const tailCount = Math.max(0, limit - headCount);
+  return [
+    ...unique.slice(0, headCount),
+    ...unique.slice(unique.length - tailCount),
+  ];
+}
+
+function selectSearchMatches(matches: FileMatch[]): FileMatch[] {
+  const sorted = [...matches].sort(compareSearchMatches);
+  const primary = sorted.filter((match) => !isReferenceLikePath(match.path));
+  const references = sorted.filter((match) => isReferenceLikePath(match.path));
+
+  if (primary.length === 0) {
+    return references.slice(0, SEARCH_MAX_MATCHES);
+  }
+
+  const keptReferences = references.slice(0, SEARCH_REFERENCE_MATCHES_MAX);
+  const primaryBudget = Math.max(0, SEARCH_MAX_MATCHES - keptReferences.length);
+  return [
+    ...primary.slice(0, primaryBudget),
+    ...keptReferences,
+  ];
+}
+
+function compareSearchMatches(a: FileMatch, b: FileMatch): number {
+  const scoreDelta = b.relevanceScore - a.relevanceScore;
+  if (scoreDelta !== 0) {
+    return scoreDelta;
+  }
+  const rankDelta = searchPathRank(a.path) - searchPathRank(b.path);
+  if (rankDelta !== 0) {
+    return rankDelta;
+  }
+  return a.path.localeCompare(b.path);
+}
+
+function searchPathRank(filePath: string): number {
+  return isReferenceLikePath(filePath) ? 1 : 0;
+}
+
+function isReferenceLikePath(filePath: string): boolean {
+  const normalized = filePath.replace(/\\/g, '/').toLowerCase();
+  const segments = normalized.split('/').filter(Boolean);
+  const basename = segments.at(-1) ?? normalized;
+  return segments.some((segment) => (
+    segment === '__tests__' ||
+    segment === '__mocks__' ||
+    segment === 'fixtures' ||
+    segment === 'fixture' ||
+    segment === 'test' ||
+    segment === 'tests' ||
+    segment === 'spec' ||
+    segment === 'specs' ||
+    segment === 'examples' ||
+    segment === 'example' ||
+    segment === 'samples' ||
+    segment === 'sample'
+  )) ||
+    /\.(?:test|spec|stories|story|mock|fixture|sample|example)\.[^.]+$/.test(basename);
 }

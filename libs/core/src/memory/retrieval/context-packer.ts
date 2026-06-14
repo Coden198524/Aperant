@@ -4,7 +4,7 @@
  * Packs retrieved memories into a formatted string respecting:
  *   - Per-phase token budgets
  *   - Per-type allocation ratios
- *   - MMR diversity filtering (skip near-duplicates with cosine > 0.85)
+ *   - MMR diversity filtering (skip near-duplicates with Jaccard > 0.85)
  *   - Citation chips: [^ Memory: citationText]
  */
 
@@ -77,7 +77,11 @@ export const DEFAULT_PACKING_CONFIG: Record<UniversalPhase, ContextPackingConfig
   },
 };
 
-const MAX_PACKED_MEMORY_CONTENT_CHARS = 700;
+export const MAX_PACKED_MEMORY_CONTENT_CHARS = 420;
+export const MAX_PACKED_MEMORY_CITATION_CHARS = 120;
+export const MAX_PACKED_MEMORY_FILE_REF_CHARS = 80;
+export const MIN_PACKED_MEMORY_CONFIDENCE = 0.55;
+const PACKED_MEMORY_TRUNCATION_HEAD_RATIO = 0.65;
 
 // ============================================================
 // MAIN EXPORT
@@ -107,6 +111,7 @@ export function packContext(
   // Pack each type's memories within its budget
   const sections: string[] = [];
   let totalUsed = 0;
+  const globallyIncluded: string[] = [];
 
   for (const [memoryType, budget] of typeBudgets) {
     const typeMemories = byType.get(memoryType) ?? [];
@@ -120,6 +125,7 @@ export function packContext(
       typeMemories,
       effectiveBudget,
       memoryType,
+      globallyIncluded,
     );
 
     if (packed.length > 0) {
@@ -142,6 +148,7 @@ export function packContext(
       typeMemories,
       remaining,
       memoryType,
+      globallyIncluded,
     );
 
     if (packed.length > 0) {
@@ -162,11 +169,35 @@ export function packContext(
 function groupByType(memories: Memory[]): Map<MemoryType, Memory[]> {
   const map = new Map<MemoryType, Memory[]>();
   for (const m of memories) {
+    if (!isMemoryEligibleForPromptContext(m)) {
+      continue;
+    }
     const group = map.get(m.type) ?? [];
     group.push(m);
     map.set(m.type, group);
   }
   return map;
+}
+
+export function isMemoryEligibleForPromptContext(memory: Memory): boolean {
+  if (memory.deprecated) {
+    return false;
+  }
+  if (isStaleMemory(memory) && !memory.pinned && !memory.userVerified) {
+    return false;
+  }
+  if (memory.needsReview && !memory.userVerified && !memory.pinned) {
+    return false;
+  }
+  return memory.confidence >= MIN_PACKED_MEMORY_CONFIDENCE || memory.userVerified === true || memory.pinned === true;
+}
+
+function isStaleMemory(memory: Memory): boolean {
+  if (!memory.staleAt) {
+    return false;
+  }
+  const timestamp = Date.parse(memory.staleAt);
+  return Number.isFinite(timestamp) && timestamp <= Date.now();
 }
 
 function computeTypeBudgets(
@@ -189,22 +220,30 @@ function packTypeMemories(
   memories: Memory[],
   budget: number,
   memoryType: MemoryType,
+  globallyIncluded: string[],
 ): PackResult {
   const packed: string[] = [];
   let tokensUsed = 0;
   const included: string[] = []; // content strings for MMR dedup
 
   for (const memory of memories) {
+    // Global diversity: avoid injecting the same lesson again under a
+    // different memory type once it has already been packed for this prompt.
+    if (isTooSimilar(memory.content, globallyIncluded)) continue;
+
     const formatted = formatMemory(memory, memoryType);
     const tokens = estimateTokens(formatted);
 
-    if (tokensUsed + tokens > budget) break;
+    if (tokensUsed + tokens > budget) {
+      continue;
+    }
 
     // MMR diversity: skip if too similar to already-included memories
     if (isTooSimilar(memory.content, included)) continue;
 
     packed.push(formatted);
     included.push(memory.content);
+    globallyIncluded.push(memory.content);
     tokensUsed += tokens;
   }
 
@@ -214,12 +253,15 @@ function packTypeMemories(
 function formatMemory(memory: Memory, memoryType: MemoryType): string {
   const typeLabel = formatTypeLabel(memoryType);
   const citation = memory.citationText
-    ? `[^ Memory: ${memory.citationText}]`
+    ? `[^ Memory: ${truncateText(memory.citationText, MAX_PACKED_MEMORY_CITATION_CHARS)}]`
     : '';
 
   const fileContext =
     memory.relatedFiles.length > 0
-      ? ` (${memory.relatedFiles.slice(0, 2).join(', ')})`
+      ? ` (${memory.relatedFiles
+          .slice(0, 2)
+          .map((file) => truncateText(file, MAX_PACKED_MEMORY_FILE_REF_CHARS))
+          .join(', ')})`
       : '';
 
   const confidence =
@@ -239,7 +281,23 @@ function truncateText(text: string, maxChars: number): string {
   if (compact.length <= maxChars) {
     return compact;
   }
-  return `${compact.slice(0, Math.max(0, maxChars - 1)).trimEnd()}...`;
+  if (maxChars <= 3) {
+    return compact.slice(0, maxChars);
+  }
+
+  const marker = '... [memory middle omitted] ...';
+  if (marker.length >= maxChars - 2) {
+    return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+
+  const budget = maxChars - marker.length;
+  const headLength = Math.ceil(budget * PACKED_MEMORY_TRUNCATION_HEAD_RATIO);
+  const tailLength = Math.max(0, budget - headLength);
+  return [
+    compact.slice(0, headLength).trimEnd(),
+    marker,
+    tailLength > 0 ? compact.slice(-tailLength).trimStart() : '',
+  ].join('');
 }
 
 function formatTypeLabel(type: MemoryType): string {
@@ -272,11 +330,20 @@ function formatTypeLabel(type: MemoryType): string {
 function isTooSimilar(content: string, included: string[]): boolean {
   if (included.length === 0) return false;
 
+  const normalizedContent = normalizeForSimilarity(content);
   const newWords = new Set(tokenize(content));
-  if (newWords.size === 0) return false;
+  if (newWords.size === 0 && !normalizedContent) return false;
 
   for (const existingContent of included) {
+    const normalizedExisting = normalizeForSimilarity(existingContent);
+    if (normalizedContent && normalizedContent === normalizedExisting) {
+      return true;
+    }
+
     const existingWords = new Set(tokenize(existingContent));
+    if (newWords.size === 0 || existingWords.size === 0) {
+      continue;
+    }
     const intersection = [...newWords].filter((w) => existingWords.has(w)).length;
     const union = new Set([...newWords, ...existingWords]).size;
     const jaccard = union === 0 ? 0 : intersection / union;
@@ -287,8 +354,15 @@ function isTooSimilar(content: string, included: string[]): boolean {
   return false;
 }
 
+function normalizeForSimilarity(text: string): string {
+  return text.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
 function tokenize(text: string): string[] {
-  return text.toLowerCase().split(/\W+/).filter((w) => w.length > 2);
+  const normalized = text.toLowerCase();
+  const latinWords = normalized.match(/[a-z0-9_]{3,}/g) ?? [];
+  const cjkChars = normalized.match(/[\u3400-\u9fff]/g) ?? [];
+  return [...latinWords, ...cjkChars];
 }
 
 /**

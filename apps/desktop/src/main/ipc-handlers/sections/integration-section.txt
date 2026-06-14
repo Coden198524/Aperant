@@ -874,7 +874,7 @@ ${issue.description || 'No description provided.'}
             const specDir = path.join(specsDir, specId);
             mkdirSync(specDir, { recursive: true });
 
-            // Create initial implementation_plan.json
+            // Create initial implementation_plan.md
             const now = new Date().toISOString();
             const implementationPlan = {
               feature: issue.title,
@@ -1366,7 +1366,7 @@ Please analyze this issue and provide:
         const specDir = path.join(specsDir, specId);
         mkdirSync(specDir, { recursive: true });
 
-        // Create initial implementation_plan.json
+        // Create initial implementation_plan.md
         const now = new Date().toISOString();
         const implementationPlan = {
           feature: issue.title,
@@ -1530,7 +1530,7 @@ ${issue.body || 'No description provided.'}
           const specDir = path.join(specsDir, specId);
           mkdirSync(specDir, { recursive: true });
 
-          // Create initial implementation_plan.json
+          // Create initial implementation_plan.md
           const now = new Date().toISOString();
           const implementationPlan = {
             feature: issue.title,

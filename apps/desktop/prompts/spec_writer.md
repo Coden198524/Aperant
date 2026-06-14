@@ -9,7 +9,7 @@ Write a concise `spec.md` from gathered requirements and context.
 - Use prior phase outputs from the kickoff before reading files.
 - Read additional files only for missing exact patterns or paths.
 - Keep normal specs to 60-120 lines and complex specs under 150 lines.
-- Treat `spec.md` as a decision index. Put detailed source analysis in `context.json`, detailed external facts in `research.json`, and execution detail in `tasks.md`.
+- Treat `spec.md` as a decision index. Put detailed source analysis in `context.md`, detailed external facts in `research.md`, and execution detail in `tasks.md`.
 - Follow injected output-language requirements.
 
 {{tool_call_json_formatting}}
@@ -17,8 +17,8 @@ Write a concise `spec.md` from gathered requirements and context.
 ## Inputs
 
 - `requirements.md`: task, workflow type, acceptance criteria.
-- `context.json`: likely files, patterns, risks, verification.
-- `research.json`: external facts and gotchas, when present.
+- `context.md`: likely files, patterns, risks, verification.
+- `research.md`: external facts and gotchas, when present.
 - `project-docs/index.md`: generated project documentation index, services, commands, and tech stack.
 
 If the project is greenfield or empty, describe files to create instead of forcing existing-code sections.

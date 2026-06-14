@@ -136,6 +136,15 @@ describe('buildQaSessionContext', () => {
     expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledTimes(1);
   });
 
+  it('passes projectId to workflow recipe search', async () => {
+    await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'qa-project');
+
+    expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('Validate auth', {
+      limit: 1,
+      projectId: 'qa-project',
+    });
+  });
+
   it('prioritizes requirements before error patterns in output', async () => {
     vi.mocked(memoryService.search).mockImplementation(async (filters) => {
       if (filters.types?.includes('requirement')) {
@@ -154,5 +163,178 @@ describe('buildQaSessionContext', () => {
     expect(reqPos).toBeGreaterThanOrEqual(0);
     expect(errPos).toBeGreaterThanOrEqual(0);
     expect(reqPos).toBeLessThan(errPos);
+  });
+
+  it('deduplicates near-duplicate QA memories across sections', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('requirement')) {
+        return [
+          makeMemory(
+            'req-auth-callback',
+            'Auth callback tests must wait for token cache refresh before asserting listener notifications.',
+            'requirement',
+          ),
+        ];
+      }
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory(
+            'ep-duplicate',
+            'Auth callback tests should wait for token cache refresh before asserting listener notification.',
+            'error_pattern',
+          ),
+          makeMemory(
+            'ep-distinct',
+            'OAuth retry tests need a mocked clock to avoid flaky expiry assertions.',
+            'error_pattern',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('Auth callback tests must wait');
+    expect(result).toContain('OAuth retry tests need a mocked clock');
+    expect(result).not.toContain('Auth callback tests should wait');
+  });
+
+  it('filters duplicate and untrusted QA memories before formatting', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory('ep-high', 'Expired token tests fail unless the clock is frozen.', 'error_pattern'),
+          makeMemory('ep-low', 'Low confidence QA memory should not enter context.', 'error_pattern'),
+          makeMemory('ep-review', 'Pending review QA memory should not enter context.', 'error_pattern'),
+          makeMemory('ep-dup', 'Expired token tests fail unless the clock is frozen.', 'error_pattern'),
+          makeMemory('ep-second', 'OAuth callback tests need a mocked redirect URI.', 'error_pattern'),
+          makeMemory('ep-third', 'Third error pattern should be capped out.', 'error_pattern'),
+        ].map((memory) => {
+          if (memory.id === 'ep-low') return { ...memory, confidence: 0.2 };
+          if (memory.id === 'ep-review') return { ...memory, needsReview: true };
+          return memory;
+        });
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('Expired token tests fail');
+    expect(result).toContain('mocked redirect URI');
+    expect(result).not.toContain('Low confidence');
+    expect(result).not.toContain('Pending review');
+    expect(result).not.toContain('Third error pattern');
+    expect((result.match(/Expired token tests fail/g) ?? [])).toHaveLength(1);
+    expect(result.length).toBeLessThanOrEqual(1700);
+  });
+
+  it('preserves the tail of compacted QA memories', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory(
+            'ep-long',
+            `Token refresh fails after the first retry ${'browser trace '.repeat(80)}QA_MEMORY_TAIL_OK`,
+            'error_pattern',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('ERROR PATTERNS');
+    expect(result).toContain('middle omitted');
+    expect(result).toContain('QA_MEMORY_TAIL_OK');
+    expect(result.length).toBeLessThanOrEqual(1700);
+  });
+
+  it('caps related file references for QA error patterns', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          {
+            ...makeMemory('ep-files', 'Retry assertions need fake timers.', 'error_pattern'),
+            relatedFiles: [
+              'src/auth/token-refresh.test.ts',
+              'src/auth/session-store.ts',
+              'src\\auth\\clock-utils.ts',
+              'src/auth/fourth-should-not-appear.ts',
+              'src/auth/fifth-should-not-appear.ts',
+            ],
+          },
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('[token-refresh.test.ts, session-store.ts, clock-utils.ts, ...]');
+    expect(result).not.toContain('fourth-should-not-appear');
+    expect(result).not.toContain('fifth-should-not-appear');
+    expect(result.length).toBeLessThanOrEqual(1700);
+  });
+
+  it('deduplicates repeated related file references across QA error patterns', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          {
+            ...makeMemory('ep-refresh', 'Token refresh assertions need fake timers.', 'error_pattern'),
+            relatedFiles: [
+              'src/auth/session-store.ts',
+              'src/auth/token-refresh.test.ts',
+            ],
+          },
+          {
+            ...makeMemory('ep-retry', 'Retry assertions need mocked network delays.', 'error_pattern'),
+            relatedFiles: [
+              'src/auth/session-store.ts',
+              'src/auth/retry-policy.test.ts',
+            ],
+          },
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('Token refresh assertions need fake timers.');
+    expect(result).toContain('Retry assertions need mocked network delays.');
+    expect((result.match(/session-store\.ts/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('token-refresh.test.ts');
+    expect(result).toContain('retry-policy.test.ts');
+  });
+
+  it('filters stale QA memories unless they are pinned or user verified', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory('stale', 'Old flaky auth assertion should not guide QA.', 'error_pattern'),
+          makeMemory('pinned-stale', 'Pinned auth callback failure remains relevant.', 'error_pattern'),
+          makeMemory('verified-stale', 'Verified token expiry assertion remains relevant.', 'error_pattern'),
+        ].map((memory) => {
+          if (memory.id === 'pinned-stale') {
+            return { ...memory, staleAt: '2000-01-01T00:00:00.000Z', pinned: true };
+          }
+          if (memory.id === 'verified-stale') {
+            return { ...memory, staleAt: '2000-01-01T00:00:00.000Z', userVerified: true };
+          }
+          return { ...memory, staleAt: '2000-01-01T00:00:00.000Z' };
+        });
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('Pinned auth callback failure');
+    expect(result).toContain('Verified token expiry assertion');
+    expect(result).not.toContain('Old flaky auth assertion');
   });
 });

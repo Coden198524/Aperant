@@ -15,7 +15,7 @@ import type {
   IdeationGenerationStatus,
   IdeationSession
 } from '../../../shared/types';
-import type { IdeationTypeState } from '../../stores/ideation-store';
+import { translateIdeationLogMessage, type IdeationTypeState } from '../../stores/ideation-store';
 import { TypeIcon } from './TypeIcon';
 import { TypeStateIcon } from './TypeStateIcon';
 import { IdeaSkeletonCard } from './IdeaSkeletonCard';
@@ -50,7 +50,7 @@ export function GenerationProgressScreen({
   onDismiss,
   onStop
 }: GenerationProgressScreenProps) {
-  const { t } = useTranslation('common');
+  const { t, i18n } = useTranslation('common');
   const logsEndRef = useRef<HTMLDivElement>(null);
   const [showLogs, setShowLogs] = useState(false);
   const [isStopping, setIsStopping] = useState(false);
@@ -175,7 +175,7 @@ export function GenerationProgressScreen({
                   <span className="text-muted-foreground/50 mr-2 select-none">
                     {String(index + 1).padStart(3, '0')}
                   </span>
-                  {log}
+                  {translateIdeationLogMessage(log, i18n.resolvedLanguage || i18n.language)}
                 </div>
               ))}
               <div ref={logsEndRef} />

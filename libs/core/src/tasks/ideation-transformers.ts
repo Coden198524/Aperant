@@ -63,6 +63,9 @@ export interface AutocodeRawIdea extends Record<string, unknown> {
   breaking_change?: boolean;
   breakingChange?: boolean;
   prerequisites?: string[];
+  linked_task_id?: string;
+  linkedTaskId?: string;
+  taskId?: string;
 }
 
 export interface AutocodeRawIdeationSession {
@@ -148,6 +151,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
   const status = (idea.status || 'draft') as AutocodeIdeationStatus;
   const now = options.now || (() => new Date());
   const createdAt = idea.created_at ? new Date(idea.created_at) : now();
+  const taskId = idea.linked_task_id || idea.linkedTaskId || idea.taskId;
 
   if (idea.type === 'code_improvements') {
     return {
@@ -158,6 +162,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
       rationale: idea.rationale,
       status,
       createdAt,
+      ...(taskId ? { taskId } : {}),
       buildsUpon: idea.builds_upon || idea.buildsUpon || [],
       estimatedEffort: idea.estimated_effort || idea.estimatedEffort || 'small',
       affectedFiles: idea.affected_files || idea.affectedFiles || [],
@@ -175,6 +180,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
       rationale: idea.rationale,
       status,
       createdAt,
+      ...(taskId ? { taskId } : {}),
       category: idea.category || 'usability',
       affectedComponents: idea.affected_components || idea.affectedComponents || [],
       screenshots: idea.screenshots || [],
@@ -193,6 +199,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
       rationale: idea.rationale,
       status,
       createdAt,
+      ...(taskId ? { taskId } : {}),
       category: idea.category || 'readme',
       targetAudience: idea.target_audience || idea.targetAudience || 'developers',
       affectedAreas: idea.affected_areas || idea.affectedAreas || [],
@@ -212,6 +219,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
       rationale: idea.rationale,
       status,
       createdAt,
+      ...(taskId ? { taskId } : {}),
       category: idea.category || 'configuration',
       severity: idea.severity || 'medium',
       affectedFiles: idea.affected_files || idea.affectedFiles || [],
@@ -232,6 +240,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
       rationale: idea.rationale,
       status,
       createdAt,
+      ...(taskId ? { taskId } : {}),
       category: idea.category || 'runtime',
       impact: idea.impact || 'medium',
       affectedAreas: idea.affected_areas || idea.affectedAreas || [],
@@ -252,6 +261,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
       rationale: idea.rationale,
       status,
       createdAt,
+      ...(taskId ? { taskId } : {}),
       category: idea.category || 'code_smells',
       severity: idea.severity || 'minor',
       affectedFiles: idea.affected_files || idea.affectedFiles || [],
@@ -274,6 +284,7 @@ export function transformAutocodeIdeaFromSnakeCase<TIdea = Record<string, unknow
     rationale: idea.rationale,
     status,
     createdAt,
+    ...(taskId ? { taskId } : {}),
     buildsUpon: [],
     estimatedEffort: 'small',
     affectedFiles: [],

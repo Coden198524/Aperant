@@ -3,7 +3,7 @@
  * Tests Zustand store for roadmap state management including drag-and-drop actions
  */
 import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
-import { useRoadmapStore, getFeaturesByPhase, getFeaturesByPriority, getFeatureStats, resetActors } from '../stores/roadmap-store';
+import { useRoadmapStore, getFeaturesByPhase, getFeaturesByPriority, getFeatureStats, loadRoadmap, resetActors } from '../stores/roadmap-store';
 import type {
   Roadmap,
   RoadmapFeature,
@@ -867,6 +867,37 @@ describe('Roadmap Store', () => {
       expect(status.phase).toBe('generating');
       expect(status.startedAt?.getTime()).toBe(new Date('2025-06-01T12:00:00.000Z').getTime());
       expect(status.lastActivityAt?.getTime()).toBeDefined();
+    });
+  });
+
+  describe('loadRoadmap generation race handling', () => {
+    it('should not reset a locally started generation when the initial status query returns idle later', async () => {
+      let resolveStatus: ((value: { success: boolean; data: { isRunning: boolean } }) => void) | undefined;
+      const statusPromise = new Promise<{ success: boolean; data: { isRunning: boolean } }>((resolve) => {
+        resolveStatus = resolve;
+      });
+      const electronAPI = {
+        getRoadmapStatus: vi.fn(() => statusPromise),
+        getRoadmap: vi.fn().mockResolvedValue({ success: true, data: null }),
+      };
+      (globalThis as unknown as { window: { electronAPI: unknown } }).window = {
+        electronAPI,
+      };
+
+      const loadPromise = loadRoadmap('project-1');
+
+      useRoadmapStore.getState().setCurrentProjectId('project-1');
+      useRoadmapStore.getState().setGenerationStatus({
+        phase: 'analyzing',
+        progress: 0,
+        message: 'Starting roadmap generation...'
+      });
+
+      resolveStatus?.({ success: true, data: { isRunning: false } });
+      await loadPromise;
+
+      expect(useRoadmapStore.getState().generationStatus.phase).toBe('analyzing');
+      expect(useRoadmapStore.getState().generationStatus.message).toBe('Starting roadmap generation...');
     });
   });
 

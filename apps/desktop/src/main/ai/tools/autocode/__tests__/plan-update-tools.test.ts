@@ -8,6 +8,7 @@ import {
 } from '@autocode/core';
 
 import type { ToolContext } from '../../types';
+import { getBuildProgressTool } from '../get-build-progress';
 import { updateSubtaskStatusTool } from '../update-subtask-status';
 import { updateQaStatusTool } from '../update-qa-status';
 
@@ -103,5 +104,37 @@ describe('Autocode plan update tools', () => {
     expect(planState?.phases?.[0].subtasks?.[0].status).toBe('completed');
     expect(qaSignoff?.qa_session).toBe(2);
     expect(qaSignoff?.status).toBe('rejected');
+  });
+
+  it('returns compact build progress for large plans', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: Array.from({ length: 18 }, (_, phaseIndex) => ({
+        id: `phase-${phaseIndex}`,
+        name: `Phase ${phaseIndex}`,
+        subtasks: [
+          {
+            id: `task-${phaseIndex}`,
+            title: `Task ${phaseIndex}`,
+            status: phaseIndex < 5 ? 'completed' : 'pending',
+            description: phaseIndex === 5
+              ? `NEXT_HEAD ${'implementation detail '.repeat(80)} NEXT_TAIL`
+              : `Description ${phaseIndex}`,
+          },
+        ],
+      })),
+    });
+
+    const result = await getBuildProgressTool.config.execute({}, context);
+
+    expect(result).toContain('Build Progress: 5/18 subtasks');
+    expect(result).toContain('Phase 0: 1/1');
+    expect(result).toContain('Phase 17: 0/1');
+    expect(result).toContain('phase(s) omitted');
+    expect(result).not.toContain('Phase 10: 0/1');
+    expect(result).toContain('ID: task-5');
+    expect(result).toContain('NEXT_HEAD');
+    expect(result).toContain('NEXT_TAIL');
+    expect(result).toContain('[middle omitted]');
+    expect(result.length).toBeLessThan(1400);
   });
 });

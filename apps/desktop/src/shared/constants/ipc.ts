@@ -230,7 +230,6 @@ export const IPC_CHANNELS = {
 
   // Context operations
   CONTEXT_GET: 'context:get',
-  CONTEXT_REFRESH_INDEX: 'context:refreshIndex',
   CONTEXT_MEMORY_STATUS: 'context:memoryStatus',
   CONTEXT_SEARCH_MEMORIES: 'context:searchMemories',
   CONTEXT_GET_MEMORIES: 'context:getMemories',
@@ -253,6 +252,7 @@ export const IPC_CHANNELS = {
   IDEATION_GENERATE: 'ideation:generate',
   IDEATION_REFRESH: 'ideation:refresh',
   IDEATION_STOP: 'ideation:stop',
+  IDEATION_IS_RUNNING: 'ideation:isRunning',
   IDEATION_UPDATE_IDEA: 'ideation:updateIdea',
   IDEATION_CONVERT_TO_TASK: 'ideation:convertToTask',
   IDEATION_DISMISS: 'ideation:dismiss',

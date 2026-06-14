@@ -20,20 +20,26 @@ import { createSimpleClient } from '../client/factory';
 // ---------------------------------------------------------------------------
 
 /** Maximum input chars to send for summarization */
-const MAX_INPUT_CHARS = 10000;
+export const MAX_INPUT_CHARS = 10000;
 
 /** Maximum chars per file before truncation */
-const MAX_FILE_CHARS = 6000;
+export const MAX_FILE_CHARS = 6000;
+
+/** Maximum formatted previous-phase context injected into later prompts */
+export const MAX_PHASE_SUMMARIES_CONTEXT_CHARS = 8000;
+
+/** Maximum chars kept per previous phase summary */
+export const MAX_PHASE_SUMMARY_ITEM_CHARS = 1800;
 
 /** Default target summary length in words */
 const DEFAULT_TARGET_WORDS = 300;
 
 /** Maps phases to the output files they produce */
 const PHASE_OUTPUT_FILES: Record<string, string[]> = {
-  discovery: ['context.json'],
+  discovery: ['context.md'],
   requirements: ['requirements.md'],
-  research: ['research.json'],
-  context: ['context.json'],
+  research: ['research.md'],
+  context: ['context.md'],
   quick_spec: ['spec.md'],
   spec_writing: ['spec.md'],
   self_critique: ['spec.md', 'critique_notes.md'],
@@ -61,10 +67,7 @@ export function gatherPhaseOutputs(specDir: string, phaseName: string): string {
     if (!existsSync(filePath)) continue;
 
     try {
-      let content = readFileSync(filePath, 'utf-8');
-      if (content.length > MAX_FILE_CHARS) {
-        content = `${content.slice(0, MAX_FILE_CHARS)}\n\n[... file truncated ...]`;
-      }
+      const content = compactPhaseFileContent(readFileSync(filePath, 'utf-8'), MAX_FILE_CHARS);
       outputs.push(`**${filename}**:\n\`\`\`\n${content}\n\`\`\``);
     } catch {
       // Skip unreadable files
@@ -79,14 +82,43 @@ export function gatherPhaseOutputs(specDir: string, phaseName: string): string {
  * Ported from: `format_phase_summaries()` in compaction.py
  */
 export function formatPhaseSummaries(summaries: Record<string, string>): string {
-  if (Object.keys(summaries).length === 0) {
+  const entries = Object.entries(summaries);
+  if (entries.length === 0) {
     return '';
   }
 
-  const parts = ['## Context from Previous Phases\n'];
-  for (const [phaseName, summary] of Object.entries(summaries)) {
+  const formattedEntries = entries.map(([phaseName, summary]) => {
     const title = phaseName.replace(/_/g, ' ').replace(/\b\w/g, (c) => c.toUpperCase());
-    parts.push(`### ${title}\n${summary}\n`);
+    const compactSummary = compactPhaseSummaryForPrompt(summary, MAX_PHASE_SUMMARY_ITEM_CHARS);
+    return {
+      phaseName,
+      text: `### ${title}\n${compactSummary}\n`,
+    };
+  });
+
+  const selected: typeof formattedEntries = [];
+  const headerLength = '## Context from Previous Phases\n\n'.length;
+  const omittedNoticeReserve = 160;
+  let remaining = Math.max(0, MAX_PHASE_SUMMARIES_CONTEXT_CHARS - headerLength - omittedNoticeReserve);
+  let omitted = 0;
+
+  for (const entry of formattedEntries.slice().reverse()) {
+    const cost = entry.text.length + 1;
+    if (cost > remaining) {
+      omitted += 1;
+      continue;
+    }
+    selected.push(entry);
+    remaining -= cost;
+  }
+
+  selected.reverse();
+  const parts = ['## Context from Previous Phases\n'];
+  if (omitted > 0) {
+    parts.push(`> ${omitted} older phase summary/summaries omitted to stay within the prompt budget.\n`);
+  }
+  for (const entry of selected) {
+    parts.push(entry.text);
   }
 
   return parts.join('\n');
@@ -112,11 +144,7 @@ export async function summarizePhaseOutput(
   phaseOutput: string,
   targetWords = DEFAULT_TARGET_WORDS,
 ): Promise<string> {
-  // Truncate input if too large
-  let truncatedOutput = phaseOutput;
-  if (phaseOutput.length > MAX_INPUT_CHARS) {
-    truncatedOutput = `${phaseOutput.slice(0, MAX_INPUT_CHARS)}\n\n[... output truncated for summarization ...]`;
-  }
+  const truncatedOutput = compactPhaseOutputForSummarization(phaseOutput, MAX_INPUT_CHARS);
 
   const prompt = `Summarize the "${phaseName}" phase in ${targetWords} words or less.
 
@@ -152,14 +180,67 @@ ${truncatedOutput}
     }
   } catch (error: unknown) {
     // Fallback: return truncated raw output on error
-    const fallback = phaseOutput.slice(0, 2000);
-    const suffix = phaseOutput.length > 2000 ? '\n\n[... truncated ...]' : '';
+    const fallback = compactPhaseOutputForSummarization(phaseOutput, 2000);
     const errMsg = error instanceof Error ? error.message : String(error);
-    return `[Summarization failed: ${errMsg}]\n\n${fallback}${suffix}`;
+    return `[Summarization failed: ${errMsg}]\n\n${fallback}`;
   }
 
   // Empty response fallback
-  return phaseOutput.slice(0, 1000);
+  return compactPhaseOutputForSummarization(phaseOutput, 1000);
+}
+
+export function compactPhaseFileContent(content: string, maxChars = MAX_FILE_CHARS): string {
+  return compactHeadTailText(
+    content,
+    maxChars,
+    (length) => `\n\n[... file middle omitted, ${length} chars total ...]\n\n`,
+  );
+}
+
+export function compactPhaseOutputForSummarization(content: string, maxChars = MAX_INPUT_CHARS): string {
+  return compactHeadTailText(
+    content,
+    maxChars,
+    (length) => `\n\n[... output middle omitted for summarization, ${length} chars total ...]\n\n`,
+  );
+}
+
+export function compactPhaseSummaryForPrompt(content: string, maxChars = MAX_PHASE_SUMMARY_ITEM_CHARS): string {
+  return compactHeadTailText(
+    content,
+    maxChars,
+    (length) => `\n\n[... phase summary middle omitted, ${length} chars total ...]\n\n`,
+  );
+}
+
+function compactHeadTailText(
+  value: string,
+  maxChars: number,
+  markerFactory: (length: number) => string,
+): string {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const marker = markerFactory(normalized.length);
+  if (maxChars <= marker.length) {
+    return marker.slice(0, maxChars);
+  }
+
+  const bodyBudget = maxChars - marker.length;
+  const headBudget = Math.ceil(bodyBudget * 0.6);
+  const tailBudget = Math.max(0, bodyBudget - headBudget);
+  return [
+    normalized.slice(0, headBudget).trimEnd(),
+    marker.trimEnd(),
+    normalized.slice(Math.max(0, normalized.length - tailBudget)).trimStart(),
+  ].join('\n');
 }
 
 /**

@@ -5,7 +5,7 @@ Find improvements that are clearly enabled by existing code patterns. This is co
 
 ## Inputs
 - `project-docs/index.md`
-- `ideation_context.json`
+- `ideation_context.md`
 - Optional memory and graph hint files
 - Injected Output Directory, Project Directory, and Max Ideas
 

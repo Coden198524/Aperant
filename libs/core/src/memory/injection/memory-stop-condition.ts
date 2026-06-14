@@ -51,6 +51,7 @@ export async function getCalibrationFactor(
       limit: 5,
       projectId,
       sort: 'recency',
+      promptContextOnly: true,
     });
 
     if (calibrations.length === 0) return undefined;

@@ -96,7 +96,7 @@ export const useContextStore = create<ContextState>((set) => ({
 }));
 
 /**
- * Load project context (project index + memory status)
+ * Load project context (legacy project-index placeholder + memory status)
  */
 export async function loadProjectContext(projectId: string): Promise<void> {
   const store = useContextStore.getState();
@@ -120,28 +120,6 @@ export async function loadProjectContext(projectId: string): Promise<void> {
   } finally {
     store.setIndexLoading(false);
     store.setMemoryLoading(false);
-  }
-}
-
-/**
- * Refresh project index by re-running analyzer
- */
-export async function refreshProjectIndex(projectId: string): Promise<void> {
-  const store = useContextStore.getState();
-  store.setIndexLoading(true);
-  store.setIndexError(null);
-
-  try {
-    const result = await window.electronAPI.refreshProjectIndex(projectId);
-    if (result.success && result.data) {
-      store.setProjectIndex(result.data);
-    } else {
-      store.setIndexError(result.error || 'Failed to refresh project index');
-    }
-  } catch (error) {
-    store.setIndexError(error instanceof Error ? error.message : 'Unknown error');
-  } finally {
-    store.setIndexLoading(false);
   }
 }
 

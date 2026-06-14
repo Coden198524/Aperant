@@ -3,6 +3,7 @@ import { EventEmitter } from 'events';
 
 import type { AgentExecutorConfig, WorkerMessage } from '../types';
 import type { SessionResult } from '../../session/types';
+import type { Memory } from '../../memory/types';
 
 // =============================================================================
 // Mocks
@@ -10,6 +11,8 @@ import type { SessionResult } from '../../session/types';
 
 // Track created workers
 const createdWorkers: EventEmitter[] = [];
+const mockMemoryServiceSearch = vi.hoisted(() => vi.fn());
+const mockMemoryServiceStore = vi.hoisted(() => vi.fn());
 
 vi.mock('worker_threads', () => {
   const { EventEmitter: EE } = require('events') as typeof import('events');
@@ -59,6 +62,13 @@ vi.mock('../../session/progress-tracker', () => ({
   },
 }));
 
+vi.mock('../../../ipc-handlers/context/memory-service-factory', () => ({
+  getMemoryService: vi.fn(() => ({
+    search: mockMemoryServiceSearch,
+    store: mockMemoryServiceStore,
+  })),
+}));
+
 // Import after mocks
 import { WorkerBridge } from '../worker-bridge';
 
@@ -98,6 +108,27 @@ function createSessionResult(overrides: Partial<SessionResult> = {}): SessionRes
   };
 }
 
+function makeMemory(overrides: Partial<Memory> = {}): Memory {
+  return {
+    id: 'mem-1',
+    type: 'gotcha',
+    content: 'Use refreshToken() before API calls',
+    confidence: 0.9,
+    tags: [],
+    relatedFiles: [],
+    relatedModules: [],
+    createdAt: new Date().toISOString(),
+    lastAccessedAt: new Date().toISOString(),
+    accessCount: 1,
+    scope: 'module',
+    source: 'agent_explicit',
+    sessionId: 'sess-1',
+    provenanceSessionIds: [],
+    projectId: 'proj-456',
+    ...overrides,
+  };
+}
+
 // =============================================================================
 // Tests
 // =============================================================================
@@ -107,6 +138,8 @@ describe('WorkerBridge', () => {
 
   beforeEach(() => {
     vi.clearAllMocks();
+    mockMemoryServiceSearch.mockReset();
+    mockMemoryServiceStore.mockReset();
     createdWorkers.length = 0;
     bridge = new WorkerBridge();
   });
@@ -280,6 +313,31 @@ describe('WorkerBridge', () => {
       );
     });
 
+    it('repairs Chinese mojibake before emitting live model output', () => {
+      const handler = vi.fn();
+      bridge.on('task-log-stream', handler);
+      bridge.spawn(createConfig());
+
+      getWorker().emit('message', {
+        type: 'stream-event',
+        taskId: 'task-123',
+        projectId: 'proj-456',
+        phase: 'planning',
+        data: { type: 'text-delta', text: '璇存槑浜у搧鐩爣' } as never,
+      } satisfies WorkerMessage);
+
+      expect(handler).toHaveBeenCalledWith(
+        'task-123',
+        expect.objectContaining({
+          type: 'text',
+          content: '说明产品目标',
+          phase: 'planning',
+          source: 'sdk',
+        }),
+        'proj-456'
+      );
+    });
+
     it('emits task-log-stream for tool-call events', () => {
       const handler = vi.fn();
       bridge.on('task-log-stream', handler);
@@ -327,6 +385,64 @@ describe('WorkerBridge', () => {
       getWorker().emit('message', msg);
 
       expect(handler).toHaveBeenCalledWith('task-123', streamEvent.usage, 'proj-456');
+    });
+
+    it('compacts memory search results before posting them back to the worker', async () => {
+      const longMemory = makeMemory({
+        content: `MEMORY_HEAD ${'verbose memory detail '.repeat(120)} MEMORY_TAIL`,
+        tags: [
+          'auth',
+          'auth',
+          ...Array.from({ length: 20 }, (_, index) => `tag-${index}-${'x'.repeat(80)}`),
+        ],
+        relatedFiles: Array.from(
+          { length: 20 },
+          (_, index) => `src/very/deep/path/${index}/${'file-name-segment-'.repeat(18)}tail-${index}.ts`,
+        ),
+        relatedModules: Array.from(
+          { length: 16 },
+          (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
+        ),
+        citationText: `CITATION_HEAD ${'citation detail '.repeat(80)} CITATION_TAIL`,
+        contextPrefix: `PREFIX_HEAD ${'context detail '.repeat(80)} PREFIX_TAIL`,
+      });
+      mockMemoryServiceSearch.mockResolvedValueOnce([longMemory]);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-1',
+        filters: { query: 'auth memory', projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-1',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { type?: string }).type === 'memory:search-result',
+      )?.[0] as { memories: Memory[] };
+      const memory = response.memories[0];
+      expect(memory.content.length).toBeLessThanOrEqual(900);
+      expect(memory.content).toContain('MEMORY_HEAD');
+      expect(memory.content).toContain('MEMORY_TAIL');
+      expect(memory.content).toContain('memory response middle omitted before IPC');
+      expect(memory.tags).toHaveLength(12);
+      expect(new Set(memory.tags).size).toBe(memory.tags.length);
+      expect(memory.tags.every((tag) => tag.length <= 64)).toBe(true);
+      expect(memory.relatedFiles).toHaveLength(12);
+      expect(memory.relatedFiles.every((file) => file.length <= 180)).toBe(true);
+      expect(memory.relatedModules).toHaveLength(10);
+      expect(memory.relatedModules.every((module) => module.length <= 96)).toBe(true);
+      expect(memory.citationText?.length).toBeLessThanOrEqual(300);
+      expect(memory.citationText).toContain('CITATION_HEAD');
+      expect(memory.citationText).toContain('CITATION_TAIL');
+      expect(memory.contextPrefix?.length).toBeLessThanOrEqual(300);
+      expect(memory.contextPrefix).toContain('PREFIX_HEAD');
+      expect(memory.contextPrefix).toContain('PREFIX_TAIL');
     });
 
     it('accumulates request counts across provider sessions in one worker', () => {

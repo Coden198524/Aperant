@@ -241,8 +241,35 @@ describe('TaskLogWriter', () => {
     expect(toolEnd?.detail).toContain('[Tool result summary]');
     expect(toolEnd?.detail).toContain('Tool: Read');
     expect(toolEnd?.detail).toContain('Size: 200 lines');
+    expect(toolEnd?.detail).toContain('preview middle omitted');
     expect(toolEnd?.detail?.length).toBeLessThan(3000);
-    expect(toolEnd?.detail).not.toContain('line-200');
+    expect(toolEnd?.detail).toContain('line-200');
+  });
+
+  it('preserves the tail of long tool inputs in compact log entries', () => {
+    const writer = createWriter();
+    writer.startPhase('coding', 'Starting implementation');
+
+    writer.processEvent(
+      {
+        type: 'tool-call',
+        toolCallId: 'tool-long-input',
+        toolName: 'Bash',
+        args: {
+          command: `npm test ${'--workspace apps/desktop '.repeat(30)}FINAL_COMMAND_TAIL_OK`,
+        },
+      },
+      'coding',
+    );
+
+    const toolStart = writer.getData().phases.coding.entries.find((entry) =>
+      entry.tool_call_id === 'tool-long-input'
+    );
+
+    expect(toolStart?.tool_input).toContain('npm test');
+    expect(toolStart?.tool_input).toContain('input middle omitted');
+    expect(toolStart?.tool_input).toContain('FINAL_COMMAND_TAIL_OK');
+    expect(toolStart?.tool_input?.length).toBeLessThanOrEqual(200);
   });
 
   it('flushes pending text for the active subtask when a phase ends', () => {

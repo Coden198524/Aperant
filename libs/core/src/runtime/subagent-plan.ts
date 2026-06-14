@@ -36,6 +36,13 @@ export const AUTOCODE_SUBAGENT_TYPES = [
 
 export type AutocodeSubagentType = typeof AUTOCODE_SUBAGENT_TYPES[number];
 
+export const AUTOCODE_SUBAGENT_CONTEXT_MAX_CHARS = 8_000;
+export const AUTOCODE_SUBAGENT_TEXT_OUTPUT_MAX_CHARS = 8_000;
+const SUBAGENT_CONTEXT_COMPACTION_NOTICE =
+  '\n\n...[subagent context middle omitted for prompt budget; pass a narrower context or cite source files for exact omitted detail]...\n\n';
+const SUBAGENT_OUTPUT_COMPACTION_NOTICE =
+  '\n\n...[subagent output middle omitted for prompt budget; inspect the subagent artifacts or logs for exact omitted detail]...\n\n';
+
 export const AUTOCODE_SUBAGENT_AGENT_TYPE_MAP: Record<AutocodeSubagentType, AgentType> = {
   complexity_assessor: 'spec_gatherer',
   spec_discovery: 'spec_discovery',
@@ -115,9 +122,9 @@ export const AUTOCODE_SPAWN_SUBAGENT_TOOL_DESCRIPTION = `Spawn a specialist suba
 
 Available subagent types:
 - complexity_assessor: Assess task complexity (simple/standard/complex). Returns structured JSON.
-- spec_discovery: Analyze project structure, tech stack, conventions, and source evidence. Writes context.json.
+- spec_discovery: Analyze project structure, tech stack, conventions, and source evidence. Writes context.md.
 - spec_gatherer: Gather and validate evidence-backed requirements from task description, project source, and standards. Writes requirements.md.
-- spec_researcher: Research implementation approaches, external APIs, libraries, and standards using verified sources. Writes research.json.
+- spec_researcher: Research implementation approaches, external APIs, libraries, and standards using verified sources. Writes research.md.
 - spec_writer: Write the evidence-backed specification (spec.md). Writes files.
 - spec_critic: Review spec for completeness, technical feasibility, gaps.
 - spec_validation: Final validation of spec.md and implementation_plan.md.
@@ -174,10 +181,52 @@ export function buildAutocodeSubagentUserMessage(input: {
   context?: string | null;
 }): string {
   let message = `Your task: ${input.task}`;
-  if (input.context) {
-    message += `\n\nContext:\n${input.context}`;
+  const context = compactAutocodeSubagentContextText(input.context);
+  if (context) {
+    message += `\n\nContext:\n${context}`;
   }
   return message;
+}
+
+export function compactAutocodeSubagentContextText(value: string | null | undefined): string {
+  return compactAutocodeSubagentText(
+    value,
+    AUTOCODE_SUBAGENT_CONTEXT_MAX_CHARS,
+    SUBAGENT_CONTEXT_COMPACTION_NOTICE,
+  );
+}
+
+export function compactAutocodeSubagentOutputText(value: string | null | undefined): string {
+  return compactAutocodeSubagentText(
+    value,
+    AUTOCODE_SUBAGENT_TEXT_OUTPUT_MAX_CHARS,
+    SUBAGENT_OUTPUT_COMPACTION_NOTICE,
+  );
+}
+
+function compactAutocodeSubagentText(
+  value: string | null | undefined,
+  maxChars: number,
+  notice: string,
+): string {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (!normalized || normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const budget = Math.max(0, maxChars - notice.length);
+  const headBudget = Math.ceil(budget * 0.6);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return [
+    normalized.slice(0, headBudget).trimEnd(),
+    notice,
+    normalized.slice(-tailBudget).trimStart(),
+  ].join('');
 }
 
 export function formatAutocodeSubagentToolResult(input: {
@@ -194,5 +243,6 @@ export function formatAutocodeSubagentToolResult(input: {
     return `Subagent (${input.agentType}) completed successfully.\n\nStructured output:\n\`\`\`json\n${JSON.stringify(input.structuredOutput, null, 2)}\n\`\`\``;
   }
 
-  return `Subagent (${input.agentType}) completed successfully.\n\nOutput:\n${input.text ?? '(no text output)'}`;
+  const text = compactAutocodeSubagentOutputText(input.text) || '(no text output)';
+  return `Subagent (${input.agentType}) completed successfully.\n\nOutput:\n${text}`;
 }

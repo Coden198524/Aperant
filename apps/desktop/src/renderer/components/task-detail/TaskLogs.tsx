@@ -28,7 +28,14 @@ import type { Task, TaskLogs, TaskLogPhase, TaskPhaseLog, TaskMetadata } from '.
 import type { PhaseModelConfig, ThinkingLevel } from '../../../shared/types/settings';
 import type { BuiltinProvider } from '../../../shared/types/provider-account';
 import { getProviderModelLabel } from '@shared/utils/model-display';
-import { buildDisplayLogEntries, type DisplayTaskLogEntry } from './task-log-display';
+import {
+  buildDisplayLogEntries,
+  findCodexToolRouterErrorLog,
+  isPowerShellJsonParseFailureLog,
+  isRawCodexInternalEventLog,
+  normalizeRawCodexInternalEventLog,
+  type DisplayTaskLogEntry,
+} from './task-log-display';
 
 interface TaskLogsProps {
   task: Task;
@@ -333,7 +340,19 @@ interface LogEntryProps {
 function LogEntry({ entry }: LogEntryProps) {
   const { t } = useTranslation(['tasks', 'common']);
   const [isExpanded, setIsExpanded] = useState(false);
-  const hasDetail = Boolean(entry.detail);
+  const rawInternalEventDetail = isRawCodexInternalEventLog(entry.content)
+    ? normalizeRawCodexInternalEventLog(entry.content)
+    : undefined;
+  const toolRouterErrorDetail = findCodexToolRouterErrorLog(entry.content, entry.detail);
+  const displayContent = rawInternalEventDetail
+    ? t('tasks:logs.internalEventCollapsed', { defaultValue: 'Internal Codex event log collapsed.' })
+    : toolRouterErrorDetail
+      ? isPowerShellJsonParseFailureLog(toolRouterErrorDetail)
+        ? t('tasks:logs.codexJsonParseErrorCollapsed', { defaultValue: 'PowerShell JSON parse failure log collapsed.' })
+        : t('tasks:logs.codexToolErrorCollapsed', { defaultValue: 'Codex tool error log collapsed.' })
+    : entry.content;
+  const detail = entry.detail || rawInternalEventDetail || toolRouterErrorDetail;
+  const hasDetail = Boolean(detail);
 
   const getToolInfo = (toolName: string) => {
     switch (toolName) {
@@ -349,6 +368,8 @@ function LogEntry({ entry }: LogEntryProps) {
         return { icon: FileCode, label: t('tasks:logs.toolLabels.writing', 'Writing'), color: 'text-cyan-500 bg-cyan-500/10' };
       case 'Bash':
         return { icon: Terminal, label: t('tasks:logs.toolLabels.running', 'Running'), color: 'text-orange-500 bg-orange-500/10' };
+      case 'Command':
+        return { icon: Terminal, label: t('tasks:logs.toolLabels.command', 'Command'), color: 'text-orange-500 bg-orange-500/10' };
       default:
         return { icon: Wrench, label: toolName, color: 'text-muted-foreground bg-muted' };
     }
@@ -444,7 +465,7 @@ function LogEntry({ entry }: LogEntryProps) {
         {hasDetail && isExpanded && (
           <div className="mt-1.5 ml-4 p-2 bg-secondary/30 rounded-md border border-border/50 overflow-x-auto">
             <pre className="text-[10px] text-muted-foreground whitespace-pre-wrap break-words font-mono max-h-[300px] overflow-y-auto">
-              {entry.detail}
+              {detail}
             </pre>
           </div>
         )}
@@ -457,7 +478,7 @@ function LogEntry({ entry }: LogEntryProps) {
       <div className="flex flex-col">
         <div className="flex items-start gap-2 text-xs text-destructive bg-destructive/10 rounded-md px-2 py-1">
           <XCircle className="h-3 w-3 mt-0.5 shrink-0" />
-          <span className="break-words flex-1">{entry.content}</span>
+          <span className="break-words flex-1">{displayContent}</span>
           <SubphaseBadge />
           {hasDetail && (
             <button
@@ -475,7 +496,7 @@ function LogEntry({ entry }: LogEntryProps) {
         {hasDetail && isExpanded && (
           <div className="mt-1.5 ml-4 p-2 bg-destructive/5 rounded-md border border-destructive/20 overflow-x-auto">
             <pre className="text-[10px] text-destructive/80 whitespace-pre-wrap break-words font-mono max-h-[300px] overflow-y-auto">
-              {entry.detail}
+              {detail}
             </pre>
           </div>
         )}
@@ -487,7 +508,7 @@ function LogEntry({ entry }: LogEntryProps) {
     return (
       <div className="flex items-start gap-2 text-xs text-success bg-success/10 rounded-md px-2 py-1">
         <CheckCircle2 className="h-3 w-3 mt-0.5 shrink-0" />
-        <span className="break-words flex-1">{entry.content}</span>
+        <span className="break-words flex-1">{displayContent}</span>
         <SubphaseBadge />
       </div>
     );
@@ -497,7 +518,7 @@ function LogEntry({ entry }: LogEntryProps) {
     return (
       <div className="flex items-start gap-2 text-xs text-info bg-info/10 rounded-md px-2 py-1">
         <Info className="h-3 w-3 mt-0.5 shrink-0" />
-        <span className="break-words flex-1">{entry.content}</span>
+        <span className="break-words flex-1">{displayContent}</span>
         <SubphaseBadge />
       </div>
     );
@@ -512,7 +533,7 @@ function LogEntry({ entry }: LogEntryProps) {
             {formatTime(entry.timestamp)}
           </span>
         </span>
-        <span className="break-words whitespace-pre-wrap flex-1">{entry.content}</span>
+        <span className="break-words whitespace-pre-wrap flex-1">{displayContent}</span>
         <SubphaseBadge />
         {hasDetail && (
           <button
@@ -540,7 +561,7 @@ function LogEntry({ entry }: LogEntryProps) {
       {hasDetail && isExpanded && (
         <div className="mt-1.5 ml-12 p-2 bg-secondary/30 rounded-md border border-border/50 overflow-x-auto">
           <pre className="text-[10px] text-muted-foreground whitespace-pre-wrap break-words font-mono max-h-[300px] overflow-y-auto">
-            {entry.detail}
+            {detail}
           </pre>
         </div>
       )}

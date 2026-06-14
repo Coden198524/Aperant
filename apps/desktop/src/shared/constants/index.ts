@@ -24,6 +24,9 @@ export * from './changelog';
 // Model and agent profile constants
 export * from './models';
 
+// Provider/model commercial support matrix
+export * from './provider-support';
+
 // Theme constants
 export * from './themes';
 

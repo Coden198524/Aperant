@@ -59,7 +59,14 @@ vi.mock('../../schema/insight-extractor', () => ({
 // Import after mocking
 // =============================================================================
 
-import { runInsightsQuery } from '../insights';
+import {
+  INSIGHTS_CURRENT_MESSAGE_MAX_CHARS,
+  INSIGHTS_HISTORY_MAX_CHARS,
+  INSIGHTS_HISTORY_MAX_MESSAGES,
+  INSIGHTS_HISTORY_MESSAGE_MAX_CHARS,
+  INSIGHTS_PROJECT_DOCS_REFERENCE_MAX_BYTES,
+  runInsightsQuery,
+} from '../insights';
 import type { InsightsConfig, InsightsStreamEvent } from '../insights';
 import { parseLLMJson } from '../../schema/structured-output';
 
@@ -347,6 +354,42 @@ describe('runInsightsQuery', () => {
     expect(clientArgs.thinkingLevel).toBe('low');
   });
 
+  it('keeps generated project documentation context compact in the system prompt', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+    mockExistsSync.mockImplementation((filePath: unknown) => {
+      const normalized = String(filePath).replace(/\\/g, '/');
+      return normalized.includes('/project/.autocode/project-docs/');
+    });
+    mockReadFileSync.mockImplementation((filePath: unknown) => {
+      const name = String(filePath).replace(/\\/g, '/').split('/').pop();
+      return [
+        `# ${name}`,
+        '',
+        '## Architecture',
+        '',
+        '- Renderer owns task views and state hydration.',
+        '- Main process owns IPC and long-running AI orchestration.',
+        '',
+        ...Array.from({ length: 220 }, (_, index) => (
+          `- Deep repeated detail ${index}: ${'large documentation paragraph '.repeat(8)}`
+        )),
+      ].join('\n');
+    });
+
+    await runInsightsQuery(baseConfig());
+
+    const clientArgs = mockCreateSimpleClient.mock.calls[0][0];
+    const systemPrompt = clientArgs.systemPrompt as string;
+    expect(INSIGHTS_PROJECT_DOCS_REFERENCE_MAX_BYTES).toBeLessThan(12_000);
+    expect(systemPrompt).toContain('Project Documentation Reference');
+    expect(systemPrompt).toContain('Compact excerpt');
+    expect(systemPrompt).toContain('Renderer owns task views');
+    expect(systemPrompt).not.toContain('Deep repeated detail 219');
+    expect(Buffer.byteLength(systemPrompt, 'utf8')).toBeLessThan(
+      INSIGHTS_PROJECT_DOCS_REFERENCE_MAX_BYTES + 1_600,
+    );
+  });
+
   // ---------------------------------------------------------------------------
   // History handling
   // ---------------------------------------------------------------------------
@@ -369,6 +412,74 @@ describe('runInsightsQuery', () => {
     expect(prompt).toContain('How does auth work?');
     expect(prompt).toContain('It uses JWT.');
     expect(prompt).toContain('What about refresh tokens?');
+  });
+
+  it('compacts long insights history while preserving the current question', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+    const history = Array.from({ length: INSIGHTS_HISTORY_MAX_MESSAGES + 4 }, (_, index) => ({
+      role: index % 2 === 0 ? 'user' as const : 'assistant' as const,
+      content: `history-${index} ${'verbose detail '.repeat(120)} HISTORY_TAIL_${index}`,
+    }));
+
+    await runInsightsQuery(baseConfig({
+      message: 'Current question should remain complete.',
+      history,
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    const prompt = callArgs.prompt as string;
+    expect(prompt).toContain(`up to ${INSIGHTS_HISTORY_MAX_MESSAGES} most recent of ${history.length} messages`);
+    expect(prompt).not.toContain('history-0');
+    expect(prompt).not.toContain('history-3');
+    expect(prompt).toContain(`history-${history.length - 1}`);
+    expect(prompt).toContain(`HISTORY_TAIL_${history.length - 1}`);
+    expect(prompt).toContain('history middle omitted');
+    expect(prompt).toContain('Current question should remain complete.');
+    expect(prompt.length).toBeLessThan(
+      INSIGHTS_HISTORY_MAX_CHARS + INSIGHTS_HISTORY_MESSAGE_MAX_CHARS + 700,
+    );
+  });
+
+  it('compacts an oversized current question when history is empty', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    await runInsightsQuery(baseConfig({
+      message: [
+        'question-head',
+        'large pasted log '.repeat(2_000),
+        'question-tail final error detail',
+      ].join('\n'),
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    const prompt = callArgs.prompt as string;
+    expect(prompt.length).toBeLessThanOrEqual(INSIGHTS_CURRENT_MESSAGE_MAX_CHARS);
+    expect(prompt).toContain('question-head');
+    expect(prompt).toContain('question-tail final error detail');
+    expect(prompt).toContain('current question truncated');
+  });
+
+  it('compacts an oversized current question when history is present', async () => {
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    await runInsightsQuery(baseConfig({
+      message: [
+        'current-head',
+        'diagnostic '.repeat(2_000),
+        'current-tail exact question',
+      ].join('\n'),
+      history: [{ role: 'assistant', content: 'Previous compact answer.' }],
+    }));
+
+    const callArgs = mockStreamText.mock.calls[0][0];
+    const prompt = callArgs.prompt as string;
+    expect(prompt).toContain('Previous compact answer.');
+    expect(prompt).toContain('current-head');
+    expect(prompt).toContain('current-tail exact question');
+    expect(prompt).toContain('current question truncated');
+    expect(prompt.length).toBeLessThan(
+      INSIGHTS_HISTORY_MAX_CHARS + INSIGHTS_CURRENT_MESSAGE_MAX_CHARS + 700,
+    );
   });
 
   it('uses message directly as prompt when history is empty', async () => {

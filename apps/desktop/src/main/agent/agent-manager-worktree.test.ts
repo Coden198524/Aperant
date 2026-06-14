@@ -201,6 +201,31 @@ describe('AgentManager worktree execution', () => {
     });
   });
 
+  it('keeps spec creation initial messages compact without duplicating project docs', async () => {
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+    const longTaskDescription = [
+      'Opening spec task rule: keep app-owned structured files as JSON.',
+      ...Array.from(
+        { length: 260 },
+        (_, index) => `Large spec creation context ${index}: ${'project documentation noise '.repeat(6)}`,
+      ),
+      'Closing spec task rule: convert only model-readable prose references to Markdown.',
+    ].join('\n');
+
+    await manager.startSpecCreation('001-task', 'E:/repo', longTaskDescription, undefined, undefined, undefined, 'project-1');
+
+    expect(spawnWorkerProcessMock).toHaveBeenCalled();
+    const executorConfig = spawnWorkerProcessMock.mock.calls[0][1];
+    const content = executorConfig.session.initialMessages[0].content;
+    expect(content).toContain('Opening spec task rule: keep app-owned structured files as JSON.');
+    expect(content).toContain('task description middle omitted for initial session budget');
+    expect(content).toContain('Closing spec task rule: convert only model-readable prose references to Markdown.');
+    expect(content).not.toContain('Large spec creation context 160');
+    expect(content).not.toContain('Project Documentation Reference');
+    expect(content).toContain('Project directory: E:/repo');
+  });
+
   it('captures the baseline commit when running in the current project workspace', async () => {
     const { AgentManager } = await import('./agent-manager');
     const manager = new AgentManager();

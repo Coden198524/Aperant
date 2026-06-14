@@ -4,6 +4,14 @@ export type AutocodeChangelogEmojiLevel = 'none' | 'little' | 'medium' | 'high';
 export type AutocodeChangelogSourceMode = 'tasks' | 'git-history' | 'branch-diff';
 export type AutocodeVersionBumpType = 'major' | 'minor' | 'patch';
 
+export const AUTOCODE_CHANGELOG_MAX_TASKS = 80;
+export const AUTOCODE_CHANGELOG_MAX_COMMITS = 160;
+export const AUTOCODE_CHANGELOG_TASK_OVERVIEW_MAX_CHARS = 280;
+export const AUTOCODE_CHANGELOG_COMMIT_SUBJECT_MAX_CHARS = 180;
+export const AUTOCODE_CHANGELOG_COMMIT_AUTHOR_MAX_CHARS = 80;
+export const AUTOCODE_CHANGELOG_CUSTOM_INSTRUCTIONS_MAX_CHARS = 1_000;
+export const AUTOCODE_VERSION_BUMP_MAX_COMMITS = 120;
+
 export interface AutocodeTaskSpecContent {
   taskId: string;
   specId: string;
@@ -97,6 +105,70 @@ export function extractAutocodeSpecOverview(spec: string): string {
   }
 
   return overview.join(' ').substring(0, 400);
+}
+
+function normalizeAutocodePromptText(value: string): string {
+  return value
+    .replace(/\r\n/g, '\n')
+    .replace(/[ \t]+/g, ' ')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
+}
+
+function limitAutocodePromptText(value: string, maxChars: number): string {
+  const normalized = normalizeAutocodePromptText(value);
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const suffix = `... [truncated, ${normalized.length} chars total]`;
+  const budget = Math.max(0, maxChars - suffix.length);
+  return `${normalized.slice(0, budget).trimEnd()}${suffix}`;
+}
+
+function getAutocodePromptCustomInstructions(request: AutocodeChangelogGenerationRequest): string {
+  return request.customInstructions
+    ? `Note: ${limitAutocodePromptText(request.customInstructions, AUTOCODE_CHANGELOG_CUSTOM_INSTRUCTIONS_MAX_CHARS)}`
+    : '';
+}
+
+function formatAutocodePromptCommit(commit: AutocodeGitCommit): string {
+  const hash = limitAutocodePromptText(commit.hash, 16);
+  const subject = limitAutocodePromptText(commit.subject, AUTOCODE_CHANGELOG_COMMIT_SUBJECT_MAX_CHARS);
+  const author = limitAutocodePromptText(commit.author, AUTOCODE_CHANGELOG_COMMIT_AUTHOR_MAX_CHARS);
+  const conventionalMatch = subject.match(/^(\w+)(?:\(([^)]+)\))?:\s*(.+)$/);
+  if (conventionalMatch) {
+    const [, type, scope, message] = conventionalMatch;
+    return `- ${hash} | ${type}${scope ? `(${scope})` : ''}: ${message} | by ${author}`;
+  }
+  return `- ${hash} | ${subject} | by ${author}`;
+}
+
+function isAutocodeVersionSignificantCommit(commit: AutocodeGitCommit): boolean {
+  return /(^\w+(?:\([^)]+\))?!:|BREAKING[-\s]CHANGE|breaking change)/i.test(
+    `${commit.subject}\n${commit.body ?? ''}`,
+  );
+}
+
+function selectAutocodeVersionPromptCommits(
+  commits: AutocodeGitCommit[],
+  maxCommits: number,
+): AutocodeGitCommit[] {
+  const selected = new Map<string, AutocodeGitCommit>();
+
+  for (const commit of commits) {
+    if (selected.size >= maxCommits) break;
+    if (isAutocodeVersionSignificantCommit(commit)) {
+      selected.set(commit.fullHash || commit.hash, commit);
+    }
+  }
+
+  for (const commit of commits) {
+    if (selected.size >= maxCommits) break;
+    selected.set(commit.fullHash || commit.hash, commit);
+  }
+
+  return Array.from(selected.values());
 }
 
 export function extractAutocodeChangelog(output: string): string {
@@ -316,7 +388,8 @@ export function buildAutocodeChangelogPrompt(
   const audienceInstruction = AUDIENCE_INSTRUCTIONS[request.audience];
   const formatInstruction = FORMAT_TEMPLATES[request.format](request.version, request.date);
   const emojiInstruction = getAutocodeChangelogEmojiInstructions(request.emojiLevel, request.format);
-  const taskSummaries = specs.map((spec) => {
+  const visibleSpecs = specs.slice(0, AUTOCODE_CHANGELOG_MAX_TASKS);
+  const taskSummaries = visibleSpecs.map((spec) => {
     const parts: string[] = [`- **${spec.specId}**`];
     const workflowType = spec.implementationPlan?.workflow_type || spec.implementationPlan?.workflowType;
 
@@ -327,12 +400,16 @@ export function buildAutocodeChangelogPrompt(
     if (spec.spec) {
       const overview = extractAutocodeSpecOverview(spec.spec);
       if (overview) {
-        parts.push(`: ${overview}`);
+        parts.push(`: ${limitAutocodePromptText(overview, AUTOCODE_CHANGELOG_TASK_OVERVIEW_MAX_CHARS)}`);
       }
     }
 
     return parts.join('');
-  }).join('\n');
+  });
+
+  if (specs.length > AUTOCODE_CHANGELOG_MAX_TASKS) {
+    taskSummaries.push(`- ... ${specs.length - AUTOCODE_CHANGELOG_MAX_TASKS} additional completed tasks omitted from the prompt budget.`);
+  }
 
   let formatSpecificInstructions = '';
   if (request.format === 'github-release') {
@@ -354,9 +431,9 @@ ${emojiInstruction ? `\nEmoji Usage:\n${emojiInstruction}` : ''}
 ${formatSpecificInstructions}
 
 Completed tasks:
-${taskSummaries}
+${taskSummaries.join('\n')}
 
-${request.customInstructions ? `Note: ${request.customInstructions}` : ''}
+${getAutocodePromptCustomInstructions(request)}
 
 Output only raw changelog content. Start with the changelog heading; no preamble, analysis, questions, or clarifications.`;
 }
@@ -368,14 +445,13 @@ export function buildAutocodeGitChangelogPrompt(
   const audienceInstruction = AUDIENCE_INSTRUCTIONS[request.audience];
   const formatInstruction = FORMAT_TEMPLATES[request.format](request.version, request.date);
   const emojiInstruction = getAutocodeChangelogEmojiInstructions(request.emojiLevel, request.format);
-  const commitLines = commits.map((commit) => {
-    const conventionalMatch = commit.subject.match(/^(\w+)(?:\(([^)]+)\))?:\s*(.+)$/);
-    if (conventionalMatch) {
-      const [, type, scope, message] = conventionalMatch;
-      return `- ${commit.hash} | ${type}${scope ? `(${scope})` : ''}: ${message} | by ${commit.author}`;
-    }
-    return `- ${commit.hash} | ${commit.subject} | by ${commit.author}`;
-  }).join('\n');
+  const visibleCommits = commits.slice(0, AUTOCODE_CHANGELOG_MAX_COMMITS);
+  const commitLines = [
+    ...visibleCommits.map(formatAutocodePromptCommit),
+    ...(commits.length > AUTOCODE_CHANGELOG_MAX_COMMITS
+      ? [`- ... ${commits.length - AUTOCODE_CHANGELOG_MAX_COMMITS} additional commits omitted from the prompt budget.`]
+      : []),
+  ].join('\n');
 
   let sourceContext = '';
   if (request.branchDiff) {
@@ -451,7 +527,7 @@ ${emojiInstruction ? `\nEmoji Usage:\n${emojiInstruction}` : ''}
 Git commits (${commits.length} total):
 ${commitLines}
 
-${request.customInstructions ? `Note: ${request.customInstructions}` : ''}
+${getAutocodePromptCustomInstructions(request)}
 
 Output only raw changelog content. Start with the changelog heading; no preamble, analysis, questions, or clarifications. Group related commits and include only sections with actual changes.`;
 }
@@ -460,17 +536,22 @@ export function buildAutocodeVersionBumpPrompt(
   commits: AutocodeGitCommit[],
   currentVersion: string,
 ): string {
-  const commitSummary = commits
-    .map((commit, index) => `${index + 1}. ${commit.hash} - ${commit.subject}`)
+  const visibleCommits = selectAutocodeVersionPromptCommits(commits, AUTOCODE_VERSION_BUMP_MAX_COMMITS);
+  const commitSummary = visibleCommits
+    .map((commit, index) => `${index + 1}. ${limitAutocodePromptText(commit.hash, 16)} - ${limitAutocodePromptText(commit.subject, AUTOCODE_CHANGELOG_COMMIT_SUBJECT_MAX_CHARS)}`)
     .join('\n');
+  const omittedSummary = commits.length > visibleCommits.length
+    ? `\n\n${commits.length - visibleCommits.length} additional commits omitted from the prompt budget. Breaking-change commits are prioritized above.`
+    : '';
 
   return `Suggest a semantic version bump from these commits.
 
 Current version: ${currentVersion}
 
-Commits (${commits.length}):
+Commits (${commits.length} total, ${visibleCommits.length} included):
 
 ${commitSummary}
+${omittedSummary}
 
 Rules:
 - MAJOR (X.0.0): Breaking changes, API changes, removed features, architectural changes

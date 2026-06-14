@@ -59,7 +59,11 @@ vi.mock('../../prompts/prompt-loader', () => ({
 // Import after mocking
 // =============================================================================
 
-import { runRoadmapGeneration } from '../roadmap';
+import {
+  ROADMAP_MAX_STEPS_PER_PHASE,
+  ROADMAP_PRESERVED_FEATURES_PROMPT_MAX,
+  runRoadmapGeneration,
+} from '../roadmap';
 import type { RoadmapConfig, RoadmapStreamEvent } from '../roadmap';
 
 // =============================================================================
@@ -73,7 +77,7 @@ function makeMockClient() {
     model: fakeModel,
     systemPrompt: '',
     tools: {},
-    maxSteps: 30,
+    maxSteps: ROADMAP_MAX_STEPS_PER_PHASE,
   };
 }
 
@@ -225,6 +229,89 @@ describe('runRoadmapGeneration', () => {
     expect(discoverySystem).toContain('Write all user-facing JSON string values in Simplified Chinese');
     expect(roadmapSystem).toContain('Write all roadmap user-facing JSON string values in Simplified Chinese');
     expect(roadmapSystem).toContain('feature titles/descriptions');
+  });
+
+  it('summarizes preserved features in the prompt while merging all preserved data', async () => {
+    const existingFeatures = Array.from({ length: ROADMAP_PRESERVED_FEATURES_PROMPT_MAX + 5 }, (_, index) => ({
+      id: `existing-${index + 1}`,
+      title: `Preserved Feature ${index + 1}`,
+      status: 'planned',
+    }));
+    const existingRoadmap = JSON.stringify({
+      vision: 'Existing roadmap',
+      target_audience: { primary: 'Developers' },
+      phases: [],
+      features: existingFeatures,
+    });
+    let roadmapReadCount = 0;
+
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      if (p.endsWith('roadmap_discovery.json')) return true;
+      if (p.endsWith('roadmap.json')) return true;
+      return false;
+    });
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap_discovery.json')) return VALID_DISCOVERY_JSON;
+      if (p.endsWith('roadmap.json')) {
+        roadmapReadCount += 1;
+        return roadmapReadCount === 1 ? existingRoadmap : VALID_ROADMAP_JSON;
+      }
+      return '{}';
+    });
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    const result = await runRoadmapGeneration(baseConfig({ refresh: true }));
+
+    expect(result.success).toBe(true);
+    const roadmapPrompt = mockStreamText.mock.calls[1][0].system as string;
+    expect(roadmapPrompt).toContain('Preserved Feature 1');
+    expect(roadmapPrompt).toContain(`Preserved Feature ${ROADMAP_PRESERVED_FEATURES_PROMPT_MAX + 5}`);
+    expect(roadmapPrompt).not.toContain(`Preserved Feature ${ROADMAP_PRESERVED_FEATURES_PROMPT_MAX - 13}`);
+    expect(roadmapPrompt).toContain('5 middle existing feature(s) omitted');
+
+    const mergedWrite = mockWriteFileSync.mock.calls.find((call) => String(call[0]).includes('roadmap.json.tmp'));
+    expect(mergedWrite?.[1]).toEqual(expect.stringContaining('Preserved Feature 45'));
+  });
+
+  it('preserves the tail of long existing feature titles in the roadmap prompt', async () => {
+    const existingRoadmap = JSON.stringify({
+      vision: 'Existing roadmap',
+      target_audience: { primary: 'Developers' },
+      phases: [],
+      features: [
+        {
+          id: 'existing-long-title',
+          title: `Important preserved workflow ${'verbose context '.repeat(20)}FINAL_TITLE_TAIL`,
+          status: 'planned',
+        },
+      ],
+    });
+    let roadmapReadCount = 0;
+
+    mockExistsSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap') && !p.includes('.json')) return true;
+      if (p.endsWith('roadmap_discovery.json')) return true;
+      if (p.endsWith('roadmap.json')) return true;
+      return false;
+    });
+    mockReadFileSync.mockImplementation((p: string) => {
+      if (p.endsWith('roadmap_discovery.json')) return VALID_DISCOVERY_JSON;
+      if (p.endsWith('roadmap.json')) {
+        roadmapReadCount += 1;
+        return roadmapReadCount === 1 ? existingRoadmap : VALID_ROADMAP_JSON;
+      }
+      return '{}';
+    });
+    mockStreamText.mockReturnValue(makeStream([]));
+
+    const result = await runRoadmapGeneration(baseConfig({ refresh: true }));
+
+    expect(result.success).toBe(true);
+    const roadmapPrompt = mockStreamText.mock.calls[1][0].system as string;
+    expect(roadmapPrompt).toContain('Important preserved workflow');
+    expect(roadmapPrompt).toContain('middle omitted');
+    expect(roadmapPrompt).toContain('FINAL_TITLE_TAIL');
   });
 
   // ---------------------------------------------------------------------------
@@ -560,6 +647,7 @@ describe('runRoadmapGeneration', () => {
     const clientArgs = mockCreateSimpleClient.mock.calls[0][0];
     expect(clientArgs.modelShorthand).toBe('sonnet');
     expect(clientArgs.thinkingLevel).toBe('medium');
+    expect(clientArgs.maxSteps).toBe(ROADMAP_MAX_STEPS_PER_PHASE);
   });
 
   it('accepts custom modelShorthand and thinkingLevel', async () => {

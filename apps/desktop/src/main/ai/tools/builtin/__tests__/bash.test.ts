@@ -127,7 +127,11 @@ describe('Bash Tool', () => {
   });
 
   it('should truncate output exceeding MAX_OUTPUT_LENGTH', async () => {
-    const longOutput = 'x'.repeat(31_000);
+    const longOutput = [
+      'BEGIN_OUTPUT',
+      ...Array.from({ length: 90 }, (_, index) => `line-${index} ${'x'.repeat(360)}`),
+      'FINAL_OUTPUT_SENTINEL',
+    ].join('\n');
     setupExecFile(longOutput, '', 0);
 
     const result = await bashTool.config.execute(
@@ -136,13 +140,31 @@ describe('Bash Tool', () => {
     );
 
     expect(result).toContain('[Output truncated');
+    expect(result).toContain('BEGIN_OUTPUT');
+    expect(result).toContain('FINAL_OUTPUT_SENTINEL');
     expect(result.length).toBeLessThan(longOutput.length);
+  });
+
+  it('should compact very long stdout lines while preserving the tail', async () => {
+    const output = `HEAD_${'middle_'.repeat(300)}TAIL_SENTINEL`;
+    setupExecFile(output, '', 0);
+
+    const result = await bashTool.config.execute(
+      { command: 'node noisy-script.js' },
+      baseContext,
+    );
+
+    expect(result).toContain('HEAD_');
+    expect(result).toContain('[line middle omitted]');
+    expect(result).toContain('TAIL_SENTINEL');
+    expect(result.length).toBeLessThan(output.length);
   });
 
   it('should compact compiler stderr in aggressive mode', async () => {
     const hugeCompilerError = [
       'In file included from tetris.cpp:1:',
-      ...Array.from({ length: 400 }, (_, i) => `C:/VS/include/header${i}.hpp:${i}:10: note: template instantiation context`),
+      ...Array.from({ length: 80 }, (_, i) => `C:/VS/include/header${i}.hpp:${i}:10: warning: template instantiation context`),
+      ...Array.from({ length: 400 }, (_, i) => `C:/VS/include/note${i}.hpp:${i}:10: note: additional context`),
       'C:/VS/include/type_traits:2461:22: error: deduced return types are a C++14 extension',
       'C:/VS/include/xutility:314:1: error: statement not allowed in constexpr function',
       'fatal error: too many errors emitted, stopping now [-ferror-limit=]',
@@ -158,6 +180,8 @@ describe('Bash Tool', () => {
     );
 
     expect(result).toContain('deduced return types are a C++14 extension');
+    expect(result).toContain('fatal error: too many errors emitted');
+    expect(result).toContain('line(s) omitted');
     expect(result).toContain('[Compiler output truncated');
     expect(result.length).toBeLessThan(7_000);
   });

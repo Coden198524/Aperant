@@ -4,7 +4,7 @@
 Find refactoring and quality improvements with clear code evidence.
 
 ## Process
-1. Read project index, config, tests, and ideation context.
+1. Read project documentation index, config, tests, and ideation context.
 2. Inspect only files needed to verify large files, duplication, type gaps, weak tests, or poor boundaries.
 3. Prefer high-impact maintainability issues.
 4. Avoid duplicates and broad rewrites.

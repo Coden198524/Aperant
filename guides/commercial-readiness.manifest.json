@@ -1,0 +1,128 @@
+{
+  "version": "2026-06-14",
+  "status": "windows-local-candidate",
+  "product": {
+    "packageName": "autocode",
+    "packageVersion": "2.8.0-beta.6",
+    "productName": "Autocode",
+    "appId": "com.autocode.app",
+    "license": "AGPL-3.0"
+  },
+  "candidateEvidence": {
+    "providerModelSupport": {
+      "status": "documented",
+      "path": "guides/PROVIDER_MODEL_SUPPORT.md",
+      "version": "2026-06-14"
+    },
+    "tokenCostDisplayPolicy": {
+      "tokenCounts": "enabled",
+      "monetaryEstimates": "disabled"
+    },
+    "memoryTokenEfficiency": {
+      "status": "passed",
+      "runtimeContextSelection": "trusted-deduped-ranked",
+      "maxRuntimeContextChars": 1800,
+      "checks": [
+        "npx vitest run libs/core/src/memory/runtime.test.ts libs/core/src/memory/retrieval/context-packer.test.ts",
+        "npm test -- src/main/ai/memory/__tests__/injection/planner-memory-context.test.ts src/main/ai/memory/__tests__/injection/qa-context.test.ts src/main/ai/memory/__tests__/injection/step-injection-decider.test.ts src/main/ai/memory/__tests__/injection/step-memory-state.test.ts"
+      ]
+    },
+    "privacySupport": {
+      "status": "documented",
+      "path": "guides/PRIVACY_SUPPORT.md",
+      "version": "2026-06-14",
+      "telemetryDefault": "disabled",
+      "automaticCrashUpload": "disabled",
+      "supportLogSharing": "user-reviewed-redacted"
+    },
+    "windowsPackage": {
+      "status": "passed",
+      "artifactSmoke": "passed",
+      "launchSmoke": "passed",
+      "requiredArtifacts": [
+        "apps/desktop/dist/win-unpacked/Autocode.exe",
+        "apps/desktop/dist/win-unpacked/resources/app.asar",
+        "apps/desktop/dist/Autocode-2.8.0-beta.6-win32-x64.zip",
+        "apps/desktop/dist/Autocode-2.8.0-beta.6-win32-x64.exe",
+        "apps/desktop/dist/Autocode-2.8.0-beta.6-win32-x64.exe.blockmap"
+      ]
+    },
+    "verificationBaseline": {
+      "path": "openspec/changes/commercial-token-memory-readiness/verification-baseline.md"
+    },
+    "releaseReadinessSummary": {
+      "path": "openspec/changes/commercial-token-memory-readiness/release-readiness.md"
+    },
+    "platformScope": {
+      "verifiedPlatforms": [
+        "windows-x64"
+      ],
+      "unverifiedPlatforms": [
+        "macos",
+        "linux"
+      ]
+    }
+  },
+  "commercialReadiness": {
+    "status": "not-ready",
+    "claimPolicy": "Do not market, publish, or label this build as commercial ready until every required manual approval is approved."
+  },
+  "manualApprovals": [
+    {
+      "id": "public-brand",
+      "label": "Public product name, icons, trademark posture, and listing copy",
+      "status": "pending",
+      "owner": "product",
+      "requiredFor": "commercial-ready"
+    },
+    {
+      "id": "license-posture",
+      "label": "AGPL-3.0 commercial distribution and paid-offering posture",
+      "status": "pending",
+      "owner": "legal",
+      "requiredFor": "commercial-ready"
+    },
+    {
+      "id": "provider-model-matrix",
+      "label": "Provider/model support matrix acceptance for public claims",
+      "status": "pending",
+      "owner": "product",
+      "requiredFor": "commercial-ready"
+    },
+    {
+      "id": "provider-pricing-policy",
+      "label": "Versioned provider pricing policy and invoice reconciliation workflow",
+      "status": "pending",
+      "owner": "product",
+      "requiredFor": "commercial-ready"
+    },
+    {
+      "id": "signing-update-channel",
+      "label": "Installer signing, notarization where applicable, and update channel",
+      "status": "pending",
+      "owner": "release",
+      "requiredFor": "commercial-ready"
+    },
+    {
+      "id": "privacy-support",
+      "label": "Crash/log privacy, telemetry posture, and support process",
+      "status": "pending",
+      "owner": "product",
+      "requiredFor": "commercial-ready"
+    },
+    {
+      "id": "distribution-channel",
+      "label": "External distribution channel, store/listing copy, and download policy",
+      "status": "pending",
+      "owner": "release",
+      "requiredFor": "commercial-ready"
+    },
+    {
+      "id": "manual-packaged-app-acceptance",
+      "label": "Manual acceptance pass on selected release platform",
+      "status": "pending",
+      "owner": "qa",
+      "requiredFor": "commercial-ready"
+    }
+  ]
+}

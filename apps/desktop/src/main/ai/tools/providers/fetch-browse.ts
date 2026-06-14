@@ -8,9 +8,9 @@
  */
 
 import type { BrowseOptions, BrowseProvider, BrowseResult } from './types';
+import { compactBrowseContent } from './content-compaction';
 
 const DEFAULT_TIMEOUT = 30_000;
-const MAX_CONTENT_LENGTH = 100_000;
 
 export class FetchBrowseProvider implements BrowseProvider {
   readonly name = 'fetch';
@@ -33,13 +33,9 @@ export class FetchBrowseProvider implements BrowseProvider {
         throw new Error(`HTTP ${response.status} ${response.statusText}`);
       }
 
-      let content = await response.text();
+      const content = await response.text();
 
-      if (content.length > MAX_CONTENT_LENGTH) {
-        content = `${content.slice(0, MAX_CONTENT_LENGTH)}\n\n[Content truncated — ${content.length} characters total]`;
-      }
-
-      return { url, content };
+      return { url, content: compactBrowseContent(content) };
     } finally {
       clearTimeout(timeoutId);
     }

@@ -487,7 +487,7 @@ function inferWorkflow(
       promptIntensity: 'standard',
       specStyle: 'standard',
       planningGuidance: 'Use enough phases to separate dependencies, but avoid research/self-critique unless risk or unfamiliar technology requires it.',
-      contextGuidance: 'Use the project index first, then inspect only the files and patterns needed for the task.',
+      contextGuidance: 'Use the project documentation reference first, then inspect only the files and patterns needed for the task.',
       validationGuidance: 'Run targeted tests plus one broader confidence check when available.',
       maxRecommendedSubtasks: 8,
     };
@@ -831,7 +831,7 @@ ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
-1. Read the task and the project index from the kickoff message.
+1. Read the task and the project documentation reference from the kickoff message.
 2. Inspect only the files needed to identify the change.
 3. Write a compact Standard \`spec.md\` with overview, scope, files, change details, and success criteria.
 4. Write \`tasks.md\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} tasks unless the task truly needs more.
@@ -909,8 +909,8 @@ ${buildToolCallJsonGuidance()}
 
 ## PROCESS
 
-1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.json\` summaries.
-2. Read \`spec.md\`, \`requirements.md\`, or \`context.json\` only if the kickoff context is missing the detail needed for tasks.md; use Read \`limit\` for large files.
+1. Use kickoff context from prior phases first; it may already include \`spec.md\`, \`requirements.md\`, and \`context.md\` summaries.
+2. Read \`spec.md\`, \`requirements.md\`, or \`context.md\` only if the kickoff context is missing the detail needed for tasks.md; use Read \`limit\` for large files.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
 4. Ground requirements, design choices, task scope, and verification commands in source files, project docs, existing patterns, or verified official/industry references. Put gaps in assumptions or validation tasks.
 5. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.

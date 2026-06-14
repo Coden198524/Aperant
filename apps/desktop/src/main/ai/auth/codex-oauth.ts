@@ -20,6 +20,7 @@ import * as fs from 'fs';
 import * as http from 'http';
 import * as path from 'path';
 import * as url from 'url';
+import { readOAuthErrorMessage } from './oauth-error';
 
 // Electron APIs loaded lazily to avoid crashing in worker threads
 // (workers don't have access to Electron main-process modules)
@@ -363,14 +364,8 @@ async function exchangeCodeForTokens(code: string, codeVerifier: string): Promis
   debugLog('Token exchange response', { status: response.status, ok: response.ok });
 
   if (!response.ok) {
-    let errorMessage = `HTTP ${response.status}`;
-    try {
-      const errorData = await response.json() as Record<string, string>;
-      debugLog('Token exchange error response', errorData);
-      errorMessage = errorData.error_description ?? errorData.error ?? errorMessage;
-    } catch {
-      // Ignore parse errors
-    }
+    const errorMessage = await readOAuthErrorMessage(response);
+    debugLog('Token exchange error response', { error: errorMessage });
     throw new Error(`Token exchange failed: ${errorMessage}`);
   }
 
@@ -428,14 +423,8 @@ export async function refreshCodexToken(refreshToken: string): Promise<CodexAuth
   debugLog('Token refresh response', { status: response.status, ok: response.ok });
 
   if (!response.ok) {
-    let errorMessage = `HTTP ${response.status}`;
-    try {
-      const errorData = await response.json() as Record<string, string>;
-      debugLog('Token refresh error response', errorData);
-      errorMessage = errorData.error_description ?? errorData.error ?? errorMessage;
-    } catch {
-      // Ignore parse errors
-    }
+    const errorMessage = await readOAuthErrorMessage(response);
+    debugLog('Token refresh error response', { error: errorMessage });
     throw new Error(`Token refresh failed: ${errorMessage}`);
   }
 

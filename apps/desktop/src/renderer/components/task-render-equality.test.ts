@@ -42,7 +42,7 @@ describe('task-render-equality', () => {
         ...prevTask.executionProgress!,
         phaseProgress: 55,
         overallProgress: 55,
-        message: 'Writing context.json',
+        message: 'Writing context.md',
         sequenceNumber: 2,
       },
     };

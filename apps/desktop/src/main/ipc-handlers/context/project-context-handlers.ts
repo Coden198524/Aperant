@@ -7,7 +7,6 @@ import { IPC_CHANNELS } from '../../../shared/constants';
 import type {
   IPCResult,
   ProjectContextData,
-  ProjectIndex,
   RendererMemory,
 } from '../../../shared/types';
 import { projectStore } from '../../project-store';
@@ -82,26 +81,4 @@ export function registerProjectContextHandlers(
     }
   );
 
-  // Refresh project index
-  ipcMain.handle(
-    IPC_CHANNELS.CONTEXT_REFRESH_INDEX,
-    async (_, projectId: string): Promise<IPCResult<ProjectIndex>> => {
-      const project = projectStore.getProject(projectId);
-      if (!project) {
-        return { success: false, error: 'Project not found' };
-      }
-
-      try {
-        return {
-          success: false,
-          error: 'Project index has been replaced by project documents. Generate or refresh project documentation instead.',
-        };
-      } catch (error) {
-        return {
-          success: false,
-          error: error instanceof Error ? error.message : 'Failed to refresh project index'
-        };
-      }
-    }
-  );
 }

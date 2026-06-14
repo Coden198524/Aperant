@@ -126,7 +126,7 @@
         taskMetadata.attachedImages = savedImages;
       }
 
-      // Create initial implementation_plan.json (task is created but not started)
+      // Create initial implementation_plan.md (task is created but not started)
       const now = new Date().toISOString();
       const implementationPlan = {
         feature: finalTitle,
@@ -290,7 +290,7 @@
           }
         }
 
-        // Update implementation_plan.json
+        // Update implementation_plan.md
         const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
         if (existsSync(planPath)) {
           try {
@@ -604,7 +604,7 @@
         task.specId
       );
 
-      // Update implementation_plan.json if it exists
+      // Update implementation_plan.md if it exists
       const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
 
       try {
@@ -783,7 +783,7 @@
         task.specId
       );
 
-      // Update implementation_plan.json
+      // Update implementation_plan.md
       const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
 
       try {
@@ -1248,7 +1248,7 @@
 
           mergeProcess.on('close', (code: number) => {
             if (code === 0) {
-              // Persist the status change to implementation_plan.json
+              // Persist the status change to implementation_plan.md
               const planPath = path.join(specDir, AUTO_BUILD_PATHS.IMPLEMENTATION_PLAN);
               try {
                 if (existsSync(planPath)) {

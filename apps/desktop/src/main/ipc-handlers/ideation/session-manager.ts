@@ -3,11 +3,69 @@
  */
 
 import type { IpcMainInvokeEvent } from 'electron';
-import { getAutocodeIdeationFilePath } from '@autocode/core';
-import type { IPCResult, IdeationSession } from '../../../shared/types';
+import { getAutocodeIdeationFilePath, getAutocodeIdeationTypeIdeasPath } from '@autocode/core';
+import type { IPCResult, IdeationSession, IdeationType } from '../../../shared/types';
 import { projectStore } from '../../project-store';
 import { transformIdeaFromSnakeCase } from './transformers';
-import { readIdeationFile } from './file-utils';
+import { readIdeationFile, writeIdeationFile } from './file-utils';
+import type { RawIdea, RawIdeationData } from './types';
+
+const IDEATION_TYPES: IdeationType[] = [
+  'code_improvements',
+  'ui_ux_improvements',
+  'documentation_gaps',
+  'security_hardening',
+  'performance_optimizations',
+  'code_quality',
+];
+
+function readTypeIdeas(projectPath: string, dataDirName: string | undefined, type: IdeationType): RawIdea[] {
+  const typePath = getAutocodeIdeationTypeIdeasPath(projectPath, type, dataDirName);
+  const rawTypeData = readIdeationFile(typePath) as Record<string, unknown> | null;
+  const ideas = rawTypeData?.[type];
+  return Array.isArray(ideas) ? ideas as RawIdea[] : [];
+}
+
+function rebuildIdeationFromTypeFiles(
+  projectId: string,
+  projectPath: string,
+  dataDirName: string | undefined
+): RawIdeationData | null {
+  const ideas: RawIdea[] = [];
+  const enabledTypes: IdeationType[] = [];
+
+  for (const type of IDEATION_TYPES) {
+    const typeIdeas = readTypeIdeas(projectPath, dataDirName, type);
+    if (typeIdeas.length > 0) {
+      ideas.push(...typeIdeas);
+      enabledTypes.push(type);
+    }
+  }
+
+  if (ideas.length === 0) {
+    return null;
+  }
+
+  const now = new Date().toISOString();
+  return {
+    id: `ideation-${Date.now()}`,
+    project_id: projectId,
+    config: {
+      enabled_types: enabledTypes,
+      include_roadmap_context: true,
+      include_kanban_context: true,
+      max_ideas_per_type: 5,
+    },
+    ideas,
+    project_context: {
+      existing_features: [],
+      tech_stack: [],
+      planned_features: [],
+    },
+    generated_at: now,
+    updated_at: now,
+  };
+}
 
 /**
  * Get ideation session for a project
@@ -23,9 +81,13 @@ export async function getIdeationSession(
 
   const ideationPath = getAutocodeIdeationFilePath(project.path, project.autoBuildPath);
 
-  const rawIdeation = readIdeationFile(ideationPath);
+  let rawIdeation = readIdeationFile(ideationPath);
   if (!rawIdeation) {
-    return { success: true, data: null };
+    rawIdeation = rebuildIdeationFromTypeFiles(projectId, project.path, project.autoBuildPath);
+    if (!rawIdeation) {
+      return { success: true, data: null };
+    }
+    writeIdeationFile(ideationPath, rawIdeation);
   }
 
   try {

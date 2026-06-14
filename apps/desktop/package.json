@@ -43,6 +43,8 @@
     "package:flatpak": "electron-builder --linux flatpak",
     "verify:linux": "node scripts/verify-linux-packages.cjs dist",
     "test:verify-linux": "node --test scripts/verify-linux-packages.test.mjs",
+    "verify:commercial": "node scripts/verify-commercial-readiness.cjs guides/commercial-readiness.manifest.json",
+    "test:commercial-readiness": "node --test scripts/verify-commercial-readiness.test.mjs",
     "start:packaged:mac": "open dist/mac-arm64/Autocode.app || open dist/mac/Autocode.app",
     "start:packaged:win": "start \"\" \"dist\\win-unpacked\\Autocode.exe\"",
     "start:packaged:linux": "./dist/linux-unpacked/autocode",
@@ -243,6 +245,15 @@
       ],
       "forceCodeSigning": false,
       "signAndEditExecutable": false
+    },
+    "nsis": {
+      "installerIcon": "resources/icon.ico",
+      "uninstallerIcon": "resources/icon.ico",
+      "installerHeaderIcon": "resources/icon.ico",
+      "include": "installer.nsh",
+      "shortcutName": "Autocode",
+      "createDesktopShortcut": "always",
+      "createStartMenuShortcut": true
     },
     "linux": {
       "icon": "resources/icons",

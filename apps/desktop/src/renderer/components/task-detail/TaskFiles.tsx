@@ -28,6 +28,10 @@ interface TaskFilesProps {
 
 // File extensions to display
 const ALLOWED_EXTENSIONS = ['.md', '.json', '.jsonl'];
+const INTERNAL_TASK_FILES = new Set([
+  'autocode-run-prompt.md',
+  'autocode-run-result.json',
+]);
 const FILE_PRIORITY: Record<string, number> = {
   'HUMAN_INPUT.md': 0,
   'change_requests.jsonl': 1,
@@ -61,6 +65,12 @@ function getFileKind(filename: string | null): FileKind {
   if (filename.endsWith('.json')) return 'json';
   if (filename.endsWith('.md')) return 'markdown';
   return 'text';
+}
+
+function isVisibleTaskFile(file: FileNode): boolean {
+  if (file.isDirectory) return false;
+  if (INTERNAL_TASK_FILES.has(file.name.toLowerCase())) return false;
+  return ALLOWED_EXTENSIONS.some(ext => file.name.endsWith(ext));
 }
 
 function getJsonSummary(value: JsonValue): string {
@@ -206,10 +216,7 @@ export function TaskFiles({ task }: TaskFilesProps) {
         throw new Error(result.error || 'Failed to load directory');
       }
 
-      // Filter to only show allowed file types
-      const filteredFiles = result.data.filter(
-        (file) => !file.isDirectory && ALLOWED_EXTENSIONS.some(ext => file.name.endsWith(ext))
-      );
+      const filteredFiles = result.data.filter(isVisibleTaskFile);
 
       // Sort high-signal task files first, then alphabetically.
       filteredFiles.sort((a, b) => {

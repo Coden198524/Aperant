@@ -4,12 +4,12 @@
 Analyze the project and create `roadmap_discovery.json` in the injected Output File path.
 
 ## Inputs
-- Project directory and project index from the injected context.
+- Project directory and project documentation index from the injected context.
 - Optional existing `competitor_analysis.json`.
 - README, package/config files, app entry points, docs, and representative source files.
 
 ## Process
-1. Read the project index first.
+1. Read the project documentation index first.
 2. Inspect only files needed to infer product purpose, audience, current state, constraints, and positioning.
 3. If competitor analysis exists, fold its top pain points and differentiators into `competitive_context`.
 4. Do not ask questions. Use concise assumptions when evidence is incomplete.
