@@ -186,6 +186,34 @@ describe('MemoryServiceImpl', () => {
       expect(memoriesArgs).toContain('agent_explicit');
     });
 
+    it('normalizes confidence before storage', async () => {
+      await service.store({
+        type: 'gotcha',
+        content: 'Clamp overconfident memory writes',
+        projectId: 'proj-001',
+        confidence: 1.5,
+      });
+
+      let batchArgs = mockBatch.mock.calls[0][0];
+      let memoriesArgs = batchArgs[0].args;
+      expect(memoriesArgs[3]).toBe(1);
+
+      vi.clearAllMocks();
+      mockBatch.mockResolvedValue([]);
+      mockEmbed.mockResolvedValue(new Array(1024).fill(0.1));
+
+      await service.store({
+        type: 'gotcha',
+        content: 'Default invalid confidence memory writes',
+        projectId: 'proj-001',
+        confidence: Number.NaN,
+      });
+
+      batchArgs = mockBatch.mock.calls[0][0];
+      memoriesArgs = batchArgs[0].args;
+      expect(memoriesArgs[3]).toBe(0.8);
+    });
+
     it('serializes tags and relatedFiles as JSON', async () => {
       const entry: MemoryRecordEntry = {
         type: 'gotcha',
@@ -354,6 +382,89 @@ describe('MemoryServiceImpl', () => {
       });
     });
 
+    it('normalizes query text and structural filters before pipeline search', async () => {
+      const matching = makeMemoryResult({
+        id: 'matching',
+        type: 'gotcha',
+        relatedFiles: ['src/auth/token.ts'],
+        relatedModules: ['auth'],
+      });
+      const wrongModule = makeMemoryResult({
+        id: 'wrong-module',
+        type: 'gotcha',
+        relatedFiles: ['src/auth/token.ts'],
+        relatedModules: ['billing'],
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [wrongModule, matching],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: '  auth\n\tmemory   gotcha  ',
+        projectId: 'proj-001',
+        types: ['gotcha', 'gotcha'],
+        relatedFiles: [' ./src/auth//token.ts ', 'src\\auth\\token.ts'],
+        relatedModules: [' auth ', 'auth'],
+        limit: 2,
+      });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('auth memory gotcha', {
+        phase: 'explore',
+        projectId: 'proj-001',
+        maxResults: 10,
+      });
+      expect(results.map((memory) => memory.id)).toEqual(['matching']);
+    });
+
+    it('does not run a broad search for blank query text', async () => {
+      const results = await service.search({
+        query: ' \n\t ',
+        projectId: 'proj-001',
+      });
+
+      expect(results).toEqual([]);
+      expect(mockRetrievalSearch).not.toHaveBeenCalled();
+      expect(mockExecute).not.toHaveBeenCalled();
+    });
+
+    it('does not run query search when normalized limit is zero', async () => {
+      const results = await service.search({
+        query: 'auth memory',
+        projectId: 'proj-001',
+        limit: Number.NaN,
+      });
+
+      expect(results).toEqual([]);
+      expect(mockRetrievalSearch).not.toHaveBeenCalled();
+      expect(mockExecute).not.toHaveBeenCalled();
+    });
+
+    it('rounds fractional query limits down before candidate expansion and final slicing', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [
+          makeMemoryResult({ id: 'first' }),
+          makeMemoryResult({ id: 'second' }),
+          makeMemoryResult({ id: 'third' }),
+        ],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'auth memory',
+        projectId: 'proj-001',
+        limit: 2.9,
+        promptContextOnly: true,
+      });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('auth memory', {
+        phase: 'explore',
+        projectId: 'proj-001',
+        maxResults: 10,
+      });
+      expect(results.map((memory) => memory.id)).toEqual(['first', 'second']);
+    });
+
     it('applies minConfidence post-filter', async () => {
       const highConf = makeMemoryResult({ id: 'high', confidence: 0.95 });
       const lowConf = makeMemoryResult({ id: 'low', confidence: 0.5 });
@@ -370,6 +481,47 @@ describe('MemoryServiceImpl', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe('high');
+    });
+
+    it('ignores non-finite minConfidence for query search', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [
+          makeMemoryResult({ id: 'low', confidence: 0.2 }),
+          makeMemoryResult({ id: 'high', confidence: 0.9 }),
+        ],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'test',
+        projectId: 'proj-001',
+        minConfidence: Number.NaN,
+      });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('test', {
+        phase: 'explore',
+        projectId: 'proj-001',
+        maxResults: 8,
+      });
+      expect(results.map((memory) => memory.id)).toEqual(['low', 'high']);
+    });
+
+    it('clamps query minConfidence above one before filtering', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [
+          makeMemoryResult({ id: 'almost', confidence: 0.99 }),
+          makeMemoryResult({ id: 'perfect', confidence: 1 }),
+        ],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'test',
+        projectId: 'proj-001',
+        minConfidence: 1.5,
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['perfect']);
     });
 
     it('applies excludeDeprecated post-filter', async () => {
@@ -613,6 +765,180 @@ describe('MemoryServiceImpl', () => {
       expect(results).toHaveLength(1);
     });
 
+    it('normalizes legacy row metadata before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            tags: '[" auth ","auth","","typescript"]',
+            related_files: '[" ./src/auth//token.ts ","src\\\\auth\\\\token.ts","src/auth/session.ts/",""]',
+            related_modules: '[" auth ","auth","","billing"]',
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(results[0].tags).toEqual(['auth', 'typescript']);
+      expect(results[0].relatedFiles).toEqual(['src/auth/token.ts', 'src/auth/session.ts']);
+      expect(results[0].relatedModules).toEqual(['auth', 'billing']);
+    });
+
+    it('tolerates legacy row metadata that is not a string array', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'bad-metadata',
+            tags: '"auth"',
+            related_files: '{"path":"src/auth/token.ts"}',
+            related_modules: '[123," auth ",null,"billing"]',
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(results[0].id).toBe('bad-metadata');
+      expect(results[0].tags).toEqual([]);
+      expect(results[0].relatedFiles).toEqual([]);
+      expect(results[0].relatedModules).toEqual(['auth', 'billing']);
+    });
+
+    it('normalizes legacy row confidence before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({ id: 'string-confidence', confidence: '0.25' }),
+          makeMemoryRow({ id: 'bad-confidence', confidence: 'not-a-number' }),
+          makeMemoryRow({ id: 'high-confidence', confidence: 1.5 }),
+          makeMemoryRow({ id: 'negative-confidence', confidence: -0.2 }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(results.map((memory) => [memory.id, memory.confidence])).toEqual([
+        ['string-confidence', 0.25],
+        ['bad-confidence', 0.8],
+        ['high-confidence', 1],
+        ['negative-confidence', 0],
+      ]);
+    });
+
+    it('normalizes legacy provenance and relation arrays before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            provenance_session_ids: '[" session-a ","session-a",42,"session-b"]',
+            impacted_node_ids: '[" node-a ","node-a",null,"node-b"]',
+            relations: JSON.stringify([
+              {
+                relationType: 'validates',
+                targetFilePath: ' ./src/auth//token.ts ',
+                confidence: 1.5,
+                autoExtracted: true,
+              },
+              {
+                relationType: 'derived_from',
+                targetMemoryId: ' parent-memory ',
+                confidence: 'bad',
+                autoExtracted: false,
+              },
+              { relationType: 'unknown', targetMemoryId: 'ignored' },
+              { relationType: 'conflicts_with', confidence: 0.9 },
+              'not-a-relation',
+            ]),
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(results[0].provenanceSessionIds).toEqual(['session-a', 'session-b']);
+      expect(results[0].impactedNodeIds).toEqual(['node-a', 'node-b']);
+      expect(results[0].relations).toEqual([
+        {
+          relationType: 'validates',
+          targetFilePath: 'src/auth/token.ts',
+          confidence: 1,
+          autoExtracted: true,
+        },
+        {
+          relationType: 'derived_from',
+          targetMemoryId: 'parent-memory',
+          confidence: 0.8,
+          autoExtracted: false,
+        },
+      ]);
+    });
+
+    it('normalizes legacy work-unit and chunk fields before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'valid-structured-fields',
+            work_unit_ref: JSON.stringify({
+              methodology: ' native ',
+              hierarchy: [' root ', 42, 'task', 'task'],
+              label: ' implement memory ',
+            }),
+            methodology: ' native ',
+            decay_half_life_days: '14.5',
+            chunk_type: 'function',
+            chunk_start_line: '10.9',
+            chunk_end_line: '20.1',
+          }),
+          makeMemoryRow({
+            id: 'invalid-structured-fields',
+            work_unit_ref: '"not-a-ref"',
+            methodology: '   ',
+            decay_half_life_days: -1,
+            chunk_type: 'unknown',
+            chunk_start_line: 'NaN',
+            chunk_end_line: -4,
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(results[0].workUnitRef).toEqual({
+        methodology: 'native',
+        hierarchy: ['root', 'task'],
+        label: 'implement memory',
+      });
+      expect(results[0].methodology).toBe('native');
+      expect(results[0].decayHalfLifeDays).toBe(14.5);
+      expect(results[0].chunkType).toBe('function');
+      expect(results[0].chunkStartLine).toBe(10);
+      expect(results[0].chunkEndLine).toBe(20);
+
+      expect(results[1].workUnitRef).toBeUndefined();
+      expect(results[1].methodology).toBeUndefined();
+      expect(results[1].decayHalfLifeDays).toBeUndefined();
+      expect(results[1].chunkType).toBeUndefined();
+      expect(results[1].chunkStartLine).toBeUndefined();
+      expect(results[1].chunkEndLine).toBeUndefined();
+    });
+
+    it('normalizes legacy enum fields before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'invalid-enums',
+            type: 'obsolete_type',
+            source: 'old_source',
+            scope: 'workspace',
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(results[0].id).toBe('invalid-enums');
+      expect(results[0].type).toBe('gotcha');
+      expect(results[0].source).toBe('agent_explicit');
+      expect(results[0].scope).toBe('global');
+    });
+
     it('filters by type in direct SQL', async () => {
       mockExecute.mockResolvedValueOnce({ rows: [] });
 
@@ -620,6 +946,75 @@ describe('MemoryServiceImpl', () => {
 
       const sql = mockExecute.mock.calls[0][0].sql as string;
       expect(sql).toContain('type IN (?, ?)');
+    });
+
+    it('deduplicates direct-search type and source filters before SQL', async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+
+      await service.search({
+        types: ['gotcha', 'gotcha', 'decision'],
+        sources: ['agent_explicit', 'agent_explicit'],
+      });
+
+      const call = mockExecute.mock.calls[0][0];
+      const sql = call.sql as string;
+      const args = call.args as unknown[];
+      expect(sql).toContain('type IN (?, ?)');
+      expect(sql).toContain('source IN (?)');
+      expect(args).toEqual(['gotcha', 'decision', 'agent_explicit', 50]);
+    });
+
+    it('does not run direct search when normalized limit is zero', async () => {
+      const results = await service.search({
+        projectId: 'proj-001',
+        limit: -1,
+      });
+
+      expect(results).toEqual([]);
+      expect(mockExecute).not.toHaveBeenCalled();
+      expect(mockRetrievalSearch).not.toHaveBeenCalled();
+    });
+
+    it('rounds fractional direct-search limits down before SQL', async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+
+      await service.search({
+        projectId: 'proj-001',
+        limit: 2.9,
+      });
+
+      const args = mockExecute.mock.calls[0][0].args as unknown[];
+      expect(args[args.length - 1]).toBe(2);
+    });
+
+    it('omits non-finite direct-search minConfidence from SQL', async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+
+      await service.search({
+        projectId: 'proj-001',
+        minConfidence: Number.NaN,
+      });
+
+      const call = mockExecute.mock.calls[0][0];
+      const sql = call.sql as string;
+      const args = call.args as unknown[];
+      expect(sql).not.toContain('confidence >= ?');
+      expect(args).toEqual(['proj-001', 50]);
+    });
+
+    it('clamps direct-search minConfidence above one before SQL', async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+
+      await service.search({
+        projectId: 'proj-001',
+        minConfidence: 1.5,
+      });
+
+      const call = mockExecute.mock.calls[0][0];
+      const sql = call.sql as string;
+      const args = call.args as unknown[];
+      expect(sql).toContain('confidence >= ?');
+      expect(args).toEqual(['proj-001', 1, 50]);
     });
 
     it('filters by scope in direct SQL', async () => {
@@ -781,6 +1176,13 @@ describe('MemoryServiceImpl', () => {
   // ----------------------------------------------------------
 
   describe('searchByPattern()', () => {
+    it('returns null without BM25 for blank patterns', async () => {
+      const result = await service.searchByPattern(' \n\t ');
+
+      expect(result).toBeNull();
+      expect(mockExecute).not.toHaveBeenCalled();
+    });
+
     it('returns null when no BM25 results', async () => {
       // searchBM25 calls db.execute
       mockExecute.mockResolvedValueOnce({ rows: [] });
@@ -816,6 +1218,15 @@ describe('MemoryServiceImpl', () => {
 
       const bm25Args = mockExecute.mock.calls[0][0].args as unknown[];
       expect(bm25Args).toEqual(['typescript testing', 'project-patterns', 6]);
+    });
+
+    it('normalizes pattern whitespace before BM25 search', async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+
+      await service.searchByPattern('  typescript\n\ttesting  ');
+
+      const bm25Args = mockExecute.mock.calls[0][0].args as unknown[];
+      expect(bm25Args[0]).toBe('typescript testing');
     });
 
     it('returns null if the fetched memory is deprecated', async () => {
@@ -910,6 +1321,27 @@ describe('MemoryServiceImpl', () => {
   // ----------------------------------------------------------
 
   describe('searchWorkflowRecipe()', () => {
+    it('returns empty array without retrieval for blank task descriptions', async () => {
+      const results = await service.searchWorkflowRecipe(' \n\t ');
+
+      expect(results).toEqual([]);
+      expect(mockRetrievalSearch).not.toHaveBeenCalled();
+    });
+
+    it('returns empty array without retrieval when limit is zero', async () => {
+      const results = await service.searchWorkflowRecipe('deploy task', { limit: 0 });
+
+      expect(results).toEqual([]);
+      expect(mockRetrievalSearch).not.toHaveBeenCalled();
+    });
+
+    it('returns empty array without retrieval for non-finite workflow recipe limits', async () => {
+      const results = await service.searchWorkflowRecipe('deploy task', { limit: Number.NaN });
+
+      expect(results).toEqual([]);
+      expect(mockRetrievalSearch).not.toHaveBeenCalled();
+    });
+
     it('returns workflow_recipe memories', async () => {
       const recipe = makeMemoryResult({ id: 'recipe-001', type: 'workflow_recipe' });
       const other = makeMemoryResult({ id: 'other-001', type: 'gotcha' });
@@ -936,6 +1368,40 @@ describe('MemoryServiceImpl', () => {
       const results = await service.searchWorkflowRecipe('task', { limit: 3 });
 
       expect(results).toHaveLength(3);
+    });
+
+    it('rounds fractional workflow recipe limits down before retrieval and slicing', async () => {
+      const recipes = Array.from({ length: 3 }, (_, i) =>
+        makeMemoryResult({ id: `recipe-${i}`, type: 'workflow_recipe' }),
+      );
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: recipes,
+        formattedContext: '',
+      });
+
+      const results = await service.searchWorkflowRecipe('task', { limit: 2.9 });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('task', {
+        phase: 'implement',
+        projectId: '',
+        maxResults: 10,
+      });
+      expect(results.map((memory) => memory.id)).toEqual(['recipe-0', 'recipe-1']);
+    });
+
+    it('normalizes task description before workflow recipe retrieval', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [],
+        formattedContext: '',
+      });
+
+      await service.searchWorkflowRecipe('  deploy\n\tto   production  ', { limit: 2 });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('deploy to production', {
+        phase: 'implement',
+        projectId: '',
+        maxResults: 10,
+      });
     });
 
     it('passes projectId to workflow recipe retrieval', async () => {

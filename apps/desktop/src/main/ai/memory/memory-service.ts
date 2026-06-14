@@ -6,6 +6,11 @@
  */
 
 import type { Client } from '@libsql/client';
+import {
+  isAutocodeMemoryScope,
+  isAutocodeMemorySource,
+  isAutocodeMemoryType,
+} from '@autocode/core';
 import type {
   Memory,
   MemoryService,
@@ -39,6 +44,21 @@ const FILTERED_SEARCH_CANDIDATE_MULTIPLIER = 4;
 const FILTERED_SEARCH_CANDIDATE_EXTRA = 8;
 const FILTERED_SEARCH_CANDIDATE_CAP = 50;
 const PATTERN_SEARCH_CANDIDATE_LIMIT = 6;
+const MEMORY_ROW_ID_LIST_LIMIT = 64;
+const MEMORY_ROW_ID_MAX_CHARS = 128;
+const MEMORY_RELATION_TYPES = new Set<MemoryRelation['relationType']>([
+  'required_with',
+  'conflicts_with',
+  'validates',
+  'supersedes',
+  'derived_from',
+]);
+const MEMORY_CHUNK_TYPES = new Set<NonNullable<Memory['chunkType']>>([
+  'function',
+  'class',
+  'module',
+  'prose',
+]);
 
 // ============================================================
 // ROW MAPPING HELPER
@@ -55,27 +75,92 @@ function rowToMemory(row: Record<string, unknown>): Memory {
     }
     return fallback;
   };
+  const parseJsonStringArray = (val: unknown): string[] => {
+    const parsed = parseJson<unknown>(val, []);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+    return parsed.filter((item): item is string => typeof item === 'string');
+  };
+  const parseJsonMemoryRelations = (val: unknown): MemoryRelation[] => {
+    const parsed = parseJson<unknown>(val, []);
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    return parsed.flatMap((item) => {
+      if (!isRecord(item) || !isMemoryRelationType(item.relationType)) {
+        return [];
+      }
+
+      const targetMemoryId = normalizeOptionalMemoryText(item.targetMemoryId);
+      const targetFilePath = normalizeOptionalMemoryPath(item.targetFilePath);
+      if (!targetMemoryId && !targetFilePath) {
+        return [];
+      }
+
+      const relation: MemoryRelation = {
+        relationType: item.relationType,
+        confidence: normalizeMemoryConfidence(item.confidence, 0.8) ?? 0.8,
+        autoExtracted: item.autoExtracted === true,
+      };
+      if (targetMemoryId) {
+        relation.targetMemoryId = targetMemoryId;
+      }
+      if (targetFilePath) {
+        relation.targetFilePath = targetFilePath;
+      }
+      return [relation];
+    });
+  };
+
+  const tags = compactMemoryStringList(
+    parseJsonStringArray(row.tags),
+    MEMORY_STORE_TAG_LIMIT,
+    MEMORY_STORE_TAG_MAX_CHARS,
+  ) ?? [];
+  const relatedFiles = compactMemoryPathList(
+    parseJsonStringArray(row.related_files),
+    MEMORY_STORE_RELATED_FILE_LIMIT,
+    MEMORY_STORE_RELATED_FILE_MAX_CHARS,
+  ) ?? [];
+  const relatedModules = compactMemoryStringList(
+    parseJsonStringArray(row.related_modules),
+    MEMORY_STORE_RELATED_MODULE_LIMIT,
+    MEMORY_STORE_RELATED_MODULE_MAX_CHARS,
+  ) ?? [];
+  const provenanceSessionIds = compactMemoryStringList(
+    parseJsonStringArray(row.provenance_session_ids),
+    MEMORY_ROW_ID_LIST_LIMIT,
+    MEMORY_ROW_ID_MAX_CHARS,
+  ) ?? [];
+  const impactedNodeIds = compactMemoryStringList(
+    parseJsonStringArray(row.impacted_node_ids),
+    MEMORY_ROW_ID_LIST_LIMIT,
+    MEMORY_ROW_ID_MAX_CHARS,
+  ) ?? [];
+  const workUnitRef = parseJsonWorkUnitRef(row.work_unit_ref);
 
   return {
     id: row.id as string,
-    type: row.type as MemoryType,
+    type: normalizeMemoryType(row.type),
     content: row.content as string,
-    confidence: (row.confidence as number) ?? 0.8,
-    tags: parseJson<string[]>(row.tags, []),
-    relatedFiles: parseJson<string[]>(row.related_files, []),
-    relatedModules: parseJson<string[]>(row.related_modules, []),
+    confidence: normalizeMemoryConfidence(row.confidence, 0.8) ?? 0.8,
+    tags,
+    relatedFiles,
+    relatedModules,
     createdAt: row.created_at as string,
     lastAccessedAt: row.last_accessed_at as string,
     accessCount: (row.access_count as number) ?? 0,
-    scope: (row.scope as MemoryScope) ?? 'global',
-    source: (row.source as MemorySource) ?? 'agent_explicit',
+    scope: normalizeMemoryScope(row.scope),
+    source: normalizeMemorySource(row.source),
     sessionId: (row.session_id as string) ?? '',
     commitSha: (row.commit_sha as string | null) ?? undefined,
-    provenanceSessionIds: parseJson<string[]>(row.provenance_session_ids, []),
+    provenanceSessionIds,
     targetNodeId: (row.target_node_id as string | null) ?? undefined,
-    impactedNodeIds: parseJson<string[]>(row.impacted_node_ids, []),
-    relations: parseJson<MemoryRelation[]>(row.relations, []),
-    decayHalfLifeDays: (row.decay_half_life_days as number | null) ?? undefined,
+    impactedNodeIds,
+    relations: parseJsonMemoryRelations(row.relations),
+    decayHalfLifeDays: normalizePositiveMemoryNumber(row.decay_half_life_days),
     needsReview: Boolean(row.needs_review),
     userVerified: Boolean(row.user_verified),
     citationText: (row.citation_text as string | null) ?? undefined,
@@ -85,15 +170,13 @@ function rowToMemory(row: Record<string, unknown>): Memory {
     staleAt: (row.stale_at as string | null) ?? undefined,
     projectId: row.project_id as string,
     trustLevelScope: (row.trust_level_scope as string | null) ?? undefined,
-    chunkType: (row.chunk_type as Memory['chunkType']) ?? undefined,
-    chunkStartLine: (row.chunk_start_line as number | null) ?? undefined,
-    chunkEndLine: (row.chunk_end_line as number | null) ?? undefined,
+    chunkType: normalizeMemoryChunkType(row.chunk_type),
+    chunkStartLine: normalizeNonNegativeMemoryInteger(row.chunk_start_line),
+    chunkEndLine: normalizeNonNegativeMemoryInteger(row.chunk_end_line),
     contextPrefix: (row.context_prefix as string | null) ?? undefined,
     embeddingModelId: (row.embedding_model_id as string | null) ?? undefined,
-    workUnitRef: row.work_unit_ref
-      ? parseJson<WorkUnitRef | undefined>(row.work_unit_ref, undefined)
-      : undefined,
-    methodology: (row.methodology as string | null) ?? undefined,
+    workUnitRef,
+    methodology: normalizeOptionalMemoryText(row.methodology),
   };
 }
 
@@ -306,49 +389,58 @@ export class MemoryServiceImpl implements MemoryService {
    * Otherwise, performs a direct SQL query using type/scope/project filters.
    */
   async search(filters: MemorySearchFilters): Promise<Memory[]> {
+    const normalizedFilters = normalizeMemorySearchFilters(filters);
+    if (filters.query !== undefined && !normalizedFilters.query) {
+      return [];
+    }
+    const resultLimit = getMemorySearchResultLimit(normalizedFilters);
+    if (resultLimit <= 0) {
+      return [];
+    }
+
     try {
       let memories: Memory[];
 
-      if (filters.query) {
+      if (normalizedFilters.query) {
         // Use the retrieval pipeline for semantic search
-        const result = await this.retrievalPipeline.search(filters.query, {
-          phase: filters.phase ?? 'explore',
-          projectId: filters.projectId ?? '',
-          maxResults: getMemorySearchCandidateLimit(filters),
+        const result = await this.retrievalPipeline.search(normalizedFilters.query, {
+          phase: normalizedFilters.phase ?? 'explore',
+          projectId: normalizedFilters.projectId ?? '',
+          maxResults: getMemorySearchCandidateLimit(normalizedFilters),
         });
         memories = result.memories;
       } else {
         // Direct SQL query using structural filters
-        memories = await this.directSearch(filters);
+        memories = await this.directSearch(normalizedFilters);
       }
 
-      memories = this.applyStructuralPostFilters(memories, filters);
+      memories = this.applyStructuralPostFilters(memories, normalizedFilters);
 
       // Post-filter by minConfidence
-      if (filters.minConfidence !== undefined) {
-        memories = memories.filter((m) => m.confidence >= (filters.minConfidence ?? 0));
+      if (normalizedFilters.minConfidence !== undefined) {
+        memories = memories.filter((m) => m.confidence >= (normalizedFilters.minConfidence ?? 0));
       }
 
       // Post-filter deprecated
-      if (filters.excludeDeprecated) {
+      if (normalizedFilters.excludeDeprecated) {
         memories = memories.filter((m) => !m.deprecated);
       }
 
-      if (filters.promptContextOnly) {
+      if (normalizedFilters.promptContextOnly) {
         memories = memories.filter(isMemoryEligibleForPromptContext);
       }
 
       // Apply custom filter callback
-      if (filters.filter) {
-        memories = memories.filter(filters.filter);
+      if (normalizedFilters.filter) {
+        memories = memories.filter(normalizedFilters.filter);
       }
 
       // Sort
-      if (filters.sort === 'recency') {
+      if (normalizedFilters.sort === 'recency') {
         memories.sort(
           (a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime(),
         );
-      } else if (filters.sort === 'confidence') {
+      } else if (normalizedFilters.sort === 'confidence') {
         memories.sort((a, b) => b.confidence - a.confidence);
       }
       // 'relevance' sort is preserved from pipeline order
@@ -356,7 +448,6 @@ export class MemoryServiceImpl implements MemoryService {
       // Apply limit after all filtering. Query searches have an implicit default
       // limit from the retrieval pipeline, so preserve that even when we fetch
       // extra prompt-context candidates for quality filtering.
-      const resultLimit = getMemorySearchResultLimit(filters);
       if (memories.length > resultLimit) {
         memories = memories.slice(0, resultLimit);
       }
@@ -374,10 +465,15 @@ export class MemoryServiceImpl implements MemoryService {
    * Used for fast lookups (e.g., StepInjectionDecider).
    */
   async searchByPattern(pattern: string, opts?: { projectId?: string }): Promise<Memory | null> {
+    const normalizedPattern = normalizeMemorySearchQuery(pattern);
+    if (!normalizedPattern) {
+      return null;
+    }
+
     try {
       const results = await searchBM25(
         this.db,
-        pattern,
+        normalizedPattern,
         opts?.projectId ?? '',
         PATTERN_SEARCH_CANDIDATE_LIMIT,
       );
@@ -435,9 +531,14 @@ export class MemoryServiceImpl implements MemoryService {
     taskDescription: string,
     opts?: { limit?: number; projectId?: string },
   ): Promise<Memory[]> {
+    const normalizedTaskDescription = normalizeMemorySearchQuery(taskDescription);
+    const limit = normalizeRequiredMemoryLimit(opts?.limit ?? 5);
+    if (!normalizedTaskDescription || limit <= 0) {
+      return [];
+    }
+
     try {
-      const limit = opts?.limit ?? 5;
-      const result = await this.retrievalPipeline.search(taskDescription, {
+      const result = await this.retrievalPipeline.search(normalizedTaskDescription, {
         phase: 'implement',
         projectId: opts?.projectId ?? '',
         maxResults: getWorkflowRecipeSearchCandidateLimit(limit),
@@ -616,6 +717,217 @@ export class MemoryServiceImpl implements MemoryService {
   }
 }
 
+function normalizeMemorySearchFilters(filters: MemorySearchFilters): MemorySearchFilters {
+  return {
+    ...filters,
+    query: filters.query === undefined ? undefined : normalizeMemorySearchQuery(filters.query),
+    limit: normalizeOptionalMemoryLimit(filters.limit),
+    minConfidence: normalizeMemoryMinConfidence(filters.minConfidence),
+    types: uniqueMemoryFilterList(filters.types),
+    sources: uniqueMemoryFilterList(filters.sources),
+    relatedFiles: normalizeMemoryPathFilterList(filters.relatedFiles),
+    relatedModules: normalizeMemoryTextFilterList(filters.relatedModules),
+  };
+}
+
+function normalizeMemorySearchQuery(query: string): string | undefined {
+  const normalized = query.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeOptionalMemoryLimit(limit: number | undefined): number | undefined {
+  return limit === undefined ? undefined : normalizeRequiredMemoryLimit(limit);
+}
+
+function normalizeRequiredMemoryLimit(limit: number): number {
+  if (!Number.isFinite(limit)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(limit));
+}
+
+function normalizeMemoryMinConfidence(value: number | undefined): number | undefined {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return undefined;
+  }
+  return Math.min(1, value);
+}
+
+function normalizeMemoryConfidence(value: unknown, fallback: number | undefined): number | undefined {
+  const numericValue =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : undefined;
+  if (numericValue === undefined || !Number.isFinite(numericValue)) {
+    return fallback;
+  }
+  return Math.min(1, Math.max(0, numericValue));
+}
+
+function normalizeMemoryType(value: unknown): MemoryType {
+  return typeof value === 'string' && isAutocodeMemoryType(value) ? value : 'gotcha';
+}
+
+function normalizeMemoryScope(value: unknown): MemoryScope {
+  return typeof value === 'string' && isAutocodeMemoryScope(value) ? value : 'global';
+}
+
+function normalizeMemorySource(value: unknown): MemorySource {
+  return typeof value === 'string' && isAutocodeMemorySource(value) ? value : 'agent_explicit';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function isMemoryRelationType(value: unknown): value is MemoryRelation['relationType'] {
+  return typeof value === 'string' && MEMORY_RELATION_TYPES.has(value as MemoryRelation['relationType']);
+}
+
+function normalizeOptionalMemoryText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeOptionalMemoryPath(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = normalizeMemoryPathListItem(value);
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseJsonWorkUnitRef(value: unknown): WorkUnitRef | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(value);
+  } catch {
+    return undefined;
+  }
+
+  if (!isRecord(parsed)) {
+    return undefined;
+  }
+
+  const methodology = normalizeOptionalMemoryText(parsed.methodology);
+  const label = normalizeOptionalMemoryText(parsed.label);
+  if (!methodology || !label || !Array.isArray(parsed.hierarchy)) {
+    return undefined;
+  }
+
+  const hierarchy = compactMemoryStringList(
+    parsed.hierarchy.filter((item): item is string => typeof item === 'string'),
+    MEMORY_ROW_ID_LIST_LIMIT,
+    MEMORY_ROW_ID_MAX_CHARS,
+  ) ?? [];
+  if (hierarchy.length === 0) {
+    return undefined;
+  }
+
+  return { methodology, hierarchy, label };
+}
+
+function normalizeMemoryChunkType(value: unknown): Memory['chunkType'] | undefined {
+  return typeof value === 'string' && MEMORY_CHUNK_TYPES.has(value as NonNullable<Memory['chunkType']>)
+    ? (value as Memory['chunkType'])
+    : undefined;
+}
+
+function normalizeNonNegativeMemoryInteger(value: unknown): number | undefined {
+  const numericValue = toFiniteMemoryNumber(value);
+  if (numericValue === undefined || numericValue < 0) {
+    return undefined;
+  }
+  return Math.floor(numericValue);
+}
+
+function normalizePositiveMemoryNumber(value: unknown): number | undefined {
+  const numericValue = toFiniteMemoryNumber(value);
+  return numericValue !== undefined && numericValue > 0 ? numericValue : undefined;
+}
+
+function toFiniteMemoryNumber(value: unknown): number | undefined {
+  const numericValue =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim().length > 0
+        ? Number(value)
+        : undefined;
+  return numericValue !== undefined && Number.isFinite(numericValue) ? numericValue : undefined;
+}
+
+function uniqueMemoryFilterList<T extends string>(values: T[] | undefined): T[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+
+  const seen = new Set<T>();
+  const unique: T[] = [];
+  for (const value of values) {
+    if (seen.has(value)) {
+      continue;
+    }
+    seen.add(value);
+    unique.push(value);
+  }
+  return unique;
+}
+
+function normalizeMemoryPathFilterList(values: string[] | undefined): string[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const normalizedValues: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeMemoryPathListItem(value);
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalizeFilterPath(normalized);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalizedValues.push(normalized);
+  }
+  return normalizedValues;
+}
+
+function normalizeMemoryTextFilterList(values: string[] | undefined): string[] | undefined {
+  if (!values) {
+    return undefined;
+  }
+
+  const seen = new Set<string>();
+  const normalizedValues: string[] = [];
+  for (const value of values) {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalizeFilterValue(normalized);
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    normalizedValues.push(normalized);
+  }
+  return normalizedValues;
+}
+
 function hasNormalizedOverlap(values: string[], expected: string[]): boolean {
   const normalized = new Set(values.map(normalizeFilterValue));
   return expected.some((value) => normalized.has(normalizeFilterValue(value)));
@@ -653,6 +965,7 @@ function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryR
   return {
     ...entry,
     content: compactMemoryStorageText(entry.content, MEMORY_STORE_CONTENT_MAX_CHARS),
+    confidence: normalizeMemoryConfidence(entry.confidence, undefined),
     tags: compactMemoryStringList(entry.tags, MEMORY_STORE_TAG_LIMIT, MEMORY_STORE_TAG_MAX_CHARS),
     relatedFiles: compactMemoryPathList(
       entry.relatedFiles,
