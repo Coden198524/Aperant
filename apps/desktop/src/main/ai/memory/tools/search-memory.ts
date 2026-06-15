@@ -12,6 +12,7 @@
 import { tool } from 'ai';
 import { z } from 'zod/v3';
 import type { Tool as AITool } from 'ai';
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory, MemoryType, MemorySearchFilters } from '../types';
 import {
@@ -534,7 +535,7 @@ function hasRenderableSearchMemoryContent(memory: Memory): boolean {
 
 function getSearchMemoryPromptContent(memory: Memory): string {
   return memory.type === 'context_cost'
-    ? stripLowValueContextCostMemoryLines(memory.content)
+    ? foldRepeatedAutocodePromptLines(stripLowValueContextCostMemoryLines(memory.content))
     : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER).trim();
 }
 

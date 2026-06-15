@@ -434,6 +434,38 @@ describe('memory agent tools', () => {
     expect(result).not.toContain('No issues found');
   });
 
+  it('folds repeated context_cost search_memory result lines while keeping token signals', async () => {
+    const repeatedLine = 'Context token spike came from repeated full search results with no new signal.';
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'token-cost-repeated',
+          type: 'context_cost',
+          content: [
+            'High token usage per step: 24k tokens.',
+            ...Array.from({ length: 80 }, () => repeatedLine),
+            'Reduce tokens by narrowing memory searches before broad scans.',
+          ].join('\n'),
+          confidence: 0.95,
+          relatedFiles: ['apps/desktop/src/main/ai/memory/tools/search-memory.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number; types: ['context_cost'] },
+      string
+    >(tool, { query: 'token cost', limit: 3, types: ['context_cost'] });
+
+    expect(result).toContain('[context_cost]');
+    expect(result).toContain('High token usage per step: 24k tokens');
+    expect(result).toContain('Reduce tokens by narrowing memory searches before broad scans.');
+    expect(result).toContain('79 repeated line(s) omitted for prompt budget');
+    expect((result.match(/Context token spike came from repeated full search results/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('Related files: apps/desktop/src/main/ai/memory/tools/search-memory.ts');
+  });
+
   it('omits context_cost search_memory results that lose all content after status cleanup', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([
