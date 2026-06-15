@@ -864,7 +864,7 @@ function normalizePromptMemory(memory: Memory): Memory | undefined {
     relatedFiles: normalizePromptPathList(memory.relatedFiles),
     relatedModules: normalizePromptTextList(memory.relatedModules),
     tags: normalizePromptTextList(memory.tags),
-    citationText: normalizePromptText(memory.citationText),
+    citationText: normalizePromptFoldedText(memory.citationText),
   };
 }
 
@@ -875,6 +875,14 @@ function normalizePromptText(value: unknown): string | undefined {
 
   const normalized = value.replace(/\s+/g, ' ').trim();
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizePromptFoldedText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  return normalizePromptText(foldRepeatedAutocodePromptLines(value));
 }
 
 function normalizePromptTextList(values: readonly unknown[] | undefined): string[] {

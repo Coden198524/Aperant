@@ -165,6 +165,31 @@ describe('packContext memory quality gate', () => {
     expect(useful).toContain('[^ Memory: Observed in auth/session-store.ts after retry audit.]');
   });
 
+  it('folds repeated citation lines before packing prompt context', () => {
+    const repeatedCitation = 'REPEAT_CITATION_FRAME_001';
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'repeated-citation',
+          content: 'Keep retry metadata compact before injecting memory into prompts.',
+          citationText: [
+            'Citation head.',
+            ...Array.from({ length: 6 }, () => repeatedCitation),
+            'Citation tail.',
+          ].join('\n'),
+          relatedFiles: [],
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { gotcha: 1 } },
+    );
+
+    expect(result).toContain('[^ Memory:');
+    expect(result).toContain('5 repeated line(s) omitted for prompt budget');
+    expect((result.match(/REPEAT_CITATION_FRAME_001/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('Citation tail.');
+  });
+
   it('omits packed file context already visible in memory content', () => {
     const result = packContext(
       [
