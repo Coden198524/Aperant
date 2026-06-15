@@ -135,7 +135,7 @@ describe('WebSearch Tool', () => {
   });
 
   it('should truncate long content snippets', async () => {
-    const longContent = 'A'.repeat(500);
+    const longContent = `${'A'.repeat(260)} IMPORTANT_TAIL`;
     mockSearch.mockResolvedValueOnce([
       { title: 'Long Content', url: 'https://example.com', content: longContent },
     ]);
@@ -146,8 +146,63 @@ describe('WebSearch Tool', () => {
     );
 
     expect(result).toContain('Long Content');
-    // 300 char truncation
-    expect(result).not.toContain('A'.repeat(500));
+    expect(result).toContain('[omitted]');
+    expect(result).toContain('IMPORTANT_TAIL');
+    expect(result).not.toContain(longContent);
+  });
+
+  it('deduplicates equivalent result URLs and reports omitted items', async () => {
+    mockSearch.mockResolvedValueOnce([
+      {
+        title: 'Docs',
+        url: 'https://example.com/docs/?b=2&a=1#intro',
+        content: 'First result.',
+      },
+      {
+        title: 'Docs duplicate',
+        url: 'https://EXAMPLE.com/docs?a=1&b=2',
+        content: 'Duplicate result.',
+      },
+      {
+        title: 'Empty URL',
+        url: '',
+        content: 'Should not be shown.',
+      },
+      {
+        title: 'Other',
+        url: 'https://example.org/guide',
+        content: 'Other result.',
+      },
+    ]);
+
+    const result = await webSearchTool.config.execute(
+      { query: 'docs', allowed_domains: undefined, blocked_domains: undefined },
+      baseContext,
+    );
+
+    expect(result).toContain('2 unique results shown, 2 duplicate/empty results omitted');
+    expect(result).toContain('Docs');
+    expect(result).toContain('Other');
+    expect(result).not.toContain('Docs duplicate');
+    expect(result).not.toContain('Should not be shown');
+  });
+
+  it('normalizes whitespace in snippets before formatting', async () => {
+    mockSearch.mockResolvedValueOnce([
+      {
+        title: 'Whitespace',
+        url: 'https://example.com/whitespace',
+        content: 'Line one\n\n      Line two\tLine three',
+      },
+    ]);
+
+    const result = await webSearchTool.config.execute(
+      { query: 'whitespace', allowed_domains: undefined, blocked_domains: undefined },
+      baseContext,
+    );
+
+    expect(result).toContain('Line one Line two Line three');
+    expect(result).not.toContain('Line one\n\n');
   });
 
   it('should handle results without content', async () => {
