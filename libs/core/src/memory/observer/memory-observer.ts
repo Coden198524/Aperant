@@ -17,7 +17,10 @@ import type {
   SessionType,
   AcuteCandidate,
 } from '../types.js';
-import type { AutocodeMemoryRuntimeObservationIpcRequest } from '../runtime.js';
+import {
+  compactAutocodeMemoryRuntimeToolArgs,
+  type AutocodeMemoryRuntimeObservationIpcRequest,
+} from '../runtime.js';
 import { Scratchpad } from './scratchpad.js';
 import { detectDeadEnd } from './dead-end-detector.js';
 import { applyTrustGate } from './trust-gate.js';
@@ -241,7 +244,8 @@ export class MemoryObserver {
   private onToolCall(
     msg: Extract<MemoryObserverIpcRequest, { type: 'memory:tool-call' }>,
   ): void {
-    const { toolName, args, stepNumber } = msg;
+    const { toolName, stepNumber } = msg;
+    const args = compactAutocodeMemoryRuntimeToolArgs(msg.args);
 
     // Track external tool calls for trust gate
     if (EXTERNAL_TOOL_NAMES.has(toolName)) {

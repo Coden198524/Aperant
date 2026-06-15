@@ -203,6 +203,32 @@ describe('MemoryObserver', () => {
       expect(scratchpad.analytics.configFilesTouched.has('/tsconfig.json')).toBe(true);
       expect(scratchpad.analytics.fileEditSet.has('/tsconfig.json')).toBe(true);
     });
+
+    it('canonicalizes raw camelCase tool args before tracking files', () => {
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: {
+          filePath: ' src\\auth\\token.ts ',
+          content: 'ignored large read payload',
+        },
+        stepNumber: 1,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Edit',
+        args: {
+          filePath: 'src/auth//token.ts',
+          oldString: 'old'.repeat(1_000),
+          newString: 'new'.repeat(1_000),
+        },
+        stepNumber: 2,
+      });
+
+      const scratchpad = observer.getScratchpad();
+      expect(scratchpad.analytics.fileAccessCounts.get('src/auth/token.ts')).toBe(2);
+      expect(scratchpad.analytics.fileEditSet.has('src/auth/token.ts')).toBe(true);
+    });
   });
 
   describe('finalize()', () => {
