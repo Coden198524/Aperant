@@ -150,9 +150,14 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;');
     expect(runner).toContain('const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;');
     expect(runner).toContain('formatCliMemoryPromptLine(memory)');
+    expect(runner).toContain('const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [');
+    expect(runner).toContain('function stripCliLowValueMemoryText(content)');
+    expect(runner).toContain('const memoryContent = stripCliLowValueMemoryText(memory.content);');
+    expect(runner).toContain('if (included === 0)');
     expect(runner).toContain('limitCliMemoryContext(lines.join');
     expect(runner).toContain('const compactSummary = limitCliMemoryStorageText(summary);');
     expect(runner).toContain('compactCliMemoryStorageFiles(getWorkItemFiles(subtask || {}))');
+    expect(runner).not.toContain('limitLogText(memory.content, CLI_MEMORY_ITEM_MAX_CHARS)');
     expect(runner).not.toContain('limitLogText(memory.content, 900)');
     expect(runner).not.toContain('dedupeCliMemories(memories).slice(0, 8)');
   });

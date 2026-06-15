@@ -671,6 +671,35 @@ const CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS = 1200;
 const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;
 const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;
 const CLI_MEMORY_STORAGE_FILE_REF_MAX_CHARS = 160;
+const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [
+  /^(?:Summary:\\s*)?Efficient token usage\\b/i,
+  /^(?:Summary:\\s*)?High token usage per step\\b/i,
+  /^(?:Summary:\\s*)?No memory search run\\b/i,
+  /^(?:Summary:\\s*)?No relevant (?:[\\w/-]+\\s+)*memories found\\b/i,
+  /^(?:Summary:\\s*)?Memory search results\\b/i,
+  /^(?:Summary:\\s*)?Memory system not available\\b/i,
+  /^(?:Summary:\\s*)?Memory (?:recorded|skipped|noted locally|system not available)\\b/i,
+  /^(?:Summary:\\s*)?Work unit .+ finished with outcome:\\s*success\\.?$/i,
+  /^(?:Summary:\\s*)?Completed quickly with few steps\\b/i,
+  /^(?:Summary:\\s*)?Many steps required\\b/i,
+  /^(?:Summary:\\s*)?Used diverse set of tools\\b/i,
+  /^(?:Summary:\\s*)?(?:task|implementation|session|work|subtask)\\s+(?:completed|finished|done|succeeded)\\b/i,
+  /^(?:Summary:\\s*)?completed successfully\\b/i,
+  /^(?:Summary:\\s*)?(?:tests?|checks?|typecheck|lint|build)\\s+(?:passed|succeeded)\\.?$/i,
+  /^(?:Summary:\\s*)?(?:[\\w./:-]+\\s+){1,5}(?:tests?|checks?|typecheck|lint|build)\\s+(?:passed|succeeded)\\.?$/i,
+  /^(?:Summary:\\s*)?all tests passed\\b/i,
+  /^(?:Summary:\\s*)?no issues found\\b/i,
+  /^Completed at:\\s*\\S+/i,
+  /^Duration:\\s*\\d+ms$/i,
+  /^(?:Summary:\\s*)?\\u9ad8\\u6548\\s*token\\s*(?:\\u4f7f\\u7528|\\u6d88\\u8017)/i,
+  /^(?:Summary:\\s*)?token\\s*(?:\\u4f7f\\u7528|\\u6d88\\u8017|\\u7528\\u91cf).*(?:\\u9ad8|\\u4f4e|\\u5c11|\\u591a)/i,
+  /^(?:Summary:\\s*)?(?:\\u4efb\\u52a1|\\u5b9e\\u73b0|\\u4f1a\\u8bdd|\\u5de5\\u4f5c|\\u5b50\\u4efb\\u52a1)\\s*(?:\\u5df2)?(?:\\u5b8c\\u6210|\\u7ed3\\u675f|\\u6210\\u529f)/i,
+  /^(?:Summary:\\s*)?(?:\\u5168\\u90e8|\\u6240\\u6709)?\\s*\\u6d4b\\u8bd5\\s*(?:\\u5df2)?\\u901a\\u8fc7/i,
+  /^(?:Summary:\\s*)?(?:\\u7c7b\\u578b\\u68c0\\u67e5|\\u6784\\u5efa|\\u7f16\\u8bd1|\\u68c0\\u67e5|lint)\\s*(?:\\u5df2)?\\u901a\\u8fc7[.\\u3002]?$/i,
+  /^(?:Summary:\\s*)?(?:\\u6ca1\\u6709|\\u672a)\\s*\\u53d1\\u73b0\\u95ee\\u9898/i,
+  /^(?:Summary:\\s*)?\\u65e0\\u95ee\\u9898/i,
+];
+const CLI_LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN = /(?<=[.!?\\u3002\\uff01\\uff1f])\\s+|;\\s+/;
 const CODING_WORKER_INACTIVITY_TIMEOUT_MS = readPositiveInteger(
   process.env.AUTOCODE_WORKER_INACTIVITY_TIMEOUT_MS,
   10 * 60 * 1000,
@@ -722,14 +751,22 @@ async function initializeCliMemoryRuntime() {
     '',
   ];
   let omitted = 0;
+  let included = 0;
   for (const memory of deduped) {
     const line = formatCliMemoryPromptLine(memory);
+    if (!line) {
+      continue;
+    }
     const next = lines.concat(line).join('\\n');
     if (next.length > CLI_MEMORY_CONTEXT_MAX_CHARS) {
       omitted += 1;
       continue;
     }
     lines.push(line);
+    included += 1;
+  }
+  if (included === 0) {
+    return '';
   }
   if (omitted > 0) {
     lines.push('- ... ' + omitted + ' more memory item(s) omitted; search memory only if needed.');
@@ -738,6 +775,10 @@ async function initializeCliMemoryRuntime() {
 }
 
 function formatCliMemoryPromptLine(memory) {
+  const memoryContent = stripCliLowValueMemoryText(memory.content);
+  if (!memoryContent) {
+    return '';
+  }
   const sourceRelatedFiles = Array.isArray(memory.relatedFiles)
     ? memory.relatedFiles.filter(Boolean)
     : [];
@@ -747,7 +788,38 @@ function formatCliMemoryPromptLine(memory) {
   const files = relatedFiles.length > 0
     ? ' Files: ' + relatedFiles.join(', ') + (sourceRelatedFiles.length > relatedFiles.length ? ', ...' : '') + '.'
     : '';
-  return '- [' + memory.type + '] ' + limitLogText(memory.content, CLI_MEMORY_ITEM_MAX_CHARS) + files;
+  return '- [' + memory.type + '] ' + limitLogText(memoryContent, CLI_MEMORY_ITEM_MAX_CHARS) + files;
+}
+
+function stripCliLowValueMemoryText(content) {
+  return String(content || '')
+    .split(/\\r?\\n/)
+    .map(stripCliLowValueMemoryLine)
+    .filter(Boolean)
+    .join('\\n')
+    .trim();
+}
+
+function stripCliLowValueMemoryLine(line) {
+  const trimmed = String(line || '').trim();
+  if (!trimmed || isCliLowValueMemoryLine(trimmed)) {
+    return '';
+  }
+  const fragments = trimmed
+    .split(CLI_LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN)
+    .map((fragment) => fragment.trim())
+    .filter(Boolean);
+  if (fragments.length <= 1) {
+    return trimmed;
+  }
+  return fragments
+    .filter((fragment) => !isCliLowValueMemoryLine(fragment))
+    .join(' ')
+    .trim();
+}
+
+function isCliLowValueMemoryLine(line) {
+  return CLI_LOW_VALUE_MEMORY_LINE_PATTERNS.some((pattern) => pattern.test(line));
 }
 
 function limitCliMemoryContext(value) {
