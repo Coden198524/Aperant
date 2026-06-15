@@ -32,6 +32,26 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(message.length).toBeLessThan(AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS + 3_500);
   });
 
+  it('folds repeated task description lines before spec kickoff prompts', () => {
+    const repeatedLine = 'KICKOFF TASK REPEAT: same pasted diagnostic line without new signal.';
+    const message = buildAutocodeSpecKickoffMessage({
+      agentType: 'spec_discovery',
+      specPhase: 'discovery',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      taskDescription: [
+        'KICKOFF TASK HEAD',
+        ...Array.from({ length: 120 }, () => repeatedLine),
+        'KICKOFF TASK TAIL',
+      ].join('\n'),
+    });
+
+    expect(message).toContain('KICKOFF TASK HEAD');
+    expect(message).toContain('KICKOFF TASK TAIL');
+    expect(message).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((message.match(/KICKOFF TASK REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('compacts large prior phase outputs before injecting kickoff context', () => {
     const contextMarkdown = [
       '# Project Context',
@@ -84,6 +104,31 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(message).toContain('Tail detail 199');
     expect(message).toContain('Compact JSON summary');
     expect(message.length).toBeLessThan(14_000);
+  });
+
+  it('folds repeated prior phase output lines before kickoff context injection', () => {
+    const repeatedLine = 'KICKOFF PRIOR REPEAT: same evidence line without new signal.';
+    const message = buildAutocodeSpecKickoffMessage({
+      agentType: 'planner',
+      specPhase: 'planning',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+      taskDescription: 'Plan a change.',
+      priorPhaseOutputs: {
+        'context.md': [
+          '# Project Context',
+          'KICKOFF PRIOR HEAD',
+          ...Array.from({ length: 120 }, () => repeatedLine),
+          'KICKOFF PRIOR TAIL',
+        ].join('\n'),
+      },
+    });
+
+    expect(message).toContain('## CONTEXT FROM PRIOR PHASES');
+    expect(message).toContain('KICKOFF PRIOR HEAD');
+    expect(message).toContain('KICKOFF PRIOR TAIL');
+    expect(message).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((message.match(/KICKOFF PRIOR REPEAT/g) ?? [])).toHaveLength(1);
   });
 
   it('caps oversized project documentation references in spec phase kickoff', () => {

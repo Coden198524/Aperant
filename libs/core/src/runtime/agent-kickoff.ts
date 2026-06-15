@@ -1,10 +1,11 @@
 import type { AgentType } from '../config/agent-configs.js';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import {
+  type AutocodeOutputLanguage,
   appendAutocodeLanguageRequirement,
   getAutocodeImplementationPlanLanguageRequirement,
-  type AutocodeOutputLanguage,
 } from './agent-language.js';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 const PRIOR_PHASE_CONTEXT_TOTAL_MAX_CHARS = 10_000;
 const PRIOR_PHASE_CONTEXT_FILE_MAX_CHARS = 2_800;
@@ -346,10 +347,12 @@ function summarizeJsonValue(value: unknown): unknown {
 }
 
 function normalizePriorPhaseOutput(content: string): string {
-  return String(content ?? '')
+  const normalized = String(content ?? '')
     .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
     .replace(/\n{3,}/g, '\n\n')
     .trim();
+  return foldRepeatedAutocodePromptLines(normalized).trim();
 }
 
 function appendCompactSection(lines: string[], title: string, items: readonly string[]): void {
@@ -378,8 +381,9 @@ function compactAutocodeKickoffTaskDescription(value: string): string {
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{4,}/g, '\n\n\n')
     .trim();
-  if (normalized.length <= AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS) {
-    return normalized;
+  const compact = foldRepeatedAutocodePromptLines(normalized).trim();
+  if (compact.length <= AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS) {
+    return compact;
   }
 
   const budget = Math.max(
@@ -389,9 +393,9 @@ function compactAutocodeKickoffTaskDescription(value: string): string {
   const headBudget = Math.ceil(budget * 0.65);
   const tailBudget = Math.max(0, budget - headBudget);
   return [
-    normalized.slice(0, headBudget).trimEnd(),
+    compact.slice(0, headBudget).trimEnd(),
     TASK_DESCRIPTION_COMPACTION_NOTICE,
-    normalized.slice(-tailBudget).trimStart(),
+    compact.slice(-tailBudget).trimStart(),
   ].join('');
 }
 
