@@ -325,6 +325,10 @@ export class MemoryServiceImpl implements MemoryService {
         memories = memories.slice(0, resultLimit);
       }
 
+      if (normalizedFilters.recordAccess) {
+        await this.markMemoriesAccessed(memories);
+      }
+
       return memories;
     } catch (error) {
       console.error('[MemoryService] Failed to search memories:', error);
@@ -337,7 +341,7 @@ export class MemoryServiceImpl implements MemoryService {
    * Returns the single best match or null.
    * Used for fast lookups (e.g., StepInjectionDecider).
    */
-  async searchByPattern(pattern: string, opts?: { projectId?: string }): Promise<Memory | null> {
+  async searchByPattern(pattern: string, opts?: { projectId?: string; recordAccess?: boolean }): Promise<Memory | null> {
     const normalizedPattern = normalizeMemorySearchQuery(pattern);
     if (!normalizedPattern) {
       return null;
@@ -370,6 +374,9 @@ export class MemoryServiceImpl implements MemoryService {
       for (const result of results) {
         const memory = memoriesById.get(result.memoryId);
         if (memory && isMemoryEligibleForPromptContext(memory)) {
+          if (opts?.recordAccess !== false) {
+            await this.markMemoriesAccessed([memory]);
+          }
           return memory;
         }
       }
@@ -402,7 +409,7 @@ export class MemoryServiceImpl implements MemoryService {
    */
   async searchWorkflowRecipe(
     taskDescription: string,
-    opts?: { limit?: number; projectId?: string },
+    opts?: { limit?: number; projectId?: string; recordAccess?: boolean },
   ): Promise<Memory[]> {
     const normalizedTaskDescription = normalizeMemorySearchQuery(taskDescription);
     const limit = normalizeRequiredMemoryLimit(
@@ -424,7 +431,11 @@ export class MemoryServiceImpl implements MemoryService {
       const recipes = result.memories.filter((m) =>
         m.type === 'workflow_recipe' && isMemoryEligibleForPromptContext(m)
       );
-      return recipes.slice(0, limit);
+      const selectedRecipes = recipes.slice(0, limit);
+      if (opts?.recordAccess !== false) {
+        await this.markMemoriesAccessed(selectedRecipes);
+      }
+      return selectedRecipes;
     } catch (error) {
       console.error('[MemoryService] searchWorkflowRecipe failed:', error);
       return [];
@@ -591,6 +602,42 @@ export class MemoryServiceImpl implements MemoryService {
       return null;
     }
   }
+
+  private async markMemoriesAccessed(memories: Memory[]): Promise<void> {
+    const ids = uniqueMemoryIds(memories);
+    if (ids.length === 0) {
+      return;
+    }
+
+    const now = new Date().toISOString();
+    try {
+      await this.db.batch(
+        ids.map((id) => ({
+          sql: `UPDATE memories
+                SET access_count = access_count + 1,
+                    last_accessed_at = ?
+                WHERE id = ?`,
+          args: [now, id],
+        })),
+      );
+    } catch (error) {
+      console.error('[MemoryService] markMemoriesAccessed failed:', error);
+    }
+  }
+}
+
+function uniqueMemoryIds(memories: Memory[]): string[] {
+  const seen = new Set<string>();
+  const ids: string[] = [];
+  for (const memory of memories) {
+    const id = memory.id.trim();
+    if (!id || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+    ids.push(id);
+  }
+  return ids;
 }
 
 function normalizeMemorySearchFilters(filters: MemorySearchFilters): MemorySearchFilters {

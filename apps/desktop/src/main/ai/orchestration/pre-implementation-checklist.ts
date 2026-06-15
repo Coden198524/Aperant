@@ -24,6 +24,7 @@ import {
 import {
   isMemoryEligibleForPromptContext,
 } from '../memory/retrieval/context-packer';
+import { recordSelectedMemoryAccess } from '@autocode/core/memory/injection';
 import { compactHeadTailSingleLineText } from './prompt-compaction';
 
 export const PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX = 5;
@@ -174,10 +175,12 @@ async function analyzeHistoricalFailures(
       promptContextOnly: true,
     });
 
-    return failures
+    const selectedFailures = failures
       .filter(isMemoryEligibleForPromptContext)
-      .slice(0, PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX)
-      .map((failure) => ({
+      .slice(0, PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX);
+    await recordSelectedMemoryAccess(memoryService, selectedFailures);
+
+    return selectedFailures.map((failure) => ({
         category: 'historical_failure' as const,
         priority: 'high' as const,
         issue: limitChecklistText(failure.content, PRE_IMPLEMENTATION_CHECKLIST_TEXT_MAX_CHARS),

@@ -683,6 +683,7 @@ export function registerMemoryHandlers(): void {
         const memories = await service.search({
           query: query || undefined,
           ...(filters as object),
+          recordAccess: false,
         });
 
         return { success: true, data: memories };

@@ -55,6 +55,7 @@ describe('memory agent tools', () => {
       limit: 3,
       projectId: 'project-1',
       promptContextOnly: true,
+      recordAccess: true,
     }));
     expect((result.match(/\[gotcha\]/g) ?? [])).toHaveLength(1);
     expect(result).toContain('2. [decision]');
@@ -103,6 +104,7 @@ describe('memory agent tools', () => {
       relatedFiles: ['src/auth/token.ts', 'src/auth/session.ts'],
       projectId: 'project-1',
       promptContextOnly: true,
+      recordAccess: true,
     }));
   });
 

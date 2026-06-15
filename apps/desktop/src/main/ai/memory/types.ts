@@ -226,9 +226,12 @@ export interface WorkUnitResult {
 export interface MemoryService {
   store(entry: MemoryRecordEntry): Promise<string>;
   search(filters: MemorySearchFilters): Promise<Memory[]>;
-  searchByPattern(pattern: string, opts?: { projectId?: string }): Promise<Memory | null>;
+  searchByPattern(pattern: string, opts?: { projectId?: string; recordAccess?: boolean }): Promise<Memory | null>;
   insertUserTaught(content: string, projectId: string, tags: string[]): Promise<string>;
-  searchWorkflowRecipe(taskDescription: string, opts?: { limit?: number; projectId?: string }): Promise<Memory[]>;
+  searchWorkflowRecipe(
+    taskDescription: string,
+    opts?: { limit?: number; projectId?: string; recordAccess?: boolean },
+  ): Promise<Memory[]>;
   updateAccessCount(memoryId: string): Promise<void>;
   deprecateMemory(memoryId: string): Promise<void>;
   verifyMemory(memoryId: string): Promise<void>;
@@ -299,6 +302,7 @@ export interface MemorySearchFilters {
   sort?: 'relevance' | 'recency' | 'confidence';
   excludeDeprecated?: boolean;
   promptContextOnly?: boolean;
+  recordAccess?: boolean;
   filter?: (memory: Memory) => boolean;
 }
 
@@ -391,6 +395,10 @@ export type MemoryIpcResponse =
       type: 'memory:stored';
       requestId: string;
       id: string;
+    }
+  | {
+      type: 'memory:accessed';
+      requestId: string;
     }
   | {
       type: 'memory:step-injection-result';

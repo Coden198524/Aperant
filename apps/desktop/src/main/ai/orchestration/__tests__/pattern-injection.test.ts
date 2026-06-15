@@ -50,6 +50,7 @@ describe('pattern injection memory success cases', () => {
           userVerified: true,
         }),
       ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
     } as unknown as MemoryService;
 
     const result = await enhanceCoderPrompt('Base prompt\n\n## STEP 6: IMPLEMENT THE SUBTASK', {
@@ -69,6 +70,9 @@ describe('pattern injection memory success cases', () => {
       promptContextOnly: true,
       types: ['pattern'],
     }));
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('good');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('verified');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('low');
     expect(result.enhancedPrompt).toContain('Trusted success pattern should remain.');
     expect(result.enhancedPrompt).toContain('Verified low confidence pattern should remain.');
     expect(result.enhancedPrompt).not.toContain('Low confidence pattern should be hidden.');

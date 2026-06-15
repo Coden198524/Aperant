@@ -1,3 +1,5 @@
+import { selectMemoryContextItems } from './injection/context-selection.js';
+import { estimateTokens } from './retrieval/context-packer.js';
 import type {
   Memory,
   MemoryRecordEntry,
@@ -5,8 +7,6 @@ import type {
   MemoryType,
   WorkUnitRef,
 } from './types.js';
-import { selectMemoryContextItems } from './injection/context-selection.js';
-import { estimateTokens } from './retrieval/context-packer.js';
 
 export interface AutocodeMemoryRuntimeToolCall {
   toolName: string;
@@ -64,6 +64,11 @@ export type AutocodeMemoryRuntimeToolIpcRequest =
       entry: MemoryRecordEntry;
     }
   | {
+      type: 'memory:access';
+      requestId: string;
+      memoryId: string;
+    }
+  | {
       type: 'memory:step-injection-request';
       requestId: string;
       stepNumber: number;
@@ -84,6 +89,10 @@ export type AutocodeMemoryRuntimeIpcResponse =
       type: 'memory:stored';
       requestId: string;
       id: string;
+    }
+  | {
+      type: 'memory:accessed';
+      requestId: string;
     }
   | {
       type: 'memory:step-injection-result';
@@ -212,7 +221,9 @@ const AUTOCODE_MEMORY_RUNTIME_REASONING_SIGNAL_PATTERNS = [
   /this method (is deprecated|has been removed|no longer exists)/i,
 ];
 
-export function compactAutocodeMemoryRuntimeToolArgs(args: Record<string, unknown>): Record<string, unknown> {
+export function compactAutocodeMemoryRuntimeToolArgs(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
   const compact: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(args)) {
@@ -239,13 +250,17 @@ export function compactAutocodeMemoryRuntimeToolArgs(args: Record<string, unknow
 export function compactAutocodeMemoryRuntimeRecentToolCalls(
   toolCalls: readonly AutocodeMemoryRuntimeToolCall[],
 ): AutocodeMemoryRuntimeToolCall[] {
-  return toolCalls.slice(-AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT).map((toolCall) => ({
-    toolName: toolCall.toolName,
-    args: compactAutocodeMemoryRuntimeToolArgs(toolCall.args),
-  }));
+  return toolCalls
+    .slice(-AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT)
+    .map((toolCall) => ({
+      toolName: toolCall.toolName,
+      args: compactAutocodeMemoryRuntimeToolArgs(toolCall.args),
+    }));
 }
 
-export function compactAutocodeMemoryRuntimeInjectedMemoryIds(ids: Iterable<unknown>): string[] {
+export function compactAutocodeMemoryRuntimeInjectedMemoryIds(
+  ids: Iterable<unknown>,
+): string[] {
   const compact = new Set<string>();
 
   for (const rawId of ids) {
@@ -253,7 +268,10 @@ export function compactAutocodeMemoryRuntimeInjectedMemoryIds(ids: Iterable<unkn
       continue;
     }
     const id = rawId.trim();
-    if (!id || id.length > AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_MAX_CHARS) {
+    if (
+      !id ||
+      id.length > AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_MAX_CHARS
+    ) {
       continue;
     }
     if (compact.has(id)) {
@@ -272,7 +290,9 @@ export function compactAutocodeMemoryRuntimeInjectedMemoryIds(ids: Iterable<unkn
   return [...compact];
 }
 
-export function compactAutocodeMemoryRuntimeToolResult(result: unknown): unknown {
+export function compactAutocodeMemoryRuntimeToolResult(
+  result: unknown,
+): unknown {
   if (typeof result === 'string') {
     return truncateAutocodeMemoryRuntimeText(
       result,
@@ -280,23 +300,34 @@ export function compactAutocodeMemoryRuntimeToolResult(result: unknown): unknown
       { preferDiagnosticWindow: true, preserveTail: true },
     );
   }
-  if (typeof result === 'number' || typeof result === 'boolean' || result === null) {
+  if (
+    typeof result === 'number' ||
+    typeof result === 'boolean' ||
+    result === null
+  ) {
     return result;
   }
   if (Array.isArray(result)) {
     return {
       type: 'array',
       length: result.length,
-      items: result.slice(0, 5).map((item) => compactAutocodeMemoryRuntimeValue(
-        item,
-        AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
-        { preferDiagnosticWindow: true, preserveTail: true },
-      )),
+      items: result
+        .slice(0, 5)
+        .map((item) =>
+          compactAutocodeMemoryRuntimeValue(
+            item,
+            AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
+            { preferDiagnosticWindow: true, preserveTail: true },
+          ),
+        ),
     };
   }
   if (typeof result === 'object' && result !== null) {
     const compact: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(result).slice(0, AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT)) {
+    for (const [key, value] of Object.entries(result).slice(
+      0,
+      AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT,
+    )) {
       if (AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS.has(key)) {
         compact[key] = '[omitted]';
         continue;
@@ -315,7 +346,9 @@ export function compactAutocodeMemoryRuntimeToolResult(result: unknown): unknown
   return undefined;
 }
 
-export function compactAutocodeMemoryRuntimeReasoningText(text: string): string {
+export function compactAutocodeMemoryRuntimeReasoningText(
+  text: string,
+): string {
   return truncateAutocodeMemoryRuntimeText(
     text,
     AUTOCODE_MEMORY_RUNTIME_REASONING_TEXT_MAX_CHARS,
@@ -330,18 +363,28 @@ export function compactAutocodeMemoryRuntimeReasoningText(text: string): string 
 function compactAutocodeMemoryRuntimeValue(
   value: unknown,
   maxStringChars: number,
-  options: { preferDiagnosticWindow?: boolean; preserveTail?: boolean; signalPatterns?: readonly RegExp[] } = {},
+  options: {
+    preferDiagnosticWindow?: boolean;
+    preserveTail?: boolean;
+    signalPatterns?: readonly RegExp[];
+  } = {},
 ): unknown {
   if (typeof value === 'string') {
     return truncateAutocodeMemoryRuntimeText(value, maxStringChars, options);
   }
-  if (typeof value === 'number' || typeof value === 'boolean' || value === null) {
+  if (
+    typeof value === 'number' ||
+    typeof value === 'boolean' ||
+    value === null
+  ) {
     return value;
   }
   if (Array.isArray(value)) {
     const items = value
       .slice(0, 5)
-      .map((item) => compactAutocodeMemoryRuntimeValue(item, maxStringChars, options))
+      .map((item) =>
+        compactAutocodeMemoryRuntimeValue(item, maxStringChars, options),
+      )
       .filter((item) => item !== undefined);
     return items.length > 0 ? items : undefined;
   }
@@ -351,7 +394,11 @@ function compactAutocodeMemoryRuntimeValue(
 function truncateAutocodeMemoryRuntimeText(
   text: string,
   maxChars: number,
-  options: { preferDiagnosticWindow?: boolean; preserveTail?: boolean; signalPatterns?: readonly RegExp[] } = {},
+  options: {
+    preferDiagnosticWindow?: boolean;
+    preserveTail?: boolean;
+    signalPatterns?: readonly RegExp[];
+  } = {},
 ): string {
   const compact = text.replace(/\s+/g, ' ').trim();
   if (maxChars <= 0) {
@@ -371,12 +418,18 @@ function truncateAutocodeMemoryRuntimeText(
     );
     if (diagnosticIndex > Math.floor(maxChars / 2)) {
       if (options.preserveTail) {
-        return truncateAutocodeMemoryRuntimeDiagnosticTailText(compact, maxChars, diagnosticIndex);
+        return truncateAutocodeMemoryRuntimeDiagnosticTailText(
+          compact,
+          maxChars,
+          diagnosticIndex,
+        );
       }
       const headBudget = Math.min(180, Math.floor(maxChars / 4));
       const windowBudget = Math.max(0, maxChars - headBudget - 8);
       const windowStart = Math.max(0, diagnosticIndex - 80);
-      const window = compact.slice(windowStart, windowStart + windowBudget).trim();
+      const window = compact
+        .slice(windowStart, windowStart + windowBudget)
+        .trim();
       return `${`${compact.slice(0, headBudget).trimEnd()} ... ${window}`.slice(0, maxChars - 3).trimEnd()}...`;
     }
   }
@@ -388,7 +441,10 @@ function truncateAutocodeMemoryRuntimeText(
   return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
 }
 
-function truncateAutocodeMemoryRuntimeHeadTailText(text: string, maxChars: number): string {
+function truncateAutocodeMemoryRuntimeHeadTailText(
+  text: string,
+  maxChars: number,
+): string {
   const marker = ' ... [middle omitted] ... ';
   if (maxChars <= 0) {
     return '';
@@ -421,20 +477,28 @@ function truncateAutocodeMemoryRuntimeDiagnosticTailText(
   const tailBudget = Math.min(280, Math.max(96, Math.floor(maxChars * 0.24)));
   const diagnosticBudget = Math.max(
     0,
-    maxChars - headBudget - tailBudget - (marker.length * 2),
+    maxChars - headBudget - tailBudget - marker.length * 2,
   );
   if (diagnosticBudget < 96) {
     return truncateAutocodeMemoryRuntimeHeadTailText(text, maxChars);
   }
 
-  const diagnosticStart = Math.max(0, diagnosticIndex - Math.floor(diagnosticBudget * 0.2));
-  const diagnosticWindow = text.slice(diagnosticStart, diagnosticStart + diagnosticBudget).trim();
+  const diagnosticStart = Math.max(
+    0,
+    diagnosticIndex - Math.floor(diagnosticBudget * 0.2),
+  );
+  const diagnosticWindow = text
+    .slice(diagnosticStart, diagnosticStart + diagnosticBudget)
+    .trim();
   const head = text.slice(0, headBudget).trimEnd();
   const tail = text.slice(-tailBudget).trimStart();
   return `${head}${marker}${diagnosticWindow}${marker}${tail}`;
 }
 
-function findAutocodeMemoryRuntimeImportantTextIndex(text: string, signalPatterns: readonly RegExp[]): number {
+function findAutocodeMemoryRuntimeImportantTextIndex(
+  text: string,
+  signalPatterns: readonly RegExp[],
+): number {
   const patterns = [
     /\b(error|failed|failure|exception|traceback)\b/i,
     ...signalPatterns,
@@ -453,8 +517,13 @@ export function buildAutocodeWorkUnitOutcomeMemoryEntry(
   input: AutocodeMemoryRuntimeWorkUnitOutcomeInput,
 ): MemoryRecordEntry {
   const completedAt = input.completedAt ?? new Date().toISOString();
-  const content = buildAutocodeWorkUnitOutcomeContent({ ...input, completedAt });
-  const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(input.relatedFiles);
+  const content = buildAutocodeWorkUnitOutcomeContent({
+    ...input,
+    completedAt,
+  });
+  const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(
+    input.relatedFiles,
+  );
   const relatedModules = compactAutocodeMemoryRuntimeBoundedTextList(
     input.relatedModules,
     AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_LIMIT,
@@ -508,7 +577,9 @@ export function buildAutocodeWorkUnitOutcomeSessionInsight(
 ): AutocodeMemoryRuntimeSessionInsight {
   const timestamp = input.completedAt ?? new Date().toISOString();
   const summary = compactAutocodeMemoryRuntimeOutcomeField(input.summary);
-  const description = compactAutocodeMemoryRuntimeOutcomeField(input.workUnitDescription);
+  const description = compactAutocodeMemoryRuntimeOutcomeField(
+    input.workUnitDescription,
+  );
   const error = compactAutocodeMemoryRuntimeOutcomeField(input.error);
   const upstreamTaskIds = compactAutocodeMemoryRuntimeBoundedTextList(
     input.upstreamTaskIds,
@@ -535,7 +606,10 @@ export function buildAutocodeWorkUnitOutcomeSessionInsight(
   };
 }
 
-export function formatAutocodeMemoryRuntimeContext(memories: Memory[], maxItems = 6): string {
+export function formatAutocodeMemoryRuntimeContext(
+  memories: Memory[],
+  maxItems = 6,
+): string {
   const itemLimit = Math.max(0, maxItems);
   const usable = selectMemoryContextItems(memories, {
     maxItems: itemLimit * AUTOCODE_MEMORY_RUNTIME_CONTEXT_CANDIDATE_MULTIPLIER,
@@ -561,7 +635,10 @@ export function formatAutocodeMemoryRuntimeContext(memories: Memory[], maxItems 
       break;
     }
 
-    const formatted = formatAutocodeMemoryRuntimeContextLine(memory, seenContextFiles);
+    const formatted = formatAutocodeMemoryRuntimeContextLine(
+      memory,
+      seenContextFiles,
+    );
     const line = formatted.line;
     const next = [...lines, line].join('\n');
     if (!fitsAutocodeMemoryRuntimeContextBudget(next)) {
@@ -608,16 +685,21 @@ function formatAutocodeMemoryRuntimeContextLine(
 ): FormattedRuntimeContextLine {
   const sourceFiles = uniqueStrings(memory.relatedFiles);
   const unseenFiles = sourceFiles.filter((file) => !seenContextFiles.has(file));
-  const displayedFiles = unseenFiles.slice(0, AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT);
-  const visibleFiles = displayedFiles
-    .map((file) => truncateAutocodeMemoryRuntimePathTailToTokenBudget(
+  const displayedFiles = unseenFiles.slice(
+    0,
+    AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT,
+  );
+  const visibleFiles = displayedFiles.map((file) =>
+    truncateAutocodeMemoryRuntimePathTailToTokenBudget(
       file,
       AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_CHARS,
       AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_TOKENS,
-    ));
-  const files = visibleFiles.length > 0
-    ? ` Files: ${visibleFiles.join(', ')}${unseenFiles.length > visibleFiles.length ? ', ...' : ''}.`
-    : '';
+    ),
+  );
+  const files =
+    visibleFiles.length > 0
+      ? ` Files: ${visibleFiles.join(', ')}${unseenFiles.length > visibleFiles.length ? ', ...' : ''}.`
+      : '';
   return {
     line: `- [${memory.type}] ${truncateAutocodeMemoryRuntimeTextToTokenBudget(
       memory.content,
@@ -633,7 +715,9 @@ function buildAutocodeWorkUnitOutcomeContent(
   input: AutocodeMemoryRuntimeWorkUnitOutcomeInput & { completedAt: string },
 ): string {
   const title = input.workUnitTitle ? ` (${input.workUnitTitle})` : '';
-  const description = compactAutocodeMemoryRuntimeOutcomeField(input.workUnitDescription);
+  const description = compactAutocodeMemoryRuntimeOutcomeField(
+    input.workUnitDescription,
+  );
   const summary = compactAutocodeMemoryRuntimeOutcomeField(input.summary);
   const error = compactAutocodeMemoryRuntimeOutcomeField(input.error);
   const upstreamTaskIds = compactAutocodeMemoryRuntimeBoundedTextList(
@@ -641,8 +725,13 @@ function buildAutocodeWorkUnitOutcomeContent(
     AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT,
     AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_MAX_CHARS,
   );
-  const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(input.relatedFiles);
-  const inlineRelatedFiles = relatedFiles.slice(0, AUTOCODE_MEMORY_RUNTIME_OUTCOME_INLINE_FILE_REF_LIMIT);
+  const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(
+    input.relatedFiles,
+  );
+  const inlineRelatedFiles = relatedFiles.slice(
+    0,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_INLINE_FILE_REF_LIMIT,
+  );
   const lines = [
     `Work unit ${input.workUnitId}${title} finished with outcome: ${input.outcome}.`,
     description ? `Task: ${description}` : '',
@@ -665,7 +754,9 @@ function buildAutocodeWorkUnitOutcomeContent(
   );
 }
 
-function compactAutocodeMemoryRuntimeOutcomeField(value: string | undefined): string | undefined {
+function compactAutocodeMemoryRuntimeOutcomeField(
+  value: string | undefined,
+): string | undefined {
   if (!value?.trim()) {
     return undefined;
   }
@@ -676,7 +767,9 @@ function compactAutocodeMemoryRuntimeOutcomeField(value: string | undefined): st
   );
 }
 
-function compactAutocodeMemoryRuntimeOutcomeFiles(values: readonly unknown[] | undefined): string[] {
+function compactAutocodeMemoryRuntimeOutcomeFiles(
+  values: readonly unknown[] | undefined,
+): string[] {
   const files: string[] = [];
   const seen = new Set<string>();
   for (const file of uniqueStrings(values)) {
@@ -712,7 +805,9 @@ function compactAutocodeMemoryRuntimeBoundedTextList(
   const compactedValues: string[] = [];
   const seen = new Set<string>();
   for (const value of uniqueStrings(values)) {
-    const compacted = truncateAutocodeMemoryRuntimeText(value, maxItemChars, { preserveTail: true });
+    const compacted = truncateAutocodeMemoryRuntimeText(value, maxItemChars, {
+      preserveTail: true,
+    });
     if (!compacted || seen.has(compacted)) {
       continue;
     }
@@ -727,7 +822,10 @@ function compactAutocodeMemoryRuntimeBoundedTextList(
   return compactedValues;
 }
 
-function truncateAutocodeMemoryRuntimePathTail(path: string, maxChars: number): string {
+function truncateAutocodeMemoryRuntimePathTail(
+  path: string,
+  maxChars: number,
+): string {
   const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
   if (maxChars <= 0) {
     return '';
@@ -758,7 +856,10 @@ function truncateAutocodeMemoryRuntimePathTailToTokenBudget(
   let high = Math.min(maxChars, normalized.length);
   while (low <= high) {
     const midpoint = Math.floor((low + high) / 2);
-    const candidate = truncateAutocodeMemoryRuntimePathTail(normalized, midpoint);
+    const candidate = truncateAutocodeMemoryRuntimePathTail(
+      normalized,
+      midpoint,
+    );
     if (estimateTokens(candidate) <= maxTokens) {
       best = candidate;
       low = midpoint + 1;
@@ -774,7 +875,11 @@ function truncateAutocodeMemoryRuntimeTextToTokenBudget(
   text: string,
   maxChars: number,
   maxTokens: number,
-  options: { preferDiagnosticWindow?: boolean; preserveTail?: boolean; signalPatterns?: readonly RegExp[] } = {},
+  options: {
+    preferDiagnosticWindow?: boolean;
+    preserveTail?: boolean;
+    signalPatterns?: readonly RegExp[];
+  } = {},
 ): string {
   if (maxChars <= 0 || maxTokens <= 0) {
     return '';
@@ -791,8 +896,15 @@ function truncateAutocodeMemoryRuntimeTextToTokenBudget(
   let high = Math.min(maxChars, compact.length);
   while (low <= high) {
     const midpoint = Math.floor((low + high) / 2);
-    const candidate = truncateAutocodeMemoryRuntimeText(compact, midpoint, options);
-    if (candidate.length <= maxChars && estimateTokens(candidate) <= maxTokens) {
+    const candidate = truncateAutocodeMemoryRuntimeText(
+      compact,
+      midpoint,
+      options,
+    );
+    if (
+      candidate.length <= maxChars &&
+      estimateTokens(candidate) <= maxTokens
+    ) {
       best = candidate;
       low = midpoint + 1;
     } else {
@@ -805,11 +917,11 @@ function truncateAutocodeMemoryRuntimeTextToTokenBudget(
 
 function uniqueStrings(values: readonly unknown[] | undefined): string[] {
   if (!values) return [];
-  return [...new Set(
-    values
-      .map((value) => String(value ?? '').trim())
-      .filter(Boolean),
-  )];
+  return [
+    ...new Set(
+      values.map((value) => String(value ?? '').trim()).filter(Boolean),
+    ),
+  ];
 }
 
 export type AutocodeMemoryRuntimeMemoryType = MemoryType;

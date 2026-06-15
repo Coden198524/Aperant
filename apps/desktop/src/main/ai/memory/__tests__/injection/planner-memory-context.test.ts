@@ -67,6 +67,7 @@ describe('buildPlannerMemoryContext', () => {
       'proj-1',
     );
     expect(result).toBe('');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalled();
   });
 
   it('includes workflow recipes when found', async () => {
@@ -78,6 +79,12 @@ describe('buildPlannerMemoryContext', () => {
 
     expect(result).toContain('WORKFLOW RECIPES');
     expect(result).toContain('Step 1: Validate token');
+    expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledWith('Add auth', {
+      limit: 1,
+      projectId: 'proj-1',
+      recordAccess: false,
+    });
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('r1');
   });
 
   it('includes task calibrations with ratio when JSON content is parseable', async () => {
@@ -98,6 +105,7 @@ describe('buildPlannerMemoryContext', () => {
 
     expect(result).toContain('TASK CALIBRATIONS');
     expect(result).toContain('1.40x');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('cal-1');
   });
 
   it('includes dead ends when found', async () => {
@@ -239,6 +247,7 @@ describe('buildPlannerMemoryContext', () => {
     expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('task', {
       limit: 1,
       projectId: 'my-project',
+      recordAccess: false,
     });
   });
 
@@ -251,6 +260,7 @@ describe('buildPlannerMemoryContext', () => {
     expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('Add auth flow', {
       limit: 1,
       projectId: 'my-project',
+      recordAccess: false,
     });
   });
 
@@ -265,6 +275,7 @@ describe('buildPlannerMemoryContext', () => {
     expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledWith('Add auth', {
       limit: 1,
       projectId: 'proj-1',
+      recordAccess: false,
     });
     expect(result).toContain('WORKFLOW RECIPES');
   });

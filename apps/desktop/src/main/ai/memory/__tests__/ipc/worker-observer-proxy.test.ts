@@ -241,6 +241,7 @@ describe('WorkerObserverProxy', () => {
           { length: 20 },
           (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
         ),
+        recordAccess: true,
         filter: () => true,
       });
 
@@ -249,6 +250,7 @@ describe('WorkerObserverProxy', () => {
           query?: string;
           relatedFiles?: string[];
           relatedModules?: string[];
+          recordAccess?: boolean;
           filter?: unknown;
         };
       };
@@ -267,6 +269,7 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.filters.relatedModules).toHaveLength(12);
       expect(sentMsg.filters.relatedModules?.every((module) => module.length <= 96)).toBe(true);
       expect(sentMsg.filters.relatedModules?.every((module) => estimateTokens(module) <= 32)).toBe(true);
+      expect(sentMsg.filters.recordAccess).toBe(true);
       expect(sentMsg.filters).not.toHaveProperty('filter');
     });
 
@@ -501,6 +504,28 @@ describe('WorkerObserverProxy', () => {
       });
 
       expect(id).toBeNull();
+    });
+  });
+
+  describe('updateAccessCount()', () => {
+    it('sends a memory:access message and resolves on ACK', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:accessed',
+        requestId,
+      }));
+
+      await proxy.updateAccessCount(' mem-1 ');
+
+      expect(mockPort.sentMessages[0]).toEqual(expect.objectContaining({
+        type: 'memory:access',
+        memoryId: 'mem-1',
+      }));
+    });
+
+    it('ignores blank memory IDs without posting IPC', async () => {
+      await proxy.updateAccessCount('   ');
+
+      expect(mockPort.postMessage).not.toHaveBeenCalled();
     });
   });
 

@@ -5,8 +5,8 @@
  * patterns stored as 'prefetch_pattern' memories.
  */
 
-import type { MemoryService } from '../types.js';
 import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer.js';
+import type { MemoryService } from '../types.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 // ============================================================
@@ -100,13 +100,16 @@ export async function buildPrefetchPlan(
       return createEmptyPrefetchPlan();
     }
 
-    const prefetchMemories = (await memoryService.search({
-      types: ['prefetch_pattern'],
-      relatedModules,
-      limit: 5,
-      projectId,
-      promptContextOnly: true,
-    })).filter(isMemoryEligibleForPromptContext);
+    const prefetchMemories = (
+      await memoryService.search({
+        types: ['prefetch_pattern'],
+        relatedModules,
+        limit: 5,
+        projectId,
+        promptContextOnly: true,
+        recordAccess: true,
+      })
+    ).filter(isMemoryEligibleForPromptContext);
 
     const alwaysReadFiles: string[] = [];
     const frequentlyReadFiles: string[] = [];
@@ -118,10 +121,18 @@ export async function buildPrefetchPlan(
           frequentlyReadFiles?: string[];
         };
         if (Array.isArray(data.alwaysReadFiles)) {
-          alwaysReadFiles.push(...data.alwaysReadFiles.map(normalizePrefetchFilePath).filter(isString));
+          alwaysReadFiles.push(
+            ...data.alwaysReadFiles
+              .map(normalizePrefetchFilePath)
+              .filter(isString),
+          );
         }
         if (Array.isArray(data.frequentlyReadFiles)) {
-          frequentlyReadFiles.push(...data.frequentlyReadFiles.map(normalizePrefetchFilePath).filter(isString));
+          frequentlyReadFiles.push(
+            ...data.frequentlyReadFiles
+              .map(normalizePrefetchFilePath)
+              .filter(isString),
+          );
         }
       } catch {
         // Skip malformed memory content
@@ -132,7 +143,10 @@ export async function buildPrefetchPlan(
       uniqueInOrder(alwaysReadFiles),
       Math.min(MAX_ALWAYS_READ_FILES, DEFAULT_PREFETCH_MAX_FILES),
     );
-    const remainingFileBudget = Math.max(0, DEFAULT_PREFETCH_MAX_FILES - always.length);
+    const remainingFileBudget = Math.max(
+      0,
+      DEFAULT_PREFETCH_MAX_FILES - always.length,
+    );
     const alwaysSet = new Set(always);
     const frequent = selectPrefetchFiles(
       uniqueInOrder(frequentlyReadFiles).filter((file) => !alwaysSet.has(file)),
@@ -188,16 +202,26 @@ function normalizePrefetchFilePath(value: unknown): string | null {
   }
 
   const segments = normalized.split('/').filter(Boolean);
-  if (segments.length === 0 || segments.some((segment) => segment === '.' || segment === '..')) {
+  if (
+    segments.length === 0 ||
+    segments.some((segment) => segment === '.' || segment === '..')
+  ) {
     return null;
   }
 
-  if (segments.some((segment) => IGNORED_PREFETCH_PATH_SEGMENTS.has(segment.toLowerCase()))) {
+  if (
+    segments.some((segment) =>
+      IGNORED_PREFETCH_PATH_SEGMENTS.has(segment.toLowerCase()),
+    )
+  ) {
     return null;
   }
 
   const fileName = (segments[segments.length - 1] ?? '').toLowerCase();
-  if (isIgnoredPrefetchFileName(fileName) || isIgnoredPrefetchFileExtension(fileName)) {
+  if (
+    isIgnoredPrefetchFileName(fileName) ||
+    isIgnoredPrefetchFileExtension(fileName)
+  ) {
     return null;
   }
 
@@ -209,7 +233,9 @@ function isIgnoredPrefetchFileName(fileName: string): boolean {
 }
 
 function isIgnoredPrefetchFileExtension(fileName: string): boolean {
-  return [...IGNORED_PREFETCH_FILE_EXTENSIONS].some((extension) => fileName.endsWith(extension));
+  return [...IGNORED_PREFETCH_FILE_EXTENSIONS].some((extension) =>
+    fileName.endsWith(extension),
+  );
 }
 
 function uniqueInOrder(values: readonly string[]): string[] {
@@ -225,7 +251,10 @@ function uniqueInOrder(values: readonly string[]): string[] {
   return result;
 }
 
-function selectPrefetchFiles(files: readonly string[], limit: number): string[] {
+function selectPrefetchFiles(
+  files: readonly string[],
+  limit: number,
+): string[] {
   if (limit <= 0) {
     return [];
   }

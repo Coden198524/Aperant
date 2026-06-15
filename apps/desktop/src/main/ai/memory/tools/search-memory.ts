@@ -113,6 +113,7 @@ export function createSearchMemoryTool(
         projectId,
         excludeDeprecated: true,
         promptContextOnly: true,
+        recordAccess: true,
       };
 
       const memories = dedupeMemories(

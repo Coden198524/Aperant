@@ -109,6 +109,18 @@ function makeMemoryResult(overrides: Partial<Memory> = {}): Memory {
   };
 }
 
+function getAccessBatchMemoryIds(): string[] {
+  const statements = mockBatch.mock.calls.at(-1)?.[0] as
+    | Array<{ sql: string; args: unknown[] }>
+    | undefined;
+  expect(statements).toBeDefined();
+  return (statements ?? []).map((statement) => {
+    expect(statement.sql).toContain('access_count = access_count + 1');
+    expect(statement.sql).toContain('last_accessed_at');
+    return statement.args[1] as string;
+  });
+}
+
 // ============================================================
 // TESTS
 // ============================================================
@@ -438,6 +450,7 @@ describe('MemoryServiceImpl', () => {
       expect(mockRetrievalSearch).toHaveBeenCalledOnce();
       expect(results).toHaveLength(1);
       expect(results[0].id).toBe('mem-001');
+      expect(mockBatch).not.toHaveBeenCalled();
     });
 
     it('passes phase and projectId to the pipeline', async () => {
@@ -489,6 +502,37 @@ describe('MemoryServiceImpl', () => {
         maxResults: 10,
       });
       expect(results.map((memory) => memory.id)).toEqual(['matching']);
+    });
+
+    it('records access for final query-search results only when requested', async () => {
+      const wrongModule = makeMemoryResult({
+        id: 'wrong-module',
+        relatedModules: ['billing'],
+      });
+      const matching = makeMemoryResult({
+        id: 'matching',
+        relatedModules: ['auth'],
+      });
+      const slicedOut = makeMemoryResult({
+        id: 'sliced-out',
+        relatedModules: ['auth'],
+      });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [wrongModule, matching, slicedOut],
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'auth memory',
+        projectId: 'proj-001',
+        relatedModules: ['auth'],
+        limit: 1,
+        recordAccess: true,
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['matching']);
+      expect(mockBatch).toHaveBeenCalledOnce();
+      expect(getAccessBatchMemoryIds()).toEqual(['matching']);
     });
 
     it('compacts long query searches at the service boundary before pipeline retrieval', async () => {
@@ -1330,6 +1374,7 @@ describe('MemoryServiceImpl', () => {
       });
 
       expect(results.map((memory) => memory.id)).toEqual(['trusted', 'verified']);
+      expect(mockBatch).not.toHaveBeenCalled();
     });
 
     it('fetches extra direct-search candidates for prompt-context searches before applying the final limit', async () => {
@@ -1365,6 +1410,31 @@ describe('MemoryServiceImpl', () => {
       const directSearchArgs = mockExecute.mock.calls[0][0].args as unknown[];
       expect(directSearchArgs[directSearchArgs.length - 1]).toBe(10);
       expect(results.map((memory) => memory.id)).toEqual(['trusted', 'verified']);
+    });
+
+    it('records access for final direct-search results only when requested', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'low-confidence',
+            content: 'Low confidence memory should not be counted.',
+            confidence: 0.2,
+          }),
+          makeMemoryRow({ id: 'trusted-one', content: 'Trusted memory should be counted.' }),
+          makeMemoryRow({ id: 'trusted-two', content: 'Second trusted memory should be sliced out.' }),
+        ],
+      });
+
+      const results = await service.search({
+        projectId: 'proj-001',
+        limit: 1,
+        promptContextOnly: true,
+        recordAccess: true,
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['trusted-one']);
+      expect(mockBatch).toHaveBeenCalledOnce();
+      expect(getAccessBatchMemoryIds()).toEqual(['trusted-one']);
     });
 
     it('fetches extra direct-search candidates before applying related-file filters and final limit', async () => {
@@ -1468,6 +1538,20 @@ describe('MemoryServiceImpl', () => {
       expect(result?.id).toBe('mem-001');
       const bm25Args = mockExecute.mock.calls[0][0].args as unknown[];
       expect(bm25Args[bm25Args.length - 1]).toBe(6);
+      expect(mockBatch).toHaveBeenCalledOnce();
+      expect(getAccessBatchMemoryIds()).toEqual(['mem-001']);
+    });
+
+    it('can skip access recording for BM25 pattern matches used as candidates', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [{ id: 'mem-001', bm25_score: -1.5 }],
+      });
+      mockExecute.mockResolvedValueOnce({ rows: [makeMemoryRow()] });
+
+      const result = await service.searchByPattern('typescript testing', { recordAccess: false });
+
+      expect(result?.id).toBe('mem-001');
+      expect(mockBatch).not.toHaveBeenCalled();
     });
 
     it('passes projectId to BM25 pattern search when provided', async () => {
@@ -1547,6 +1631,8 @@ describe('MemoryServiceImpl', () => {
       expect(result?.content).toBe('Trusted pattern should be injected.');
       const fetchArgs = mockExecute.mock.calls[1][0].args as unknown[];
       expect(fetchArgs).toEqual(['low-confidence', 'trusted']);
+      expect(mockBatch).toHaveBeenCalledOnce();
+      expect(getAccessBatchMemoryIds()).toEqual(['trusted']);
     });
   });
 
@@ -1616,6 +1702,19 @@ describe('MemoryServiceImpl', () => {
 
       expect(results).toHaveLength(1);
       expect(results[0].type).toBe('workflow_recipe');
+    });
+
+    it('can skip access recording for workflow recipes used as candidates', async () => {
+      const recipe = makeMemoryResult({ id: 'recipe-001', type: 'workflow_recipe' });
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [recipe],
+        formattedContext: '',
+      });
+
+      const results = await service.searchWorkflowRecipe('deploy to production', { recordAccess: false });
+
+      expect(results.map((memory) => memory.id)).toEqual(['recipe-001']);
+      expect(mockBatch).not.toHaveBeenCalled();
     });
 
     it('respects limit option', async () => {
@@ -1769,6 +1868,8 @@ describe('MemoryServiceImpl', () => {
       const results = await service.searchWorkflowRecipe('task', { limit: 5 });
 
       expect(results.map((memory) => memory.id)).toEqual(['recipe-good', 'recipe-verified']);
+      expect(mockBatch).toHaveBeenCalledOnce();
+      expect(getAccessBatchMemoryIds()).toEqual(['recipe-good', 'recipe-verified']);
     });
 
     it('returns empty array on pipeline failure', async () => {

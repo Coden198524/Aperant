@@ -5,9 +5,10 @@
  */
 
 import type { Memory, MemoryService } from '../types.js';
+import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { selectMemoryContextItems } from './context-selection.js';
-import { compactMemoryInjectionText } from './text-compaction.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
+import { compactMemoryInjectionText } from './text-compaction.js';
 
 const MAX_QA_MEMORY_ITEM_CHARS = 240;
 const MAX_QA_MEMORY_ITEM_TOKENS = 80;
@@ -27,37 +28,61 @@ export async function buildQaSessionContext(
     const task = normalizeTaskDescription(specDescription);
     const emptySearch = Promise.resolve([] as Memory[]);
     const recipeSearch = task
-      ? memoryService.searchWorkflowRecipe(task, { limit: 1, projectId })
+      ? memoryService.searchWorkflowRecipe(task, {
+          limit: 1,
+          projectId,
+          recordAccess: false,
+        })
       : Promise.resolve([] as Memory[]);
 
-    const [e2eObservations, errorPatterns, requirements, recipes] = await Promise.all([
-      modules.length > 0 ? memoryService.search({
-        types: ['e2e_observation'],
-        relatedModules: modules,
-        limit: 4,
-        sort: 'recency',
-        projectId,
-        promptContextOnly: true,
-      }) : emptySearch,
-      modules.length > 0 ? memoryService.search({
-        types: ['error_pattern'],
-        relatedModules: modules,
-        limit: 3,
-        minConfidence: 0.6,
-        projectId,
-        promptContextOnly: true,
-      }) : emptySearch,
-      modules.length > 0 ? memoryService.search({
-        types: ['requirement'],
-        relatedModules: modules,
-        limit: 3,
-        projectId,
-        promptContextOnly: true,
-      }) : emptySearch,
-      recipeSearch,
-    ]);
+    const [e2eObservations, errorPatterns, requirements, recipes] =
+      await Promise.all([
+        modules.length > 0
+          ? memoryService.search({
+              types: ['e2e_observation'],
+              relatedModules: modules,
+              limit: 4,
+              sort: 'recency',
+              projectId,
+              promptContextOnly: true,
+            })
+          : emptySearch,
+        modules.length > 0
+          ? memoryService.search({
+              types: ['error_pattern'],
+              relatedModules: modules,
+              limit: 3,
+              minConfidence: 0.6,
+              projectId,
+              promptContextOnly: true,
+            })
+          : emptySearch,
+        modules.length > 0
+          ? memoryService.search({
+              types: ['requirement'],
+              relatedModules: modules,
+              limit: 3,
+              projectId,
+              promptContextOnly: true,
+            })
+          : emptySearch,
+        recipeSearch,
+      ]);
 
-    return formatQaSections({ e2eObservations, errorPatterns, requirements, recipes });
+    const selectedSections = selectQaSections({
+      e2eObservations,
+      errorPatterns,
+      requirements,
+      recipes,
+    });
+    const context = formatQaSections(selectedSections);
+    if (context) {
+      await recordSelectedMemoryAccess(
+        memoryService,
+        flattenQaSections(selectedSections),
+      );
+    }
+    return context;
   } catch {
     return '';
   }
@@ -70,37 +95,54 @@ interface QaSections {
   recipes: Memory[];
 }
 
-function formatQaSections(sections: QaSections): string {
-  const parts: string[] = [];
+function selectQaSections(sections: QaSections): QaSections {
   const seenFingerprints = new Set<string>();
   const seenContents: string[] = [];
-  const requirements = selectMemoryContextItems(sections.requirements, {
-    maxItems: 2,
-    minConfidence: 0.6,
-    seenContents,
-    seenFingerprints,
-  });
-  const errorPatterns = selectMemoryContextItems(sections.errorPatterns, {
-    maxItems: 2,
-    minConfidence: 0.6,
-    seenContents,
-    seenFingerprints,
-  });
-  const e2eObservations = selectMemoryContextItems(sections.e2eObservations, {
-    maxItems: 2,
-    minConfidence: 0.55,
-    seenContents,
-    seenFingerprints,
-  });
-  const recipes = selectMemoryContextItems(sections.recipes, {
-    maxItems: 1,
-    minConfidence: 0.55,
-    seenContents,
-    seenFingerprints,
-  });
+  return {
+    requirements: selectMemoryContextItems(sections.requirements, {
+      maxItems: 2,
+      minConfidence: 0.6,
+      seenContents,
+      seenFingerprints,
+    }),
+    errorPatterns: selectMemoryContextItems(sections.errorPatterns, {
+      maxItems: 2,
+      minConfidence: 0.6,
+      seenContents,
+      seenFingerprints,
+    }),
+    e2eObservations: selectMemoryContextItems(sections.e2eObservations, {
+      maxItems: 2,
+      minConfidence: 0.55,
+      seenContents,
+      seenFingerprints,
+    }),
+    recipes: selectMemoryContextItems(sections.recipes, {
+      maxItems: 1,
+      minConfidence: 0.55,
+      seenContents,
+      seenFingerprints,
+    }),
+  };
+}
+
+function flattenQaSections(sections: QaSections): Memory[] {
+  return [
+    ...sections.requirements,
+    ...sections.errorPatterns,
+    ...sections.e2eObservations,
+    ...sections.recipes,
+  ];
+}
+
+function formatQaSections(sections: QaSections): string {
+  const parts: string[] = [];
+  const { requirements, errorPatterns, e2eObservations, recipes } = sections;
 
   if (requirements.length > 0) {
-    const items = requirements.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+    const items = requirements
+      .map((m) => `- ${formatMemoryContent(m)}`)
+      .join('\n');
     parts.push(`KNOWN REQUIREMENTS - Constraints to validate:\n${items}`);
   }
 
@@ -115,7 +157,9 @@ function formatQaSections(sections: QaSections): string {
   }
 
   if (e2eObservations.length > 0) {
-    const items = e2eObservations.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+    const items = e2eObservations
+      .map((m) => `- ${formatMemoryContent(m)}`)
+      .join('\n');
     parts.push(`E2E OBSERVATIONS - Historical test behavior:\n${items}`);
   }
 
@@ -136,16 +180,24 @@ function formatQaSections(sections: QaSections): string {
 }
 
 function formatMemoryContent(memory: Memory): string {
-  return truncateText(memory.content, MAX_QA_MEMORY_ITEM_CHARS, MAX_QA_MEMORY_ITEM_TOKENS);
+  return truncateText(
+    memory.content,
+    MAX_QA_MEMORY_ITEM_CHARS,
+    MAX_QA_MEMORY_ITEM_TOKENS,
+  );
 }
 
-function formatRelatedFileRefs(relatedFiles: string[], seenFiles: Set<string>): string {
+function formatRelatedFileRefs(
+  relatedFiles: string[],
+  seenFiles: Set<string>,
+): string {
   if (relatedFiles.length === 0) {
     return '';
   }
 
-  const uniqueUnseenFiles = uniqueFilePaths(relatedFiles)
-    .filter((filePath) => !seenFiles.has(normalizeFilePathForDedupe(filePath)));
+  const uniqueUnseenFiles = uniqueFilePaths(relatedFiles).filter(
+    (filePath) => !seenFiles.has(normalizeFilePathForDedupe(filePath)),
+  );
   const displayedFiles = uniqueUnseenFiles
     .slice(0, MAX_QA_MEMORY_FILE_REFS)
     .map((filePath) => ({
@@ -158,15 +210,14 @@ function formatRelatedFileRefs(relatedFiles: string[], seenFiles: Set<string>): 
     seenFiles.add(normalizeFilePathForDedupe(file.filePath));
   }
 
-  const fileNames = displayedFiles
-    .map((file) => file.fileName)
-    .filter(Boolean);
+  const fileNames = displayedFiles.map((file) => file.fileName).filter(Boolean);
 
   if (fileNames.length === 0) {
     return '';
   }
 
-  const omittedSuffix = uniqueUnseenFiles.length > displayedFiles.length ? ', ...' : '';
+  const omittedSuffix =
+    uniqueUnseenFiles.length > displayedFiles.length ? ', ...' : '';
   return ` [${fileNames.join(', ')}${omittedSuffix}]`;
 }
 
@@ -209,7 +260,11 @@ function uniqueFilePaths(values: readonly string[]): string[] {
   return unique;
 }
 
-function truncateText(text: string, maxChars: number, maxTokens: number): string {
+function truncateText(
+  text: string,
+  maxChars: number,
+  maxTokens: number,
+): string {
   return compactMemoryInjectionText(text, maxChars, maxTokens);
 }
 

@@ -90,6 +90,7 @@ describe('StepInjectionDecider', () => {
       expect(result?.type).toBe('gotcha_injection');
       expect(result?.memoryIds).toContain('gotcha-1');
       expect(result?.content).toContain('MEMORY ALERT');
+      expect(memoryService.updateAccessCount).toHaveBeenCalledWith('gotcha-1');
     });
 
     it('includes error_pattern and dead_end types in gotcha search', async () => {
@@ -466,7 +467,11 @@ describe('StepInjectionDecider', () => {
       expect(result?.type).toBe('search_short_circuit');
       expect(result?.memoryIds).toContain('grep-match');
       expect(result?.content).toContain('MEMORY CONTEXT');
-      expect(memoryService.searchByPattern).toHaveBeenCalledWith('useCallback', { projectId: 'proj-1' });
+      expect(memoryService.searchByPattern).toHaveBeenCalledWith('useCallback', {
+        projectId: 'proj-1',
+        recordAccess: false,
+      });
+      expect(memoryService.updateAccessCount).toHaveBeenCalledWith('grep-match');
     });
 
     it('preserves the tail when compacting search short-circuit memories', async () => {
@@ -585,9 +590,9 @@ describe('StepInjectionDecider', () => {
       // Should only check the last 3: pat3, pat4, pat5
       expect(memoryService.searchByPattern).toHaveBeenCalledTimes(3);
       expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
-        ['pat3', { projectId: 'proj-1' }],
-        ['pat4', { projectId: 'proj-1' }],
-        ['pat5', { projectId: 'proj-1' }],
+        ['pat3', { projectId: 'proj-1', recordAccess: false }],
+        ['pat4', { projectId: 'proj-1', recordAccess: false }],
+        ['pat5', { projectId: 'proj-1', recordAccess: false }],
       ]);
     });
 
@@ -604,8 +609,8 @@ describe('StepInjectionDecider', () => {
       });
 
       expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
-        ['useCallback', { projectId: 'proj-1' }],
-        ['auth-refresh', { projectId: 'proj-1' }],
+        ['useCallback', { projectId: 'proj-1', recordAccess: false }],
+        ['auth-refresh', { projectId: 'proj-1', recordAccess: false }],
       ]);
     });
 
@@ -622,7 +627,7 @@ describe('StepInjectionDecider', () => {
       });
 
       expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
-        ['use callback', { projectId: 'proj-1' }],
+        ['use callback', { projectId: 'proj-1', recordAccess: false }],
       ]);
     });
   });

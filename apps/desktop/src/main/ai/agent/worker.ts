@@ -341,13 +341,17 @@ function createWorkerMemoryService(
         promptContextOnly: scoped.promptContextOnly ?? true,
       });
     },
-    searchByPattern: async (pattern: string, opts?: { projectId?: string }): Promise<Memory | null> => {
+    searchByPattern: async (
+      pattern: string,
+      opts?: { projectId?: string; recordAccess?: boolean },
+    ): Promise<Memory | null> => {
       const memories = await proxy.searchMemory({
         query: pattern,
         projectId: opts?.projectId ?? fallbackProjectId,
         limit: 1,
         excludeDeprecated: true,
         promptContextOnly: true,
+        recordAccess: opts?.recordAccess ?? true,
       });
       return memories.find(isMemoryEligibleForPromptContext) ?? null;
     },
@@ -364,7 +368,7 @@ function createWorkerMemoryService(
     },
     searchWorkflowRecipe: async (
       taskDescription: string,
-      opts?: { limit?: number; projectId?: string },
+      opts?: { limit?: number; projectId?: string; recordAccess?: boolean },
     ): Promise<Memory[]> => {
       const memories = await proxy.searchMemory({
         query: taskDescription,
@@ -373,12 +377,15 @@ function createWorkerMemoryService(
         limit: opts?.limit ?? 3,
         excludeDeprecated: true,
         promptContextOnly: true,
+        recordAccess: opts?.recordAccess ?? true,
       });
       return memories.filter((memory) =>
         memory.type === 'workflow_recipe' && isMemoryEligibleForPromptContext(memory)
       );
     },
-    updateAccessCount: async (): Promise<void> => {},
+    updateAccessCount: async (memoryId: string): Promise<void> => {
+      await proxy.updateAccessCount(memoryId);
+    },
     deprecateMemory: async (): Promise<void> => {},
     verifyMemory: async (): Promise<void> => {},
     pinMemory: async (): Promise<void> => {},

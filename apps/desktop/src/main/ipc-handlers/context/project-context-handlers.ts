@@ -28,6 +28,7 @@ async function loadRecentMemories(projectId: string): Promise<RendererMemory[]> 
       limit: 20,
       sort: 'recency',
       excludeDeprecated: true,
+      recordAccess: false,
     });
     return memories.map(toAutocodeRendererMemory);
   } catch {

@@ -52,6 +52,7 @@ describe('buildQaSessionContext', () => {
   it('returns empty string when no memories exist', async () => {
     const result = await buildQaSessionContext('Validate auth flow', ['auth'], memoryService, 'proj-1');
     expect(result).toBe('');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalled();
   });
 
   it('includes error patterns when found', async () => {
@@ -66,6 +67,7 @@ describe('buildQaSessionContext', () => {
 
     expect(result).toContain('ERROR PATTERNS');
     expect(result).toContain('Token validation fails silently');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('ep-1');
   });
 
   it('includes e2e observations when found', async () => {
@@ -105,6 +107,12 @@ describe('buildQaSessionContext', () => {
 
     expect(result).toContain('VALIDATION WORKFLOW');
     expect(result).toContain('Check login');
+    expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledWith('Validate auth', {
+      limit: 1,
+      projectId: 'proj-1',
+      recordAccess: false,
+    });
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('r1');
   });
 
   it('wraps output in QA section header/footer', async () => {
@@ -143,6 +151,7 @@ describe('buildQaSessionContext', () => {
     expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('Validate auth', {
       limit: 1,
       projectId: 'qa-project',
+      recordAccess: false,
     });
   });
 
@@ -155,6 +164,7 @@ describe('buildQaSessionContext', () => {
     expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('Validate auth flow', {
       limit: 1,
       projectId: 'qa-project',
+      recordAccess: false,
     });
   });
 
@@ -169,6 +179,7 @@ describe('buildQaSessionContext', () => {
     expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledWith('Validate auth', {
       limit: 1,
       projectId: 'proj-1',
+      recordAccess: false,
     });
     expect(result).toContain('VALIDATION WORKFLOW');
   });

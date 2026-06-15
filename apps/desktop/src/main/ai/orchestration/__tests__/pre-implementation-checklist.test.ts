@@ -92,6 +92,7 @@ describe('pre-implementation checklist formatting', () => {
           userVerified: true,
         }),
       ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
     } as unknown as MemoryService;
 
     const checklist = await generatePreImplementationChecklist({
@@ -112,6 +113,9 @@ describe('pre-implementation checklist formatting', () => {
       limit: 10,
       promptContextOnly: true,
     }));
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('good');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('verified');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('low');
     expect(issues).toContain('Trusted historical failure should remain.');
     expect(issues).toContain('Verified low confidence failure should remain.');
     expect(issues).not.toContain('Low confidence failure should be hidden.');

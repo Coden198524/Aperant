@@ -58,6 +58,7 @@ describe('buildPrefetchPlan', () => {
     expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
       relatedModules: ['auth', 'billing'],
       promptContextOnly: true,
+      recordAccess: true,
     }));
   });
 

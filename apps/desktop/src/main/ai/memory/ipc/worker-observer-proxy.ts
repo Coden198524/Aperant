@@ -51,6 +51,7 @@ const MEMORY_RECORD_IPC_RELATED_MODULE_LIMIT = 16;
 const MEMORY_RECORD_IPC_RELATED_MODULE_MAX_CHARS = 96;
 const MEMORY_RECORD_IPC_RELATED_MODULE_MAX_TOKENS = 32;
 const MEMORY_RECORD_IPC_OMISSION_MARKER = ' ... [memory record middle omitted before IPC] ... ';
+const MEMORY_ACCESS_ID_MAX_CHARS = 256;
 
 export type MemoryToolIpcRequest = AutocodeMemoryRuntimeToolIpcRequest;
 export type SerializableRecentContext = AutocodeMemoryRuntimeSerializableRecentContext;
@@ -130,6 +131,23 @@ export class WorkerObserverProxy {
       return response.type === 'memory:stored' ? response.id : null;
     } catch {
       return null;
+    }
+  }
+
+  async updateAccessCount(memoryId: string): Promise<void> {
+    const normalizedMemoryId = compactMemoryIdForIpc(memoryId);
+    if (!normalizedMemoryId) {
+      return;
+    }
+
+    const requestId = randomUUID();
+    try {
+      await this.sendRequest<AutocodeMemoryRuntimeIpcResponse>(
+        { type: 'memory:access', requestId, memoryId: normalizedMemoryId },
+        requestId,
+      );
+    } catch {
+      // Access feedback is best-effort and must never block agent progress.
     }
   }
 
@@ -247,6 +265,10 @@ function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordE
       MEMORY_RECORD_IPC_OMISSION_MARKER,
     ),
   };
+}
+
+function compactMemoryIdForIpc(memoryId: string): string {
+  return memoryId.replace(/\s+/g, ' ').trim().slice(0, MEMORY_ACCESS_ID_MAX_CHARS);
 }
 
 function compactMemorySearchFiltersForIpc(filters: MemorySearchFilters): MemorySearchFilters {

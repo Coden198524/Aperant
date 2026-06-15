@@ -22,6 +22,7 @@ import {
 import {
   isMemoryEligibleForPromptContext,
 } from '../memory/retrieval/context-packer';
+import { recordSelectedMemoryAccess } from '@autocode/core/memory/injection';
 import { compactHeadTailSingleLineText } from './prompt-compaction';
 
 const MAX_SUCCESS_CASE_DESCRIPTION_CHARS = 160;
@@ -323,10 +324,12 @@ async function retrieveSuccessCases(
       promptContextOnly: true,
     });
 
-    return searchResults
+    const selectedResults = searchResults
       .filter(isMemoryEligibleForPromptContext)
-      .slice(0, 3)
-      .map((result) => {
+      .slice(0, 3);
+    await recordSelectedMemoryAccess(memoryService, selectedResults);
+
+    return selectedResults.map((result) => {
         const content = result.content || subtaskDescription;
         return {
           subtaskId: result.tags?.find((tag) => tag.startsWith('subtask:'))?.slice(8) || 'unknown',

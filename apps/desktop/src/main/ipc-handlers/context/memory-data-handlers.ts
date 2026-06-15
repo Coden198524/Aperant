@@ -39,6 +39,7 @@ export function registerMemoryDataHandlers(
           limit,
           sort: 'recency',
           excludeDeprecated: true,
+          recordAccess: false,
         });
         return { success: true, data: memories.map(toAutocodeRendererMemory) };
       } catch {
@@ -120,6 +121,7 @@ export function registerMemoryDataHandlers(
           projectId,
           limit: 20,
           excludeDeprecated: true,
+          recordAccess: false,
         });
         return {
           success: true,

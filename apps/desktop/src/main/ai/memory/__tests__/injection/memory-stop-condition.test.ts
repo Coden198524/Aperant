@@ -211,6 +211,7 @@ describe('getCalibrationFactor', () => {
         projectId: 'my-project',
         sort: 'recency',
         promptContextOnly: true,
+        recordAccess: true,
       }),
     );
   });

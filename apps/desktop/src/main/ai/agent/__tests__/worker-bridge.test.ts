@@ -14,6 +14,7 @@ import { estimateTokens } from '../../memory/retrieval/context-packer';
 const createdWorkers: EventEmitter[] = [];
 const mockMemoryServiceSearch = vi.hoisted(() => vi.fn());
 const mockMemoryServiceStore = vi.hoisted(() => vi.fn());
+const mockMemoryServiceUpdateAccessCount = vi.hoisted(() => vi.fn());
 
 vi.mock('worker_threads', () => {
   const { EventEmitter: EE } = require('events') as typeof import('events');
@@ -67,6 +68,7 @@ vi.mock('../../../ipc-handlers/context/memory-service-factory', () => ({
   getMemoryService: vi.fn(() => ({
     search: mockMemoryServiceSearch,
     store: mockMemoryServiceStore,
+    updateAccessCount: mockMemoryServiceUpdateAccessCount,
   })),
 }));
 
@@ -507,6 +509,26 @@ describe('WorkerBridge', () => {
       expect(estimateTokens(memory.contextPrefix ?? '')).toBeLessThanOrEqual(75);
       expect(memory.contextPrefix).toContain('前缀开头');
       expect(memory.contextPrefix).toContain('前缀尾部');
+    });
+
+    it('handles memory access updates from the worker', async () => {
+      mockMemoryServiceUpdateAccessCount.mockResolvedValueOnce(undefined);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:access',
+        requestId: 'access-1',
+        memoryId: 'mem-1',
+      });
+
+      await vi.waitFor(() => {
+        expect(mockMemoryServiceUpdateAccessCount).toHaveBeenCalledWith('mem-1');
+        expect(worker.postMessage).toHaveBeenCalledWith({
+          type: 'memory:accessed',
+          requestId: 'access-1',
+        });
+      });
     });
 
     it('accumulates request counts across provider sessions in one worker', () => {

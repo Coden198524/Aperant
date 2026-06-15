@@ -304,6 +304,11 @@ export class WorkerBridge extends EventEmitter {
 
     if (message.type === 'memory:record') {
       this.handleMemoryRecord(message);
+      return;
+    }
+
+    if (message.type === 'memory:access') {
+      this.handleMemoryAccess(message);
     }
   }
 
@@ -334,6 +339,24 @@ export class WorkerBridge extends EventEmitter {
           type: 'memory:stored',
           requestId: message.requestId,
           id,
+        });
+      })
+      .catch((error) => {
+        this.postMemoryResponse({
+          type: 'memory:error',
+          requestId: message.requestId,
+          error: error instanceof Error ? error.message : String(error),
+        });
+      });
+  }
+
+  private handleMemoryAccess(message: Extract<MemoryToolIpcRequest, { type: 'memory:access' }>): void {
+    getMemoryServiceLazy()
+      .then((service) => service.updateAccessCount(message.memoryId))
+      .then(() => {
+        this.postMemoryResponse({
+          type: 'memory:accessed',
+          requestId: message.requestId,
         });
       })
       .catch((error) => {

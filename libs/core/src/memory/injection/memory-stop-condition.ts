@@ -28,7 +28,9 @@ export function calculateMemoryAwareMaxSteps(
   baseMaxSteps: number,
   calibrationFactor: number | undefined,
 ): number {
-  const baseSteps = Number.isFinite(baseMaxSteps) ? Math.max(0, Math.floor(baseMaxSteps)) : 0;
+  const baseSteps = Number.isFinite(baseMaxSteps)
+    ? Math.max(0, Math.floor(baseMaxSteps))
+    : 0;
   const factor = normalizeCalibrationFactor(calibrationFactor);
   return Math.min(Math.ceil(baseSteps * factor), MAX_ABSOLUTE_STEPS);
 }
@@ -59,6 +61,7 @@ export async function getCalibrationFactor(
       projectId,
       sort: 'recency',
       promptContextOnly: true,
+      recordAccess: true,
     });
 
     if (calibrations.length === 0) return undefined;

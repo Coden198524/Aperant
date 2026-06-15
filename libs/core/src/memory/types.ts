@@ -85,7 +85,8 @@ export type AutocodeMemoryScope = (typeof AUTOCODE_MEMORY_SCOPES)[number];
 export type AutocodeUniversalPhase = (typeof AUTOCODE_MEMORY_PHASES)[number];
 export type AutocodeSessionOutcome = (typeof AUTOCODE_SESSION_OUTCOMES)[number];
 export type AutocodeSessionType = (typeof AUTOCODE_SESSION_TYPES)[number];
-export type AutocodeObserverSignalType = (typeof AUTOCODE_OBSERVER_SIGNAL_TYPES)[number];
+export type AutocodeObserverSignalType =
+  (typeof AUTOCODE_OBSERVER_SIGNAL_TYPES)[number];
 
 export type MemoryType = AutocodeMemoryType;
 export type MemorySource = AutocodeMemorySource;
@@ -104,7 +105,12 @@ export interface WorkUnitRef {
 export interface MemoryRelation {
   targetMemoryId?: string;
   targetFilePath?: string;
-  relationType: 'required_with' | 'conflicts_with' | 'validates' | 'supersedes' | 'derived_from';
+  relationType:
+    | 'required_with'
+    | 'conflicts_with'
+    | 'validates'
+    | 'supersedes'
+    | 'derived_from';
   confidence: number;
   autoExtracted: boolean;
 }
@@ -161,6 +167,7 @@ export interface MemorySearchFilters {
   sort?: 'relevance' | 'recency' | 'confidence';
   excludeDeprecated?: boolean;
   promptContextOnly?: boolean;
+  recordAccess?: boolean;
   filter?: (memory: Memory) => boolean;
 }
 
@@ -215,9 +222,19 @@ export interface AcuteCandidate {
 export interface MemoryService {
   store(entry: MemoryRecordEntry): Promise<string>;
   search(filters: MemorySearchFilters): Promise<Memory[]>;
-  searchByPattern(pattern: string, opts?: { projectId?: string }): Promise<Memory | null>;
-  insertUserTaught(content: string, projectId: string, tags: string[]): Promise<string>;
-  searchWorkflowRecipe(taskDescription: string, opts?: { limit?: number; projectId?: string }): Promise<Memory[]>;
+  searchByPattern(
+    pattern: string,
+    opts?: { projectId?: string; recordAccess?: boolean },
+  ): Promise<Memory | null>;
+  insertUserTaught(
+    content: string,
+    projectId: string,
+    tags: string[],
+  ): Promise<string>;
+  searchWorkflowRecipe(
+    taskDescription: string,
+    opts?: { limit?: number; projectId?: string; recordAccess?: boolean },
+  ): Promise<Memory[]>;
   updateAccessCount(memoryId: string): Promise<void>;
   deprecateMemory(memoryId: string): Promise<void>;
   verifyMemory(memoryId: string): Promise<void>;
@@ -260,7 +277,11 @@ export interface MemoryMethodologyPlugin {
   extractWorkState(sessionOutput: string): Promise<Record<string, unknown>>;
   formatWorkStateContext(state: Record<string, unknown>): string;
   customMemoryTypes?: MemoryTypeDefinition[];
-  onWorkUnitComplete?(ctx: ExecutionContext, result: WorkUnitResult, svc: MemoryService): Promise<void>;
+  onWorkUnitComplete?(
+    ctx: ExecutionContext,
+    result: WorkUnitResult,
+    svc: MemoryService,
+  ): Promise<void>;
 }
 
 export const nativePlugin: MemoryMethodologyPlugin = {
@@ -280,7 +301,9 @@ export const nativePlugin: MemoryMethodologyPlugin = {
   },
   resolveWorkUnitRef: (context: ExecutionContext): WorkUnitRef => ({
     methodology: 'native',
-    hierarchy: [context.specNumber, context.subtaskId].filter((value): value is string => Boolean(value)),
+    hierarchy: [context.specNumber, context.subtaskId].filter(
+      (value): value is string => Boolean(value),
+    ),
     label: context.subtaskId
       ? `Spec ${context.specNumber} / Subtask ${context.subtaskId}`
       : `Spec ${context.specNumber}`,
@@ -288,10 +311,16 @@ export const nativePlugin: MemoryMethodologyPlugin = {
   getRelayTransitions: (): RelayTransition[] => [
     { from: 'planner', to: 'coder' },
     { from: 'coder', to: 'qa_reviewer' },
-    { from: 'qa_reviewer', to: 'qa_fixer', filter: { types: ['error_pattern', 'requirement'] } },
+    {
+      from: 'qa_reviewer',
+      to: 'qa_fixer',
+      filter: { types: ['error_pattern', 'requirement'] },
+    },
   ],
   formatRelayContext: (_memories: Memory[], _toStage: string): string => '',
-  extractWorkState: async (_sessionOutput: string): Promise<Record<string, unknown>> => ({}),
+  extractWorkState: async (
+    _sessionOutput: string,
+  ): Promise<Record<string, unknown>> => ({}),
   formatWorkStateContext: (_state: Record<string, unknown>): string => '',
 };
 
@@ -364,7 +393,9 @@ export function isAutocodeMemoryScope(value: string): value is MemoryScope {
   return (AUTOCODE_MEMORY_SCOPES as readonly string[]).includes(value);
 }
 
-export function toAutocodeRendererMemory(memory: Memory): AutocodeRendererMemory {
+export function toAutocodeRendererMemory(
+  memory: Memory,
+): AutocodeRendererMemory {
   return {
     id: memory.id,
     type: memory.type,
@@ -387,7 +418,9 @@ export function toAutocodeRendererMemory(memory: Memory): AutocodeRendererMemory
   };
 }
 
-export function toAutocodeContextSearchResult(memory: Memory): AutocodeContextSearchResult {
+export function toAutocodeContextSearchResult(
+  memory: Memory,
+): AutocodeContextSearchResult {
   return {
     content: memory.content,
     score: memory.confidence,
