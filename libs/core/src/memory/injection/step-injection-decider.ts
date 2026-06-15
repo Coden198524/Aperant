@@ -40,11 +40,53 @@ const MIN_SCRATCHPAD_REFLECTION_PRIORITY = 0.75;
 const MAX_SHORT_CIRCUIT_CHARS = 260;
 const MAX_SHORT_CIRCUIT_TOKENS = 85;
 const MAX_SHORT_CIRCUIT_PATTERN_CHARS = 120;
+const MAX_SHORT_CIRCUIT_RECENT_PATTERNS = 3;
 const BROAD_SEARCH_PATTERN_CHARS = 3;
+const GENERIC_SEARCH_SHORT_CIRCUIT_PATTERNS = new Set([
+  '.cjs',
+  '.css',
+  '.go',
+  '.js',
+  '.json',
+  '.jsx',
+  '.md',
+  '.mjs',
+  '.py',
+  '.rs',
+  '.ts',
+  '.tsx',
+  'app',
+  'apps',
+  'class',
+  'const',
+  'content',
+  'data',
+  'error',
+  'errors',
+  'export',
+  'fixme',
+  'function',
+  'import',
+  'interface',
+  'let',
+  'lib',
+  'libs',
+  'result',
+  'return',
+  'spec',
+  'src',
+  'test',
+  'tests',
+  'todo',
+  'type',
+  'types',
+  'var',
+]);
 const SCRATCHPAD_MEMORY_ID_PREFIX = 'scratchpad:';
 const SCRATCHPAD_MEMORY_ID_HASH_CHARS = 16;
 const SEARCH_PATTERN_MEMORY_ID_PREFIX = 'search-pattern:';
 const SEARCH_PATTERN_MEMORY_ID_HASH_CHARS = 16;
+const REGEXP_BACKSPACE_WORD_BOUNDARY = String.fromCharCode(8);
 
 // ============================================================
 // STEP INJECTION DECIDER
@@ -130,18 +172,12 @@ export class StepInjectionDecider {
       }
 
       // Trigger 3: Agent is searching for something already in memory
-      const recentSearches = recentContext.toolCalls
-        .filter((t) => t.toolName === 'Grep' || t.toolName === 'Glob')
-        .slice(-3);
-      const seenSearchPatterns = new Set<string>();
+      const recentSearchPatterns = getRecentPreciseSearchPatterns(
+        recentContext.toolCalls,
+        MAX_SHORT_CIRCUIT_RECENT_PATTERNS,
+      );
 
-      for (const search of recentSearches) {
-        const pattern = normalizeSearchPattern(
-          search.args.pattern ?? search.args.glob,
-        );
-        if (!isPreciseSearchPattern(pattern)) continue;
-        if (seenSearchPatterns.has(pattern)) continue;
-        seenSearchPatterns.add(pattern);
+      for (const pattern of recentSearchPatterns) {
         const patternInjectionId = getSearchPatternInjectionId(pattern);
         if (recentContext.injectedMemoryIds.has(patternInjectionId)) continue;
 
@@ -287,6 +323,45 @@ function getScratchpadEntryText(entry: AcuteCandidate): string {
     : '';
 }
 
+function getRecentPreciseSearchPatterns(
+  toolCalls: readonly RecentToolCallContext['toolCalls'][number][],
+  limit: number,
+): string[] {
+  const itemLimit = Math.max(0, limit);
+  if (itemLimit === 0) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const selected: string[] = [];
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = toolCalls[index];
+    if (toolCall.toolName !== 'Grep' && toolCall.toolName !== 'Glob') {
+      continue;
+    }
+
+    const pattern = normalizeSearchPattern(
+      toolCall.args.pattern ?? toolCall.args.glob,
+    );
+    if (!isPreciseSearchPattern(pattern)) {
+      continue;
+    }
+
+    const key = getSearchPatternIdentityKey(pattern);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    selected.push(pattern);
+    if (selected.length >= itemLimit) {
+      break;
+    }
+  }
+
+  return selected.reverse();
+}
+
 function getInjectableMemoryContent(memory: Memory): string {
   return stripLowValueMemoryLines(memory.content);
 }
@@ -322,9 +397,15 @@ function getLegacyScratchpadInjectionId(entry: AcuteCandidate): string {
 
 function getSearchPatternInjectionId(pattern: string): string {
   return `${SEARCH_PATTERN_MEMORY_ID_PREFIX}${getShortHash(
-    normalizeSearchPattern(pattern),
+    getSearchPatternIdentityKey(pattern),
     SEARCH_PATTERN_MEMORY_ID_HASH_CHARS,
   )}`;
+}
+
+function getSearchPatternIdentityKey(pattern: string): string {
+  const normalized = normalizeSearchPattern(pattern).toLowerCase();
+  const unwrapped = getUnwrappedSearchPatternKey(normalized);
+  return unwrapped || normalized;
 }
 
 function getShortHash(value: string, chars: number): string {
@@ -356,6 +437,12 @@ function isPreciseSearchPattern(pattern: string): boolean {
   if (normalized.length > MAX_SHORT_CIRCUIT_PATTERN_CHARS) {
     return false;
   }
+  if (!hasSemanticSearchPatternText(normalized)) {
+    return false;
+  }
+  if (isHashLikeSearchPattern(normalized)) {
+    return false;
+  }
   if (/^[*?{}[\]./\\]+$/.test(normalized)) {
     return false;
   }
@@ -370,7 +457,75 @@ function isPreciseSearchPattern(pattern: string): boolean {
   ) {
     return false;
   }
+  if (isGenericSearchShortCircuitPattern(normalized)) {
+    return false;
+  }
+  if (isRegexSkeletonSearchPattern(normalized)) {
+    return false;
+  }
   return true;
+}
+
+function hasSemanticSearchPatternText(pattern: string): boolean {
+  return /[a-z\u0080-\uffff]/i.test(pattern);
+}
+
+function isHashLikeSearchPattern(pattern: string): boolean {
+  const compact = pattern.replace(/[\s:._-]+/g, '');
+  return compact.length >= 4 &&
+    /\d/.test(compact) &&
+    /^[a-f0-9]+$/i.test(compact);
+}
+
+function isRegexSkeletonSearchPattern(pattern: string): boolean {
+  const signalText = unwrapSearchPatternKey(pattern)
+    .replace(/\\[bBdDsSwW]/g, '')
+    .replace(/\\[^\w\s]/g, '')
+    .replace(/\(\?:/g, '')
+    .replace(/[()[\]{}^$.*+?|/\\,-]/g, '')
+    .replace(/\s+/g, '')
+    .trim();
+
+  return signalText.length === 0;
+}
+
+function isGenericSearchShortCircuitPattern(pattern: string): boolean {
+  const key = getUnwrappedSearchPatternKey(pattern);
+  return key.length > 0 && GENERIC_SEARCH_SHORT_CIRCUIT_PATTERNS.has(key);
+}
+
+function getUnwrappedSearchPatternKey(pattern: string): string {
+  let key = normalizeSearchPattern(pattern).toLowerCase();
+
+  for (let index = 0; index < 3; index += 1) {
+    const next = unwrapSearchPatternKey(key);
+    if (next === key) {
+      break;
+    }
+    key = next;
+  }
+
+  return key;
+}
+
+function unwrapSearchPatternKey(pattern: string): string {
+  let key = pattern
+    .split(REGEXP_BACKSPACE_WORD_BOUNDARY)
+    .join('')
+    .replace(/\\b/g, '')
+    .replace(/\\\./g, '.')
+    .replace(/\\([/.'"`^$])/g, '$1')
+    .replace(/^[\s"'`/^]+/g, '')
+    .replace(/[\s"'`/$]+$/g, '')
+    .trim();
+
+  if (key.startsWith('(?:') && key.endsWith(')')) {
+    key = key.slice(3, -1).trim();
+  } else if (key.startsWith('(') && key.endsWith(')') && !key.includes('|')) {
+    key = key.slice(1, -1).trim();
+  }
+
+  return key;
 }
 
 function formatFileRefs(files: readonly string[], content = ''): string {

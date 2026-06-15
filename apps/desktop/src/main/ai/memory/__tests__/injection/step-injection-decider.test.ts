@@ -819,6 +819,182 @@ describe('StepInjectionDecider', () => {
       expect(memoryService.searchByPattern).not.toHaveBeenCalled();
     });
 
+    it('skips generic Grep and Glob patterns that would cause noisy short-circuit lookups', async () => {
+      const known = makeMemory({ id: 'generic-match' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: ' src ' } },
+          { toolName: 'Grep', args: { pattern: 'import' } },
+          { toolName: 'Glob', args: { glob: '.ts' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('generic-match');
+    });
+
+    it('skips wrapped generic search patterns before short-circuit lookup', async () => {
+      const known = makeMemory({ id: 'wrapped-generic-match' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: '\\bimport\\b' } },
+          { toolName: 'Grep', args: { pattern: '^src$' } },
+          { toolName: 'Glob', args: { glob: '/\\.ts$/' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('wrapped-generic-match');
+    });
+
+    it('keeps recent precise searches even when newer generic searches are skipped', async () => {
+      const known = makeMemory({
+        id: 'auth-refresh-match',
+        content: 'Use the auth refresh retry memory before scanning more files.',
+      });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: 'auth refresh retry' } },
+          { toolName: 'Grep', args: { pattern: 'src' } },
+          { toolName: 'Grep', args: { pattern: '\\bimport\\b' } },
+          { toolName: 'Glob', args: { glob: '/\\.ts$/' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('search_short_circuit');
+      expect(result?.memoryIds).toContain('auth-refresh-match');
+      expect(memoryService.searchByPattern).toHaveBeenCalledWith('auth refresh retry', {
+        projectId: 'proj-1',
+        recordAccess: false,
+      });
+      expect(memoryService.updateAccessCount).toHaveBeenCalledWith('auth-refresh-match');
+    });
+
+    it('skips regex skeleton patterns without business terms before lookup', async () => {
+      const known = makeMemory({ id: 'regex-skeleton-match' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: '\\w+' } },
+          { toolName: 'Grep', args: { pattern: '\\d{4}-\\d{2}-\\d{2}' } },
+          { toolName: 'Grep', args: { pattern: '.+' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('regex-skeleton-match');
+    });
+
+    it('keeps regex patterns that include specific business terms', async () => {
+      const known = makeMemory({
+        id: 'regex-business-match',
+        content: 'Use the auth token retry memory before expanding the search.',
+      });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'auth\\w+Token' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('search_short_circuit');
+      expect(result?.memoryIds).toContain('regex-business-match');
+      expect(memoryService.searchByPattern).toHaveBeenCalledWith('auth\\w+Token', {
+        projectId: 'proj-1',
+        recordAccess: false,
+      });
+    });
+
+    it('skips numeric and hash-like patterns without semantic text before lookup', async () => {
+      const known = makeMemory({ id: 'numeric-match' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: '404' } },
+          { toolName: 'Grep', args: { pattern: '1.2.3' } },
+          { toolName: 'Grep', args: { pattern: '7f9e-42' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('numeric-match');
+    });
+
+    it('keeps numeric search patterns when they include business terms', async () => {
+      const known = makeMemory({
+        id: 'semantic-status-code-match',
+        content: 'Handle auth 404 by refreshing the workspace token cache first.',
+      });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'auth 404' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('search_short_circuit');
+      expect(result?.memoryIds).toContain('semantic-status-code-match');
+      expect(memoryService.searchByPattern).toHaveBeenCalledWith('auth 404', {
+        projectId: 'proj-1',
+        recordAccess: false,
+      });
+    });
+
+    it('skips delimiter-only patterns without semantic text before lookup', async () => {
+      const known = makeMemory({ id: 'delimiter-match' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: '___' } },
+          { toolName: 'Grep', args: { pattern: '---' } },
+          { toolName: 'Grep', args: { pattern: ':::' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('delimiter-match');
+    });
+
+    it('keeps snake_case search patterns when they include business terms', async () => {
+      const known = makeMemory({
+        id: 'snake-case-match',
+        content: 'Use auth_token refresh memory before scanning generated files.',
+      });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'auth_token' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('search_short_circuit');
+      expect(result?.memoryIds).toContain('snake-case-match');
+      expect(memoryService.searchByPattern).toHaveBeenCalledWith('auth_token', {
+        projectId: 'proj-1',
+        recordAccess: false,
+      });
+    });
+
     it('skips search_short_circuit if memory is already injected', async () => {
       const known = makeMemory({ id: 'already-injected' });
       vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
@@ -837,6 +1013,27 @@ describe('StepInjectionDecider', () => {
 
       const firstResult = await decider.decide(5, {
         toolCalls: [{ toolName: 'Grep', args: { pattern: ' useCallback ' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(firstResult?.type).toBe('search_short_circuit');
+      vi.mocked(memoryService.searchByPattern).mockClear();
+
+      const repeatedResult = await decider.decide(6, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'useCallback' } }],
+        injectedMemoryIds: new Set(firstResult?.memoryIds ?? []),
+      });
+
+      expect(repeatedResult).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+    });
+
+    it('skips wrapped equivalents of search patterns already injected this session', async () => {
+      const known = makeMemory({ id: 'wrapped-pattern-match', content: 'Use the cached auth callback.' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const firstResult = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: '\\buseCallback\\b' } }],
         injectedMemoryIds: new Set(),
       });
 
@@ -947,6 +1144,23 @@ describe('StepInjectionDecider', () => {
       expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
         ['useCallback', { projectId: 'proj-1', recordAccess: false }],
         ['auth-refresh', { projectId: 'proj-1', recordAccess: false }],
+      ]);
+    });
+
+    it('deduplicates wrapped equivalent recent search patterns before memory lookup', async () => {
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(null);
+
+      await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: 'useCallback' } },
+          { toolName: 'Grep', args: { pattern: '\\buseCallback\\b' } },
+          { toolName: 'Grep', args: { pattern: '^useCallback$' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
+        ['^useCallback$', { projectId: 'proj-1', recordAccess: false }],
       ]);
     });
 

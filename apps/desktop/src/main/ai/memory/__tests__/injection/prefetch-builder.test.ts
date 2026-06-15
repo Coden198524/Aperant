@@ -253,9 +253,18 @@ describe('buildPrefetchPlan', () => {
           '.autocode/specs/001-task/context.md',
           'node_modules/pkg/index.js',
           'dist/bundle.js',
+          '.next/server/app.js',
+          '.turbo/cache/trace.json',
+          '.cache/vite/auth.ts',
+          'target/debug/auth.rs',
+          'tmp/generated-auth.ts',
           'src/auth//refresh.ts',
           'src/assets/logo.png',
           'src/auth/generated.js.map',
+          'src/data/auth.sqlite',
+          'src/data/cache.db',
+          'src/native/auth.wasm',
+          'src/native/auth.dll',
           'package-lock.json',
           'src/auth/',
         ],
@@ -292,8 +301,17 @@ describe('buildPrefetchPlan', () => {
     ]);
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('.autocode');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('node_modules');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('.next');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('.turbo');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('.cache');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('target/');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('tmp/');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('logo.png');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('generated.js.map');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('auth.sqlite');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('cache.db');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('auth.wasm');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('auth.dll');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('package-lock');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('pnpm-lock');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('demo.mp4');

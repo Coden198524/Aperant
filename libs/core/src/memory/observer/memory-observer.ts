@@ -39,6 +39,8 @@ const MAX_CO_ACCESS_CANDIDATES = 8;
 const MAX_OBSERVER_RELATED_MODULES = 6;
 const MAX_CONTEXT_COST_RELATED_FILES = 4;
 const OBSERVER_ACUTE_MEMORY_SNIPPET_MAX_CHARS = 220;
+const CONTEXT_TOKEN_SPIKE_SINGLE_FILE_HINT_MAX_CHARS = 64;
+const CONTEXT_TOKEN_SPIKE_FILE_HINT_MAX_CHARS = 96;
 const CONTEXT_TOKEN_SPIKE_DEFAULT_EXPECTED_TOKENS = 8_000;
 const CONTEXT_TOKEN_SPIKE_MIN_INPUT_TOKENS = 12_000;
 const CONTEXT_TOKEN_SPIKE_WINDOW_RATIO = 0.72;
@@ -507,7 +509,7 @@ export class MemoryObserver {
     return [{
       signalType: 'context_token_spike',
       proposedType: 'context_cost',
-      content: formatContextTokenSpikeMemoryContent(spike),
+      content: formatContextTokenSpikeMemoryContent(spike, relatedFiles),
       relatedFiles,
       relatedModules: inferObserverRelatedModules(relatedFiles),
       confidence: Math.min(0.82, 0.58 + Math.min(0.18, (spike.spikeRatio - 1) * 0.08)),
@@ -677,20 +679,91 @@ function buildContextTokenSpikeSnapshot(
   };
 }
 
-function formatContextTokenSpikeMemoryContent(spike: ContextTokenSpikeSnapshot): string {
+function formatContextTokenSpikeMemoryContent(
+  spike: ContextTokenSpikeSnapshot,
+  relatedFiles: readonly string[],
+): string {
   const windowText = spike.contextWindowLimit
-    ? ` of a ${formatObserverTokenCount(spike.contextWindowLimit)} context window`
+    ? ` of ${formatObserverTokenCount(spike.contextWindowLimit)} window`
     : '';
+  const fileHints = formatObserverCompactFileHintList(relatedFiles);
+  const fileHintText = fileHints ? ` Likely broad file reads: ${fileHints}.` : '';
+
   return [
-    `Context token spike: prompt reached ${formatObserverTokenCount(spike.inputTokens)} tokens${windowText}`,
+    `Context token spike: ${formatObserverTokenCount(spike.inputTokens)} tokens${windowText}`,
     `(${spike.spikeRatio.toFixed(1)}x expected).`,
-    `Files touched before spike: ${spike.filesAccessedCount}.`,
-    'Future runs should narrow searches and avoid broad file rereads in this area.',
-  ].join(' ');
+    `Files touched: ${spike.filesAccessedCount}.`,
+    `${fileHintText} Narrow searches before broad rereads.`,
+  ].join(' ').replace(/\s+/g, ' ').trim();
 }
 
 function formatObserverTokenCount(tokens: number): string {
   return tokens >= 1_000 ? `${Math.round(tokens / 100) / 10}k` : String(tokens);
+}
+
+function formatObserverCompactFileHintList(filePaths: readonly string[]): string {
+  const hints = [...new Set(filePaths.map(formatObserverCompactFileHint).filter(Boolean))];
+  if (hints.length === 0) {
+    return '';
+  }
+
+  const selected: string[] = [];
+  let charCount = 0;
+  for (const hint of hints) {
+    const separatorChars = selected.length > 0 ? 2 : 0;
+    const omittedAfterThis = hints.length - selected.length - 1;
+    const omittedSuffixChars = omittedAfterThis > 0 ? `, +${omittedAfterThis} more`.length : 0;
+    const nextCharCount = charCount + separatorChars + hint.length;
+
+    if (
+      selected.length > 0 &&
+      nextCharCount + omittedSuffixChars > CONTEXT_TOKEN_SPIKE_FILE_HINT_MAX_CHARS
+    ) {
+      break;
+    }
+
+    selected.push(hint);
+    charCount = nextCharCount;
+  }
+
+  const omittedCount = hints.length - selected.length;
+  return omittedCount > 0
+    ? `${selected.join(', ')}, +${omittedCount} more`
+    : selected.join(', ');
+}
+
+function formatObserverCompactFileHint(filePath: string): string {
+  const normalized = filePath
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
+  if (!normalized) {
+    return '';
+  }
+
+  const segments = normalized.split('/').filter(Boolean);
+  if (segments.length <= 3) {
+    return truncateObserverFileHint(normalized);
+  }
+
+  const sourceIndex = segments.lastIndexOf('src');
+  if (sourceIndex >= 0 && segments.length - sourceIndex <= 4) {
+    return truncateObserverFileHint(segments.slice(sourceIndex).join('/'));
+  }
+
+  return truncateObserverFileHint(segments.slice(-3).join('/'));
+}
+
+function truncateObserverFileHint(hint: string): string {
+  if (hint.length <= CONTEXT_TOKEN_SPIKE_SINGLE_FILE_HINT_MAX_CHARS) {
+    return hint;
+  }
+
+  const marker = '...';
+  return `${marker}${hint.slice(-(CONTEXT_TOKEN_SPIKE_SINGLE_FILE_HINT_MAX_CHARS - marker.length))}`;
 }
 
 function selectTopObserverFilesByAccess(

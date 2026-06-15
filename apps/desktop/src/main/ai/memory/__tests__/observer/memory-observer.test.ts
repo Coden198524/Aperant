@@ -463,6 +463,9 @@ describe('MemoryObserver', () => {
       expect(contextCost[0].proposedType).toBe('context_cost');
       expect(contextCost[0].content).toContain('Context token spike');
       expect(contextCost[0].content).toContain('24k tokens');
+      expect(contextCost[0].content).toContain(
+        'Likely broad file reads: src/auth/session.ts, src/auth/token-cache.ts.',
+      );
       expect(contextCost[0].content.length).toBeLessThan(220);
       expect(contextCost[0].relatedFiles).toEqual([
         'src/auth/session.ts',
@@ -470,6 +473,37 @@ describe('MemoryObserver', () => {
       ]);
       expect(contextCost[0].relatedModules).toEqual(['auth']);
       expect(contextCost[0].originatingStep).toBe(4);
+    });
+
+    it('keeps context token spike file hints compact for deep workspace paths', async () => {
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'apps/desktop/src/main/ai/memory/observer/memory-observer.ts' },
+        stepNumber: 1,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'apps/desktop/src/main/ai/memory/injection/prefetch-builder.ts' },
+        stepNumber: 2,
+      });
+      observer.observe({
+        type: 'memory:token-usage',
+        inputTokens: 48_000,
+        contextWindowLimit: 60_000,
+        stepNumber: 3,
+      });
+
+      const candidates = await observer.finalize('success');
+      const contextCost = candidates.find(
+        (candidate) => candidate.signalType === 'context_token_spike',
+      );
+
+      expect(contextCost?.content).toContain('Likely broad file reads:');
+      expect(contextCost?.content).toContain('memory/observer/memory-observer.ts');
+      expect(contextCost?.content).toContain('memory/injection/prefetch-builder.ts');
+      expect(contextCost?.content.length).toBeLessThan(220);
     });
 
     it('does not promote normal token usage into context_cost noise', async () => {
