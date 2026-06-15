@@ -63,6 +63,7 @@ type CompactVerification = {
 };
 
 const PLAN_TEXT_COMPACTION_NOTICE = ' ... [plan middle omitted for context budget] ... ';
+const PLAN_REPEATED_LINE_MIN_CHARS = 24;
 
 function mergeLimits(options?: PlanCompactionOptions): PlanCompactionLimits {
   return {
@@ -78,7 +79,13 @@ function compactText(
   options: { preserveTail?: boolean } = {},
 ): string {
   const text = typeof value === 'string' ? value : fallback;
-  const normalized = text.replace(/\s+/g, ' ').trim();
+  const normalized = foldRepeatedPlanLines(
+    text
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n'),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
   if (normalized.length <= maxChars) {
     return normalized;
   }
@@ -98,11 +105,13 @@ function compactMultilineText(
   options: { preserveTail?: boolean } = {},
 ): string {
   const text = typeof value === 'string' ? value : fallback;
-  const normalized = text
-    .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  const normalized = foldRepeatedPlanLines(
+    text
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n'),
+  ).trim();
   if (normalized.length <= maxChars) {
     return normalized;
   }
@@ -138,11 +147,13 @@ function limitHeadTailText(value: string, maxChars: number): string {
 
 function compactCompletionSummary(value: unknown, maxChars: number): string {
   const text = typeof value === 'string' ? value : '';
-  const normalized = text
-    .replace(/\r\n/g, '\n')
-    .replace(/[ \t]+/g, ' ')
-    .replace(/\n{3,}/g, '\n\n')
-    .trim();
+  const normalized = foldRepeatedPlanLines(
+    text
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n')
+      .replace(/[ \t]+/g, ' ')
+      .replace(/\n{3,}/g, '\n\n'),
+  ).trim();
   if (!normalized) {
     return '';
   }
@@ -202,6 +213,39 @@ function compactTableLine(line: string, maxChars: number): string {
     ? detail
     : limitHeadTailText(detail, availableForDetail);
   return `| ${firstCell} | ${compactedDetail} |`;
+}
+
+function foldRepeatedPlanLines(value: string): string {
+  const lines = value.split('\n');
+  const folded: string[] = [];
+  let previousKey = '';
+  let repeatedCount = 0;
+
+  const flushRepeatedMarker = (): void => {
+    if (repeatedCount <= 0) {
+      return;
+    }
+    folded.push(`[... ${repeatedCount} repeated line(s) omitted for plan budget ...]`);
+    repeatedCount = 0;
+  };
+
+  for (const line of lines) {
+    const key = line.trim().replace(/\s+/g, ' ');
+    if (
+      key.length >= PLAN_REPEATED_LINE_MIN_CHARS &&
+      key === previousKey
+    ) {
+      repeatedCount += 1;
+      continue;
+    }
+
+    flushRepeatedMarker();
+    folded.push(line);
+    previousKey = key;
+  }
+
+  flushRepeatedMarker();
+  return folded.join('\n');
 }
 
 function toStringArray(value: unknown, maxItems: number, maxChars: number): string[] {
