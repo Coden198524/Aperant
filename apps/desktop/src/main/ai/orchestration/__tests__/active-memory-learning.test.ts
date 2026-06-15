@@ -146,6 +146,64 @@ describe('active memory learning storage', () => {
     expect(stored.some((entry) => entry.type === 'work_unit_outcome')).toBe(true);
   });
 
+  it('deduplicates code pattern files before applying the sampling limit', async () => {
+    const stored: Array<{ type?: string; content?: string }> = [];
+    await writeFile(
+      join(projectDir, 'generic-patterns.tsx'),
+      'export function Counter() { const [count, setCount] = useState(0); return count; }',
+      'utf-8',
+    );
+    await writeFile(
+      join(projectDir, 'domain-pattern.ts'),
+      [
+        'export async function rememberDomainPattern() {',
+        '  try { await refreshSessionWithBackoff("auth"); }',
+        '  catch (error) { reportAuthFailure(error); return { success: false, error }; }',
+        '}',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    await extractAndStoreKnowledge({
+      sessionResult: {
+        outcome: 'completed',
+        stepsExecuted: 2,
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        messages: [],
+        durationMs: 1,
+        toolCallCount: 0,
+      },
+      subtask: {
+        id: '1.4',
+        description: 'Update duplicated file hints',
+        filesToModify: [
+          'generic-patterns.tsx',
+          './generic-patterns.tsx',
+          'generic-patterns.tsx',
+          'GENERIC-PATTERNS.tsx',
+          'generic-patterns.tsx/',
+        ],
+        filesToCreate: ['domain-pattern.ts'],
+      },
+      projectDir,
+      specDir,
+      projectId: 'project-1',
+      memoryService: {
+        store: async (entry) => {
+          stored.push(entry);
+          return `memory-${stored.length}`;
+        },
+      },
+    });
+
+    expect(
+      stored.some((entry) => entry.content?.includes('Try-Catch Block')),
+    ).toBe(true);
+    expect(
+      stored.some((entry) => entry.content?.includes('domain-pattern.ts')),
+    ).toBe(true);
+  });
+
   it('samples large code files before active memory pattern extraction', async () => {
     const fileName = 'large.ts';
     const head = 'const [count, setCount] = useState(0);\n';

@@ -76,10 +76,10 @@ export async function extractAndStoreKnowledge(config: LearningConfig): Promise<
 
 async function extractCodePatterns(config: LearningConfig): Promise<CodePattern[]> {
   const patterns: CodePattern[] = [];
-  const filesToAnalyze = [
+  const filesToAnalyze = normalizeCodePatternFiles([
     ...(config.subtask.filesToModify ?? []),
     ...(config.subtask.filesToCreate ?? []),
-  ];
+  ]);
 
   for (const file of filesToAnalyze.slice(0, ACTIVE_MEMORY_CODE_PATTERN_FILES_MAX)) {
     try {
@@ -91,6 +91,36 @@ async function extractCodePatterns(config: LearningConfig): Promise<CodePattern[
   }
 
   return patterns;
+}
+
+function normalizeCodePatternFiles(files: readonly string[]): string[] {
+  const normalizedFiles: string[] = [];
+  const seen = new Set<string>();
+  for (const file of files) {
+    const normalized = normalizeCodePatternFile(file);
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalizedFiles.push(normalized);
+  }
+  return normalizedFiles;
+}
+
+function normalizeCodePatternFile(file: string): string {
+  return file
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/')
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
 }
 
 export async function readCodePatternFileSample(projectDir: string, file: string): Promise<string> {
