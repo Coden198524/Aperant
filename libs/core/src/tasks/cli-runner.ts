@@ -678,6 +678,7 @@ const CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS = 1200;
 const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;
 const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;
 const CLI_MEMORY_STORAGE_FILE_REF_MAX_CHARS = 160;
+const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 const CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS = [
   /^(?:Summary:\\s*)?No memory search run\\b/i,
   /^(?:Summary:\\s*)?No relevant (?:[\\w/-]+\\s+)*memories found\\b/i,
@@ -2978,13 +2979,28 @@ function formatCodexCommandExecutionDetail(commandText, output, exitCode, status
 
 function isLikelyInternalCodexJsonLog(value) {
   const text = normalizeCodexJsonEventLine(value);
-  return text.startsWith('{') &&
-    /"type"\s*:\s*"item\.[^"]+"/.test(text) &&
-    /"item"\s*:|"command_execution"|"aggregated_output"/.test(text);
+  if (!text.startsWith('{')) {
+    return false;
+  }
+  try {
+    const parsed = JSON.parse(text);
+    return Boolean(parsed &&
+      typeof parsed === 'object' &&
+      typeof parsed.type === 'string' &&
+      parsed.type.startsWith('item.') &&
+      ('item' in parsed || 'command_execution' in parsed || 'aggregated_output' in parsed));
+  } catch {
+    return false;
+  }
 }
 
 function normalizeCodexJsonEventLine(value) {
-  return String(value ?? '').trim().replace(/^[\u3002\s]+(?=\{)/, '');
+  const text = String(value ?? '').trim();
+  let index = 0;
+  while (index < text.length && (text[index] === '。' || text[index].trim() === '')) {
+    index += 1;
+  }
+  return text[index] === '{' ? text.slice(index) : text;
 }
 
 function appendCollapsedInternalCodexJsonLog(value, state = defaultAttemptState) {
@@ -3438,7 +3454,9 @@ function validatePlanningSchedulingMetadata() {
 }
 
 function compactArtifactValidationRetryBasePrompt(value) {
-  const text = String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim();
+  const text = foldRepeatedRunnerPromptLines(
+    String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim(),
+  );
   if (text.length <= VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS) {
     return text;
   }
@@ -3450,7 +3468,9 @@ function compactArtifactValidationRetryBasePrompt(value) {
 }
 
 function compactArtifactValidationError(value) {
-  const text = String(value || '').replace(/\\s+/g, ' ').trim();
+  const text = foldRepeatedRunnerPromptLines(
+    String(value || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n').trim(),
+  ).replace(/\\s+/g, ' ').trim();
   if (text.length <= VALIDATION_RETRY_ERROR_MAX_CHARS) {
     return text;
   }
@@ -3838,6 +3858,35 @@ function cleanLogText(value) {
     .replace(/[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]/g, '');
 }
 
+function foldRepeatedRunnerPromptLines(value) {
+  const lines = String(value || '').split('\\n');
+  const folded = [];
+  let previousKey = '';
+  let repeatedCount = 0;
+
+  const flushRepeatedMarker = () => {
+    if (repeatedCount <= 0) {
+      return;
+    }
+    folded.push('[... ' + repeatedCount + ' repeated line(s) omitted for prompt budget ...]');
+    repeatedCount = 0;
+  };
+
+  for (const line of lines) {
+    const key = line.trim().replace(/\\s+/g, ' ');
+    if (key.length >= RUNNER_REPEATED_LINE_MIN_CHARS && key === previousKey) {
+      repeatedCount += 1;
+      continue;
+    }
+    flushRepeatedMarker();
+    folded.push(line);
+    previousKey = key;
+  }
+
+  flushRepeatedMarker();
+  return folded.join('\\n');
+}
+
 function stripNoisyCliDiagnosticLines(value) {
   return String(value ?? '')
     .split('\\n')
@@ -3857,7 +3906,7 @@ function isNoisyCliDiagnosticLine(line) {
 }
 
 function limitLogText(value, maxLength) {
-  const text = cleanLogText(value);
+  const text = foldRepeatedRunnerPromptLines(cleanLogText(value));
   return text.length > maxLength ? text.slice(0, maxLength - 3) + '...' : text;
 }
 

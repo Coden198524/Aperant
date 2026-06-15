@@ -219,6 +219,10 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('const CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS = 1200;');
     expect(runner).toContain('const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;');
     expect(runner).toContain('const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;');
+    expect(runner).toContain('const RUNNER_REPEATED_LINE_MIN_CHARS = 24;');
+    expect(runner).toContain('function foldRepeatedRunnerPromptLines(value)');
+    expect(runner).toContain('repeated line(s) omitted for prompt budget');
+    expect(runner).toContain('const text = foldRepeatedRunnerPromptLines(cleanLogText(value));');
     expect(runner).toContain('formatCliMemoryPromptLine(memory)');
     expect(runner).toContain('const CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS = [');
     expect(runner).toContain('const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [');
@@ -260,6 +264,8 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('original prompt middle omitted for validation retry budget');
     expect(runner).toContain('const compactValidationError = compactArtifactValidationError(validationError);');
     expect(runner).toContain('compactArtifactValidationRetryBasePrompt(prompt)');
+    expect(runner).toContain('const text = foldRepeatedRunnerPromptLines(');
+    expect((runner.match(/foldRepeatedRunnerPromptLines/g) ?? []).length).toBeGreaterThanOrEqual(4);
     expect(runner).not.toContain(
       `The previous CLI attempt exited successfully, but artifact validation failed: \${validationError}`,
     );
