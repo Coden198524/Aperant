@@ -1,5 +1,6 @@
 import { basename } from 'node:path';
 import type { AutocodeSessionResult } from './agent-session-types.js';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 export type AutocodeDirectSummaryLanguage = 'zh-CN' | 'fr' | string | undefined;
 export const AUTOCODE_DIRECT_FINAL_TEXT_MAX_CHARS = 4_000;
@@ -206,12 +207,7 @@ export function buildAutocodeDirectCompletionSummaryV2(
 }
 
 function limitAutocodeDirectFinalText(value: string): string {
-  const normalized = value
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{4,}/g, '\n\n\n')
-    .trim();
+  const normalized = normalizeAutocodeDirectSummaryText(value);
   if (normalized.length <= AUTOCODE_DIRECT_FINAL_TEXT_MAX_CHARS) {
     return normalized;
   }
@@ -273,17 +269,28 @@ export function extractAutocodeDirectTaskDescription(input: {
 }
 
 function limitAutocodeDirectTaskDescription(value: string): string {
-  if (value.length <= AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS) {
-    return value;
+  const normalized = normalizeAutocodeDirectSummaryText(value);
+  if (normalized.length <= AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS) {
+    return normalized;
   }
   const budget = Math.max(0, AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS - DIRECT_TASK_DESCRIPTION_TRUNCATION_MARKER.length);
   const headLength = Math.ceil(budget * 0.65);
   const tailLength = Math.max(0, budget - headLength);
   return [
-    value.slice(0, headLength).trimEnd(),
+    normalized.slice(0, headLength).trimEnd(),
     DIRECT_TASK_DESCRIPTION_TRUNCATION_MARKER,
-    value.slice(-tailLength).trimStart(),
+    normalized.slice(-tailLength).trimStart(),
   ].join('');
+}
+
+function normalizeAutocodeDirectSummaryText(value: string): string {
+  const normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  return foldRepeatedAutocodePromptLines(normalized).trim();
 }
 
 export function extractAutocodeDirectFilePathFromToolArgs(

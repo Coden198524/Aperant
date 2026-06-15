@@ -30,6 +30,25 @@ describe('direct task summary helpers', () => {
     expect(description.length).toBeLessThanOrEqual(AUTOCODE_DIRECT_TASK_DESCRIPTION_MAX_CHARS);
   });
 
+  it('folds repeated direct task description lines before storing summaries', () => {
+    const repeatedLine = 'DIRECT TASK REPEAT: same setup instruction without new signal.';
+    const description = extractAutocodeDirectTaskDescription({
+      initialMessages: [{
+        content: [
+          'DIRECT TASK HEAD',
+          ...Array.from({ length: 120 }, () => repeatedLine),
+          'DIRECT TASK TAIL',
+        ].join('\n'),
+      }],
+      specDir: 'E:/repo/.autocode/specs/001-task',
+    });
+
+    expect(description).toContain('DIRECT TASK HEAD');
+    expect(description).toContain('DIRECT TASK TAIL');
+    expect(description).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((description.match(/DIRECT TASK REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('falls back to the spec directory name when no initial task message exists', () => {
     expect(extractAutocodeDirectTaskDescription({
       initialMessages: [],
@@ -67,6 +86,34 @@ describe('direct task summary helpers', () => {
     expect(summary).toContain('| Item | Details |');
     expect(summary).toContain('Tokens: 2 total (1 prompt, 1 completion)');
     expect(summary.length).toBeLessThan(AUTOCODE_DIRECT_FINAL_TEXT_MAX_CHARS + 1_000);
+  });
+
+  it('folds repeated direct completion summary lines before appending quality details', () => {
+    const repeatedLine = 'DIRECT FINAL REPEAT: same verification detail without new signal.';
+    const finalText = [
+      'DIRECT FINAL HEAD',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      'DIRECT FINAL TAIL',
+    ].join('\n');
+
+    const summary = buildAutocodeDirectCompletionSummary({
+      specDir: 'E:/repo/.autocode/specs/001-task',
+      streamedText: '',
+      result: {
+        outcome: 'completed',
+        stepsExecuted: 1,
+        toolCallCount: 1,
+        durationMs: 1,
+        messages: [{ role: 'assistant', content: finalText }],
+        usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      },
+    });
+
+    expect(summary).toContain('DIRECT FINAL HEAD');
+    expect(summary).toContain('DIRECT FINAL TAIL');
+    expect(summary).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((summary.match(/DIRECT FINAL REPEAT/g) ?? [])).toHaveLength(1);
+    expect(summary).toContain('| Item | Details |');
   });
 
   it('includes compact token usage in fallback direct completion summaries', () => {
