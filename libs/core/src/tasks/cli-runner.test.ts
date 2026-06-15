@@ -1,5 +1,5 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
@@ -232,6 +232,11 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('isCliLowValueWholeMemoryLine(trimmed)');
     expect(runner).toContain('function stripCliLowValueMemoryText(content)');
     expect(runner).toContain('const memoryContent = stripCliLowValueMemoryText(memory.content);');
+    expect(runner).toContain('function compactCliExplicitMemoryNotes(explicitNotes)');
+    expect(runner).toContain('stripCliLowValueMemoryText(note && note.content)');
+    expect(runner).toContain('function normalizeCliMemoryNoteKey(value)');
+    expect(runner).toContain('function appendPlainCliMessageText(previous, next)');
+    expect(runner).toContain('state.lastCodexMessageText = appendPlainCliMessageText');
     expect(runner).toContain('function compactCliLocalSessionMemoryContent(insight)');
     expect(runner).toContain('function buildCliLocalSessionMemoryParts(insight)');
     expect(runner).toContain('foldRepeatedRunnerPromptLines(cleanLogText(part))');
@@ -321,6 +326,57 @@ describe('Autocode CLI runner prompt', () => {
     expect(capturedPrompt).toContain('Files: src/auth/session.ts.');
     expect(capturedPrompt).not.toContain('Efficient token usage');
     expect(capturedPrompt).not.toContain('Completed quickly with few steps');
+  });
+
+  it('stores filtered explicit Memory Notes from plain CLI output', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '006-cli-memory-notes',
+      title: 'Store plain CLI memory notes',
+      description: 'Persist explicit Memory Notes from non-JSON CLI output without noise.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '006-cli-memory-notes' });
+    const fakeCliPath = join(projectRoot, 'memory-cli.cjs');
+    writeFileSync(fakeCliPath, [
+      "process.stdout.write([",
+      "  'Implementation complete.',",
+      "  '## Memory Notes',",
+      "  '- [decision] Keep focused validation before broader checks.',",
+      "  '- [module_insight] keep   focused validation before broader checks.',",
+      "  '- [module_insight] High token usage per step - may need more focused approach',",
+      "].join('\\n'));",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '006-cli-memory-notes',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'true' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const memoryDir = join(specDir, 'memory', 'session_insights');
+    const memoryFiles = readdirSync(memoryDir).filter((name) => /^session_.+\.json$/i.test(name));
+    expect(memoryFiles).toHaveLength(1);
+    const memory = JSON.parse(readFileSync(join(memoryDir, memoryFiles[0]), 'utf8')) as {
+      insights?: string[];
+    };
+
+    expect(memory.insights).toContain('Keep focused validation before broader checks.');
+    expect(
+      memory.insights?.filter((insight) => /focused validation/i.test(insight)),
+    ).toHaveLength(1);
+    expect(memory.insights?.some((insight) => insight.includes('High token usage'))).toBe(false);
   });
 
   it('generates bounded artifact validation retry prompts', () => {

@@ -990,12 +990,7 @@ function recordCliWorkItemMemory(subtask, outcome, summary, explicitNotes) {
   const files = compactCliMemoryStorageFiles(getWorkItemFiles(subtask || {}));
   const sessionId = getCliMemorySessionId(subtask.id || 'task');
   const compactSummary = limitCliMemoryStorageText(summary);
-  const memoryNotes = (Array.isArray(explicitNotes) ? explicitNotes : [])
-    .map((note) => ({
-      ...note,
-      content: limitCliMemoryStorageText(note.content),
-    }))
-    .filter((note) => note.content);
+  const memoryNotes = compactCliExplicitMemoryNotes(explicitNotes);
   const content = buildCliWorkUnitOutcomeContent(subtask, outcome, summary, files, now);
   const insight = {
     sessionId,
@@ -1258,6 +1253,31 @@ function safeFileSegment(value) {
   return String(value || 'memory').replace(/[^A-Za-z0-9_.-]+/g, '_').slice(0, 160);
 }
 
+function compactCliExplicitMemoryNotes(explicitNotes) {
+  const seen = new Set();
+  const notes = [];
+  for (const note of Array.isArray(explicitNotes) ? explicitNotes : []) {
+    const content = limitCliMemoryStorageText(
+      stripCliLowValueMemoryText(note && note.content),
+    );
+    const key = normalizeCliMemoryNoteKey(content);
+    if (content.length < 10 || !key || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    notes.push({
+      ...note,
+      type: normalizeCliMemoryNoteType(note && note.type),
+      content,
+    });
+    if (notes.length >= 5) {
+      break;
+    }
+  }
+  return notes;
+}
+
 function extractCliMemoryNotes(text) {
   const normalized = String(text || '').replace(/\\r\\n/g, '\\n').replace(/\\r/g, '\\n');
   const match = /^#{1,6}\\s*Memory Notes\\s*$/im.exec(normalized);
@@ -1278,11 +1298,9 @@ function extractCliMemoryNotes(text) {
       type = normalizeCliMemoryNoteType(typed[1]);
       content = typed[2].trim();
     }
-    if (content.length >= 10) {
-      notes.push({ type, content: limitLogText(content, 500) });
-    }
+    notes.push({ type, content });
   }
-  return notes.slice(0, 5);
+  return compactCliExplicitMemoryNotes(notes);
 }
 
 function normalizeCliMemoryNoteType(value) {
@@ -1300,6 +1318,10 @@ function normalizeCliMemoryNoteType(value) {
     return type;
   }
   return 'module_insight';
+}
+
+function normalizeCliMemoryNoteKey(value) {
+  return String(value || '').replace(/\\s+/g, ' ').trim().toLowerCase();
 }
 
 function startAttempt(attemptPrompt, subtaskId) {
@@ -1325,7 +1347,7 @@ function startAttempt(attemptPrompt, subtaskId) {
     finalize(currentAttemptId, 1, undefined, error instanceof Error ? error.message : String(error))
       .catch((finalizeError) => finishRun(1, undefined, finalizeError instanceof Error ? finalizeError.message : String(finalizeError), undefined));
   });
-  child.on('exit', (code, signal) => {
+  child.on('close', (code, signal) => {
     if (signal) {
       console.error(\`Autocode CLI exited by signal: \${signal}\`);
       finalize(currentAttemptId, 1, signal, \`Autocode CLI exited by signal: \${signal}\`)
@@ -1612,7 +1634,7 @@ function startCodingWorkerAttempt(subtask) {
     console.error(message);
     finalizeCodingAttempt(currentAttemptId, 1, undefined, message);
   });
-  child.on('exit', (code, signal) => {
+  child.on('close', (code, signal) => {
     if (signal) {
       const message = 'Autocode CLI exited by signal: ' + signal;
       console.error(message);
@@ -2753,6 +2775,12 @@ function queueModelOutput(text, state = defaultAttemptState) {
     return;
   }
 
+  if (!codexJsonMode) {
+    state.lastCodexMessageText = appendPlainCliMessageText(
+      state.lastCodexMessageText,
+      cleaned,
+    );
+  }
   state.pendingModelOutput += cleaned;
   if (state.pendingModelOutput.length >= MODEL_OUTPUT_MAX_CHARS || cleaned.includes('\\n')) {
     flushModelOutput(state);
@@ -2781,6 +2809,13 @@ function flushModelOutput(state = defaultAttemptState) {
     : text;
   const detail = text.length > MODEL_OUTPUT_MAX_CHARS ? text : undefined;
   appendTaskLogEntry(logPhase, 'text', content, detail, buildAttemptLogExtra(state));
+}
+
+function appendPlainCliMessageText(previous, next) {
+  const combined = [previous, next].filter(Boolean).join('\\n');
+  return combined.length > MODEL_OUTPUT_MAX_CHARS
+    ? combined.slice(-MODEL_OUTPUT_MAX_CHARS)
+    : combined;
 }
 
 function processCodexJsonOutput(text, state = defaultAttemptState) {
