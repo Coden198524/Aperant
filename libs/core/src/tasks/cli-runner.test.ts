@@ -152,7 +152,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('formatCliMemoryPromptLine(memory)');
     expect(runner).toContain('const CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS = [');
     expect(runner).toContain('const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [');
-    expect(runner).toContain('Memory (?:recorded|skipped|noted locally|search unavailable|system not available)');
+    expect(runner).toContain('Memory (?:recorded|skipped|noted locally|not persisted|search unavailable|system not available)');
     expect(runner).toContain('isCliLowValueWholeMemoryLine(trimmed)');
     expect(runner).toContain('function stripCliLowValueMemoryText(content)');
     expect(runner).toContain('const memoryContent = stripCliLowValueMemoryText(memory.content);');
@@ -190,6 +190,8 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('original prompt middle omitted for validation retry budget');
     expect(runner).toContain('const compactValidationError = compactArtifactValidationError(validationError);');
     expect(runner).toContain('compactArtifactValidationRetryBasePrompt(prompt)');
-    expect(runner).not.toContain('The previous CLI attempt exited successfully, but artifact validation failed: ${validationError}');
+    expect(runner).not.toContain(
+      `The previous CLI attempt exited successfully, but artifact validation failed: \${validationError}`,
+    );
   });
 });

@@ -22,8 +22,7 @@ const MAX_RECORD_MEMORY_RELATED_FILES = 12;
 const MAX_RECORD_MEMORY_RELATED_MODULES = 12;
 const MAX_RECORD_MEMORY_FILE_REF_CHARS = 160;
 const MAX_RECORD_MEMORY_MODULE_CHARS = 96;
-const SKIPPED_LOW_VALUE_MEMORY_RESULT =
-  'Memory skipped: only reusable project-specific lessons.';
+const SKIPPED_LOW_VALUE_MEMORY_RESULT = 'Memory skipped: not reusable.';
 
 const recordMemorySchema = z.object({
   type: z
@@ -37,31 +36,27 @@ const recordMemorySchema = z.object({
       'causal_dependency',
       'requirement',
     ])
-    .describe(
-      'Type of memory: gotcha=pitfall to avoid, decision=architectural choice, pattern=reusable approach, error_pattern=recurring error, module_insight=non-obvious module behavior, dead_end=failed approach, causal_dependency=file coupling, requirement=constraint',
-    ),
+    .describe('Closest reusable memory kind.'),
   content: z
     .string()
     .min(10)
     .max(500)
-    .describe(
-      'The memory content. Be specific and actionable. Example: "Always call refreshToken() before making API calls in auth.ts; the token expires after 15 minutes of inactivity"',
-    ),
+    .describe('Reusable lesson; no status, test success, or tool echo.'),
   relatedFiles: z
     .array(z.string())
     .optional()
-    .describe('Absolute paths to files this memory relates to'),
+    .describe('Related file paths.'),
   relatedModules: z
     .array(z.string())
     .optional()
-    .describe('Module names this memory relates to (e.g., ["auth", "token"])'),
+    .describe('Related module names.'),
   confidence: z
     .number()
     .min(0)
     .max(1)
     .optional()
     .default(0.8)
-    .describe('Confidence in this memory (0.0-1.0, default 0.8)'),
+    .describe('Confidence 0-1; default .8.'),
 });
 
 type RecordMemoryInput = z.infer<typeof recordMemorySchema>;
@@ -73,7 +68,7 @@ export function createRecordMemoryTool(
 ): AITool<RecordMemoryInput, string> {
   return tool({
     description:
-      'Record a concise persistent memory for future sessions. Use this only for non-obvious, reusable gotchas, decisions, recurring errors, file couplings, or failed approaches. Do not record generic completion status, test success, token usage notes, or memory/search tool responses.',
+      'Record reusable project memory: non-obvious gotcha, decision, recurring error, file coupling, or failed approach. Never record status, tests, token notes, or memory/search echoes.',
     inputSchema: recordMemorySchema,
     execute: async (input: RecordMemoryInput): Promise<string> => {
       const content = normalizeRecordMemoryContent(
@@ -86,7 +81,7 @@ export function createRecordMemoryTool(
 
       const duplicate = await findDuplicateMemory(proxy, projectId, content);
       if (duplicate) {
-        return `Memory skipped: similar memory already exists (id: ${duplicate.id.slice(0, 8)}).`;
+        return `Memory skipped: duplicate (${duplicate.id.slice(0, 8)}).`;
       }
 
       const relatedFiles = normalizeRelatedFiles(input.relatedFiles);
@@ -113,10 +108,10 @@ export function createRecordMemoryTool(
       }
 
       if (!id) {
-        return 'Memory noted locally, but could not be persisted.';
+        return 'Memory not persisted.';
       }
 
-      return `Memory recorded (id: ${id.slice(0, 8)}).`;
+      return `Memory recorded (${id.slice(0, 8)}).`;
     },
   });
 }
@@ -361,10 +356,10 @@ function truncateHeadTailTextToBudget(text: string, maxChars: number, maxTokens:
 
 export function createRecordMemoryStub(): AITool<RecordMemoryInput, string> {
   return tool({
-    description: 'Record a memory (memory not available in this session).',
+    description: 'Record memory (unavailable in this session).',
     inputSchema: recordMemorySchema,
     execute: async (_input: RecordMemoryInput): Promise<string> => {
-      return 'Memory noted locally, but memory persistence is unavailable in this session.';
+      return 'Memory not persisted.';
     },
   });
 }

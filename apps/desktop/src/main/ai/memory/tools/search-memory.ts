@@ -20,6 +20,7 @@ import {
   isMemoryEligibleForAutomationContext,
   isMemoryEligibleForPromptContext,
 } from '../retrieval/context-packer';
+import { stripLowValueMemoryLines } from '../outcome-content';
 
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 8;
@@ -57,12 +58,16 @@ const LOCALIZED_CONTEXT_COST_SEARCH_QUERY_PATTERN = new RegExp(
   [
     '上下文窗口',
     '上下文成本',
-    '上下文(?:过大|太大|爆|满|超|长度|token)',
+    '上下文(?:过大|太大|太长|爆|满|超|长度|token)',
     'token\\s*(?:成本|消耗|用量|过高|太多)',
+    '(?:少用|少耗|节约)\\s*token',
+    '避免\\s*token\\s*(?:浪费|过高|太多)',
     '减少\\s*token',
     '降低\\s*token',
     '节省\\s*token',
     '压缩\\s*token',
+    '减少上下文',
+    '压缩上下文',
     '提示词\\s*token',
     '输入\\s*token',
   ].join('|'),
@@ -87,11 +92,16 @@ const LOCALIZED_PREFETCH_PATTERN_SEARCH_QUERY_PATTERN = new RegExp(
     '文件访问模式',
     '文件访问规律',
     '一起读',
-    '该先?(?:读|看|打开|检查)哪些文件',
-    '哪些文件(?:需要|应该|要)?(?:读|看|打开|检查)',
-    '先(?:读|看|打开|检查)哪些文件',
-    '从哪里开始(?:读|看|检查)',
+    '少读文件',
+    '缩小文件范围',
+    '避免(?:全量|全仓|大范围)扫描',
+    '该先?(?:读|看|查|打开|检查)哪些文件',
+    '哪些文件(?:需要|应该|要)?(?:读|看|查|打开|检查)',
+    '先(?:读|看|查|打开|检查)哪些文件',
+    '先(?:读|看|查|打开|检查)哪些入口',
+    '从哪里开始(?:读|看|查|检查|改)',
     '入口文件',
+    '入口在哪里',
   ].join('|'),
   'i',
 );
@@ -105,9 +115,7 @@ const MEMORY_SEARCH_UNAVAILABLE_RESULT =
 const searchMemorySchema = z.object({
   query: z
     .string()
-    .describe(
-      'Search query describing what you are looking for (e.g., "how to handle auth errors", "file access patterns for auth module")',
-    ),
+    .describe('Recall topic, e.g. auth errors, file access, token cost.'),
   types: z
     .array(
       z.enum([
@@ -130,11 +138,11 @@ const searchMemorySchema = z.object({
       ]),
     )
     .optional()
-    .describe('Optional: filter by memory type(s)'),
+    .describe('Memory type filter.'),
   relatedFiles: z
     .array(z.string())
     .optional()
-    .describe('Optional: filter memories related to specific files'),
+    .describe('Related file filter.'),
   limit: z
     .number()
     .int()
@@ -142,7 +150,7 @@ const searchMemorySchema = z.object({
     .max(MAX_SEARCH_LIMIT)
     .optional()
     .default(DEFAULT_SEARCH_LIMIT)
-    .describe('Maximum number of results to return (default 3, max 8)'),
+    .describe('Limit 1-8; default 3.'),
 });
 
 type SearchMemoryInput = z.infer<typeof searchMemorySchema>;
@@ -163,12 +171,12 @@ export function createSearchMemoryTool(
 ): AITool<SearchMemoryInput, string> {
   return tool({
     description:
-      'Search the persistent memory system for relevant context, gotchas, decisions, file prefetch/file access patterns, token/context cost lessons, and patterns from previous sessions. Use this when you are unsure how something was done before, need to know which files to inspect first, or want to check known pitfalls before making a change.',
+      'Search memory for gotchas, decisions, file-prefetch patterns, token-cost lessons, and prior workflows. Use before broad file scans or uncertain changes.',
     inputSchema: searchMemorySchema,
     execute: async (input: SearchMemoryInput): Promise<string> => {
       const query = normalizeSearchQuery(input.query);
       if (!query) {
-        return 'No memory search run: provide a specific query.';
+        return 'No memory search run: empty query.';
       }
       const types = inferSearchTypes(query, input.types as MemoryType[] | undefined);
 
@@ -222,7 +230,7 @@ function searchMemoryWithUnavailableSignal(
  */
 export function createSearchMemoryStub(): AITool<SearchMemoryInput, string> {
   return tool({
-    description: 'Search the memory system (memory not available in this session).',
+    description: 'Search memory (unavailable in this session).',
     inputSchema: searchMemorySchema,
     execute: async (_input: SearchMemoryInput): Promise<string> => {
       return 'Memory system not available in this session.';
@@ -296,9 +304,9 @@ function formatNoSearchMemoryResults(types: MemoryType[] | undefined): string {
       .map(formatMachineSearchMemoryKind),
   );
   if (!machineKinds || machineKinds.length === 0) {
-    return 'No relevant memories found for this query; continue with focused inspection instead of repeating this search.';
+    return 'No relevant memories found; inspect focused files next.';
   }
-  return `No relevant ${machineKinds.join('/')} memories found; continue with focused inspection instead of repeating this search.`;
+  return `No relevant ${machineKinds.join('/')} memories found; inspect focused files next.`;
 }
 
 function inferSearchTypes(query: string, requestedTypes: MemoryType[] | undefined): MemoryType[] | undefined {
@@ -328,9 +336,10 @@ function isPrefetchPatternSearchQuery(query: string): boolean {
 }
 
 function isMemoryEligibleForSearchMemoryResult(memory: Memory): boolean {
-  return isMachineReadableSearchMemoryType(memory.type)
+  const eligible = isMachineReadableSearchMemoryType(memory.type)
     ? isMemoryEligibleForAutomationContext(memory)
     : isMemoryEligibleForPromptContext(memory);
+  return eligible && hasRenderableSearchMemoryContent(memory);
 }
 
 function isMachineReadableSearchMemoryType(type: MemoryType): boolean {
@@ -422,12 +431,7 @@ function uniqueInOrder<T>(values: T[] | undefined): T[] | undefined {
 }
 
 function formatSearchMemoryOutput(query: string, memories: Memory[]): FormattedSearchMemoryOutput {
-  const header = `Memory search results for "${truncateTextToBudget(
-    query,
-    MAX_SEARCH_QUERY_ECHO_CHARS,
-    MAX_SEARCH_QUERY_ECHO_TOKENS,
-    { preserveTail: true },
-  )}":`;
+  const header = formatSearchMemoryHeader(query, memories);
   const lines: string[] = [];
   const renderedMemories: Memory[] = [];
   let omitted = 0;
@@ -456,6 +460,19 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): FormattedS
     output: truncateTextToBudget(output, MAX_SEARCH_OUTPUT_CHARS, MAX_SEARCH_OUTPUT_TOKENS, { preserveTail: true }),
     memories: renderedMemories,
   };
+}
+
+function formatSearchMemoryHeader(query: string, memories: readonly Memory[]): string {
+  if (memories.length > 0 && memories.every((memory) => isMachineReadableSearchMemoryType(memory.type))) {
+    return 'Memory search results:';
+  }
+
+  return `Memory search results for "${truncateTextToBudget(
+    query,
+    MAX_SEARCH_QUERY_ECHO_CHARS,
+    MAX_SEARCH_QUERY_ECHO_TOKENS,
+    { preserveTail: true },
+  )}":`;
 }
 
 async function recordDisplayedSearchMemoryAccess(
@@ -498,9 +515,7 @@ function shouldShowSearchMemoryFileRefs(memory: Memory): boolean {
 }
 
 function formatSearchMemoryContent(memory: Memory): string {
-  const promptContent = memory.type === 'context_cost'
-    ? memory.content
-    : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER);
+  const promptContent = getSearchMemoryPromptContent(memory);
   const content = appendSearchMemoryMetadata(
     memory,
     promptContent,
@@ -511,6 +526,38 @@ function formatSearchMemoryContent(memory: Memory): string {
     MAX_MEMORY_RESULT_TOKENS,
     { preserveTail: true },
   );
+}
+
+function hasRenderableSearchMemoryContent(memory: Memory): boolean {
+  return getSearchMemoryPromptContent(memory).length > 0;
+}
+
+function getSearchMemoryPromptContent(memory: Memory): string {
+  return memory.type === 'context_cost'
+    ? stripLowValueContextCostSearchContent(memory.content)
+    : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER).trim();
+}
+
+function stripLowValueContextCostSearchContent(content: string): string {
+  return content
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => isContextCostSearchSignalLine(line)
+      ? line
+      : stripLowValueMemoryLines(line))
+    .filter(Boolean)
+    .join('\n')
+    .trim();
+}
+
+function isContextCostSearchSignalLine(line: string): boolean {
+  return /context (?:token )?(?:spike|cost|window)/i.test(line)
+    || /high token usage/i.test(line)
+    || /(?:prompt|input) tokens?/i.test(line)
+    || /\btoken\b.*(?:cost|usage|spike|too many|expensive|reduce|save|compress|narrow)/i.test(line)
+    || /(?:上下文|提示词|输入).*token/i.test(line)
+    || /(?:减少|降低|节省|压缩|少用|少耗).*token/i.test(line);
 }
 
 function appendSearchMemoryMetadata(memory: Memory, content: string): string {

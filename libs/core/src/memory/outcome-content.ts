@@ -3,7 +3,7 @@ const LOW_VALUE_WHOLE_LINE_PATTERNS = [
 	/^(?:Summary:\s*)?No relevant (?:[\w/-]+\s+)*memories found\b/i,
 	/^(?:Summary:\s*)?Memory search results\b/i,
 	/^(?:Summary:\s*)?Memory system not available\b/i,
-	/^(?:Summary:\s*)?Memory (?:recorded|skipped|noted locally|search unavailable|system not available)\b/i,
+	/^(?:Summary:\s*)?Memory (?:recorded|skipped|noted locally|not persisted|search unavailable|system not available)\b/i,
 	/^(?:Summary:\s*)?Work unit .+ finished with outcome:\s*success\.?$/i,
 ] as const;
 
@@ -32,7 +32,8 @@ const LOW_VALUE_OUTCOME_LINE_PATTERNS = [
 	/^(?:Summary:\s*)?\u65e0\u95ee\u9898/i,
 ] as const;
 
-const LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN = /(?<=[.!?\u3002\uff01\uff1f])\s+|;\s+/;
+const LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN =
+	/(?<=[.!?\u3002\uff01\uff1f])\s+|;\s+/;
 const LOW_VALUE_REASONING_CUE_PATTERN =
 	/^(?:Actually,?|Wait[,.]?|Correction:|Let me reconsider[.:]?)\s+/i;
 
@@ -73,14 +74,16 @@ function stripLowValueMemoryLine(line: string): string {
 }
 
 function isLowValueMemoryLine(line: string): boolean {
-	return LOW_VALUE_OUTCOME_LINE_PATTERNS.some((pattern) =>
-		pattern.test(line) || pattern.test(stripLowValueReasoningCue(line)),
+	return LOW_VALUE_OUTCOME_LINE_PATTERNS.some(
+		(pattern) =>
+			pattern.test(line) || pattern.test(stripLowValueReasoningCue(line)),
 	);
 }
 
 function isLowValueWholeMemoryLine(line: string): boolean {
-	return LOW_VALUE_WHOLE_LINE_PATTERNS.some((pattern) =>
-		pattern.test(line) || pattern.test(stripLowValueReasoningCue(line)),
+	return LOW_VALUE_WHOLE_LINE_PATTERNS.some(
+		(pattern) =>
+			pattern.test(line) || pattern.test(stripLowValueReasoningCue(line)),
 	);
 }
 

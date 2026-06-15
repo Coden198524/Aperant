@@ -6,7 +6,7 @@ import type { Memory } from '../types';
 import { estimateTokens } from '../retrieval/context-packer';
 
 const MEMORY_SKIPPED_LOW_VALUE_RESULT =
-  'Memory skipped: only reusable project-specific lessons.';
+  'Memory skipped: not reusable.';
 
 function makeMemory(overrides: Partial<Memory> = {}): Memory {
   return {
@@ -44,9 +44,9 @@ describe('memory agent tools', () => {
     } as unknown as WorkerObserverProxy;
     const tool = createSearchMemoryTool(proxy, 'project-1') as { description?: string };
 
-    expect(tool.description).toContain('file prefetch/file access patterns');
-    expect(tool.description).toContain('token/context cost lessons');
-    expect(tool.description).toContain('which files to inspect first');
+    expect(tool.description).toContain('file-prefetch patterns');
+    expect(tool.description).toContain('token-cost lessons');
+    expect(tool.description).toContain('before broad file scans');
   });
 
   it('describes record_memory low-value write constraints', () => {
@@ -56,9 +56,9 @@ describe('memory agent tools', () => {
     } as unknown as WorkerObserverProxy;
     const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1') as { description?: string };
 
-    expect(tool.description).toContain('non-obvious, reusable gotchas');
-    expect(tool.description).toContain('generic completion status');
-    expect(tool.description).toContain('memory/search tool responses');
+    expect(tool.description).toContain('non-obvious gotcha');
+    expect(tool.description).toContain('Never record status');
+    expect(tool.description).toContain('memory/search echoes');
   });
 
   it('keeps search_memory output compact and deduplicated', async () => {
@@ -103,7 +103,7 @@ describe('memory agent tools', () => {
       string
     >(tool, { query: '   \n\t  ' });
 
-    expect(result).toBe('No memory search run: provide a specific query.');
+    expect(result).toBe('No memory search run: empty query.');
     expect(proxy.searchMemory).not.toHaveBeenCalled();
   });
 
@@ -175,7 +175,7 @@ describe('memory agent tools', () => {
     });
 
     expect(result).toBe(
-      'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+      'No relevant memories found; inspect focused files next.',
     );
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       query: 'auth token refresh',
@@ -245,7 +245,7 @@ describe('memory agent tools', () => {
     >(tool, { query: 'auth outcome', limit: 3, types: ['work_unit_outcome'] });
 
     expect(result).toBe(
-      'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+      'No relevant memories found; inspect focused files next.',
     );
   });
 
@@ -301,7 +301,7 @@ describe('memory agent tools', () => {
     >(tool, { query: 'auth gotcha', limit: 3, types: ['gotcha'] });
 
     expect(result).toBe(
-      'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+      'No relevant memories found; inspect focused files next.',
     );
   });
 
@@ -317,12 +317,151 @@ describe('memory agent tools', () => {
     >(tool, { query: 'token cost and files to read for auth module', limit: 3 });
 
     expect(result).toBe(
-      'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
+      'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
     );
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       types: ['context_cost', 'prefetch_pattern'],
       promptContextOnly: false,
     }));
+  });
+
+  it('infers machine memory searches from localized token and file-prefetch queries', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: '为了少用 token，应该先查哪些文件，避免全仓扫描', limit: 3 });
+
+    expect(result).toBe(
+      'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
+    );
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['context_cost', 'prefetch_pattern'],
+      promptContextOnly: false,
+    }));
+  });
+
+  it('infers file-prefetch searches from localized focused-inspection queries', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: '从哪里开始改认证流程，先查哪些入口，尽量少读文件', limit: 3 });
+
+    expect(result).toBe(
+      'No relevant file-prefetch memories found; inspect focused files next.',
+    );
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['prefetch_pattern'],
+      promptContextOnly: false,
+    }));
+  });
+
+  it('uses a compact header for machine-only search_memory results instead of echoing long queries', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'prefetch-json',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: ['apps/desktop/src/main/ai/memory/tools/search-memory.ts'],
+            frequentlyReadFiles: ['apps/desktop/src/main/ai/memory/__tests__/memory-tools.test.ts'],
+          }),
+          relatedFiles: [],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+    const longLocalizedQuery = [
+      '为了少用 token 并避免全仓扫描，处理认证流程时应该先查哪些文件？',
+      '这段查询很长会浪费模型上下文。'.repeat(30),
+      'LONG_QUERY_TAIL_SHOULD_NOT_BE_ECHOED',
+    ].join(' ');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: longLocalizedQuery, limit: 3 });
+
+    expect(result).toContain('Memory search results: 1. [prefetch_pattern]');
+    expect(result).toContain('Always prefetch:');
+    expect(result).not.toContain('Memory search results for "');
+    expect(result).not.toContain('LONG_QUERY_TAIL_SHOULD_NOT_BE_ECHOED');
+  });
+
+  it('strips low-value status lines from context_cost search_memory results while keeping token signals', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'token-cost-noise',
+          type: 'context_cost',
+          content: [
+            'High token usage per step: 24k tokens.',
+            'Context token spike came from broad repo scans; search memory before rg --files.',
+            'npm run typecheck passed.',
+            'No issues found.',
+          ].join('\n'),
+          confidence: 0.95,
+          relatedFiles: [
+            'apps/desktop/src/main/ai/memory/ipc/worker-observer-proxy.ts',
+            'apps/desktop/src/main/ai/memory/tools/search-memory.ts',
+          ],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: '减少 token 上下文成本', limit: 3 });
+
+    expect(result).toContain('[context_cost]');
+    expect(result).toContain('High token usage per step: 24k tokens');
+    expect(result).toContain('Context token spike came from broad repo scans');
+    expect(result).toContain('Related files: apps/desktop/src/main/ai/memory');
+    expect(result).not.toContain('npm run typecheck passed');
+    expect(result).not.toContain('No issues found');
+  });
+
+  it('omits context_cost search_memory results that lose all content after status cleanup', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'token-cost-empty',
+          type: 'context_cost',
+          content: [
+            'npm run typecheck passed.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          confidence: 0.95,
+          relatedFiles: ['apps/desktop/src/main/ai/memory/tools/search-memory.ts'],
+        }),
+      ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number; types: ['context_cost'] },
+      string
+    >(tool, { query: 'token cost', limit: 3, types: ['context_cost'] });
+
+    expect(result).toBe(
+      'No relevant token-cost memories found; inspect focused files next.',
+    );
+    expect(result).not.toContain('[context_cost]');
+    expect(result).not.toContain('Related files:');
+    expect(proxy.updateAccessCount).not.toHaveBeenCalled();
   });
 
   it('bounds search_memory query and related file filters before IPC', async () => {
@@ -1175,7 +1314,7 @@ describe('memory agent tools', () => {
       relatedFiles: ['src/auth/token.ts'],
     });
 
-    expect(result).toBe('Memory recorded (id: 12345678).');
+    expect(result).toBe('Memory recorded (12345678).');
     expect(result).not.toContain('reusable implementation gotcha');
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       query: 'This is a reusable implementation gotcha that should not be echoed back.',
@@ -1202,7 +1341,7 @@ describe('memory agent tools', () => {
       relatedFiles: ['src/main/ai/memory/tools/record-memory.ts'],
     });
 
-    expect(result).toBe('Memory recorded (id: aabbccdd).');
+    expect(result).toBe('Memory recorded (aabbccdd).');
     expect(proxy.searchMemory).toHaveBeenCalledOnce();
     expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
       content: 'Retry memory persistence after transient search IPC failures.',
@@ -1224,7 +1363,7 @@ describe('memory agent tools', () => {
       content: 'Use a compact tool response when memory persistence fails.',
     });
 
-    expect(result).toBe('Memory noted locally, but could not be persisted.');
+    expect(result).toBe('Memory not persisted.');
     expect(result).not.toContain('database unavailable');
     expect(result).not.toContain('Use a compact tool response');
   });
@@ -1252,7 +1391,7 @@ describe('memory agent tools', () => {
       relatedModules: [' auth ', 'auth', 'AUTH', 'token refresh', ''],
     });
 
-    expect(result).toBe('Memory recorded (id: abcdef12).');
+    expect(result).toBe('Memory recorded (abcdef12).');
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       query: 'Use shared auth helper before retrying token refresh.',
     }));
@@ -1381,7 +1520,7 @@ describe('memory agent tools', () => {
       ].join('\n'),
     });
 
-    expect(result).toBe('Memory recorded (id: feedface).');
+    expect(result).toBe('Memory recorded (feedface).');
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       query: 'Mock the OAuth clock before testing refresh retries.',
     }));
@@ -1435,7 +1574,7 @@ describe('memory agent tools', () => {
       content: 'When editing auth refresh flow update token cache before notifying listener and keep retry guard enabled.',
     });
 
-    expect(result).toBe('Memory skipped: similar memory already exists (id: existing).');
+    expect(result).toBe('Memory skipped: duplicate (existing).');
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
 
@@ -1463,7 +1602,7 @@ describe('memory agent tools', () => {
       content: 'When editing auth refresh flow update token cache before notifying listener and keep retry guard enabled.',
     });
 
-    expect(result).toBe('Memory skipped: similar memory already exists (id: existing).');
+    expect(result).toBe('Memory skipped: duplicate (existing).');
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
 
@@ -1526,12 +1665,15 @@ describe('memory agent tools', () => {
   });
 
   it.each([
-    'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
-    'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
+    'No relevant memories found; inspect focused files next.',
+    'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
     'Memory search unavailable; inspect focused files next.',
+    'Memory skipped: not reusable.',
+    'Memory skipped: duplicate (existing).',
+    'Memory not persisted.',
+    'Memory recorded (facefeed).',
     'Memory search results for "auth": 1. [gotcha] Refresh token cache before notifying listeners.',
     'Memory system not available in this session.',
-    'Memory noted locally, but could not be persisted.',
   ])('skips memory tool echo responses before persistence: %s', async (content) => {
     const proxy = {
       searchMemory: vi.fn(),
@@ -1568,7 +1710,7 @@ describe('memory agent tools', () => {
       relatedFiles: ['src/auth/token-cache.ts'],
     });
 
-    expect(result).toBe('Memory recorded (id: facefeed).');
+    expect(result).toBe('Memory recorded (facefeed).');
     expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
       content: '实现 auth refresh 时必须先更新 token cache，再通知 renderer 监听器。',
       relatedFiles: ['src/auth/token-cache.ts'],
@@ -1591,7 +1733,7 @@ describe('memory agent tools', () => {
       relatedFiles: ['src/main/ai/memory/types.ts'],
     });
 
-    expect(result).toBe('Memory recorded (id: feedface).');
+    expect(result).toBe('Memory recorded (feedface).');
     expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
       content: 'Typecheck fails unless worker memory IPC request unions include token usage events.',
       relatedFiles: ['src/main/ai/memory/types.ts'],
@@ -1628,6 +1770,6 @@ describe('memory agent tools', () => {
       content: 'This content should not be echoed when persistence is unavailable.',
     });
 
-    expect(result).toBe('Memory noted locally, but memory persistence is unavailable in this session.');
+    expect(result).toBe('Memory not persisted.');
   });
 });

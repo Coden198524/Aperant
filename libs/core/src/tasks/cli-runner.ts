@@ -676,7 +676,7 @@ const CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS = [
   /^(?:Summary:\\s*)?No relevant (?:[\\w/-]+\\s+)*memories found\\b/i,
   /^(?:Summary:\\s*)?Memory search results\\b/i,
   /^(?:Summary:\\s*)?Memory system not available\\b/i,
-  /^(?:Summary:\\s*)?Memory (?:recorded|skipped|noted locally|search unavailable|system not available)\\b/i,
+  /^(?:Summary:\\s*)?Memory (?:recorded|skipped|noted locally|not persisted|search unavailable|system not available)\\b/i,
   /^(?:Summary:\\s*)?Work unit .+ finished with outcome:\\s*success\\.?$/i,
 ];
 const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [
@@ -1942,7 +1942,7 @@ function normalizeWorkItemFileIntent(file) {
 
   const wildcardIndex = normalized.search(/[*?[{]/);
   const stablePrefix = wildcardIndex >= 0 ? normalized.slice(0, wildcardIndex) : normalized;
-  const pathLike = stablePrefix.replace(/\\/+\$/g, '');
+  const pathLike = stablePrefix.replace(/\\/+$/g, '');
   if (!pathLike || pathLike === '.') {
     return '';
   }
@@ -3894,16 +3894,4 @@ function quoteShellArg(value: string): string {
 
 function isCodingRunPhase(phase: AutocodeTaskRunPhase): boolean {
   return phase === 'coding' || phase === 'direct';
-}
-
-function readJson<T>(filePath: string): T | null {
-  if (!existsSync(filePath)) {
-    return null;
-  }
-
-  try {
-    return JSON.parse(readFileSync(filePath, 'utf8')) as T;
-  } catch {
-    return null;
-  }
 }
