@@ -9,6 +9,10 @@ import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { selectMemoryContextItems } from './context-selection.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
 import { compactMemoryInjectionText } from './text-compaction.js';
+import {
+  getRenderedVisibleMemories,
+  type VisibleMemoryItem,
+} from './visible-memory-items.js';
 
 const MAX_QA_MEMORY_ITEM_CHARS = 240;
 const MAX_QA_MEMORY_ITEM_TOKENS = 80;
@@ -75,14 +79,14 @@ export async function buildQaSessionContext(
       requirements,
       recipes,
     });
-    const context = formatQaSections(selectedSections);
-    if (context) {
+    const formattedContext = formatQaSections(selectedSections);
+    if (formattedContext.context) {
       await recordSelectedMemoryAccess(
         memoryService,
-        flattenQaSections(selectedSections),
+        formattedContext.memories,
       );
     }
-    return context;
+    return formattedContext.context;
   } catch {
     return '';
   }
@@ -126,57 +130,85 @@ function selectQaSections(sections: QaSections): QaSections {
   };
 }
 
-function flattenQaSections(sections: QaSections): Memory[] {
-  return [
-    ...sections.requirements,
-    ...sections.errorPatterns,
-    ...sections.e2eObservations,
-    ...sections.recipes,
-  ];
+interface FormattedQaContext {
+  context: string;
+  memories: Memory[];
 }
 
-function formatQaSections(sections: QaSections): string {
+function formatQaSections(sections: QaSections): FormattedQaContext {
   const parts: string[] = [];
+  const memoryItems: VisibleMemoryItem[] = [];
   const { requirements, errorPatterns, e2eObservations, recipes } = sections;
 
   if (requirements.length > 0) {
-    const items = requirements
-      .map((m) => `- ${formatMemoryContent(m)}`)
-      .join('\n');
-    parts.push(`KNOWN REQUIREMENTS - Constraints to validate:\n${items}`);
+    const items = requirements.map((memory) => formatMemoryLine(memory));
+    parts.push(
+      `KNOWN REQUIREMENTS - Constraints to validate:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
   }
 
   if (errorPatterns.length > 0) {
     const seenErrorPatternFiles = new Set<string>();
-    const items = errorPatterns
-      .map((m) => {
-        return `- ${formatMemoryContent(m)}${formatRelatedFileRefs(m.relatedFiles, seenErrorPatternFiles)}`;
-      })
-      .join('\n');
-    parts.push(`ERROR PATTERNS - Known failure modes:\n${items}`);
+    const items = errorPatterns.map((memory) => {
+      return {
+        memory,
+        renderedLine: `- ${formatMemoryContent(memory)}${formatRelatedFileRefs(
+          memory.relatedFiles,
+          seenErrorPatternFiles,
+        )}`,
+      };
+    });
+    parts.push(
+      `ERROR PATTERNS - Known failure modes:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
   }
 
   if (e2eObservations.length > 0) {
-    const items = e2eObservations
-      .map((m) => `- ${formatMemoryContent(m)}`)
-      .join('\n');
-    parts.push(`E2E OBSERVATIONS - Historical test behavior:\n${items}`);
+    const items = e2eObservations.map((memory) => formatMemoryLine(memory));
+    parts.push(
+      `E2E OBSERVATIONS - Historical test behavior:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
   }
 
   if (recipes.length > 0) {
-    const items = recipes.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
-    parts.push(`VALIDATION WORKFLOW - Proven QA approach:\n${items}`);
+    const items = recipes.map((memory) => formatMemoryLine(memory));
+    parts.push(
+      `VALIDATION WORKFLOW - Proven QA approach:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
   }
 
   if (parts.length === 0) {
-    return '';
+    return { context: '', memories: [] };
   }
 
-  return truncateText(
+  const context = truncateText(
     `=== MEMORY CONTEXT FOR QA ===\n${parts.join('\n\n')}\n=== END MEMORY CONTEXT ===`,
     MAX_QA_MEMORY_CONTEXT_CHARS,
     MAX_QA_MEMORY_CONTEXT_TOKENS,
   );
+  return {
+    context,
+    memories: getRenderedVisibleMemories(context, memoryItems),
+  };
+}
+
+function formatMemoryLine(memory: Memory): VisibleMemoryItem {
+  return {
+    memory,
+    renderedLine: `- ${formatMemoryContent(memory)}`,
+  };
 }
 
 function formatMemoryContent(memory: Memory): string {

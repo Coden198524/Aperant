@@ -27,6 +27,14 @@ function makeMemory(id: string, content: string, type: Memory['type'] = 'gotcha'
   };
 }
 
+function makeLongContent(label: string): string {
+  return [
+    label,
+    ...Array.from({ length: 80 }, (_, index) => `${label.toLowerCase()}_${index}`),
+    `${label}_TAIL`,
+  ].join(' ');
+}
+
 function makeMemoryService(): MemoryService {
   return {
     store: vi.fn().mockResolvedValue('id'),
@@ -237,6 +245,76 @@ describe('buildQaSessionContext', () => {
     expect(result).toContain('Auth callback tests must wait');
     expect(result).toContain('OAuth retry tests need a mocked clock');
     expect(result).not.toContain('Auth callback tests should wait');
+  });
+
+  it('records access only for QA memories visible in formatted context', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('requirement')) {
+        return [
+          makeMemory(
+            'req-visible',
+            'Auth callback tests must wait for token cache refresh before asserting listener notifications.',
+            'requirement',
+          ),
+        ];
+      }
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory(
+            'ep-duplicate',
+            'Auth callback tests should wait for token cache refresh before asserting listener notification.',
+            'error_pattern',
+          ),
+          makeMemory(
+            'ep-visible',
+            'OAuth retry tests need a mocked clock to avoid flaky expiry assertions.',
+            'error_pattern',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('Auth callback tests must wait');
+    expect(result).toContain('OAuth retry tests need a mocked clock');
+    expect(result).not.toContain('Auth callback tests should wait');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('req-visible');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('ep-visible');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('ep-duplicate');
+  });
+
+  it('does not record QA memories partially removed by the final context truncation', async () => {
+    vi.mocked(memoryService.searchWorkflowRecipe).mockResolvedValueOnce([
+      makeMemory('recipe-tail', makeLongContent('QA_RECIPE_TAIL'), 'workflow_recipe'),
+    ]);
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('requirement')) {
+        return [
+          makeMemory('req-visible-1', makeLongContent('QA_REQ_VISIBLE_ONE'), 'requirement'),
+          makeMemory('req-visible-2', makeLongContent('QA_REQ_VISIBLE_TWO'), 'requirement'),
+        ];
+      }
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory('ep-visible-1', makeLongContent('QA_ERROR_VISIBLE_ONE'), 'error_pattern'),
+          makeMemory('ep-visible-2', makeLongContent('QA_ERROR_VISIBLE_TWO'), 'error_pattern'),
+        ];
+      }
+      if (filters.types?.includes('e2e_observation')) {
+        return [
+          makeMemory('e2e-middle', makeLongContent('QA_MIDDLE_SHOULD_DROP'), 'e2e_observation'),
+          makeMemory('e2e-late', makeLongContent('QA_E2E_LATE'), 'e2e_observation'),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('middle omitted');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('e2e-middle');
   });
 
   it('filters duplicate and untrusted QA memories before formatting', async () => {

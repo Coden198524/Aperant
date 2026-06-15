@@ -9,6 +9,10 @@ import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { selectMemoryContextItems } from './context-selection.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
 import { compactMemoryInjectionText } from './text-compaction.js';
+import {
+  getRenderedVisibleMemories,
+  type VisibleMemoryItem,
+} from './visible-memory-items.js';
 
 const MAX_PLANNER_MEMORY_ITEM_CHARS = 240;
 const MAX_PLANNER_MEMORY_ITEM_TOKENS = 80;
@@ -89,14 +93,14 @@ export async function buildPlannerMemoryContext(
       outcomes,
       recipes,
     });
-    const context = formatPlannerSections(selectedSections);
-    if (context) {
+    const formattedContext = formatPlannerSections(selectedSections);
+    if (formattedContext.context) {
       await recordSelectedMemoryAccess(
         memoryService,
-        flattenPlannerSections(selectedSections),
+        formattedContext.memories,
       );
     }
-    return context;
+    return formattedContext.context;
   } catch {
     return '';
   }
@@ -147,32 +151,32 @@ function selectPlannerSections(sections: PlannerSections): PlannerSections {
   };
 }
 
-function flattenPlannerSections(sections: PlannerSections): Memory[] {
-  return [
-    ...sections.recipes,
-    ...sections.calibrations,
-    ...sections.deadEnds,
-    ...sections.causalDeps,
-    ...sections.outcomes,
-  ];
+interface FormattedPlannerContext {
+  context: string;
+  memories: Memory[];
 }
 
-function formatPlannerSections(sections: PlannerSections): string {
+function formatPlannerSections(
+  sections: PlannerSections,
+): FormattedPlannerContext {
   const parts: string[] = [];
+  const memoryItems: VisibleMemoryItem[] = [];
   const { recipes, calibrations, deadEnds, causalDeps, outcomes } = sections;
 
   if (recipes.length > 0) {
-    const items = recipes.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
+    const items = recipes.map((memory) => formatMemoryLine(memory));
+    const text = items.map((item) => item.renderedLine).join('\n');
     parts.push(
-      `WORKFLOW RECIPES - Proven approaches for similar tasks:\n${items}`,
+      `WORKFLOW RECIPES - Proven approaches for similar tasks:\n${text}`,
     );
+    memoryItems.push(...items);
   }
 
   if (calibrations.length > 0) {
-    const items = calibrations
-      .map((m) => {
+    const items = calibrations.map((memory) => {
+      const renderedLine = (() => {
         try {
-          const data = JSON.parse(m.content) as {
+          const data = JSON.parse(memory.content) as {
             ratio?: number;
             module?: string;
           };
@@ -180,47 +184,82 @@ function formatPlannerSections(sections: PlannerSections): string {
             data.ratio != null
               ? ` (step ratio: ${data.ratio.toFixed(2)}x)`
               : '';
-          return `- ${data.module ?? formatMemoryContent(m)}${ratio}`;
+          return `- ${data.module ?? formatMemoryContent(memory)}${ratio}`;
         } catch {
-          return `- ${formatMemoryContent(m)}`;
+          return `- ${formatMemoryContent(memory)}`;
         }
-      })
-      .join('\n');
-    parts.push(`TASK CALIBRATIONS - Historical step count data:\n${items}`);
+      })();
+      return { memory, renderedLine };
+    });
+    parts.push(
+      `TASK CALIBRATIONS - Historical step count data:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
   }
 
   if (deadEnds.length > 0) {
-    const items = deadEnds.map((m) => `- ${formatMemoryContent(m)}`).join('\n');
-    parts.push(`DEAD ENDS - Approaches that failed before:\n${items}`);
+    const items = deadEnds.map((memory) => formatMemoryLine(memory));
+    parts.push(
+      `DEAD ENDS - Approaches that failed before:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
   }
 
   if (causalDeps.length > 0) {
-    const items = causalDeps
-      .map((m) => `- ${formatMemoryContent(m)}`)
-      .join('\n');
-    parts.push(`CAUSAL DEPENDENCIES - Known ordering constraints:\n${items}`);
+    const items = causalDeps.map((memory) => formatMemoryLine(memory));
+    parts.push(
+      `CAUSAL DEPENDENCIES - Known ordering constraints:\n${items
+        .map((item) => item.renderedLine)
+        .join('\n')}`,
+    );
+    memoryItems.push(...items);
   }
 
   if (outcomes.length > 0) {
-    const items = outcomes
-      .map(formatOutcomeMemoryContent)
-      .filter(Boolean)
-      .map((content) => `- ${content}`)
+    const formattedOutcomes = outcomes
+      .map((memory) => ({
+        memory,
+        content: formatOutcomeMemoryContent(memory),
+      }))
+      .filter((outcome) => Boolean(outcome.content));
+    const items = formattedOutcomes
+      .map((outcome) => `- ${outcome.content}`)
       .join('\n');
     if (items) {
       parts.push(`RECENT OUTCOMES - Similar past work:\n${items}`);
+      memoryItems.push(
+        ...formattedOutcomes.map((outcome) => ({
+          memory: outcome.memory,
+          renderedLine: `- ${outcome.content}`,
+        })),
+      );
     }
   }
 
   if (parts.length === 0) {
-    return '';
+    return { context: '', memories: [] };
   }
 
-  return truncateText(
+  const context = truncateText(
     `=== MEMORY CONTEXT FOR PLANNER ===\n${parts.join('\n\n')}\n=== END MEMORY CONTEXT ===`,
     MAX_PLANNER_MEMORY_CONTEXT_CHARS,
     MAX_PLANNER_MEMORY_CONTEXT_TOKENS,
   );
+  return {
+    context,
+    memories: getRenderedVisibleMemories(context, memoryItems),
+  };
+}
+
+function formatMemoryLine(memory: Memory): VisibleMemoryItem {
+  return {
+    memory,
+    renderedLine: `- ${formatMemoryContent(memory)}`,
+  };
 }
 
 function formatMemoryContent(memory: Memory): string {

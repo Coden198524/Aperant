@@ -33,6 +33,14 @@ function makeMemory(id: string, content: string, type: Memory['type'] = 'gotcha'
   };
 }
 
+function makeLongContent(label: string): string {
+  return [
+    label,
+    ...Array.from({ length: 80 }, (_, index) => `${label.toLowerCase()}_${index}`),
+    `${label}_TAIL`,
+  ].join(' ');
+}
+
 function makeMemoryService(): MemoryService {
   return {
     store: vi.fn().mockResolvedValue('id'),
@@ -210,6 +218,76 @@ describe('buildPlannerMemoryContext', () => {
     expect(result).toContain('src/auth/session.ts');
     expect(result).not.toContain('Efficient token usage');
     expect(result).not.toContain('Completed quickly');
+  });
+
+  it('does not record access for outcomes that are stripped from planner context', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('dead_end')) {
+        return [
+          makeMemory('dead-visible', 'Mock the OAuth clock before refresh tests.', 'dead_end'),
+        ];
+      }
+      if (filters.types?.includes('work_unit_outcome')) {
+        return [
+          makeMemory(
+            'out-metrics-only',
+            [
+              'Efficient token usage - concise and focused implementation',
+              'Completed quickly with few steps - good planning',
+              'Used diverse set of tools - comprehensive coverage',
+            ].join('\n'),
+            'work_unit_outcome',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildPlannerMemoryContext('Add auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('DEAD ENDS');
+    expect(result).not.toContain('RECENT OUTCOMES');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('dead-visible');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('out-metrics-only');
+  });
+
+  it('does not record planner memories removed by the final context truncation', async () => {
+    vi.mocked(memoryService.searchWorkflowRecipe).mockResolvedValueOnce([
+      makeMemory('recipe-visible', makeLongContent('PLANNER_RECIPE_VISIBLE'), 'workflow_recipe'),
+    ]);
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('task_calibration')) {
+        return [
+          makeMemory('cal-visible-1', makeLongContent('PLANNER_CAL_VISIBLE_ONE'), 'task_calibration'),
+          makeMemory('cal-visible-2', makeLongContent('PLANNER_CAL_VISIBLE_TWO'), 'task_calibration'),
+        ];
+      }
+      if (filters.types?.includes('dead_end')) {
+        return [
+          makeMemory('dead-visible-1', makeLongContent('PLANNER_DEAD_VISIBLE_ONE'), 'dead_end'),
+          makeMemory('dead-visible-2', makeLongContent('PLANNER_DEAD_VISIBLE_TWO'), 'dead_end'),
+        ];
+      }
+      if (filters.types?.includes('causal_dependency')) {
+        return [
+          makeMemory('causal-middle', makeLongContent('PLANNER_MIDDLE_SHOULD_DROP'), 'causal_dependency'),
+          makeMemory('causal-late', makeLongContent('PLANNER_CAUSAL_LATE'), 'causal_dependency'),
+        ];
+      }
+      if (filters.types?.includes('work_unit_outcome')) {
+        return [
+          makeMemory('out-tail-1', makeLongContent('PLANNER_OUTCOME_TAIL_ONE'), 'work_unit_outcome'),
+          makeMemory('out-tail-2', makeLongContent('PLANNER_OUTCOME_TAIL_TWO'), 'work_unit_outcome'),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildPlannerMemoryContext('Add auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('middle omitted');
+    expect(result).not.toContain('PLANNER_MIDDLE_SHOULD_DROP');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('causal-middle');
   });
 
   it('only includes sections that have results', async () => {

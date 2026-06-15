@@ -16,7 +16,7 @@ import type { MemoryService, Memory } from '../../types';
 // HELPERS
 // ============================================================
 
-function makeCalibrationMemory(ratio: number): Memory {
+function makeCalibrationMemory(ratio: number, overrides: Partial<Memory> = {}): Memory {
   return {
     id: `cal-${ratio}`,
     type: 'task_calibration',
@@ -33,6 +33,7 @@ function makeCalibrationMemory(ratio: number): Memory {
     sessionId: 'sess-1',
     provenanceSessionIds: [],
     projectId: 'proj-1',
+    ...overrides,
   };
 }
 
@@ -128,68 +129,52 @@ describe('getCalibrationFactor', () => {
     expect(factor).toBeCloseTo(1.5, 5);
   });
 
-  it('defaults to 1.0 for calibrations with missing ratio field', async () => {
-    const mem: Memory = {
-      id: 'bad-cal',
-      type: 'task_calibration',
-      content: JSON.stringify({ module: 'auth' }), // no ratio field
-      confidence: 0.9,
-      tags: [],
-      relatedFiles: [],
-      relatedModules: ['auth'],
-      createdAt: new Date().toISOString(),
-      lastAccessedAt: new Date().toISOString(),
-      accessCount: 1,
-      scope: 'module',
-      source: 'observer_inferred',
-      sessionId: 'sess-1',
-      provenanceSessionIds: [],
-      projectId: 'proj-1',
-    };
+  it('skips calibrations with missing ratio field', async () => {
+    const mem = makeCalibrationMemory(1, {
+      id: 'missing-ratio',
+      content: JSON.stringify({ module: 'auth' }),
+    });
     const memoryService = makeMemoryService([mem]);
     const factor = await getCalibrationFactor(memoryService, ['auth'], 'proj-1');
-    expect(factor).toBeCloseTo(1.0, 5);
+    expect(factor).toBeUndefined();
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalled();
   });
 
-  it('defaults to 1.0 for malformed JSON content', async () => {
-    const mem: Memory = {
+  it('skips malformed JSON content', async () => {
+    const mem = {
+      ...makeCalibrationMemory(1),
       id: 'malformed',
-      type: 'task_calibration',
       content: 'not valid json {{ }}',
-      confidence: 0.9,
-      tags: [],
-      relatedFiles: [],
-      relatedModules: ['auth'],
-      createdAt: new Date().toISOString(),
-      lastAccessedAt: new Date().toISOString(),
-      accessCount: 1,
-      scope: 'module',
-      source: 'observer_inferred',
-      sessionId: 'sess-1',
-      provenanceSessionIds: [],
-      projectId: 'proj-1',
     };
     const memoryService = makeMemoryService([mem]);
     const factor = await getCalibrationFactor(memoryService, ['auth'], 'proj-1');
-    expect(factor).toBeCloseTo(1.0, 5);
+    expect(factor).toBeUndefined();
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalled();
   });
 
-  it('defaults invalid ratios to 1.0 and caps high ratios', async () => {
+  it('skips invalid ratios, caps high ratios, and records only used calibrations', async () => {
     const invalid: Memory = {
       ...makeCalibrationMemory(1),
       id: 'invalid-ratio',
       content: JSON.stringify({ ratio: Number.NaN }),
     };
     const high: Memory = {
-      ...makeCalibrationMemory(1),
+      ...makeCalibrationMemory(4),
       id: 'high-ratio',
-      content: JSON.stringify({ ratio: 4 }),
     };
-    const memoryService = makeMemoryService([invalid, high]);
+    const normal: Memory = {
+      ...makeCalibrationMemory(1.4),
+      id: 'normal-ratio',
+    };
+    const memoryService = makeMemoryService([invalid, high, normal]);
 
     const factor = await getCalibrationFactor(memoryService, ['auth'], 'proj-1');
 
-    expect(factor).toBeCloseTo(1.5, 5);
+    expect(factor).toBeCloseTo(1.7, 5);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(2);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('high-ratio');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('normal-ratio');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('invalid-ratio');
   });
 
   it('returns undefined gracefully when memoryService throws', async () => {
@@ -211,7 +196,7 @@ describe('getCalibrationFactor', () => {
         projectId: 'my-project',
         sort: 'recency',
         promptContextOnly: true,
-        recordAccess: true,
+        recordAccess: false,
       }),
     );
   });

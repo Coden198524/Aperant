@@ -6,7 +6,8 @@
  */
 
 import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer.js';
-import type { MemoryService } from '../types.js';
+import type { Memory, MemoryService } from '../types.js';
+import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 // ============================================================
@@ -22,6 +23,19 @@ export interface PrefetchPlan {
   totalTokenBudget: number;
   /** Maximum number of files to prefetch */
   maxFiles: number;
+}
+
+interface ParsedPrefetchMemory {
+  memory: Memory;
+  alwaysReadFiles: string[];
+  frequentlyReadFiles: string[];
+}
+
+interface PrefetchCandidateSources {
+  alwaysReadFiles: string[];
+  frequentlyReadFiles: string[];
+  alwaysSourceByFile: Map<string, Memory>;
+  frequentSourceByFile: Map<string, Memory>;
 }
 
 const DEFAULT_PREFETCH_TOKEN_BUDGET = 8192;
@@ -107,40 +121,17 @@ export async function buildPrefetchPlan(
         limit: 5,
         projectId,
         promptContextOnly: true,
-        recordAccess: true,
+        recordAccess: false,
       })
     ).filter(isMemoryEligibleForPromptContext);
 
-    const alwaysReadFiles: string[] = [];
-    const frequentlyReadFiles: string[] = [];
-
-    for (const m of prefetchMemories) {
-      try {
-        const data = JSON.parse(m.content) as {
-          alwaysReadFiles?: string[];
-          frequentlyReadFiles?: string[];
-        };
-        if (Array.isArray(data.alwaysReadFiles)) {
-          alwaysReadFiles.push(
-            ...data.alwaysReadFiles
-              .map(normalizePrefetchFilePath)
-              .filter(isString),
-          );
-        }
-        if (Array.isArray(data.frequentlyReadFiles)) {
-          frequentlyReadFiles.push(
-            ...data.frequentlyReadFiles
-              .map(normalizePrefetchFilePath)
-              .filter(isString),
-          );
-        }
-      } catch {
-        // Skip malformed memory content
-      }
-    }
+    const parsedMemories = prefetchMemories
+      .map(parsePrefetchMemory)
+      .filter(isParsedPrefetchMemory);
+    const candidates = collectPrefetchCandidateSources(parsedMemories);
 
     const always = selectPrefetchFiles(
-      uniqueInOrder(alwaysReadFiles),
+      candidates.alwaysReadFiles,
       Math.min(MAX_ALWAYS_READ_FILES, DEFAULT_PREFETCH_MAX_FILES),
     );
     const remainingFileBudget = Math.max(
@@ -149,9 +140,18 @@ export async function buildPrefetchPlan(
     );
     const alwaysSet = new Set(always);
     const frequent = selectPrefetchFiles(
-      uniqueInOrder(frequentlyReadFiles).filter((file) => !alwaysSet.has(file)),
+      candidates.frequentlyReadFiles.filter((file) => !alwaysSet.has(file)),
       Math.min(MAX_FREQUENTLY_READ_FILES, remainingFileBudget),
     );
+
+    const accessedMemories = getSelectedPrefetchSourceMemories(
+      always,
+      frequent,
+      candidates,
+    );
+    if (accessedMemories.length > 0) {
+      await recordSelectedMemoryAccess(memoryService, accessedMemories);
+    }
 
     return {
       alwaysReadFiles: always,
@@ -163,6 +163,92 @@ export async function buildPrefetchPlan(
     // Return empty plan on any failure
     return createEmptyPrefetchPlan();
   }
+}
+
+function parsePrefetchMemory(memory: Memory): ParsedPrefetchMemory | null {
+  try {
+    const data = JSON.parse(memory.content) as {
+      alwaysReadFiles?: string[];
+      frequentlyReadFiles?: string[];
+    };
+    const alwaysReadFiles = Array.isArray(data.alwaysReadFiles)
+      ? data.alwaysReadFiles.map(normalizePrefetchFilePath).filter(isString)
+      : [];
+    const frequentlyReadFiles = Array.isArray(data.frequentlyReadFiles)
+      ? data.frequentlyReadFiles.map(normalizePrefetchFilePath).filter(isString)
+      : [];
+    return alwaysReadFiles.length > 0 || frequentlyReadFiles.length > 0
+      ? { memory, alwaysReadFiles, frequentlyReadFiles }
+      : null;
+  } catch {
+    return null;
+  }
+}
+
+function collectPrefetchCandidateSources(
+  memories: readonly ParsedPrefetchMemory[],
+): PrefetchCandidateSources {
+  const alwaysSourceByFile = new Map<string, Memory>();
+  const frequentSourceByFile = new Map<string, Memory>();
+
+  for (const entry of memories) {
+    recordFirstPrefetchSource(
+      entry.alwaysReadFiles,
+      entry.memory,
+      alwaysSourceByFile,
+    );
+    recordFirstPrefetchSource(
+      entry.frequentlyReadFiles,
+      entry.memory,
+      frequentSourceByFile,
+    );
+  }
+
+  return {
+    alwaysReadFiles: [...alwaysSourceByFile.keys()],
+    frequentlyReadFiles: [...frequentSourceByFile.keys()],
+    alwaysSourceByFile,
+    frequentSourceByFile,
+  };
+}
+
+function recordFirstPrefetchSource(
+  files: readonly string[],
+  memory: Memory,
+  sourceByFile: Map<string, Memory>,
+): void {
+  for (const file of files) {
+    if (!sourceByFile.has(file)) {
+      sourceByFile.set(file, memory);
+    }
+  }
+}
+
+function getSelectedPrefetchSourceMemories(
+  alwaysReadFiles: readonly string[],
+  frequentlyReadFiles: readonly string[],
+  candidates: PrefetchCandidateSources,
+): Memory[] {
+  const memories: Memory[] = [];
+  for (const file of alwaysReadFiles) {
+    const memory = candidates.alwaysSourceByFile.get(file);
+    if (memory) {
+      memories.push(memory);
+    }
+  }
+  for (const file of frequentlyReadFiles) {
+    const memory = candidates.frequentSourceByFile.get(file);
+    if (memory) {
+      memories.push(memory);
+    }
+  }
+  return memories;
+}
+
+function isParsedPrefetchMemory(
+  value: ParsedPrefetchMemory | null,
+): value is ParsedPrefetchMemory {
+  return value !== null;
 }
 
 function createEmptyPrefetchPlan(): PrefetchPlan {
@@ -236,19 +322,6 @@ function isIgnoredPrefetchFileExtension(fileName: string): boolean {
   return [...IGNORED_PREFETCH_FILE_EXTENSIONS].some((extension) =>
     fileName.endsWith(extension),
   );
-}
-
-function uniqueInOrder(values: readonly string[]): string[] {
-  const seen = new Set<string>();
-  const result: string[] = [];
-  for (const value of values) {
-    if (seen.has(value)) {
-      continue;
-    }
-    seen.add(value);
-    result.push(value);
-  }
-  return result;
 }
 
 function selectPrefetchFiles(

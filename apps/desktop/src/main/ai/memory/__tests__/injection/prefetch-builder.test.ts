@@ -58,7 +58,7 @@ describe('buildPrefetchPlan', () => {
     expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
       relatedModules: ['auth', 'billing'],
       promptContextOnly: true,
-      recordAccess: true,
+      recordAccess: false,
     }));
   });
 
@@ -95,6 +95,39 @@ describe('buildPrefetchPlan', () => {
     expect(plan.alwaysReadFiles).not.toContain('src/prefetch-7.ts');
     expect(plan.alwaysReadFiles).toHaveLength(6);
     expect(plan.alwaysReadFiles.length + plan.frequentlyReadFiles.length).toBeLessThanOrEqual(plan.maxFiles);
+  });
+
+  it('records access only for memories that contribute selected prefetch files', async () => {
+    const files = Array.from({ length: 14 }, (_, index) => `src/prefetch-${index}.ts`);
+    const memoryService = makeMemoryService([
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: files,
+      }), { id: 'selected' }),
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: ['src/prefetch-0.ts'],
+      }), { id: 'duplicate-selected' }),
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: ['src/prefetch-7.ts'],
+      }), { id: 'not-selected' }),
+      makeMemory('{bad json', { id: 'malformed' }),
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: ['src/prefetch-low.ts'],
+      }), { id: 'low-confidence', confidence: 0.2 }),
+    ]);
+
+    const plan = await buildPrefetchPlan(['auth'], memoryService, 'project-1');
+
+    expect(plan.alwaysReadFiles).toEqual([
+      'src/prefetch-0.ts',
+      'src/prefetch-1.ts',
+      'src/prefetch-2.ts',
+      'src/prefetch-3.ts',
+      'src/prefetch-12.ts',
+      'src/prefetch-13.ts',
+    ]);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(1);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('selected');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('duplicate-selected');
   });
 
   it('filters low-quality memories and unsafe prefetch paths', async () => {

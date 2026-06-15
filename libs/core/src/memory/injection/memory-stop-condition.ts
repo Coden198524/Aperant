@@ -5,7 +5,8 @@
  * Prevents premature stopping for tasks that historically require more steps.
  */
 
-import type { MemoryService } from '../types.js';
+import type { Memory, MemoryService } from '../types.js';
+import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 // ============================================================
@@ -31,7 +32,7 @@ export function calculateMemoryAwareMaxSteps(
   const baseSteps = Number.isFinite(baseMaxSteps)
     ? Math.max(0, Math.floor(baseMaxSteps))
     : 0;
-  const factor = normalizeCalibrationFactor(calibrationFactor);
+  const factor = normalizeCalibrationFactor(calibrationFactor) ?? 1.0;
   return Math.min(Math.ceil(baseSteps * factor), MAX_ABSOLUTE_STEPS);
 }
 
@@ -61,29 +62,58 @@ export async function getCalibrationFactor(
       projectId,
       sort: 'recency',
       promptContextOnly: true,
-      recordAccess: true,
+      recordAccess: false,
     });
 
     if (calibrations.length === 0) return undefined;
 
-    const ratios = calibrations.map((m) => {
-      try {
-        const data = JSON.parse(m.content) as { ratio?: number };
-        return normalizeCalibrationFactor(data.ratio);
-      } catch {
-        return 1.0;
-      }
-    });
+    const parsedCalibrations = calibrations
+      .map(parseCalibrationMemory)
+      .filter(isParsedCalibrationMemory);
+    if (parsedCalibrations.length === 0) return undefined;
 
-    return ratios.reduce((sum, r) => sum + r, 0) / ratios.length;
+    await recordSelectedMemoryAccess(
+      memoryService,
+      parsedCalibrations.map((calibration) => calibration.memory),
+    );
+
+    return (
+      parsedCalibrations.reduce(
+        (sum, calibration) => sum + calibration.ratio,
+        0,
+      ) / parsedCalibrations.length
+    );
   } catch {
     return undefined;
   }
 }
 
-function normalizeCalibrationFactor(value: number | undefined): number {
-  if (value === undefined || !Number.isFinite(value) || value <= 0) {
-    return 1.0;
+interface ParsedCalibrationMemory {
+  memory: Memory;
+  ratio: number;
+}
+
+function parseCalibrationMemory(
+  memory: Memory,
+): ParsedCalibrationMemory | null {
+  try {
+    const data = JSON.parse(memory.content) as { ratio?: unknown };
+    const ratio = normalizeCalibrationFactor(data.ratio);
+    return ratio === undefined ? null : { memory, ratio };
+  } catch {
+    return null;
+  }
+}
+
+function isParsedCalibrationMemory(
+  value: ParsedCalibrationMemory | null,
+): value is ParsedCalibrationMemory {
+  return value !== null;
+}
+
+function normalizeCalibrationFactor(value: unknown): number | undefined {
+  if (typeof value !== 'number' || !Number.isFinite(value) || value <= 0) {
+    return undefined;
   }
   return Math.min(value, 2.0);
 }
