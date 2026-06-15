@@ -1,5 +1,9 @@
 import { selectMemoryContextItems } from './injection/context-selection.js';
-import { estimateTokens, isMemoryEligibleForPromptContext } from './retrieval/context-packer.js';
+import {
+  estimateTokens,
+  isMemoryEligibleForAutomationContext,
+  isMemoryEligibleForPromptContext,
+} from './retrieval/context-packer.js';
 import type {
   Memory,
   MemoryRecordEntry,
@@ -176,6 +180,10 @@ export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT = 3;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_CHARS = 80;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_TOKENS = 32;
 const AUTOCODE_MEMORY_RUNTIME_CONTEXT_CANDIDATE_MULTIPLIER = 3;
+const AUTOCODE_MEMORY_RUNTIME_PREFETCH_PATTERN_HINT =
+  '- File prefetch memory is available; search_memory("files to read") before broad file scans.';
+const AUTOCODE_MEMORY_RUNTIME_CONTEXT_COST_HINT =
+  '- Token/context cost memory is available; search_memory("token cost") before broad rereads.';
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_CONTENT_MAX_CHARS = 1_200;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_FIELD_MAX_CHARS = 500;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT = 12;
@@ -709,6 +717,10 @@ export function formatAutocodeMemoryRuntimeContext(
   maxItems = 6,
 ): string {
   const itemLimit = Math.max(0, maxItems);
+  const machineHints = buildAutocodeMemoryRuntimeMachineHints(
+    memories,
+    itemLimit > 0,
+  );
   const usable = selectMemoryContextItems(
     memories.filter(isAutocodeMemoryRuntimeContextMemoryEligible),
     {
@@ -718,7 +730,7 @@ export function formatAutocodeMemoryRuntimeContext(
     },
   );
 
-  if (usable.length === 0) {
+  if (usable.length === 0 && machineHints.length === 0) {
     return '';
   }
 
@@ -728,6 +740,9 @@ export function formatAutocodeMemoryRuntimeContext(
     'Use these prior outcomes, gotchas, and decisions when relevant. Do not repeat failed approaches.',
     '',
   ];
+  if (machineHints.length > 0) {
+    lines.push(...machineHints, '');
+  }
 
   let omitted = 0;
   let included = 0;
@@ -783,6 +798,38 @@ function isAutocodeMemoryRuntimeContextMemoryEligible(memory: Memory): boolean {
     memory.type !== 'prefetch_pattern' &&
     memory.type !== 'context_cost' &&
     isMemoryEligibleForPromptContext(memory)
+  );
+}
+
+function buildAutocodeMemoryRuntimeMachineHints(
+  memories: Memory[],
+  enabled: boolean,
+): string[] {
+  if (!enabled) {
+    return [];
+  }
+
+  const hints: string[] = [];
+  if (hasAutocodeMemoryRuntimePrefetchPatternHint(memories)) {
+    hints.push(AUTOCODE_MEMORY_RUNTIME_PREFETCH_PATTERN_HINT);
+  }
+  if (hasAutocodeMemoryRuntimeContextCostHint(memories)) {
+    hints.push(AUTOCODE_MEMORY_RUNTIME_CONTEXT_COST_HINT);
+  }
+  return hints;
+}
+
+function hasAutocodeMemoryRuntimePrefetchPatternHint(memories: Memory[]): boolean {
+  return memories.some((memory) =>
+    memory.type === 'prefetch_pattern' &&
+    isMemoryEligibleForAutomationContext(memory)
+  );
+}
+
+function hasAutocodeMemoryRuntimeContextCostHint(memories: Memory[]): boolean {
+  return memories.some((memory) =>
+    memory.type === 'context_cost' &&
+    isMemoryEligibleForAutomationContext(memory)
   );
 }
 

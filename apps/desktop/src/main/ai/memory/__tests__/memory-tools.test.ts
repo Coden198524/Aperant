@@ -35,6 +35,29 @@ async function executeTool<TInput, TOutput>(
 }
 
 describe('memory agent tools', () => {
+  it('describes search_memory machine memory affordances', () => {
+    const proxy = {
+      searchMemory: vi.fn(),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1') as { description?: string };
+
+    expect(tool.description).toContain('file prefetch/file access patterns');
+    expect(tool.description).toContain('token/context cost lessons');
+    expect(tool.description).toContain('which files to inspect first');
+  });
+
+  it('describes record_memory low-value write constraints', () => {
+    const proxy = {
+      searchMemory: vi.fn(),
+      recordMemory: vi.fn(),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1') as { description?: string };
+
+    expect(tool.description).toContain('non-obvious, reusable gotchas');
+    expect(tool.description).toContain('generic completion status');
+    expect(tool.description).toContain('memory/search tool responses');
+  });
+
   it('keeps search_memory output compact and deduplicated', async () => {
     const longContent = 'Use the auth refresh helper before API calls. '.repeat(30);
     const proxy = {
@@ -106,6 +129,26 @@ describe('memory agent tools', () => {
       projectId: 'project-1',
       promptContextOnly: true,
       recordAccess: true,
+    }));
+  });
+
+  it('returns a focused no-result hint for machine memory searches', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'token cost and files to read for auth module', limit: 3 });
+
+    expect(result).toBe(
+      'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
+    );
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['context_cost', 'prefetch_pattern'],
+      promptContextOnly: false,
     }));
   });
 
@@ -451,6 +494,7 @@ describe('memory agent tools', () => {
 
     expect(result).toContain('[prefetch_pattern]');
     expect(result).toContain('Prefetch together: src/auth/session.ts, src/auth/token.ts');
+    expect(result).not.toContain('[session.ts, token.ts]');
     expect(result).not.toContain('frequentlyReadFiles');
     expect(result).not.toContain('{');
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
@@ -494,6 +538,127 @@ describe('memory agent tools', () => {
     expect(result).not.toContain('frequentlyReadFiles');
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       types: ['prefetch_pattern'],
+      promptContextOnly: false,
+    }));
+  });
+
+  it('infers prefetch_pattern searches from file access queries without explicit types', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'prefetch-json',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: ['src/auth/session.ts'],
+            frequentlyReadFiles: ['src/auth/token.ts'],
+          }),
+          relatedFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'file access patterns for auth module', limit: 3 });
+
+    expect(result).toContain('[prefetch_pattern]');
+    expect(result).toContain('Always prefetch: src/auth/session.ts');
+    expect(result).toContain('Prefetch together: src/auth/token.ts');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['prefetch_pattern'],
+      promptContextOnly: false,
+    }));
+  });
+
+  it('infers prefetch_pattern searches from localized file access queries', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'localized-prefetch-json',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: ['src/auth/session.ts'],
+            frequentlyReadFiles: ['src/auth/token.ts'],
+          }),
+          relatedFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: '处理认证时该先看哪些文件', limit: 3 });
+
+    expect(result).toContain('[prefetch_pattern]');
+    expect(result).toContain('Always prefetch: src/auth/session.ts');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['prefetch_pattern'],
+      promptContextOnly: false,
+    }));
+  });
+
+  it('does not infer prefetch_pattern for ordinary file gotcha searches', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'file-gotcha',
+          type: 'gotcha',
+          content: 'Validate file upload size before writing to disk.',
+          confidence: 0.95,
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'file upload gotchas', limit: 3 });
+
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: undefined,
+      promptContextOnly: true,
+    }));
+  });
+
+  it('infers multiple machine memory types from combined cost and file access queries', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'context-cost',
+          type: 'context_cost',
+          content: 'Context token spike: prompt reached 24k tokens; narrow broad file rereads.',
+          confidence: 0.95,
+          relatedFiles: ['src/auth/session.ts'],
+        }),
+        makeMemory({
+          id: 'prefetch-json',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: ['src/auth/session.ts'],
+            frequentlyReadFiles: ['src/auth/token.ts'],
+          }),
+          relatedFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'token cost and files to read for auth module', limit: 3 });
+
+    expect(result).toContain('[context_cost]');
+    expect(result).toContain('Context token spike');
+    expect(result).toContain('[prefetch_pattern]');
+    expect(result).toContain('Always prefetch: src/auth/session.ts');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['context_cost', 'prefetch_pattern'],
       promptContextOnly: false,
     }));
   });
@@ -552,6 +717,33 @@ describe('memory agent tools', () => {
     }));
   });
 
+  it('infers context_cost searches from localized token cost queries', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'localized-context-cost',
+          type: 'context_cost',
+          content: 'Context token spike: prompt reached 24k tokens; narrow broad file rereads.',
+          confidence: 0.95,
+          relatedFiles: ['src/auth/session.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: '怎么减少 token 消耗并避免上下文窗口过大', limit: 3 });
+
+    expect(result).toContain('[context_cost]');
+    expect(result).toContain('Context token spike');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['context_cost'],
+      promptContextOnly: false,
+    }));
+  });
+
   it('does not infer context_cost for ordinary auth token searches', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([
@@ -569,6 +761,30 @@ describe('memory agent tools', () => {
       { query: string; limit: number },
       string
     >(tool, { query: 'auth token refresh behavior', limit: 3 });
+
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: undefined,
+      promptContextOnly: true,
+    }));
+  });
+
+  it('does not infer context_cost for localized auth token searches', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'localized-auth-token-gotcha',
+          type: 'gotcha',
+          content: 'Refresh the auth token before calling protected APIs.',
+          confidence: 0.95,
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: '认证 token 刷新行为', limit: 3 });
 
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       types: undefined,
@@ -798,6 +1014,122 @@ describe('memory agent tools', () => {
       'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
     );
     expect(proxy.recordMemory).not.toHaveBeenCalled();
+  });
+
+  it('skips localized generic completion memories before persistence', async () => {
+    const proxy = {
+      searchMemory: vi.fn(),
+      recordMemory: vi.fn(),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'module_insight'; content: string },
+      string
+    >(tool, {
+      type: 'module_insight',
+      content: '任务完成，所有测试通过，token 使用较少。',
+    });
+
+    expect(result).toBe(
+      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
+    );
+    expect(proxy.searchMemory).not.toHaveBeenCalled();
+    expect(proxy.recordMemory).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'Typecheck passed.',
+    'npm run typecheck passed.',
+  ])('skips generic verification status memories before persistence: %s', async (content) => {
+    const proxy = {
+      searchMemory: vi.fn(),
+      recordMemory: vi.fn(),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'module_insight'; content: string },
+      string
+    >(tool, { type: 'module_insight', content });
+
+    expect(result).toBe(
+      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
+    );
+    expect(proxy.searchMemory).not.toHaveBeenCalled();
+    expect(proxy.recordMemory).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
+    'Memory search results for "auth": 1. [gotcha] Refresh token cache before notifying listeners.',
+    'Memory system not available in this session.',
+  ])('skips memory tool echo responses before persistence: %s', async (content) => {
+    const proxy = {
+      searchMemory: vi.fn(),
+      recordMemory: vi.fn(),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'module_insight'; content: string },
+      string
+    >(tool, {
+      type: 'module_insight',
+      content,
+    });
+
+    expect(result).toBe(
+      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
+    );
+    expect(proxy.searchMemory).not.toHaveBeenCalled();
+    expect(proxy.recordMemory).not.toHaveBeenCalled();
+  });
+
+  it('keeps localized reusable gotchas recordable', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+      recordMemory: vi.fn().mockResolvedValue('facefeed-aaaa-bbbb-cccc-123456789abc'),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'gotcha'; content: string; relatedFiles: string[] },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: '实现 auth refresh 时必须先更新 token cache，再通知 renderer 监听器。',
+      relatedFiles: ['src/auth/token-cache.ts'],
+    });
+
+    expect(result).toBe('Memory recorded (id: facefeed).');
+    expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
+      content: '实现 auth refresh 时必须先更新 token cache，再通知 renderer 监听器。',
+      relatedFiles: ['src/auth/token-cache.ts'],
+    }));
+  });
+
+  it('keeps actionable verification gotchas recordable', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+      recordMemory: vi.fn().mockResolvedValue('feedface-aaaa-bbbb-cccc-123456789abc'),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'gotcha'; content: string; relatedFiles: string[] },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: 'Typecheck fails unless worker memory IPC request unions include token usage events.',
+      relatedFiles: ['src/main/ai/memory/types.ts'],
+    });
+
+    expect(result).toBe('Memory recorded (id: feedface).');
+    expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'Typecheck fails unless worker memory IPC request unions include token usage events.',
+      relatedFiles: ['src/main/ai/memory/types.ts'],
+    }));
   });
 
   it('skips low-confidence memories before persistence', async () => {

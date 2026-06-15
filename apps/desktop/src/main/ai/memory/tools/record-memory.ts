@@ -15,13 +15,27 @@ import { estimateTokens, isMemoryEligibleForPromptContext, MIN_PACKED_MEMORY_CON
 const LOW_VALUE_MEMORY_PATTERNS = [
   /^Efficient token usage\b/i,
   /^High token usage per step\b/i,
+  /^No memory search run\b/i,
+  /^No relevant (?:[\w/-]+\s+)*memories found\b/i,
+  /^Memory search results\b/i,
+  /^Memory system not available\b/i,
+  /^Memory (?:recorded|skipped|noted locally|system not available)\b/i,
   /^Completed quickly with few steps\b/i,
   /^Many steps required\b/i,
   /^Used diverse set of tools\b/i,
   /^(?:task|implementation|session|work|subtask)\s+(?:completed|finished|done|succeeded)\b/i,
   /^completed successfully\b/i,
+  /^(?:tests?|checks?|typecheck|lint|build)\s+(?:passed|succeeded)\.?$/i,
+  /^(?:[\w./:-]+\s+){1,5}(?:tests?|checks?|typecheck|lint|build)\s+(?:passed|succeeded)\.?$/i,
   /^all tests passed\b/i,
   /^no issues found\b/i,
+  /^高效\s*token\s*(?:使用|消耗)/i,
+  /^token\s*(?:使用|消耗|用量).*(?:高|低|少|多)/i,
+  /^(?:任务|实现|会话|工作|子任务)\s*(?:已)?(?:完成|结束|成功)/i,
+  /^(?:全部|所有)?测试\s*(?:已)?通过/i,
+  /^(?:类型检查|构建|编译|检查|lint)\s*(?:已)?通过[。.]?$/i,
+  /^(?:没有|未)发现问题/i,
+  /^无问题/i,
 ] as const;
 const DUPLICATE_MEMORY_SEARCH_LIMIT = 4;
 const DUPLICATE_MEMORY_SIMILARITY_THRESHOLD = 0.82;
@@ -81,7 +95,7 @@ export function createRecordMemoryTool(
 ): AITool<RecordMemoryInput, string> {
   return tool({
     description:
-      'Record a concise persistent memory for future sessions. Use this only for non-obvious, reusable gotchas, decisions, recurring errors, file couplings, or failed approaches. Do not record generic completion status, test success, or token usage notes.',
+      'Record a concise persistent memory for future sessions. Use this only for non-obvious, reusable gotchas, decisions, recurring errors, file couplings, or failed approaches. Do not record generic completion status, test success, token usage notes, or memory/search tool responses.',
     inputSchema: recordMemorySchema,
     execute: async (input: RecordMemoryInput): Promise<string> => {
       const content = normalizeRecordMemoryContent(input.content);

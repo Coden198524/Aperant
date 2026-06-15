@@ -36,6 +36,63 @@ const MAX_SEARCH_OUTPUT_TOKENS = Math.ceil(MAX_SEARCH_OUTPUT_CHARS / 4);
 const MAX_SEARCH_QUERY_ECHO_TOKENS = Math.ceil(MAX_SEARCH_QUERY_ECHO_CHARS / 4);
 const SEARCH_RESULT_SIMILARITY_THRESHOLD = 0.82;
 const MIN_SEARCH_RESULT_SIMILARITY_TOKEN_UNION = 6;
+const CONTEXT_COST_SEARCH_QUERY_PATTERN = new RegExp(
+  [
+    'context window',
+    'prompt tokens?',
+    'input tokens?',
+    'token usage',
+    'token cost',
+    'context cost',
+    'high token',
+    'reduce tokens?',
+    'too many tokens?',
+    'expensive context',
+  ].join('|'),
+  'i',
+);
+const LOCALIZED_CONTEXT_COST_SEARCH_QUERY_PATTERN = new RegExp(
+  [
+    '上下文窗口',
+    '上下文成本',
+    '上下文(?:过大|太大|爆|满|超|长度|token)',
+    'token\\s*(?:成本|消耗|用量|过高|太多)',
+    '减少\\s*token',
+    '降低\\s*token',
+    '节省\\s*token',
+    '压缩\\s*token',
+    '提示词\\s*token',
+    '输入\\s*token',
+  ].join('|'),
+  'i',
+);
+const PREFETCH_PATTERN_SEARCH_QUERY_PATTERN = new RegExp(
+  [
+    'prefetch',
+    'file access patterns?',
+    'read together',
+    'files? to (?:read|inspect|open|check)',
+    '(?:which|what) files? (?:should i |do i need to |to )?(?:read|inspect|open|check)',
+    '(?:read|inspect|open|check) first',
+    'where to start',
+    'entry points?',
+  ].join('|'),
+  'i',
+);
+const LOCALIZED_PREFETCH_PATTERN_SEARCH_QUERY_PATTERN = new RegExp(
+  [
+    '预取',
+    '文件访问模式',
+    '文件访问规律',
+    '一起读',
+    '该先?(?:读|看|打开|检查)哪些文件',
+    '哪些文件(?:需要|应该|要)?(?:读|看|打开|检查)',
+    '先(?:读|看|打开|检查)哪些文件',
+    '从哪里开始(?:读|看|检查)',
+    '入口文件',
+  ].join('|'),
+  'i',
+);
 
 // ============================================================
 // INPUT SCHEMA
@@ -102,7 +159,7 @@ export function createSearchMemoryTool(
 ): AITool<SearchMemoryInput, string> {
   return tool({
     description:
-      'Search the persistent memory system for relevant context, gotchas, decisions, token/context cost lessons, and patterns from previous sessions. Use this when you are unsure how something was done before, or to check for known pitfalls before making a change.',
+      'Search the persistent memory system for relevant context, gotchas, decisions, file prefetch/file access patterns, token/context cost lessons, and patterns from previous sessions. Use this when you are unsure how something was done before, need to know which files to inspect first, or want to check known pitfalls before making a change.',
     inputSchema: searchMemorySchema,
     execute: async (input: SearchMemoryInput): Promise<string> => {
       const query = normalizeSearchQuery(input.query);
@@ -127,7 +184,7 @@ export function createSearchMemoryTool(
       );
 
       if (memories.length === 0) {
-        return 'No relevant memories found for this query.';
+        return formatNoSearchMemoryResults(types);
       }
 
       return formatSearchMemoryOutput(query, memories);
@@ -202,16 +259,42 @@ function shouldSearchPromptContextOnly(types: MemoryType[] | undefined): boolean
   return !types?.some(isMachineReadableSearchMemoryType);
 }
 
+function formatNoSearchMemoryResults(types: MemoryType[] | undefined): string {
+  const machineKinds = uniqueInOrder(
+    types
+      ?.filter(isMachineReadableSearchMemoryType)
+      .map(formatMachineSearchMemoryKind),
+  );
+  if (!machineKinds || machineKinds.length === 0) {
+    return 'No relevant memories found for this query.';
+  }
+  return `No relevant ${machineKinds.join('/')} memories found; continue with focused inspection instead of repeating this search.`;
+}
+
 function inferSearchTypes(query: string, requestedTypes: MemoryType[] | undefined): MemoryType[] | undefined {
   const types = uniqueInOrder(requestedTypes);
-  if (types || !isContextCostSearchQuery(query)) {
+  if (types) {
     return types;
   }
-  return ['context_cost'];
+
+  const inferredTypes: MemoryType[] = [];
+  if (isContextCostSearchQuery(query)) {
+    inferredTypes.push('context_cost');
+  }
+  if (isPrefetchPatternSearchQuery(query)) {
+    inferredTypes.push('prefetch_pattern');
+  }
+  return inferredTypes.length > 0 ? inferredTypes : undefined;
 }
 
 function isContextCostSearchQuery(query: string): boolean {
-  return /\b(context window|prompt tokens?|input tokens?|token usage|token cost|context cost|high token|reduce tokens?|too many tokens?|expensive context)\b/i.test(query);
+  return CONTEXT_COST_SEARCH_QUERY_PATTERN.test(query)
+    || LOCALIZED_CONTEXT_COST_SEARCH_QUERY_PATTERN.test(query);
+}
+
+function isPrefetchPatternSearchQuery(query: string): boolean {
+  return PREFETCH_PATTERN_SEARCH_QUERY_PATTERN.test(query)
+    || LOCALIZED_PREFETCH_PATTERN_SEARCH_QUERY_PATTERN.test(query);
 }
 
 function isMemoryEligibleForSearchMemoryResult(memory: Memory): boolean {
@@ -222,6 +305,17 @@ function isMemoryEligibleForSearchMemoryResult(memory: Memory): boolean {
 
 function isMachineReadableSearchMemoryType(type: MemoryType): boolean {
   return type === 'prefetch_pattern' || type === 'context_cost';
+}
+
+function formatMachineSearchMemoryKind(type: MemoryType): string {
+  switch (type) {
+    case 'context_cost':
+      return 'token-cost';
+    case 'prefetch_pattern':
+      return 'file-prefetch';
+    default:
+      return type;
+  }
 }
 
 function normalizeContent(content: string): string {
@@ -330,9 +424,15 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
 }
 
 function formatSearchMemoryResult(memory: Memory, index: number): string {
-  const fileRef = formatFileRefs(memory.relatedFiles);
+  const fileRef = shouldShowSearchMemoryFileRefs(memory)
+    ? formatFileRefs(memory.relatedFiles)
+    : '';
   const confidence = formatConfidenceHint(memory);
   return `${index}. [${memory.type}]${fileRef}${confidence}\n   ${formatSearchMemoryContent(memory)}`;
+}
+
+function shouldShowSearchMemoryFileRefs(memory: Memory): boolean {
+  return memory.type !== 'prefetch_pattern';
 }
 
 function formatSearchMemoryContent(memory: Memory): string {

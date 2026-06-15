@@ -284,9 +284,95 @@ describe('Autocode memory runtime context formatting', () => {
     ]);
 
     expect(formatted).toContain('Visible runtime gotcha remains available.');
+    expect(formatted).toContain('search_memory("files to read")');
+    expect(formatted).toContain('search_memory("token cost")');
     expect(formatted).not.toContain('prefetch_pattern');
     expect(formatted).not.toContain('alwaysReadFiles');
+    expect(formatted).not.toContain('src/auth/session.ts');
     expect(formatted).not.toContain('High token usage per step');
+  });
+
+  it('keeps prefetch_pattern memories discoverable without injecting their content by default', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'prefetch',
+        type: 'prefetch_pattern',
+        content: JSON.stringify({
+          alwaysReadFiles: ['src/auth/session.ts'],
+          frequentlyReadFiles: ['src/auth/token.ts'],
+        }),
+        confidence: 0.95,
+      }),
+    ]);
+
+    expect(formatted).toContain('## Project Memory');
+    expect(formatted).toContain('search_memory("files to read")');
+    expect(formatted).not.toContain('alwaysReadFiles');
+    expect(formatted).not.toContain('src/auth/session.ts');
+  });
+
+  it('does not advertise low-quality prefetch_pattern memories in runtime context', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'prefetch-low-confidence',
+        type: 'prefetch_pattern',
+        content: JSON.stringify({
+          alwaysReadFiles: ['LOW_CONFIDENCE_PREFETCH_SHOULD_NOT_APPEAR.ts'],
+        }),
+        confidence: 0.1,
+      }),
+    ]);
+
+    expect(formatted).toBe('');
+  });
+
+  it('keeps context_cost memories discoverable without injecting their content by default', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'context-cost',
+        type: 'context_cost',
+        content: 'Context token spike: prompt reached 24k tokens; narrow broad file rereads.',
+        confidence: 0.95,
+      }),
+    ]);
+
+    expect(formatted).toContain('## Project Memory');
+    expect(formatted).toContain('search_memory("token cost")');
+    expect(formatted).not.toContain('Context token spike');
+  });
+
+  it('does not advertise low-quality context_cost memories in runtime context', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'context-cost-low-confidence',
+        type: 'context_cost',
+        content: 'LOW_CONFIDENCE_CONTEXT_COST_SHOULD_NOT_APPEAR',
+        confidence: 0.1,
+      }),
+    ]);
+
+    expect(formatted).toBe('');
+  });
+
+  it('respects maxItems zero when machine-only memories are present', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'prefetch',
+        type: 'prefetch_pattern',
+        content: JSON.stringify({
+          alwaysReadFiles: ['src/auth/session.ts'],
+        }),
+        confidence: 0.95,
+      }),
+      memory({
+        id: 'context-cost',
+        type: 'context_cost',
+        content: 'Context token spike: prompt reached 24k tokens; narrow broad file rereads.',
+        confidence: 0.95,
+      }),
+    ], 0);
+
+    expect(formatted).toBe('');
   });
 
   it('deduplicates runtime memories by their compact rendered content', () => {
