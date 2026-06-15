@@ -67,21 +67,29 @@ export async function getCalibrationFactor(
 
     if (calibrations.length === 0) return undefined;
 
+    const requestedModuleKeys = new Set(
+      relatedModules.map((moduleName) => normalizeModuleKey(moduleName)),
+    );
     const parsedCalibrations = calibrations
-      .map(parseCalibrationMemory)
+      .map((memory) => parseCalibrationMemory(memory, requestedModuleKeys))
       .filter(isParsedCalibrationMemory);
     if (parsedCalibrations.length === 0) return undefined;
 
+    const selectedCalibrations = selectOneCalibrationPerModule(
+      parsedCalibrations,
+    );
+    if (selectedCalibrations.length === 0) return undefined;
+
     await recordSelectedMemoryAccess(
       memoryService,
-      parsedCalibrations.map((calibration) => calibration.memory),
+      selectedCalibrations.map((calibration) => calibration.memory),
     );
 
     return (
-      parsedCalibrations.reduce(
+      selectedCalibrations.reduce(
         (sum, calibration) => sum + calibration.ratio,
         0,
-      ) / parsedCalibrations.length
+      ) / selectedCalibrations.length
     );
   } catch {
     return undefined;
@@ -91,15 +99,33 @@ export async function getCalibrationFactor(
 interface ParsedCalibrationMemory {
   memory: Memory;
   ratio: number;
+  moduleKey: string;
 }
 
 function parseCalibrationMemory(
   memory: Memory,
+  requestedModuleKeys: ReadonlySet<string>,
 ): ParsedCalibrationMemory | null {
   try {
-    const data = JSON.parse(memory.content) as { ratio?: unknown };
+    const data = JSON.parse(memory.content) as {
+      module?: unknown;
+      ratio?: unknown;
+    };
     const ratio = normalizeCalibrationFactor(data.ratio);
-    return ratio === undefined ? null : { memory, ratio };
+    if (ratio === undefined) {
+      return null;
+    }
+
+    return {
+      memory,
+      ratio,
+      moduleKey: getCalibrationModuleKey(
+        data.module,
+        memory.relatedModules,
+        requestedModuleKeys,
+        memory.id,
+      ),
+    };
   } catch {
     return null;
   }
@@ -116,4 +142,42 @@ function normalizeCalibrationFactor(value: unknown): number | undefined {
     return undefined;
   }
   return Math.min(value, 2.0);
+}
+
+function selectOneCalibrationPerModule(
+  calibrations: readonly ParsedCalibrationMemory[],
+): ParsedCalibrationMemory[] {
+  const byModule = new Map<string, ParsedCalibrationMemory>();
+  for (const calibration of calibrations) {
+    if (!byModule.has(calibration.moduleKey)) {
+      byModule.set(calibration.moduleKey, calibration);
+    }
+  }
+  return [...byModule.values()];
+}
+
+function getCalibrationModuleKey(
+  contentModule: unknown,
+  relatedModules: readonly string[],
+  requestedModuleKeys: ReadonlySet<string>,
+  fallbackId: string,
+): string {
+  if (typeof contentModule === 'string') {
+    const key = normalizeModuleKey(contentModule);
+    if (key) {
+      return key;
+    }
+  }
+
+  const normalizedRelatedModules = normalizeMemoryModuleFilters(relatedModules)
+    .map(normalizeModuleKey)
+    .filter(Boolean);
+  const matchingModule = normalizedRelatedModules.find((moduleKey) =>
+    requestedModuleKeys.has(moduleKey),
+  );
+  return matchingModule ?? normalizedRelatedModules[0] ?? `memory:${fallbackId}`;
+}
+
+function normalizeModuleKey(moduleName: string): string {
+  return moduleName.replace(/\s+/g, ' ').trim().toLowerCase();
 }

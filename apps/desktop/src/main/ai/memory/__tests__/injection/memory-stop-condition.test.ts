@@ -120,13 +120,87 @@ describe('getCalibrationFactor', () => {
     expect(factor).toBeCloseTo(1.4, 5);
   });
 
-  it('averages ratios from multiple calibrations', async () => {
+  it('averages ratios from multiple calibrated modules', async () => {
     const memoryService = makeMemoryService([
-      makeCalibrationMemory(1.0),
-      makeCalibrationMemory(2.0),
+      makeCalibrationMemory(1.0, {
+        id: 'auth-calibration',
+        content: JSON.stringify({
+          module: 'auth',
+          ratio: 1.0,
+          averageActualSteps: 100,
+          averagePlannedSteps: 100,
+          sampleCount: 3,
+        }),
+        relatedModules: ['auth'],
+      }),
+      makeCalibrationMemory(2.0, {
+        id: 'billing-calibration',
+        content: JSON.stringify({
+          module: 'billing',
+          ratio: 2.0,
+          averageActualSteps: 200,
+          averagePlannedSteps: 100,
+          sampleCount: 3,
+        }),
+        relatedModules: ['billing'],
+      }),
     ]);
-    const factor = await getCalibrationFactor(memoryService, ['auth'], 'proj-1');
+    const factor = await getCalibrationFactor(
+      memoryService,
+      ['auth', 'billing'],
+      'proj-1',
+    );
     expect(factor).toBeCloseTo(1.5, 5);
+  });
+
+  it('uses one calibration per module to avoid over-weighting duplicate module memories', async () => {
+    const memoryService = makeMemoryService([
+      makeCalibrationMemory(2.0, {
+        id: 'auth-latest',
+        content: JSON.stringify({
+          module: ' auth ',
+          ratio: 2.0,
+          averageActualSteps: 200,
+          averagePlannedSteps: 100,
+          sampleCount: 4,
+        }),
+        relatedModules: ['auth'],
+      }),
+      makeCalibrationMemory(1.8, {
+        id: 'auth-older',
+        content: JSON.stringify({
+          module: 'AUTH',
+          ratio: 1.8,
+          averageActualSteps: 180,
+          averagePlannedSteps: 100,
+          sampleCount: 4,
+        }),
+        relatedModules: ['auth'],
+      }),
+      makeCalibrationMemory(1.0, {
+        id: 'billing-latest',
+        content: JSON.stringify({
+          module: 'billing',
+          ratio: 1.0,
+          averageActualSteps: 100,
+          averagePlannedSteps: 100,
+          sampleCount: 4,
+        }),
+        relatedModules: ['billing'],
+      }),
+    ]);
+
+    const factor = await getCalibrationFactor(
+      memoryService,
+      ['auth', 'billing'],
+      'proj-1',
+    );
+
+    expect(factor).toBeCloseTo(1.5, 5);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(2);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('auth-latest');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('billing-latest');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('auth-older');
   });
 
   it('skips calibrations with missing ratio field', async () => {
@@ -165,10 +239,22 @@ describe('getCalibrationFactor', () => {
     const normal: Memory = {
       ...makeCalibrationMemory(1.4),
       id: 'normal-ratio',
+      content: JSON.stringify({
+        module: 'token',
+        ratio: 1.4,
+        averageActualSteps: 140,
+        averagePlannedSteps: 100,
+        sampleCount: 3,
+      }),
+      relatedModules: ['token'],
     };
     const memoryService = makeMemoryService([invalid, high, normal]);
 
-    const factor = await getCalibrationFactor(memoryService, ['auth'], 'proj-1');
+    const factor = await getCalibrationFactor(
+      memoryService,
+      ['auth', 'token'],
+      'proj-1',
+    );
 
     expect(factor).toBeCloseTo(1.7, 5);
     expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(2);
