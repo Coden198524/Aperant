@@ -666,7 +666,7 @@ function truncateTextToTokenBudget(
   maxTokens: number,
   maxChars: number,
 ): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
+  const compact = foldRepeatedAutocodePromptLines(text).replace(/\s+/g, ' ').trim();
   if (!compact || maxTokens <= 0 || maxChars <= 0) {
     return '';
   }

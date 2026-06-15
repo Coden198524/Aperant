@@ -725,6 +725,32 @@ describe('packContext memory quality gate', () => {
     expect(result.length).toBeLessThan(900);
   });
 
+  it('folds repeated memory lines in the tight token-budget fallback path', () => {
+    const repeatedLine = 'TIGHT_MEMORY_REPEAT_FRAME';
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'tight-repeated-memory',
+          content: [
+            'Tight memory head.',
+            ...Array.from({ length: 120 }, () => repeatedLine),
+            `${'尾部约束'.repeat(12)}TIGHT_MEMORY_TAIL`,
+          ].join('\n'),
+          type: 'gotcha',
+          citationText: undefined,
+          relatedFiles: [],
+        }),
+      ],
+      'implement',
+      { totalBudget: 92, allocation: { gotcha: 1 } },
+    );
+
+    expect(result).toContain('Tight memory head');
+    expect(result).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((result.match(/TIGHT_MEMORY_REPEAT/g) ?? [])).toHaveLength(1);
+    expect(estimateTokens(result)).toBeLessThanOrEqual(92);
+  });
+
   it('deduplicates repeated memory content across memory types', () => {
     const repeated = 'Check settings save failures against userData settings path permissions first.';
     const result = packContext([
