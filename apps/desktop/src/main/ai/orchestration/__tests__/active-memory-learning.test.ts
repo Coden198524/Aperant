@@ -1,7 +1,7 @@
 import { mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { afterEach, beforeEach, describe, expect, it } from 'vitest';
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 import {
   ACTIVE_MEMORY_CODE_PATTERN_FILE_MAX_BYTES,
@@ -100,6 +100,52 @@ describe('active memory learning storage', () => {
     expect(outcomeMemory?.content).toContain('Task: Update static copy');
     expect(outcomeMemory?.content).not.toContain('Completed work unit');
     expect(outcomeMemory?.content).not.toContain('finished with outcome');
+  });
+
+  it('continues storing later memory entries when one write fails', async () => {
+    const stored: Array<{ type?: string; content?: string }> = [];
+    let attempts = 0;
+    const consoleError = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+
+    try {
+      await extractAndStoreKnowledge({
+        sessionResult: {
+          outcome: 'completed',
+          stepsExecuted: 3,
+          usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+          messages: [{
+            role: 'assistant',
+            content: 'We decided to keep auth retry state in the session store.',
+          }],
+          durationMs: 1,
+          toolCallCount: 1,
+        },
+        subtask: {
+          id: '1.2-resilient',
+          description: 'Update auth retry state',
+        },
+        projectDir,
+        specDir,
+        projectId: 'project-1',
+        memoryService: {
+          store: async (entry) => {
+            attempts += 1;
+            if (attempts === 1) {
+              throw new Error('db busy');
+            }
+            stored.push(entry);
+            return `memory-${attempts}`;
+          },
+        },
+      });
+    } finally {
+      consoleError.mockRestore();
+    }
+
+    expect(attempts).toBeGreaterThan(1);
+    expect(
+      stored.some((entry) => entry.content?.includes('Success pattern:')),
+    ).toBe(true);
   });
 
   it('does not store generic code pattern memories', async () => {

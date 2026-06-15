@@ -49,6 +49,8 @@ export type ExtractedKnowledge = AutocodeExtractedKnowledge;
 export type SuccessPattern = AutocodeSuccessPattern;
 export type FailurePattern = AutocodeFailureLearningPattern;
 export type CodePattern = AutocodeCodePattern;
+type LearningMemoryStore = NonNullable<LearningConfig['memoryService']>;
+type LearningMemoryEntry = Parameters<LearningMemoryStore['store']>[0];
 
 export const ACTIVE_MEMORY_CODE_PATTERN_FILES_MAX = 5;
 export const ACTIVE_MEMORY_CODE_PATTERN_FILE_MAX_BYTES = 32_000;
@@ -177,9 +179,10 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
     return;
   }
 
+  const memoryService = config.memoryService;
   try {
     const longTermInsights = knowledge.insights.filter((insight) => shouldStoreModuleInsight(insight, knowledge));
-    await config.memoryService.store(buildAutocodeWorkUnitOutcomeMemoryEntry({
+    await storeMemoryEntry(memoryService, buildAutocodeWorkUnitOutcomeMemoryEntry({
       projectId: config.projectId,
       sessionId: knowledge.sessionId,
       workUnitId: config.subtask.id,
@@ -195,7 +198,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
 
     if (knowledge.successPatterns) {
       for (const pattern of knowledge.successPatterns) {
-        await config.memoryService.store({
+        await storeMemoryEntry(memoryService, {
           type: 'pattern',
           content: formatAutocodeSuccessPatternMemory(pattern),
           confidence: pattern.confidence,
@@ -209,7 +212,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
 
     if (knowledge.failurePatterns) {
       for (const pattern of knowledge.failurePatterns) {
-        await config.memoryService.store({
+        await storeMemoryEntry(memoryService, {
           type: 'error_pattern',
           content: formatAutocodeFailurePatternMemory(pattern),
           confidence: pattern.confidence,
@@ -223,7 +226,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
 
     if (knowledge.codePatterns) {
       for (const pattern of knowledge.codePatterns) {
-        await config.memoryService.store({
+        await storeMemoryEntry(memoryService, {
           type: 'pattern',
           content: formatAutocodeCodePatternMemory(pattern),
           confidence: 0.7,
@@ -236,7 +239,7 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
     }
 
     for (const insight of longTermInsights) {
-      await config.memoryService.store({
+      await storeMemoryEntry(memoryService, {
         type: 'module_insight',
         content: insight,
         confidence: 0.7,
@@ -250,6 +253,17 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
     }
   } catch (error) {
     console.error('Failed to store knowledge to memory:', error);
+  }
+}
+
+async function storeMemoryEntry(
+  memoryService: LearningMemoryStore,
+  entry: LearningMemoryEntry,
+): Promise<void> {
+  try {
+    await memoryService.store(entry);
+  } catch (error) {
+    console.error('Failed to store active memory entry:', error);
   }
 }
 
