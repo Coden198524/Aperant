@@ -579,6 +579,8 @@ export class WorkerBridge extends EventEmitter {
 
   private finalizeMemoryObserver(result: SessionResult, projectId?: string): void {
     const observer = this.memoryObserver;
+    const memoryTaskId = this.taskId;
+    const memorySessionType = this.memorySessionType;
     const memoryProjectId = projectId || this.projectId || this.taskId;
     if (!observer || !memoryProjectId) {
       return;
@@ -586,35 +588,59 @@ export class WorkerBridge extends EventEmitter {
 
     const outcome = mapSessionResultToMemoryOutcome(result);
     observer.finalize(outcome)
-      .then((candidates) => this.storeMemoryCandidates(candidates, memoryProjectId))
+      .then((candidates) =>
+        this.storeMemoryCandidates(candidates, {
+          projectId: memoryProjectId,
+          taskId: memoryTaskId,
+          sessionType: memorySessionType,
+        }))
       .catch((error) => {
-        console.warn(`[WorkerBridge:${this.taskId}] Memory finalize failed:`, error);
+        console.warn(`[WorkerBridge:${memoryTaskId}] Memory finalize failed:`, error);
       });
   }
 
-  private async storeMemoryCandidates(candidates: MemoryCandidate[], projectId: string): Promise<void> {
+  private async storeMemoryCandidates(
+    candidates: MemoryCandidate[],
+    context: { projectId: string; taskId: string; sessionType: SessionType },
+  ): Promise<void> {
     if (candidates.length === 0) {
       return;
     }
 
     try {
       const service = await getMemoryServiceLazy();
-      await Promise.all(candidates.map((candidate) => service.store({
-        type: candidate.proposedType,
-        content: candidate.content,
-        confidence: candidate.confidence,
-        tags: [candidate.signalType, this.memorySessionType],
-        relatedFiles: candidate.relatedFiles,
-        relatedModules: candidate.relatedModules,
-        source: 'observer_inferred',
-        scope: candidate.relatedFiles.length > 0 ? 'module' : 'session',
-        projectId,
-        sessionId: this.taskId,
-        needsReview: candidate.needsReview ?? candidate.trustFlags?.contaminated ?? false,
-      })));
-      this.emitTyped('log', this.taskId, `Memory learned: ${candidates.length} candidate(s) stored`, projectId);
+      const results = await Promise.allSettled(
+        candidates.map((candidate) => service.store({
+          type: candidate.proposedType,
+          content: candidate.content,
+          confidence: candidate.confidence,
+          tags: buildMemoryCandidateTags(candidate, context.sessionType),
+          relatedFiles: candidate.relatedFiles,
+          relatedModules: candidate.relatedModules,
+          source: 'observer_inferred',
+          scope: candidate.relatedFiles.length > 0 ? 'module' : 'session',
+          projectId: context.projectId,
+          sessionId: context.taskId,
+          needsReview: candidate.needsReview ?? candidate.trustFlags?.contaminated ?? false,
+        })),
+      );
+      const storedCount = results.filter((result) => result.status === 'fulfilled').length;
+      const failedCount = results.length - storedCount;
+      if (storedCount > 0) {
+        this.emitTyped(
+          'log',
+          context.taskId,
+          `Memory learned: ${storedCount} candidate(s) stored`,
+          context.projectId,
+        );
+      }
+      if (failedCount > 0) {
+        console.warn(
+          `[WorkerBridge:${context.taskId}] Failed to store ${failedCount} memory candidate(s)`,
+        );
+      }
     } catch (error) {
-      console.warn(`[WorkerBridge:${this.taskId}] Failed to store memory candidates:`, error);
+      console.warn(`[WorkerBridge:${context.taskId}] Failed to store memory candidates:`, error);
     }
   }
 
@@ -1180,7 +1206,20 @@ function isMemoryObservationMessage(message: MemoryIpcMessage): message is Memor
   return message.type === 'memory:tool-call' ||
     message.type === 'memory:tool-result' ||
     message.type === 'memory:reasoning' ||
+    message.type === 'memory:token-usage' ||
     message.type === 'memory:step-complete';
+}
+
+function buildMemoryCandidateTags(
+  candidate: MemoryCandidate,
+  sessionType: SessionType,
+): string[] {
+  const tags = new Set<string>([candidate.signalType, sessionType]);
+  if (candidate.proposedType === 'context_cost') {
+    tags.add('context_cost');
+    tags.add('token_usage');
+  }
+  return [...tags];
 }
 
 async function getMemoryServiceLazy() {

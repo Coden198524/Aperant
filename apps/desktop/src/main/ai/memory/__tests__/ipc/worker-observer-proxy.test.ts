@@ -156,6 +156,30 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.result).toContain('FINAL_EXIT_CODE_1_SHOULD_BE_PRESERVED');
     });
 
+    it('preserves compact diagnostics for omitted object tool result fields', () => {
+      proxy.onToolResult('Bash', {
+        stdout: 'stdout noise '.repeat(500),
+        stderr: [
+          'stderr noise '.repeat(500),
+          'Error: build failed because module was missing',
+          'tail '.repeat(80),
+          'FINAL_STDERR_TAIL',
+        ].join(' '),
+        exitCode: 1,
+      }, 6);
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        result: Record<string, unknown>;
+      };
+      expect(sentMsg.result.omittedKeys).toEqual(['stdout', 'stderr']);
+      expect(sentMsg.result).not.toHaveProperty('stdout');
+      expect(sentMsg.result).not.toHaveProperty('stderr');
+      expect(sentMsg.result.exitCode).toBe(1);
+      expect(String(sentMsg.result.diagnosticText)).toContain('Error: build failed');
+      expect(String(sentMsg.result.diagnosticText)).toContain('FINAL_STDERR_TAIL');
+      expect(String(sentMsg.result.diagnosticText).length).toBeLessThanOrEqual(360);
+    });
+
     it('onReasoning posts a memory:reasoning message', () => {
       proxy.onReasoning('I should check the imports first.', 2);
 
@@ -179,6 +203,19 @@ describe('WorkerObserverProxy', () => {
       const sentMsg = mockPort.sentMessages[0] as { text: string };
       expect(sentMsg.text.length).toBeLessThanOrEqual(900);
       expect(sentMsg.text).toContain('Correction: this file is generated');
+    });
+
+    it('onTokenUsage posts a compact memory:token-usage message', () => {
+      proxy.onTokenUsage(18_500.9, 7, 24_000.3);
+
+      expect(mockPort.postMessage).toHaveBeenCalledWith(
+        expect.objectContaining({
+          type: 'memory:token-usage',
+          inputTokens: 18_500,
+          contextWindowLimit: 24_000,
+          stepNumber: 7,
+        }),
+      );
     });
 
     it('onStepComplete posts a memory:step-complete message', () => {

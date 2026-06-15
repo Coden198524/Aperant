@@ -657,6 +657,32 @@ describe('runAgentSession', () => {
     expect(stepPrompt).toEqual({});
   });
 
+  it('reports step prompt token usage to the memory observer', async () => {
+    const proxy = {
+      requestStepInjection: vi.fn().mockResolvedValue(null),
+      onStepComplete: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolResult: vi.fn(),
+      onReasoning: vi.fn(),
+      onTokenUsage: vi.fn(),
+    };
+
+    mockStreamText.mockReturnValue(
+      createMockStreamResult(
+        [{ type: 'finish-step', usage: { inputTokens: 18_500, outputTokens: 25 } }],
+        { text: 'done', totalUsage: { inputTokens: 18_500, outputTokens: 25 } },
+      ),
+    );
+
+    await runAgentSession(createMockConfig({ contextWindowLimit: 24_000 }), {
+      memoryContext: {
+        proxy: proxy as unknown as NonNullable<RunnerOptions['memoryContext']>['proxy'],
+      },
+    });
+
+    expect(proxy.onTokenUsage).toHaveBeenCalledWith(18_500, 1, 24_000);
+  });
+
   it('batches memory reasoning deltas until step finish', async () => {
     const proxy = {
       requestStepInjection: vi.fn().mockResolvedValue(null),

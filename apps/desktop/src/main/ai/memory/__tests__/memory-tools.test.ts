@@ -525,6 +525,57 @@ describe('memory agent tools', () => {
     }));
   });
 
+  it('infers context_cost searches from token cost queries without requiring explicit types', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'context-cost',
+          type: 'context_cost',
+          content: 'Context token spike: prompt reached 24k tokens; narrow broad file rereads.',
+          confidence: 0.95,
+          relatedFiles: ['src/auth/session.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'token cost for this auth task', limit: 3 });
+
+    expect(result).toContain('[context_cost]');
+    expect(result).toContain('Context token spike');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['context_cost'],
+      promptContextOnly: false,
+    }));
+  });
+
+  it('does not infer context_cost for ordinary auth token searches', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'auth-token-gotcha',
+          type: 'gotcha',
+          content: 'Refresh the auth token before calling protected APIs.',
+          confidence: 0.95,
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth token refresh behavior', limit: 3 });
+
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: undefined,
+      promptContextOnly: true,
+    }));
+  });
+
   it('preserves useful tail details when compacting search_memory result content', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([

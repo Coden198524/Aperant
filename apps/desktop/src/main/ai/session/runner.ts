@@ -485,6 +485,11 @@ async function executeStream(
     if (event.type === 'step-finish') {
       flushMemoryReasoningBuffer();
       lastPromptTokens = event.usage.promptTokens;
+      memoryContext?.proxy.onTokenUsage?.(
+        event.usage.promptTokens,
+        event.stepNumber,
+        contextWindowLimit,
+      );
       const usagePct = contextWindowLimit > 0
         ? ((lastPromptTokens / contextWindowLimit) * 100).toFixed(1)
         : 'N/A';

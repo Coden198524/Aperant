@@ -48,6 +48,12 @@ export type AutocodeMemoryRuntimeObservationIpcRequest =
       stepNumber: number;
     }
   | {
+      type: 'memory:token-usage';
+      inputTokens: number;
+      stepNumber: number;
+      contextWindowLimit?: number;
+    }
+  | {
       type: 'memory:step-complete';
       stepNumber: number;
     };
@@ -155,6 +161,7 @@ const AUTOCODE_MEMORY_RUNTIME_TOOL_ARG_STRING_MAX_CHARS = 240;
 const AUTOCODE_MEMORY_RUNTIME_TOOL_RESULT_STRING_MAX_CHARS = 1_200;
 const AUTOCODE_MEMORY_RUNTIME_REASONING_TEXT_MAX_CHARS = 900;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS = 160;
+const AUTOCODE_MEMORY_RUNTIME_OBJECT_DIAGNOSTIC_MAX_CHARS = 360;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT = 12;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_SCAN_KEY_LIMIT = 32;
 export const AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT = 5;
@@ -210,6 +217,8 @@ const AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS = new Set([
 ]);
 
 const AUTOCODE_MEMORY_RUNTIME_RESULT_PRIORITY_KEYS = new Set([
+  'diagnostictext',
+  'diagnostic_text',
   'error',
   'message',
   'exitcode',
@@ -351,12 +360,17 @@ function compactAutocodeMemoryRuntimeToolResultObject(
     AUTOCODE_MEMORY_RUNTIME_OBJECT_SCAN_KEY_LIMIT,
   );
   const omittedKeys: string[] = [];
+  const diagnosticParts: string[] = [];
   const priorityEntries: Array<[string, unknown]> = [];
   const normalEntries: Array<[string, unknown]> = [];
 
   for (const [key, value] of entries) {
     if (AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS.has(key)) {
       omittedKeys.push(key);
+      const diagnosticText = extractAutocodeMemoryRuntimeResultDiagnosticText(key, value);
+      if (diagnosticText) {
+        diagnosticParts.push(diagnosticText);
+      }
       continue;
     }
 
@@ -371,6 +385,13 @@ function compactAutocodeMemoryRuntimeToolResultObject(
   const compact: Record<string, unknown> = {};
   if (omittedKeys.length > 0) {
     compact.omittedKeys = omittedKeys.slice(0, AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT);
+  }
+  if (diagnosticParts.length > 0) {
+    compact.diagnosticText = truncateAutocodeMemoryRuntimeText(
+      diagnosticParts.join(' '),
+      AUTOCODE_MEMORY_RUNTIME_OBJECT_DIAGNOSTIC_MAX_CHARS,
+      { preferDiagnosticWindow: true, preserveTail: true },
+    );
   }
 
   for (const [key, value] of [...priorityEntries, ...normalEntries]) {
@@ -388,6 +409,39 @@ function compactAutocodeMemoryRuntimeToolResultObject(
   }
 
   return compact;
+}
+
+function extractAutocodeMemoryRuntimeResultDiagnosticText(
+  key: string,
+  value: unknown,
+): string | undefined {
+  const text = flattenAutocodeMemoryRuntimeDiagnosticValue(value);
+  if (!text || findAutocodeMemoryRuntimeImportantTextIndex(text, []) < 0) {
+    return undefined;
+  }
+  const compact = truncateAutocodeMemoryRuntimeText(
+    text,
+    AUTOCODE_MEMORY_RUNTIME_OBJECT_DIAGNOSTIC_MAX_CHARS,
+    { preferDiagnosticWindow: true, preserveTail: true },
+  );
+  return compact ? `${key}: ${compact}` : undefined;
+}
+
+function flattenAutocodeMemoryRuntimeDiagnosticValue(value: unknown): string {
+  if (typeof value === 'string') {
+    return value;
+  }
+  if (typeof value === 'number' || typeof value === 'boolean') {
+    return String(value);
+  }
+  if (Array.isArray(value)) {
+    return value
+      .slice(0, 5)
+      .map((item) => flattenAutocodeMemoryRuntimeDiagnosticValue(item))
+      .filter(Boolean)
+      .join(' ');
+  }
+  return '';
 }
 
 export function compactAutocodeMemoryRuntimeReasoningText(

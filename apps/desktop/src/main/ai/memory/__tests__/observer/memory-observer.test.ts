@@ -318,6 +318,71 @@ describe('MemoryObserver', () => {
       expect(unorderedPairs.size).toBe(coAccess.length);
     });
 
+    it('promotes a high context token spike into one compact context_cost candidate', async () => {
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/auth/session.ts' },
+        stepNumber: 1,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/auth/session.ts' },
+        stepNumber: 2,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/auth/token-cache.ts' },
+        stepNumber: 3,
+      });
+      observer.observe({
+        type: 'memory:token-usage',
+        inputTokens: 24_000,
+        contextWindowLimit: 30_000,
+        stepNumber: 4,
+      });
+      observer.observe({
+        type: 'memory:token-usage',
+        inputTokens: 18_000,
+        contextWindowLimit: 30_000,
+        stepNumber: 5,
+      });
+
+      const candidates = await observer.finalize('success');
+      const contextCost = candidates.filter(
+        (candidate) => candidate.signalType === 'context_token_spike',
+      );
+
+      expect(contextCost).toHaveLength(1);
+      expect(contextCost[0].proposedType).toBe('context_cost');
+      expect(contextCost[0].content).toContain('Context token spike');
+      expect(contextCost[0].content).toContain('24k tokens');
+      expect(contextCost[0].content.length).toBeLessThan(220);
+      expect(contextCost[0].relatedFiles).toEqual([
+        'src/auth/session.ts',
+        'src/auth/token-cache.ts',
+      ]);
+      expect(contextCost[0].relatedModules).toEqual(['auth']);
+      expect(contextCost[0].originatingStep).toBe(4);
+    });
+
+    it('does not promote normal token usage into context_cost noise', async () => {
+      observer.observe({
+        type: 'memory:token-usage',
+        inputTokens: 7_500,
+        contextWindowLimit: 30_000,
+        stepNumber: 4,
+      });
+
+      const candidates = await observer.finalize('success');
+
+      expect(candidates.some((candidate) => candidate.signalType === 'context_token_spike')).toBe(false);
+      expect(observer.getScratchpad().analytics.totalInputTokens).toBe(7_500);
+      expect(observer.getScratchpad().analytics.peakContextTokens).toBe(7_500);
+    });
+
     it('only returns dead_end candidates on failed session', async () => {
       observer.observe({
         type: 'memory:tool-call',

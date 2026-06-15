@@ -186,6 +186,25 @@ describe('Scratchpad', () => {
 
       expect(scratchpad.analytics.errorFingerprints.size).toBe(1);
     });
+
+    it('uses compact diagnostic text from omitted result fields for error fingerprints', () => {
+      scratchpad.recordToolResult('Bash', {
+        omittedKeys: ['stderr'],
+        exitCode: 1,
+        message: 'Command failed',
+        diagnosticText:
+          'stderr: Error: Cannot find module "./auth" in /home/alice/project/src/main.ts:42',
+      }, 8);
+      scratchpad.recordToolResult('Bash', {
+        omittedKeys: ['stderr'],
+        exitCode: 1,
+        message: 'Command failed',
+        diagnosticText:
+          'stderr: TypeError: Cannot read properties of undefined in /home/alice/project/src/main.ts:42',
+      }, 9);
+
+      expect(scratchpad.analytics.errorFingerprints.size).toBe(2);
+    });
   });
 
   describe('recordTokenUsage', () => {

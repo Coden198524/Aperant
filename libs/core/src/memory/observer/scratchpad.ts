@@ -72,6 +72,8 @@ const SCRATCHPAD_ERROR_TEXT_MAX_CHARS = 4_000;
 const SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS = 1_800;
 const SCRATCHPAD_ERROR_OBJECT_KEY_LIMIT = 10;
 const SCRATCHPAD_ERROR_OBJECT_KEYS = [
+  'diagnosticText',
+  'diagnostic_text',
   'error',
   'message',
   'reason',

@@ -111,6 +111,20 @@ export class WorkerObserverProxy {
     });
   }
 
+  onTokenUsage(inputTokens: number, stepNumber: number, contextWindowLimit?: number): void {
+    if (!Number.isFinite(inputTokens) || inputTokens <= 0) {
+      return;
+    }
+    this.postFireAndForget({
+      type: 'memory:token-usage',
+      inputTokens: Math.floor(inputTokens),
+      ...(Number.isFinite(contextWindowLimit) && contextWindowLimit && contextWindowLimit > 0
+        ? { contextWindowLimit: Math.floor(contextWindowLimit) }
+        : {}),
+      stepNumber,
+    });
+  }
+
   onStepComplete(stepNumber: number): void {
     this.postFireAndForget({
       type: 'memory:step-complete',

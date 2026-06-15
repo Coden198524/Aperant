@@ -33,6 +33,11 @@ export type MemoryObserverIpcRequest = AutocodeMemoryRuntimeObservationIpcReques
 const EXTERNAL_TOOL_NAMES = new Set(['WebFetch', 'WebSearch']);
 const MAX_CO_ACCESS_CANDIDATES = 8;
 const MAX_OBSERVER_RELATED_MODULES = 6;
+const MAX_CONTEXT_COST_RELATED_FILES = 4;
+const CONTEXT_TOKEN_SPIKE_DEFAULT_EXPECTED_TOKENS = 8_000;
+const CONTEXT_TOKEN_SPIKE_MIN_INPUT_TOKENS = 12_000;
+const CONTEXT_TOKEN_SPIKE_WINDOW_RATIO = 0.72;
+const CONTEXT_TOKEN_SPIKE_MIN_RATIO = 1.35;
 const OBSERVER_GENERIC_PATH_SEGMENTS = new Set([
   'app',
   'apps',
@@ -76,18 +81,26 @@ interface RankedCoAccessPair {
   lastAccessStep: number;
 }
 
+interface ContextTokenSpikeSnapshot {
+  inputTokens: number;
+  expectedTokens: number;
+  spikeRatio: number;
+  filesAccessedCount: number;
+  contextWindowLimit?: number;
+  stepNumber: number;
+}
+
 // ============================================================
 // MEMORY OBSERVER
 // ============================================================
 
 export class MemoryObserver {
   private readonly scratchpad: Scratchpad;
-  private readonly projectId: string;
   private externalToolCallStep: number | undefined = undefined;
+  private contextTokenSpike: ContextTokenSpikeSnapshot | undefined = undefined;
 
-  constructor(sessionId: string, sessionType: SessionType, projectId: string) {
+  constructor(sessionId: string, sessionType: SessionType, _projectId: string) {
     this.scratchpad = new Scratchpad(sessionId, sessionType);
-    this.projectId = projectId;
   }
 
   /**
@@ -107,6 +120,9 @@ export class MemoryObserver {
           break;
         case 'memory:reasoning':
           this.onReasoning(message);
+          break;
+        case 'memory:token-usage':
+          this.onTokenUsage(message);
           break;
         case 'memory:step-complete':
           this.onStepComplete(message.stepNumber);
@@ -148,6 +164,7 @@ export class MemoryObserver {
       ...this.finalizeErrorRetry(),
       ...this.finalizeAcuteCandidates(),
       ...this.finalizeRepeatedGrep(),
+      ...this.finalizeContextTokenSpike(),
     ];
 
     if (outcome === 'failure' || outcome === 'abandoned') {
@@ -249,6 +266,33 @@ export class MemoryObserver {
         stepNumber,
       };
       this.scratchpad.acuteCandidates.push(candidate);
+    }
+  }
+
+  private onTokenUsage(
+    msg: Extract<MemoryObserverIpcRequest, { type: 'memory:token-usage' }>,
+  ): void {
+    const inputTokens = Math.floor(msg.inputTokens);
+    if (!Number.isFinite(inputTokens) || inputTokens <= 0) {
+      return;
+    }
+
+    this.scratchpad.recordTokenUsage(inputTokens);
+
+    const spike = buildContextTokenSpikeSnapshot(
+      inputTokens,
+      msg.stepNumber,
+      this.scratchpad.analytics.fileAccessCounts.size,
+      msg.contextWindowLimit,
+    );
+    if (
+      spike &&
+      (!this.contextTokenSpike ||
+        spike.inputTokens > this.contextTokenSpike.inputTokens ||
+        (spike.inputTokens === this.contextTokenSpike.inputTokens &&
+          spike.stepNumber > this.contextTokenSpike.stepNumber))
+    ) {
+      this.contextTokenSpike = spike;
     }
   }
 
@@ -389,6 +433,30 @@ export class MemoryObserver {
     return candidates;
   }
 
+  private finalizeContextTokenSpike(): MemoryCandidate[] {
+    const spike = this.contextTokenSpike;
+    if (!spike) {
+      return [];
+    }
+
+    const relatedFiles = selectTopObserverFilesByAccess(
+      this.scratchpad.analytics.fileAccessCounts,
+      this.scratchpad.analytics.fileLastAccess,
+      MAX_CONTEXT_COST_RELATED_FILES,
+    );
+
+    return [{
+      signalType: 'context_token_spike',
+      proposedType: 'context_cost',
+      content: formatContextTokenSpikeMemoryContent(spike),
+      relatedFiles,
+      relatedModules: inferObserverRelatedModules(relatedFiles),
+      confidence: Math.min(0.82, 0.58 + Math.min(0.18, (spike.spikeRatio - 1) * 0.08)),
+      priority: 0.63,
+      originatingStep: spike.stepNumber,
+    }];
+  }
+
   /**
    * Optional LLM synthesis for co-access patterns.
    * Single generateText call per session maximum.
@@ -438,6 +506,93 @@ function rankCoAccessPair(
       fileLastAccess.get(fileB) ?? 0,
     ),
   };
+}
+
+function buildContextTokenSpikeSnapshot(
+  inputTokens: number,
+  stepNumber: number,
+  filesAccessedCount: number,
+  contextWindowLimit?: number,
+): ContextTokenSpikeSnapshot | null {
+  const normalizedWindowLimit =
+    typeof contextWindowLimit === 'number' &&
+    Number.isFinite(contextWindowLimit) &&
+    contextWindowLimit > 0
+      ? Math.floor(contextWindowLimit)
+      : undefined;
+  const expectedTokens = normalizedWindowLimit
+    ? Math.max(
+      CONTEXT_TOKEN_SPIKE_DEFAULT_EXPECTED_TOKENS,
+      Math.floor(normalizedWindowLimit * 0.5),
+    )
+    : CONTEXT_TOKEN_SPIKE_DEFAULT_EXPECTED_TOKENS;
+  const spikeThreshold = normalizedWindowLimit
+    ? Math.max(
+      CONTEXT_TOKEN_SPIKE_MIN_INPUT_TOKENS,
+      Math.floor(normalizedWindowLimit * CONTEXT_TOKEN_SPIKE_WINDOW_RATIO),
+    )
+    : CONTEXT_TOKEN_SPIKE_MIN_INPUT_TOKENS;
+  const spikeRatio = inputTokens / expectedTokens;
+
+  if (
+    inputTokens < spikeThreshold ||
+    spikeRatio < CONTEXT_TOKEN_SPIKE_MIN_RATIO
+  ) {
+    return null;
+  }
+
+  return {
+    inputTokens,
+    expectedTokens,
+    spikeRatio,
+    filesAccessedCount,
+    contextWindowLimit: normalizedWindowLimit,
+    stepNumber,
+  };
+}
+
+function formatContextTokenSpikeMemoryContent(spike: ContextTokenSpikeSnapshot): string {
+  const windowText = spike.contextWindowLimit
+    ? ` of a ${formatObserverTokenCount(spike.contextWindowLimit)} context window`
+    : '';
+  return [
+    `Context token spike: prompt reached ${formatObserverTokenCount(spike.inputTokens)} tokens${windowText}`,
+    `(${spike.spikeRatio.toFixed(1)}x expected).`,
+    `Files touched before spike: ${spike.filesAccessedCount}.`,
+    'Future runs should narrow searches and avoid broad file rereads in this area.',
+  ].join(' ');
+}
+
+function formatObserverTokenCount(tokens: number): string {
+  return tokens >= 1_000 ? `${Math.round(tokens / 100) / 10}k` : String(tokens);
+}
+
+function selectTopObserverFilesByAccess(
+  fileAccessCounts: ReadonlyMap<string, number>,
+  fileLastAccess: ReadonlyMap<string, number>,
+  limit: number,
+): string[] {
+  const seen = new Set<string>();
+  const files: string[] = [];
+
+  for (const [file] of [...fileAccessCounts.entries()].sort(
+    ([fileA, countA], [fileB, countB]) =>
+      countB - countA ||
+      (fileLastAccess.get(fileB) ?? 0) - (fileLastAccess.get(fileA) ?? 0) ||
+      fileA.localeCompare(fileB),
+  )) {
+    const key = normalizeObserverPathKey(file);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    files.push(file);
+    if (files.length >= limit) {
+      break;
+    }
+  }
+
+  return files;
 }
 
 function normalizeObserverPathKey(filePath: string): string {

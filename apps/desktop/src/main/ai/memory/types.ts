@@ -381,6 +381,12 @@ export type MemoryIpcRequest =
       stepNumber: number;
     }
   | {
+      type: 'memory:token-usage';
+      inputTokens: number;
+      stepNumber: number;
+      contextWindowLimit?: number;
+    }
+  | {
       type: 'memory:step-complete';
       stepNumber: number;
     };

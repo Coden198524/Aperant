@@ -355,7 +355,12 @@ describe('Autocode memory runtime context formatting', () => {
     const compact = compactAutocodeMemoryRuntimeToolResult({
       content: 'x'.repeat(5_000),
       stdout: 'stdout '.repeat(500),
-      stderr: 'stderr '.repeat(500),
+      stderr: [
+        'stderr '.repeat(500),
+        'Error: stderr dependency resolution failed',
+        'tail '.repeat(80),
+        'FINAL_STDERR_TAIL',
+      ].join(' '),
       output: 'output '.repeat(500),
       data: { huge: 'payload '.repeat(500) },
       text: 'text '.repeat(500),
@@ -369,6 +374,10 @@ describe('Autocode memory runtime context formatting', () => {
 
     expect(Object.keys(compact).length).toBeLessThanOrEqual(12);
     expect(compact.omittedKeys).toEqual(['content', 'stdout', 'stderr', 'output', 'data', 'text']);
+    expect(String(compact.diagnosticText)).toContain('stderr:');
+    expect(String(compact.diagnosticText)).toContain('Error: stderr dependency resolution failed');
+    expect(String(compact.diagnosticText)).toContain('FINAL_STDERR_TAIL');
+    expect(String(compact.diagnosticText).length).toBeLessThanOrEqual(360);
     expect(compact).not.toHaveProperty('stdout');
     expect(compact).not.toHaveProperty('stderr');
     expect(compact.exitCode).toBe(1);

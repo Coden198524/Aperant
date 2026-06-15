@@ -102,22 +102,23 @@ export function createSearchMemoryTool(
 ): AITool<SearchMemoryInput, string> {
   return tool({
     description:
-      'Search the persistent memory system for relevant context, gotchas, decisions, and patterns from previous sessions. Use this when you are unsure how something was done before, or to check for known pitfalls before making a change.',
+      'Search the persistent memory system for relevant context, gotchas, decisions, token/context cost lessons, and patterns from previous sessions. Use this when you are unsure how something was done before, or to check for known pitfalls before making a change.',
     inputSchema: searchMemorySchema,
     execute: async (input: SearchMemoryInput): Promise<string> => {
       const query = normalizeSearchQuery(input.query);
       if (!query) {
         return 'No memory search run: provide a specific query.';
       }
+      const types = inferSearchTypes(query, input.types as MemoryType[] | undefined);
 
       const filters: MemorySearchFilters = {
         query,
-        types: uniqueInOrder(input.types as MemoryType[] | undefined),
+        types,
         relatedFiles: normalizeRelatedFiles(input.relatedFiles),
         limit: Math.min(input.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT),
         projectId,
         excludeDeprecated: true,
-        promptContextOnly: shouldSearchPromptContextOnly(input.types as MemoryType[] | undefined),
+        promptContextOnly: shouldSearchPromptContextOnly(types),
         recordAccess: true,
       };
 
@@ -199,6 +200,18 @@ function scoreSearchMemory(memory: Memory): number {
 
 function shouldSearchPromptContextOnly(types: MemoryType[] | undefined): boolean {
   return !types?.some(isMachineReadableSearchMemoryType);
+}
+
+function inferSearchTypes(query: string, requestedTypes: MemoryType[] | undefined): MemoryType[] | undefined {
+  const types = uniqueInOrder(requestedTypes);
+  if (types || !isContextCostSearchQuery(query)) {
+    return types;
+  }
+  return ['context_cost'];
+}
+
+function isContextCostSearchQuery(query: string): boolean {
+  return /\b(context window|prompt tokens?|input tokens?|token usage|token cost|context cost|high token|reduce tokens?|too many tokens?|expensive context)\b/i.test(query);
 }
 
 function isMemoryEligibleForSearchMemoryResult(memory: Memory): boolean {

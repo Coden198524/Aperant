@@ -792,6 +792,150 @@ describe('WorkerBridge', () => {
       });
     });
 
+    it('stores context_cost memories learned from token usage observations', async () => {
+      mockMemoryServiceStore.mockResolvedValue('stored-context-cost');
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/auth/session.ts' },
+        stepNumber: 1,
+      });
+      worker.emit('message', {
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/auth/session.ts' },
+        stepNumber: 2,
+      });
+      worker.emit('message', {
+        type: 'memory:token-usage',
+        inputTokens: 24_000,
+        contextWindowLimit: 30_000,
+        stepNumber: 3,
+      });
+      worker.emit('message', {
+        type: 'result',
+        taskId: 'task-123',
+        data: createSessionResult({ outcome: 'completed', stepsExecuted: 3 }),
+        projectId: 'proj-456',
+      } satisfies WorkerMessage);
+
+      await vi.waitFor(() => {
+        expect(mockMemoryServiceStore).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'context_cost',
+          source: 'observer_inferred',
+          projectId: 'proj-456',
+          sessionId: 'task-123',
+          tags: expect.arrayContaining([
+            'context_token_spike',
+            'build',
+            'context_cost',
+            'token_usage',
+          ]),
+          relatedFiles: ['src/auth/session.ts'],
+          relatedModules: ['auth'],
+        }));
+      });
+      const storedEntry = mockMemoryServiceStore.mock.calls[0][0];
+      expect(storedEntry.content).toContain('Context token spike');
+      expect(storedEntry.content).toContain('24k tokens');
+      expect(storedEntry.content.length).toBeLessThan(220);
+    });
+
+    it('stores learned memories with the finalized task snapshot when the bridge is reused', async () => {
+      mockMemoryServiceStore.mockResolvedValue('stored-context-cost');
+      bridge.spawn(createConfig({
+        taskId: 'old-task',
+        projectId: 'old-project',
+        processType: 'task-execution',
+      }));
+      const oldWorker = getWorker();
+
+      oldWorker.emit('message', {
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/auth/session.ts' },
+        stepNumber: 1,
+      });
+      oldWorker.emit('message', {
+        type: 'memory:token-usage',
+        inputTokens: 24_000,
+        contextWindowLimit: 30_000,
+        stepNumber: 2,
+      });
+      oldWorker.emit('message', {
+        type: 'result',
+        taskId: 'old-task',
+        data: createSessionResult({ outcome: 'completed', stepsExecuted: 2 }),
+        projectId: 'old-project',
+      } satisfies WorkerMessage);
+
+      bridge.spawn(createConfig({
+        taskId: 'new-task',
+        projectId: 'new-project',
+        processType: 'spec-creation',
+      }));
+
+      await vi.waitFor(() => {
+        expect(mockMemoryServiceStore).toHaveBeenCalled();
+      });
+      const storedEntry = mockMemoryServiceStore.mock.calls[0][0];
+      expect(storedEntry.projectId).toBe('old-project');
+      expect(storedEntry.sessionId).toBe('old-task');
+      expect(storedEntry.tags).toContain('build');
+      expect(storedEntry.tags).not.toContain('spec_creation');
+    });
+
+    it('continues storing remaining learned memories when one candidate fails', async () => {
+      const warnSpy = vi.spyOn(console, 'warn').mockImplementation(() => undefined);
+      try {
+        const logHandler = vi.fn();
+        mockMemoryServiceStore
+          .mockRejectedValueOnce(new Error('bad candidate'))
+          .mockResolvedValueOnce('stored-context-cost');
+        bridge.on('log', logHandler);
+        bridge.spawn(createConfig());
+        const worker = getWorker();
+
+        for (let stepNumber = 1; stepNumber <= 3; stepNumber += 1) {
+          worker.emit('message', {
+            type: 'memory:tool-call',
+            toolName: 'Grep',
+            args: { pattern: 'refreshToken', path: 'src/auth' },
+            stepNumber,
+          });
+        }
+        worker.emit('message', {
+          type: 'memory:token-usage',
+          inputTokens: 24_000,
+          contextWindowLimit: 30_000,
+          stepNumber: 4,
+        });
+        worker.emit('message', {
+          type: 'result',
+          taskId: 'task-123',
+          data: createSessionResult({ outcome: 'completed', stepsExecuted: 4 }),
+          projectId: 'proj-456',
+        } satisfies WorkerMessage);
+
+        await vi.waitFor(() => {
+          expect(mockMemoryServiceStore).toHaveBeenCalledTimes(2);
+          expect(logHandler).toHaveBeenCalledWith(
+            'task-123',
+            'Memory learned: 1 candidate(s) stored',
+            'proj-456',
+          );
+        });
+        expect(warnSpy).toHaveBeenCalledWith(
+          '[WorkerBridge:task-123] Failed to store 1 memory candidate(s)',
+        );
+      } finally {
+        warnSpy.mockRestore();
+      }
+    });
+
     it('accumulates request counts across provider sessions in one worker', () => {
       const handler = vi.fn();
       bridge.on('task-token-usage', handler);
