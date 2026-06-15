@@ -115,7 +115,7 @@ export class StepInjectionDecider {
       // Trigger 1: Agent read a file with unseen gotchas
       const recentReads = recentContext.toolCalls
         .filter((t) => t.toolName === 'Read' || t.toolName === 'Edit')
-        .map((t) => normalizeAccessedFilePath(t.args.file_path))
+        .map((t) => normalizeAccessedFilePath(t.args.file_path ?? t.args.path))
         .filter(Boolean);
 
       if (recentReads.length > 0) {

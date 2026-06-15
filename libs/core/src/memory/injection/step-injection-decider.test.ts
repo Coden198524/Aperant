@@ -69,6 +69,39 @@ describe('StepInjectionDecider memory context compaction', () => {
     );
     expect(injection?.content).not.toContain('[gotcha] ():');
   });
+
+  it('uses path tool arguments when looking up gotchas for recently accessed files', async () => {
+    const memory = makeMemory({
+      id: 'gotcha-path-arg',
+      content: 'Use path arguments from Read events when injecting gotchas.',
+      relatedFiles: ['src/runtime/path-reader.ts'],
+    });
+    const searchCalls: Parameters<MemoryService['search']>[0][] = [];
+    const decider = new StepInjectionDecider(
+      createNoopMemoryService({
+        search: async (filters) => {
+          searchCalls.push(filters);
+          return [memory];
+        },
+      }),
+      new Scratchpad('session-step', 'terminal'),
+      'project-a',
+    );
+
+    const injection = await decider.decide(2, {
+      toolCalls: [
+        {
+          toolName: 'Read',
+          args: { path: ' ./src/runtime//path-reader.ts/ ' },
+        },
+      ],
+      injectedMemoryIds: new Set(),
+    });
+
+    expect(searchCalls[0].relatedFiles).toEqual(['src/runtime/path-reader.ts']);
+    expect(injection?.type).toBe('gotcha_injection');
+    expect(injection?.content).toContain('Use path arguments from Read events');
+  });
 });
 
 function makeMemory(overrides: Partial<Memory> = {}): Memory {
