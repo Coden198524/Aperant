@@ -18,6 +18,7 @@ import type {
   MemoryType,
   WorkUnitRef,
 } from '@autocode/core';
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 import { estimateTokens } from './retrieval/context-packer';
 
 const MEMORY_ROW_CONTENT_MAX_CHARS = 2_000;
@@ -436,21 +437,22 @@ function compactMemoryText(value: string, maxChars: number, maxTokens: number): 
   if (maxChars <= 0 || maxTokens <= 0) {
     return '';
   }
-  if (normalized.length <= maxChars && estimateTokens(normalized) <= maxTokens) {
-    return normalized;
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= maxChars && estimateTokens(folded) <= maxTokens) {
+    return folded;
   }
 
-  const charBounded = compactMemoryTextByChars(normalized, maxChars);
+  const charBounded = compactMemoryTextByChars(folded, maxChars);
   if (estimateTokens(charBounded) <= maxTokens) {
     return charBounded;
   }
 
   let best = '';
   let low = 1;
-  let high = Math.min(maxChars, normalized.length);
+  let high = Math.min(maxChars, folded.length);
   while (low <= high) {
     const midpoint = Math.floor((low + high) / 2);
-    const candidate = compactMemoryTextByChars(normalized, midpoint);
+    const candidate = compactMemoryTextByChars(folded, midpoint);
     if (estimateTokens(candidate) <= maxTokens) {
       best = candidate;
       low = midpoint + 1;

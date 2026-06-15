@@ -1311,6 +1311,44 @@ describe('MemoryServiceImpl', () => {
       expect(memory.contextPrefix).toContain('context-end');
     });
 
+    it('folds repeated legacy row text before returning memories', async () => {
+      const repeatedContent = 'ROW_REPEAT_CONTENT: renderer sent the same diagnostic frame.';
+      const repeatedCitation = 'ROW_REPEAT_CITATION: citation repeated the same source note.';
+      const repeatedContext = 'ROW_REPEAT_CONTEXT: context prefix repeated the same breadcrumb.';
+
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            content: [
+              'Legacy row content head.',
+              ...Array.from({ length: 6 }, () => repeatedContent),
+              'Legacy row content tail.',
+            ].join('\n'),
+            citation_text: [
+              'Legacy citation head.',
+              ...Array.from({ length: 5 }, () => repeatedCitation),
+              'Legacy citation tail.',
+            ].join('\n'),
+            context_prefix: [
+              'Legacy context head.',
+              ...Array.from({ length: 4 }, () => repeatedContext),
+              'Legacy context tail.',
+            ].join('\n'),
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+      const memory = results[0];
+
+      expect(memory.content).toContain('5 repeated line(s) omitted for prompt budget');
+      expect((memory.content.match(/ROW_REPEAT_CONTENT/g) ?? [])).toHaveLength(1);
+      expect(memory.citationText).toContain('4 repeated line(s) omitted for prompt budget');
+      expect((memory.citationText?.match(/ROW_REPEAT_CITATION/g) ?? [])).toHaveLength(1);
+      expect(memory.contextPrefix).toContain('3 repeated line(s) omitted for prompt budget');
+      expect((memory.contextPrefix?.match(/ROW_REPEAT_CONTEXT/g) ?? [])).toHaveLength(1);
+    });
+
     it('normalizes legacy row confidence before returning memories', async () => {
       mockExecute.mockResolvedValueOnce({
         rows: [
