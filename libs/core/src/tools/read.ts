@@ -27,6 +27,8 @@ export const READ_PDF_EXTENSION = '.pdf';
 const READ_IMAGE_EXTENSION_SET: ReadonlySet<string> = new Set(READ_IMAGE_EXTENSIONS);
 const READ_LONG_LINE_OMISSION_MARKER = ' ... [line middle omitted] ... ';
 const READ_LONG_LINE_HEAD_RATIO = 0.6;
+// biome-ignore lint/complexity/useRegexLiterals: Literal form triggers noControlCharactersInRegex.
+const CONTROL_CHARACTER_PATTERN = new RegExp('[\\u0000-\\u0008\\u000B\\u000C\\u000E-\\u001F\\u007F]', 'g');
 
 export type ReadWorkflowMode = 'aggressive' | 'balanced' | string | undefined;
 
@@ -98,15 +100,23 @@ export function buildLargeReadFileNote(fileSizeBytes: number, lineLimit: number)
 
 export function formatWithLineNumbers(content: string, offset: number): string {
   const lines = content.split(/\r?\n/);
-  const maxLineNum = offset + lines.length;
+  const safeOffset = normalizeReadRangeValue(offset);
+  const maxLineNum = safeOffset + lines.length;
   const padWidth = String(maxLineNum).length;
 
   return lines
     .map((line, index) => {
-      const lineNum = String(offset + index + 1).padStart(padWidth, ' ');
+      const lineNum = String(safeOffset + index + 1).padStart(padWidth, ' ');
       return `${lineNum}\t${compactReadLine(line, MAX_READ_LINE_LENGTH)}`;
     })
     .join('\n');
+}
+
+function normalizeReadRangeValue(value: number): number {
+  if (!Number.isFinite(value)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(value));
 }
 
 function compactReadLine(line: string, maxLength: number): string {
@@ -133,7 +143,7 @@ function countMatches(text: string, pattern: RegExp): number {
 
 function scoreDecodedText(text: string): number {
   const replacementCount = countMatches(text, /\uFFFD/g);
-  const controlCount = countMatches(text, /[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g);
+  const controlCount = countMatches(text, CONTROL_CHARACTER_PATTERN);
   const extendedLatinCount = countMatches(text, /[\u00A0-\u00FF]/g);
   const cjkCount = countMatches(text, /[\u3040-\u30FF\u3400-\u9FFF\uF900-\uFAFF]/g);
   const singleCjkPenalty = cjkCount > 0 && cjkCount < 2 ? 10 : 0;
@@ -190,13 +200,25 @@ export function formatReadContent(
   options: { note?: string } = {},
 ): string {
   const lines = content.split(/\r?\n/);
-  const sliced = lines.slice(startLine, startLine + lineLimit);
-  const result = formatWithLineNumbers(sliced.join('\n'), startLine);
-
   const totalLines = lines.length;
   const prefix = options.note ? `${options.note}\n\n` : '';
-  if (startLine + lineLimit < totalLines) {
-    return `${prefix}${result}\n\n[Showing lines ${startLine + 1}-${startLine + lineLimit} of ${totalLines} total lines]`;
+  const safeStartLine = normalizeReadRangeValue(startLine);
+  const safeLineLimit = normalizeReadRangeValue(lineLimit);
+
+  if (safeLineLimit === 0) {
+    return `${prefix}[No lines requested: limit must be greater than 0. File has ${totalLines} total lines.]`;
+  }
+
+  if (safeStartLine >= totalLines) {
+    return `${prefix}[No lines in requested range: offset ${safeStartLine} is beyond the file's ${totalLines} total lines.]`;
+  }
+
+  const endLine = Math.min(totalLines, safeStartLine + safeLineLimit);
+  const sliced = lines.slice(safeStartLine, endLine);
+  const result = formatWithLineNumbers(sliced.join('\n'), safeStartLine);
+
+  if (endLine < totalLines) {
+    return `${prefix}${result}\n\n[Showing lines ${safeStartLine + 1}-${endLine} of ${totalLines} total lines]`;
   }
 
   return `${prefix}${result}`;

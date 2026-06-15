@@ -44,10 +44,14 @@ const inputSchema = z.object({
   file_path: z.string().describe('The absolute path to the file to read'),
   offset: z
     .number()
+    .int()
+    .nonnegative()
     .optional()
-    .describe('The line number to start reading from. Only provide if the file is too large to read at once'),
+    .describe('The zero-based line offset to start reading from. Only provide if the file is too large to read at once'),
   limit: z
     .number()
+    .int()
+    .positive()
     .optional()
     .describe('The number of lines to read. Only provide if the file is too large to read at once.'),
   pages: z

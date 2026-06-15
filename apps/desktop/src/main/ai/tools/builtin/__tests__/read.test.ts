@@ -140,6 +140,34 @@ describe('Read Tool', () => {
     expect(result).not.toContain('line4');
   });
 
+  it('should report offset ranges beyond EOF without a phantom line number', async () => {
+    setupTextFile('line1\nline2\nline3');
+
+    const result = await readTool.config.execute(
+      { file_path: '/test/project/file.ts', offset: 99, limit: 5 },
+      baseContext,
+    ) as string;
+
+    expect(result).toBe("[No lines in requested range: offset 99 is beyond the file's 3 total lines.]");
+    expect(result).not.toContain('\t');
+    expect(result).not.toContain('100\t');
+  });
+
+  it('should reject invalid offset and limit inputs in the schema', () => {
+    expect(readTool.config.inputSchema.safeParse({
+      file_path: '/test/project/file.ts',
+      offset: -1,
+    }).success).toBe(false);
+    expect(readTool.config.inputSchema.safeParse({
+      file_path: '/test/project/file.ts',
+      limit: 0,
+    }).success).toBe(false);
+    expect(readTool.config.inputSchema.safeParse({
+      file_path: '/test/project/file.ts',
+      offset: 1.5,
+    }).success).toBe(false);
+  });
+
   it('should cap default reads in aggressive mode', async () => {
     const content = Array.from({ length: 150 }, (_, i) => `line${i + 1}`).join('\n');
     setupTextFile(content);
