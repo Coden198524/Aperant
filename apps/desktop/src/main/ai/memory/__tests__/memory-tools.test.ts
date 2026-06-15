@@ -912,7 +912,7 @@ describe('memory agent tools', () => {
 
     expect(result).toContain('[context_cost]');
     expect(result).toContain(
-      'Related files: src/auth/session.ts, src/auth/token.ts, src/auth/refresh-flow.ts, src/auth/retry-policy.ts (+1 more).',
+      'Related files: src/auth/{session.ts, token.ts, refresh-flow.ts, retry-policy.ts} (+1 more).',
     );
     expect(result).not.toContain('[session.ts');
   });
@@ -937,7 +937,7 @@ describe('memory agent tools', () => {
     >(tool, { query: 'token cost auth files', limit: 3, types: ['context_cost'] });
 
     expect(result).toContain('Context token spike near session.ts and auth-token.ts');
-    expect(result).toContain('Related files: src/auth/token.ts, src/auth/retry-policy.ts.');
+    expect(result).toContain('Related files: src/auth/{token.ts, retry-policy.ts}.');
     expect(result).not.toContain('Related files: src/auth/session.ts');
   });
 

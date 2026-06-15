@@ -479,7 +479,38 @@ function formatContextCostRelatedFiles(files: readonly string[], content: string
     .map((file) => truncatePathTail(file, MAX_SEARCH_CONTEXT_COST_FILE_REF_CHARS));
   const omitted = unmentionedFiles.length - visible.length;
   const omittedText = omitted > 0 ? ` (+${omitted} more)` : '';
-  return `Related files: ${visible.join(', ')}${omittedText}.`;
+  return `Related files: ${formatCompactSearchPathList(visible)}${omittedText}.`;
+}
+
+function formatCompactSearchPathList(paths: readonly string[]): string {
+  const expanded = paths.join(', ');
+  if (paths.length < 2) {
+    return expanded;
+  }
+
+  const segments = paths.map(splitSearchPath);
+  if (segments.some((parts) => parts.length < 2)) {
+    return expanded;
+  }
+
+  const maxCommonDepth = Math.min(...segments.map((parts) => parts.length - 1));
+  let commonDepth = 0;
+  for (let index = 0; index < maxCommonDepth; index += 1) {
+    const segment = segments[0][index].toLowerCase();
+    if (!segments.every((parts) => parts[index].toLowerCase() === segment)) {
+      break;
+    }
+    commonDepth += 1;
+  }
+
+  if (commonDepth === 0) {
+    return expanded;
+  }
+
+  const commonDir = segments[0].slice(0, commonDepth).join('/');
+  const tails = segments.map((parts) => parts.slice(commonDepth).join('/'));
+  const compact = `${commonDir}/{${tails.join(', ')}}`;
+  return compact.length < expanded.length ? compact : expanded;
 }
 
 function formatConfidenceHint(memory: Memory): string {
