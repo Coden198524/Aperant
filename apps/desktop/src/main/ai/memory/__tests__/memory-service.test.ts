@@ -409,7 +409,8 @@ describe('MemoryServiceImpl', () => {
       expect(estimateTokens(storedContent)).toBeLessThanOrEqual(500);
       expect(storedContent).toContain('MEMORY_HEAD');
       expect(storedContent).toContain('MEMORY_TAIL');
-      expect(storedContent).toContain('memory middle omitted before storage');
+      expect(storedContent).toContain('119 repeated line(s) omitted for prompt budget');
+      expect((storedContent.match(/verbose implementation detail/g) ?? [])).toHaveLength(1);
       expect(ftsArgs[1]).toBe(storedContent);
       expect(embeddingText).toContain(storedContent);
       expect(embeddingText).not.toContain('verbose implementation detail\n'.repeat(120));
@@ -454,6 +455,52 @@ describe('MemoryServiceImpl', () => {
       expect(estimateTokens(storedWorkUnitRef.label)).toBeLessThanOrEqual(75);
       expect(storedWorkUnitRef.label).toContain('WORK_UNIT_LABEL_HEAD');
       expect(storedWorkUnitRef.label).toContain('WORK_UNIT_LABEL_TAIL');
+    });
+
+    it('folds repeated memory storage text before inserting and embedding', async () => {
+      const repeatedContent = 'REPEATED_STORAGE_LOG: worker retried the same file read with no new signal.';
+      const repeatedCitation = 'REPEATED_STORAGE_CITATION: reranker returned the same score without new evidence.';
+      const repeatedPrefix = 'REPEATED_STORAGE_PREFIX: context prefix repeated the same module breadcrumb.';
+
+      await service.store({
+        type: 'gotcha',
+        content: [
+          'Storage head: keep the useful memory lesson visible.',
+          ...Array.from({ length: 120 }, () => repeatedContent),
+          'Storage tail: inspect settings write permissions before broad searches.',
+        ].join('\n'),
+        projectId: 'proj-001',
+        citationText: [
+          'Citation head.',
+          ...Array.from({ length: 48 }, () => repeatedCitation),
+          'Citation tail.',
+        ].join('\n'),
+        contextPrefix: [
+          'Prefix head.',
+          ...Array.from({ length: 48 }, () => repeatedPrefix),
+          'Prefix tail.',
+        ].join('\n'),
+      });
+
+      const batchArgs = mockBatch.mock.calls[0][0];
+      const memoriesArgs = batchArgs[0].args;
+      const ftsArgs = batchArgs[1].args;
+      const storedContent = memoriesArgs[2] as string;
+      const storedCitation = memoriesArgs[19] as string;
+      const storedContextPrefix = memoriesArgs[23] as string;
+      const embeddingText = mockEmbed.mock.calls[0][0] as string;
+
+      expect(storedContent).toContain('Storage head: keep the useful memory lesson visible.');
+      expect(storedContent).toContain('Storage tail: inspect settings write permissions before broad searches.');
+      expect(storedContent).toContain('119 repeated line(s) omitted for prompt budget');
+      expect((storedContent.match(/REPEATED_STORAGE_LOG/g) ?? [])).toHaveLength(1);
+      expect(storedContent).not.toContain('memory middle omitted before storage');
+      expect(storedCitation).toContain('47 repeated line(s) omitted for prompt budget');
+      expect((storedCitation.match(/REPEATED_STORAGE_CITATION/g) ?? [])).toHaveLength(1);
+      expect(storedContextPrefix).toContain('47 repeated line(s) omitted for prompt budget');
+      expect((storedContextPrefix.match(/REPEATED_STORAGE_PREFIX/g) ?? [])).toHaveLength(1);
+      expect(ftsArgs[1]).toBe(storedContent);
+      expect(embeddingText).toContain(storedContent);
     });
 
     it('compacts localized memory content and metadata before storage and embedding', async () => {

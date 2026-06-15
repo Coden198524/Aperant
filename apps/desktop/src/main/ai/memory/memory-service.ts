@@ -12,6 +12,7 @@ import type {
   MemoryRecordEntry,
   MemorySearchFilters,
 } from '@autocode/core';
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 import type { EmbeddingService } from './embedding-service';
 import { buildMemoryContextualText } from './embedding-service';
 import {
@@ -950,17 +951,22 @@ function compactMemoryTextWithMarker(value: string, maxChars: number, maxTokens:
     return normalized;
   }
 
-  const charBounded = compactMemoryTextWithMarkerByChars(normalized, maxChars, marker);
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= maxChars && estimateTokens(folded) <= maxTokens) {
+    return folded;
+  }
+
+  const charBounded = compactMemoryTextWithMarkerByChars(folded, maxChars, marker);
   if (estimateTokens(charBounded) <= maxTokens) {
     return charBounded;
   }
 
   let best = '';
   let low = 1;
-  let high = Math.min(maxChars, normalized.length);
+  let high = Math.min(maxChars, folded.length);
   while (low <= high) {
     const midpoint = Math.floor((low + high) / 2);
-    const candidate = compactMemoryTextWithMarkerByChars(normalized, midpoint, marker);
+    const candidate = compactMemoryTextWithMarkerByChars(folded, midpoint, marker);
     if (estimateTokens(candidate) <= maxTokens) {
       best = candidate;
       low = midpoint + 1;
