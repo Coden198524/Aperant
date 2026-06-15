@@ -408,6 +408,19 @@ describe('WorkerBridge', () => {
         ),
         citationText: `CITATION_HEAD ${'citation detail '.repeat(80)} CITATION_TAIL`,
         contextPrefix: `PREFIX_HEAD ${'context detail '.repeat(80)} PREFIX_TAIL`,
+        methodology: `METHODOLOGY_HEAD ${'response methodology detail '.repeat(30)} METHODOLOGY_TAIL`,
+        workUnitRef: {
+          methodology: `WORK_UNIT_METHOD_HEAD ${'work unit methodology detail '.repeat(30)} WU_TAIL`,
+          hierarchy: [
+            'Spec 001',
+            ' spec 001 ',
+            ...Array.from(
+              { length: 12 },
+              (_, index) => `Task ${index} ${'hierarchy detail '.repeat(20)}tail-${index}`,
+            ),
+          ],
+          label: `WORK_UNIT_LABEL_HEAD ${'work unit label detail '.repeat(60)} WORK_UNIT_LABEL_TAIL`,
+        },
       });
       mockMemoryServiceSearch.mockResolvedValueOnce([longMemory]);
       bridge.spawn(createConfig());
@@ -451,6 +464,22 @@ describe('WorkerBridge', () => {
       expect(estimateTokens(memory.contextPrefix ?? '')).toBeLessThanOrEqual(75);
       expect(memory.contextPrefix).toContain('PREFIX_HEAD');
       expect(memory.contextPrefix).toContain('PREFIX_TAIL');
+      expect(memory.methodology?.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(memory.methodology ?? '')).toBeLessThanOrEqual(24);
+      expect(memory.methodology).toContain('METHODOLOGY_HEAD');
+      expect(memory.methodology).toContain('METHODOLOGY_TAIL');
+      expect(memory.workUnitRef?.methodology.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(memory.workUnitRef?.methodology ?? '')).toBeLessThanOrEqual(24);
+      expect(memory.workUnitRef?.methodology).toContain('WORK_UNIT_METHOD_HEAD');
+      expect(memory.workUnitRef?.methodology).toContain('WU_TAIL');
+      expect(memory.workUnitRef?.hierarchy).toHaveLength(12);
+      expect(memory.workUnitRef?.hierarchy[0]).toBe('Spec 001');
+      expect(memory.workUnitRef?.hierarchy).not.toContain('spec 001');
+      expect(memory.workUnitRef?.hierarchy.every((item) => item.length <= 80)).toBe(true);
+      expect(memory.workUnitRef?.label.length).toBeLessThanOrEqual(300);
+      expect(estimateTokens(memory.workUnitRef?.label ?? '')).toBeLessThanOrEqual(75);
+      expect(memory.workUnitRef?.label).toContain('WORK_UNIT_LABEL_HEAD');
+      expect(memory.workUnitRef?.label).toContain('WORK_UNIT_LABEL_TAIL');
     });
 
     it('deduplicates case and whitespace variants in memory search metadata before IPC', async () => {

@@ -282,8 +282,9 @@ describe('MemoryServiceImpl', () => {
         content: longContent,
         projectId: 'proj-001',
         tags: [
-          'auth',
-          'auth',
+          'Auth',
+          ' auth ',
+          'AUTH',
           ...Array.from({ length: 30 }, (_, index) => `tag-${index}-${'x'.repeat(80)}`),
         ],
         relatedFiles: Array.from(
@@ -296,6 +297,19 @@ describe('MemoryServiceImpl', () => {
         ),
         citationText: longCitation,
         contextPrefix: longContextPrefix,
+        methodology: `METHODOLOGY_HEAD ${'storage methodology detail '.repeat(30)} METHODOLOGY_TAIL`,
+        workUnitRef: {
+          methodology: `WORK_UNIT_METHOD_HEAD ${'work unit methodology detail '.repeat(30)} WU_TAIL`,
+          hierarchy: [
+            'Spec 001',
+            ' spec 001 ',
+            ...Array.from(
+              { length: 12 },
+              (_, index) => `Task ${index} ${'hierarchy detail '.repeat(20)}tail-${index}`,
+            ),
+          ],
+          label: `WORK_UNIT_LABEL_HEAD ${'work unit label detail '.repeat(60)} WORK_UNIT_LABEL_TAIL`,
+        },
       });
 
       const batchArgs = mockBatch.mock.calls[0][0];
@@ -305,6 +319,12 @@ describe('MemoryServiceImpl', () => {
       const storedTags = JSON.parse(memoriesArgs[4] as string) as string[];
       const storedRelatedFiles = JSON.parse(memoriesArgs[5] as string) as string[];
       const storedRelatedModules = JSON.parse(memoriesArgs[6] as string) as string[];
+      const storedWorkUnitRef = JSON.parse(memoriesArgs[11] as string) as {
+        methodology: string;
+        hierarchy: string[];
+        label: string;
+      };
+      const storedMethodology = memoriesArgs[12] as string;
       const storedCitation = memoriesArgs[19] as string;
       const storedContextPrefix = memoriesArgs[23] as string;
       const embeddingText = mockEmbed.mock.calls[0][0] as string;
@@ -320,6 +340,9 @@ describe('MemoryServiceImpl', () => {
 
       expect(storedTags).toHaveLength(20);
       expect(new Set(storedTags).size).toBe(storedTags.length);
+      expect(storedTags[0]).toBe('Auth');
+      expect(storedTags).not.toContain('auth');
+      expect(storedTags).not.toContain('AUTH');
       expect(storedTags.every((tag) => tag.length <= 64)).toBe(true);
       expect(storedTags.every((tag) => estimateTokens(tag) <= 24)).toBe(true);
       expect(storedRelatedFiles).toHaveLength(24);
@@ -338,6 +361,23 @@ describe('MemoryServiceImpl', () => {
       expect(estimateTokens(storedContextPrefix)).toBeLessThanOrEqual(150);
       expect(storedContextPrefix).toContain('PREFIX_HEAD');
       expect(storedContextPrefix).toContain('PREFIX_TAIL');
+      expect(storedMethodology.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(storedMethodology)).toBeLessThanOrEqual(24);
+      expect(storedMethodology).toContain('METHODOLOGY_HEAD');
+      expect(storedMethodology).toContain('METHODOLOGY_TAIL');
+      expect(storedWorkUnitRef.methodology.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(storedWorkUnitRef.methodology)).toBeLessThanOrEqual(24);
+      expect(storedWorkUnitRef.methodology).toContain('WORK_UNIT_METHOD_HEAD');
+      expect(storedWorkUnitRef.methodology).toContain('WU_TAIL');
+      expect(storedWorkUnitRef.hierarchy).toHaveLength(8);
+      expect(storedWorkUnitRef.hierarchy[0]).toBe('Spec 001');
+      expect(storedWorkUnitRef.hierarchy).not.toContain('spec 001');
+      expect(storedWorkUnitRef.hierarchy.every((item) => item.length <= 120)).toBe(true);
+      expect(storedWorkUnitRef.hierarchy.every((item) => estimateTokens(item) <= 32)).toBe(true);
+      expect(storedWorkUnitRef.label.length).toBeLessThanOrEqual(300);
+      expect(estimateTokens(storedWorkUnitRef.label)).toBeLessThanOrEqual(75);
+      expect(storedWorkUnitRef.label).toContain('WORK_UNIT_LABEL_HEAD');
+      expect(storedWorkUnitRef.label).toContain('WORK_UNIT_LABEL_TAIL');
     });
 
     it('compacts localized memory content and metadata before storage and embedding', async () => {
@@ -973,7 +1013,7 @@ describe('MemoryServiceImpl', () => {
       mockExecute.mockResolvedValueOnce({
         rows: [
           makeMemoryRow({
-            tags: '[" auth ","auth","","typescript"]',
+            tags: '[" auth ","AUTH","auth","","typescript"," TYPESCRIPT "]',
             related_files: '[" ./src/auth//token.ts ","src\\\\auth\\\\token.ts","src/auth/session.ts/",""]',
             related_modules: '[" auth ","AUTH","","billing"]',
           }),
@@ -1160,6 +1200,50 @@ describe('MemoryServiceImpl', () => {
       ]);
     });
 
+    it('deduplicates and caps legacy row relations before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            relations: JSON.stringify([
+              {
+                relationType: 'validates',
+                targetFilePath: ' ./src/auth//token.ts ',
+                confidence: 0.4,
+                autoExtracted: true,
+              },
+              {
+                relationType: 'validates',
+                targetFilePath: 'SRC\\auth\\token.ts',
+                confidence: 0.98,
+                autoExtracted: false,
+              },
+              ...Array.from({ length: 20 }, (_, index) => ({
+                relationType: 'required_with',
+                targetFilePath: `src/relation/${index}/${'deep-segment/'.repeat(30)}tail-${index}.ts`,
+                confidence: 0.8,
+                autoExtracted: true,
+              })),
+            ]),
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+      const relations = results[0].relations ?? [];
+
+      expect(relations).toHaveLength(16);
+      expect(relations[0]).toEqual({
+        relationType: 'validates',
+        targetFilePath: 'src/auth/token.ts',
+        confidence: 0.98,
+        autoExtracted: false,
+      });
+      expect(relations.every((relation) => (relation.targetFilePath?.length ?? 0) <= 220)).toBe(true);
+      expect(relations.every((relation) => estimateTokens(relation.targetFilePath ?? '') <= 56)).toBe(true);
+      expect(relations.some((relation) => relation.targetFilePath?.includes('tail-14.ts'))).toBe(true);
+      expect(relations.some((relation) => relation.targetFilePath?.includes('tail-15.ts'))).toBe(false);
+    });
+
     it('normalizes legacy work-unit and chunk fields before returning memories', async () => {
       mockExecute.mockResolvedValueOnce({
         rows: [
@@ -1207,6 +1291,50 @@ describe('MemoryServiceImpl', () => {
       expect(results[1].chunkType).toBeUndefined();
       expect(results[1].chunkStartLine).toBeUndefined();
       expect(results[1].chunkEndLine).toBeUndefined();
+    });
+
+    it('compacts legacy work-unit metadata before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'verbose-work-unit',
+            work_unit_ref: JSON.stringify({
+              methodology: `WORK_UNIT_METHOD_HEAD ${'legacy methodology detail '.repeat(30)} WU_TAIL`,
+              hierarchy: [
+                'Spec 001',
+                ' spec 001 ',
+                ...Array.from(
+                  { length: 12 },
+                  (_, index) => `Task ${index} ${'legacy hierarchy detail '.repeat(20)}tail-${index}`,
+                ),
+              ],
+              label: `WORK_UNIT_LABEL_HEAD ${'legacy work unit label detail '.repeat(60)} WORK_UNIT_LABEL_TAIL`,
+            }),
+            methodology: `METHODOLOGY_HEAD ${'legacy top methodology detail '.repeat(30)} METHODOLOGY_TAIL`,
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+      const memory = results[0];
+
+      expect(memory.methodology?.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(memory.methodology ?? '')).toBeLessThanOrEqual(24);
+      expect(memory.methodology).toContain('METHODOLOGY_HEAD');
+      expect(memory.methodology).toContain('METHODOLOGY_TAIL');
+      expect(memory.workUnitRef?.methodology.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(memory.workUnitRef?.methodology ?? '')).toBeLessThanOrEqual(24);
+      expect(memory.workUnitRef?.methodology).toContain('WORK_UNIT_METHOD_HEAD');
+      expect(memory.workUnitRef?.methodology).toContain('WU_TAIL');
+      expect(memory.workUnitRef?.hierarchy).toHaveLength(8);
+      expect(memory.workUnitRef?.hierarchy[0]).toBe('Spec 001');
+      expect(memory.workUnitRef?.hierarchy).not.toContain('spec 001');
+      expect(memory.workUnitRef?.hierarchy.every((item) => item.length <= 120)).toBe(true);
+      expect(memory.workUnitRef?.hierarchy.every((item) => estimateTokens(item) <= 32)).toBe(true);
+      expect(memory.workUnitRef?.label.length).toBeLessThanOrEqual(300);
+      expect(estimateTokens(memory.workUnitRef?.label ?? '')).toBeLessThanOrEqual(75);
+      expect(memory.workUnitRef?.label).toContain('WORK_UNIT_LABEL_HEAD');
+      expect(memory.workUnitRef?.label).toContain('WORK_UNIT_LABEL_TAIL');
     });
 
     it('normalizes legacy enum fields before returning memories', async () => {

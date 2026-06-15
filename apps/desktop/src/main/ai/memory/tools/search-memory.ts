@@ -148,24 +148,53 @@ export function createSearchMemoryStub(): AITool<SearchMemoryInput, string> {
 }
 
 function dedupeMemories(memories: Memory[]): Memory[] {
-  const seenNormalized = new Set<string>();
-  const seenTokenSets: Set<string>[] = [];
-  const result: Memory[] = [];
+  const selected: SelectedSearchMemory[] = [];
+  const keyToIndex = new Map<string, number>();
   for (const memory of memories) {
-    const promptContent = formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER);
+    const promptContent = formatSearchMemoryContent(memory);
     const key = normalizeContent(promptContent);
-    if (!key || seenNormalized.has(key)) {
+    if (!key) {
       continue;
     }
     const tokens = new Set(tokenizeContent(promptContent));
-    if (isSimilarToSeenSearchResult(tokens, seenTokenSets)) {
+    const existingIndex = keyToIndex.get(key);
+    if (existingIndex !== undefined) {
+      if (isHigherQualitySearchMemory(memory, selected[existingIndex].memory)) {
+        selected[existingIndex] = { memory, tokens, key };
+      }
       continue;
     }
-    seenNormalized.add(key);
-    seenTokenSets.push(tokens);
-    result.push(memory);
+
+    const similarIndex = findSimilarSelectedSearchMemoryIndex(tokens, selected);
+    if (similarIndex !== undefined) {
+      if (isHigherQualitySearchMemory(memory, selected[similarIndex].memory)) {
+        keyToIndex.delete(selected[similarIndex].key);
+        keyToIndex.set(key, similarIndex);
+        selected[similarIndex] = { memory, tokens, key };
+      }
+      continue;
+    }
+    keyToIndex.set(key, selected.length);
+    selected.push({ memory, tokens, key });
   }
-  return result;
+  return selected.map((item) => item.memory);
+}
+
+interface SelectedSearchMemory {
+  memory: Memory;
+  tokens: Set<string>;
+  key: string;
+}
+
+function isHigherQualitySearchMemory(candidate: Memory, existing: Memory): boolean {
+  return scoreSearchMemory(candidate) > scoreSearchMemory(existing);
+}
+
+function scoreSearchMemory(memory: Memory): number {
+  const verifiedBoost = memory.userVerified ? 0.3 : 0;
+  const pinnedBoost = memory.pinned ? 0.5 : 0;
+  const accessBoost = Math.min(memory.accessCount || 0, 10) * 0.01;
+  return memory.confidence + verifiedBoost + pinnedBoost + accessBoost;
 }
 
 function shouldSearchPromptContextOnly(types: MemoryType[] | undefined): boolean {
@@ -197,26 +226,27 @@ function tokenizeContent(content: string): string[] {
   return [...latinWords, ...cjkChars];
 }
 
-function isSimilarToSeenSearchResult(
+function findSimilarSelectedSearchMemoryIndex(
   tokens: Set<string>,
-  seenTokenSets: readonly Set<string>[],
-): boolean {
+  selected: readonly SelectedSearchMemory[],
+): number | undefined {
   if (tokens.size === 0) {
-    return false;
+    return undefined;
   }
 
-  for (const seen of seenTokenSets) {
+  for (let index = 0; index < selected.length; index += 1) {
+    const seen = selected[index].tokens;
     const union = new Set([...tokens, ...seen]).size;
     if (union < MIN_SEARCH_RESULT_SIMILARITY_TOKEN_UNION) {
       continue;
     }
     const intersection = [...tokens].filter((token) => seen.has(token)).length;
     if (intersection / union >= SEARCH_RESULT_SIMILARITY_THRESHOLD) {
-      return true;
+      return index;
     }
   }
 
-  return false;
+  return undefined;
 }
 
 function normalizeSearchQuery(query: string): string {
@@ -289,12 +319,16 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
 function formatSearchMemoryResult(memory: Memory, index: number): string {
   const fileRef = formatFileRefs(memory.relatedFiles);
   const confidence = formatConfidenceHint(memory);
-  return `${index}. [${memory.type}]${fileRef}${confidence}\n   ${truncateTextToBudget(
+  return `${index}. [${memory.type}]${fileRef}${confidence}\n   ${formatSearchMemoryContent(memory)}`;
+}
+
+function formatSearchMemoryContent(memory: Memory): string {
+  return truncateTextToBudget(
     formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER),
     MAX_MEMORY_RESULT_CHARS,
     MAX_MEMORY_RESULT_TOKENS,
     { preserveTail: true },
-  )}`;
+  );
 }
 
 function formatConfidenceHint(memory: Memory): string {

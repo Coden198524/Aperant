@@ -25,6 +25,13 @@ const MEMORY_STORE_CITATION_TEXT_MAX_CHARS = 1_000;
 const MEMORY_STORE_CITATION_TEXT_MAX_TOKENS = 250;
 const MEMORY_STORE_CONTEXT_PREFIX_MAX_CHARS = 600;
 const MEMORY_STORE_CONTEXT_PREFIX_MAX_TOKENS = 150;
+const MEMORY_STORE_WORK_UNIT_METHODOLOGY_MAX_CHARS = 96;
+const MEMORY_STORE_WORK_UNIT_METHODOLOGY_MAX_TOKENS = 24;
+const MEMORY_STORE_WORK_UNIT_LABEL_MAX_CHARS = 300;
+const MEMORY_STORE_WORK_UNIT_LABEL_MAX_TOKENS = 75;
+const MEMORY_STORE_WORK_UNIT_HIERARCHY_LIMIT = 8;
+const MEMORY_STORE_WORK_UNIT_HIERARCHY_MAX_CHARS = 120;
+const MEMORY_STORE_WORK_UNIT_HIERARCHY_MAX_TOKENS = 32;
 const MEMORY_STORE_TAG_LIMIT = 20;
 const MEMORY_STORE_TAG_MAX_CHARS = 64;
 const MEMORY_STORE_TAG_MAX_TOKENS = 24;
@@ -822,6 +829,7 @@ function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryR
       MEMORY_STORE_TAG_LIMIT,
       MEMORY_STORE_TAG_MAX_CHARS,
       MEMORY_STORE_TAG_MAX_TOKENS,
+      normalizeMemoryTextDedupeKey,
     ),
     relatedFiles: compactMemoryPathList(
       entry.relatedFiles,
@@ -846,6 +854,46 @@ function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryR
       MEMORY_STORE_CONTEXT_PREFIX_MAX_CHARS,
       MEMORY_STORE_CONTEXT_PREFIX_MAX_TOKENS,
     ),
+    methodology: compactOptionalMemoryStorageText(
+      entry.methodology,
+      MEMORY_STORE_WORK_UNIT_METHODOLOGY_MAX_CHARS,
+      MEMORY_STORE_WORK_UNIT_METHODOLOGY_MAX_TOKENS,
+    ),
+    workUnitRef: compactMemoryWorkUnitRefForStorage(entry.workUnitRef),
+  };
+}
+
+function compactMemoryWorkUnitRefForStorage(
+  workUnitRef: MemoryRecordEntry['workUnitRef'],
+): MemoryRecordEntry['workUnitRef'] {
+  if (!workUnitRef) {
+    return undefined;
+  }
+
+  const methodology = compactMemoryStorageText(
+    workUnitRef.methodology,
+    MEMORY_STORE_WORK_UNIT_METHODOLOGY_MAX_CHARS,
+    MEMORY_STORE_WORK_UNIT_METHODOLOGY_MAX_TOKENS,
+  );
+  const label = compactMemoryStorageText(
+    workUnitRef.label,
+    MEMORY_STORE_WORK_UNIT_LABEL_MAX_CHARS,
+    MEMORY_STORE_WORK_UNIT_LABEL_MAX_TOKENS,
+  );
+  if (!methodology || !label) {
+    return undefined;
+  }
+
+  return {
+    methodology,
+    hierarchy: compactMemoryStringList(
+      workUnitRef.hierarchy,
+      MEMORY_STORE_WORK_UNIT_HIERARCHY_LIMIT,
+      MEMORY_STORE_WORK_UNIT_HIERARCHY_MAX_CHARS,
+      MEMORY_STORE_WORK_UNIT_HIERARCHY_MAX_TOKENS,
+      normalizeMemoryTextDedupeKey,
+    ) ?? [],
+    label,
   };
 }
 

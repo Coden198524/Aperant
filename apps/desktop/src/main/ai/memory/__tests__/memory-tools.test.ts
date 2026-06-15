@@ -187,6 +187,113 @@ describe('memory agent tools', () => {
     expect(result.length).toBeLessThanOrEqual(1800);
   });
 
+  it('deduplicates search_memory memories by compact rendered content before output', async () => {
+    const sharedHead = [
+      'SHARED_RENDERED_HEAD use the auth retry helper before refreshing tokens.',
+      'shared rendered head detail '.repeat(30),
+    ].join(' ');
+    const sharedTail = ' SHARED_RENDERED_TAIL verify expired-token retry before merging.';
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'rendered-a',
+          content: `${sharedHead}${'alpha-only-middle-detail '.repeat(100)}${sharedTail}`,
+        }),
+        makeMemory({
+          id: 'rendered-b',
+          content: `${sharedHead}${'beta-only-middle-detail '.repeat(100)}${sharedTail}`,
+        }),
+        makeMemory({
+          id: 'distinct',
+          type: 'decision',
+          content: 'Mock the OAuth clock before testing refresh retry expiry.',
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth refresh retry', limit: 8 });
+
+    expect(result.match(/SHARED_RENDERED_HEAD/g)).toHaveLength(1);
+    expect(result.match(/SHARED_RENDERED_TAIL/g)).toHaveLength(1);
+    expect(result).toContain('2. [decision]');
+    expect(result.length).toBeLessThanOrEqual(1800);
+  });
+
+  it('keeps the higher quality memory for duplicate search_memory rendered content', async () => {
+    const duplicateContent = 'Use the shared auth refresh helper before calling protected APIs.';
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'duplicate-low',
+          content: duplicateContent,
+          confidence: 0.55,
+          relatedFiles: ['src/auth/low-quality.ts'],
+          accessCount: 0,
+        }),
+        makeMemory({
+          id: 'duplicate-high',
+          content: duplicateContent,
+          confidence: 0.95,
+          relatedFiles: ['src/auth/high-quality.ts'],
+          userVerified: true,
+          accessCount: 5,
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth refresh helper', limit: 8 });
+
+    expect((result.match(/\[gotcha\]/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('[high-quality.ts]');
+    expect(result).not.toContain('[low-quality.ts]');
+    expect(result).not.toContain('[confidence: 55%]');
+  });
+
+  it('keeps the higher quality memory for near-duplicate search_memory content', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'near-low',
+          content: 'When editing auth refresh flow, update token cache before notifying listeners and keep retry guard enabled.',
+          confidence: 0.55,
+          relatedFiles: ['src/auth/near-low.ts'],
+        }),
+        makeMemory({
+          id: 'near-high',
+          content: 'When editing auth refresh flow update token cache before notifying listener and keep retry guard enabled.',
+          confidence: 0.95,
+          relatedFiles: ['src/auth/near-high.ts'],
+          userVerified: true,
+        }),
+        makeMemory({
+          id: 'clock',
+          type: 'decision',
+          content: 'Mock the OAuth clock before testing refresh retry expiry.',
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth refresh retry', limit: 8 });
+
+    expect((result.match(/\[gotcha\]/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('[near-high.ts]');
+    expect(result).not.toContain('[near-low.ts]');
+    expect(result).not.toContain('[confidence: 55%]');
+    expect(result).toContain('2. [decision]');
+  });
+
   it('packs search_memory output by result budget instead of truncating the whole response', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue(

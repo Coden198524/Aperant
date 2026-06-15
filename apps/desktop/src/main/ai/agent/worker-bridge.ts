@@ -42,6 +42,8 @@ const MEMORY_SEARCH_RESPONSE_CONTENT_MAX_CHARS = 900;
 const MEMORY_SEARCH_RESPONSE_CONTENT_MAX_TOKENS = 225;
 const MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS = 300;
 const MEMORY_SEARCH_RESPONSE_TEXT_MAX_TOKENS = 75;
+const MEMORY_SEARCH_RESPONSE_METHODOLOGY_MAX_CHARS = 96;
+const MEMORY_SEARCH_RESPONSE_METHODOLOGY_MAX_TOKENS = 24;
 const MEMORY_SEARCH_RESPONSE_MEMORY_LIMIT = 12;
 const MEMORY_SEARCH_RESPONSE_TAG_LIMIT = 12;
 const MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS = 64;
@@ -793,9 +795,15 @@ function compactMemorySearchResponseMemory(memory: Memory): Memory {
     ),
     citationText: compactOptionalMemorySearchResponseText(memory.citationText),
     contextPrefix: compactOptionalMemorySearchResponseText(memory.contextPrefix),
+    methodology: compactOptionalMemorySearchResponseMethodology(memory.methodology),
     workUnitRef: memory.workUnitRef
       ? {
           ...memory.workUnitRef,
+          methodology: compactMemorySearchResponseText(
+            memory.workUnitRef.methodology,
+            MEMORY_SEARCH_RESPONSE_METHODOLOGY_MAX_CHARS,
+            MEMORY_SEARCH_RESPONSE_METHODOLOGY_MAX_TOKENS,
+          ),
           label: compactMemorySearchResponseText(
             memory.workUnitRef.label,
             MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS,
@@ -806,6 +814,7 @@ function compactMemorySearchResponseMemory(memory: Memory): Memory {
             MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
             MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
             MEMORY_SEARCH_RESPONSE_ID_MAX_TOKENS,
+            { normalizedKey: true },
           ) ?? [],
         }
       : undefined,
@@ -891,6 +900,17 @@ function compactOptionalMemorySearchResponseText(value: string | undefined): str
     value,
     MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS,
     MEMORY_SEARCH_RESPONSE_TEXT_MAX_TOKENS,
+  );
+}
+
+function compactOptionalMemorySearchResponseMethodology(value: string | undefined): string | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  return compactMemorySearchResponseText(
+    value,
+    MEMORY_SEARCH_RESPONSE_METHODOLOGY_MAX_CHARS,
+    MEMORY_SEARCH_RESPONSE_METHODOLOGY_MAX_TOKENS,
   );
 }
 

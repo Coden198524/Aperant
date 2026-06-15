@@ -26,6 +26,13 @@ const MEMORY_ROW_CITATION_TEXT_MAX_CHARS = 1_000;
 const MEMORY_ROW_CITATION_TEXT_MAX_TOKENS = 250;
 const MEMORY_ROW_CONTEXT_PREFIX_MAX_CHARS = 600;
 const MEMORY_ROW_CONTEXT_PREFIX_MAX_TOKENS = 150;
+const MEMORY_ROW_WORK_UNIT_METHODOLOGY_MAX_CHARS = 96;
+const MEMORY_ROW_WORK_UNIT_METHODOLOGY_MAX_TOKENS = 24;
+const MEMORY_ROW_WORK_UNIT_LABEL_MAX_CHARS = 300;
+const MEMORY_ROW_WORK_UNIT_LABEL_MAX_TOKENS = 75;
+const MEMORY_ROW_WORK_UNIT_HIERARCHY_LIMIT = 8;
+const MEMORY_ROW_WORK_UNIT_HIERARCHY_MAX_CHARS = 120;
+const MEMORY_ROW_WORK_UNIT_HIERARCHY_MAX_TOKENS = 32;
 const MEMORY_ROW_TAG_LIMIT = 20;
 const MEMORY_ROW_TAG_MAX_CHARS = 64;
 const MEMORY_ROW_TAG_MAX_TOKENS = 24;
@@ -40,6 +47,7 @@ const MEMORY_ROW_EPOCH_TIMESTAMP = '1970-01-01T00:00:00.000Z';
 const MEMORY_ROW_ID_LIST_LIMIT = 64;
 const MEMORY_ROW_ID_MAX_CHARS = 128;
 const MEMORY_ROW_ID_MAX_TOKENS = 48;
+const MEMORY_ROW_RELATION_LIMIT = 16;
 const MEMORY_RELATION_TYPES = new Set<MemoryRelation['relationType']>([
   'required_with',
   'conflicts_with',
@@ -60,6 +68,7 @@ export function rowToMemory(row: Record<string, unknown>): Memory {
     MEMORY_ROW_TAG_LIMIT,
     MEMORY_ROW_TAG_MAX_CHARS,
     MEMORY_ROW_TAG_MAX_TOKENS,
+    normalizeMemoryTextDedupeKey,
   ) ?? [];
   const relatedFiles = compactMemoryPathList(
     parseJsonStringArray(row.related_files),
@@ -132,7 +141,11 @@ export function rowToMemory(row: Record<string, unknown>): Memory {
     ),
     embeddingModelId: normalizeOptionalMemoryText(row.embedding_model_id),
     workUnitRef: parseJsonWorkUnitRef(row.work_unit_ref),
-    methodology: normalizeOptionalMemoryText(row.methodology),
+    methodology: compactOptionalMemoryMetadataText(
+      row.methodology,
+      MEMORY_ROW_WORK_UNIT_METHODOLOGY_MAX_CHARS,
+      MEMORY_ROW_WORK_UNIT_METHODOLOGY_MAX_TOKENS,
+    ),
   };
 }
 
@@ -161,15 +174,20 @@ function parseJsonMemoryRelations(val: unknown): MemoryRelation[] {
     return [];
   }
 
-  return parsed.flatMap((item) => {
+  const byKey = new Map<string, RankedMemoryRelation>();
+  parsed.forEach((item, rank) => {
     if (!isRecord(item) || !isMemoryRelationType(item.relationType)) {
-      return [];
+      return;
     }
 
-    const targetMemoryId = normalizeOptionalMemoryText(item.targetMemoryId);
-    const targetFilePath = normalizeOptionalMemoryPath(item.targetFilePath);
+    const targetMemoryId = compactOptionalMemoryMetadataText(
+      item.targetMemoryId,
+      MEMORY_ROW_ID_MAX_CHARS,
+      MEMORY_ROW_ID_MAX_TOKENS,
+    );
+    const targetFilePath = normalizeOptionalMemoryRelationPath(item.targetFilePath);
     if (!targetMemoryId && !targetFilePath) {
-      return [];
+      return;
     }
 
     const relation: MemoryRelation = {
@@ -183,8 +201,48 @@ function parseJsonMemoryRelations(val: unknown): MemoryRelation[] {
     if (targetFilePath) {
       relation.targetFilePath = targetFilePath;
     }
-    return [relation];
+
+    const key = getMemoryRelationDedupeKey(relation);
+    const existing = byKey.get(key);
+    if (!existing || isHigherPriorityMemoryRelation(relation, existing.relation)) {
+      const relationForStorage = existing
+        ? {
+            ...relation,
+            targetMemoryId: existing.relation.targetMemoryId ?? relation.targetMemoryId,
+            targetFilePath: existing.relation.targetFilePath ?? relation.targetFilePath,
+          }
+        : relation;
+      byKey.set(key, {
+        relation: relationForStorage,
+        rank: existing?.rank ?? rank,
+      });
+    }
   });
+
+  return [...byKey.values()]
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, MEMORY_ROW_RELATION_LIMIT)
+    .map((item) => item.relation);
+}
+
+interface RankedMemoryRelation {
+  relation: MemoryRelation;
+  rank: number;
+}
+
+function isHigherPriorityMemoryRelation(candidate: MemoryRelation, existing: MemoryRelation): boolean {
+  if (candidate.confidence !== existing.confidence) {
+    return candidate.confidence > existing.confidence;
+  }
+  return existing.autoExtracted && !candidate.autoExtracted;
+}
+
+function getMemoryRelationDedupeKey(relation: MemoryRelation): string {
+  return [
+    relation.relationType,
+    normalizeMemoryTextDedupeKey(relation.targetMemoryId ?? ''),
+    normalizeFilterPath(relation.targetFilePath ?? ''),
+  ].join(':');
 }
 
 function normalizeMemoryConfidence(value: unknown, fallback: number | undefined): number | undefined {
@@ -252,6 +310,18 @@ function normalizeOptionalMemoryPath(value: unknown): string | undefined {
   return normalized.length > 0 ? normalized : undefined;
 }
 
+function normalizeOptionalMemoryRelationPath(value: unknown): string | undefined {
+  const normalized = normalizeOptionalMemoryPath(value);
+  if (!normalized) {
+    return undefined;
+  }
+  return truncateMemoryPathTailToBudget(
+    normalized,
+    MEMORY_ROW_RELATED_FILE_MAX_CHARS,
+    MEMORY_ROW_RELATED_FILE_MAX_TOKENS,
+  );
+}
+
 function normalizeMemoryBoolean(value: unknown): boolean {
   if (typeof value === 'boolean') {
     return value;
@@ -282,17 +352,26 @@ function parseJsonWorkUnitRef(value: unknown): WorkUnitRef | undefined {
     return undefined;
   }
 
-  const methodology = normalizeOptionalMemoryText(parsed.methodology);
-  const label = normalizeOptionalMemoryText(parsed.label);
+  const methodology = compactOptionalMemoryMetadataText(
+    parsed.methodology,
+    MEMORY_ROW_WORK_UNIT_METHODOLOGY_MAX_CHARS,
+    MEMORY_ROW_WORK_UNIT_METHODOLOGY_MAX_TOKENS,
+  );
+  const label = compactOptionalMemoryMetadataText(
+    parsed.label,
+    MEMORY_ROW_WORK_UNIT_LABEL_MAX_CHARS,
+    MEMORY_ROW_WORK_UNIT_LABEL_MAX_TOKENS,
+  );
   if (!methodology || !label || !Array.isArray(parsed.hierarchy)) {
     return undefined;
   }
 
   const hierarchy = compactMemoryStringList(
     parsed.hierarchy.filter((item): item is string => typeof item === 'string'),
-    MEMORY_ROW_ID_LIST_LIMIT,
-    MEMORY_ROW_ID_MAX_CHARS,
-    MEMORY_ROW_ID_MAX_TOKENS,
+    MEMORY_ROW_WORK_UNIT_HIERARCHY_LIMIT,
+    MEMORY_ROW_WORK_UNIT_HIERARCHY_MAX_CHARS,
+    MEMORY_ROW_WORK_UNIT_HIERARCHY_MAX_TOKENS,
+    normalizeMemoryTextDedupeKey,
   ) ?? [];
   if (hierarchy.length === 0) {
     return undefined;
@@ -342,6 +421,14 @@ function compactOptionalMemoryRowText(value: unknown, maxChars: number, maxToken
     return undefined;
   }
   return compactMemoryText(value, maxChars, maxTokens);
+}
+
+function compactOptionalMemoryMetadataText(value: unknown, maxChars: number, maxTokens: number): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const compacted = compactMemoryListItem(value, maxChars, maxTokens);
+  return compacted || undefined;
 }
 
 function compactMemoryText(value: string, maxChars: number, maxTokens: number): string {

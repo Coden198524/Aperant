@@ -274,6 +274,12 @@ function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordE
       MEMORY_RECORD_IPC_CONTEXT_PREFIX_MAX_TOKENS,
       MEMORY_RECORD_IPC_OMISSION_MARKER,
     ),
+    methodology: compactOptionalMemoryIpcText(
+      entry.methodology,
+      MEMORY_RECORD_IPC_WORK_UNIT_METHODOLOGY_MAX_CHARS,
+      MEMORY_RECORD_IPC_WORK_UNIT_METHODOLOGY_MAX_TOKENS,
+      MEMORY_RECORD_IPC_OMISSION_MARKER,
+    ),
     workUnitRef: compactMemoryWorkUnitRefForIpc(entry.workUnitRef),
   };
 }

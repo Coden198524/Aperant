@@ -351,6 +351,32 @@ describe('Autocode memory runtime context formatting', () => {
     expect(compactText).toContain('FINAL_EXIT_CODE_1_SHOULD_BE_PRESERVED');
   });
 
+  it('compacts object tool results without letting omitted bulk fields crowd diagnostics', () => {
+    const compact = compactAutocodeMemoryRuntimeToolResult({
+      content: 'x'.repeat(5_000),
+      stdout: 'stdout '.repeat(500),
+      stderr: 'stderr '.repeat(500),
+      output: 'output '.repeat(500),
+      data: { huge: 'payload '.repeat(500) },
+      text: 'text '.repeat(500),
+      ...Object.fromEntries(
+        Array.from({ length: 16 }, (_, index) => [`detail${index}`, `detail-${index}`]),
+      ),
+      exitCode: 1,
+      status: 'failed',
+      error: `Error: build failed ${'because dependency resolution failed '.repeat(40)}FINAL_ERROR_TAIL`,
+    }) as Record<string, unknown>;
+
+    expect(Object.keys(compact).length).toBeLessThanOrEqual(12);
+    expect(compact.omittedKeys).toEqual(['content', 'stdout', 'stderr', 'output', 'data', 'text']);
+    expect(compact).not.toHaveProperty('stdout');
+    expect(compact).not.toHaveProperty('stderr');
+    expect(compact.exitCode).toBe(1);
+    expect(compact.status).toBe('failed');
+    expect(String(compact.error)).toContain('Error: build failed');
+    expect(String(compact.error)).toContain('FINAL_ERROR_TAIL');
+  });
+
   it('compacts tool args and reasoning observations before runtime memory use', () => {
     const args = compactAutocodeMemoryRuntimeToolArgs({
       file_path: '/src/generated.ts',

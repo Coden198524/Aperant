@@ -156,6 +156,7 @@ const AUTOCODE_MEMORY_RUNTIME_TOOL_RESULT_STRING_MAX_CHARS = 1_200;
 const AUTOCODE_MEMORY_RUNTIME_REASONING_TEXT_MAX_CHARS = 900;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS = 160;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT = 12;
+const AUTOCODE_MEMORY_RUNTIME_OBJECT_SCAN_KEY_LIMIT = 32;
 export const AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT = 5;
 export const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT = 128;
 const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_MAX_CHARS = 160;
@@ -206,6 +207,20 @@ const AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS = new Set([
   'output',
   'data',
   'text',
+]);
+
+const AUTOCODE_MEMORY_RUNTIME_RESULT_PRIORITY_KEYS = new Set([
+  'error',
+  'message',
+  'exitcode',
+  'exit_code',
+  'code',
+  'status',
+  'statuscode',
+  'status_code',
+  'success',
+  'ok',
+  'failed',
 ]);
 
 const AUTOCODE_MEMORY_RUNTIME_REASONING_SIGNAL_PATTERNS = [
@@ -323,27 +338,56 @@ export function compactAutocodeMemoryRuntimeToolResult(
     };
   }
   if (typeof result === 'object' && result !== null) {
-    const compact: Record<string, unknown> = {};
-    for (const [key, value] of Object.entries(result).slice(
-      0,
-      AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT,
-    )) {
-      if (AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS.has(key)) {
-        compact[key] = '[omitted]';
-        continue;
-      }
-      const compactValue = compactAutocodeMemoryRuntimeValue(
-        value,
-        AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
-        { preferDiagnosticWindow: true, preserveTail: true },
-      );
-      if (compactValue !== undefined) {
-        compact[key] = compactValue;
-      }
-    }
-    return compact;
+    return compactAutocodeMemoryRuntimeToolResultObject(result);
   }
   return undefined;
+}
+
+function compactAutocodeMemoryRuntimeToolResultObject(
+  result: object,
+): Record<string, unknown> {
+  const entries = Object.entries(result).slice(
+    0,
+    AUTOCODE_MEMORY_RUNTIME_OBJECT_SCAN_KEY_LIMIT,
+  );
+  const omittedKeys: string[] = [];
+  const priorityEntries: Array<[string, unknown]> = [];
+  const normalEntries: Array<[string, unknown]> = [];
+
+  for (const [key, value] of entries) {
+    if (AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS.has(key)) {
+      omittedKeys.push(key);
+      continue;
+    }
+
+    const normalizedKey = key.replace(/[\s-]+/g, '_').toLowerCase();
+    if (AUTOCODE_MEMORY_RUNTIME_RESULT_PRIORITY_KEYS.has(normalizedKey)) {
+      priorityEntries.push([key, value]);
+    } else {
+      normalEntries.push([key, value]);
+    }
+  }
+
+  const compact: Record<string, unknown> = {};
+  if (omittedKeys.length > 0) {
+    compact.omittedKeys = omittedKeys.slice(0, AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT);
+  }
+
+  for (const [key, value] of [...priorityEntries, ...normalEntries]) {
+    if (Object.keys(compact).length >= AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT) {
+      break;
+    }
+    const compactValue = compactAutocodeMemoryRuntimeValue(
+      value,
+      AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
+      { preferDiagnosticWindow: true, preserveTail: true },
+    );
+    if (compactValue !== undefined) {
+      compact[key] = compactValue;
+    }
+  }
+
+  return compact;
 }
 
 export function compactAutocodeMemoryRuntimeReasoningText(

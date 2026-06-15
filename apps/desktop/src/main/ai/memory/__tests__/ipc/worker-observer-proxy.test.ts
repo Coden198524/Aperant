@@ -426,6 +426,7 @@ describe('WorkerObserverProxy', () => {
         ],
         citationText: `CITATION_HEAD ${'citation detail '.repeat(120)} CITATION_TAIL`,
         contextPrefix: `PREFIX_HEAD ${'context detail '.repeat(80)} PREFIX_TAIL`,
+        methodology: `METHODOLOGY_HEAD ${'top level methodology detail '.repeat(30)} METHODOLOGY_TAIL`,
         workUnitRef: {
           methodology: `native ${'methodology detail '.repeat(30)}METHODOLOGY_TAIL`,
           hierarchy: [
@@ -448,6 +449,7 @@ describe('WorkerObserverProxy', () => {
           relatedModules?: string[];
           citationText?: string;
           contextPrefix?: string;
+          methodology?: string;
           workUnitRef?: {
             methodology: string;
             hierarchy: string[];
@@ -483,6 +485,10 @@ describe('WorkerObserverProxy', () => {
       expect(estimateTokens(sentMsg.entry.contextPrefix ?? '')).toBeLessThanOrEqual(150);
       expect(sentMsg.entry.contextPrefix).toContain('PREFIX_HEAD');
       expect(sentMsg.entry.contextPrefix).toContain('PREFIX_TAIL');
+      expect(sentMsg.entry.methodology?.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(sentMsg.entry.methodology ?? '')).toBeLessThanOrEqual(24);
+      expect(sentMsg.entry.methodology).toContain('METHODOLOGY_HEAD');
+      expect(sentMsg.entry.methodology).toContain('METHODOLOGY_TAIL');
       expect(sentMsg.entry.workUnitRef?.methodology.length).toBeLessThanOrEqual(96);
       expect(estimateTokens(sentMsg.entry.workUnitRef?.methodology ?? '')).toBeLessThanOrEqual(24);
       expect(sentMsg.entry.workUnitRef?.hierarchy).toHaveLength(8);
