@@ -607,29 +607,15 @@ export class MemoryServiceImpl implements MemoryService {
 
   private async findExistingMemoryId(entry: MemoryRecordEntry, indexContent: string): Promise<string | null> {
     try {
-      if (entry.type === 'context_cost') {
-        const result = await this.db.execute({
-          sql: `SELECT m.id FROM memories m
-                LEFT JOIN memories_fts f ON f.memory_id = m.id
-                WHERE m.project_id = ?
-                  AND m.type = ?
-                  AND (m.content = ? OR f.content = ?)
-                  AND m.deprecated = 0
-                LIMIT 1`,
-          args: [entry.projectId, entry.type, entry.content, indexContent],
-        });
-        const row = result.rows[0] as Record<string, unknown> | undefined;
-        return typeof row?.id === 'string' ? row.id : null;
-      }
-
       const result = await this.db.execute({
-        sql: `SELECT id FROM memories
-              WHERE project_id = ?
-                AND type = ?
-                AND content = ?
-                AND deprecated = 0
+        sql: `SELECT m.id FROM memories m
+              LEFT JOIN memories_fts f ON f.memory_id = m.id
+              WHERE m.project_id = ?
+                AND m.type = ?
+                AND (m.content = ? OR f.content = ?)
+                AND m.deprecated = 0
               LIMIT 1`,
-        args: [entry.projectId, entry.type, entry.content],
+        args: [entry.projectId, entry.type, entry.content, indexContent],
       });
       const row = result.rows[0] as Record<string, unknown> | undefined;
       return typeof row?.id === 'string' ? row.id : null;

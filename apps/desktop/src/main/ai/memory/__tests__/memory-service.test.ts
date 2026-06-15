@@ -604,6 +604,40 @@ describe('MemoryServiceImpl', () => {
       expect(mockExecute.mock.calls[1][0].sql).toContain('access_count = access_count + 1');
     });
 
+    it('deduplicates generic memories by cleaned index content', async () => {
+      mockExecute
+        .mockResolvedValueOnce({ rows: [{ id: 'existing-clean-memory' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const id = await service.store({
+        type: 'work_unit_outcome',
+        content: [
+          'Keep OAuth refresh retry guard inside the session manager.',
+          'npm run typecheck passed.',
+          'No issues found.',
+        ].join('\n'),
+        projectId: 'proj-001',
+      });
+
+      const duplicateLookup = mockExecute.mock.calls[0][0];
+
+      expect(id).toBe('existing-clean-memory');
+      expect(duplicateLookup.sql).toContain('LEFT JOIN memories_fts');
+      expect(duplicateLookup.args).toEqual([
+        'proj-001',
+        'work_unit_outcome',
+        [
+          'Keep OAuth refresh retry guard inside the session manager.',
+          'npm run typecheck passed.',
+          'No issues found.',
+        ].join('\n'),
+        'Keep OAuth refresh retry guard inside the session manager.',
+      ]);
+      expect(mockEmbed).not.toHaveBeenCalled();
+      expect(mockBatch).not.toHaveBeenCalled();
+      expect(mockExecute.mock.calls[1][0].sql).toContain('access_count = access_count + 1');
+    });
+
     it('deduplicates context_cost memories by cleaned index content', async () => {
       mockExecute
         .mockResolvedValueOnce({ rows: [{ id: 'existing-context-cost' }] })
