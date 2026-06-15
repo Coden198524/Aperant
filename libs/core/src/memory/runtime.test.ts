@@ -400,6 +400,7 @@ describe('Autocode memory runtime context formatting', () => {
     expect(formatted).toContain('Visible runtime gotcha remains available.');
     expect(formatted).toContain('search_memory("files to read")');
     expect(formatted).toContain('search_memory("token cost")');
+    expect(formatted.split('\n').filter((line) => line.includes('search_memory('))).toHaveLength(1);
     expect(formatted).not.toContain('prefetch_pattern');
     expect(formatted).not.toContain('alwaysReadFiles');
     expect(formatted).not.toContain('src/auth/session.ts');

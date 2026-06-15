@@ -184,9 +184,11 @@ export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_CHARS = 80;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_TOKENS = 32;
 const AUTOCODE_MEMORY_RUNTIME_CONTEXT_CANDIDATE_MULTIPLIER = 3;
 const AUTOCODE_MEMORY_RUNTIME_PREFETCH_PATTERN_HINT =
-  '- File prefetch memory is available; search_memory("files to read") before broad file scans.';
+  '- Search memory before broad file scans: search_memory("files to read").';
 const AUTOCODE_MEMORY_RUNTIME_CONTEXT_COST_HINT =
-  '- Token/context cost memory is available; search_memory("token cost") before broad rereads.';
+  '- Search memory before broad rereads: search_memory("token cost").';
+const AUTOCODE_MEMORY_RUNTIME_MACHINE_MEMORY_HINT =
+  '- Search memory before broad scans/rereads: search_memory("files to read"); search_memory("token cost").';
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_CONTENT_MAX_CHARS = 1_200;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_FIELD_MAX_CHARS = 500;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT = 12;
@@ -910,11 +912,17 @@ function buildAutocodeMemoryRuntimeMachineHints(
     return [];
   }
 
+  const hasPrefetchPatternHint = hasAutocodeMemoryRuntimePrefetchPatternHint(memories);
+  const hasContextCostHint = hasAutocodeMemoryRuntimeContextCostHint(memories);
+  if (hasPrefetchPatternHint && hasContextCostHint) {
+    return [AUTOCODE_MEMORY_RUNTIME_MACHINE_MEMORY_HINT];
+  }
+
   const hints: string[] = [];
-  if (hasAutocodeMemoryRuntimePrefetchPatternHint(memories)) {
+  if (hasPrefetchPatternHint) {
     hints.push(AUTOCODE_MEMORY_RUNTIME_PREFETCH_PATTERN_HINT);
   }
-  if (hasAutocodeMemoryRuntimeContextCostHint(memories)) {
+  if (hasContextCostHint) {
     hints.push(AUTOCODE_MEMORY_RUNTIME_CONTEXT_COST_HINT);
   }
   return hints;
