@@ -387,7 +387,7 @@ function formatMemory(
     : '';
 
   const fileContext = includeFileContext
-    ? formatMemoryFileContext(memory.relatedFiles, content, fileRefMaxChars)
+    ? formatMemoryFileContext(memory.relatedFiles, `${content} ${citation}`, fileRefMaxChars)
     : '';
 
   const confidence =
