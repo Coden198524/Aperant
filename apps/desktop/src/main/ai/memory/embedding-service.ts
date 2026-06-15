@@ -89,6 +89,7 @@ export function buildContextualText(chunk: ASTChunk): string {
 export function buildMemoryContextualText(memory: Memory): string {
   const relatedFiles = uniqueContextualFilePaths(memory.relatedFiles).slice(0, MEMORY_CONTEXTUAL_FILE_LIMIT);
   const primaryModule = uniqueContextualTextItems(memory.relatedModules)[0];
+  const content = getMemoryContentForEmbedding(memory);
   const parts = [
     relatedFiles.length > 0 ? `Files: ${formatCompactContextualPathList(relatedFiles)}` : null,
     primaryModule ? `Module: ${primaryModule}` : null,
@@ -97,7 +98,7 @@ export function buildMemoryContextualText(memory: Memory): string {
     .filter(Boolean)
     .join(' | ');
 
-  return parts ? `${parts}\n\n${memory.content}` : memory.content;
+  return parts ? `${parts}\n\n${content}` : content;
 }
 
 function getMemoryContentForEmbedding(memory: Memory): string {
@@ -503,10 +504,7 @@ export class EmbeddingService {
    * Always uses 1024-dim for storage quality.
    */
   async embedMemory(memory: Memory): Promise<number[]> {
-    const contextualText = buildMemoryContextualText({
-      ...memory,
-      content: getMemoryContentForEmbedding(memory),
-    });
+    const contextualText = buildMemoryContextualText(memory);
     return this.embed(contextualText, 1024);
   }
 

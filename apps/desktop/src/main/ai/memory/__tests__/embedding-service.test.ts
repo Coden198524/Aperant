@@ -151,6 +151,38 @@ describe('buildMemoryContextualText', () => {
     expect(filesPrefix).not.toContain('src/{auth.ts, session.ts}');
   });
 
+  it('strips low-value memory lines when building embedding context', () => {
+    const memory = makeMemory({
+      type: 'work_unit_outcome',
+      content: [
+        'Keep OAuth refresh retry guard inside the session manager.',
+        'npm run typecheck passed.',
+        'No issues found',
+      ].join('\n'),
+    });
+
+    const text = buildMemoryContextualText(memory);
+
+    expect(text).toContain('Keep OAuth refresh retry guard inside the session manager.');
+    expect(text).not.toContain('npm run typecheck passed.');
+    expect(text).not.toContain('No issues found');
+  });
+
+  it('preserves context_cost lines when building embedding context', () => {
+    const memory = makeMemory({
+      type: 'context_cost',
+      content: [
+        'High token usage per step: 24k tokens.',
+        'Context token spike came from large memory search results.',
+      ].join('\n'),
+    });
+
+    const text = buildMemoryContextualText(memory);
+
+    expect(text).toContain('High token usage per step: 24k tokens.');
+    expect(text).toContain('Context token spike');
+  });
+
   it('uses the first non-empty normalized module in embedding context', () => {
     const memory = makeMemory({
       relatedModules: [' ', ' auth ', 'AUTH', 'billing'],
