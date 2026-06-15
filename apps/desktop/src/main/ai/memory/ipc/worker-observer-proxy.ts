@@ -35,12 +35,22 @@ const MEMORY_SEARCH_IPC_RELATED_MODULE_LIMIT = 12;
 const MEMORY_SEARCH_IPC_RELATED_MODULE_MAX_CHARS = 96;
 const MEMORY_SEARCH_IPC_RELATED_MODULE_MAX_TOKENS = 32;
 const MEMORY_SEARCH_IPC_OMISSION_MARKER = ' ... [memory search middle omitted before IPC] ... ';
+const MEMORY_SEARCH_IPC_DEFAULT_QUERY_LIMIT = 8;
+const MEMORY_SEARCH_IPC_DEFAULT_DIRECT_LIMIT = 12;
+const MEMORY_SEARCH_IPC_MAX_LIMIT = 12;
 const MEMORY_RECORD_IPC_CONTENT_MAX_CHARS = 2_000;
 const MEMORY_RECORD_IPC_CONTENT_MAX_TOKENS = 500;
 const MEMORY_RECORD_IPC_CITATION_TEXT_MAX_CHARS = 1_000;
 const MEMORY_RECORD_IPC_CITATION_TEXT_MAX_TOKENS = 250;
 const MEMORY_RECORD_IPC_CONTEXT_PREFIX_MAX_CHARS = 600;
 const MEMORY_RECORD_IPC_CONTEXT_PREFIX_MAX_TOKENS = 150;
+const MEMORY_RECORD_IPC_WORK_UNIT_METHODOLOGY_MAX_CHARS = 96;
+const MEMORY_RECORD_IPC_WORK_UNIT_METHODOLOGY_MAX_TOKENS = 24;
+const MEMORY_RECORD_IPC_WORK_UNIT_LABEL_MAX_CHARS = 300;
+const MEMORY_RECORD_IPC_WORK_UNIT_LABEL_MAX_TOKENS = 75;
+const MEMORY_RECORD_IPC_WORK_UNIT_HIERARCHY_LIMIT = 8;
+const MEMORY_RECORD_IPC_WORK_UNIT_HIERARCHY_MAX_CHARS = 120;
+const MEMORY_RECORD_IPC_WORK_UNIT_HIERARCHY_MAX_TOKENS = 32;
 const MEMORY_RECORD_IPC_TAG_LIMIT = 20;
 const MEMORY_RECORD_IPC_TAG_MAX_CHARS = 64;
 const MEMORY_RECORD_IPC_TAG_MAX_TOKENS = 24;
@@ -264,6 +274,37 @@ function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordE
       MEMORY_RECORD_IPC_CONTEXT_PREFIX_MAX_TOKENS,
       MEMORY_RECORD_IPC_OMISSION_MARKER,
     ),
+    workUnitRef: compactMemoryWorkUnitRefForIpc(entry.workUnitRef),
+  };
+}
+
+function compactMemoryWorkUnitRefForIpc(
+  workUnitRef: MemoryRecordEntry['workUnitRef'],
+): MemoryRecordEntry['workUnitRef'] {
+  if (!workUnitRef) {
+    return undefined;
+  }
+
+  return {
+    methodology: compactMemoryIpcText(
+      workUnitRef.methodology,
+      MEMORY_RECORD_IPC_WORK_UNIT_METHODOLOGY_MAX_CHARS,
+      MEMORY_RECORD_IPC_WORK_UNIT_METHODOLOGY_MAX_TOKENS,
+      MEMORY_RECORD_IPC_OMISSION_MARKER,
+    ),
+    hierarchy: compactMemoryIpcTextList(
+      workUnitRef.hierarchy,
+      MEMORY_RECORD_IPC_WORK_UNIT_HIERARCHY_LIMIT,
+      MEMORY_RECORD_IPC_WORK_UNIT_HIERARCHY_MAX_CHARS,
+      MEMORY_RECORD_IPC_WORK_UNIT_HIERARCHY_MAX_TOKENS,
+      MEMORY_RECORD_IPC_OMISSION_MARKER,
+    ) ?? [],
+    label: compactMemoryIpcText(
+      workUnitRef.label,
+      MEMORY_RECORD_IPC_WORK_UNIT_LABEL_MAX_CHARS,
+      MEMORY_RECORD_IPC_WORK_UNIT_LABEL_MAX_TOKENS,
+      MEMORY_RECORD_IPC_OMISSION_MARKER,
+    ),
   };
 }
 
@@ -273,16 +314,18 @@ function compactMemoryIdForIpc(memoryId: string): string {
 
 function compactMemorySearchFiltersForIpc(filters: MemorySearchFilters): MemorySearchFilters {
   const { filter: _filter, ...serializableFilters } = filters;
+  const query = serializableFilters.query
+    ? compactMemoryIpcText(
+        serializableFilters.query,
+        MEMORY_SEARCH_IPC_QUERY_MAX_CHARS,
+        MEMORY_SEARCH_IPC_QUERY_MAX_TOKENS,
+        MEMORY_SEARCH_IPC_OMISSION_MARKER,
+      )
+    : serializableFilters.query;
   return {
     ...serializableFilters,
-    query: serializableFilters.query
-      ? compactMemoryIpcText(
-          serializableFilters.query,
-          MEMORY_SEARCH_IPC_QUERY_MAX_CHARS,
-          MEMORY_SEARCH_IPC_QUERY_MAX_TOKENS,
-          MEMORY_SEARCH_IPC_OMISSION_MARKER,
-        )
-      : serializableFilters.query,
+    query,
+    limit: normalizeMemorySearchIpcLimit(serializableFilters.limit, query),
     relatedFiles: compactMemoryIpcPathList(
       serializableFilters.relatedFiles,
       MEMORY_SEARCH_IPC_RELATED_FILE_LIMIT,
@@ -297,6 +340,16 @@ function compactMemorySearchFiltersForIpc(filters: MemorySearchFilters): MemoryS
       MEMORY_SEARCH_IPC_OMISSION_MARKER,
     ),
   };
+}
+
+function normalizeMemorySearchIpcLimit(limit: number | undefined, query: string | undefined): number {
+  if (limit === undefined) {
+    return query ? MEMORY_SEARCH_IPC_DEFAULT_QUERY_LIMIT : MEMORY_SEARCH_IPC_DEFAULT_DIRECT_LIMIT;
+  }
+  if (!Number.isFinite(limit)) {
+    return 0;
+  }
+  return Math.min(Math.max(0, Math.floor(limit)), MEMORY_SEARCH_IPC_MAX_LIMIT);
 }
 
 function compactOptionalMemoryIpcText(

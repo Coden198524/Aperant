@@ -453,6 +453,238 @@ describe('WorkerBridge', () => {
       expect(memory.contextPrefix).toContain('PREFIX_TAIL');
     });
 
+    it('deduplicates case and whitespace variants in memory search metadata before IPC', async () => {
+      mockMemoryServiceSearch.mockResolvedValueOnce([
+        makeMemory({
+          tags: [' Auth ', 'auth', 'AUTH', 'testing', ' TESTING ', 'memory'],
+          relatedFiles: ['src\\auth\\token.ts', './SRC/auth/token.ts/', 'src/auth/session.ts'],
+          relatedModules: [' Agent/Memory ', 'agent/memory', 'AGENT/MEMORY', 'runtime', ' Runtime '],
+          provenanceSessionIds: ['Session-A', 'session-a'],
+        }),
+      ]);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-metadata-dedupe',
+        filters: { query: 'auth memory', projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-metadata-dedupe',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-metadata-dedupe',
+      )?.[0] as { memories: Memory[] };
+      const memory = response.memories[0];
+
+      expect(memory.tags).toEqual(['Auth', 'testing', 'memory']);
+      expect(memory.relatedFiles).toEqual(['src/auth/token.ts', 'src/auth/session.ts']);
+      expect(memory.relatedModules).toEqual(['Agent/Memory', 'runtime']);
+      expect(memory.provenanceSessionIds).toEqual(['Session-A', 'session-a']);
+    });
+
+    it('deduplicates compacted memory relations before applying the IPC relation limit', async () => {
+      mockMemoryServiceSearch.mockResolvedValueOnce([
+        makeMemory({
+          relations: [
+            ...Array.from({ length: 8 }, (_, index) => ({
+              relationType: 'validates' as const,
+              targetFilePath: index % 2 === 0 ? 'src\\auth\\token.ts' : './SRC/auth/token.ts/',
+              confidence: index === 7 ? 0.98 : 0.4,
+              autoExtracted: true,
+            })),
+            {
+              relationType: 'required_with',
+              targetFilePath: 'src/auth/session.ts',
+              confidence: 0.85,
+              autoExtracted: true,
+            },
+          ],
+        }),
+      ]);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-relation-dedupe',
+        filters: { query: 'auth relation', projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-relation-dedupe',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-relation-dedupe',
+      )?.[0] as { memories: Memory[] };
+      const memory = response.memories[0];
+
+      expect(memory.relations?.map((relation) => relation.targetFilePath)).toEqual([
+        'src/auth/token.ts',
+        'src/auth/session.ts',
+      ]);
+      expect(memory.relations?.map((relation) => relation.relationType)).toEqual([
+        'validates',
+        'required_with',
+      ]);
+      expect(memory.relations?.[0].confidence).toBe(0.98);
+    });
+
+    it('deduplicates equivalent compacted memories before posting search results to the worker', async () => {
+      mockMemoryServiceSearch.mockResolvedValueOnce([
+        makeMemory({
+          id: 'duplicate-low',
+          content: 'Use the auth-retry helper before refreshing tokens!',
+          confidence: 0.65,
+          accessCount: 1,
+          tags: ['auth'],
+          relatedFiles: ['src/auth/legacy.ts'],
+          relatedModules: ['auth/legacy'],
+          provenanceSessionIds: ['low-session'],
+          impactedNodeIds: ['node-low'],
+          relations: [
+            {
+              relationType: 'validates',
+              targetFilePath: 'src/auth/legacy.ts',
+              confidence: 0.4,
+              autoExtracted: true,
+            },
+          ],
+        }),
+        makeMemory({
+          id: 'duplicate-high',
+          content: ' use   the auth retry helper before refreshing tokens. ',
+          confidence: 0.92,
+          accessCount: 2,
+          tags: ['runtime'],
+          relatedFiles: ['src/auth/current.ts'],
+          relatedModules: ['auth/runtime'],
+          provenanceSessionIds: ['high-session'],
+          impactedNodeIds: ['node-high'],
+          relations: [
+            {
+              relationType: 'required_with',
+              targetFilePath: 'src/auth/current.ts',
+              confidence: 0.9,
+              autoExtracted: true,
+            },
+          ],
+        }),
+        makeMemory({
+          id: 'distinct',
+          content: 'Mock the OAuth clock before testing refresh retries.',
+          confidence: 0.7,
+        }),
+      ]);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-memory-dedupe',
+        filters: { query: 'auth retry', projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-memory-dedupe',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-memory-dedupe',
+      )?.[0] as { memories: Memory[] };
+
+      expect(response.memories.map((memory) => memory.id)).toEqual(['duplicate-high', 'distinct']);
+      expect(response.memories[0].content).toBe('use the auth retry helper before refreshing tokens.');
+      expect(response.memories[0].tags).toEqual(['runtime', 'auth']);
+      expect(response.memories[0].relatedFiles).toEqual(['src/auth/current.ts', 'src/auth/legacy.ts']);
+      expect(response.memories[0].relatedModules).toEqual(['auth/runtime', 'auth/legacy']);
+      expect(response.memories[0].provenanceSessionIds).toEqual(['high-session', 'low-session']);
+      expect(response.memories[0].impactedNodeIds).toEqual(['node-high', 'node-low']);
+      expect(response.memories[0].relations?.map((relation) => relation.targetFilePath)).toEqual([
+        'src/auth/current.ts',
+        'src/auth/legacy.ts',
+      ]);
+    });
+
+    it('caps memory search responses before posting them back to the worker', async () => {
+      mockMemoryServiceSearch.mockResolvedValueOnce(
+        Array.from({ length: 20 }, (_, index) =>
+          makeMemory({
+            id: `mem-${index}`,
+            content: `Distinct memory result ${index} for IPC cap testing.`,
+            confidence: 0.8,
+          }),
+        ),
+      );
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-memory-cap',
+        filters: { projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-memory-cap',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-memory-cap',
+      )?.[0] as { memories: Memory[] };
+
+      expect(response.memories).toHaveLength(12);
+      expect(response.memories.at(-1)?.id).toBe('mem-11');
+    });
+
+    it('respects smaller requested memory search limits at the IPC response boundary', async () => {
+      mockMemoryServiceSearch.mockResolvedValueOnce(
+        Array.from({ length: 8 }, (_, index) =>
+          makeMemory({
+            id: `limited-${index}`,
+            content: `Limited memory result ${index}.`,
+            confidence: 0.8,
+          }),
+        ),
+      );
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-memory-small-limit',
+        filters: { query: 'limited', projectId: 'proj-456', limit: 3 },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-memory-small-limit',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-memory-small-limit',
+      )?.[0] as { memories: Memory[] };
+
+      expect(response.memories.map((memory) => memory.id)).toEqual([
+        'limited-0',
+        'limited-1',
+        'limited-2',
+      ]);
+    });
+
     it('keeps localized memory search responses within token budgets before IPC', async () => {
       mockMemoryServiceSearch.mockResolvedValueOnce([
         makeMemory({

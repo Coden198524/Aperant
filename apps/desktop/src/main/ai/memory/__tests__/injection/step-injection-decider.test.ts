@@ -263,6 +263,41 @@ describe('StepInjectionDecider', () => {
       expect(result?.content).not.toContain('notifying listeners and keep');
     });
 
+    it('deduplicates gotchas by their compact rendered injection line', async () => {
+      const sharedHead = `RENDERED_DUP_HEAD ${'shared token refresh context '.repeat(16)}`;
+      const sharedTail = ' Verify expired token retry before merging.'.repeat(3);
+
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({
+          id: 'rendered-duplicate-low',
+          content: `${sharedHead}${'alpha-only-middle-detail '.repeat(100)}${sharedTail}`,
+          confidence: 0.9,
+        }),
+        makeMemory({
+          id: 'rendered-duplicate-high',
+          content: `${sharedHead}${'beta-only-middle-detail '.repeat(100)}${sharedTail}`,
+          confidence: 0.95,
+        }),
+        makeMemory({
+          id: 'distinct',
+          content: 'Mock the OAuth clock before testing refresh retries.',
+          confidence: 0.72,
+        }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.memoryIds).toEqual(['rendered-duplicate-high', 'distinct']);
+      expect(result?.content).toContain('Mock the OAuth clock');
+      expect(result?.content?.match(/RENDERED_DUP_HEAD/g)).toHaveLength(1);
+      expect(memoryService.updateAccessCount).toHaveBeenCalledWith('rendered-duplicate-high');
+      expect(memoryService.updateAccessCount).toHaveBeenCalledWith('distinct');
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('rendered-duplicate-low');
+    });
+
     it('skips already-injected memory IDs', async () => {
       const gotcha = makeMemory({ id: 'gotcha-already-seen' });
       vi.mocked(memoryService.search).mockImplementation(async (filters) => {
@@ -434,6 +469,50 @@ describe('StepInjectionDecider', () => {
       expect(result?.content).toContain('Resolve the latest writer before retrying.');
       expect(result?.content).not.toContain('self_correction:');
       expect(result?.content).not.toContain('error_retry:');
+    });
+
+    it('deduplicates scratchpad reflections by compact rendered text before applying the limit', async () => {
+      const capturedAt = Date.now();
+      const sharedHead = `SCRATCH_RENDERED_DUP_HEAD ${'shared scratchpad context '.repeat(8)}`;
+      const sharedTail = ' Verify the retry path before continuing.'.repeat(2);
+      scratchpad = makeScratchpad([
+        {
+          signalType: 'self_correction',
+          rawData: { triggeringText: `${sharedHead}${'alpha-middle '.repeat(80)}${sharedTail}` },
+          priority: 0.8,
+          capturedAt,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'error_retry',
+          rawData: { triggeringText: `${sharedHead}${'beta-middle '.repeat(80)}${sharedTail}` },
+          priority: 0.95,
+          capturedAt: capturedAt + 1,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'parallel_conflict',
+          rawData: { triggeringText: 'Resolve the latest writer before retrying.' },
+          priority: 0.8,
+          capturedAt: capturedAt + 2,
+          stepNumber: 4,
+        },
+      ]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('scratchpad_reflection');
+      expect(result?.memoryIds).toEqual([
+        `scratchpad:error_retry:4:${capturedAt + 1}`,
+        `scratchpad:parallel_conflict:4:${capturedAt + 2}`,
+      ]);
+      expect(result?.content).toContain('Resolve the latest writer before retrying.');
+      expect(result?.content?.match(/SCRATCH_RENDERED_DUP_HEAD/g)).toHaveLength(1);
+      expect(result?.content).not.toContain('self_correction:');
     });
 
     it('keeps localized scratchpad reflections within an estimated token budget', async () => {

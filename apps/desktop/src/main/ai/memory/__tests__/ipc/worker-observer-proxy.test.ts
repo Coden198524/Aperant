@@ -253,6 +253,7 @@ describe('WorkerObserverProxy', () => {
       const sentMsg = mockPort.sentMessages[0] as {
         filters: {
           query?: string;
+          limit?: number;
           relatedFiles?: string[];
           relatedModules?: string[];
           recordAccess?: boolean;
@@ -265,6 +266,7 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.filters.query).toContain('SEARCH_HEAD');
       expect(sentMsg.filters.query).toContain('SEARCH_TAIL');
       expect(sentMsg.filters.query).toContain('memory search middle omitted before IPC');
+      expect(sentMsg.filters.limit).toBe(8);
       expect(sentMsg.filters.relatedFiles).toHaveLength(16);
       expect(new Set(sentMsg.filters.relatedFiles).size).toBe(sentMsg.filters.relatedFiles?.length);
       expect(sentMsg.filters.relatedFiles?.[0]).toBe('src/auth/token.ts');
@@ -278,6 +280,34 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.filters.relatedModules?.every((module) => estimateTokens(module) <= 32)).toBe(true);
       expect(sentMsg.filters.recordAccess).toBe(true);
       expect(sentMsg.filters).not.toHaveProperty('filter');
+    });
+
+    it('caps direct search limits before posting IPC requests', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:search-result',
+        requestId,
+        memories: [],
+      }));
+
+      await proxy.searchMemory({ projectId: 'proj-1' });
+
+      let sentMsg = mockPort.sentMessages[0] as {
+        filters: { limit?: number };
+      };
+      expect(sentMsg.filters.limit).toBe(12);
+
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:search-result',
+        requestId,
+        memories: [],
+      }));
+
+      await proxy.searchMemory({ query: 'auth', projectId: 'proj-1', limit: 50 });
+
+      sentMsg = mockPort.sentMessages[1] as {
+        filters: { limit?: number };
+      };
+      expect(sentMsg.filters.limit).toBe(12);
     });
 
     it('keeps localized search filters within token budgets before IPC', async () => {
@@ -396,6 +426,18 @@ describe('WorkerObserverProxy', () => {
         ],
         citationText: `CITATION_HEAD ${'citation detail '.repeat(120)} CITATION_TAIL`,
         contextPrefix: `PREFIX_HEAD ${'context detail '.repeat(80)} PREFIX_TAIL`,
+        workUnitRef: {
+          methodology: `native ${'methodology detail '.repeat(30)}METHODOLOGY_TAIL`,
+          hierarchy: [
+            'Spec 001',
+            ' spec 001 ',
+            ...Array.from(
+              { length: 12 },
+              (_, index) => `Task ${index} ${'hierarchy detail '.repeat(20)}tail-${index}`,
+            ),
+          ],
+          label: `LABEL_HEAD ${'work unit label detail '.repeat(80)} LABEL_TAIL`,
+        },
       });
 
       const sentMsg = mockPort.sentMessages[0] as {
@@ -406,6 +448,11 @@ describe('WorkerObserverProxy', () => {
           relatedModules?: string[];
           citationText?: string;
           contextPrefix?: string;
+          workUnitRef?: {
+            methodology: string;
+            hierarchy: string[];
+            label: string;
+          };
         };
       };
 
@@ -436,6 +483,17 @@ describe('WorkerObserverProxy', () => {
       expect(estimateTokens(sentMsg.entry.contextPrefix ?? '')).toBeLessThanOrEqual(150);
       expect(sentMsg.entry.contextPrefix).toContain('PREFIX_HEAD');
       expect(sentMsg.entry.contextPrefix).toContain('PREFIX_TAIL');
+      expect(sentMsg.entry.workUnitRef?.methodology.length).toBeLessThanOrEqual(96);
+      expect(estimateTokens(sentMsg.entry.workUnitRef?.methodology ?? '')).toBeLessThanOrEqual(24);
+      expect(sentMsg.entry.workUnitRef?.hierarchy).toHaveLength(8);
+      expect(sentMsg.entry.workUnitRef?.hierarchy[0]).toBe('Spec 001');
+      expect(sentMsg.entry.workUnitRef?.hierarchy).not.toContain('spec 001');
+      expect(sentMsg.entry.workUnitRef?.hierarchy.every((item) => item.length <= 120)).toBe(true);
+      expect(sentMsg.entry.workUnitRef?.hierarchy.every((item) => estimateTokens(item) <= 32)).toBe(true);
+      expect(sentMsg.entry.workUnitRef?.label.length).toBeLessThanOrEqual(300);
+      expect(estimateTokens(sentMsg.entry.workUnitRef?.label ?? '')).toBeLessThanOrEqual(75);
+      expect(sentMsg.entry.workUnitRef?.label).toContain('LABEL_HEAD');
+      expect(sentMsg.entry.workUnitRef?.label).toContain('LABEL_TAIL');
     });
 
     it('keeps localized memory record entries within token budgets before IPC', async () => {

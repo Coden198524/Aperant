@@ -89,6 +89,7 @@ export class StepInjectionDecider {
           {
             maxItems: MAX_GOTCHA_INJECTION_MEMORIES,
             minConfidence: 0.65,
+            getContent: (memory) => this.formatGotchaLine(memory),
           },
         );
         if (eligibleGotchas.length > 0) {
@@ -111,13 +112,12 @@ export class StepInjectionDecider {
               getScratchpadInjectionId(entry),
             ),
         );
-      if (newEntries.length > 0) {
+      const selectedScratchpadEntries = selectScratchpadEntriesForInjection(newEntries);
+      if (selectedScratchpadEntries.length > 0) {
         return {
-          content: this.formatScratchpadEntries(newEntries),
+          content: this.formatScratchpadEntries(selectedScratchpadEntries),
           type: 'scratchpad_reflection',
-          memoryIds: newEntries
-            .slice(0, MAX_SCRATCHPAD_REFLECTIONS)
-            .map(getScratchpadInjectionId),
+          memoryIds: selectedScratchpadEntries.map(getScratchpadInjectionId),
         };
       }
 
@@ -177,22 +177,23 @@ export class StepInjectionDecider {
 
   private formatGotchas(memories: Memory[]): string {
     const bullets = memories
-      .map((m) => {
-        const fileContext = formatFileRefs(m.relatedFiles);
-        return `- [${m.type}]${fileContext}: ${truncateText(
-          m.content,
-          MAX_MEMORY_ALERT_CHARS,
-          MAX_MEMORY_ALERT_TOKENS,
-        )}`;
-      })
+      .map((memory) => this.formatGotchaLine(memory))
       .join('\n');
 
     return `MEMORY ALERT - Gotchas for files you just accessed:\n${bullets}`;
   }
 
+  private formatGotchaLine(memory: Memory): string {
+    const fileContext = formatFileRefs(memory.relatedFiles);
+    return `- [${memory.type}]${fileContext}: ${truncateText(
+      memory.content,
+      MAX_MEMORY_ALERT_CHARS,
+      MAX_MEMORY_ALERT_TOKENS,
+    )}`;
+  }
+
   private formatScratchpadEntries(entries: AcuteCandidate[]): string {
     const lines = entries
-      .slice(0, MAX_SCRATCHPAD_REFLECTIONS)
       .map((e) => {
         const text = truncateText(
           getScratchpadEntryText(e),
@@ -205,6 +206,50 @@ export class StepInjectionDecider {
 
     return `MEMORY REFLECTION - New observations recorded this step:\n${lines}`;
   }
+}
+
+interface RankedScratchpadEntry {
+  entry: AcuteCandidate;
+  rank: number;
+}
+
+function selectScratchpadEntriesForInjection(entries: AcuteCandidate[]): AcuteCandidate[] {
+  const byRenderedText = new Map<string, RankedScratchpadEntry>();
+  entries.forEach((entry, rank) => {
+    const key = getScratchpadRenderedTextKey(entry);
+    if (!key) {
+      return;
+    }
+
+    const existing = byRenderedText.get(key);
+    if (!existing || isHigherPriorityScratchpadEntry(entry, existing.entry)) {
+      byRenderedText.set(key, {
+        entry,
+        rank: existing?.rank ?? rank,
+      });
+    }
+  });
+
+  return [...byRenderedText.values()]
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, MAX_SCRATCHPAD_REFLECTIONS)
+    .map((item) => item.entry);
+}
+
+function getScratchpadRenderedTextKey(entry: AcuteCandidate): string {
+  return truncateText(
+    getScratchpadEntryText(entry),
+    MAX_SCRATCHPAD_TEXT_CHARS,
+    MAX_SCRATCHPAD_TEXT_TOKENS,
+  )
+    .toLowerCase()
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
+function isHigherPriorityScratchpadEntry(candidate: AcuteCandidate, existing: AcuteCandidate): boolean {
+  return candidate.priority > existing.priority ||
+    candidate.priority === existing.priority && candidate.capturedAt > existing.capturedAt;
 }
 
 function shouldInjectScratchpadEntry(entry: AcuteCandidate): boolean {

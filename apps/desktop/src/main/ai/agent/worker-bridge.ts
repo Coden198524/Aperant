@@ -42,6 +42,7 @@ const MEMORY_SEARCH_RESPONSE_CONTENT_MAX_CHARS = 900;
 const MEMORY_SEARCH_RESPONSE_CONTENT_MAX_TOKENS = 225;
 const MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS = 300;
 const MEMORY_SEARCH_RESPONSE_TEXT_MAX_TOKENS = 75;
+const MEMORY_SEARCH_RESPONSE_MEMORY_LIMIT = 12;
 const MEMORY_SEARCH_RESPONSE_TAG_LIMIT = 12;
 const MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS = 64;
 const MEMORY_SEARCH_RESPONSE_TAG_MAX_TOKENS = 24;
@@ -319,7 +320,7 @@ export class WorkerBridge extends EventEmitter {
         this.postMemoryResponse({
           type: 'memory:search-result',
           requestId: message.requestId,
-          memories: compactMemorySearchResponseMemories(memories),
+          memories: compactMemorySearchResponseMemories(memories, message.filters.limit),
         });
       })
       .catch((error) => {
@@ -707,8 +708,51 @@ function mapSessionResultToMemoryOutcome(result: SessionResult): SessionOutcome 
   }
 }
 
-function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
-  return memories.map((memory) => ({
+function compactMemorySearchResponseMemories(memories: Memory[], requestedLimit?: number): Memory[] {
+  const byKey = new Map<string, RankedMemorySearchResponseMemory>();
+  memories.forEach((memory, rank) => {
+    const compactMemory = compactMemorySearchResponseMemory(memory);
+    const key = getMemorySearchResponseMemoryDedupeKey(compactMemory);
+    const existing = byKey.get(key);
+    if (!existing) {
+      byKey.set(key, {
+        memory: compactMemory,
+        rank,
+      });
+      return;
+    }
+
+    const preferredMemory = isHigherPriorityMemorySearchResponseMemory(compactMemory, existing.memory)
+      ? compactMemory
+      : existing.memory;
+    const secondaryMemory = preferredMemory === compactMemory ? existing.memory : compactMemory;
+    byKey.set(key, {
+      memory: mergeDuplicateMemorySearchResponseMemory(preferredMemory, secondaryMemory),
+      rank: existing.rank,
+    });
+  });
+
+  return [...byKey.values()]
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, normalizeMemorySearchResponseMemoryLimit(requestedLimit))
+    .map((item) => item.memory);
+}
+
+function normalizeMemorySearchResponseMemoryLimit(requestedLimit: number | undefined): number {
+  if (requestedLimit === undefined) {
+    return MEMORY_SEARCH_RESPONSE_MEMORY_LIMIT;
+  }
+  if (!Number.isFinite(requestedLimit)) {
+    return 0;
+  }
+  return Math.min(
+    Math.max(0, Math.floor(requestedLimit)),
+    MEMORY_SEARCH_RESPONSE_MEMORY_LIMIT,
+  );
+}
+
+function compactMemorySearchResponseMemory(memory: Memory): Memory {
+  return {
     ...memory,
     content: compactMemorySearchResponseText(
       memory.content,
@@ -720,6 +764,7 @@ function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
       MEMORY_SEARCH_RESPONSE_TAG_LIMIT,
       MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS,
       MEMORY_SEARCH_RESPONSE_TAG_MAX_TOKENS,
+      { normalizedKey: true },
     ) ?? [],
     relatedFiles: compactMemorySearchResponsePathList(
       memory.relatedFiles,
@@ -732,6 +777,7 @@ function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
       MEMORY_SEARCH_RESPONSE_MODULE_LIMIT,
       MEMORY_SEARCH_RESPONSE_MODULE_MAX_CHARS,
       MEMORY_SEARCH_RESPONSE_MODULE_MAX_TOKENS,
+      { normalizedKey: true },
     ) ?? [],
     provenanceSessionIds: compactMemorySearchResponseTextList(
       memory.provenanceSessionIds,
@@ -763,19 +809,78 @@ function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
           ) ?? [],
         }
       : undefined,
-    relations: memory.relations
-      ?.slice(0, MEMORY_SEARCH_RESPONSE_RELATION_LIMIT)
-      .map((relation) => ({
-        ...relation,
-        targetFilePath: relation.targetFilePath
-          ? compactMemorySearchResponsePathTailToBudget(
-              relation.targetFilePath,
-              MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS,
-              MEMORY_SEARCH_RESPONSE_FILE_MAX_TOKENS,
-            )
-          : relation.targetFilePath,
-      })),
-  }));
+    relations: compactMemorySearchResponseRelations(memory.relations),
+  };
+}
+
+function mergeDuplicateMemorySearchResponseMemory(primary: Memory, secondary: Memory): Memory {
+  return {
+    ...primary,
+    tags: compactMemorySearchResponseTextList(
+      [...primary.tags, ...secondary.tags],
+      MEMORY_SEARCH_RESPONSE_TAG_LIMIT,
+      MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_TAG_MAX_TOKENS,
+      { normalizedKey: true },
+    ) ?? [],
+    relatedFiles: compactMemorySearchResponsePathList(
+      [...primary.relatedFiles, ...secondary.relatedFiles],
+      MEMORY_SEARCH_RESPONSE_FILE_LIMIT,
+      MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_FILE_MAX_TOKENS,
+    ) ?? [],
+    relatedModules: compactMemorySearchResponseTextList(
+      [...primary.relatedModules, ...secondary.relatedModules],
+      MEMORY_SEARCH_RESPONSE_MODULE_LIMIT,
+      MEMORY_SEARCH_RESPONSE_MODULE_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_MODULE_MAX_TOKENS,
+      { normalizedKey: true },
+    ) ?? [],
+    provenanceSessionIds: compactMemorySearchResponseTextList(
+      [...primary.provenanceSessionIds, ...secondary.provenanceSessionIds],
+      MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_TOKENS,
+    ) ?? [],
+    impactedNodeIds: compactMemorySearchResponseTextList(
+      [
+        ...(primary.impactedNodeIds ?? []),
+        ...(secondary.impactedNodeIds ?? []),
+      ],
+      MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_TOKENS,
+    ),
+    relations: compactMemorySearchResponseRelations([
+      ...(primary.relations ?? []),
+      ...(secondary.relations ?? []),
+    ]),
+  };
+}
+
+interface RankedMemorySearchResponseMemory {
+  memory: Memory;
+  rank: number;
+}
+
+function getMemorySearchResponseMemoryDedupeKey(memory: Memory): string {
+  return [
+    memory.type,
+    fingerprintMemorySearchResponseText(memory.content),
+  ].join(':');
+}
+
+function isHigherPriorityMemorySearchResponseMemory(candidate: Memory, existing: Memory): boolean {
+  const candidateScore = scoreMemorySearchResponseMemory(candidate);
+  const existingScore = scoreMemorySearchResponseMemory(existing);
+  return candidateScore > existingScore;
+}
+
+function scoreMemorySearchResponseMemory(memory: Memory): number {
+  const verifiedBoost = memory.userVerified ? 0.3 : 0;
+  const pinnedBoost = memory.pinned ? 0.5 : 0;
+  const accessBoost = Math.min(memory.accessCount || 0, 10) * 0.01;
+  return memory.confidence + verifiedBoost + pinnedBoost + accessBoost;
 }
 
 function compactOptionalMemorySearchResponseText(value: string | undefined): string | undefined {
@@ -840,11 +945,24 @@ function compactMemorySearchResponseTextByChars(normalized: string, maxChars: nu
   ].join('');
 }
 
+function normalizeMemorySearchResponseDedupeText(value: string): string {
+  return value.toLowerCase().replace(/\s+/g, ' ').trim();
+}
+
+function fingerprintMemorySearchResponseText(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 function compactMemorySearchResponseTextList(
   values: string[] | undefined,
   limit: number,
   maxItemChars: number,
   maxItemTokens: number,
+  options: { normalizedKey?: boolean } = {},
 ): string[] | undefined {
   if (!values) {
     return undefined;
@@ -859,11 +977,12 @@ function compactMemorySearchResponseTextList(
   const compacted: string[] = [];
   for (const value of values) {
     const item = compactMemorySearchResponseText(value, maxItemChars, maxItemTokens);
-    if (!item || seen.has(item)) {
+    const key = getMemorySearchResponseTextListDedupeKey(item, options);
+    if (!item || seen.has(key)) {
       continue;
     }
 
-    seen.add(item);
+    seen.add(key);
     compacted.push(item);
     if (compacted.length >= itemLimit) {
       break;
@@ -871,6 +990,16 @@ function compactMemorySearchResponseTextList(
   }
 
   return compacted;
+}
+
+function getMemorySearchResponseTextListDedupeKey(
+  value: string,
+  options: { normalizedKey?: boolean },
+): string {
+  if (!options.normalizedKey) {
+    return value;
+  }
+  return normalizeMemorySearchResponseDedupeText(value);
 }
 
 function compactMemorySearchResponsePathList(
@@ -907,8 +1036,82 @@ function compactMemorySearchResponsePathList(
   return compacted;
 }
 
+function compactMemorySearchResponseRelations(
+  relations: Memory['relations'],
+): Memory['relations'] {
+  if (!relations) {
+    return undefined;
+  }
+
+  const byKey = new Map<string, RankedMemorySearchResponseRelation>();
+  relations.forEach((relation, rank) => {
+    const compactRelation = {
+      ...relation,
+      targetFilePath: relation.targetFilePath
+        ? compactMemorySearchResponsePathTailToBudget(
+            relation.targetFilePath,
+            MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS,
+            MEMORY_SEARCH_RESPONSE_FILE_MAX_TOKENS,
+          )
+        : relation.targetFilePath,
+    };
+    const key = getMemorySearchResponseRelationDedupeKey(compactRelation);
+    const existing = byKey.get(key);
+    if (!existing || isHigherPriorityMemorySearchResponseRelation(compactRelation, existing.relation)) {
+      const relationForStorage = existing
+        ? {
+            ...compactRelation,
+            targetFilePath: existing.relation.targetFilePath,
+          }
+        : compactRelation;
+      byKey.set(key, {
+        relation: relationForStorage,
+        rank: existing?.rank ?? rank,
+      });
+    }
+  });
+
+  return [...byKey.values()]
+    .sort((a, b) => a.rank - b.rank)
+    .slice(0, MEMORY_SEARCH_RESPONSE_RELATION_LIMIT)
+    .map((item) => item.relation);
+}
+
+type MemorySearchResponseRelation = NonNullable<Memory['relations']>[number];
+
+interface RankedMemorySearchResponseRelation {
+  relation: MemorySearchResponseRelation;
+  rank: number;
+}
+
+function isHigherPriorityMemorySearchResponseRelation(
+  candidate: MemorySearchResponseRelation,
+  existing: MemorySearchResponseRelation,
+): boolean {
+  if (candidate.confidence !== existing.confidence) {
+    return candidate.confidence > existing.confidence;
+  }
+  return existing.autoExtracted && !candidate.autoExtracted;
+}
+
+function getMemorySearchResponseRelationDedupeKey(
+  relation: MemorySearchResponseRelation,
+): string {
+  return [
+    relation.relationType,
+    relation.targetMemoryId ?? '',
+    relation.targetFilePath?.toLowerCase().replace(/\\/g, '/').replace(/\/+/g, '/').trim() ?? '',
+  ].join(':');
+}
+
 function compactMemorySearchResponsePathTailToBudget(value: string, maxChars: number, maxTokens: number): string {
-  const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  const normalized = value
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
   if (maxChars <= 0 || maxTokens <= 0) {
     return '';
   }
