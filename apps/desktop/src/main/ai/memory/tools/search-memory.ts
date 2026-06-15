@@ -397,8 +397,9 @@ function findSimilarSelectedSearchMemoryIndex(
 }
 
 function normalizeSearchQuery(query: string): string {
+  const folded = foldRepeatedAutocodePromptLines(query);
   return truncateTextToBudget(
-    query.replace(/\s+/g, ' ').trim(),
+    folded.replace(/\s+/g, ' ').trim(),
     MAX_SEARCH_QUERY_CHARS,
     Math.ceil(MAX_SEARCH_QUERY_CHARS / 4),
     { preserveTail: true },

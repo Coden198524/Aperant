@@ -187,6 +187,38 @@ describe('memory agent tools', () => {
     }));
   });
 
+  it('folds repeated search_memory query lines before IPC', async () => {
+    const repeatedLine = 'SEARCH_MEMORY_QUERY_REPEAT: same stack frame produced no new signal.';
+    const query = [
+      'SEARCH_MEMORY_QUERY_HEAD',
+      ...Array.from({ length: 80 }, () => repeatedLine),
+      'SEARCH_MEMORY_QUERY_TAIL',
+    ].join('\n');
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'query-folded-memory',
+          content: 'Use focused memory queries instead of sending repeated stack frames.',
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query, limit: 3 });
+
+    const filters = vi.mocked(proxy.searchMemory).mock.calls[0][0];
+    const normalizedQuery = filters.query ?? '';
+    expect(normalizedQuery.length).toBeLessThan(query.length / 4);
+    expect(normalizedQuery).toContain('SEARCH_MEMORY_QUERY_HEAD');
+    expect(normalizedQuery).toContain('SEARCH_MEMORY_QUERY_TAIL');
+    expect(normalizedQuery).toContain('79 repeated line(s) omitted for prompt budget');
+    expect((normalizedQuery.match(/SEARCH_MEMORY_QUERY_REPEAT/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('Use focused memory queries instead of sending repeated stack frames.');
+  });
+
   it('strips low-value outcome lines from search_memory results', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([
