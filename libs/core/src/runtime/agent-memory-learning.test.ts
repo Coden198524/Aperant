@@ -4,6 +4,7 @@ import {
 	analyzeAutocodeApproach,
 	analyzeAutocodeWhyItWorked,
 	createAutocodeExtractedKnowledge,
+	formatAutocodeCodePatternMemory,
 	formatAutocodeFailurePatternMemory,
 	formatAutocodeSuccessPatternMemory,
 	identifyAutocodeEffectiveTools,
@@ -269,6 +270,51 @@ describe("agent memory learning compaction", () => {
 		expect(
 			patterns.some((pattern) => pattern.useCase === "Generic rethrow"),
 		).toBe(false);
+	});
+
+	it("compacts repeated code pattern payloads before storing extracted knowledge", () => {
+		const repeatedLine =
+			"CODE_PATTERN_REPEAT: same generated guard branch repeated without new signal.";
+		const rawCode = [
+			"function rememberAuthGuard() {",
+			...Array.from({ length: 120 }, () => repeatedLine),
+			"return authGuard;",
+			"}",
+		].join("\n");
+
+		const knowledge = createAutocodeExtractedKnowledge({
+			subtask: { id: "1.6", description: "Remember auth guard pattern" },
+			sessionResult: makeSessionResult(),
+			codePatterns: [
+				{
+					category: "testing",
+					name: "Auth guard regression pattern",
+					code: rawCode,
+					useCase: "Keep auth guard regression coverage focused",
+					language: "typescript",
+					sourceFile: "src/auth/auth-guard.test.ts",
+				},
+			],
+			sessionId: "session-compact-code-pattern",
+			timestamp: "2026-06-14T00:00:00.000Z",
+		});
+
+		const pattern = knowledge.codePatterns?.[0];
+		expect(pattern).toBeDefined();
+		if (!pattern) {
+			throw new Error("Expected compact code pattern");
+		}
+
+		expect(pattern.code.length).toBeLessThan(rawCode.length / 4);
+		expect(pattern.code.length).toBeLessThanOrEqual(420);
+		expect(pattern.code).toContain(
+			"119 repeated line(s) omitted for prompt budget",
+		);
+		expect((pattern.code.match(/CODE_PATTERN_REPEAT/g) ?? [])).toHaveLength(1);
+
+		const memoryText = formatAutocodeCodePatternMemory(pattern);
+		expect(memoryText.length).toBeLessThanOrEqual(900);
+		expect((memoryText.match(/CODE_PATTERN_REPEAT/g) ?? [])).toHaveLength(1);
 	});
 
 	it("bounds failure pattern memory content and summary text", () => {

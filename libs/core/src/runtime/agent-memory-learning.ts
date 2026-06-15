@@ -143,18 +143,47 @@ function compactAutocodeCodePatterns(
 			continue;
 		}
 
-		const key = getAutocodeCodePatternDedupeKey(pattern);
+		const compactedPattern = compactAutocodeCodePattern(pattern);
+		const key = getAutocodeCodePatternDedupeKey(compactedPattern);
 		if (seen.has(key)) {
 			continue;
 		}
 
 		seen.add(key);
-		compacted.push(pattern);
+		compacted.push(compactedPattern);
 		if (compacted.length >= AUTOCODE_MEMORY_CODE_PATTERN_LIMIT) {
 			break;
 		}
 	}
 	return compacted;
+}
+
+function compactAutocodeCodePattern(
+	pattern: AutocodeCodePattern,
+): AutocodeCodePattern {
+	return {
+		category: pattern.category,
+		name: limitAutocodeLearningText(
+			pattern.name,
+			AUTOCODE_MEMORY_FIELD_MAX_CHARS,
+		),
+		code: limitAutocodeLearningText(
+			pattern.code,
+			AUTOCODE_MEMORY_CODE_MAX_CHARS,
+		),
+		useCase: limitAutocodeLearningText(
+			pattern.useCase,
+			AUTOCODE_MEMORY_FIELD_MAX_CHARS,
+		),
+		language: limitAutocodeLearningText(
+			pattern.language,
+			AUTOCODE_MEMORY_TOOL_MAX_CHARS,
+		),
+		sourceFile: limitAutocodeLearningText(
+			pattern.sourceFile,
+			AUTOCODE_MEMORY_FIELD_MAX_CHARS,
+		),
+	};
 }
 
 function isAutocodeCodePatternWorthRemembering(
@@ -210,7 +239,7 @@ function isGenericAutocodeRethrowPattern(
 
 	const catchBody =
 		code.match(/catch\s*\([^)]+\)\s*\{([\s\S]*)\}\s*$/)?.[1] ?? "";
-	const normalized = catchBody.replace(/\s+/g, " ").trim();
+	const normalized = normalizeAutocodeLearningText(catchBody);
 	return /^(?:console\.(?:error|warn|log)\([^)]*\);\s*)?throw\s+\w+;?$/.test(
 		normalized,
 	);
@@ -241,7 +270,7 @@ function getAutocodeCodePatternDedupeKey(pattern: AutocodeCodePattern): string {
 	return [
 		pattern.category,
 		pattern.name,
-		pattern.code.replace(/\s+/g, " ").trim().toLowerCase(),
+		normalizeAutocodeLearningTextKey(pattern.code),
 	].join("\0");
 }
 
@@ -850,9 +879,7 @@ function stringifyAutocodeMessageContent(
 }
 
 function limitAutocodeLearningText(value: string, maxChars: number): string {
-	const normalized = foldRepeatedAutocodePromptLines(value)
-		.replace(/\s+/g, " ")
-		.trim();
+	const normalized = normalizeAutocodeLearningText(value);
 	if (normalized.length <= maxChars) {
 		return normalized;
 	}
@@ -864,4 +891,12 @@ function limitAutocodeLearningText(value: string, maxChars: number): string {
 	const headChars = Math.ceil(budget * 0.6);
 	const tailChars = budget - headChars;
 	return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
+}
+
+function normalizeAutocodeLearningText(value: string): string {
+	return foldRepeatedAutocodePromptLines(value).replace(/\s+/g, " ").trim();
+}
+
+function normalizeAutocodeLearningTextKey(value: string): string {
+	return normalizeAutocodeLearningText(value).toLowerCase();
 }
