@@ -39,6 +39,28 @@ function makeMemoryService(memories: Memory[]): MemoryService {
 }
 
 describe('buildPrefetchPlan', () => {
+  it('returns an empty plan without querying memory when modules normalize empty', async () => {
+    const memoryService = makeMemoryService([]);
+
+    const plan = await buildPrefetchPlan([' ', '\n\t'], memoryService, 'project-1');
+
+    expect(memoryService.search).not.toHaveBeenCalled();
+    expect(plan.alwaysReadFiles).toEqual([]);
+    expect(plan.frequentlyReadFiles).toEqual([]);
+    expect(plan.maxFiles).toBe(6);
+  });
+
+  it('normalizes and deduplicates module filters before searching', async () => {
+    const memoryService = makeMemoryService([]);
+
+    await buildPrefetchPlan([' auth ', 'AUTH', 'billing', 'billing'], memoryService, 'project-1');
+
+    expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
+      relatedModules: ['auth', 'billing'],
+      promptContextOnly: true,
+    }));
+  });
+
   it('keeps the default prefetch plan compact', async () => {
     const files = Array.from({ length: 20 }, (_, index) => `src/file-${index}.ts`);
     const memoryService = makeMemoryService([

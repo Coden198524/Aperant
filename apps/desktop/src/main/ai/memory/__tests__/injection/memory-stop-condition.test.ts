@@ -4,8 +4,12 @@
  * Tests calibration factor application and step limit adjustment.
  */
 
-import { describe, it, expect, vi, beforeEach } from 'vitest';
-import { buildMemoryAwareStopCondition, getCalibrationFactor } from '../../injection/memory-stop-condition';
+import { describe, it, expect, vi } from 'vitest';
+import {
+  buildMemoryAwareStopCondition,
+  calculateMemoryAwareMaxSteps,
+  getCalibrationFactor,
+} from '../../injection/memory-stop-condition';
 import type { MemoryService, Memory } from '../../types';
 
 // ============================================================
@@ -90,6 +94,12 @@ describe('buildMemoryAwareStopCondition', () => {
     const condition = buildMemoryAwareStopCondition(500, 1.3);
     expect(condition).toBeTruthy();
   });
+
+  it('normalizes invalid max-step inputs to a safe finite value', () => {
+    expect(calculateMemoryAwareMaxSteps(Number.NaN, 1.5)).toBe(0);
+    expect(calculateMemoryAwareMaxSteps(500.8, Number.NaN)).toBe(500);
+    expect(calculateMemoryAwareMaxSteps(500, -2)).toBe(500);
+  });
 });
 
 // ============================================================
@@ -164,6 +174,24 @@ describe('getCalibrationFactor', () => {
     expect(factor).toBeCloseTo(1.0, 5);
   });
 
+  it('defaults invalid ratios to 1.0 and caps high ratios', async () => {
+    const invalid: Memory = {
+      ...makeCalibrationMemory(1),
+      id: 'invalid-ratio',
+      content: JSON.stringify({ ratio: Number.NaN }),
+    };
+    const high: Memory = {
+      ...makeCalibrationMemory(1),
+      id: 'high-ratio',
+      content: JSON.stringify({ ratio: 4 }),
+    };
+    const memoryService = makeMemoryService([invalid, high]);
+
+    const factor = await getCalibrationFactor(memoryService, ['auth'], 'proj-1');
+
+    expect(factor).toBeCloseTo(1.5, 5);
+  });
+
   it('returns undefined gracefully when memoryService throws', async () => {
     const memoryService = makeMemoryService();
     vi.mocked(memoryService.search).mockRejectedValueOnce(new Error('DB unavailable'));
@@ -174,7 +202,7 @@ describe('getCalibrationFactor', () => {
 
   it('passes correct search filters to memoryService', async () => {
     const memoryService = makeMemoryService([]);
-    await getCalibrationFactor(memoryService, ['auth', 'token'], 'my-project');
+    await getCalibrationFactor(memoryService, [' auth ', 'AUTH', 'token'], 'my-project');
 
     expect(memoryService.search).toHaveBeenCalledWith(
       expect.objectContaining({
@@ -185,5 +213,14 @@ describe('getCalibrationFactor', () => {
         promptContextOnly: true,
       }),
     );
+  });
+
+  it('does not query calibration memories when modules normalize empty', async () => {
+    const memoryService = makeMemoryService([]);
+
+    const factor = await getCalibrationFactor(memoryService, [' ', '\n'], 'my-project');
+
+    expect(factor).toBeUndefined();
+    expect(memoryService.search).not.toHaveBeenCalled();
   });
 });

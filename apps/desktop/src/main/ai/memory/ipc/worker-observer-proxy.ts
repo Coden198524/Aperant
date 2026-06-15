@@ -10,6 +10,8 @@ import { MessagePort } from 'worker_threads';
 import { randomUUID } from 'crypto';
 import {
   compactAutocodeMemoryRuntimeReasoningText,
+  compactAutocodeMemoryRuntimeInjectedMemoryIds,
+  compactAutocodeMemoryRuntimeRecentToolCalls,
   compactAutocodeMemoryRuntimeToolArgs,
   compactAutocodeMemoryRuntimeToolResult,
   type AutocodeMemoryRuntimeIpcResponse,
@@ -127,11 +129,8 @@ export class WorkerObserverProxy {
   ): Promise<StepInjection | null> {
     const requestId = randomUUID();
     const serializableContext: SerializableRecentContext = {
-      toolCalls: recentContext.toolCalls.map((toolCall) => ({
-        toolName: toolCall.toolName,
-        args: compactAutocodeMemoryRuntimeToolArgs(toolCall.args),
-      })),
-      injectedMemoryIds: [...recentContext.injectedMemoryIds],
+      toolCalls: compactAutocodeMemoryRuntimeRecentToolCalls(recentContext.toolCalls),
+      injectedMemoryIds: compactAutocodeMemoryRuntimeInjectedMemoryIds(recentContext.injectedMemoryIds),
     };
 
     try {

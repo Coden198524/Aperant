@@ -5,7 +5,10 @@
  * Used by the prepareStep callback to feed context to StepInjectionDecider.
  */
 
-import { compactAutocodeMemoryRuntimeToolArgs } from '../runtime.js';
+import {
+  compactAutocodeMemoryRuntimeInjectedMemoryIds,
+  compactAutocodeMemoryRuntimeToolArgs,
+} from '../runtime.js';
 import type { RecentToolCallContext } from './step-injection-decider.js';
 
 // ============================================================
@@ -33,9 +36,12 @@ export class StepMemoryState {
    * Mark memory IDs as having been injected so they are not injected again.
    */
   markInjected(memoryIds: string[]): void {
-    for (const id of memoryIds) {
-      this.injectedMemoryIds.add(id);
-    }
+    this.injectedMemoryIds = new Set(
+      compactAutocodeMemoryRuntimeInjectedMemoryIds([
+        ...this.injectedMemoryIds,
+        ...memoryIds,
+      ]),
+    );
   }
 
   /**
@@ -47,7 +53,7 @@ export class StepMemoryState {
     const recentUniqueCalls = selectRecentUniqueToolCalls(this.recentToolCalls, windowSize);
     return {
       toolCalls: recentUniqueCalls,
-      injectedMemoryIds: this.injectedMemoryIds,
+      injectedMemoryIds: new Set(this.injectedMemoryIds),
     };
   }
 
@@ -64,13 +70,14 @@ function selectRecentUniqueToolCalls(
   calls: Array<{ toolName: string; args: Record<string, unknown> }>,
   windowSize: number,
 ): Array<{ toolName: string; args: Record<string, unknown> }> {
-  if (windowSize <= 0 || calls.length === 0) {
+  const normalizedWindowSize = Number.isFinite(windowSize) ? Math.max(0, Math.floor(windowSize)) : 0;
+  if (normalizedWindowSize <= 0 || calls.length === 0) {
     return [];
   }
 
   const seen = new Set<string>();
   const selected: Array<{ toolName: string; args: Record<string, unknown> }> = [];
-  for (let index = calls.length - 1; index >= 0 && selected.length < windowSize; index -= 1) {
+  for (let index = calls.length - 1; index >= 0 && selected.length < normalizedWindowSize; index -= 1) {
     const call = calls[index];
     const signature = getToolCallSignature(call);
     if (seen.has(signature)) {

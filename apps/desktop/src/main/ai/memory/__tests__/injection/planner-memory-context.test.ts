@@ -241,6 +241,33 @@ describe('buildPlannerMemoryContext', () => {
     });
   });
 
+  it('normalizes module filters and task description before planner lookups', async () => {
+    await buildPlannerMemoryContext('  Add   auth\nflow  ', [' auth ', 'AUTH', 'token'], memoryService, 'my-project');
+
+    for (const call of vi.mocked(memoryService.search).mock.calls) {
+      expect(call[0].relatedModules).toEqual(['auth', 'token']);
+    }
+    expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('Add auth flow', {
+      limit: 1,
+      projectId: 'my-project',
+    });
+  });
+
+  it('skips module-scoped planner searches when modules normalize empty', async () => {
+    vi.mocked(memoryService.searchWorkflowRecipe).mockResolvedValueOnce([
+      makeMemory('recipe', 'Use the short validation path.', 'workflow_recipe'),
+    ]);
+
+    const result = await buildPlannerMemoryContext(' Add auth ', [' ', '\n'], memoryService, 'proj-1');
+
+    expect(memoryService.search).not.toHaveBeenCalled();
+    expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledWith('Add auth', {
+      limit: 1,
+      projectId: 'proj-1',
+    });
+    expect(result).toContain('WORKFLOW RECIPES');
+  });
+
   it('runs all 5 queries in parallel', async () => {
     const callOrder: string[] = [];
     vi.mocked(memoryService.search).mockImplementation(async (filters) => {

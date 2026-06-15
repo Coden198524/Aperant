@@ -154,6 +154,14 @@ describe('StepMemoryState', () => {
       expect(ctx.injectedMemoryIds.has('id-a')).toBe(true);
       expect(ctx.injectedMemoryIds.has('id-b')).toBe(true);
     });
+
+    it('returns injectedMemoryIds as a snapshot', () => {
+      state.markInjected(['id-a']);
+      const ctx = state.getRecentContext();
+      ctx.injectedMemoryIds.add('external-mutation');
+
+      expect(state.getRecentContext().injectedMemoryIds.has('external-mutation')).toBe(false);
+    });
   });
 
   describe('markInjected()', () => {
@@ -174,6 +182,22 @@ describe('StepMemoryState', () => {
       state.markInjected(['mem-1', 'mem-1', 'mem-2']);
       const ctx = state.getRecentContext();
       expect(ctx.injectedMemoryIds.size).toBe(2);
+    });
+
+    it('trims, filters blank IDs, and bounds the injected ID set', () => {
+      state.markInjected([
+        ' ',
+        ' mem-existing ',
+        ...Array.from({ length: 130 }, (_, index) => `mem-${index}`),
+      ]);
+      const ctx = state.getRecentContext();
+
+      expect(ctx.injectedMemoryIds.size).toBe(128);
+      expect(ctx.injectedMemoryIds.has('mem-existing')).toBe(false);
+      expect(ctx.injectedMemoryIds.has('mem-0')).toBe(false);
+      expect(ctx.injectedMemoryIds.has('mem-2')).toBe(true);
+      expect(ctx.injectedMemoryIds.has('mem-129')).toBe(true);
+      expect(ctx.injectedMemoryIds.has('')).toBe(false);
     });
   });
 

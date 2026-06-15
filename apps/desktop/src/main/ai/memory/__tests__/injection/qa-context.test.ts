@@ -145,6 +145,33 @@ describe('buildQaSessionContext', () => {
     });
   });
 
+  it('normalizes module filters and spec description before QA lookups', async () => {
+    await buildQaSessionContext('  Validate   auth\nflow  ', [' auth ', 'AUTH', 'browser'], memoryService, 'qa-project');
+
+    for (const call of vi.mocked(memoryService.search).mock.calls) {
+      expect(call[0].relatedModules).toEqual(['auth', 'browser']);
+    }
+    expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('Validate auth flow', {
+      limit: 1,
+      projectId: 'qa-project',
+    });
+  });
+
+  it('skips module-scoped QA searches when modules normalize empty', async () => {
+    vi.mocked(memoryService.searchWorkflowRecipe).mockResolvedValueOnce([
+      makeMemory('recipe', 'Run the smoke checks first.', 'workflow_recipe'),
+    ]);
+
+    const result = await buildQaSessionContext(' Validate auth ', [' ', '\n'], memoryService, 'proj-1');
+
+    expect(memoryService.search).not.toHaveBeenCalled();
+    expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledWith('Validate auth', {
+      limit: 1,
+      projectId: 'proj-1',
+    });
+    expect(result).toContain('VALIDATION WORKFLOW');
+  });
+
   it('prioritizes requirements before error patterns in output', async () => {
     vi.mocked(memoryService.search).mockImplementation(async (filters) => {
       if (filters.types?.includes('requirement')) {

@@ -7,6 +7,7 @@
 
 import type { MemoryService } from '../types.js';
 import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer.js';
+import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 // ============================================================
 // TYPES
@@ -94,9 +95,14 @@ export async function buildPrefetchPlan(
   projectId: string,
 ): Promise<PrefetchPlan> {
   try {
+    const relatedModules = normalizeMemoryModuleFilters(modules);
+    if (relatedModules.length === 0) {
+      return createEmptyPrefetchPlan();
+    }
+
     const prefetchMemories = (await memoryService.search({
       types: ['prefetch_pattern'],
-      relatedModules: modules,
+      relatedModules,
       limit: 5,
       projectId,
       promptContextOnly: true,

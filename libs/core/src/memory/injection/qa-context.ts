@@ -7,6 +7,7 @@
 import type { Memory, MemoryService } from '../types.js';
 import { selectMemoryContextItems } from './context-selection.js';
 import { compactMemoryInjectionText } from './text-compaction.js';
+import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 const MAX_QA_MEMORY_ITEM_CHARS = 240;
 const MAX_QA_MEMORY_CONTEXT_CHARS = 1700;
@@ -20,31 +21,38 @@ export async function buildQaSessionContext(
   projectId: string,
 ): Promise<string> {
   try {
+    const modules = normalizeMemoryModuleFilters(relevantModules);
+    const task = normalizeTaskDescription(specDescription);
+    const emptySearch = Promise.resolve([] as Memory[]);
+    const recipeSearch = task
+      ? memoryService.searchWorkflowRecipe(task, { limit: 1, projectId })
+      : Promise.resolve([] as Memory[]);
+
     const [e2eObservations, errorPatterns, requirements, recipes] = await Promise.all([
-      memoryService.search({
+      modules.length > 0 ? memoryService.search({
         types: ['e2e_observation'],
-        relatedModules: relevantModules,
+        relatedModules: modules,
         limit: 4,
         sort: 'recency',
         projectId,
         promptContextOnly: true,
-      }),
-      memoryService.search({
+      }) : emptySearch,
+      modules.length > 0 ? memoryService.search({
         types: ['error_pattern'],
-        relatedModules: relevantModules,
+        relatedModules: modules,
         limit: 3,
         minConfidence: 0.6,
         projectId,
         promptContextOnly: true,
-      }),
-      memoryService.search({
+      }) : emptySearch,
+      modules.length > 0 ? memoryService.search({
         types: ['requirement'],
-        relatedModules: relevantModules,
+        relatedModules: modules,
         limit: 3,
         projectId,
         promptContextOnly: true,
-      }),
-      memoryService.searchWorkflowRecipe(specDescription, { limit: 1, projectId }),
+      }) : emptySearch,
+      recipeSearch,
     ]);
 
     return formatQaSections({ e2eObservations, errorPatterns, requirements, recipes });
@@ -200,4 +208,8 @@ function uniqueFilePaths(values: readonly string[]): string[] {
 
 function truncateText(text: string, maxChars: number): string {
   return compactMemoryInjectionText(text, maxChars);
+}
+
+function normalizeTaskDescription(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }

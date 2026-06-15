@@ -66,8 +66,7 @@ export class StepInjectionDecider {
       // Trigger 1: Agent read a file with unseen gotchas
       const recentReads = recentContext.toolCalls
         .filter((t) => t.toolName === 'Read' || t.toolName === 'Edit')
-        .map((t) => t.args.file_path as string)
-        .map(normalizeAccessedFilePath)
+        .map((t) => normalizeAccessedFilePath(t.args.file_path))
         .filter(Boolean);
 
       if (recentReads.length > 0) {
@@ -117,7 +116,7 @@ export class StepInjectionDecider {
       const seenSearchPatterns = new Set<string>();
 
       for (const search of recentSearches) {
-        const pattern = normalizeSearchPattern((search.args.pattern ?? search.args.glob ?? '') as string);
+        const pattern = normalizeSearchPattern(search.args.pattern ?? search.args.glob);
         if (!isPreciseSearchPattern(pattern)) continue;
         if (seenSearchPatterns.has(pattern)) continue;
         seenSearchPatterns.add(pattern);
@@ -190,15 +189,21 @@ function getScratchpadInjectionId(entry: AcuteCandidate): string {
   return `${SCRATCHPAD_MEMORY_ID_PREFIX}${entry.signalType}:${entry.stepNumber}:${entry.capturedAt}`;
 }
 
-function normalizeAccessedFilePath(filePath: string): string {
+function normalizeAccessedFilePath(filePath: unknown): string {
+  if (typeof filePath !== 'string') {
+    return '';
+  }
   return filePath
     .replace(/\\/g, '/')
     .replace(/\/{2,}/g, '/')
     .trim();
 }
 
-function normalizeSearchPattern(pattern: string): string {
-  return pattern.trim();
+function normalizeSearchPattern(pattern: unknown): string {
+  if (typeof pattern !== 'string') {
+    return '';
+  }
+  return pattern.replace(/\s+/g, ' ').trim();
 }
 
 function isPreciseSearchPattern(pattern: string): boolean {
@@ -209,10 +214,10 @@ function isPreciseSearchPattern(pattern: string): boolean {
   if (normalized.length > MAX_SHORT_CIRCUIT_PATTERN_CHARS) {
     return false;
   }
-  if (/^[*?{}\[\]./\\]+$/.test(normalized)) {
+  if (/^[*?{}[\]./\\]+$/.test(normalized)) {
     return false;
   }
-  if (/[*?{}\[\]]/.test(normalized)) {
+  if (/[*?{}[\]]/.test(normalized)) {
     return false;
   }
   if (normalized === '.' || normalized === './' || normalized === '/' || normalized === '**') {

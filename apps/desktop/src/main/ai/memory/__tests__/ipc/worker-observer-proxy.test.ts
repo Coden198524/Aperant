@@ -439,17 +439,58 @@ describe('WorkerObserverProxy', () => {
       expect(Array.isArray(ctx.injectedMemoryIds)).toBe(true);
       expect(ctx.injectedMemoryIds).toContain('id-1');
     });
+
+    it('compacts step injection context before posting IPC requests', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:step-injection-result',
+        requestId,
+        injection: null,
+      }));
+
+      await proxy.requestStepInjection(12, {
+        toolCalls: Array.from({ length: 8 }, (_, index) => ({
+          toolName: index % 2 === 0 ? 'Grep' : 'Write',
+          args: {
+            pattern: `pattern-${index}`,
+            command: `npm test ${'--workspace apps/desktop '.repeat(30)}TAIL-${index}`,
+            content: 'x'.repeat(5_000),
+          },
+        })),
+        injectedMemoryIds: new Set([
+          ' ',
+          ' existing-id ',
+          'x'.repeat(200),
+          ...Array.from({ length: 130 }, (_, index) => `memory-${index}`),
+        ]),
+      });
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        recentContext: {
+          toolCalls: Array<{ args: Record<string, unknown> }>;
+          injectedMemoryIds: string[];
+        };
+      };
+
+      expect(sentMsg.recentContext.toolCalls).toHaveLength(5);
+      expect(sentMsg.recentContext.toolCalls[0].args.pattern).toBe('pattern-3');
+      expect(sentMsg.recentContext.toolCalls[0].args).not.toHaveProperty('content');
+      expect(String(sentMsg.recentContext.toolCalls[0].args.command)).toHaveLength(240);
+      expect(sentMsg.recentContext.injectedMemoryIds).toHaveLength(128);
+      expect(sentMsg.recentContext.injectedMemoryIds).not.toContain('existing-id');
+      expect(sentMsg.recentContext.injectedMemoryIds).not.toContain('memory-0');
+      expect(sentMsg.recentContext.injectedMemoryIds).toContain('memory-2');
+      expect(sentMsg.recentContext.injectedMemoryIds).toContain('memory-129');
+      expect(sentMsg.recentContext.injectedMemoryIds).not.toContain('');
+    });
   });
 
   describe('response correlation', () => {
     it('correctly routes concurrent responses by requestId', async () => {
       const responses: MemoryIpcResponse[] = [];
-      let callCount = 0;
 
       mockPort.postMessage.mockImplementation((msg: unknown) => {
         // Push to sentMessages manually
         mockPort.sentMessages.push(msg);
-        callCount++;
         const reqId = (msg as Record<string, unknown>).requestId as string;
         setTimeout(() => {
           const response: MemoryIpcResponse = {

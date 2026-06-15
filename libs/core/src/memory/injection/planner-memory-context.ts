@@ -7,6 +7,7 @@
 import type { Memory, MemoryService } from '../types.js';
 import { selectMemoryContextItems } from './context-selection.js';
 import { compactMemoryInjectionText } from './text-compaction.js';
+import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 const MAX_PLANNER_MEMORY_ITEM_CHARS = 240;
 const MAX_PLANNER_MEMORY_CONTEXT_CHARS = 1800;
@@ -25,37 +26,44 @@ export async function buildPlannerMemoryContext(
   projectId: string,
 ): Promise<string> {
   try {
+    const modules = normalizeMemoryModuleFilters(relevantModules);
+    const task = normalizeTaskDescription(taskDescription);
+    const emptySearch = Promise.resolve([] as Memory[]);
+    const recipeSearch = task
+      ? memoryService.searchWorkflowRecipe(task, { limit: 1, projectId })
+      : Promise.resolve([] as Memory[]);
+
     const [calibrations, deadEnds, causalDeps, outcomes, recipes] = await Promise.all([
-      memoryService.search({
+      modules.length > 0 ? memoryService.search({
         types: ['task_calibration'],
-        relatedModules: relevantModules,
+        relatedModules: modules,
         limit: 3,
         projectId,
         promptContextOnly: true,
-      }),
-      memoryService.search({
+      }) : emptySearch,
+      modules.length > 0 ? memoryService.search({
         types: ['dead_end'],
-        relatedModules: relevantModules,
+        relatedModules: modules,
         limit: 3,
         projectId,
         promptContextOnly: true,
-      }),
-      memoryService.search({
+      }) : emptySearch,
+      modules.length > 0 ? memoryService.search({
         types: ['causal_dependency'],
-        relatedModules: relevantModules,
+        relatedModules: modules,
         limit: 4,
         projectId,
         promptContextOnly: true,
-      }),
-      memoryService.search({
+      }) : emptySearch,
+      modules.length > 0 ? memoryService.search({
         types: ['work_unit_outcome'],
-        relatedModules: relevantModules,
+        relatedModules: modules,
         limit: 3,
         sort: 'recency',
         projectId,
         promptContextOnly: true,
-      }),
-      memoryService.searchWorkflowRecipe(taskDescription, { limit: 1, projectId }),
+      }) : emptySearch,
+      recipeSearch,
     ]);
 
     return formatPlannerSections({ calibrations, deadEnds, causalDeps, outcomes, recipes });
@@ -176,4 +184,8 @@ function stripLowValueSessionMetricLines(content: string): string {
 
 function truncateText(text: string, maxChars: number): string {
   return compactMemoryInjectionText(text, maxChars);
+}
+
+function normalizeTaskDescription(value: string): string {
+  return value.replace(/\s+/g, ' ').trim();
 }

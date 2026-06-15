@@ -216,7 +216,7 @@ describe('StepInjectionDecider', () => {
         return passesFilter ? [gotcha] : [];
       });
 
-      const result = await decider.decide(5, {
+      await decider.decide(5, {
         toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
         injectedMemoryIds: new Set(['gotcha-already-seen']),
       });
@@ -242,6 +242,29 @@ describe('StepInjectionDecider', () => {
         (call) => call[0].types?.includes('gotcha'),
       );
       expect(gotchaSearchCalls).toHaveLength(0);
+    });
+
+    it('ignores malformed file paths without blocking later triggers', async () => {
+      const capturedAt = Date.now();
+      scratchpad = makeScratchpad([
+        {
+          signalType: 'self_correction',
+          rawData: { triggeringText: 'Use the stable helper instead.' },
+          priority: 0.9,
+          capturedAt,
+          stepNumber: 4,
+        },
+      ]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: 42 } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(memoryService.search).not.toHaveBeenCalled();
+      expect(result?.type).toBe('scratchpad_reflection');
+      expect(result?.content).toContain('Use the stable helper instead.');
     });
   });
 
@@ -506,6 +529,23 @@ describe('StepInjectionDecider', () => {
       expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
         ['useCallback', { projectId: 'proj-1' }],
         ['auth-refresh', { projectId: 'proj-1' }],
+      ]);
+    });
+
+    it('ignores non-string search patterns and folds whitespace before lookup', async () => {
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(null);
+
+      await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: { nested: 'ignored' } } },
+          { toolName: 'Grep', args: { pattern: ' use   callback ' } },
+          { toolName: 'Glob', args: { glob: 'use callback' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(vi.mocked(memoryService.searchByPattern).mock.calls).toEqual([
+        ['use callback', { projectId: 'proj-1' }],
       ]);
     });
   });

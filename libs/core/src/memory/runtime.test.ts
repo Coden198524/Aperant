@@ -6,15 +6,19 @@ import {
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS,
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS,
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_MIN_CONFIDENCE,
+  AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT,
   AUTOCODE_MEMORY_RUNTIME_OUTCOME_CONTENT_MAX_CHARS,
   AUTOCODE_MEMORY_RUNTIME_OUTCOME_FIELD_MAX_CHARS,
   AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT,
+  AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT,
   buildAutocodeWorkUnitOutcomeMemoryEntry,
   buildAutocodeWorkUnitOutcomeSessionInsight,
+  compactAutocodeMemoryRuntimeInjectedMemoryIds,
   compactAutocodeMemoryRuntimeReasoningText,
   compactAutocodeMemoryRuntimeToolArgs,
   compactAutocodeMemoryRuntimeToolResult,
   formatAutocodeMemoryRuntimeContext,
+  toAutocodeMemoryRuntimeRecentContext,
 } from './runtime.js';
 
 function memory(overrides: Partial<Memory> = {}): Memory {
@@ -266,6 +270,43 @@ describe('Autocode memory runtime context formatting', () => {
     expect(reasoning.length).toBeLessThanOrEqual(900);
     expect(reasoning).toContain('Correction: this file is generated');
     expect(reasoning).toContain('FINAL_REASONING_TAIL');
+  });
+
+  it('compacts injected memory ids for runtime recent context', () => {
+    const compactIds = compactAutocodeMemoryRuntimeInjectedMemoryIds([
+      '',
+      ' existing-id ',
+      'x'.repeat(200),
+      ...Array.from({ length: 130 }, (_, index) => `memory-${index}`),
+    ]);
+    const context = toAutocodeMemoryRuntimeRecentContext({
+      toolCalls: Array.from({ length: 8 }, (_, index) => ({
+        toolName: index % 2 === 0 ? 'Grep' : 'Write',
+        args: {
+          pattern: `pattern-${index}`,
+          file_path: `/src/generated-${index}.ts`,
+          content: 'x'.repeat(5_000),
+          command: `npm test ${'--workspace apps/desktop '.repeat(30)}TAIL-${index}`,
+        },
+      })),
+      injectedMemoryIds: [
+        ' ',
+        ' existing-id ',
+        ...Array.from({ length: 130 }, (_, index) => `memory-${index}`),
+      ],
+    });
+
+    expect(compactIds).toHaveLength(AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT);
+    expect(compactIds).not.toContain('existing-id');
+    expect(compactIds).not.toContain('memory-0');
+    expect(compactIds).toContain('memory-2');
+    expect(compactIds).toContain('memory-129');
+    expect(context.injectedMemoryIds.size).toBe(AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT);
+    expect(context.injectedMemoryIds.has('memory-129')).toBe(true);
+    expect(context.toolCalls).toHaveLength(AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT);
+    expect(context.toolCalls[0].args.pattern).toBe('pattern-3');
+    expect(context.toolCalls[0].args).not.toHaveProperty('content');
+    expect(String(context.toolCalls[0].args.command)).toHaveLength(240);
   });
 
   it('compacts stored work-unit outcome memory content and session insights', () => {

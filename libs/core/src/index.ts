@@ -153,6 +153,8 @@ export {
   toAutocodeContextSearchResult,
   toAutocodeRendererMemory,
   compactAutocodeMemoryRuntimeReasoningText,
+  compactAutocodeMemoryRuntimeInjectedMemoryIds,
+  compactAutocodeMemoryRuntimeRecentToolCalls,
   compactAutocodeMemoryRuntimeToolArgs,
   compactAutocodeMemoryRuntimeToolResult,
   toAutocodeMemoryRuntimeRecentContext,

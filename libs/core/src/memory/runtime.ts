@@ -134,11 +134,10 @@ export function toAutocodeMemoryRuntimeRecentContext(
   context: AutocodeMemoryRuntimeSerializableRecentContext,
 ): AutocodeMemoryRuntimeRecentToolCallContext {
   return {
-    toolCalls: context.toolCalls.map((toolCall) => ({
-      toolName: toolCall.toolName,
-      args: compactAutocodeMemoryRuntimeToolArgs(toolCall.args),
-    })),
-    injectedMemoryIds: new Set(context.injectedMemoryIds),
+    toolCalls: compactAutocodeMemoryRuntimeRecentToolCalls(context.toolCalls),
+    injectedMemoryIds: new Set(
+      compactAutocodeMemoryRuntimeInjectedMemoryIds(context.injectedMemoryIds),
+    ),
   };
 }
 
@@ -147,6 +146,9 @@ const AUTOCODE_MEMORY_RUNTIME_TOOL_RESULT_STRING_MAX_CHARS = 1_200;
 const AUTOCODE_MEMORY_RUNTIME_REASONING_TEXT_MAX_CHARS = 900;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS = 160;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT = 12;
+export const AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT = 5;
+export const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT = 128;
+const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_MAX_CHARS = 160;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS = 1_800;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS = 260;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_MIN_CONFIDENCE = 0.55;
@@ -222,6 +224,42 @@ export function compactAutocodeMemoryRuntimeToolArgs(args: Record<string, unknow
   }
 
   return compact;
+}
+
+export function compactAutocodeMemoryRuntimeRecentToolCalls(
+  toolCalls: readonly AutocodeMemoryRuntimeToolCall[],
+): AutocodeMemoryRuntimeToolCall[] {
+  return toolCalls.slice(-AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT).map((toolCall) => ({
+    toolName: toolCall.toolName,
+    args: compactAutocodeMemoryRuntimeToolArgs(toolCall.args),
+  }));
+}
+
+export function compactAutocodeMemoryRuntimeInjectedMemoryIds(ids: Iterable<unknown>): string[] {
+  const compact = new Set<string>();
+
+  for (const rawId of ids) {
+    if (typeof rawId !== 'string') {
+      continue;
+    }
+    const id = rawId.trim();
+    if (!id || id.length > AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_MAX_CHARS) {
+      continue;
+    }
+    if (compact.has(id)) {
+      compact.delete(id);
+    }
+    compact.add(id);
+    while (compact.size > AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT) {
+      const oldest = compact.values().next().value as string | undefined;
+      if (oldest === undefined) {
+        break;
+      }
+      compact.delete(oldest);
+    }
+  }
+
+  return [...compact];
 }
 
 export function compactAutocodeMemoryRuntimeToolResult(result: unknown): unknown {
@@ -323,7 +361,7 @@ function truncateAutocodeMemoryRuntimeText(
       const windowBudget = Math.max(0, maxChars - headBudget - 8);
       const windowStart = Math.max(0, diagnosticIndex - 80);
       const window = compact.slice(windowStart, windowStart + windowBudget).trim();
-      return `${compact.slice(0, headBudget).trimEnd()} ... ${window}`.slice(0, maxChars - 3).trimEnd() + '...';
+      return `${`${compact.slice(0, headBudget).trimEnd()} ... ${window}`.slice(0, maxChars - 3).trimEnd()}...`;
     }
   }
 

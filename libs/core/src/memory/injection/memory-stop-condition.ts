@@ -6,6 +6,7 @@
  */
 
 import type { MemoryService } from '../types.js';
+import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 // ============================================================
 // CONSTANTS
@@ -27,8 +28,9 @@ export function calculateMemoryAwareMaxSteps(
   baseMaxSteps: number,
   calibrationFactor: number | undefined,
 ): number {
-  const factor = Math.min(calibrationFactor ?? 1.0, 2.0); // Cap at 2x
-  return Math.min(Math.ceil(baseMaxSteps * factor), MAX_ABSOLUTE_STEPS);
+  const baseSteps = Number.isFinite(baseMaxSteps) ? Math.max(0, Math.floor(baseMaxSteps)) : 0;
+  const factor = normalizeCalibrationFactor(calibrationFactor);
+  return Math.min(Math.ceil(baseSteps * factor), MAX_ABSOLUTE_STEPS);
 }
 
 /**
@@ -45,9 +47,14 @@ export async function getCalibrationFactor(
   projectId: string,
 ): Promise<number | undefined> {
   try {
+    const relatedModules = normalizeMemoryModuleFilters(modules);
+    if (relatedModules.length === 0) {
+      return undefined;
+    }
+
     const calibrations = await memoryService.search({
       types: ['task_calibration'],
-      relatedModules: modules,
+      relatedModules,
       limit: 5,
       projectId,
       sort: 'recency',
@@ -59,7 +66,7 @@ export async function getCalibrationFactor(
     const ratios = calibrations.map((m) => {
       try {
         const data = JSON.parse(m.content) as { ratio?: number };
-        return typeof data.ratio === 'number' ? data.ratio : 1.0;
+        return normalizeCalibrationFactor(data.ratio);
       } catch {
         return 1.0;
       }
@@ -69,4 +76,11 @@ export async function getCalibrationFactor(
   } catch {
     return undefined;
   }
+}
+
+function normalizeCalibrationFactor(value: number | undefined): number {
+  if (value === undefined || !Number.isFinite(value) || value <= 0) {
+    return 1.0;
+  }
+  return Math.min(value, 2.0);
 }
