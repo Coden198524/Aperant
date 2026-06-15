@@ -1,7 +1,8 @@
 import { createHash } from 'node:crypto';
 
-import type { Memory } from '../types.js';
+import { foldRepeatedAutocodePromptLines } from '../../runtime/prompt-context.js';
 import { stripLowValueMemoryLines } from '../outcome-content.js';
+import type { Memory } from '../types.js';
 
 export interface MemoryContextSelectionOptions {
   maxItems: number;
@@ -108,7 +109,7 @@ function getDefaultSelectionContent(memory: Memory): string {
 }
 
 function normalizeSelectionContent(content: string): string {
-  return content.replace(/\s+/g, ' ').trim();
+  return foldRepeatedAutocodePromptLines(content).replace(/\s+/g, ' ').trim();
 }
 
 function getMemoryContentFingerprint(content: string): string {

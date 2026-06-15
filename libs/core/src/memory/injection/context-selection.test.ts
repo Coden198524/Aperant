@@ -108,6 +108,29 @@ describe('selectMemoryContextItems', () => {
     expect(second.map((item) => item.id)).toEqual(['distinct-error-pattern']);
   });
 
+  it('folds repeated lines before storing shared selection content', () => {
+    const seenContents: string[] = [];
+    const repeatedLine = 'SELECTION_REPEAT: same memory observation without new signal.';
+    const selected = selectMemoryContextItems([
+      memory({
+        id: 'repeated-selection',
+        content: [
+          'Selection head: keep useful memory visible.',
+          ...Array.from({ length: 120 }, () => repeatedLine),
+          'Selection tail: prefer targeted context reads.',
+        ].join('\n'),
+        confidence: 0.9,
+      }),
+    ], { maxItems: 1, seenContents });
+
+    expect(selected.map((item) => item.id)).toEqual(['repeated-selection']);
+    expect(seenContents).toHaveLength(1);
+    expect(seenContents[0]).toContain('Selection head');
+    expect(seenContents[0]).toContain('119 repeated line(s) omitted for prompt budget');
+    expect(seenContents[0]).toContain('Selection tail');
+    expect((seenContents[0].match(/SELECTION_REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('deduplicates using caller-provided rendered content', () => {
     const selected = selectMemoryContextItems([
       memory({
