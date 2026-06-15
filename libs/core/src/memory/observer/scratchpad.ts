@@ -84,20 +84,28 @@ const SCRATCHPAD_ERROR_RELATIVE_PATH_PATTERN = /\.[./][^\s:'"]+/g;
 const SCRATCHPAD_ERROR_PATH_LINE_COLUMN_PATTERN =
   /((?:\.{1,2}[\\/]|[\w.-]+[\\/])[\w./\\@+-]+\.[A-Za-z0-9]+):\d+(?::\d+)?/g;
 const SCRATCHPAD_ERROR_OBJECT_KEYS = [
-  'diagnosticText',
   'diagnostic_text',
   'error',
   'message',
   'reason',
   'status',
   'exit_code',
-  'exitCode',
   'code',
   'stderr',
   'stdout',
   'output',
   'summary',
 ];
+const SCRATCHPAD_OBJECT_KEY_ALIASES = new Map<string, string>([
+  ['diagnostictext', 'diagnostic_text'],
+  ['exitcode', 'exit_code'],
+  ['file_path', 'file_path'],
+  ['filepath', 'file_path'],
+  ['std_out', 'stdout'],
+  ['standard_output', 'stdout'],
+  ['std_err', 'stderr'],
+  ['standard_error', 'stderr'],
+]);
 
 /**
  * Returns true if the file path is a recognized config file.
@@ -215,8 +223,8 @@ export class Scratchpad {
     }
 
     // Track grep patterns
-    if (toolName === 'Grep' && typeof args.pattern === 'string') {
-      const pattern = args.pattern;
+    const pattern = getScratchpadRecordString(args, 'pattern');
+    if (toolName === 'Grep' && pattern) {
       const count = (this.analytics.grepPatternCounts.get(pattern) ?? 0) + 1;
       this.analytics.grepPatternCounts.set(pattern, count);
     }
@@ -390,15 +398,13 @@ export class Scratchpad {
     const filePath = (() => {
       switch (toolName) {
         case 'Read':
-          return typeof args.file_path === 'string' ? args.file_path : null;
         case 'Edit':
-          return typeof args.file_path === 'string' ? args.file_path : null;
         case 'Write':
-          return typeof args.file_path === 'string' ? args.file_path : null;
+          return getScratchpadRecordString(args, 'file_path') ?? null;
         case 'Glob':
           return null; // Glob returns multiple files.
         case 'Grep':
-          return typeof args.path === 'string' ? args.path : null;
+          return getScratchpadRecordString(args, 'path') ?? null;
         default:
           return null;
       }
@@ -463,9 +469,10 @@ function compactScratchpadToolResultText(result: unknown): string {
 
   const record = result as Record<string, unknown>;
   const entries = SCRATCHPAD_ERROR_OBJECT_KEYS
-    .filter((key) => key in record)
+    .map((key) => [key, getScratchpadRecordValue(record, key)] as const)
+    .filter(([, value]) => value !== undefined)
     .slice(0, SCRATCHPAD_ERROR_OBJECT_KEY_LIMIT)
-    .map((key) => `${key}: ${compactScratchpadToolResultText(record[key])}`)
+    .map(([key, value]) => `${key}: ${compactScratchpadToolResultText(value)}`)
     .filter((part) => part.length > 0);
   if (entries.length > 0) {
     return compactScratchpadTextSample(entries.join(' '), SCRATCHPAD_ERROR_TEXT_MAX_CHARS);
@@ -521,7 +528,7 @@ function hasScratchpadFailureStatus(result: unknown): boolean {
   }
 
   const record = result as Record<string, unknown>;
-  const exitCode = record.exit_code ?? record.exitCode ?? record.code;
+  const exitCode = getScratchpadRecordValue(record, 'exit_code') ?? getScratchpadRecordValue(record, 'code');
   if (typeof exitCode === 'number') {
     return exitCode !== 0;
   }
@@ -529,11 +536,41 @@ function hasScratchpadFailureStatus(result: unknown): boolean {
     const parsed = Number(exitCode);
     return Number.isFinite(parsed) && parsed !== 0;
   }
-  if (typeof record.ok === 'boolean') {
-    return !record.ok;
+  const ok = getScratchpadRecordValue(record, 'ok');
+  if (typeof ok === 'boolean') {
+    return !ok;
   }
-  if (typeof record.status === 'string') {
-    return /fail|error|exception/i.test(record.status);
+  const status = getScratchpadRecordValue(record, 'status');
+  if (typeof status === 'string') {
+    return /fail|error|exception/i.test(status);
   }
   return false;
+}
+
+function getScratchpadRecordString(
+  record: Record<string, unknown>,
+  canonicalKey: string,
+): string | undefined {
+  const value = getScratchpadRecordValue(record, canonicalKey);
+  return typeof value === 'string' ? value : undefined;
+}
+
+function getScratchpadRecordValue(
+  record: Record<string, unknown>,
+  canonicalKey: string,
+): unknown {
+  for (const [key, value] of Object.entries(record)) {
+    if (canonicalizeScratchpadRecordKey(key) === canonicalKey) {
+      return value;
+    }
+  }
+  return undefined;
+}
+
+function canonicalizeScratchpadRecordKey(key: string): string {
+  const canonicalKey = key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
+  return SCRATCHPAD_OBJECT_KEY_ALIASES.get(canonicalKey) ?? canonicalKey;
 }

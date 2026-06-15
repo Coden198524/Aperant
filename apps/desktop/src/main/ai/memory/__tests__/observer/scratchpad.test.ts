@@ -99,6 +99,15 @@ describe('Scratchpad', () => {
       expect(scratchpad.analytics.fileAccessCounts.get('src/auth.ts')).toBe(2);
     });
 
+    it('tracks file access counts from camelCase filePath args', () => {
+      scratchpad.recordToolCall('Read', { filePath: './src/auth.ts/' }, 1);
+      scratchpad.recordToolCall('Edit', { filePath: 'src\\auth.ts' }, 2);
+
+      expect(scratchpad.analytics.fileAccessCounts.get('src/auth.ts')).toBe(2);
+      expect(scratchpad.analytics.fileFirstAccess.get('src/auth.ts')).toBe(1);
+      expect(scratchpad.analytics.fileLastAccess.get('src/auth.ts')).toBe(2);
+    });
+
     it('records first and last access step', () => {
       scratchpad.recordToolCall('Read', { file_path: '/src/main.ts' }, 3);
       scratchpad.recordToolCall('Read', { file_path: '/src/main.ts' }, 7);
@@ -202,6 +211,21 @@ describe('Scratchpad', () => {
       }, 8);
 
       expect(scratchpad.analytics.errorFingerprints.size).toBe(1);
+    });
+
+    it('tracks aliased object-shaped failed tool result diagnostics', () => {
+      scratchpad.recordToolResult('Bash', {
+        exitCode: 1,
+        message: 'Command failed',
+        stdOut: 'noise '.repeat(2_000),
+        stdErr: 'Error: dependency install failed in /tmp/project/package.json:12',
+      }, 8);
+
+      expect(scratchpad.analytics.errorFingerprints.size).toBe(1);
+      const sample = [...scratchpad.analytics.errorFingerprintSamples.values()][0];
+      expect(sample).toContain('dependency install failed');
+      expect(sample).toContain('<path>');
+      expect(sample).not.toContain('/tmp/project');
     });
 
     it('sanitizes local details in stored error samples', () => {
