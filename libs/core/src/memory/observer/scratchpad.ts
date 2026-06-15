@@ -11,7 +11,8 @@
  */
 
 import { createHash } from 'node:crypto';
-import type { SignalType, SessionType, AcuteCandidate, WorkUnitRef } from '../types.js';
+import { foldRepeatedAutocodePromptLines } from '../../runtime/prompt-context.js';
+import type { AcuteCandidate, SessionType, SignalType, WorkUnitRef } from '../types.js';
 import type { ObserverSignal } from './signals.js';
 
 export interface ScratchpadCheckpointClient {
@@ -486,13 +487,14 @@ function compactScratchpadToolResultText(result: unknown): string {
 }
 
 function compactScratchpadTextSample(text: string, maxChars: number): string {
-  if (text.length <= maxChars) {
-    return normalizeScratchpadInlineText(text);
+  const folded = foldRepeatedAutocodePromptLines(text);
+  if (folded.length <= maxChars) {
+    return normalizeScratchpadInlineText(folded);
   }
 
   const marker = ' ... [middle omitted] ... ';
-  const head = normalizeScratchpadInlineText(text.slice(0, SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS));
-  const tail = normalizeScratchpadInlineText(text.slice(-SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS));
+  const head = normalizeScratchpadInlineText(folded.slice(0, SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS));
+  const tail = normalizeScratchpadInlineText(folded.slice(-SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS));
   return `${head}${marker}${tail}`.slice(0, maxChars).trim();
 }
 
