@@ -1,12 +1,12 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type AutocodeFailureRecord,
   analyzeAutocodeFailureAndRecover,
   expandAutocodeContextStrategy,
   formatAutocodeFailureAnalysis,
   formatAutocodeRecoverySummary,
   seekAutocodeHelpStrategy,
-  type AutocodeFailureRecord,
 } from './agent-context-recovery.js';
 
 function makeFailure(overrides: Partial<AutocodeFailureRecord> = {}): AutocodeFailureRecord {
@@ -39,6 +39,35 @@ describe('agent context recovery prompt formatting', () => {
     expect(summary).toContain('recovery middle omitted');
     expect(summary).toContain('RECOVERY_ERROR_TAIL_MUST_REMAIN');
     expect(prompt.length).toBeLessThan(2600);
+  });
+
+  it('folds repeated failure lines before formatting recovery prompts', async () => {
+    const repeatedLine = 'RECOVERY_REPEAT: same stack frame without new signal.';
+    const analysis = await analyzeAutocodeFailureAndRecover(
+      {
+        id: '1.1b',
+        description: 'Retry noisy failure',
+      },
+      [
+        makeFailure({
+          error: [
+            'RECOVERY_REPEAT_HEAD',
+            ...Array.from({ length: 120 }, () => repeatedLine),
+            'RECOVERY_REPEAT_TAIL',
+          ].join('\n'),
+        }),
+      ],
+    );
+
+    const prompt = formatAutocodeFailureAnalysis(analysis);
+    const summary = formatAutocodeRecoverySummary(analysis);
+
+    expect(prompt).toContain('RECOVERY_REPEAT_HEAD');
+    expect(prompt).toContain('RECOVERY_REPEAT_TAIL');
+    expect(prompt).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((prompt.match(/RECOVERY_REPEAT:/g) ?? [])).toHaveLength(1);
+    expect(summary).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((summary.match(/RECOVERY_REPEAT:/g) ?? [])).toHaveLength(1);
   });
 
   it('preserves tail constraints from long missing-context task descriptions', async () => {

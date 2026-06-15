@@ -2,6 +2,8 @@
  * Compact retry recovery hints shared by Autocode host runtimes.
  */
 
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
+
 export interface AutocodeCodingRecoverySubtask {
   id: string;
   filesToCreate?: string[];
@@ -55,8 +57,8 @@ export function summarizeAutocodeCodingAttemptFailure(
 }
 
 export function compactAutocodeAgentRecoveryText(value: string, maxLength = 260): string {
-  const compacted = value
-    .replace(/```[\s\S]*?```/g, ' ')
+  const withoutCodeBlocks = value.replace(/```[\s\S]*?```/g, ' ');
+  const compacted = foldRepeatedAutocodePromptLines(withoutCodeBlocks)
     .replace(/\s+/g, ' ')
     .trim();
 
