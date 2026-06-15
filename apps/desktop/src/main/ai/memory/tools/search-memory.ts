@@ -20,6 +20,7 @@ import {
   isMemoryEligibleForAutomationContext,
   isMemoryEligibleForPromptContext,
 } from '../retrieval/context-packer';
+import { stripLowValueOutcomeLines } from '../outcome-content';
 
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 8;
@@ -31,6 +32,8 @@ const MAX_SEARCH_FILE_REF_CHARS = 36;
 const MAX_SEARCH_QUERY_CHARS = 360;
 const MAX_SEARCH_RELATED_FILES = 8;
 const MAX_SEARCH_RELATED_FILE_CHARS = 160;
+const MAX_SEARCH_CONTEXT_COST_FILE_REFS = 4;
+const MAX_SEARCH_CONTEXT_COST_FILE_REF_CHARS = 96;
 const MAX_MEMORY_RESULT_TOKENS = Math.ceil(MAX_MEMORY_RESULT_CHARS / 4);
 const MAX_SEARCH_OUTPUT_TOKENS = Math.ceil(MAX_SEARCH_OUTPUT_CHARS / 4);
 const MAX_SEARCH_QUERY_ECHO_TOKENS = Math.ceil(MAX_SEARCH_QUERY_ECHO_CHARS / 4);
@@ -432,16 +435,51 @@ function formatSearchMemoryResult(memory: Memory, index: number): string {
 }
 
 function shouldShowSearchMemoryFileRefs(memory: Memory): boolean {
-  return memory.type !== 'prefetch_pattern';
+  return !isMachineReadableSearchMemoryType(memory.type);
 }
 
 function formatSearchMemoryContent(memory: Memory): string {
+  const promptContent = memory.type === 'work_unit_outcome'
+    ? stripLowValueOutcomeLines(memory.content)
+    : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER);
+  const content = appendSearchMemoryMetadata(
+    memory,
+    promptContent,
+  );
   return truncateTextToBudget(
-    formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER),
+    content,
     MAX_MEMORY_RESULT_CHARS,
     MAX_MEMORY_RESULT_TOKENS,
     { preserveTail: true },
   );
+}
+
+function appendSearchMemoryMetadata(memory: Memory, content: string): string {
+  if (memory.type !== 'context_cost') {
+    return content;
+  }
+
+  const relatedFiles = formatContextCostRelatedFiles(memory.relatedFiles, content);
+  if (!relatedFiles) {
+    return content;
+  }
+  return `${content} ${relatedFiles}`;
+}
+
+function formatContextCostRelatedFiles(files: readonly string[], content: string): string {
+  const normalizedContent = content.toLowerCase().replace(/\\/g, '/');
+  const unmentionedFiles = uniquePathRefs(files)
+    .filter((file) => !normalizedContent.includes(file.toLowerCase()));
+  if (unmentionedFiles.length === 0) {
+    return '';
+  }
+
+  const visible = unmentionedFiles
+    .slice(0, MAX_SEARCH_CONTEXT_COST_FILE_REFS)
+    .map((file) => truncatePathTail(file, MAX_SEARCH_CONTEXT_COST_FILE_REF_CHARS));
+  const omitted = unmentionedFiles.length - visible.length;
+  const omittedText = omitted > 0 ? ` (+${omitted} more)` : '';
+  return `Related files: ${visible.join(', ')}${omittedText}.`;
 }
 
 function formatConfidenceHint(memory: Memory): string {

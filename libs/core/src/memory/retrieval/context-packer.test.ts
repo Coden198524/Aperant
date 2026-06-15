@@ -305,6 +305,58 @@ describe('packContext memory quality gate', () => {
     expect(result).not.toContain('**Context Cost**');
   });
 
+  it('strips low-value outcome lines before packing prompt context', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'outcome-noise',
+          type: 'work_unit_outcome',
+          content: [
+            'Work unit s1 finished with outcome: success.',
+            'Summary: Auth module narrowed memory lookup before editing.',
+            'npm run typecheck passed.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          confidence: 0.95,
+          relatedFiles: ['src/auth/session.ts'],
+        }),
+      ],
+      'validate',
+      { totalBudget: 300, allocation: { work_unit_outcome: 1 } },
+    );
+
+    expect(result).toContain('**Work Unit Outcome**');
+    expect(result).toContain('Auth module narrowed memory lookup before editing');
+    expect(result).toContain('src/auth/session.ts');
+    expect(result).not.toContain('Work unit s1 finished');
+    expect(result).not.toContain('npm run typecheck passed');
+    expect(result).not.toContain('No issues found');
+    expect(result).not.toContain('Completed at:');
+  });
+
+  it('skips outcome memories that only contain low-value prompt lines', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'empty-outcome',
+          type: 'work_unit_outcome',
+          content: [
+            'Work unit s1 finished with outcome: success.',
+            'npm run typecheck passed.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          confidence: 0.95,
+        }),
+      ],
+      'validate',
+      { totalBudget: 300, allocation: { work_unit_outcome: 1 } },
+    );
+
+    expect(result).toBe('');
+  });
+
   it('deduplicates equivalent prefetch patterns by rendered prompt content', () => {
     const result = packContext(
       [

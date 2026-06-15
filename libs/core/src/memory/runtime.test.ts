@@ -258,6 +258,54 @@ describe('Autocode memory runtime context formatting', () => {
     expect(formatted).not.toContain('STALE_SHOULD_NOT_APPEAR');
   });
 
+  it('strips generic outcome noise from runtime project memory', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'outcome-with-noise',
+        type: 'work_unit_outcome',
+        content: [
+          'Work unit s1 finished with outcome: success.',
+          'Summary: Auth module narrowed memory lookup before editing.',
+          'npm run typecheck passed.',
+          'No issues found.',
+          '\u4efb\u52a1\u5df2\u5b8c\u6210',
+          'Duration: 1234ms',
+          'Completed at: 2026-06-15T00:00:00.000Z',
+        ].join('\n'),
+        confidence: 0.95,
+        relatedFiles: ['src/auth/session.ts'],
+      }),
+    ]);
+
+    expect(formatted).toContain('[work_unit_outcome]');
+    expect(formatted).toContain('Auth module narrowed memory lookup');
+    expect(formatted).toContain('src/auth/session.ts');
+    expect(formatted).not.toContain('Work unit s1 finished');
+    expect(formatted).not.toContain('npm run typecheck passed');
+    expect(formatted).not.toContain('No issues found');
+    expect(formatted).not.toContain('\u4efb\u52a1\u5df2\u5b8c\u6210');
+    expect(formatted).not.toContain('Duration: 1234ms');
+    expect(formatted).not.toContain('Completed at:');
+  });
+
+  it('omits outcome memories that only contain low-value runtime lines', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'empty-outcome',
+        type: 'work_unit_outcome',
+        content: [
+          'Work unit s1 finished with outcome: success.',
+          'npm run typecheck passed.',
+          'No issues found.',
+          'Completed at: 2026-06-15T00:00:00.000Z',
+        ].join('\n'),
+        confidence: 0.95,
+      }),
+    ]);
+
+    expect(formatted).toBe('');
+  });
+
   it('omits machine-only runtime memories from project context', () => {
     const formatted = formatAutocodeMemoryRuntimeContext([
       memory({

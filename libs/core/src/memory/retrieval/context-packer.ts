@@ -9,6 +9,7 @@
  */
 
 import type { Memory, MemoryType, UniversalPhase } from '../types.js';
+import { stripLowValueOutcomeLines } from '../outcome-content.js';
 
 // ============================================================
 // TYPES & CONFIG
@@ -485,6 +486,9 @@ function getMemoryPromptContent(memory: Memory): string {
   if (memory.type === 'prefetch_pattern') {
     return formatPrefetchPatternForPrompt(memory) ?? memory.content;
   }
+  if (memory.type === 'work_unit_outcome') {
+    return stripLowValueOutcomeLines(memory.content);
+  }
   return memory.content;
 }
 
@@ -734,7 +738,10 @@ function normalizePromptMemories(memories: Memory[]): Memory[] {
 
 function normalizePromptMemory(memory: Memory): Memory | undefined {
   const id = normalizePromptText(memory.id);
-  const content = normalizePromptText(memory.content);
+  const rawContent = memory.type === 'work_unit_outcome'
+    ? stripLowValueOutcomeLines(memory.content)
+    : memory.content;
+  const content = normalizePromptText(rawContent);
   if (!id || !content) {
     return undefined;
   }

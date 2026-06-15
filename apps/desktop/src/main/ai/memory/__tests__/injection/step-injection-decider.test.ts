@@ -233,6 +233,41 @@ describe('StepInjectionDecider', () => {
       expect(result?.content).not.toContain('Stale gotcha');
     });
 
+    it('skips low-value gotcha content before injecting memory alerts', async () => {
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({
+          id: 'generic-status',
+          content: [
+            'npm run typecheck passed.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          confidence: 0.95,
+        }),
+        makeMemory({
+          id: 'actionable-gotcha',
+          content: [
+            'No issues found.',
+            'Mock the OAuth clock before testing refresh retries.',
+          ].join('\n'),
+          confidence: 0.9,
+        }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('gotcha_injection');
+      expect(result?.memoryIds).toEqual(['actionable-gotcha']);
+      expect(result?.content).toContain('Mock the OAuth clock before testing refresh retries.');
+      expect(result?.content).not.toContain('npm run typecheck passed');
+      expect(result?.content).not.toContain('No issues found');
+      expect(memoryService.updateAccessCount).toHaveBeenCalledWith('actionable-gotcha');
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('generic-status');
+    });
+
     it('deduplicates near-duplicate gotchas before using the two injection slots', async () => {
       vi.mocked(memoryService.search).mockResolvedValueOnce([
         makeMemory({
@@ -726,6 +761,28 @@ describe('StepInjectionDecider', () => {
       });
 
       expect(result).toBeNull();
+    });
+
+    it('does not short-circuit with low-value pattern matches', async () => {
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(
+        makeMemory({
+          id: 'low-value-match',
+          content: [
+            'Memory search results for "auth": 1. [gotcha] Already shown.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          confidence: 0.95,
+        }),
+      );
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'useCallback' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('low-value-match');
     });
 
     it('only checks last 3 Grep/Glob calls', async () => {

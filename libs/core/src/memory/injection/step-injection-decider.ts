@@ -15,6 +15,7 @@ import type { AcuteCandidate, Memory, MemoryService } from '../types.js';
 import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { selectMemoryContextItems } from './context-selection.js';
 import { compactMemoryInjectionText } from './text-compaction.js';
+import { stripLowValueMemoryLines } from '../outcome-content.js';
 
 // ============================================================
 // TYPES
@@ -84,12 +85,14 @@ export class StepInjectionDecider {
 
         const eligibleGotchas = selectMemoryContextItems(
           freshGotchas.filter(
-            (memory) => !recentContext.injectedMemoryIds.has(memory.id),
+            (memory) =>
+              !recentContext.injectedMemoryIds.has(memory.id) &&
+              hasInjectableMemoryContent(memory),
           ),
           {
             maxItems: MAX_GOTCHA_INJECTION_MEMORIES,
             minConfidence: 0.65,
-            getContent: (memory) => this.formatGotchaLine(memory),
+            getContent: getInjectableMemoryContent,
           },
         );
         if (eligibleGotchas.length > 0) {
@@ -142,12 +145,14 @@ export class StepInjectionDecider {
         if (
           known &&
           isMemoryEligibleForPromptContext(known) &&
+          hasInjectableMemoryContent(known) &&
           !recentContext.injectedMemoryIds.has(known.id)
         ) {
+          const content = getInjectableMemoryContent(known);
           await recordSelectedMemoryAccess(this.memoryService, [known]);
           return {
             content: `MEMORY CONTEXT: ${truncateText(
-              known.content,
+              content,
               MAX_SHORT_CIRCUIT_CHARS,
               MAX_SHORT_CIRCUIT_TOKENS,
             )}`,
@@ -186,7 +191,7 @@ export class StepInjectionDecider {
   private formatGotchaLine(memory: Memory): string {
     const fileContext = formatFileRefs(memory.relatedFiles);
     return `- [${memory.type}]${fileContext}: ${truncateText(
-      memory.content,
+      getInjectableMemoryContent(memory),
       MAX_MEMORY_ALERT_CHARS,
       MAX_MEMORY_ALERT_TOKENS,
     )}`;
@@ -272,6 +277,14 @@ function getScratchpadEntryText(entry: AcuteCandidate): string {
   return typeof value === 'string'
     ? value.replace(/\s+/g, ' ').trim()
     : '';
+}
+
+function getInjectableMemoryContent(memory: Memory): string {
+  return stripLowValueMemoryLines(memory.content);
+}
+
+function hasInjectableMemoryContent(memory: Memory): boolean {
+  return getInjectableMemoryContent(memory).length > 0;
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

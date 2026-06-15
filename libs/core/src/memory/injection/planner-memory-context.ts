@@ -13,18 +13,12 @@ import {
   getRenderedVisibleMemories,
   type VisibleMemoryItem,
 } from './visible-memory-items.js';
+import { stripLowValueOutcomeLines } from '../outcome-content.js';
 
 const MAX_PLANNER_MEMORY_ITEM_CHARS = 240;
 const MAX_PLANNER_MEMORY_ITEM_TOKENS = 80;
 const MAX_PLANNER_MEMORY_CONTEXT_CHARS = 1800;
 const MAX_PLANNER_MEMORY_CONTEXT_TOKENS = 450;
-const LOW_VALUE_SESSION_METRIC_LINE_PATTERNS = [
-  /^(?:Summary:\s*)?Efficient token usage\b/i,
-  /^(?:Summary:\s*)?High token usage per step\b/i,
-  /^(?:Summary:\s*)?Completed quickly with few steps\b/i,
-  /^(?:Summary:\s*)?Many steps required\b/i,
-  /^(?:Summary:\s*)?Used diverse set of tools\b/i,
-] as const;
 
 export async function buildPlannerMemoryContext(
   taskDescription: string,
@@ -283,23 +277,10 @@ function formatCalibrationMemoryContent(memory: Memory): string {
 
 function formatOutcomeMemoryContent(memory: Memory): string {
   return truncateText(
-    stripLowValueSessionMetricLines(memory.content),
+    stripLowValueOutcomeLines(memory.content),
     MAX_PLANNER_MEMORY_ITEM_CHARS,
     MAX_PLANNER_MEMORY_ITEM_TOKENS,
   );
-}
-
-function stripLowValueSessionMetricLines(content: string): string {
-  return content
-    .split(/\r?\n/)
-    .filter(
-      (line) =>
-        !LOW_VALUE_SESSION_METRIC_LINE_PATTERNS.some((pattern) =>
-          pattern.test(line.trim()),
-        ),
-    )
-    .join('\n')
-    .trim();
 }
 
 function truncateText(

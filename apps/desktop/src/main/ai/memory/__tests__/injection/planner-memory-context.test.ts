@@ -212,6 +212,9 @@ describe('buildPlannerMemoryContext', () => {
               'Summary: Auth module refactored successfully.',
               'Efficient token usage - concise and focused implementation',
               'Completed quickly with few steps - good planning',
+              'npm run typecheck passed.',
+              'No issues found.',
+              'Memory search results for "auth": 1. [gotcha] Refresh token cache before notifying listeners.',
               'Files: src/auth/session.ts',
             ].join('\n'),
             'work_unit_outcome',
@@ -226,8 +229,42 @@ describe('buildPlannerMemoryContext', () => {
     expect(result).toContain('RECENT OUTCOMES');
     expect(result).toContain('Auth module refactored successfully');
     expect(result).toContain('src/auth/session.ts');
+    expect(result).not.toContain('Work unit s1 finished');
     expect(result).not.toContain('Efficient token usage');
     expect(result).not.toContain('Completed quickly');
+    expect(result).not.toContain('npm run typecheck passed');
+    expect(result).not.toContain('No issues found');
+    expect(result).not.toContain('Memory search results');
+  });
+
+  it('omits localized generic outcome lines from planner context', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('work_unit_outcome')) {
+        return [
+          makeMemory(
+            'out-localized-noise',
+            [
+              '\u4efb\u52a1\u5df2\u5b8c\u6210',
+              '\u5168\u90e8\u6d4b\u8bd5\u5df2\u901a\u8fc7',
+              '\u6ca1\u6709\u53d1\u73b0\u95ee\u9898',
+              '\u8ba4\u8bc1\u6a21\u5757\u6536\u7a84\u4e86\u6587\u4ef6\u68c0\u7d22\u8303\u56f4\u3002',
+              'Files: src/auth/session.ts',
+            ].join('\n'),
+            'work_unit_outcome',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildPlannerMemoryContext('Add auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('RECENT OUTCOMES');
+    expect(result).toContain('\u8ba4\u8bc1\u6a21\u5757\u6536\u7a84\u4e86\u6587\u4ef6\u68c0\u7d22\u8303\u56f4');
+    expect(result).toContain('src/auth/session.ts');
+    expect(result).not.toContain('\u4efb\u52a1\u5df2\u5b8c\u6210');
+    expect(result).not.toContain('\u5168\u90e8\u6d4b\u8bd5\u5df2\u901a\u8fc7');
+    expect(result).not.toContain('\u6ca1\u6709\u53d1\u73b0\u95ee\u9898');
   });
 
   it('does not record access for outcomes that are stripped from planner context', async () => {
