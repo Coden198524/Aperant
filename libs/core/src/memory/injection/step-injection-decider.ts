@@ -535,6 +535,10 @@ function formatFileRefs(files: readonly string[], content = ''): string {
 
   const uniqueFiles = uniqueFileRefs(files)
     .filter((file) => !isFileRefMentionedInText(file, content));
+  if (uniqueFiles.length === 0) {
+    return '';
+  }
+
   const visible = uniqueFiles
     .slice(0, MAX_MEMORY_ALERT_FILE_REFS)
     .map((file) =>
