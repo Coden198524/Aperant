@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import {
+	stripLowValueContextCostMemoryLines,
 	stripLowValueMemoryLines,
 	stripLowValueOutcomeLines,
 } from "./outcome-content.js";
@@ -136,5 +137,40 @@ describe("low-value memory line filtering", () => {
 		expect(stripLowValueOutcomeLines(input)).toBe(
 			stripLowValueMemoryLines(input),
 		);
+	});
+
+	it("strips generic status lines from context-cost memories while preserving cost signals", () => {
+		const result = stripLowValueContextCostMemoryLines(
+			[
+				"High token usage per step: 24k tokens.",
+				"Context token spike came from repeatedly sending full memory search results.",
+				"Efficient token usage - concise and focused implementation.",
+				"npm run typecheck passed.",
+				"No issues found.",
+				"Reduce token usage by narrowing memory search before scanning files.",
+				"Token usage was high because broad scans fed full files into reranking.",
+			].join("\n"),
+		);
+
+		expect(result).toBe(
+			[
+				"High token usage per step: 24k tokens.",
+				"Context token spike came from repeatedly sending full memory search results.",
+				"Reduce token usage by narrowing memory search before scanning files.",
+				"Token usage was high because broad scans fed full files into reranking.",
+			].join("\n"),
+		);
+	});
+
+	it("returns empty text for context-cost memories that only contain generic status", () => {
+		expect(
+			stripLowValueContextCostMemoryLines(
+				[
+					"Efficient token usage - concise and focused implementation.",
+					"npm run typecheck passed.",
+					"No issues found.",
+				].join("\n"),
+			),
+		).toBe("");
 	});
 });

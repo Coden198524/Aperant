@@ -301,6 +301,9 @@ describe('MemoryServiceImpl', () => {
     it('preserves context_cost token signals in FTS and embedding text', async () => {
       const content = [
         'High token usage per step: 24k tokens.',
+        'Efficient token usage - concise and focused implementation.',
+        'npm run typecheck passed.',
+        'No issues found.',
         'Context token spike came from repeatedly sending full memory search results.',
       ].join('\n');
 
@@ -312,12 +315,37 @@ describe('MemoryServiceImpl', () => {
       });
 
       const batchArgs = mockBatch.mock.calls[0][0];
+      const memoriesArgs = batchArgs[0].args;
       const ftsArgs = batchArgs[1].args;
       const embeddingText = mockEmbed.mock.calls[0][0] as string;
 
-      expect(ftsArgs[1]).toBe(content);
+      expect(memoriesArgs[2]).toBe(content);
+      expect(ftsArgs[1]).toBe([
+        'High token usage per step: 24k tokens.',
+        'Context token spike came from repeatedly sending full memory search results.',
+      ].join('\n'));
       expect(embeddingText).toContain('High token usage per step: 24k tokens.');
       expect(embeddingText).toContain('Context token spike');
+      expect(embeddingText).not.toContain('Efficient token usage');
+      expect(embeddingText).not.toContain('npm run typecheck passed.');
+      expect(embeddingText).not.toContain('No issues found');
+    });
+
+    it('rejects context_cost memories with no token-cost signal after filtering', async () => {
+      await expect(
+        service.store({
+          type: 'context_cost',
+          content: [
+            'Efficient token usage - concise and focused implementation.',
+            'npm run typecheck passed.',
+            'No issues found.',
+          ].join('\n'),
+          projectId: 'proj-001',
+        }),
+      ).rejects.toThrow('Context-cost memory has no token-cost signal after filtering.');
+
+      expect(mockBatch).not.toHaveBeenCalled();
+      expect(mockEmbed).not.toHaveBeenCalled();
     });
 
     it('compacts oversized memory content and metadata before storage and embedding', async () => {
@@ -508,6 +536,40 @@ describe('MemoryServiceImpl', () => {
       expect(mockEmbed).not.toHaveBeenCalled();
       expect(mockBatch).not.toHaveBeenCalled();
       expect(mockExecute).toHaveBeenCalledTimes(2);
+      expect(mockExecute.mock.calls[1][0].sql).toContain('access_count = access_count + 1');
+    });
+
+    it('deduplicates context_cost memories by cleaned index content', async () => {
+      mockExecute
+        .mockResolvedValueOnce({ rows: [{ id: 'existing-context-cost' }] })
+        .mockResolvedValueOnce({ rows: [] });
+
+      const id = await service.store({
+        type: 'context_cost',
+        content: [
+          'High token usage per step: 24k tokens.',
+          'npm run typecheck passed.',
+          'No issues found.',
+        ].join('\n'),
+        projectId: 'proj-001',
+      });
+
+      const duplicateLookup = mockExecute.mock.calls[0][0];
+
+      expect(id).toBe('existing-context-cost');
+      expect(duplicateLookup.sql).toContain('LEFT JOIN memories_fts');
+      expect(duplicateLookup.args).toEqual([
+        'proj-001',
+        'context_cost',
+        [
+          'High token usage per step: 24k tokens.',
+          'npm run typecheck passed.',
+          'No issues found.',
+        ].join('\n'),
+        'High token usage per step: 24k tokens.',
+      ]);
+      expect(mockEmbed).not.toHaveBeenCalled();
+      expect(mockBatch).not.toHaveBeenCalled();
       expect(mockExecute.mock.calls[1][0].sql).toContain('access_count = access_count + 1');
     });
 

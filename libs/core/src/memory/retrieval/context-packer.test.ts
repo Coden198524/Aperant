@@ -4,6 +4,7 @@ import type { Memory } from '../types.js';
 import {
   type ContextPackingConfig,
   estimateTokens,
+  formatMemoryContentForPrompt,
   isMemoryEligibleForAutomationContext,
   isMemoryEligibleForPromptContext,
   MAX_PACKED_MEMORY_FILE_REF_CHARS,
@@ -471,6 +472,22 @@ describe('packContext memory quality gate', () => {
     expect(result).toContain('Visible gotcha should still guide implementation.');
     expect(result).not.toContain('High token usage per step');
     expect(result).not.toContain('**Context Cost**');
+  });
+
+  it('does not advertise context-cost memories that only contain status noise', () => {
+    const contextCost = makeMemory({
+      id: 'context-cost-status-only',
+      type: 'context_cost',
+      content: [
+        'Efficient token usage - concise and focused implementation.',
+        'npm run typecheck passed.',
+        'No issues found.',
+      ].join('\n'),
+      confidence: 0.95,
+    });
+
+    expect(isMemoryEligibleForAutomationContext(contextCost)).toBe(false);
+    expect(formatMemoryContentForPrompt(contextCost)).toBe('');
   });
 
   it('strips low-value outcome lines before packing prompt context', () => {

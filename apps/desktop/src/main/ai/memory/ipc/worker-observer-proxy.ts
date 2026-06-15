@@ -23,7 +23,10 @@ import {
   type MemorySearchFilters,
 } from '@autocode/core';
 import type { RecentToolCallContext, StepInjection } from '../injection/step-injection-decider';
-import { stripLowValueMemoryLines } from '../outcome-content';
+import {
+  stripLowValueContextCostMemoryLines,
+  stripLowValueMemoryLines,
+} from '../outcome-content';
 import { estimateTokens } from '../retrieval/context-packer';
 
 const IPC_TIMEOUT_MS = 3_000;
@@ -164,10 +167,15 @@ export class WorkerObserverProxy {
   }
 
   async recordMemory(entry: MemoryRecordEntry): Promise<string | null> {
+    const compactEntry = compactMemoryRecordEntryForIpc(entry);
+    if (!compactEntry.content.trim()) {
+      return null;
+    }
+
     const requestId = randomUUID();
     try {
       const response = await this.sendRequest<AutocodeMemoryRuntimeIpcResponse>(
-        { type: 'memory:record', requestId, entry: compactMemoryRecordEntryForIpc(entry) },
+        { type: 'memory:record', requestId, entry: compactEntry },
         requestId,
       );
       return response.type === 'memory:stored' ? response.id : null;
@@ -335,7 +343,7 @@ function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordE
 
 function formatMemoryRecordContentForIpc(entry: MemoryRecordEntry): string {
   return entry.type === 'context_cost'
-    ? entry.content
+    ? stripLowValueContextCostMemoryLines(entry.content)
     : stripLowValueMemoryLines(entry.content);
 }
 

@@ -406,6 +406,7 @@ describe('memory agent tools', () => {
           content: [
             'High token usage per step: 24k tokens.',
             'Context token spike came from broad repo scans; search memory before rg --files.',
+            'Efficient token usage - concise and focused implementation.',
             'npm run typecheck passed.',
             'No issues found.',
           ].join('\n'),
@@ -428,6 +429,7 @@ describe('memory agent tools', () => {
     expect(result).toContain('High token usage per step: 24k tokens');
     expect(result).toContain('Context token spike came from broad repo scans');
     expect(result).toContain('Related files: apps/desktop/src/main/ai/memory');
+    expect(result).not.toContain('Efficient token usage');
     expect(result).not.toContain('npm run typecheck passed');
     expect(result).not.toContain('No issues found');
   });
@@ -439,6 +441,7 @@ describe('memory agent tools', () => {
           id: 'token-cost-empty',
           type: 'context_cost',
           content: [
+            'Efficient token usage - concise and focused implementation.',
             'npm run typecheck passed.',
             'No issues found.',
             'Completed at: 2026-06-15T00:00:00.000Z',

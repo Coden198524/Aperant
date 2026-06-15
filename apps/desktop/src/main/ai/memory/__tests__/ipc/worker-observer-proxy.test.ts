@@ -566,6 +566,9 @@ describe('WorkerObserverProxy', () => {
         type: 'context_cost',
         content: [
           'High token usage per step: 24k tokens.',
+          'Efficient token usage - concise and focused implementation.',
+          'npm run typecheck passed.',
+          'No issues found.',
           'Context token spike came from large memory IPC payloads.',
         ].join('\n'),
         projectId: 'proj-1',
@@ -576,6 +579,26 @@ describe('WorkerObserverProxy', () => {
       };
       expect(sentMsg.entry.content).toContain('High token usage per step');
       expect(sentMsg.entry.content).toContain('24k tokens');
+      expect(sentMsg.entry.content).toContain('Context token spike');
+      expect(sentMsg.entry.content).not.toContain('Efficient token usage');
+      expect(sentMsg.entry.content).not.toContain('npm run typecheck passed');
+      expect(sentMsg.entry.content).not.toContain('No issues found');
+    });
+
+    it('does not post record IPC for context_cost memories without token-cost signals', async () => {
+      const id = await proxy.recordMemory({
+        type: 'context_cost',
+        content: [
+          'Efficient token usage - concise and focused implementation.',
+          'npm run typecheck passed.',
+          'No issues found.',
+        ].join('\n'),
+        projectId: 'proj-1',
+      });
+
+      expect(id).toBeNull();
+      expect(mockPort.postMessage).not.toHaveBeenCalled();
+      expect(mockPort.sentMessages).toHaveLength(0);
     });
 
     it('compacts verbose memory entries before posting record IPC requests', async () => {

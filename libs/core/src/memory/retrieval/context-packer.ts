@@ -8,7 +8,10 @@
  *   - Citation chips: [^ Memory: citationText]
  */
 
-import { stripLowValueMemoryLines } from '../outcome-content.js';
+import {
+  stripLowValueContextCostMemoryLines,
+  stripLowValueMemoryLines,
+} from '../outcome-content.js';
 import type { Memory, MemoryType, UniversalPhase } from '../types.js';
 
 // ============================================================
@@ -541,6 +544,9 @@ function getMemoryPromptContent(memory: Memory): string {
   if (memory.type === 'prefetch_pattern') {
     return formatPrefetchPatternForPrompt(memory) ?? stripLowValueMemoryLines(memory.content);
   }
+  if (memory.type === 'context_cost') {
+    return stripLowValueContextCostMemoryLines(memory.content);
+  }
   return stripLowValueMemoryLines(memory.content);
 }
 
@@ -835,7 +841,7 @@ function normalizePromptMemories(memories: Memory[]): Memory[] {
 function normalizePromptMemory(memory: Memory): Memory | undefined {
   const id = normalizePromptText(memory.id);
   const rawContent = memory.type === 'context_cost'
-    ? memory.content
+    ? stripLowValueContextCostMemoryLines(memory.content)
     : stripLowValueMemoryLines(memory.content);
   const content = normalizePromptText(rawContent);
   if (!id || !content) {

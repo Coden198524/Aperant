@@ -14,7 +14,10 @@ import type {
 } from '@autocode/core';
 import type { EmbeddingService } from './embedding-service';
 import { buildMemoryContextualText } from './embedding-service';
-import { stripLowValueMemoryLines } from './outcome-content';
+import {
+  stripLowValueContextCostMemoryLines,
+  stripLowValueMemoryLines,
+} from './outcome-content';
 import { rowToMemory } from './row-mapper';
 import { searchBM25 } from './retrieval/bm25-search';
 import { estimateTokens, isMemoryEligibleForPromptContext } from './retrieval/context-packer';
@@ -135,8 +138,11 @@ export class MemoryServiceImpl implements MemoryService {
   async store(entry: MemoryRecordEntry): Promise<string> {
     const normalizedEntry = normalizeMemoryRecordEntryForStorage(entry);
     const indexContent = getMemoryIndexContent(normalizedEntry);
+    if (normalizedEntry.type === 'context_cost' && !indexContent) {
+      throw new Error('Context-cost memory has no token-cost signal after filtering.');
+    }
 
-    const existingId = await this.findExistingMemoryId(normalizedEntry);
+    const existingId = await this.findExistingMemoryId(normalizedEntry, indexContent);
     if (existingId) {
       await this.updateAccessCount(existingId);
       return existingId;
@@ -594,8 +600,23 @@ export class MemoryServiceImpl implements MemoryService {
     });
   }
 
-  private async findExistingMemoryId(entry: MemoryRecordEntry): Promise<string | null> {
+  private async findExistingMemoryId(entry: MemoryRecordEntry, indexContent: string): Promise<string | null> {
     try {
+      if (entry.type === 'context_cost') {
+        const result = await this.db.execute({
+          sql: `SELECT m.id FROM memories m
+                LEFT JOIN memories_fts f ON f.memory_id = m.id
+                WHERE m.project_id = ?
+                  AND m.type = ?
+                  AND (m.content = ? OR f.content = ?)
+                  AND m.deprecated = 0
+                LIMIT 1`,
+          args: [entry.projectId, entry.type, entry.content, indexContent],
+        });
+        const row = result.rows[0] as Record<string, unknown> | undefined;
+        return typeof row?.id === 'string' ? row.id : null;
+      }
+
       const result = await this.db.execute({
         sql: `SELECT id FROM memories
               WHERE project_id = ?
@@ -819,7 +840,7 @@ function pathsReferToSameFile(left: string, right: string): boolean {
 
 function getMemoryIndexContent(entry: MemoryRecordEntry): string {
   return entry.type === 'context_cost'
-    ? entry.content
+    ? stripLowValueContextCostMemoryLines(entry.content)
     : stripLowValueMemoryLines(entry.content);
 }
 

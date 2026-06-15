@@ -21,6 +21,7 @@ import { weightedRRF } from './rrf-fusion';
 import { applyGraphNeighborhoodBoost } from './graph-boost';
 import { Reranker } from './reranker';
 import { estimateTokens, formatMemoryContentForPrompt, packContext } from './context-packer';
+import { stripLowValueContextCostMemoryLines } from '../outcome-content';
 
 export const MAX_RETRIEVAL_QUERY_CHARS = 800;
 export const MAX_RETRIEVAL_QUERY_TOKENS = 200;
@@ -196,7 +197,7 @@ function formatMemoryRerankerCandidate(memory: Memory): RerankerCandidate | unde
 
 function getMemoryRerankerContent(memory: Memory): string {
   return memory.type === 'context_cost'
-    ? memory.content.replace(/\s+/g, ' ').trim()
+    ? stripLowValueContextCostMemoryLines(memory.content).replace(/\s+/g, ' ').trim()
     : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER);
 }
 

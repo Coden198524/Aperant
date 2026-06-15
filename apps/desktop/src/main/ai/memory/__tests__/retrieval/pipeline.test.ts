@@ -310,6 +310,9 @@ describe('RetrievalPipeline', () => {
   it('preserves context_cost token signals before sending candidates to the reranker', async () => {
     const content = [
       'High token usage per step: 24k tokens.',
+      'Efficient token usage - concise and focused implementation.',
+      'npm run typecheck passed.',
+      'No issues found.',
       'Context token spike came from repeatedly sending full memory search results.',
     ].join('\n');
     await seedMemory(client, 'mem-context-cost-rerank', content, 'proj-a', 'context_cost');
@@ -330,6 +333,30 @@ describe('RetrievalPipeline', () => {
     expect(candidate?.content).toContain('[context_cost]');
     expect(candidate?.content).toContain('High token usage per step: 24k tokens.');
     expect(candidate?.content).toContain('Context token spike');
+    expect(candidate?.content).not.toContain('Efficient token usage');
+    expect(candidate?.content).not.toContain('npm run typecheck passed.');
+    expect(candidate?.content).not.toContain('No issues found');
+  });
+
+  it('skips context_cost memories with only status noise before reranking', async () => {
+    const content = [
+      'Efficient token usage - concise and focused implementation.',
+      'npm run typecheck passed.',
+      'No issues found.',
+    ].join('\n');
+    await seedMemory(client, 'mem-context-cost-status-only', content, 'proj-a', 'context_cost');
+
+    const embeddingService = makeMockEmbeddingService();
+    const { reranker, rerank } = makeCapturingReranker();
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const result = await pipeline.search('token usage typecheck', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+
+    expect(result).toEqual({ memories: [], formattedContext: '' });
+    expect(rerank).not.toHaveBeenCalled();
   });
 
   it('normalizes legacy rows fetched by query retrieval before packing context', async () => {

@@ -37,6 +37,16 @@ const LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN =
 const LOW_VALUE_REASONING_CUE_PATTERN =
 	/^(?:Actually,?|Wait[,.]?|Correction:|Let me reconsider[.:]?)\s+/i;
 
+const CONTEXT_COST_SIGNAL_LINE_PATTERNS = [
+	/context (?:token )?(?:spike|cost|window)/i,
+	/high token usage/i,
+	/(?:prompt|input) tokens?/i,
+	/\btoken (?:usage|use)\b.*(?:because|from|due to|came from|caused by|when|after|before|broad|full|rerank|embedding|context|memory|search|scan|reduce|narrow|compress|save)/i,
+	/\btoken\b.*(?:cost|spike|too many|expensive|reduce|save|compress|narrow)/i,
+	/(?:\u4e0a\u4e0b\u6587|\u63d0\u793a\u8bcd|\u8f93\u5165).*token/i,
+	/(?:\u51cf\u5c11|\u964d\u4f4e|\u8282\u7701|\u538b\u7f29|\u5c11\u7528|\u5c11\u8017).*token/i,
+] as const;
+
 export function stripLowValueMemoryLines(content: string): string {
 	return content
 		.split(/\r?\n/)
@@ -48,6 +58,19 @@ export function stripLowValueMemoryLines(content: string): string {
 
 export function stripLowValueOutcomeLines(content: string): string {
 	return stripLowValueMemoryLines(content);
+}
+
+export function stripLowValueContextCostMemoryLines(content: string): string {
+	return content
+		.split(/\r?\n/)
+		.map((line) => line.trim())
+		.filter(Boolean)
+		.map((line) =>
+			isContextCostSignalLine(line) ? line : stripLowValueMemoryLines(line),
+		)
+		.filter(Boolean)
+		.join("\n")
+		.trim();
 }
 
 function stripLowValueMemoryLine(line: string): string {
@@ -89,4 +112,10 @@ function isLowValueWholeMemoryLine(line: string): boolean {
 
 function stripLowValueReasoningCue(line: string): string {
 	return line.replace(LOW_VALUE_REASONING_CUE_PATTERN, "").trim();
+}
+
+function isContextCostSignalLine(line: string): boolean {
+	return CONTEXT_COST_SIGNAL_LINE_PATTERNS.some((pattern) =>
+		pattern.test(line),
+	);
 }

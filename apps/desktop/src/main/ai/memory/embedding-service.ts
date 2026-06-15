@@ -22,7 +22,10 @@ import { createAzure } from '@ai-sdk/azure';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { Memory } from '@autocode/core';
 import type { MemoryEmbeddingProvider } from '../../../shared/types/project';
-import { stripLowValueMemoryLines } from './outcome-content';
+import {
+  stripLowValueContextCostMemoryLines,
+  stripLowValueMemoryLines,
+} from './outcome-content';
 
 // ============================================================
 // TYPES
@@ -103,7 +106,7 @@ export function buildMemoryContextualText(memory: Memory): string {
 
 function getMemoryContentForEmbedding(memory: Memory): string {
   return memory.type === 'context_cost'
-    ? memory.content
+    ? stripLowValueContextCostMemoryLines(memory.content)
     : stripLowValueMemoryLines(memory.content);
 }
 

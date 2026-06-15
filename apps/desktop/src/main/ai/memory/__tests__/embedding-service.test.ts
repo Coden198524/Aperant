@@ -173,6 +173,9 @@ describe('buildMemoryContextualText', () => {
       type: 'context_cost',
       content: [
         'High token usage per step: 24k tokens.',
+        'Efficient token usage - concise and focused implementation.',
+        'npm run typecheck passed.',
+        'No issues found.',
         'Context token spike came from large memory search results.',
       ].join('\n'),
     });
@@ -181,6 +184,9 @@ describe('buildMemoryContextualText', () => {
 
     expect(text).toContain('High token usage per step: 24k tokens.');
     expect(text).toContain('Context token spike');
+    expect(text).not.toContain('Efficient token usage');
+    expect(text).not.toContain('npm run typecheck passed.');
+    expect(text).not.toContain('No issues found');
   });
 
   it('uses the first non-empty normalized module in embedding context', () => {
@@ -306,6 +312,9 @@ describe('EmbeddingService (none / degraded fallback)', () => {
       type: 'context_cost',
       content: [
         'High token usage per step: 24k tokens.',
+        'Efficient token usage - concise and focused implementation.',
+        'npm run typecheck passed.',
+        'No issues found.',
         'Context token spike came from repeatedly sending full memory search results.',
       ].join('\n'),
       relatedFiles: ['src/main/ai/memory/tools/search-memory.ts'],
@@ -318,6 +327,9 @@ describe('EmbeddingService (none / degraded fallback)', () => {
     expect(embeddedText).toContain('Type: context_cost');
     expect(embeddedText).toContain('High token usage per step: 24k tokens.');
     expect(embeddedText).toContain('Context token spike');
+    expect(embeddedText).not.toContain('Efficient token usage');
+    expect(embeddedText).not.toContain('npm run typecheck passed.');
+    expect(embeddedText).not.toContain('No issues found');
   });
 });
 

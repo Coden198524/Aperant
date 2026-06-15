@@ -20,7 +20,7 @@ import {
   isMemoryEligibleForAutomationContext,
   isMemoryEligibleForPromptContext,
 } from '../retrieval/context-packer';
-import { stripLowValueMemoryLines } from '../outcome-content';
+import { stripLowValueContextCostMemoryLines } from '../outcome-content';
 
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 8;
@@ -534,30 +534,8 @@ function hasRenderableSearchMemoryContent(memory: Memory): boolean {
 
 function getSearchMemoryPromptContent(memory: Memory): string {
   return memory.type === 'context_cost'
-    ? stripLowValueContextCostSearchContent(memory.content)
+    ? stripLowValueContextCostMemoryLines(memory.content)
     : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER).trim();
-}
-
-function stripLowValueContextCostSearchContent(content: string): string {
-  return content
-    .split(/\r?\n/)
-    .map((line) => line.trim())
-    .filter(Boolean)
-    .map((line) => isContextCostSearchSignalLine(line)
-      ? line
-      : stripLowValueMemoryLines(line))
-    .filter(Boolean)
-    .join('\n')
-    .trim();
-}
-
-function isContextCostSearchSignalLine(line: string): boolean {
-  return /context (?:token )?(?:spike|cost|window)/i.test(line)
-    || /high token usage/i.test(line)
-    || /(?:prompt|input) tokens?/i.test(line)
-    || /\btoken\b.*(?:cost|usage|spike|too many|expensive|reduce|save|compress|narrow)/i.test(line)
-    || /(?:上下文|提示词|输入).*token/i.test(line)
-    || /(?:减少|降低|节省|压缩|少用|少耗).*token/i.test(line);
 }
 
 function appendSearchMemoryMetadata(memory: Memory, content: string): string {
