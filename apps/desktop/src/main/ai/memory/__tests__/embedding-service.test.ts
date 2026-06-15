@@ -256,6 +256,25 @@ describe('EmbeddingService (none / degraded fallback)', () => {
     expect(embeddedText).not.toContain('npm run typecheck passed.');
     expect(embeddedText).not.toContain('No issues found');
   });
+
+  it('preserves context_cost token signals before embedding memory content', async () => {
+    const memory = makeMemory({
+      type: 'context_cost',
+      content: [
+        'High token usage per step: 24k tokens.',
+        'Context token spike came from repeatedly sending full memory search results.',
+      ].join('\n'),
+      relatedFiles: ['src/main/ai/memory/tools/search-memory.ts'],
+    });
+    const embedSpy = vi.spyOn(service, 'embed');
+
+    await service.embedMemory(memory);
+
+    const embeddedText = embedSpy.mock.calls[0][0] as string;
+    expect(embeddedText).toContain('Type: context_cost');
+    expect(embeddedText).toContain('High token usage per step: 24k tokens.');
+    expect(embeddedText).toContain('Context token spike');
+  });
 });
 
 // ============================================================

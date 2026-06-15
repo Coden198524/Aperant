@@ -100,6 +100,12 @@ export function buildMemoryContextualText(memory: Memory): string {
   return parts ? `${parts}\n\n${memory.content}` : memory.content;
 }
 
+function getMemoryContentForEmbedding(memory: Memory): string {
+  return memory.type === 'context_cost'
+    ? memory.content
+    : stripLowValueMemoryLines(memory.content);
+}
+
 function uniqueContextualFilePaths(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const files: string[] = [];
@@ -464,7 +470,7 @@ export class EmbeddingService {
   async embedMemory(memory: Memory): Promise<number[]> {
     const contextualText = buildMemoryContextualText({
       ...memory,
-      content: stripLowValueMemoryLines(memory.content),
+      content: getMemoryContentForEmbedding(memory),
     });
     return this.embed(contextualText, 1024);
   }
