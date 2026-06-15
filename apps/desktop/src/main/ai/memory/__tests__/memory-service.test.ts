@@ -255,17 +255,21 @@ describe('MemoryServiceImpl', () => {
           'src/auth/session.ts/',
           '',
         ],
+        relatedModules: [' auth ', 'AUTH', 'billing'],
       });
 
       const batchArgs = mockBatch.mock.calls[0][0];
       const memoriesArgs = batchArgs[0].args;
       const ftsArgs = batchArgs[1].args;
       const storedRelatedFiles = JSON.parse(memoriesArgs[5] as string) as string[];
+      const storedRelatedModules = JSON.parse(memoriesArgs[6] as string) as string[];
       const embeddingText = mockEmbed.mock.calls[0][0] as string;
 
       expect(storedRelatedFiles).toEqual(['src/auth/token.ts', 'src/auth/session.ts']);
+      expect(storedRelatedModules).toEqual(['auth', 'billing']);
       expect(ftsArgs[3]).toBe('src/auth/token.ts src/auth/session.ts');
       expect(embeddingText).toContain('Files: src/auth/token.ts, src/auth/session.ts');
+      expect(embeddingText).toContain('Module: auth');
     });
 
     it('compacts oversized memory content and metadata before storage and embedding', async () => {
@@ -958,7 +962,7 @@ describe('MemoryServiceImpl', () => {
           makeMemoryRow({
             tags: '[" auth ","auth","","typescript"]',
             related_files: '[" ./src/auth//token.ts ","src\\\\auth\\\\token.ts","src/auth/session.ts/",""]',
-            related_modules: '[" auth ","auth","","billing"]',
+            related_modules: '[" auth ","AUTH","","billing"]',
           }),
         ],
       });

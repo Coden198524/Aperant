@@ -152,6 +152,7 @@ describe('StepInjectionDecider', () => {
           relatedFiles: [
             'src\\auth\\session-store.ts',
             'SRC/auth/session-store.ts',
+            './SRC/auth/session-store.ts/',
             'src/auth/token-cache.ts',
             'src/auth/retry-policy.ts',
           ],
@@ -199,6 +200,7 @@ describe('StepInjectionDecider', () => {
         toolCalls: [
           { toolName: 'Read', args: { file_path: ' src\\auth\\token.ts ' } },
           { toolName: 'Read', args: { file_path: 'src/auth//token.ts' } },
+          { toolName: 'Read', args: { file_path: './SRC/auth/token.ts/' } },
           { toolName: 'Edit', args: { file_path: 'src/auth/token.ts' } },
         ],
         injectedMemoryIds: new Set(),

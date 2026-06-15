@@ -53,26 +53,32 @@ export async function applyGraphNeighborhoodBoost(
     return candidates;
   }
 
-  const topFiles = new Set<string>();
+  const topFiles: string[] = [];
+  const topFileKeys = new Set<string>();
   for (const candidate of candidates.slice(0, anchorLimit)) {
     const files = relatedFilesMap.get(candidate.memoryId) ?? [];
     for (const file of files) {
-      topFiles.add(file);
-      if (topFiles.size >= MAX_GRAPH_BOOST_TOP_FILES) {
+      const key = normalizeFilePathKey(file);
+      if (topFileKeys.has(key)) {
+        continue;
+      }
+
+      topFileKeys.add(key);
+      topFiles.push(file);
+      if (topFiles.length >= MAX_GRAPH_BOOST_TOP_FILES) {
         break;
       }
     }
-    if (topFiles.size >= MAX_GRAPH_BOOST_TOP_FILES) {
+    if (topFiles.length >= MAX_GRAPH_BOOST_TOP_FILES) {
       break;
     }
   }
 
-  if (topFiles.size === 0) return candidates;
+  if (topFiles.length === 0) return candidates;
 
-  const topFileList = [...topFiles];
-  const neighborFiles = new Set<string>();
+  const neighborFileKeys = new Set<string>();
   try {
-    const filePlaceholders = topFileList.map(() => '?').join(',');
+    const filePlaceholders = topFiles.map(() => '?').join(',');
     const neighbors = await db.execute({
       sql: `SELECT DISTINCT gn2.file_path
         FROM graph_closure gc
@@ -82,29 +88,32 @@ export async function applyGraphNeighborhoodBoost(
           AND gn.project_id = ?
           AND gc.depth = 1
           AND gn2.file_path IS NOT NULL`,
-      args: [...topFileList, projectId],
+      args: [...topFiles, projectId],
     });
 
     for (const row of neighbors.rows) {
       const filePath = normalizeFilePath(row.file_path);
       if (filePath) {
-        neighborFiles.add(filePath);
+        neighborFileKeys.add(normalizeFilePathKey(filePath));
       }
     }
   } catch {
     return candidates;
   }
 
-  if (neighborFiles.size === 0) return candidates;
+  if (neighborFileKeys.size === 0) return candidates;
 
   const boosted: RankedResult[] = candidates.map((candidate, rank) => {
     if (rank < anchorLimit) return candidate;
 
     const candidateFiles = relatedFilesMap.get(candidate.memoryId) ?? [];
-    const neighborOverlap = candidateFiles.filter((f) => neighborFiles.has(f) && !topFiles.has(f)).length;
+    const neighborOverlap = candidateFiles.filter((file) => {
+      const key = normalizeFilePathKey(file);
+      return neighborFileKeys.has(key) && !topFileKeys.has(key);
+    }).length;
     if (neighborOverlap === 0) return candidate;
 
-    const boostAmount = GRAPH_BOOST_FACTOR * (neighborOverlap / Math.max(topFiles.size, 1));
+    const boostAmount = GRAPH_BOOST_FACTOR * (neighborOverlap / Math.max(topFiles.length, 1));
     return { ...candidate, score: candidate.score + boostAmount };
   });
 
@@ -195,4 +204,8 @@ function normalizeFilePath(value: unknown): string | undefined {
     normalized = normalized.slice(0, -1);
   }
   return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeFilePathKey(value: string): string {
+  return value.toLowerCase();
 }

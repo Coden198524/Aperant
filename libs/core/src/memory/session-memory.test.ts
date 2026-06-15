@@ -61,7 +61,7 @@ describe('session memory context formatting', () => {
           { description: 'OLD_DUPLICATE_SHOULD_BE_OMITTED', discovered_at: '2026-01-01T00:00:00.000Z' },
         ],
         [
-          'SRC/auth/session-store.ts',
+          './SRC/auth/session-store.ts/',
           { description: 'NEW_DUPLICATE_SHOULD_REMAIN', discovered_at: '2026-01-02T00:00:00.000Z' },
         ],
         [
@@ -151,7 +151,7 @@ describe('session memory storage formatting', () => {
     const second = recordAutocodeSessionDiscovery(
       first,
       {
-        filePath: 'SRC/auth/session-store.ts',
+        filePath: './SRC/auth/session-store.ts/',
         description: 'NEW_DISCOVERY_SHOULD_REPLACE_OLD',
       },
       new Date('2026-01-02T00:00:00.000Z'),
@@ -169,7 +169,7 @@ describe('session memory storage formatting', () => {
           category: 'general',
           discovered_at: '2026-01-01T00:00:00.000Z',
         },
-        'SRC/auth/session-store.ts': {
+        './SRC/auth/session-store.ts/': {
           description: 'NEW_DUPLICATE_SHOULD_REMAIN',
           category: 'auth',
           discovered_at: '2026-01-02T00:00:00.000Z',

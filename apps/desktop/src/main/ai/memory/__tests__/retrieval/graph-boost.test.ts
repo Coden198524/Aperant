@@ -40,13 +40,13 @@ describe('applyGraphNeighborhoodBoost', () => {
       if (statement.sql.includes('SELECT id, related_files')) {
         return {
           rows: [
-            { id: ' anchor ', related_files: JSON.stringify([' ./src//anchor.ts ', 'src/anchor.ts', 42]) },
-            { id: 'target', related_files: JSON.stringify(['src/neighbor.ts']) },
+            { id: ' anchor ', related_files: JSON.stringify([' ./src//anchor.ts ', './SRC/anchor.ts/', 42]) },
+            { id: 'target', related_files: JSON.stringify(['src\\Neighbor.ts/']) },
           ],
         };
       }
       if (statement.sql.includes('graph_closure')) {
-        return { rows: [{ file_path: 'src/neighbor.ts' }] };
+        return { rows: [{ file_path: './SRC/neighbor.ts/' }] };
       }
       return { rows: [] };
     });

@@ -117,6 +117,7 @@ describe('StepMemoryState', () => {
     });
 
     it('normalizes equivalent file paths before recent-context dedupe', () => {
+      state.recordToolCall('Read', { file_path: './SRC/auth/token.ts/' });
       state.recordToolCall('Read', { file_path: ' src\\auth\\token.ts ' });
       state.recordToolCall('Read', { file_path: 'src/auth//token.ts' });
 

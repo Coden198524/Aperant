@@ -298,7 +298,9 @@ function normalizeFilePath(filePath: string): string {
     .replace(/\s+/g, ' ')
     .replace(/\\/g, '/')
     .replace(/\/+/g, '/')
-    .trim();
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
 }
 
 function truncateText(

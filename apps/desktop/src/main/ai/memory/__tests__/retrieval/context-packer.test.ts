@@ -122,7 +122,7 @@ describe('packContext', () => {
           id: 'metadata',
           content: '  Metadata \n memory  ',
           citationText: '  Source \n citation  ',
-          relatedFiles: [' src/auth.ts ', 'src/auth.ts', ' src/session.ts '],
+          relatedFiles: [' src/auth.ts ', './SRC/auth.ts/', ' src/session.ts ', './src/session.ts/'],
         }),
       ],
       'implement',
@@ -131,6 +131,8 @@ describe('packContext', () => {
     expect(result).toContain('Metadata memory');
     expect(result).toContain('[^ Memory: Source citation]');
     expect(result).toContain('src/auth.ts, src/session.ts');
+    expect(result).not.toContain('./SRC/auth.ts');
+    expect(result).not.toContain('./src/session.ts');
   });
 
   it('includes file context in output', () => {

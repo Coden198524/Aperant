@@ -91,7 +91,18 @@ function selectRecentUniqueToolCalls(
 }
 
 function getToolCallSignature(call: { toolName: string; args: Record<string, unknown> }): string {
-  return `${call.toolName}:${stableStringify(call.args)}`;
+  return `${call.toolName}:${stableStringify(normalizeToolCallArgsForSignature(call.args))}`;
+}
+
+function normalizeToolCallArgsForSignature(args: Record<string, unknown>): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    normalized[key] =
+      (key === 'file_path' || key === 'path') && typeof value === 'string'
+        ? normalizeMemoryFilePathArg(value).toLowerCase()
+        : value;
+  }
+  return normalized;
 }
 
 function normalizeMemoryToolArgs(args: Record<string, unknown>): Record<string, unknown> {
@@ -116,9 +127,12 @@ function normalizeMemoryToolArgs(args: Record<string, unknown>): Record<string, 
 
 function normalizeMemoryFilePathArg(value: string): string {
   return value
+    .replace(/\s+/g, ' ')
     .replace(/\\/g, '/')
     .replace(/\/{2,}/g, '/')
-    .trim();
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
 }
 
 function stableStringify(value: unknown): string {

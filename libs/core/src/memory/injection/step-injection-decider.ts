@@ -241,10 +241,7 @@ function normalizeAccessedFilePath(filePath: unknown): string {
   if (typeof filePath !== 'string') {
     return '';
   }
-  return filePath
-    .replace(/\\/g, '/')
-    .replace(/\/{2,}/g, '/')
-    .trim();
+  return normalizeInjectionFilePath(filePath);
 }
 
 function normalizeSearchPattern(pattern: unknown): string {
@@ -306,11 +303,7 @@ function uniqueFileRefs(files: readonly string[]): string[] {
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const file of files) {
-    const normalized = file
-      .replace(/\s+/g, ' ')
-      .replace(/\\/g, '/')
-      .replace(/\/+/g, '/')
-      .trim();
+    const normalized = normalizeInjectionFilePath(file);
     if (!normalized) {
       continue;
     }
@@ -326,6 +319,16 @@ function uniqueFileRefs(files: readonly string[]): string[] {
   return unique;
 }
 
+function normalizeInjectionFilePath(filePath: string): string {
+  return filePath
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
+}
+
 function truncateText(
   text: string,
   maxChars: number,
@@ -335,5 +338,15 @@ function truncateText(
 }
 
 function uniqueInOrder(values: readonly string[]): string[] {
-  return [...new Set(values)];
+  const unique: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const key = value.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
 }

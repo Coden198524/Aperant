@@ -834,6 +834,7 @@ function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryR
       MEMORY_STORE_RELATED_MODULE_LIMIT,
       MEMORY_STORE_RELATED_MODULE_MAX_CHARS,
       MEMORY_STORE_RELATED_MODULE_MAX_TOKENS,
+      normalizeMemoryTextDedupeKey,
     ),
     citationText: compactOptionalMemoryStorageText(
       entry.citationText,
@@ -918,16 +919,41 @@ function compactMemoryStringList(
   limit: number,
   maxItemChars: number,
   maxItemTokens: number,
+  getDedupeKey: (value: string) => string = identityMemoryTextDedupeKey,
 ): string[] | undefined {
   if (!values) {
     return undefined;
   }
 
-  const compacted = values
-    .map((value) => compactMemoryListItem(value, maxItemChars, maxItemTokens))
-    .filter((value) => value.length > 0);
+  const seen = new Set<string>();
+  const compacted: string[] = [];
+  for (const value of values) {
+    const compactedItem = compactMemoryListItem(value, maxItemChars, maxItemTokens);
+    if (!compactedItem) {
+      continue;
+    }
 
-  return Array.from(new Set(compacted)).slice(0, Math.max(0, limit));
+    const key = getDedupeKey(compactedItem);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    compacted.push(compactedItem);
+    if (compacted.length >= Math.max(0, limit)) {
+      break;
+    }
+  }
+
+  return compacted;
+}
+
+function identityMemoryTextDedupeKey(value: string): string {
+  return value;
+}
+
+function normalizeMemoryTextDedupeKey(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 function compactMemoryPathList(

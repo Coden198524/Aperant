@@ -232,15 +232,20 @@ describe('WorkerObserverProxy', () => {
           'src/auth/token.ts',
           ' src\\auth\\token.ts ',
           'src/auth//token.ts',
+          './SRC/auth/token.ts',
           ...Array.from(
             { length: 20 },
             (_, index) => `src/very/deep/path/${index}/${'file-name-segment-'.repeat(18)}tail-${index}.ts`,
           ),
         ],
-        relatedModules: Array.from(
-          { length: 20 },
-          (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
-        ),
+        relatedModules: [
+          ' auth ',
+          'AUTH',
+          ...Array.from(
+            { length: 20 },
+            (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
+          ),
+        ],
         recordAccess: true,
         filter: () => true,
       });
@@ -267,6 +272,8 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.filters.relatedFiles?.every((file) => !file.includes('[omitted]'))).toBe(true);
       expect(sentMsg.filters.relatedFiles?.some((file) => file.includes('tail-0.ts'))).toBe(true);
       expect(sentMsg.filters.relatedModules).toHaveLength(12);
+      expect(sentMsg.filters.relatedModules?.[0]).toBe('auth');
+      expect(sentMsg.filters.relatedModules).not.toContain('AUTH');
       expect(sentMsg.filters.relatedModules?.every((module) => module.length <= 96)).toBe(true);
       expect(sentMsg.filters.relatedModules?.every((module) => estimateTokens(module) <= 32)).toBe(true);
       expect(sentMsg.filters.recordAccess).toBe(true);
@@ -375,12 +382,18 @@ describe('WorkerObserverProxy', () => {
             ? ' src\\auth\\token.ts '
             : index === 1
               ? 'src/auth//token.ts'
-              : `src/very/deep/path/${index}/${'file-name-segment-'.repeat(20)}tail-${index}.ts`,
+              : index === 2
+                ? './SRC/auth/token.ts'
+                : `src/very/deep/path/${index}/${'file-name-segment-'.repeat(20)}tail-${index}.ts`,
         ),
-        relatedModules: Array.from(
-          { length: 20 },
-          (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
-        ),
+        relatedModules: [
+          ' auth ',
+          'AUTH',
+          ...Array.from(
+            { length: 20 },
+            (_, index) => `module-${index}-${'nested-'.repeat(20)}tail`,
+          ),
+        ],
         citationText: `CITATION_HEAD ${'citation detail '.repeat(120)} CITATION_TAIL`,
         contextPrefix: `PREFIX_HEAD ${'context detail '.repeat(80)} PREFIX_TAIL`,
       });
@@ -409,8 +422,10 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.entry.relatedFiles?.[0]).toBe('src/auth/token.ts');
       expect(sentMsg.entry.relatedFiles?.every((file) => file.length <= 220)).toBe(true);
       expect(sentMsg.entry.relatedFiles?.every((file) => !file.includes('[omitted]'))).toBe(true);
-      expect(sentMsg.entry.relatedFiles?.some((file) => file.includes('tail-2.ts'))).toBe(true);
+      expect(sentMsg.entry.relatedFiles?.some((file) => file.includes('tail-3.ts'))).toBe(true);
       expect(sentMsg.entry.relatedModules).toHaveLength(16);
+      expect(sentMsg.entry.relatedModules?.[0]).toBe('auth');
+      expect(sentMsg.entry.relatedModules).not.toContain('AUTH');
       expect(sentMsg.entry.relatedModules?.every((module) => module.length <= 96)).toBe(true);
       expect(sentMsg.entry.relatedModules?.every((module) => estimateTokens(module) <= 32)).toBe(true);
       expect(sentMsg.entry.citationText?.length).toBeLessThanOrEqual(1000);

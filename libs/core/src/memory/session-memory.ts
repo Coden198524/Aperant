@@ -461,7 +461,12 @@ function findEquivalentSessionDiscoveryPath(
 }
 
 function normalizeSessionDiscoveryPath(filePath: string): string {
-  return filePath.trim().replace(/\\/g, '/').replace(/\/+/g, '/');
+  return filePath
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
 }
 
 function normalizeSessionDiscoveryPathKey(filePath: string): string {

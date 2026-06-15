@@ -85,9 +85,9 @@ describe('Scratchpad', () => {
 
   describe('recordToolCall', () => {
     it('tracks file access counts', () => {
-      scratchpad.recordToolCall('Read', { file_path: '/src/auth.ts' }, 1);
-      scratchpad.recordToolCall('Read', { file_path: '/src/auth.ts' }, 2);
-      expect(scratchpad.analytics.fileAccessCounts.get('/src/auth.ts')).toBe(2);
+      scratchpad.recordToolCall('Read', { file_path: './src/auth.ts/' }, 1);
+      scratchpad.recordToolCall('Read', { file_path: 'src\\auth.ts' }, 2);
+      expect(scratchpad.analytics.fileAccessCounts.get('src/auth.ts')).toBe(2);
     });
 
     it('records first and last access step', () => {
@@ -104,8 +104,8 @@ describe('Scratchpad', () => {
     });
 
     it('flags config files when accessed', () => {
-      scratchpad.recordToolCall('Read', { file_path: '/package.json' }, 2);
-      expect(scratchpad.analytics.configFilesTouched.has('/package.json')).toBe(true);
+      scratchpad.recordToolCall('Read', { file_path: './package.json/' }, 2);
+      expect(scratchpad.analytics.configFilesTouched.has('package.json')).toBe(true);
     });
 
     it('maintains circular buffer of last 8 tool calls', () => {
@@ -120,11 +120,11 @@ describe('Scratchpad', () => {
     });
 
     it('detects co-access within 5-step window', () => {
-      scratchpad.recordToolCall('Read', { file_path: '/src/a.ts' }, 1);
-      scratchpad.recordToolCall('Read', { file_path: '/src/b.ts' }, 3); // within 5 steps of a.ts
+      scratchpad.recordToolCall('Read', { file_path: './src/a.ts/' }, 1);
+      scratchpad.recordToolCall('Read', { file_path: 'src\\b.ts' }, 3); // within 5 steps of a.ts
       // b.ts should be co-accessed with a.ts
-      const coAccessed = scratchpad.analytics.intraSessionCoAccess.get('/src/b.ts');
-      expect(coAccessed?.has('/src/a.ts')).toBe(true);
+      const coAccessed = scratchpad.analytics.intraSessionCoAccess.get('src/b.ts');
+      expect(coAccessed?.has('src/a.ts')).toBe(true);
     });
 
     it('does not flag co-access outside 5-step window', () => {
@@ -137,13 +137,13 @@ describe('Scratchpad', () => {
 
   describe('recordFileEdit', () => {
     it('adds to fileEditSet', () => {
-      scratchpad.recordFileEdit('/src/routes.ts');
-      expect(scratchpad.analytics.fileEditSet.has('/src/routes.ts')).toBe(true);
+      scratchpad.recordFileEdit('./src/routes.ts/');
+      expect(scratchpad.analytics.fileEditSet.has('src/routes.ts')).toBe(true);
     });
 
     it('adds config files to configFilesTouched', () => {
-      scratchpad.recordFileEdit('/tsconfig.json');
-      expect(scratchpad.analytics.configFilesTouched.has('/tsconfig.json')).toBe(true);
+      scratchpad.recordFileEdit('./tsconfig.json/');
+      expect(scratchpad.analytics.configFilesTouched.has('tsconfig.json')).toBe(true);
     });
   });
 

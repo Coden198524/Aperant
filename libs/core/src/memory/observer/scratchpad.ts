@@ -192,7 +192,7 @@ export class Scratchpad {
           if (!this.analytics.intraSessionCoAccess.has(filePath)) {
             this.analytics.intraSessionCoAccess.set(filePath, new Set());
           }
-          this.analytics.intraSessionCoAccess.get(filePath)!.add(otherFile);
+          this.analytics.intraSessionCoAccess.get(filePath)?.add(otherFile);
         }
       }
     }
@@ -244,9 +244,14 @@ export class Scratchpad {
    * Record edit of a file (called from Edit/Write tool calls).
    */
   recordFileEdit(filePath: string): void {
-    this.analytics.fileEditSet.add(filePath);
-    if (isConfigFile(filePath)) {
-      this.analytics.configFilesTouched.add(filePath);
+    const normalizedFilePath = normalizeScratchpadFilePath(filePath);
+    if (!normalizedFilePath) {
+      return;
+    }
+
+    this.analytics.fileEditSet.add(normalizedFilePath);
+    if (isConfigFile(normalizedFilePath)) {
+      this.analytics.configFilesTouched.add(normalizedFilePath);
     }
   }
 
@@ -359,20 +364,24 @@ export class Scratchpad {
     toolName: string,
     args: Record<string, unknown>,
   ): string | null {
-    switch (toolName) {
-      case 'Read':
-        return typeof args.file_path === 'string' ? args.file_path : null;
-      case 'Edit':
-        return typeof args.file_path === 'string' ? args.file_path : null;
-      case 'Write':
-        return typeof args.file_path === 'string' ? args.file_path : null;
-      case 'Glob':
-        return null; // Glob returns multiple files — handle separately
-      case 'Grep':
-        return typeof args.path === 'string' ? args.path : null;
-      default:
-        return null;
-    }
+    const filePath = (() => {
+      switch (toolName) {
+        case 'Read':
+          return typeof args.file_path === 'string' ? args.file_path : null;
+        case 'Edit':
+          return typeof args.file_path === 'string' ? args.file_path : null;
+        case 'Write':
+          return typeof args.file_path === 'string' ? args.file_path : null;
+        case 'Glob':
+          return null; // Glob returns multiple files.
+        case 'Grep':
+          return typeof args.path === 'string' ? args.path : null;
+        default:
+          return null;
+      }
+    })();
+
+    return filePath ? normalizeScratchpadFilePath(filePath) : null;
   }
 
   private serializeAnalytics(): Record<string, unknown> {
@@ -388,6 +397,17 @@ export class Scratchpad {
       peakContextTokens: this.analytics.peakContextTokens,
     };
   }
+}
+
+function normalizeScratchpadFilePath(filePath: string): string | null {
+  const normalized = filePath
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
+  return normalized.length > 0 ? normalized : null;
 }
 
 function summarizeScratchpadToolResultErrorText(result: unknown): string | undefined {
@@ -466,6 +486,7 @@ function hasScratchpadFailureStatus(result: unknown): boolean {
   if (!result || typeof result !== 'object' || Array.isArray(result)) {
     return false;
   }
+
   const record = result as Record<string, unknown>;
   const exitCode = record.exit_code ?? record.exitCode ?? record.code;
   if (typeof exitCode === 'number') {

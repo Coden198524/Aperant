@@ -132,14 +132,14 @@ describe('Autocode memory runtime context formatting', () => {
         type: 'decision',
         content: 'Keep auth token refresh retries inside the session store boundary.',
         confidence: 0.94,
-        relatedFiles: ['SRC/auth/session-store.ts', 'src/auth/retry-policy.ts'],
+        relatedFiles: ['./SRC/auth/session-store.ts/', 'src/auth/retry-policy.ts'],
       }),
     ]);
 
     expect(formatted).toContain('Refresh auth state before notifying renderer listeners.');
     expect(formatted).toContain('Keep auth token refresh retries inside the session store boundary.');
     expect((formatted.match(/src\/auth\/session-store\.ts/g) ?? [])).toHaveLength(1);
-    expect(formatted).not.toContain('SRC/auth/session-store.ts');
+    expect(formatted).not.toContain('./SRC/auth/session-store.ts');
     expect(formatted).toContain('src/auth/token-cache.ts');
     expect(formatted).toContain('src/auth/retry-policy.ts');
   });
@@ -412,6 +412,42 @@ describe('Autocode memory runtime context formatting', () => {
     expect(insight.workUnit.description ?? '').toContain('DESCRIPTION_TAIL_SHOULD_BE_PRESERVED');
     expect(insight.keyFiles).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT);
     expect(insight.keyFiles.every((file) => !file.includes('[middle omitted]'))).toBe(true);
+  });
+
+  it('deduplicates equivalent work-unit outcome metadata before spending budgets', () => {
+    const input = {
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workUnitId: '1.1',
+      outcome: 'success' as const,
+      relatedFiles: [
+        'src\\auth\\token.ts',
+        './SRC/auth/token.ts/',
+        'src/auth/retry-policy.ts',
+      ],
+      relatedModules: [' auth ', 'AUTH', 'billing'],
+      tags: [' custom-tag ', 'CUSTOM-TAG'],
+      upstreamTaskIds: [' task-1 ', 'TASK-1', 'task-2'],
+      completedAt: '2026-06-14T00:00:00.000Z',
+    };
+
+    const entry = buildAutocodeWorkUnitOutcomeMemoryEntry(input);
+    const insight = buildAutocodeWorkUnitOutcomeSessionInsight(input);
+    const entryTags = entry.tags ?? [];
+
+    expect(entry.relatedFiles).toEqual([
+      'src/auth/token.ts',
+      'src/auth/retry-policy.ts',
+    ]);
+    expect(entry.relatedModules).toEqual(['auth', 'billing']);
+    expect(entryTags.filter((tag) => tag.toLowerCase() === 'custom-tag')).toHaveLength(1);
+    expect(entryTags).toContain('upstream:task-1');
+    expect(entryTags).not.toContain('upstream:TASK-1');
+    expect(insight.keyFiles).toEqual([
+      'src/auth/token.ts',
+      'src/auth/retry-policy.ts',
+    ]);
+    expect(insight.workUnit.upstreamTaskIds).toEqual(['task-1', 'task-2']);
   });
 
   it('bounds work-unit outcome tags, modules, and upstream task ids', () => {

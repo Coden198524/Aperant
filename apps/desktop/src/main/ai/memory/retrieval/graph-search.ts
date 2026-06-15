@@ -75,7 +75,7 @@ function normalizeRecentFiles(recentFiles: string[]): string[] {
   const seen = new Set<string>();
   const normalizedFiles: string[] = [];
   for (const file of recentFiles) {
-    const normalized = file.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+    const normalized = normalizeGraphFilePath(file);
     if (!normalized) {
       continue;
     }
@@ -103,6 +103,21 @@ function normalizeGraphId(value: unknown): string | undefined {
     return undefined;
   }
   const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeGraphFilePath(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
   return normalized.length > 0 ? normalized : undefined;
 }
 
@@ -175,7 +190,7 @@ async function collectCoAccessMemories(
     });
 
     for (const row of coAccess.rows) {
-      const neighbor = normalizeGraphId(row.neighbor);
+      const neighbor = normalizeGraphFilePath(row.neighbor);
       const weight = normalizeGraphScore(row.weight);
       if (!neighbor || weight === undefined) {
         continue;

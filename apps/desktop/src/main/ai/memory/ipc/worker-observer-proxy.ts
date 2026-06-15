@@ -388,11 +388,12 @@ function compactMemoryIpcTextList(
       maxItemTokens,
       marker,
     );
-    if (!item || seen.has(item)) {
+    const key = normalizeMemoryIpcTextKey(item);
+    if (!item || seen.has(key)) {
       continue;
     }
 
-    seen.add(item);
+    seen.add(key);
     compacted.push(item);
     if (compacted.length >= itemLimit) {
       break;
@@ -421,7 +422,7 @@ function compactMemoryIpcPathList(
   const compacted: string[] = [];
   for (const value of values) {
     const item = compactMemoryIpcPathTailToBudget(value, maxItemChars, maxItemTokens);
-    const key = item.toLowerCase();
+    const key = normalizeMemoryIpcPathKey(item);
     if (!item || seen.has(key)) {
       continue;
     }
@@ -440,11 +441,21 @@ function normalizeMemoryIpcListItem(value: string): string {
   return value.replace(/\s+/g, ' ').trim();
 }
 
+function normalizeMemoryIpcTextKey(value: string): string {
+  return normalizeMemoryIpcListItem(value).toLowerCase();
+}
+
 function normalizeMemoryIpcPath(value: string): string {
   return value
     .trim()
     .replace(/\\/g, '/')
-    .replace(/\/{2,}/g, '/');
+    .replace(/\/{2,}/g, '/')
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
+}
+
+function normalizeMemoryIpcPathKey(value: string): string {
+  return normalizeMemoryIpcPath(value).toLowerCase();
 }
 
 function compactMemoryIpcPathTailToBudget(value: string, maxChars: number, maxTokens: number): string {

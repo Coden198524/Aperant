@@ -456,7 +456,7 @@ function truncateText(text: string, maxChars: number): string {
 }
 
 function truncatePathTail(path: string, maxChars: number): string {
-  const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  const normalized = normalizePromptPath(path) ?? '';
   if (maxChars <= 0) {
     return '';
   }
@@ -731,7 +731,9 @@ function normalizePromptPath(value: string): string | undefined {
     .replace(/\s+/g, ' ')
     .replace(/\\/g, '/')
     .replace(/\/+/g, '/')
-    .trim();
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
   return normalized.length > 0 ? normalized : undefined;
 }
 

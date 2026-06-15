@@ -812,11 +812,12 @@ function compactAutocodeMemoryRuntimeBoundedTextList(
     const compacted = truncateAutocodeMemoryRuntimeText(value, maxItemChars, {
       preserveTail: true,
     });
-    if (!compacted || seen.has(compacted)) {
+    const key = normalizeRuntimeTextKey(compacted);
+    if (!compacted || seen.has(key)) {
       continue;
     }
 
-    seen.add(compacted);
+    seen.add(key);
     compactedValues.push(compacted);
     if (compactedValues.length >= itemLimit) {
       break;
@@ -830,7 +831,7 @@ function truncateAutocodeMemoryRuntimePathTail(
   path: string,
   maxChars: number,
 ): string {
-  const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  const normalized = normalizeRuntimePath(path);
   if (maxChars <= 0) {
     return '';
   }
@@ -849,7 +850,7 @@ function truncateAutocodeMemoryRuntimePathTailToTokenBudget(
     return '';
   }
 
-  const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  const normalized = normalizeRuntimePath(path);
   const initial = truncateAutocodeMemoryRuntimePathTail(normalized, maxChars);
   if (estimateTokens(initial) <= maxTokens) {
     return initial;
@@ -958,11 +959,17 @@ function normalizeRuntimePath(value: string): string {
     .replace(/\s+/g, ' ')
     .replace(/\\/g, '/')
     .replace(/\/+/g, '/')
-    .trim();
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '');
 }
 
 function normalizeRuntimePathKey(value: string): string {
   return normalizeRuntimePath(value).toLowerCase();
+}
+
+function normalizeRuntimeTextKey(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 export type AutocodeMemoryRuntimeMemoryType = MemoryType;

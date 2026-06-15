@@ -82,7 +82,7 @@ describe('packContext memory quality gate', () => {
           id: 'metadata',
           content: '  Metadata \n memory  ',
           citationText: '  Source \n citation  ',
-          relatedFiles: [' src\\auth.ts ', 'SRC/auth.ts', ' src/session.ts '],
+          relatedFiles: [' src\\auth.ts ', './SRC/auth.ts/', ' src/session.ts ', './src/session.ts/'],
         }),
       ],
       'implement',
@@ -92,7 +92,8 @@ describe('packContext memory quality gate', () => {
     expect(result).toContain('Metadata memory');
     expect(result).toContain('[^ Memory: Source citation]');
     expect(result).toContain('src/auth.ts, src/session.ts');
-    expect(result).not.toContain('SRC/auth.ts');
+    expect(result).not.toContain('./SRC/auth.ts');
+    expect(result).not.toContain('./src/session.ts');
     expect(result).not.toContain('blank id should be skipped');
     expect(result).not.toContain('Second duplicate should be skipped.');
     expect(result).not.toContain('Bad confidence should be skipped.');

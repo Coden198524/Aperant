@@ -36,7 +36,7 @@ describe('searchGraph', () => {
   it('normalizes and deduplicates recent files before querying', async () => {
     const { client, execute } = makeMockClient();
 
-    await searchGraph(client, ['src\\auth.ts', 'src/auth.ts', 'src//session.ts'], 'proj-a', 2.9);
+    await searchGraph(client, ['src\\auth.ts', './SRC/auth.ts/', 'src/auth.ts', 'src//session.ts/'], 'proj-a', 2.9);
 
     const firstStatement = execute.mock.calls[0][0] as { args: unknown[] };
     expect(firstStatement.args).toEqual(['proj-a', 'src/auth.ts', 'src/session.ts', 2]);
@@ -58,7 +58,7 @@ describe('searchGraph', () => {
   it('scales internal neighbor and memory query limits down', async () => {
     const execute = vi.fn(async (statement: { sql: string }) => {
       if (statement.sql.includes('observer_co_access_edges')) {
-        return { rows: [{ neighbor: 'src/session.ts', weight: 0.9 }] };
+        return { rows: [{ neighbor: './src\\session.ts/', weight: 0.9 }] };
       }
       if (statement.sql.includes('graph_closure')) {
         return { rows: [{ descendant_id: 'node-1' }] };
@@ -76,6 +76,7 @@ describe('searchGraph', () => {
     const closureMemoryCall = statements.find((statement) => statement.sql.includes('target_node_id = ?'));
 
     expect(coAccessCall?.args.at(-1)).toBe(2);
+    expect(coAccessMemoryCall?.args).toEqual(['proj-a', '%src/session.ts%', 2]);
     expect(coAccessMemoryCall?.args.at(-1)).toBe(2);
     expect(closureCall?.args.at(-1)).toBe(2);
     expect(closureMemoryCall?.args.at(-1)).toBe(2);
