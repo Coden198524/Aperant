@@ -8,6 +8,7 @@
 import { createHash } from 'node:crypto';
 
 import type { Scratchpad } from '../observer/scratchpad.js';
+import { stripLowValueMemoryLines } from '../outcome-content.js';
 import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer.js';
 import type {
   AutocodeMemoryRuntimeRecentToolCallContext,
@@ -17,7 +18,6 @@ import type { AcuteCandidate, Memory, MemoryService } from '../types.js';
 import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { selectMemoryContextItems } from './context-selection.js';
 import { compactMemoryInjectionText } from './text-compaction.js';
-import { stripLowValueMemoryLines } from '../outcome-content.js';
 
 // ============================================================
 // TYPES
@@ -319,7 +319,7 @@ function getScratchpadEntryText(entry: AcuteCandidate): string {
   const rawData = isRecord(entry.rawData) ? entry.rawData : {};
   const value = rawData.triggeringText ?? rawData.matchedText;
   return typeof value === 'string'
-    ? stripLowValueMemoryLines(value).replace(/\s+/g, ' ').trim()
+    ? stripLowValueMemoryLines(value)
     : '';
 }
 
