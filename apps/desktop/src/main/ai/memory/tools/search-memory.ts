@@ -270,7 +270,7 @@ function formatNoSearchMemoryResults(types: MemoryType[] | undefined): string {
   if (!machineKinds || machineKinds.length === 0) {
     return 'No relevant memories found for this query.';
   }
-  return `No relevant ${machineKinds.join('/')} memories found; continue with focused inspection instead of repeating this search.`;
+  return `No relevant ${machineKinds.join('/')} memories found; inspect focused files next.`;
 }
 
 function inferSearchTypes(query: string, requestedTypes: MemoryType[] | undefined): MemoryType[] | undefined {

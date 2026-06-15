@@ -258,7 +258,7 @@ describe('memory agent tools', () => {
     >(tool, { query: 'token cost and files to read for auth module', limit: 3 });
 
     expect(result).toBe(
-      'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
+      'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
     );
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       types: ['context_cost', 'prefetch_pattern'],
@@ -1372,6 +1372,7 @@ describe('memory agent tools', () => {
 
   it.each([
     'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
+    'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
     'Memory search results for "auth": 1. [gotcha] Refresh token cache before notifying listeners.',
     'Memory system not available in this session.',
   ])('skips memory tool echo responses before persistence: %s', async (content) => {
