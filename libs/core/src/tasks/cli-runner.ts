@@ -671,15 +671,19 @@ const CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS = 1200;
 const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;
 const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;
 const CLI_MEMORY_STORAGE_FILE_REF_MAX_CHARS = 160;
-const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [
-  /^(?:Summary:\\s*)?Efficient token usage\\b/i,
-  /^(?:Summary:\\s*)?High token usage per step\\b/i,
+const CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS = [
   /^(?:Summary:\\s*)?No memory search run\\b/i,
   /^(?:Summary:\\s*)?No relevant (?:[\\w/-]+\\s+)*memories found\\b/i,
   /^(?:Summary:\\s*)?Memory search results\\b/i,
   /^(?:Summary:\\s*)?Memory system not available\\b/i,
-  /^(?:Summary:\\s*)?Memory (?:recorded|skipped|noted locally|system not available)\\b/i,
+  /^(?:Summary:\\s*)?Memory (?:recorded|skipped|noted locally|search unavailable|system not available)\\b/i,
   /^(?:Summary:\\s*)?Work unit .+ finished with outcome:\\s*success\\.?$/i,
+];
+const CLI_LOW_VALUE_MEMORY_LINE_PATTERNS = [
+  ...CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS,
+  /^(?:Summary:\\s*)?Efficient token usage\\b/i,
+  /^(?:Summary:\\s*)?High token usage per step\\b/i,
+  /^(?:Summary:\\s*)?inspect focused files next\\.?$/i,
   /^(?:Summary:\\s*)?Completed quickly with few steps\\b/i,
   /^(?:Summary:\\s*)?Many steps required\\b/i,
   /^(?:Summary:\\s*)?Used diverse set of tools\\b/i,
@@ -802,7 +806,10 @@ function stripCliLowValueMemoryText(content) {
 
 function stripCliLowValueMemoryLine(line) {
   const trimmed = String(line || '').trim();
-  if (!trimmed || isCliLowValueMemoryLine(trimmed)) {
+  if (!trimmed) {
+    return '';
+  }
+  if (isCliLowValueWholeMemoryLine(trimmed)) {
     return '';
   }
   const fragments = trimmed
@@ -810,7 +817,7 @@ function stripCliLowValueMemoryLine(line) {
     .map((fragment) => fragment.trim())
     .filter(Boolean);
   if (fragments.length <= 1) {
-    return trimmed;
+    return isCliLowValueMemoryLine(trimmed) ? '' : trimmed;
   }
   return fragments
     .filter((fragment) => !isCliLowValueMemoryLine(fragment))
@@ -820,6 +827,10 @@ function stripCliLowValueMemoryLine(line) {
 
 function isCliLowValueMemoryLine(line) {
   return CLI_LOW_VALUE_MEMORY_LINE_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+function isCliLowValueWholeMemoryLine(line) {
+  return CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS.some((pattern) => pattern.test(line));
 }
 
 function limitCliMemoryContext(value) {

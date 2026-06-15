@@ -489,7 +489,9 @@ describe('WorkerBridge', () => {
           type: 'gotcha',
           content: [
             'npm run typecheck passed.',
+            'Memory search unavailable; inspect focused files next.',
             'Prefer stable worker memory IPC request IDs when retrying searches.',
+            'Memory noted locally, but could not be persisted.',
             'No issues found.',
             'Completed at: 2026-06-15T12:00:00.000Z',
           ].join('\n'),
@@ -526,6 +528,8 @@ describe('WorkerBridge', () => {
         'Prefer stable worker memory IPC request IDs when retrying searches.',
       );
       expect(response.memories[0].content).not.toContain('typecheck passed');
+      expect(response.memories[0].content).not.toContain('Memory search unavailable');
+      expect(response.memories[0].content).not.toContain('could not be persisted');
       expect(response.memories[0].content).not.toContain('No issues found');
       expect(response.memories[0].content).not.toContain('Completed at');
       expect(response.memories[1].content).toContain('High token usage per step');

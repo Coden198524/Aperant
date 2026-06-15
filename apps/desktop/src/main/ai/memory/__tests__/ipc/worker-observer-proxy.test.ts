@@ -159,7 +159,9 @@ describe('WorkerObserverProxy', () => {
     it('strips low-value tool result lines before posting observation IPC', () => {
       proxy.onToolResult('Bash', [
         'npm run typecheck passed.',
+        'Memory search unavailable; inspect focused files next.',
         'Retry import scans with --runInBand when the sqlite watcher holds the lock.',
+        'Memory noted locally, but could not be persisted.',
         'No issues found.',
         'Completed at: 2026-06-15T12:00:00.000Z',
       ].join('\n'), 5);
@@ -171,6 +173,8 @@ describe('WorkerObserverProxy', () => {
         'Retry import scans with --runInBand when the sqlite watcher holds the lock.',
       );
       expect(sentMsg.result).not.toContain('typecheck passed');
+      expect(sentMsg.result).not.toContain('Memory search unavailable');
+      expect(sentMsg.result).not.toContain('could not be persisted');
       expect(sentMsg.result).not.toContain('No issues found');
       expect(sentMsg.result).not.toContain('Completed at');
     });
@@ -492,7 +496,9 @@ describe('WorkerObserverProxy', () => {
         type: 'gotcha',
         content: [
           'npm run typecheck passed.',
+          'Memory search unavailable; inspect focused files next.',
           'Strip status-only lines before proxying worker memory writes.',
+          'Memory noted locally, but could not be persisted.',
           'No issues found.',
           'Completed at: 2026-06-15T12:00:00.000Z',
         ].join('\n'),
@@ -506,6 +512,8 @@ describe('WorkerObserverProxy', () => {
         'Strip status-only lines before proxying worker memory writes.',
       );
       expect(sentMsg.entry.content).not.toContain('typecheck passed');
+      expect(sentMsg.entry.content).not.toContain('Memory search unavailable');
+      expect(sentMsg.entry.content).not.toContain('could not be persisted');
       expect(sentMsg.entry.content).not.toContain('No issues found');
       expect(sentMsg.entry.content).not.toContain('Completed at');
 

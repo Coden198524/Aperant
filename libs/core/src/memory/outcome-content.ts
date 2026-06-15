@@ -1,12 +1,17 @@
-const LOW_VALUE_OUTCOME_LINE_PATTERNS = [
-	/^(?:Summary:\s*)?Efficient token usage\b/i,
-	/^(?:Summary:\s*)?High token usage per step\b/i,
+const LOW_VALUE_WHOLE_LINE_PATTERNS = [
 	/^(?:Summary:\s*)?No memory search run\b/i,
 	/^(?:Summary:\s*)?No relevant (?:[\w/-]+\s+)*memories found\b/i,
 	/^(?:Summary:\s*)?Memory search results\b/i,
 	/^(?:Summary:\s*)?Memory system not available\b/i,
-	/^(?:Summary:\s*)?Memory (?:recorded|skipped|noted locally|system not available)\b/i,
+	/^(?:Summary:\s*)?Memory (?:recorded|skipped|noted locally|search unavailable|system not available)\b/i,
 	/^(?:Summary:\s*)?Work unit .+ finished with outcome:\s*success\.?$/i,
+] as const;
+
+const LOW_VALUE_OUTCOME_LINE_PATTERNS = [
+	...LOW_VALUE_WHOLE_LINE_PATTERNS,
+	/^(?:Summary:\s*)?Efficient token usage\b/i,
+	/^(?:Summary:\s*)?High token usage per step\b/i,
+	/^(?:Summary:\s*)?inspect focused files next\.?$/i,
 	/^(?:Summary:\s*)?Completed quickly with few steps\b/i,
 	/^(?:Summary:\s*)?Many steps required\b/i,
 	/^(?:Summary:\s*)?Used diverse set of tools\b/i,
@@ -44,7 +49,10 @@ export function stripLowValueOutcomeLines(content: string): string {
 
 function stripLowValueMemoryLine(line: string): string {
 	const trimmed = line.trim();
-	if (!trimmed || isLowValueMemoryLine(trimmed)) {
+	if (!trimmed) {
+		return "";
+	}
+	if (isLowValueWholeMemoryLine(trimmed)) {
 		return "";
 	}
 
@@ -53,7 +61,7 @@ function stripLowValueMemoryLine(line: string): string {
 		.map((fragment) => fragment.trim())
 		.filter(Boolean);
 	if (fragments.length <= 1) {
-		return trimmed;
+		return isLowValueMemoryLine(trimmed) ? "" : trimmed;
 	}
 
 	return fragments
@@ -64,4 +72,8 @@ function stripLowValueMemoryLine(line: string): string {
 
 function isLowValueMemoryLine(line: string): boolean {
 	return LOW_VALUE_OUTCOME_LINE_PATTERNS.some((pattern) => pattern.test(line));
+}
+
+function isLowValueWholeMemoryLine(line: string): boolean {
+	return LOW_VALUE_WHOLE_LINE_PATTERNS.some((pattern) => pattern.test(line));
 }

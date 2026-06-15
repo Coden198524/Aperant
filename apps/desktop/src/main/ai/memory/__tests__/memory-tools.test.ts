@@ -1457,8 +1457,10 @@ describe('memory agent tools', () => {
   it.each([
     'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
     'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
+    'Memory search unavailable; inspect focused files next.',
     'Memory search results for "auth": 1. [gotcha] Refresh token cache before notifying listeners.',
     'Memory system not available in this session.',
+    'Memory noted locally, but could not be persisted.',
   ])('skips memory tool echo responses before persistence: %s', async (content) => {
     const proxy = {
       searchMemory: vi.fn(),

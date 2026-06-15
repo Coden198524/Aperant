@@ -14,6 +14,8 @@ describe("low-value memory line filtering", () => {
 				"Summary: Auth module narrowed memory lookup before editing.",
 				"npm run typecheck passed.",
 				'Memory search results for "auth": 1. [gotcha] Already shown.',
+				"Memory search unavailable; inspect focused files next.",
+				"Memory noted locally, but could not be persisted.",
 				"No issues found.",
 				"Duration: 1234ms",
 				"Completed at: 2026-06-15T00:00:00.000Z",
@@ -60,6 +62,22 @@ describe("low-value memory line filtering", () => {
 		);
 
 		expect(result).toBe("Mock the OAuth clock before testing refresh retries");
+	});
+
+	it("strips leading low-value status fragments without dropping useful text", () => {
+		const result = stripLowValueMemoryLines(
+			"No issues found. Mock the OAuth clock before testing refresh retries.",
+		);
+
+		expect(result).toBe("Mock the OAuth clock before testing refresh retries.");
+	});
+
+	it("strips memory tool failure responses", () => {
+		const result = stripLowValueMemoryLines(
+			"Memory search unavailable; inspect focused files next.",
+		);
+
+		expect(result).toBe("");
 	});
 
 	it("strips localized status fragments from compact Chinese memory", () => {
