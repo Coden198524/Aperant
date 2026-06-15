@@ -1100,6 +1100,36 @@ describe('memory agent tools', () => {
     }));
   });
 
+  it('omits record_memory modules already represented by related files', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+      recordMemory: vi.fn().mockResolvedValue('ab12cd34-aaaa-bbbb-cccc-123456789abc'),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    await executeTool<
+      { type: 'gotcha'; content: string; relatedFiles: string[]; relatedModules: string[] },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: 'Use shared auth helper before retrying token refresh.',
+      relatedFiles: ['src/auth/token.ts', 'src/auth/session-store.ts'],
+      relatedModules: [
+        'src/auth/token.ts',
+        'token.ts',
+        'token',
+        'session-store',
+        'auth',
+        'token refresh',
+      ],
+    });
+
+    expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
+      relatedFiles: ['src/auth/token.ts', 'src/auth/session-store.ts'],
+      relatedModules: ['auth', 'token refresh'],
+    }));
+  });
+
   it('bounds record_memory metadata before persistence', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([]),

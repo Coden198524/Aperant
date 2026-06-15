@@ -87,11 +87,14 @@ export function createRecordMemoryTool(
         return `Memory skipped: similar memory already exists (id: ${duplicate.id.slice(0, 8)}).`;
       }
 
+      const relatedFiles = normalizeRelatedFiles(input.relatedFiles);
+      const relatedModules = normalizeRelatedModules(input.relatedModules, relatedFiles);
+
       const entry: MemoryRecordEntry = {
         type: input.type as MemoryType,
         content,
-        relatedFiles: normalizeRelatedFiles(input.relatedFiles),
-        relatedModules: normalizeRelatedModules(input.relatedModules),
+        relatedFiles,
+        relatedModules,
         confidence,
         source: 'agent_explicit',
         projectId,
@@ -195,19 +198,73 @@ function normalizeRelatedFiles(files: string[] | undefined): string[] {
   ).slice(0, MAX_RECORD_MEMORY_RELATED_FILES);
 }
 
-function normalizeRelatedModules(modules: string[] | undefined): string[] {
+function normalizeRelatedModules(
+  modules: string[] | undefined,
+  relatedFiles: readonly string[] = [],
+): string[] {
   if (!modules) {
     return [];
   }
+  const relatedFileRefs = getRelatedFileRefs(relatedFiles);
   return uniqueInOrderBy(
     modules
       .map((module) => truncateHeadTailText(
         module.replace(/\s+/g, ' ').trim(),
         MAX_RECORD_MEMORY_MODULE_CHARS,
       ))
-      .filter(Boolean),
+      .filter((module) => Boolean(module) && !isRedundantRelatedModule(module, relatedFileRefs)),
     (module) => module.toLowerCase(),
   ).slice(0, MAX_RECORD_MEMORY_RELATED_MODULES);
+}
+
+interface RelatedFileRefs {
+  paths: Set<string>;
+  fileNames: Set<string>;
+  fileStems: Set<string>;
+}
+
+function getRelatedFileRefs(files: readonly string[]): RelatedFileRefs {
+  const paths = new Set<string>();
+  const fileNames = new Set<string>();
+  const fileStems = new Set<string>();
+  for (const file of files) {
+    const normalized = normalizeToolPath(file);
+    if (!normalized) {
+      continue;
+    }
+    const pathKey = normalized.toLowerCase();
+    paths.add(pathKey);
+
+    const fileName = normalized.split('/').pop()?.toLowerCase();
+    if (!fileName) {
+      continue;
+    }
+    fileNames.add(fileName);
+    const stem = stripKnownFileExtension(fileName);
+    if (stem) {
+      fileStems.add(stem);
+    }
+  }
+  return { paths, fileNames, fileStems };
+}
+
+function isRedundantRelatedModule(module: string, relatedFileRefs: RelatedFileRefs): boolean {
+  const modulePath = normalizeToolPath(module).toLowerCase();
+  const moduleKey = module.replace(/\s+/g, ' ').trim().toLowerCase();
+  if (!moduleKey) {
+    return true;
+  }
+
+  return relatedFileRefs.paths.has(modulePath) ||
+    relatedFileRefs.fileNames.has(moduleKey) ||
+    relatedFileRefs.fileStems.has(moduleKey);
+}
+
+function stripKnownFileExtension(fileName: string): string {
+  return fileName.replace(
+    /\.(?:cjs|cts|d\.ts|e2e\.ts|js|jsx|mjs|mts|spec\.ts|test\.ts|ts|tsx)$/i,
+    '',
+  );
 }
 
 function uniqueInOrderBy(values: readonly string[], getKey: (value: string) => string): string[] {
