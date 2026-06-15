@@ -116,4 +116,37 @@ describe('implementation plan markdown', () => {
     expect(subtask.completion_summary?.length).toBeLessThanOrEqual(1200);
     expect(subtask.notes).toBe(subtask.completion_summary);
   });
+
+  it('folds repeated stored completion summary lines before updating plans', () => {
+    const plan = {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            { id: '1.1', title: 'Store compact repeated summary', status: 'pending' },
+          ],
+        },
+      ],
+    };
+    const repeatedLine = 'PLAN STORE REPEAT: same verification output without new signal.';
+    const summary = [
+      'PLAN STORE HEAD',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      'PLAN STORE TAIL',
+    ].join('\n');
+
+    const updated = updateAutocodePlanSubtask(plan, '1.1', {
+      status: 'completed',
+      completionSummary: summary,
+    });
+
+    const subtask = plan.phases[0].subtasks[0] as { completion_summary?: string; notes?: string };
+    expect(updated).toBe(true);
+    expect(subtask.completion_summary).toContain('PLAN STORE HEAD');
+    expect(subtask.completion_summary).toContain('PLAN STORE TAIL');
+    expect(subtask.completion_summary).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((subtask.completion_summary?.match(/PLAN STORE REPEAT/g) ?? [])).toHaveLength(1);
+    expect(subtask.notes).toBe(subtask.completion_summary);
+  });
 });

@@ -1,13 +1,14 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { writeFile } from 'node:fs/promises';
 import { basename, dirname, join, resolve } from 'node:path';
-import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import {
+  type AutocodeRuntimeFileWriteLockInput,
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   withAutocodeRuntimeFileWriteLock,
   withAutocodeRuntimeFileWriteLockSync,
-  type AutocodeRuntimeFileWriteLockInput,
 } from '../runtime/workspace-claims.js';
+import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
 import type {
   MutableAutocodePlan,
   MutableAutocodePlanPhase,
@@ -874,7 +875,11 @@ function compactInlineMarkdownField(value: string): string {
 }
 
 function compactStoredPlanNoteField(value: unknown): string {
-  const text = stringifyPlanValue(value).trim();
+  const text = foldRepeatedAutocodePromptLines(
+    stringifyPlanValue(value)
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n'),
+  ).trim();
   if (text.length <= MAX_AUTOCODE_PLAN_NOTE_FIELD_CHARS) {
     return text;
   }
