@@ -4,8 +4,11 @@ export const BASH_MAX_OUTPUT_LENGTH = 30_000;
 export const BASH_MAX_OUTPUT_LINE_LENGTH = 1000;
 export const AGGRESSIVE_BASH_MAX_OUTPUT_LENGTH = 8_000;
 export const AGGRESSIVE_BASH_MAX_STDERR_LENGTH = 6_000;
+export const BASH_REPEATED_LINE_THRESHOLD = 4;
 const BASH_OUTPUT_TRUNCATION_HEAD_RATIO = 0.65;
 const BASH_LINE_OMISSION_MARKER = ' ... [line middle omitted] ... ';
+// biome-ignore lint/complexity/useRegexLiterals: Literal form triggers noControlCharactersInRegex.
+const NON_ASCII_PATTERN = new RegExp('[^\\u0000-\\u007F]');
 
 export interface BashExecutionResult {
   command: string;
@@ -27,7 +30,8 @@ export function truncateBashOutput(
   output: string,
   maxLength: number = BASH_MAX_OUTPUT_LENGTH,
 ): string {
-  const compactOutput = compactBashOutputLines(output, BASH_MAX_OUTPUT_LINE_LENGTH);
+  const condensedOutput = collapseRepeatedBashOutputLines(output);
+  const compactOutput = compactBashOutputLines(condensedOutput, BASH_MAX_OUTPUT_LINE_LENGTH);
   if (compactOutput.length <= maxLength) {
     return compactOutput;
   }
@@ -39,11 +43,12 @@ export function truncateBashOutput(
 }
 
 export function truncateCompilerOutput(output: string, maxLength: number): string {
-  if (output.length <= maxLength) {
-    return output;
+  const condensedOutput = collapseRepeatedBashOutputLines(output);
+  if (condensedOutput.length <= maxLength) {
+    return condensedOutput;
   }
 
-  const lines = output.split(/\r?\n/);
+  const lines = condensedOutput.split(/\r?\n/);
   const diagnosticLines = lines.filter((line) => {
     const lower = line.toLowerCase();
     return (
@@ -63,8 +68,36 @@ export function truncateCompilerOutput(output: string, maxLength: number): strin
   return appendTruncationNotice(
     compactBashOutputLines(compact, BASH_MAX_OUTPUT_LINE_LENGTH),
     maxLength,
-    `\n\n[Compiler output truncated - ${output.length} characters total; showing diagnostic head and tail. Re-run with a narrower command if more detail is needed.]`,
+    `\n\n[Compiler output truncated - ${condensedOutput.length} characters after folding repeated lines; showing diagnostic head and tail. Re-run with a narrower command if more detail is needed.]`,
   );
+}
+
+export function collapseRepeatedBashOutputLines(
+  output: string,
+  repeatedLineThreshold: number = BASH_REPEATED_LINE_THRESHOLD,
+): string {
+  if (output.length === 0 || repeatedLineThreshold <= 1) {
+    return output;
+  }
+
+  const lines = output.split(/\r?\n/);
+  const folded: string[] = [];
+  for (let index = 0; index < lines.length;) {
+    const line = lines[index];
+    let runLength = 1;
+    while (index + runLength < lines.length && lines[index + runLength] === line) {
+      runLength += 1;
+    }
+
+    if (runLength >= repeatedLineThreshold) {
+      folded.push(line, `[... ${runLength - 1} repeated line(s) omitted ...]`);
+    } else {
+      folded.push(...lines.slice(index, index + runLength));
+    }
+    index += runLength;
+  }
+
+  return folded.join('\n');
 }
 
 function compactBashOutputLines(output: string, maxLineLength: number): string {
@@ -148,7 +181,7 @@ export function isCompilerCommand(command: string): boolean {
 }
 
 export function hasNonAscii(text: string): boolean {
-  return /[^\u0000-\u007F]/.test(text);
+  return NON_ASCII_PATTERN.test(text);
 }
 
 export function detectFastCommandFailure(

@@ -160,6 +160,27 @@ describe('Bash Tool', () => {
     expect(result.length).toBeLessThan(output.length);
   });
 
+  it('should fold repeated stdout lines to reduce context noise', async () => {
+    const repeatedLine = 'same noisy progress message';
+    const output = [
+      'start',
+      ...Array.from({ length: 25 }, () => repeatedLine),
+      'done',
+    ].join('\n');
+    setupExecFile(output, '', 0);
+
+    const result = await bashTool.config.execute(
+      { command: 'noisy-progress-command' },
+      baseContext,
+    );
+
+    expect(result).toContain('start');
+    expect(result).toContain(repeatedLine);
+    expect(result).toContain('[... 24 repeated line(s) omitted ...]');
+    expect(result).toContain('done');
+    expect(result.length).toBeLessThan(output.length);
+  });
+
   it('should compact compiler stderr in aggressive mode', async () => {
     const hugeCompilerError = [
       'In file included from tetris.cpp:1:',
