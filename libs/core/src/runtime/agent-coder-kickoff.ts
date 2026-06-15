@@ -1,5 +1,6 @@
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import { formatAutocodeIgnoredDirNamesForPrompt } from '../workspace/ignore-rules.js';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 interface AutocodePlanLike {
   phases?: unknown[];
@@ -330,7 +331,7 @@ function formatPathForPrompt(filePath: string): string {
 }
 
 function shortenForPrompt(value: string, maxLength = 700): string {
-  const compact = value.replace(/\s+/g, ' ').trim();
+  const compact = foldRepeatedAutocodePromptLines(value).replace(/\s+/g, ' ').trim();
   return compact.length <= maxLength ? compact : `${compact.slice(0, maxLength).trimEnd()}...`;
 }
 
