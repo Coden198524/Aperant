@@ -103,6 +103,27 @@ describe('memory agent tools', () => {
     expect(proxy.searchMemory).not.toHaveBeenCalled();
   });
 
+  it('returns compact unavailable text when search_memory IPC fails', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockRejectedValue(new Error('database unavailable')),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth retry memory', limit: 3 });
+
+    expect(result).toBe('Memory search unavailable; inspect focused files next.');
+    expect(result).not.toContain('database unavailable');
+    expect(result).not.toContain('auth retry memory');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      query: 'auth retry memory',
+      projectId: 'project-1',
+      recordAccess: true,
+    }));
+  });
+
   it('normalizes search_memory query and filter inputs before IPC', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([]),

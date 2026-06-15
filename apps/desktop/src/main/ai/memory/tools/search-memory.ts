@@ -95,6 +95,8 @@ const LOCALIZED_PREFETCH_PATTERN_SEARCH_QUERY_PATTERN = new RegExp(
   ].join('|'),
   'i',
 );
+const MEMORY_SEARCH_UNAVAILABLE_RESULT =
+  'Memory search unavailable; inspect focused files next.';
 
 // ============================================================
 // INPUT SCHEMA
@@ -181,8 +183,15 @@ export function createSearchMemoryTool(
         recordAccess: true,
       };
 
+      let searchResults: Memory[];
+      try {
+        searchResults = await proxy.searchMemory(filters);
+      } catch {
+        return MEMORY_SEARCH_UNAVAILABLE_RESULT;
+      }
+
       const memories = dedupeMemories(
-        (await proxy.searchMemory(filters)).filter(isMemoryEligibleForSearchMemoryResult),
+        searchResults.filter(isMemoryEligibleForSearchMemoryResult),
       );
 
       if (memories.length === 0) {
