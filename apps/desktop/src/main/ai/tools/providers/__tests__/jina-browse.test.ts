@@ -114,7 +114,7 @@ describe('JinaBrowseProvider', () => {
     expect(result.content.length).toBeLessThan(longContent.length);
     expect(result.content).toContain('CONTENT_HEAD');
     expect(result.content).toContain('CONTENT_TAIL');
-    expect(result.content).toContain('[Content middle omitted for context budget]');
+    expect(result.content).toContain('[line middle omitted]');
   });
 
   it('should pass timeout via AbortController', async () => {
