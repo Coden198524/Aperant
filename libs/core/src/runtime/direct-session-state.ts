@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 export const AUTOCODE_DIRECT_SESSION_STATE_FILE = 'direct_session.json';
 export const AUTOCODE_DIRECT_SESSION_STATE_VERSION = 1;
@@ -138,12 +139,17 @@ function limitHeadTailString(value: string | undefined, maxLength: number, marke
     return normalized;
   }
 
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= maxLength) {
+    return folded;
+  }
+
   const budget = Math.max(0, maxLength - marker.length);
   const headLength = Math.ceil(budget * 0.65);
   const tailLength = Math.max(0, budget - headLength);
   return [
-    normalized.slice(0, headLength).trimEnd(),
+    folded.slice(0, headLength).trimEnd(),
     marker,
-    normalized.slice(-tailLength).trimStart(),
+    folded.slice(-tailLength).trimStart(),
   ].join('');
 }
