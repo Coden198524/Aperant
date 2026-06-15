@@ -307,12 +307,80 @@ function canonicalizeAutocodeMemoryRuntimeResultKey(key: string): string {
 export function compactAutocodeMemoryRuntimeRecentToolCalls(
   toolCalls: readonly AutocodeMemoryRuntimeToolCall[],
 ): AutocodeMemoryRuntimeToolCall[] {
-  return toolCalls
-    .slice(-AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT)
-    .map((toolCall) => ({
+  const seen = new Set<string>();
+  const selected: AutocodeMemoryRuntimeToolCall[] = [];
+
+  for (let index = toolCalls.length - 1; index >= 0; index -= 1) {
+    const toolCall = toolCalls[index];
+    const compactArgs = compactAutocodeMemoryRuntimeToolArgs(toolCall.args);
+    const compactCall = {
       toolName: toolCall.toolName,
-      args: compactAutocodeMemoryRuntimeToolArgs(toolCall.args),
-    }));
+      args: compactArgs,
+    };
+    const signature = getAutocodeMemoryRuntimeToolCallSignature(compactCall);
+    if (seen.has(signature)) {
+      continue;
+    }
+
+    seen.add(signature);
+    selected.push(compactCall);
+    if (selected.length >= AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT) {
+      break;
+    }
+  }
+
+  return selected.reverse();
+}
+
+function getAutocodeMemoryRuntimeToolCallSignature(
+  toolCall: AutocodeMemoryRuntimeToolCall,
+): string {
+  return `${toolCall.toolName}:${stableAutocodeMemoryRuntimeStringify(
+    normalizeAutocodeMemoryRuntimeToolCallSignatureArgs(toolCall.args),
+  )}`;
+}
+
+function normalizeAutocodeMemoryRuntimeToolCallSignatureArgs(
+  args: Record<string, unknown>,
+): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+  for (const [key, value] of Object.entries(args)) {
+    if (typeof value === 'string') {
+      if (key === 'file_path' || key === 'path') {
+        normalized[key] = normalizeRuntimePathKey(value);
+      } else if (
+        key === 'pattern' ||
+        key === 'glob' ||
+        key === 'query' ||
+        key === 'command'
+      ) {
+        normalized[key] = normalizeRuntimeTextKey(value);
+      } else {
+        normalized[key] = value;
+      }
+      continue;
+    }
+
+    normalized[key] = value;
+  }
+  return normalized;
+}
+
+function stableAutocodeMemoryRuntimeStringify(value: unknown): string {
+  if (value === null || typeof value !== 'object') {
+    return JSON.stringify(value);
+  }
+  if (Array.isArray(value)) {
+    return `[${value.map(stableAutocodeMemoryRuntimeStringify).join(',')}]`;
+  }
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map(
+      (key) =>
+        `${JSON.stringify(key)}:${stableAutocodeMemoryRuntimeStringify(record[key])}`,
+    )
+    .join(',')}}`;
 }
 
 export function compactAutocodeMemoryRuntimeInjectedMemoryIds(

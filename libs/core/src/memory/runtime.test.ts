@@ -24,6 +24,7 @@ import {
   buildAutocodeWorkUnitOutcomeSessionInsight,
   compactAutocodeMemoryRuntimeInjectedMemoryIds,
   compactAutocodeMemoryRuntimeReasoningText,
+  compactAutocodeMemoryRuntimeRecentToolCalls,
   compactAutocodeMemoryRuntimeToolArgs,
   compactAutocodeMemoryRuntimeToolResult,
   formatAutocodeMemoryRuntimeContext,
@@ -757,6 +758,43 @@ describe('Autocode memory runtime context formatting', () => {
     expect(usefulCorrection).toBe(
       'Correction: retry the sqlite-backed memory search after the worker lock is released.',
     );
+  });
+
+  it('deduplicates equivalent recent tool calls before runtime injection IPC', () => {
+    const compactCalls = compactAutocodeMemoryRuntimeRecentToolCalls([
+      {
+        toolName: 'Read',
+        args: {
+          filePath: './SRC/auth/token.ts/',
+          content: 'first ignored payload',
+        },
+      },
+      {
+        toolName: 'Read',
+        args: {
+          file_path: 'src\\auth\\token.ts',
+          content: 'second ignored payload',
+        },
+      },
+      {
+        toolName: 'Grep',
+        args: { pattern: ' refreshToken ' },
+      },
+      {
+        toolName: 'Grep',
+        args: { pattern: 'refreshToken' },
+      },
+      {
+        toolName: 'Bash',
+        args: { command: 'npm test -- auth.test.ts' },
+      },
+    ]);
+
+    expect(compactCalls).toEqual([
+      { toolName: 'Read', args: { file_path: 'src\\auth\\token.ts' } },
+      { toolName: 'Grep', args: { pattern: 'refreshToken' } },
+      { toolName: 'Bash', args: { command: 'npm test -- auth.test.ts' } },
+    ]);
   });
 
   it('compacts injected memory ids for runtime recent context', () => {
