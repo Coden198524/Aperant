@@ -139,6 +139,77 @@ describe('Autocode plan update tools', () => {
     expect(result.length).toBeLessThan(1400);
   });
 
+  it('prioritizes an in-progress subtask over earlier pending work', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            { id: 'pending-first', title: 'Pending first', status: 'pending', description: 'Do later' },
+            { id: 'active-now', title: 'Active now', status: 'in_progress', description: 'Continue this work' },
+          ],
+        },
+      ],
+    });
+
+    const result = await getBuildProgressTool.config.execute({}, context);
+
+    expect(result).toContain('Current subtask in progress');
+    expect(result).toContain('ID: active-now');
+    expect(result).toContain('Status: in_progress');
+    expect(result).toContain('Continue this work');
+    expect(result).not.toContain('ID: pending-first');
+  });
+
+  it('surfaces failed work before pending work and reports blocked counts', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            { id: 'pending-work', title: 'Pending work', status: 'pending' },
+            { id: 'blocked-work', title: 'Blocked work', status: 'blocked' },
+            { id: 'failed-work', title: 'Retry failed migration', status: 'failed' },
+          ],
+        },
+      ],
+    });
+
+    const result = await getBuildProgressTool.config.execute({}, context);
+
+    expect(result).toContain('Failed subtask needing attention');
+    expect(result).toContain('ID: failed-work');
+    expect(result).toContain('Status: failed');
+    expect(result).toContain('Description: Retry failed migration');
+    expect(result).toContain('Blocked: 1');
+    expect(result).not.toContain('ID: pending-work');
+  });
+
+  it('surfaces blocked work before starting new pending work', async () => {
+    await saveAutocodeImplementationPlan(specDir, {
+      phases: [
+        {
+          id: 'phase-1',
+          name: 'Implementation',
+          subtasks: [
+            { id: 'pending-work', title: 'Pending work', status: 'pending' },
+            { id: 'blocked-work', title: 'Needs user input', status: 'blocked' },
+          ],
+        },
+      ],
+    });
+
+    const result = await getBuildProgressTool.config.execute({}, context);
+
+    expect(result).toContain('Blocked subtask needing attention');
+    expect(result).toContain('ID: blocked-work');
+    expect(result).toContain('Status: blocked');
+    expect(result).toContain('Description: Needs user input');
+    expect(result).not.toContain('ID: pending-work');
+  });
+
   it('returns recent session memory entries instead of full old markdown history', async () => {
     const memoryDir = join(specDir, 'memory');
     await mkdir(memoryDir, { recursive: true });

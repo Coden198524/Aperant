@@ -45,6 +45,15 @@ interface ImplementationPlan {
   phases?: PlanPhase[];
 }
 
+type FocusSubtaskStatus = 'in_progress' | 'failed' | 'blocked' | 'pending';
+
+interface FocusSubtask {
+  id?: string;
+  description?: string;
+  phase?: string;
+  status: FocusSubtaskStatus;
+}
+
 const MAX_PHASE_SUMMARY_LINES = 12;
 const MAX_NEXT_SUBTASK_DESCRIPTION_CHARS = 360;
 const TEXT_OMISSION_MARKER = ' ... [middle omitted] ... ';
@@ -74,9 +83,9 @@ export const getBuildProgressTool = Tool.define({
       return 'Error reading build progress: Could not parse implementation_plan.md';
     }
 
-    const stats = { total: 0, completed: 0, in_progress: 0, pending: 0, failed: 0 };
+    const stats = { total: 0, completed: 0, in_progress: 0, pending: 0, failed: 0, blocked: 0 };
     const phasesSummary: string[] = [];
-    let nextSubtask: { id?: string; description?: string; phase?: string } | null = null;
+    let focusSubtask: FocusSubtask | null = null;
 
     for (const phase of plan.phases ?? []) {
       const phaseId = phase.id ?? String(phase.phase ?? '');
@@ -94,13 +103,36 @@ export const getBuildProgressTool = Tool.define({
           phaseCompleted++;
         } else if (status === 'in_progress') {
           stats.in_progress++;
+          focusSubtask = selectBuildProgressFocusSubtask(focusSubtask, {
+            id: subtask.id,
+            description: getBuildProgressSubtaskDescription(subtask),
+            phase: phaseName,
+            status,
+          });
         } else if (status === 'failed') {
           stats.failed++;
+          focusSubtask = selectBuildProgressFocusSubtask(focusSubtask, {
+            id: subtask.id,
+            description: getBuildProgressSubtaskDescription(subtask),
+            phase: phaseName,
+            status,
+          });
+        } else if (status === 'blocked') {
+          stats.blocked++;
+          focusSubtask = selectBuildProgressFocusSubtask(focusSubtask, {
+            id: subtask.id,
+            description: getBuildProgressSubtaskDescription(subtask),
+            phase: phaseName,
+            status,
+          });
         } else {
           stats.pending++;
-          if (!nextSubtask) {
-            nextSubtask = { id: subtask.id, description: subtask.description, phase: phaseName };
-          }
+          focusSubtask = selectBuildProgressFocusSubtask(focusSubtask, {
+            id: subtask.id,
+            description: getBuildProgressSubtaskDescription(subtask),
+            phase: phaseName,
+            status: 'pending',
+          });
         }
       }
 
@@ -117,16 +149,18 @@ export const getBuildProgressTool = Tool.define({
       `  Completed: ${stats.completed}\n` +
       `  In Progress: ${stats.in_progress}\n` +
       `  Pending: ${stats.pending}\n` +
-      `  Failed: ${stats.failed}\n\n` +
+      `  Failed: ${stats.failed}\n` +
+      `  Blocked: ${stats.blocked}\n\n` +
       `Phases:\n${formatPhaseSummaryLines(phasesSummary)}`;
 
-    if (nextSubtask) {
+    if (focusSubtask) {
       result +=
-        `\n\nNext subtask to work on:\n` +
-        `  ID: ${nextSubtask.id ?? 'unknown'}\n` +
-        `  Phase: ${nextSubtask.phase ?? 'unknown'}\n` +
+        `\n\n${getBuildProgressFocusHeading(focusSubtask.status)}:\n` +
+        `  ID: ${focusSubtask.id ?? 'unknown'}\n` +
+        `  Status: ${focusSubtask.status}\n` +
+        `  Phase: ${focusSubtask.phase ?? 'unknown'}\n` +
         `  Description: ${compactBuildProgressText(
-          nextSubtask.description ?? 'No description',
+          focusSubtask.description ?? 'No description',
           MAX_NEXT_SUBTASK_DESCRIPTION_CHARS,
         )}`;
     } else if (stats.completed === stats.total && stats.total > 0) {
@@ -136,6 +170,48 @@ export const getBuildProgressTool = Tool.define({
     return result;
   },
 });
+
+function selectBuildProgressFocusSubtask(
+  current: FocusSubtask | null,
+  candidate: FocusSubtask,
+): FocusSubtask {
+  if (!current) {
+    return candidate;
+  }
+  return getBuildProgressFocusPriority(candidate.status) < getBuildProgressFocusPriority(current.status)
+    ? candidate
+    : current;
+}
+
+function getBuildProgressFocusPriority(status: FocusSubtaskStatus): number {
+  switch (status) {
+    case 'in_progress':
+      return 0;
+    case 'failed':
+      return 1;
+    case 'blocked':
+      return 2;
+    case 'pending':
+      return 3;
+  }
+}
+
+function getBuildProgressFocusHeading(status: FocusSubtaskStatus): string {
+  switch (status) {
+    case 'in_progress':
+      return 'Current subtask in progress';
+    case 'failed':
+      return 'Failed subtask needing attention';
+    case 'blocked':
+      return 'Blocked subtask needing attention';
+    case 'pending':
+      return 'Next subtask to work on';
+  }
+}
+
+function getBuildProgressSubtaskDescription(subtask: PlanSubtask): string | undefined {
+  return subtask.description?.trim() || subtask.title?.trim() || undefined;
+}
 
 function formatPhaseSummaryLines(lines: string[]): string {
   if (lines.length <= MAX_PHASE_SUMMARY_LINES) {
