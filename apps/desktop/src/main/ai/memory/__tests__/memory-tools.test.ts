@@ -582,6 +582,29 @@ describe('memory agent tools', () => {
     expect(result).not.toContain('SRC/auth/token.ts');
   });
 
+  it('does not repeat file reference chips already mentioned in search_memory content', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'mentioned-file-ref',
+          content: 'Before editing src/auth/session.ts, refresh auth-token.ts cache helpers.',
+          relatedFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth file refs', limit: 3 });
+
+    expect(result).toContain('Before editing src/auth/session.ts');
+    expect(result).toContain('auth-token.ts');
+    expect(result).toContain('[token.ts]');
+    expect(result).not.toContain('[session.ts, token.ts]');
+  });
+
   it('formats search_memory prefetch patterns without exposing raw JSON', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([

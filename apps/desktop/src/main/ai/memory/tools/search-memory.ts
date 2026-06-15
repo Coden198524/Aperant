@@ -426,11 +426,12 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
 }
 
 function formatSearchMemoryResult(memory: Memory, index: number): string {
+  const content = formatSearchMemoryContent(memory);
   const fileRef = shouldShowSearchMemoryFileRefs(memory)
-    ? formatFileRefs(memory.relatedFiles)
+    ? formatFileRefs(memory.relatedFiles, content)
     : '';
   const confidence = formatConfidenceHint(memory);
-  return `${index}. [${memory.type}]${fileRef}${confidence}\n   ${formatSearchMemoryContent(memory)}`;
+  return `${index}. [${memory.type}]${fileRef}${confidence}\n   ${content}`;
 }
 
 function shouldShowSearchMemoryFileRefs(memory: Memory): boolean {
@@ -487,8 +488,10 @@ function formatConfidenceHint(memory: Memory): string {
     : '';
 }
 
-function formatFileRefs(files: readonly string[]): string {
-  const uniqueFiles = uniquePathRefs(files.map(normalizeToolPath));
+function formatFileRefs(files: readonly string[], content = ''): string {
+  const normalizedContent = normalizeToolTextForPathMatch(content);
+  const uniqueFiles = uniquePathRefs(files.map(normalizeToolPath))
+    .filter((file) => !isPathMentionedInText(file, normalizedContent));
   if (uniqueFiles.length === 0) {
     return '';
   }
@@ -502,6 +505,34 @@ function formatFileRefs(files: readonly string[]): string {
   }
 
   return ` [${visible.join(', ')}]`;
+}
+
+function isPathMentionedInText(path: string, normalizedText: string): boolean {
+  if (!normalizedText) {
+    return false;
+  }
+  const normalizedPath = normalizeToolTextForPathMatch(path);
+  const fileName = normalizeToolTextForPathMatch(path.split('/').pop() || path);
+  return normalizedText.includes(normalizedPath) ||
+    (fileName.length > 0 && containsStandalonePathName(normalizedText, fileName));
+}
+
+function containsStandalonePathName(text: string, pathName: string): boolean {
+  return new RegExp(
+    `(?:^|[^a-z0-9_.-])${escapeRegExp(pathName)}(?:$|[^a-z0-9_.-])`,
+  ).test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeToolTextForPathMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function uniquePathRefs(values: readonly string[]): string[] {
