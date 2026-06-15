@@ -325,6 +325,7 @@ describe('packContext memory quality gate', () => {
           content: JSON.stringify({
             alwaysReadFiles: ['src\\auth\\session.ts', 'src/auth/session.ts'],
             frequentlyReadFiles: [
+              'src/auth/session.ts',
               'src/auth/token.ts',
               'src/auth/guard.ts',
               'src/auth/callback.ts',
@@ -343,6 +344,7 @@ describe('packContext memory quality gate', () => {
     expect(result).toContain('Always prefetch: src/auth/session.ts');
     expect(result).toContain('Prefetch together: src/auth/token.ts');
     expect(result).toContain('+1 more');
+    expect((result.match(/src\/auth\/session\.ts/g) ?? [])).toHaveLength(1);
     expect(result).not.toContain('alwaysReadFiles');
     expect(result).not.toContain('frequentlyReadFiles');
   });

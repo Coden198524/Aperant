@@ -574,9 +574,13 @@ function parsePrefetchPatternContent(content: string): ParsedPrefetchPatternCont
       alwaysReadFiles?: unknown;
       frequentlyReadFiles?: unknown;
     };
+    const alwaysReadFiles = parsePrefetchFileArray(parsed.alwaysReadFiles);
     return {
-      alwaysReadFiles: parsePrefetchFileArray(parsed.alwaysReadFiles),
-      frequentlyReadFiles: parsePrefetchFileArray(parsed.frequentlyReadFiles),
+      alwaysReadFiles,
+      frequentlyReadFiles: excludePromptPaths(
+        parsePrefetchFileArray(parsed.frequentlyReadFiles),
+        alwaysReadFiles,
+      ),
     };
   } catch {
     return undefined;
@@ -587,6 +591,11 @@ function parsePrefetchFileArray(value: unknown): string[] {
   return Array.isArray(value)
     ? normalizePromptPathList(value)
     : [];
+}
+
+function excludePromptPaths(files: readonly string[], excludedFiles: readonly string[]): string[] {
+  const excludedKeys = new Set(excludedFiles.map((file) => file.toLowerCase()));
+  return files.filter((file) => !excludedKeys.has(file.toLowerCase()));
 }
 
 function formatPrefetchFileList(files: readonly string[]): string {
