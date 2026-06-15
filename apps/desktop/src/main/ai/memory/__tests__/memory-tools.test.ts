@@ -895,9 +895,9 @@ describe('memory agent tools', () => {
         makeMemory({
           id: 'context-cost-mentioned-file',
           type: 'context_cost',
-          content: 'Context token spike near src\\auth\\session.ts; inspect narrowly next time.',
+          content: 'Context token spike near session.ts and auth-token.ts; inspect narrowly next time.',
           confidence: 0.95,
-          relatedFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+          relatedFiles: ['src/auth/session.ts', 'src/auth/token.ts', 'src/auth/retry-policy.ts'],
         }),
       ]),
     } as unknown as WorkerObserverProxy;
@@ -908,8 +908,8 @@ describe('memory agent tools', () => {
       string
     >(tool, { query: 'token cost auth files', limit: 3, types: ['context_cost'] });
 
-    expect(result).toContain('Context token spike near src\\auth\\session.ts');
-    expect(result).toContain('Related files: src/auth/token.ts.');
+    expect(result).toContain('Context token spike near session.ts and auth-token.ts');
+    expect(result).toContain('Related files: src/auth/token.ts, src/auth/retry-policy.ts.');
     expect(result).not.toContain('Related files: src/auth/session.ts');
   });
 

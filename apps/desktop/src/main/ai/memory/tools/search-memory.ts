@@ -467,9 +467,9 @@ function appendSearchMemoryMetadata(memory: Memory, content: string): string {
 }
 
 function formatContextCostRelatedFiles(files: readonly string[], content: string): string {
-  const normalizedContent = content.toLowerCase().replace(/\\/g, '/');
+  const normalizedContent = normalizeToolTextForPathMatch(content);
   const unmentionedFiles = uniquePathRefs(files)
-    .filter((file) => !normalizedContent.includes(file.toLowerCase()));
+    .filter((file) => !isPathMentionedInText(file, normalizedContent));
   if (unmentionedFiles.length === 0) {
     return '';
   }
