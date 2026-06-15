@@ -327,10 +327,9 @@ export function compactAutocodeMemoryRuntimeToolResult(
   result: unknown,
 ): unknown {
   if (typeof result === 'string') {
-    return truncateAutocodeMemoryRuntimeText(
+    return compactAutocodeMemoryRuntimeToolResultText(
       result,
       AUTOCODE_MEMORY_RUNTIME_TOOL_RESULT_STRING_MAX_CHARS,
-      { preferDiagnosticWindow: true, preserveTail: true },
     );
   }
   if (
@@ -350,9 +349,14 @@ export function compactAutocodeMemoryRuntimeToolResult(
           compactAutocodeMemoryRuntimeValue(
             item,
             AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
-            { preferDiagnosticWindow: true, preserveTail: true },
+            {
+              preferDiagnosticWindow: true,
+              preserveTail: true,
+              stripLowValueLines: true,
+            },
           ),
-        ),
+        )
+        .filter((item) => item !== undefined),
     };
   }
   if (typeof result === 'object' && result !== null) {
@@ -410,7 +414,11 @@ function compactAutocodeMemoryRuntimeToolResultObject(
     const compactValue = compactAutocodeMemoryRuntimeValue(
       value,
       AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
-      { preferDiagnosticWindow: true, preserveTail: true },
+      {
+        preferDiagnosticWindow: true,
+        preserveTail: true,
+        stripLowValueLines: true,
+      },
     );
     if (compactValue !== undefined) {
       compact[key] = compactValue;
@@ -428,12 +436,22 @@ function extractAutocodeMemoryRuntimeResultDiagnosticText(
   if (!text || findAutocodeMemoryRuntimeImportantTextIndex(text, []) < 0) {
     return undefined;
   }
-  const compact = truncateAutocodeMemoryRuntimeText(
+  const compact = compactAutocodeMemoryRuntimeToolResultText(
     text,
     AUTOCODE_MEMORY_RUNTIME_OBJECT_DIAGNOSTIC_MAX_CHARS,
-    { preferDiagnosticWindow: true, preserveTail: true },
   );
   return compact ? `${key}: ${compact}` : undefined;
+}
+
+function compactAutocodeMemoryRuntimeToolResultText(
+  text: string,
+  maxChars: number,
+): string {
+  return truncateAutocodeMemoryRuntimeText(
+    stripLowValueMemoryLines(text),
+    maxChars,
+    { preferDiagnosticWindow: true, preserveTail: true },
+  );
 }
 
 function flattenAutocodeMemoryRuntimeDiagnosticValue(value: unknown): string {
@@ -474,10 +492,15 @@ function compactAutocodeMemoryRuntimeValue(
     preferDiagnosticWindow?: boolean;
     preserveTail?: boolean;
     signalPatterns?: readonly RegExp[];
+    stripLowValueLines?: boolean;
   } = {},
 ): unknown {
   if (typeof value === 'string') {
-    return truncateAutocodeMemoryRuntimeText(value, maxStringChars, options);
+    const text = options.stripLowValueLines ? stripLowValueMemoryLines(value) : value;
+    if (options.stripLowValueLines && !text.trim()) {
+      return undefined;
+    }
+    return truncateAutocodeMemoryRuntimeText(text, maxStringChars, options);
   }
   if (
     typeof value === 'number' ||
@@ -505,6 +528,7 @@ function truncateAutocodeMemoryRuntimeText(
     preferDiagnosticWindow?: boolean;
     preserveTail?: boolean;
     signalPatterns?: readonly RegExp[];
+    stripLowValueLines?: boolean;
   } = {},
 ): string {
   const compact = text.replace(/\s+/g, ' ').trim();

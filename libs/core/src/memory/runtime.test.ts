@@ -520,6 +520,44 @@ describe('Autocode memory runtime context formatting', () => {
     expect(compactText).toContain('FINAL_EXIT_CODE_1_SHOULD_BE_PRESERVED');
   });
 
+  it('strips low-value tool result text before runtime memory observation', () => {
+    const compactText = compactAutocodeMemoryRuntimeToolResult([
+      'npm run typecheck passed.',
+      'Retry the import scan with --runInBand when the sqlite watcher holds the lock.',
+      'No issues found.',
+      'Completed at: 2026-06-15T00:00:00.000Z',
+    ].join('\n'));
+
+    expect(compactText).toBe(
+      'Retry the import scan with --runInBand when the sqlite watcher holds the lock.',
+    );
+
+    const compactObject = compactAutocodeMemoryRuntimeToolResult({
+      status: 'success',
+      summary: [
+        'No issues found.',
+        'Project scoped cache warmup must include the workspace id.',
+        'Completed at: 2026-06-15T00:00:00.000Z',
+      ].join('\n'),
+    }) as Record<string, unknown>;
+
+    expect(compactObject.status).toBe('success');
+    expect(compactObject.summary).toBe(
+      'Project scoped cache warmup must include the workspace id.',
+    );
+
+    const compactArray = compactAutocodeMemoryRuntimeToolResult([
+      'No issues found.',
+      'Use stable worker request IDs when retrying memory searches.',
+    ]) as { type: string; length: number; items: unknown[] };
+
+    expect(compactArray).toEqual({
+      type: 'array',
+      length: 2,
+      items: ['Use stable worker request IDs when retrying memory searches.'],
+    });
+  });
+
   it('compacts object tool results without letting omitted bulk fields crowd diagnostics', () => {
     const compact = compactAutocodeMemoryRuntimeToolResult({
       content: 'x'.repeat(5_000),

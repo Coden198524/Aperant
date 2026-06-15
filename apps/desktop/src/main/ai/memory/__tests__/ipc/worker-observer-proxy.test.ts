@@ -156,6 +156,25 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.result).toContain('FINAL_EXIT_CODE_1_SHOULD_BE_PRESERVED');
     });
 
+    it('strips low-value tool result lines before posting observation IPC', () => {
+      proxy.onToolResult('Bash', [
+        'npm run typecheck passed.',
+        'Retry import scans with --runInBand when the sqlite watcher holds the lock.',
+        'No issues found.',
+        'Completed at: 2026-06-15T12:00:00.000Z',
+      ].join('\n'), 5);
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        result: string;
+      };
+      expect(sentMsg.result).toBe(
+        'Retry import scans with --runInBand when the sqlite watcher holds the lock.',
+      );
+      expect(sentMsg.result).not.toContain('typecheck passed');
+      expect(sentMsg.result).not.toContain('No issues found');
+      expect(sentMsg.result).not.toContain('Completed at');
+    });
+
     it('preserves compact diagnostics for omitted object tool result fields', () => {
       proxy.onToolResult('Bash', {
         stdout: 'stdout noise '.repeat(500),
