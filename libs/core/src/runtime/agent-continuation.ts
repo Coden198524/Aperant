@@ -12,6 +12,7 @@ export const AUTOCODE_SUMMARY_MESSAGE_TAIL_CHARS = 8_000;
 export const AUTOCODE_SUMMARY_TRUNCATION_SLACK_CHARS = 256;
 export const AUTOCODE_CONTINUATION_SUMMARY_MAX_CHARS = 6_000;
 export const AUTOCODE_SUMMARY_TARGET_WORDS = 500;
+export const AUTOCODE_SUMMARY_RECENT_MESSAGE_LIMIT = 8;
 export const AUTOCODE_SUMMARIZER_SYSTEM_PROMPT =
   'Summarize an agent/tool conversation for continuation. Include completed work, modified files, remaining tasks, and key decisions or findings. Use concise bullets.';
 
@@ -182,16 +183,23 @@ export function serializeAutocodeSessionMessages(messages: AutocodeSessionMessag
 }
 
 export function limitAutocodeSummaryInput(messages: AutocodeSessionMessage[]): string {
-  const parts: string[] = [];
-  let remaining = AUTOCODE_MAX_SUMMARY_INPUT_CHARS;
-  let truncated = false;
-  const suffix = '\n\n[... conversation truncated ...]';
+  const serializedAll = serializeAutocodeSessionMessages(messages);
+  if (serializedAll.length <= AUTOCODE_MAX_SUMMARY_INPUT_CHARS) {
+    return serializedAll;
+  }
 
-  for (const message of messages) {
+  const { selectedMessages, omittedCount } = selectAutocodeSummaryMessages(messages);
+  const parts: string[] = [];
+  const suffix = '\n\n[... conversation truncated ...]';
+  let remaining = AUTOCODE_MAX_SUMMARY_INPUT_CHARS - suffix.length;
+  let omissionMarkerPending = omittedCount > 0;
+
+  for (let index = 0; index < selectedMessages.length; index += 1) {
+    const message = selectedMessages[index];
+
     const separator = parts.length > 0 ? '\n\n---\n\n' : '';
     const header = `${separator}[${message.role.toUpperCase()}]\n`;
     if (remaining <= header.length) {
-      truncated = true;
       break;
     }
 
@@ -200,28 +208,88 @@ export function limitAutocodeSummaryInput(messages: AutocodeSessionMessage[]): s
       ? Math.max(0, contentBudget - suffix.length - AUTOCODE_SUMMARY_TRUNCATION_SLACK_CHARS)
       : contentBudget;
     const content = limitAutocodeSummaryMessageContent(message.content, effectiveContentBudget);
-    if (content.length < message.content.length) {
-      truncated = true;
-    }
 
     parts.push(`${header}${content}`);
     remaining -= header.length + content.length;
+
+    if (omissionMarkerPending) {
+      omissionMarkerPending = false;
+      const marker = `[... ${omittedCount} older, duplicate, or blank message(s) omitted from continuation summary input ...]`;
+      const markerSeparator = parts.length > 0 ? '\n\n---\n\n' : '';
+      if (remaining <= marker.length + markerSeparator.length) {
+        break;
+      }
+      parts.push(`${markerSeparator}${marker}`);
+      remaining -= marker.length + markerSeparator.length;
+    }
   }
 
-  if (messages.length > parts.length) {
-    truncated = true;
+  if (omissionMarkerPending) {
+    const marker = `[... ${omittedCount} older, duplicate, or blank message(s) omitted from continuation summary input ...]`;
+    const markerSeparator = parts.length > 0 ? '\n\n---\n\n' : '';
+    if (remaining > marker.length + markerSeparator.length) {
+      parts.push(`${markerSeparator}${marker}`);
+    }
   }
 
   const serialized = parts.join('');
-  if (!truncated) {
-    return serialized;
-  }
-
   if (serialized.length + suffix.length <= AUTOCODE_MAX_SUMMARY_INPUT_CHARS) {
     return `${serialized}${suffix}`;
   }
 
   return `${serialized.slice(0, Math.max(0, AUTOCODE_MAX_SUMMARY_INPUT_CHARS - suffix.length)).trimEnd()}${suffix}`;
+}
+
+function selectAutocodeSummaryMessages(messages: AutocodeSessionMessage[]): {
+  selectedMessages: AutocodeSessionMessage[];
+  omittedCount: number;
+} {
+  const firstUsefulIndex = messages.findIndex((message) => message.content.trim().length > 0);
+  if (firstUsefulIndex < 0) {
+    return { selectedMessages: [], omittedCount: messages.length };
+  }
+
+  const selected = new Map<number, AutocodeSessionMessage>();
+  const seen = new Set<string>();
+  const firstMessage = messages[firstUsefulIndex];
+  selected.set(firstUsefulIndex, firstMessage);
+  seen.add(getAutocodeSummaryMessageKey(firstMessage));
+
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    if (selected.size >= AUTOCODE_SUMMARY_RECENT_MESSAGE_LIMIT + 1) {
+      break;
+    }
+
+    const message = messages[index];
+    if (!message.content.trim()) {
+      continue;
+    }
+
+    const key = getAutocodeSummaryMessageKey(message);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    selected.set(index, message);
+    seen.add(key);
+  }
+
+  const selectedMessages = [...selected.entries()]
+    .sort((a, b) => a[0] - b[0])
+    .map(([, message]) => message);
+
+  return {
+    selectedMessages,
+    omittedCount: Math.max(0, messages.length - selectedMessages.length),
+  };
+}
+
+function getAutocodeSummaryMessageKey(message: AutocodeSessionMessage): string {
+  const normalized = message.content.replace(/\s+/g, ' ').trim().toLowerCase();
+  const keyContent = normalized.length <= 800
+    ? normalized
+    : `${normalized.slice(0, 400)}...${normalized.slice(-400)}`;
+  return `${message.role}:${keyContent}`;
 }
 
 export function rawTruncateAutocodeSessionMessages(messages: AutocodeSessionMessage[]): string {

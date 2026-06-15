@@ -46,6 +46,70 @@ describe('Autocode agent continuation compaction', () => {
     expect(compact).toContain('conversation truncated');
   });
 
+  it('preserves the initial task and recent progress when many old messages exceed budget', () => {
+    const messages: AutocodeSessionMessage[] = [
+      { role: 'user', content: 'INITIAL_GOAL: continue product hardening.' },
+      ...Array.from({ length: 24 }, (_, index) => ({
+        role: 'assistant' as const,
+        content: `OLD_VERBOSE_${index} ${'old tool output '.repeat(120)}`,
+      })),
+      {
+        role: 'assistant',
+        content: 'RECENT_DECISION: memory injection should prefer current failing file.',
+      },
+      {
+        role: 'assistant',
+        content: 'RECENT_REMAINING_WORK: run focused tests and push.',
+      },
+    ];
+
+    const compact = limitAutocodeSummaryInput(messages);
+
+    expect(compact.length).toBeLessThanOrEqual(AUTOCODE_MAX_SUMMARY_INPUT_CHARS);
+    expect(compact).toContain('INITIAL_GOAL');
+    expect(compact).toContain('RECENT_DECISION');
+    expect(compact).toContain('RECENT_REMAINING_WORK');
+    expect(compact).toContain('older, duplicate, or blank message');
+    expect(compact).toContain('conversation truncated');
+    expect(compact).not.toContain('OLD_VERBOSE_0');
+  });
+
+  it('omits duplicate and blank messages from oversized continuation summary input', () => {
+    const repeated = `DUPLICATE_TOOL_NOISE ${'same output '.repeat(1_200)}`;
+    const messages: AutocodeSessionMessage[] = [
+      { role: 'user', content: 'Start the continuation summary.' },
+      { role: 'assistant', content: repeated },
+      { role: 'assistant', content: '   ' },
+      { role: 'assistant', content: repeated },
+      { role: 'assistant', content: repeated },
+      { role: 'assistant', content: 'UNIQUE_RECENT_CONTEXT' },
+    ];
+
+    const compact = limitAutocodeSummaryInput(messages);
+
+    expect(compact.length).toBeLessThanOrEqual(AUTOCODE_MAX_SUMMARY_INPUT_CHARS);
+    expect((compact.match(/DUPLICATE_TOOL_NOISE/g) ?? [])).toHaveLength(1);
+    expect(compact).toContain('UNIQUE_RECENT_CONTEXT');
+    expect(compact).toContain('older, duplicate, or blank message');
+  });
+
+  it('keeps the omission marker when only one useful oversized input message remains', () => {
+    const messages: AutocodeSessionMessage[] = [
+      { role: 'user', content: 'ONLY_USEFUL_CONTEXT' },
+      ...Array.from({ length: 220 }, () => ({
+        role: 'assistant' as const,
+        content: ' '.repeat(600),
+      })),
+    ];
+
+    const compact = limitAutocodeSummaryInput(messages);
+
+    expect(compact.length).toBeLessThanOrEqual(AUTOCODE_MAX_SUMMARY_INPUT_CHARS);
+    expect(compact).toContain('ONLY_USEFUL_CONTEXT');
+    expect(compact).toContain('older, duplicate, or blank message');
+    expect(compact).toContain('conversation truncated');
+  });
+
   it('raw fallback keeps recent message tails within its compact budget', () => {
     const messages: AutocodeSessionMessage[] = [
       { role: 'user', content: 'old context that can be omitted' },
@@ -146,7 +210,11 @@ describe('Autocode agent continuation compaction', () => {
       {
         runSession: async (config) => {
           observedPrompts.push(config.initialMessages[0]?.content ?? '');
-          return results.shift()!;
+          const nextResult = results.shift();
+          if (!nextResult) {
+            throw new Error('Expected queued continuation result');
+          }
+          return nextResult;
         },
         summarizeMessages: async () => 'Continue after finishing subtask 1.1.',
       },
