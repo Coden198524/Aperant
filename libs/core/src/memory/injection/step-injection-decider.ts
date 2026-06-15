@@ -43,6 +43,8 @@ const MAX_SHORT_CIRCUIT_PATTERN_CHARS = 120;
 const BROAD_SEARCH_PATTERN_CHARS = 3;
 const SCRATCHPAD_MEMORY_ID_PREFIX = 'scratchpad:';
 const SCRATCHPAD_MEMORY_ID_HASH_CHARS = 16;
+const SEARCH_PATTERN_MEMORY_ID_PREFIX = 'search-pattern:';
+const SEARCH_PATTERN_MEMORY_ID_HASH_CHARS = 16;
 
 // ============================================================
 // STEP INJECTION DECIDER
@@ -140,6 +142,8 @@ export class StepInjectionDecider {
         if (!isPreciseSearchPattern(pattern)) continue;
         if (seenSearchPatterns.has(pattern)) continue;
         seenSearchPatterns.add(pattern);
+        const patternInjectionId = getSearchPatternInjectionId(pattern);
+        if (recentContext.injectedMemoryIds.has(patternInjectionId)) continue;
 
         const known = await this.memoryService.searchByPattern(pattern, {
           projectId: this.projectId,
@@ -160,7 +164,7 @@ export class StepInjectionDecider {
               MAX_SHORT_CIRCUIT_TOKENS,
             )}`,
             type: 'search_short_circuit',
-            memoryIds: [known.id],
+            memoryIds: [known.id, patternInjectionId],
           };
         }
       }
@@ -300,10 +304,7 @@ function getScratchpadInjectionId(entry: AcuteCandidate): string {
     return getLegacyScratchpadInjectionId(entry);
   }
 
-  const hash = createHash('sha256')
-    .update(key, 'utf8')
-    .digest('hex')
-    .slice(0, SCRATCHPAD_MEMORY_ID_HASH_CHARS);
+  const hash = getShortHash(key, SCRATCHPAD_MEMORY_ID_HASH_CHARS);
   return `${SCRATCHPAD_MEMORY_ID_PREFIX}${hash}`;
 }
 
@@ -316,6 +317,20 @@ function getScratchpadInjectionIds(entry: AcuteCandidate): string[] {
 
 function getLegacyScratchpadInjectionId(entry: AcuteCandidate): string {
   return `${SCRATCHPAD_MEMORY_ID_PREFIX}${entry.signalType}:${entry.stepNumber}:${entry.capturedAt}`;
+}
+
+function getSearchPatternInjectionId(pattern: string): string {
+  return `${SEARCH_PATTERN_MEMORY_ID_PREFIX}${getShortHash(
+    normalizeSearchPattern(pattern),
+    SEARCH_PATTERN_MEMORY_ID_HASH_CHARS,
+  )}`;
+}
+
+function getShortHash(value: string, chars: number): string {
+  return createHash('sha256')
+    .update(value, 'utf8')
+    .digest('hex')
+    .slice(0, chars);
 }
 
 function normalizeAccessedFilePath(filePath: unknown): string {

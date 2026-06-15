@@ -689,6 +689,7 @@ describe('StepInjectionDecider', () => {
       expect(result).not.toBeNull();
       expect(result?.type).toBe('search_short_circuit');
       expect(result?.memoryIds).toContain('grep-match');
+      expect(result?.memoryIds.some((id) => /^search-pattern:[a-f0-9]{16}$/.test(id))).toBe(true);
       expect(result?.content).toContain('MEMORY CONTEXT');
       expect(memoryService.searchByPattern).toHaveBeenCalledWith('useCallback', {
         projectId: 'proj-1',
@@ -759,6 +760,27 @@ describe('StepInjectionDecider', () => {
       });
 
       expect(result).toBeNull();
+    });
+
+    it('skips repeated search_short_circuit patterns already injected this session', async () => {
+      const known = makeMemory({ id: 'pattern-match', content: 'Use the cached auth callback.' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const firstResult = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: ' useCallback ' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(firstResult?.type).toBe('search_short_circuit');
+      vi.mocked(memoryService.searchByPattern).mockClear();
+
+      const repeatedResult = await decider.decide(6, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'useCallback' } }],
+        injectedMemoryIds: new Set(firstResult?.memoryIds ?? []),
+      });
+
+      expect(repeatedResult).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
     });
 
     it('skips Grep entries with empty patterns', async () => {
