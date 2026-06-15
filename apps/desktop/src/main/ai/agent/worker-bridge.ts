@@ -20,6 +20,7 @@ import {
   toAutocodeMemoryRuntimeRecentContext,
   type AutocodeMemoryRuntimeIpcResponse,
 } from '@autocode/core';
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 
 import type { AgentManagerEvents, ExecutionProgressData, ProcessType } from '../../agent/types';
 import type { TaskEventPayload } from '../../agent/task-event-schema';
@@ -948,7 +949,8 @@ function compactOptionalMemorySearchResponseMethodology(value: string | undefine
 }
 
 function compactMemorySearchResponseText(value: string, maxChars: number, maxTokens: number): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const folded = foldRepeatedAutocodePromptLines(value);
+  const normalized = folded.replace(/\s+/g, ' ').trim();
   if (maxChars <= 0 || maxTokens <= 0) {
     return '';
   }

@@ -536,6 +536,64 @@ describe('WorkerBridge', () => {
       expect(response.memories[1].content).toContain('24k tokens');
     });
 
+    it('folds repeated memory search response text before posting to the worker', async () => {
+      const repeatedContent = 'REPEATED_MEMORY_IPC_LOG: worker retried the same read with no new signal.';
+      const repeatedCitation = 'REPEATED_CITATION_LOG: reranker reported the same score without new evidence.';
+      const repeatedPrefix = 'REPEATED_PREFIX_LOG: context prefix repeated the same module breadcrumb.';
+
+      mockMemoryServiceSearch.mockResolvedValueOnce([
+        makeMemory({
+          id: 'repeated-ipc-memory',
+          content: [
+            'Memory IPC head: keep the useful search result visible.',
+            ...Array.from({ length: 120 }, () => repeatedContent),
+            'Memory IPC tail: inspect settings write permissions before broad searches.',
+          ].join('\n'),
+          citationText: [
+            'Citation head.',
+            ...Array.from({ length: 48 }, () => repeatedCitation),
+            'Citation tail.',
+          ].join('\n'),
+          contextPrefix: [
+            'Prefix head.',
+            ...Array.from({ length: 48 }, () => repeatedPrefix),
+            'Prefix tail.',
+          ].join('\n'),
+        }),
+      ]);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-repeated-ipc',
+        filters: { query: 'repeated ipc memory', projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-repeated-ipc',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-repeated-ipc',
+      )?.[0] as { memories: Memory[] };
+      const memory = response.memories[0];
+
+      expect(memory.content).toContain('Memory IPC head: keep the useful search result visible.');
+      expect(memory.content).toContain('Memory IPC tail: inspect settings write permissions before broad searches.');
+      expect(memory.content).toContain('119 repeated line(s) omitted for prompt budget');
+      expect((memory.content.match(/REPEATED_MEMORY_IPC_LOG/g) ?? [])).toHaveLength(1);
+      expect(memory.citationText).toContain('47 repeated line(s) omitted for prompt budget');
+      expect((memory.citationText?.match(/REPEATED_CITATION_LOG/g) ?? [])).toHaveLength(1);
+      expect(memory.contextPrefix).toContain('47 repeated line(s) omitted for prompt budget');
+      expect((memory.contextPrefix?.match(/REPEATED_PREFIX_LOG/g) ?? [])).toHaveLength(1);
+      expect(estimateTokens(memory.content)).toBeLessThanOrEqual(225);
+      expect(estimateTokens(memory.citationText ?? '')).toBeLessThanOrEqual(75);
+      expect(estimateTokens(memory.contextPrefix ?? '')).toBeLessThanOrEqual(75);
+    });
+
     it('deduplicates case and whitespace variants in memory search metadata before IPC', async () => {
       mockMemoryServiceSearch.mockResolvedValueOnce([
         makeMemory({
