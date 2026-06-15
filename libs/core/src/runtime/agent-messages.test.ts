@@ -7,13 +7,13 @@ import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import { saveAutocodeTaskRequirementsSync } from '../tasks/requirements-store.js';
 import {
   AUTOCODE_DEFAULT_SPEC_TASK_DESCRIPTION_MAX_CHARS,
-  CHANGE_REQUEST_AUDIT_MAX_CHARS,
-  DIRECT_CHANGE_REQUEST_LIMIT,
   buildAutocodeDefaultSpecPrompt,
   buildAutocodeDirectTaskExecutionMessages,
   buildAutocodeQAInitialMessages,
   buildAutocodeTaskExecutionMessages,
+  CHANGE_REQUEST_AUDIT_MAX_CHARS,
   compactChangeRequestJsonlForPrompt,
+  DIRECT_CHANGE_REQUEST_LIMIT,
   QA_PLAN_CONTEXT_MAX_CHARS,
   QA_SPEC_CONTEXT_MAX_CHARS,
   RUNTIME_PLAN_CONTEXT_MAX_CHARS,
@@ -176,6 +176,32 @@ describe('Autocode runtime agent messages', () => {
     expect(message.content).toContain('Closing direct request: keep configuration tables and app-parsed state as JSON.');
     expect(message.content).not.toContain('Large direct request detail 200');
     expect(message.content.length).toBeLessThan(9_000);
+  });
+
+  it('folds repeated direct task request lines before prompt compaction', () => {
+    const repeatedLine = 'REPEATED_DIRECT_LOG: renderer printed the same warning without new evidence.';
+    const longRequest = [
+      'Opening direct request: preserve the newest functional instruction.',
+      ...Array.from({ length: 420 }, () => repeatedLine),
+      'Closing direct request: continue feature optimization before release verification.',
+    ].join('\n');
+
+    saveAutocodeTaskRequirementsSync(specDir, {
+      task_description: longRequest,
+      workflow_type: 'direct',
+    });
+
+    const [message] = buildAutocodeDirectTaskExecutionMessages({
+      specDir,
+      specId: '001-task',
+      projectRoot: tempRoot,
+    });
+
+    expect(message.content).toContain('Opening direct request: preserve the newest functional instruction.');
+    expect(message.content).toContain('Closing direct request: continue feature optimization before release verification.');
+    expect(message.content).toContain('419 repeated line(s) omitted for prompt budget');
+    expect((message.content.match(/REPEATED_DIRECT_LOG/g) ?? [])).toHaveLength(1);
+    expect(message.content.length).toBeLessThan(longRequest.length / 4);
   });
 
   it('preserves tail constraints while limiting human review input in runtime task messages', () => {

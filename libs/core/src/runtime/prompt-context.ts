@@ -23,6 +23,7 @@ export interface AutocodeProjectCapabilities {
 export const AUTOCODE_PROMPT_RECOVERY_CONTEXT_MAX_CHARS = 6_000;
 export const AUTOCODE_PROMPT_HUMAN_INPUT_MAX_CHARS = 6_000;
 export const AUTOCODE_PROMPT_PROJECT_INSTRUCTIONS_MAX_CHARS = 8_000;
+export const AUTOCODE_PROMPT_REPEATED_LINE_MIN_CHARS = 24;
 
 const PROMPT_RECOVERY_CONTEXT_COMPACTION_NOTICE =
   '\n\n...[recovery context middle omitted for prompt budget; inspect recovery artifacts or logs for exact omitted detail]...\n\n';
@@ -168,18 +169,63 @@ export function compactAutocodePromptContextSection(
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{4,}/g, '\n\n\n')
     .trim();
-  if (!normalized || normalized.length <= maxChars) {
+  if (!normalized) {
     return normalized;
+  }
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= maxChars) {
+    return folded;
   }
 
   const budget = Math.max(0, maxChars - notice.length);
   const headBudget = Math.ceil(budget * 0.65);
   const tailBudget = Math.max(0, budget - headBudget);
   return [
-    normalized.slice(0, headBudget).trimEnd(),
+    folded.slice(0, headBudget).trimEnd(),
     notice,
-    normalized.slice(-tailBudget).trimStart(),
+    folded.slice(-tailBudget).trimStart(),
   ].join('');
+}
+
+export function foldRepeatedAutocodePromptLines(value: string): string {
+  const lines = value.split('\n');
+  const folded: string[] = [];
+  let previousKey = '';
+  let repeatedCount = 0;
+
+  const flushRepeatedMarker = (): void => {
+    if (repeatedCount <= 0) {
+      return;
+    }
+    folded.push(formatAutocodePromptRepeatedLineMarker(repeatedCount));
+    repeatedCount = 0;
+  };
+
+  for (const line of lines) {
+    const key = line.trim().replace(/\s+/g, ' ');
+    if (
+      key.length >= AUTOCODE_PROMPT_REPEATED_LINE_MIN_CHARS &&
+      key === previousKey
+    ) {
+      repeatedCount += 1;
+      continue;
+    }
+
+    flushRepeatedMarker();
+    folded.push(line);
+    previousKey = key;
+  }
+
+  flushRepeatedMarker();
+  return folded.join('\n');
+}
+
+function formatAutocodePromptRepeatedLineMarker(repeatedCount: number): string {
+  return `[... ${repeatedCount} repeated line(s) omitted for prompt budget ...]`;
 }
 
 export function detectAutocodeProjectCapabilities(

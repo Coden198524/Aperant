@@ -4,10 +4,10 @@ import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import { loadAutocodeTaskRequirementsSync } from '../tasks/requirements-store.js';
 import {
-  AUTOCODE_DIRECT_SESSION_LATEST_SUMMARY_MAX_CHARS,
-  compactAutocodeDirectSessionLatestSummary,
   type AutocodeDirectSessionState,
+  compactAutocodeDirectSessionLatestSummary,
 } from './direct-session-state.js';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 export type AutocodeAgentMessageRole = 'user' | 'assistant';
 
@@ -92,6 +92,11 @@ function compactAutocodeDefaultSpecTaskDescription(value: string): string {
     return normalized;
   }
 
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= AUTOCODE_DEFAULT_SPEC_TASK_DESCRIPTION_MAX_CHARS) {
+    return folded;
+  }
+
   const budget = Math.max(
     0,
     AUTOCODE_DEFAULT_SPEC_TASK_DESCRIPTION_MAX_CHARS - DEFAULT_SPEC_TASK_DESCRIPTION_COMPACTION_NOTICE.length,
@@ -99,9 +104,9 @@ function compactAutocodeDefaultSpecTaskDescription(value: string): string {
   const headBudget = Math.ceil(budget * 0.65);
   const tailBudget = Math.max(0, budget - headBudget);
   return [
-    normalized.slice(0, headBudget).trimEnd(),
+    folded.slice(0, headBudget).trimEnd(),
     DEFAULT_SPEC_TASK_DESCRIPTION_COMPACTION_NOTICE,
-    normalized.slice(-tailBudget).trimStart(),
+    folded.slice(-tailBudget).trimStart(),
   ].join('');
 }
 
@@ -116,13 +121,18 @@ function compactAutocodeDirectTaskSectionText(value: string): string {
     return normalized;
   }
 
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= DIRECT_TASK_TEXT_LIMIT) {
+    return folded;
+  }
+
   const budget = Math.max(0, DIRECT_TASK_TEXT_LIMIT - DIRECT_TASK_SECTION_COMPACTION_NOTICE.length);
   const headBudget = Math.ceil(budget * 0.65);
   const tailBudget = Math.max(0, budget - headBudget);
   return [
-    normalized.slice(0, headBudget).trimEnd(),
+    folded.slice(0, headBudget).trimEnd(),
     DIRECT_TASK_SECTION_COMPACTION_NOTICE,
-    normalized.slice(-tailBudget).trimStart(),
+    folded.slice(-tailBudget).trimStart(),
   ].join('');
 }
 
@@ -454,7 +464,7 @@ function compactMarkdownArtifactForPrompt(
       continue;
     }
 
-    if (mode === 'plan' && /(?:\[[ xX/!\-]\]|\b(?:pending|in_progress|failed|blocked|completed)\b|Status\s*:)/i.test(line)) {
+    if (mode === 'plan' && /(?:\[[ xX/!-]\]|\b(?:pending|in_progress|failed|blocked|completed)\b|Status\s*:)/i.test(line)) {
       pushPromptLine(statuses, line, ARTIFACT_STATUS_LIMIT);
       continue;
     }
@@ -753,13 +763,18 @@ function limitHeadTailText(value: string, maxLength: number, marker: string): st
     return normalized;
   }
 
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= maxLength) {
+    return folded;
+  }
+
   const budget = Math.max(0, maxLength - marker.length);
   const headLength = Math.ceil(budget * 0.65);
   const tailLength = Math.max(0, budget - headLength);
   return [
-    normalized.slice(0, headLength).trimEnd(),
+    folded.slice(0, headLength).trimEnd(),
     marker,
-    normalized.slice(-tailLength).trimStart(),
+    folded.slice(-tailLength).trimStart(),
   ].join('');
 }
 

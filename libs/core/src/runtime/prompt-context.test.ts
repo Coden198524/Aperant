@@ -50,6 +50,27 @@ describe('prompt context injection', () => {
     expect(prompt.indexOf('## HUMAN INPUT')).toBeLessThan(prompt.indexOf('Continue implementation.'));
   });
 
+  it('folds repeated long lines before compacting prompt context sections', () => {
+    const repeatedLine = 'REPEATED_LOG_LINE: worker emitted the same reconnect warning with no new state.';
+    const humanInput = [
+      'HEAD: keep the newest reconnect instruction visible.',
+      ...Array.from({ length: 420 }, () => repeatedLine),
+      'TAIL: continue feature optimization before release verification.',
+    ].join('\n');
+
+    const prompt = injectAutocodePromptContext(
+      'Continue implementation.',
+      baseContext({ humanInput }),
+      { domain: 'none' },
+    );
+
+    expect(prompt).toContain('HEAD: keep the newest reconnect instruction visible.');
+    expect(prompt).toContain('TAIL: continue feature optimization before release verification.');
+    expect(prompt).toContain('419 repeated line(s) omitted for prompt budget');
+    expect((prompt.match(/REPEATED_LOG_LINE/g) ?? [])).toHaveLength(1);
+    expect(prompt.length).toBeLessThan(humanInput.length / 5);
+  });
+
   it('bounds project instructions and recovery context before adding the template', () => {
     const recoveryContext = [
       'RECOVERY HEAD: previous run failed after typecheck.',
