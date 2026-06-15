@@ -593,6 +593,30 @@ describe('Autocode memory runtime context formatting', () => {
     expect(String(compact.error)).toContain('FINAL_ERROR_TAIL');
   });
 
+  it('treats camelCase output fields as compact omitted diagnostics', () => {
+    const compact = compactAutocodeMemoryRuntimeToolResult({
+      stdOut: 'stdout noise '.repeat(500),
+      stdErr: [
+        'stderr noise '.repeat(500),
+        'Error: renderer preload build failed',
+        'tail '.repeat(80),
+        'FINAL_STDERR_TAIL',
+      ].join(' '),
+      exitCode: 1,
+      status: 'failed',
+    }) as Record<string, unknown>;
+
+    expect(compact.omittedKeys).toEqual(['stdout', 'stderr']);
+    expect(compact).not.toHaveProperty('stdOut');
+    expect(compact).not.toHaveProperty('stdErr');
+    expect(compact.exitCode).toBe(1);
+    expect(compact.status).toBe('failed');
+    expect(String(compact.diagnosticText)).toContain('stderr:');
+    expect(String(compact.diagnosticText)).toContain('Error: renderer preload build failed');
+    expect(String(compact.diagnosticText)).toContain('FINAL_STDERR_TAIL');
+    expect(String(compact.diagnosticText).length).toBeLessThanOrEqual(360);
+  });
+
   it('compacts tool args and reasoning observations before runtime memory use', () => {
     const args = compactAutocodeMemoryRuntimeToolArgs({
       file_path: '/src/generated.ts',

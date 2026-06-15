@@ -241,6 +241,13 @@ const AUTOCODE_MEMORY_RUNTIME_RESULT_PRIORITY_KEYS = new Set([
   'failed',
 ]);
 
+const AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_ALIASES = new Map<string, string>([
+  ['std_out', 'stdout'],
+  ['standard_output', 'stdout'],
+  ['std_err', 'stderr'],
+  ['standard_error', 'stderr'],
+]);
+
 const AUTOCODE_MEMORY_RUNTIME_REASONING_SIGNAL_PATTERNS = [
   /I was wrong about/i,
   /Let me reconsider/i,
@@ -260,7 +267,7 @@ export function compactAutocodeMemoryRuntimeToolArgs(
   const compact: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(args)) {
-    const canonicalKey = canonicalizeAutocodeMemoryRuntimeToolArgKey(key);
+    const canonicalKey = canonicalizeAutocodeMemoryRuntimeKey(key);
     if (AUTOCODE_MEMORY_RUNTIME_TOOL_ARG_OMITTED_KEYS.has(canonicalKey)) {
       continue;
     }
@@ -281,11 +288,16 @@ export function compactAutocodeMemoryRuntimeToolArgs(
   return compact;
 }
 
-function canonicalizeAutocodeMemoryRuntimeToolArgKey(key: string): string {
+function canonicalizeAutocodeMemoryRuntimeKey(key: string): string {
   return key
     .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
     .replace(/[\s-]+/g, '_')
     .toLowerCase();
+}
+
+function canonicalizeAutocodeMemoryRuntimeResultKey(key: string): string {
+  const canonicalKey = canonicalizeAutocodeMemoryRuntimeKey(key);
+  return AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_ALIASES.get(canonicalKey) ?? canonicalKey;
 }
 
 export function compactAutocodeMemoryRuntimeRecentToolCalls(
@@ -386,17 +398,19 @@ function compactAutocodeMemoryRuntimeToolResultObject(
   const normalEntries: Array<[string, unknown]> = [];
 
   for (const [key, value] of entries) {
-    if (AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS.has(key)) {
-      omittedKeys.push(key);
-      const diagnosticText = extractAutocodeMemoryRuntimeResultDiagnosticText(key, value);
+    const canonicalKey = canonicalizeAutocodeMemoryRuntimeResultKey(key);
+    if (AUTOCODE_MEMORY_RUNTIME_RESULT_OMITTED_KEYS.has(canonicalKey)) {
+      if (!omittedKeys.includes(canonicalKey)) {
+        omittedKeys.push(canonicalKey);
+      }
+      const diagnosticText = extractAutocodeMemoryRuntimeResultDiagnosticText(canonicalKey, value);
       if (diagnosticText) {
         diagnosticParts.push(diagnosticText);
       }
       continue;
     }
 
-    const normalizedKey = key.replace(/[\s-]+/g, '_').toLowerCase();
-    if (AUTOCODE_MEMORY_RUNTIME_RESULT_PRIORITY_KEYS.has(normalizedKey)) {
+    if (AUTOCODE_MEMORY_RUNTIME_RESULT_PRIORITY_KEYS.has(canonicalKey)) {
       priorityEntries.push([key, value]);
     } else {
       normalEntries.push([key, value]);
