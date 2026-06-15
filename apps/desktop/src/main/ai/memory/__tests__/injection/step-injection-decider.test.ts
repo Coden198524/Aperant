@@ -819,6 +819,45 @@ describe('StepInjectionDecider', () => {
       expect(memoryService.searchByPattern).not.toHaveBeenCalled();
     });
 
+    it('skips file-path-like search patterns before short-circuit lookup', async () => {
+      const known = makeMemory({ id: 'file-path-match' });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValue(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [
+          { toolName: 'Grep', args: { pattern: 'src/auth/token.ts' } },
+          { toolName: 'Grep', args: { pattern: 'TaskDetailModal.tsx' } },
+          { toolName: 'Glob', args: { glob: 'apps/desktop/src' } },
+          { toolName: 'Grep', args: { pattern: 'C:\\Work\\Aperant\\apps\\desktop\\package.json' } },
+        ],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result).toBeNull();
+      expect(memoryService.searchByPattern).not.toHaveBeenCalled();
+      expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('file-path-match');
+    });
+
+    it('keeps route-like search patterns that are not file paths', async () => {
+      const known = makeMemory({
+        id: 'route-like-match',
+        content: 'Use the auth callback route memory before changing OAuth redirects.',
+      });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'api/auth/callback' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('search_short_circuit');
+      expect(result?.memoryIds).toContain('route-like-match');
+      expect(memoryService.searchByPattern).toHaveBeenCalledWith('api/auth/callback', {
+        projectId: 'proj-1',
+        recordAccess: false,
+      });
+    });
+
     it('skips generic Grep and Glob patterns that would cause noisy short-circuit lookups', async () => {
       const known = makeMemory({ id: 'generic-match' });
       vi.mocked(memoryService.searchByPattern).mockResolvedValue(known);

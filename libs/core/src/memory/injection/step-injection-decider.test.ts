@@ -102,6 +102,59 @@ describe('StepInjectionDecider memory context compaction', () => {
     expect(injection?.type).toBe('gotcha_injection');
     expect(injection?.content).toContain('Use path arguments from Read events');
   });
+
+  it('skips file-path-like search patterns before memory lookup', async () => {
+    const searchPatterns: string[] = [];
+    const decider = new StepInjectionDecider(
+      createNoopMemoryService({
+        searchByPattern: async (pattern) => {
+          searchPatterns.push(pattern);
+          return makeMemory({ id: 'file-path-match' });
+        },
+      }),
+      new Scratchpad('session-step', 'terminal'),
+      'project-a',
+    );
+
+    const injection = await decider.decide(2, {
+      toolCalls: [
+        { toolName: 'Grep', args: { pattern: 'src/auth/token.ts' } },
+        { toolName: 'Grep', args: { pattern: 'TaskDetailModal.tsx' } },
+        { toolName: 'Glob', args: { glob: 'apps/desktop/src' } },
+      ],
+      injectedMemoryIds: new Set(),
+    });
+
+    expect(injection).toBeNull();
+    expect(searchPatterns).toEqual([]);
+  });
+
+  it('keeps route-like search patterns for short-circuit lookup', async () => {
+    const memory = makeMemory({
+      id: 'route-like-match',
+      content: 'Use callback route memory before changing OAuth redirects.',
+    });
+    const searchPatterns: string[] = [];
+    const decider = new StepInjectionDecider(
+      createNoopMemoryService({
+        searchByPattern: async (pattern) => {
+          searchPatterns.push(pattern);
+          return memory;
+        },
+      }),
+      new Scratchpad('session-step', 'terminal'),
+      'project-a',
+    );
+
+    const injection = await decider.decide(2, {
+      toolCalls: [{ toolName: 'Grep', args: { pattern: 'api/auth/callback' } }],
+      injectedMemoryIds: new Set(),
+    });
+
+    expect(injection?.type).toBe('search_short_circuit');
+    expect(injection?.memoryIds).toContain('route-like-match');
+    expect(searchPatterns).toEqual(['api/auth/callback']);
+  });
 });
 
 function makeMemory(overrides: Partial<Memory> = {}): Memory {

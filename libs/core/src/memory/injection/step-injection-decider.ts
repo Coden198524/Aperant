@@ -82,6 +82,65 @@ const GENERIC_SEARCH_SHORT_CIRCUIT_PATTERNS = new Set([
   'types',
   'var',
 ]);
+const FILE_PATH_SEARCH_PATTERN_EXTENSIONS = new Set([
+  'astro',
+  'bat',
+  'c',
+  'cmd',
+  'cjs',
+  'cpp',
+  'cs',
+  'css',
+  'env',
+  'go',
+  'h',
+  'hpp',
+  'html',
+  'java',
+  'js',
+  'json',
+  'jsx',
+  'kt',
+  'less',
+  'lock',
+  'md',
+  'mdx',
+  'mjs',
+  'ps1',
+  'py',
+  'rs',
+  'sass',
+  'scss',
+  'sh',
+  'sql',
+  'svelte',
+  'swift',
+  'toml',
+  'ts',
+  'tsx',
+  'txt',
+  'vue',
+  'xml',
+  'yaml',
+  'yml',
+]);
+const GENERIC_SEARCH_PATH_PREFIXES = new Set([
+  '.github',
+  '.vscode',
+  'app',
+  'apps',
+  'build',
+  'components',
+  'dist',
+  'lib',
+  'libs',
+  'node_modules',
+  'packages',
+  'pages',
+  'src',
+  'test',
+  'tests',
+]);
 const SCRATCHPAD_MEMORY_ID_PREFIX = 'scratchpad:';
 const SCRATCHPAD_MEMORY_ID_HASH_CHARS = 16;
 const SEARCH_PATTERN_MEMORY_ID_PREFIX = 'search-pattern:';
@@ -460,6 +519,9 @@ function isPreciseSearchPattern(pattern: string): boolean {
   if (isGenericSearchShortCircuitPattern(normalized)) {
     return false;
   }
+  if (isFilePathLikeSearchPattern(normalized)) {
+    return false;
+  }
   if (isRegexSkeletonSearchPattern(normalized)) {
     return false;
   }
@@ -492,6 +554,40 @@ function isRegexSkeletonSearchPattern(pattern: string): boolean {
 function isGenericSearchShortCircuitPattern(pattern: string): boolean {
   const key = getUnwrappedSearchPatternKey(pattern);
   return key.length > 0 && GENERIC_SEARCH_SHORT_CIRCUIT_PATTERNS.has(key);
+}
+
+function isFilePathLikeSearchPattern(pattern: string): boolean {
+  const key = normalizePathLikeSearchPatternKey(getUnwrappedSearchPatternKey(pattern));
+  if (!key || /\s/.test(key)) {
+    return false;
+  }
+
+  const segments = key.split('/').filter(Boolean);
+  const lastSegment = segments.at(-1) ?? key;
+  if (hasKnownFileExtension(lastSegment)) {
+    return true;
+  }
+  if (/^[a-z]:\//i.test(key) || key.startsWith('./') || key.startsWith('../')) {
+    return true;
+  }
+  if (segments.length > 1 && GENERIC_SEARCH_PATH_PREFIXES.has(segments[0])) {
+    return true;
+  }
+  return false;
+}
+
+function normalizePathLikeSearchPatternKey(pattern: string): string {
+  return pattern
+    .replace(/\\(?=[a-z0-9_.-]+(?:[\\/]|$))/gi, '/')
+    .replace(/\/+/g, '/')
+    .replace(/\/+$/, '')
+    .toLowerCase()
+    .trim();
+}
+
+function hasKnownFileExtension(fileName: string): boolean {
+  const match = /\.([a-z0-9]{1,8})$/i.exec(fileName);
+  return match ? FILE_PATH_SEARCH_PATTERN_EXTENSIONS.has(match[1].toLowerCase()) : false;
 }
 
 function getUnwrappedSearchPatternKey(pattern: string): string {
