@@ -8,6 +8,7 @@ import { getInMemoryClient } from '../../db';
 import {
   compactRetrievalQuery,
   MAX_RETRIEVAL_QUERY_CHARS,
+  normalizeMemoryFetchIds,
   RetrievalPipeline,
 } from '../../retrieval/pipeline';
 import { Reranker } from '../../retrieval/reranker';
@@ -78,6 +79,17 @@ describe('RetrievalPipeline', () => {
     expect(compact).toContain('query middle omitted for retrieval budget');
   });
 
+  it('normalizes full-record fetch ids before building SQL', () => {
+    expect(
+      normalizeMemoryFetchIds(
+        [' mem-a ', '', 'mem-b', 'mem-a', '   ', 'mem-c', 'mem-d'],
+        3.9,
+      ),
+    ).toEqual(['mem-a', 'mem-b', 'mem-c']);
+    expect(normalizeMemoryFetchIds(['mem-a'], 0)).toEqual([]);
+    expect(normalizeMemoryFetchIds(['mem-a'], Number.NaN)).toEqual([]);
+  });
+
   it('returns empty result for empty database', async () => {
     const embeddingService = makeMockEmbeddingService();
     const reranker = new Reranker('none');
@@ -90,6 +102,42 @@ describe('RetrievalPipeline', () => {
 
     expect(result.memories).toEqual([]);
     expect(result.formattedContext).toBe('');
+  });
+
+  it('returns empty result without embedding blank queries', async () => {
+    const embeddingService = makeMockEmbeddingService();
+    const reranker = new Reranker('none');
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const result = await pipeline.search('   \n\t   ', {
+      phase: 'implement',
+      projectId: 'test-project',
+    });
+
+    expect(result).toEqual({ memories: [], formattedContext: '' });
+    expect(embeddingService.embed).not.toHaveBeenCalled();
+  });
+
+  it('returns empty result without embedding when maxResults is not positive', async () => {
+    await seedMemory(client, 'mem-001', 'JWT token expiry must be checked in middleware', 'proj-a');
+    const embeddingService = makeMockEmbeddingService();
+    const reranker = new Reranker('none');
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const zeroResult = await pipeline.search('JWT token', {
+      phase: 'implement',
+      projectId: 'proj-a',
+      maxResults: 0,
+    });
+    const invalidResult = await pipeline.search('JWT token', {
+      phase: 'implement',
+      projectId: 'proj-a',
+      maxResults: Number.NaN,
+    });
+
+    expect(zeroResult).toEqual({ memories: [], formattedContext: '' });
+    expect(invalidResult).toEqual({ memories: [], formattedContext: '' });
+    expect(embeddingService.embed).not.toHaveBeenCalled();
   });
 
   it('returns memories matching a query via BM25', async () => {
@@ -107,6 +155,40 @@ describe('RetrievalPipeline', () => {
     expect(result.memories.length).toBeGreaterThan(0);
     expect(result.memories[0].id).toBe('mem-001');
     expect(result.formattedContext).toContain('JWT token expiry');
+  });
+
+  it('normalizes legacy rows fetched by query retrieval before packing context', async () => {
+    const longContent = `pipeline token head ${'verbose implementation detail '.repeat(180)} pipeline token tail`;
+    const longCitation = `pipeline citation head ${'reference detail '.repeat(120)} pipeline citation tail`;
+    const longContext = `pipeline context head ${'neighbor detail '.repeat(90)} pipeline context tail`;
+    await seedMemory(client, 'legacy-long', longContent, 'proj-a');
+    await client.execute({
+      sql: `UPDATE memories SET citation_text = ?, context_prefix = ? WHERE id = ?`,
+      args: [longCitation, longContext, 'legacy-long'],
+    });
+
+    const embeddingService = makeMockEmbeddingService();
+    const reranker = new Reranker('none');
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const result = await pipeline.search('pipeline token head', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+    const memory = result.memories[0];
+
+    expect(memory.id).toBe('legacy-long');
+    expect(memory.content.length).toBeLessThanOrEqual(2_000);
+    expect(memory.content).toContain('pipeline token head');
+    expect(memory.content).toContain('pipeline token tail');
+    expect(memory.content).toContain('[memory middle omitted before storage]');
+    expect(memory.citationText?.length).toBeLessThanOrEqual(1_000);
+    expect(memory.citationText).toContain('pipeline citation head');
+    expect(memory.citationText).toContain('pipeline citation tail');
+    expect(memory.contextPrefix?.length).toBeLessThanOrEqual(600);
+    expect(memory.contextPrefix).toContain('pipeline context head');
+    expect(memory.contextPrefix).toContain('pipeline context tail');
+    expect(result.formattedContext.length).toBeLessThan(longContent.length);
   });
 
   it('scopes results to correct project', async () => {
@@ -162,6 +244,39 @@ describe('RetrievalPipeline', () => {
     });
 
     expect(result.memories.length).toBeLessThanOrEqual(2);
+  });
+
+  it('scales candidate limits down for small maxResults requests', async () => {
+    for (let i = 0; i < 8; i++) {
+      await seedMemory(client, `mem-${i}`, `authentication gotcha number ${i}`, 'proj-a');
+    }
+    const executeSpy = vi.spyOn(client, 'execute');
+    const embeddingService = makeMockEmbeddingService();
+    const reranker = new Reranker('none');
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    await pipeline.search('authentication', {
+      phase: 'implement',
+      projectId: 'proj-a',
+      maxResults: 2,
+      recentFiles: ['src/auth.ts'],
+    });
+
+    const statements = executeSpy.mock.calls.flatMap(([statement]) => {
+      if (typeof statement === 'object' && statement !== null && 'sql' in statement) {
+        return [statement as { sql: string; args: unknown[] }];
+      }
+      return [];
+    });
+    const bm25Call = statements.find((statement) => statement.sql.includes('memories_fts MATCH'));
+    const denseCall = statements.find((statement) => statement.sql.includes('vector_distance_cos'));
+    const graphCall = statements.find((statement) => statement.sql.includes('json_each(m.related_files)'));
+    const fetchCall = statements.find((statement) => statement.sql.includes('SELECT * FROM memories WHERE id IN'));
+
+    expect(bm25Call?.args.at(-1)).toBe(8);
+    expect(denseCall?.args.at(-1)).toBe(12);
+    expect(graphCall?.args.at(-1)).toBe(6);
+    expect(fetchCall?.args.length).toBeLessThanOrEqual(8);
   });
 
   it('handles graph search gracefully when no recentFiles provided', async () => {

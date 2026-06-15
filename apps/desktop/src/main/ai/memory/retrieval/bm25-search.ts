@@ -29,9 +29,17 @@ export async function searchBM25(
   projectId: string,
   limit: number = 100,
 ): Promise<BM25Result[]> {
+  const boundedLimit = normalizeSearchLimit(limit);
+  if (boundedLimit <= 0) {
+    return [];
+  }
+
   try {
     // Sanitize query for FTS5: wrap in quotes if it contains special chars
     const sanitizedQuery = sanitizeFtsQuery(query);
+    if (!sanitizedQuery) {
+      return [];
+    }
 
     const result = await db.execute({
       sql: `SELECT m.id, bm25(memories_fts) AS bm25_score
@@ -42,17 +50,38 @@ export async function searchBM25(
           AND m.deprecated = 0
         ORDER BY bm25_score
         LIMIT ?`,
-      args: [sanitizedQuery, projectId, limit],
+      args: [sanitizedQuery, projectId, boundedLimit],
     });
 
-    return result.rows.map((r) => ({
-      memoryId: r.id as string,
-      bm25Score: r.bm25_score as number,
-    }));
+    return result.rows.flatMap((r) => {
+      const memoryId = normalizeResultId(r.id);
+      const bm25Score = normalizeFiniteNumber(r.bm25_score);
+      return memoryId && bm25Score !== undefined ? [{ memoryId, bm25Score }] : [];
+    });
   } catch {
     // FTS5 MATCH can fail on malformed queries — return empty result gracefully
     return [];
   }
+}
+
+function normalizeResultId(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeFiniteNumber(value: unknown): number | undefined {
+  const normalized = typeof value === 'number' ? value : undefined;
+  return normalized !== undefined && Number.isFinite(normalized) ? normalized : undefined;
+}
+
+function normalizeSearchLimit(limit: number): number {
+  if (!Number.isFinite(limit)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(limit));
 }
 
 /**
@@ -60,9 +89,9 @@ export async function searchBM25(
  * FTS5 special characters: " ( ) * : ^ + -
  * If query contains special chars beyond word boundaries, quote the whole thing.
  */
-function sanitizeFtsQuery(query: string): string {
-  const trimmed = query.trim();
-  if (!trimmed) return '""';
+function sanitizeFtsQuery(query: string): string | undefined {
+  const trimmed = query.replace(/\s+/g, ' ').trim();
+  if (!trimmed) return undefined;
 
   // If already looks like a valid FTS5 query with operators, pass through
   if (/^["(]/.test(trimmed)) return trimmed;

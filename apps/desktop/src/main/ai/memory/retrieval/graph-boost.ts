@@ -1,22 +1,17 @@
 /**
  * Graph Neighborhood Boost
  *
- * The unique competitive advantage of the memory system.
- * After initial RRF fusion, boost candidates that share file-graph neighborhood
- * with the top-K results. This promotes structurally-related memories even when
- * they don't score well on text similarity alone.
- *
- * Algorithm:
- *   1. Get related_files from top-K RRF results
- *   2. Query closure table for 1-hop file neighbors
- *   3. Boost remaining candidates whose related_files overlap with neighbor set
- *   4. Re-rank with boosted scores
+ * Boosts candidates that share file-graph neighborhoods with top-ranked
+ * memories, while bounding legacy/dirty inputs before SQL construction.
  */
 
 import type { Client } from '@libsql/client';
 import type { RankedResult } from './rrf-fusion';
 
 const GRAPH_BOOST_FACTOR = 0.3;
+const MAX_GRAPH_BOOST_CANDIDATES = 50;
+const MAX_GRAPH_BOOST_TOP_FILES = 64;
+const MAX_GRAPH_BOOST_FILES_PER_MEMORY = 24;
 
 /**
  * Apply graph neighborhood boost to candidates below the top-K cut.
@@ -32,10 +27,11 @@ export async function applyGraphNeighborhoodBoost(
   projectId: string,
   topK: number = 10,
 ): Promise<RankedResult[]> {
-  if (rankedCandidates.length <= topK) return rankedCandidates;
+  const candidates = normalizeRankedCandidates(rankedCandidates);
+  const anchorLimit = normalizeTopK(topK, candidates.length);
+  if (candidates.length === 0 || anchorLimit <= 0 || candidates.length <= anchorLimit) return candidates;
 
-  // Step 1: Batch-fetch related_files for ALL candidates in one query
-  const allIds = rankedCandidates.map((r) => r.memoryId);
+  const allIds = candidates.map((r) => r.memoryId);
   const placeholders = allIds.map(() => '?').join(',');
 
   let relatedFilesMap: Map<string, string[]>;
@@ -47,31 +43,36 @@ export async function applyGraphNeighborhoodBoost(
 
     relatedFilesMap = new Map();
     for (const row of memoriesResult.rows) {
-      try {
-        const files = JSON.parse((row.related_files as string) ?? '[]') as string[];
-        relatedFilesMap.set(row.id as string, files);
-      } catch {
-        relatedFilesMap.set(row.id as string, []);
+      const memoryId = normalizeMemoryId(row.id);
+      if (!memoryId) {
+        continue;
       }
+      relatedFilesMap.set(memoryId, parseRelatedFiles(row.related_files));
     }
   } catch {
-    // DB query failed — return original ranking unchanged
-    return rankedCandidates;
+    return candidates;
   }
 
-  // Step 2: Collect file paths from top-K results
-  const topFiles: string[] = [];
-  for (const candidate of rankedCandidates.slice(0, topK)) {
+  const topFiles = new Set<string>();
+  for (const candidate of candidates.slice(0, anchorLimit)) {
     const files = relatedFilesMap.get(candidate.memoryId) ?? [];
-    topFiles.push(...files);
+    for (const file of files) {
+      topFiles.add(file);
+      if (topFiles.size >= MAX_GRAPH_BOOST_TOP_FILES) {
+        break;
+      }
+    }
+    if (topFiles.size >= MAX_GRAPH_BOOST_TOP_FILES) {
+      break;
+    }
   }
 
-  if (topFiles.length === 0) return rankedCandidates;
+  if (topFiles.size === 0) return candidates;
 
-  // Step 3: Query closure table for 1-hop neighbors of top-file set
+  const topFileList = [...topFiles];
   const neighborFiles = new Set<string>();
   try {
-    const filePlaceholders = topFiles.map(() => '?').join(',');
+    const filePlaceholders = topFileList.map(() => '?').join(',');
     const neighbors = await db.execute({
       sql: `SELECT DISTINCT gn2.file_path
         FROM graph_closure gc
@@ -81,36 +82,117 @@ export async function applyGraphNeighborhoodBoost(
           AND gn.project_id = ?
           AND gc.depth = 1
           AND gn2.file_path IS NOT NULL`,
-      args: [...topFiles, projectId],
+      args: [...topFileList, projectId],
     });
 
     for (const row of neighbors.rows) {
-      if (row.file_path) neighborFiles.add(row.file_path as string);
+      const filePath = normalizeFilePath(row.file_path);
+      if (filePath) {
+        neighborFiles.add(filePath);
+      }
     }
   } catch {
-    // Graph tables may be empty — skip boost gracefully
-    return rankedCandidates;
+    return candidates;
   }
 
-  if (neighborFiles.size === 0) return rankedCandidates;
+  if (neighborFiles.size === 0) return candidates;
 
-  // Step 4: Apply boost to candidates below top-K that overlap with neighbor set
-  const topFilesSet = new Set(topFiles);
-  const boosted: RankedResult[] = rankedCandidates.map((candidate, rank) => {
-    if (rank < topK) return candidate;
+  const boosted: RankedResult[] = candidates.map((candidate, rank) => {
+    if (rank < anchorLimit) return candidate;
 
     const candidateFiles = relatedFilesMap.get(candidate.memoryId) ?? [];
-    const neighborOverlap = candidateFiles.filter(
-      (f) => neighborFiles.has(f) && !topFilesSet.has(f),
-    ).length;
-
+    const neighborOverlap = candidateFiles.filter((f) => neighborFiles.has(f) && !topFiles.has(f)).length;
     if (neighborOverlap === 0) return candidate;
 
-    const boostAmount =
-      GRAPH_BOOST_FACTOR * (neighborOverlap / Math.max(topFiles.length, 1));
-
+    const boostAmount = GRAPH_BOOST_FACTOR * (neighborOverlap / Math.max(topFiles.size, 1));
     return { ...candidate, score: candidate.score + boostAmount };
   });
 
   return boosted.sort((a, b) => b.score - a.score);
+}
+
+function normalizeRankedCandidates(candidates: RankedResult[]): RankedResult[] {
+  const seen = new Set<string>();
+  const normalized: RankedResult[] = [];
+
+  for (const candidate of candidates) {
+    const memoryId = normalizeMemoryId(candidate.memoryId);
+    if (!memoryId || seen.has(memoryId) || !Number.isFinite(candidate.score)) {
+      continue;
+    }
+
+    seen.add(memoryId);
+    normalized.push({ ...candidate, memoryId });
+    if (normalized.length >= MAX_GRAPH_BOOST_CANDIDATES) {
+      break;
+    }
+  }
+
+  return normalized;
+}
+
+function normalizeTopK(topK: number, candidateCount: number): number {
+  if (!Number.isFinite(topK)) {
+    return 0;
+  }
+  return Math.max(0, Math.min(candidateCount, Math.floor(topK)));
+}
+
+function normalizeMemoryId(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function parseRelatedFiles(value: unknown): string[] {
+  if (typeof value !== 'string') {
+    return [];
+  }
+
+  try {
+    const parsed = JSON.parse(value) as unknown;
+    if (!Array.isArray(parsed)) {
+      return [];
+    }
+
+    const files: string[] = [];
+    const seen = new Set<string>();
+    for (const item of parsed) {
+      const normalized = normalizeFilePath(item);
+      if (!normalized) {
+        continue;
+      }
+
+      const key = normalized.toLowerCase();
+      if (seen.has(key)) {
+        continue;
+      }
+
+      seen.add(key);
+      files.push(normalized);
+      if (files.length >= MAX_GRAPH_BOOST_FILES_PER_MEMORY) {
+        break;
+      }
+    }
+    return files;
+  } catch {
+    return [];
+  }
+}
+
+function normalizeFilePath(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  let normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  while (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  while (normalized.length > 1 && normalized.endsWith('/') && !/^[A-Za-z]:\/$/.test(normalized)) {
+    normalized = normalized.slice(0, -1);
+  }
+  return normalized.length > 0 ? normalized : undefined;
 }

@@ -7,6 +7,7 @@ import {
   packContext,
   estimateTokens,
   DEFAULT_PACKING_CONFIG,
+  isMemoryEligibleForPromptContext,
   MAX_PACKED_MEMORY_CITATION_CHARS,
   MAX_PACKED_MEMORY_CONTENT_CHARS,
   MAX_PACKED_MEMORY_FILE_REF_CHARS,
@@ -88,6 +89,42 @@ describe('packContext', () => {
     expect(result).toContain('Relevant Context from Memory');
     expect(result).toContain(memory.content);
     expect(result).toContain('Gotcha');
+  });
+
+  it('filters invalid and duplicate memories before packing context', () => {
+    const result = packContext(
+      [
+        makeMemory({ id: ' ', content: 'blank id should be skipped' }),
+        makeMemory({ id: 'blank-content', content: '   ' }),
+        makeMemory({ id: 'duplicate', content: 'First duplicate should remain.' }),
+        makeMemory({ id: ' duplicate ', content: 'Second duplicate should be skipped.' }),
+        makeMemory({ id: 'bad-confidence', content: 'Bad confidence should be skipped.', confidence: Number.NaN }),
+      ],
+      'implement',
+    );
+
+    expect(result).toContain('First duplicate should remain.');
+    expect(result).not.toContain('blank id should be skipped');
+    expect(result).not.toContain('Second duplicate should be skipped.');
+    expect(result).not.toContain('Bad confidence should be skipped.');
+  });
+
+  it('normalizes prompt metadata before packing context', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'metadata',
+          content: '  Metadata \n memory  ',
+          citationText: '  Source \n citation  ',
+          relatedFiles: [' src/auth.ts ', 'src/auth.ts', ' src/session.ts '],
+        }),
+      ],
+      'implement',
+    );
+
+    expect(result).toContain('Metadata memory');
+    expect(result).toContain('[^ Memory: Source citation]');
+    expect(result).toContain('src/auth.ts, src/session.ts');
   });
 
   it('includes file context in output', () => {
@@ -205,5 +242,13 @@ describe('packContext', () => {
     // With budget of 10 tokens and long content, should still handle gracefully
     const result = packContext([memory], 'implement', tinyConfig as Parameters<typeof packContext>[2]);
     expect(typeof result).toBe('string');
+  });
+});
+
+describe('isMemoryEligibleForPromptContext', () => {
+  it('returns false for prompt-invalid memories before core eligibility checks', () => {
+    expect(isMemoryEligibleForPromptContext(makeMemory({ id: ' ', content: 'usable' }))).toBe(false);
+    expect(isMemoryEligibleForPromptContext(makeMemory({ id: 'mem', content: '   ' }))).toBe(false);
+    expect(isMemoryEligibleForPromptContext(makeMemory({ id: 'mem', confidence: Number.NaN }))).toBe(false);
   });
 });

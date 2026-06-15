@@ -35,7 +35,13 @@ export async function searchDense(
   dims: 256 | 1024 = 256,
   limit: number = 30,
 ): Promise<DenseResult[]> {
-  const queryEmbedding = await embeddingService.embed(query, dims);
+  const boundedLimit = normalizeSearchLimit(limit);
+  const normalizedQuery = query.replace(/\s+/g, ' ').trim();
+  if (!normalizedQuery || boundedLimit <= 0) {
+    return [];
+  }
+
+  const queryEmbedding = await embeddingService.embed(normalizedQuery, dims);
 
   // Attempt libsql native vector_distance_cos query.
   // Falls back to JS-side cosine similarity if the query fails.
@@ -51,17 +57,38 @@ export async function searchDense(
           AND me.dims = ?
         ORDER BY distance ASC
         LIMIT ?`,
-      args: [embeddingBlob, projectId, dims, limit],
+      args: [embeddingBlob, projectId, dims, boundedLimit],
     });
 
-    return result.rows.map((r) => ({
-      memoryId: r.memory_id as string,
-      distance: r.distance as number,
-    }));
+    return result.rows.flatMap((r) => {
+      const memoryId = normalizeResultId(r.memory_id);
+      const distance = normalizeFiniteNumber(r.distance);
+      return memoryId && distance !== undefined ? [{ memoryId, distance }] : [];
+    });
   } catch {
     // Native vector query failed — use JS-side cosine similarity
-    return searchDenseJsFallback(db, queryEmbedding, projectId, dims, limit);
+    return searchDenseJsFallback(db, queryEmbedding, projectId, dims, boundedLimit);
   }
+}
+
+function normalizeSearchLimit(limit: number): number {
+  if (!Number.isFinite(limit)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(limit));
+}
+
+function normalizeResultId(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeFiniteNumber(value: unknown): number | undefined {
+  const normalized = typeof value === 'number' ? value : undefined;
+  return normalized !== undefined && Number.isFinite(normalized) ? normalized : undefined;
 }
 
 /**
@@ -89,14 +116,22 @@ async function searchDenseJsFallback(
   const scored: DenseResult[] = [];
 
   for (const row of result.rows) {
+    const memoryId = normalizeResultId(row.memory_id);
     const rawEmbedding = row.embedding;
-    if (!rawEmbedding) continue;
+    if (!memoryId || !rawEmbedding) continue;
 
-    const storedEmbedding = deserializeEmbedding(rawEmbedding as ArrayBuffer);
+    const storedEmbedding = deserializeEmbedding(rawEmbedding);
+    if (!storedEmbedding) {
+      continue;
+    }
+
     const distance = cosineDistance(queryEmbedding, storedEmbedding);
+    if (!Number.isFinite(distance)) {
+      continue;
+    }
 
     scored.push({
-      memoryId: row.memory_id as string,
+      memoryId,
       distance,
     });
   }
@@ -116,13 +151,34 @@ function serializeEmbedding(embedding: number[]): Buffer {
   return buf;
 }
 
-function deserializeEmbedding(buf: ArrayBuffer | Buffer | Uint8Array): number[] {
-  const view = Buffer.isBuffer(buf) ? buf : Buffer.from(buf as ArrayBuffer);
+function deserializeEmbedding(value: unknown): number[] | undefined {
+  const view = toEmbeddingBuffer(value);
+  if (!view || view.length === 0 || view.length % 4 !== 0) {
+    return undefined;
+  }
+
   const result: number[] = [];
   for (let i = 0; i < view.length; i += 4) {
-    result.push(view.readFloatLE(i));
+    const item = view.readFloatLE(i);
+    if (!Number.isFinite(item)) {
+      return undefined;
+    }
+    result.push(item);
   }
   return result;
+}
+
+function toEmbeddingBuffer(value: unknown): Buffer | undefined {
+  if (Buffer.isBuffer(value)) {
+    return value;
+  }
+  if (value instanceof ArrayBuffer) {
+    return Buffer.from(value);
+  }
+  if (ArrayBuffer.isView(value)) {
+    return Buffer.from(value.buffer, value.byteOffset, value.byteLength);
+  }
+  return undefined;
 }
 
 /**

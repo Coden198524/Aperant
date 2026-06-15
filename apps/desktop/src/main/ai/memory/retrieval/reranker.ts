@@ -14,6 +14,7 @@ const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 const QWEN3_RERANKER_MODEL = 'qwen3-reranker:0.6b';
 const MAX_RERANK_QUERY_CHARS = 300;
 const MAX_RERANK_DOCUMENT_CHARS = 1200;
+const MAX_RERANK_CANDIDATES = 20;
 
 export type RerankerProvider = 'ollama' | 'cohere' | 'none';
 
@@ -84,26 +85,22 @@ export class Reranker {
     candidates: RerankerCandidate[],
     topK: number = 8,
   ): Promise<RerankerResult[]> {
-    const boundedTopK = Math.max(0, topK);
-    if (boundedTopK === 0 || candidates.length === 0) {
+    const compactQuery = compactRerankerText(query, MAX_RERANK_QUERY_CHARS, { preserveTail: true });
+    const boundedTopK = normalizeRerankerTopK(topK);
+    const compactCandidates = compactRerankerCandidates(candidates);
+    const resultLimit = Math.min(boundedTopK, compactCandidates.length);
+    if (!compactQuery || resultLimit <= 0) {
       return [];
     }
-    if (this.provider === 'none' || candidates.length <= boundedTopK) {
-      return candidates
-        .slice(0, boundedTopK)
-        .map((c, i) => ({
-          memoryId: c.memoryId,
-          score: 1 - i / Math.max(candidates.length, 1),
-        }));
+    if (this.provider === 'none' || compactCandidates.length <= resultLimit) {
+      return this.passthroughRerank(compactCandidates, resultLimit);
     }
 
-    const compactQuery = compactRerankerText(query, MAX_RERANK_QUERY_CHARS, { preserveTail: true });
-    const compactCandidates = compactRerankerCandidates(candidates);
     if (this.provider === 'ollama') {
-      return this.rerankOllama(compactQuery, compactCandidates, boundedTopK);
+      return this.rerankOllama(compactQuery, compactCandidates, resultLimit);
     }
 
-    return this.rerankCohere(compactQuery, compactCandidates, boundedTopK);
+    return this.rerankCohere(compactQuery, compactCandidates, resultLimit);
   }
 
   // ============================================================
@@ -148,13 +145,23 @@ export class Reranker {
             return;
           }
 
-          const data = (await response.json()) as { embedding: number[] };
+          const data = (await response.json()) as { embedding: unknown };
+          if (!Array.isArray(data.embedding)) {
+            scored.push({
+              memoryId: candidate.memoryId,
+              score: 1 - fallbackRank / candidates.length,
+            });
+            return;
+          }
           // Use L2 norm of the embedding as a relevance proxy
           // (higher norm from the relevance prompt = more confident match)
           const norm = Math.sqrt(
-            data.embedding.reduce((s, v) => s + v * v, 0),
+            data.embedding.reduce((s, v) => (typeof v === 'number' ? s + v * v : s), 0),
           );
-          scored.push({ memoryId: candidate.memoryId, score: norm });
+          scored.push({
+            memoryId: candidate.memoryId,
+            score: Number.isFinite(norm) ? norm : 1 - fallbackRank / candidates.length,
+          });
         } catch {
           scored.push({
             memoryId: candidate.memoryId,
@@ -209,10 +216,17 @@ export class Reranker {
         results: Array<{ index: number; relevance_score: number }>;
       };
 
-      return data.results.map((r) => ({
-        memoryId: candidates[r.index].memoryId,
-        score: r.relevance_score,
-      }));
+      const reranked = Array.isArray(data.results)
+        ? data.results.flatMap((r) => {
+            const index = normalizeRerankerIndex(r.index, candidates.length);
+            const score = normalizeRerankerScore(r.relevance_score);
+            return index !== undefined && score !== undefined
+              ? [{ memoryId: candidates[index].memoryId, score }]
+              : [];
+          })
+        : [];
+
+      return reranked.length > 0 ? reranked.slice(0, topK) : this.passthroughRerank(candidates, topK);
     } catch {
       return this.passthroughRerank(candidates, topK);
     }
@@ -236,10 +250,47 @@ export class Reranker {
 // ============================================================
 
 function compactRerankerCandidates(candidates: RerankerCandidate[]): RerankerCandidate[] {
-  return candidates.map((candidate) => ({
-    ...candidate,
-    content: compactRerankerText(candidate.content, MAX_RERANK_DOCUMENT_CHARS, { preserveTail: true }),
-  }));
+  const seen = new Set<string>();
+  const compacted: RerankerCandidate[] = [];
+
+  for (const candidate of candidates) {
+    const memoryId = normalizeRerankerId(candidate.memoryId);
+    const content = compactRerankerText(candidate.content, MAX_RERANK_DOCUMENT_CHARS, { preserveTail: true });
+    if (!memoryId || !content || seen.has(memoryId)) {
+      continue;
+    }
+
+    seen.add(memoryId);
+    compacted.push({ memoryId, content });
+    if (compacted.length >= MAX_RERANK_CANDIDATES) {
+      break;
+    }
+  }
+
+  return compacted;
+}
+
+function normalizeRerankerTopK(topK: number): number {
+  if (!Number.isFinite(topK)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(topK));
+}
+
+function normalizeRerankerId(value: string): string | undefined {
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeRerankerIndex(index: unknown, candidateCount: number): number | undefined {
+  if (typeof index !== 'number' || !Number.isInteger(index) || index < 0 || index >= candidateCount) {
+    return undefined;
+  }
+  return index;
+}
+
+function normalizeRerankerScore(score: unknown): number | undefined {
+  return typeof score === 'number' && Number.isFinite(score) ? score : undefined;
 }
 
 function buildQwen3RerankerPrompt(query: string, document: string): string {

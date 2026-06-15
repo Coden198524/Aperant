@@ -12,6 +12,7 @@
 import type { Client } from '@libsql/client';
 import type { Memory, UniversalPhase } from '@autocode/core';
 import type { EmbeddingService } from '../embedding-service';
+import { rowToMemory } from '../row-mapper';
 import { detectQueryType, QUERY_TYPE_WEIGHTS } from './query-classifier';
 import { searchBM25 } from './bm25-search';
 import { searchDense } from './dense-search';
@@ -23,6 +24,11 @@ import { packContext } from './context-packer';
 
 export const MAX_RETRIEVAL_QUERY_CHARS = 800;
 const RETRIEVAL_QUERY_OMISSION_MARKER = ' ... [query middle omitted for retrieval budget] ... ';
+const DEFAULT_RETRIEVAL_MAX_RESULTS = 8;
+const DEFAULT_BM25_CANDIDATE_LIMIT = 20;
+const DEFAULT_DENSE_CANDIDATE_LIMIT = 30;
+const DEFAULT_GRAPH_CANDIDATE_LIMIT = 15;
+const DEFAULT_FETCH_CANDIDATE_LIMIT = 20;
 
 // ============================================================
 // TYPES
@@ -60,14 +66,20 @@ export class RetrievalPipeline {
    */
   async search(query: string, config: RetrievalConfig): Promise<RetrievalResult> {
     const compactQuery = compactRetrievalQuery(query);
+    const maxResults = normalizeRetrievalMaxResults(config.maxResults);
+    if (!compactQuery || maxResults <= 0) {
+      return { memories: [], formattedContext: '' };
+    }
+
     const queryType = detectQueryType(compactQuery, config.recentToolCalls);
     const weights = QUERY_TYPE_WEIGHTS[queryType];
+    const candidateLimits = getRetrievalCandidateLimits(maxResults);
 
     // Stage 1: Parallel candidate generation from all three paths
     const [bm25Results, denseResults, graphResults] = await Promise.all([
-      searchBM25(this.db, compactQuery, config.projectId, 20),
-      searchDense(this.db, compactQuery, this.embeddingService, config.projectId, 256, 30),
-      searchGraph(this.db, config.recentFiles ?? [], config.projectId, 15),
+      searchBM25(this.db, compactQuery, config.projectId, candidateLimits.bm25),
+      searchDense(this.db, compactQuery, this.embeddingService, config.projectId, 256, candidateLimits.dense),
+      searchGraph(this.db, config.recentFiles ?? [], config.projectId, candidateLimits.graph),
     ]);
 
     // Stage 2a: Weighted RRF fusion (application-side — no SQL FULL OUTER JOIN)
@@ -97,15 +109,14 @@ export class RetrievalPipeline {
     );
 
     // Fetch full memory records for top candidates
-    const topCandidateIds = boosted.slice(0, 20).map((r) => r.memoryId);
-    const memories = await this.fetchMemories(topCandidateIds);
+    const topCandidateIds = boosted.slice(0, candidateLimits.fetch).map((r) => r.memoryId);
+    const memories = await this.fetchMemories(topCandidateIds, candidateLimits.fetch);
 
     if (memories.length === 0) {
       return { memories: [], formattedContext: '' };
     }
 
     // Stage 3: Cross-encoder reranking (top 20 → top maxResults)
-    const maxResults = config.maxResults ?? 8;
     const reranked = await this.reranker.rerank(
       compactQuery,
       memories.map((m) => ({
@@ -130,81 +141,29 @@ export class RetrievalPipeline {
   // PRIVATE HELPERS
   // ============================================================
 
-  private async fetchMemories(ids: string[]): Promise<Memory[]> {
-    if (ids.length === 0) return [];
+  private async fetchMemories(ids: string[], limit: number): Promise<Memory[]> {
+    const normalizedIds = normalizeMemoryFetchIds(ids, limit);
+    if (normalizedIds.length === 0) return [];
 
-    const placeholders = ids.map(() => '?').join(',');
+    const placeholders = normalizedIds.map(() => '?').join(',');
 
     try {
       const result = await this.db.execute({
         sql: `SELECT * FROM memories WHERE id IN (${placeholders}) AND deprecated = 0`,
-        args: ids,
+        args: normalizedIds,
       });
 
       // Preserve the order from the ids array (RRF ranking order)
       const byId = new Map<string, Memory>();
       for (const row of result.rows) {
-        const memory = this.rowToMemory(row as Record<string, unknown>);
+        const memory = rowToMemory(row as Record<string, unknown>);
         byId.set(memory.id, memory);
       }
 
-      return ids.map((id) => byId.get(id)).filter((m): m is Memory => m !== undefined);
+      return normalizedIds.map((id) => byId.get(id)).filter((m): m is Memory => m !== undefined);
     } catch {
       return [];
     }
-  }
-
-  private rowToMemory(row: Record<string, unknown>): Memory {
-    const parseJson = <T>(val: unknown, fallback: T): T => {
-      if (typeof val === 'string') {
-        try {
-          return JSON.parse(val) as T;
-        } catch {
-          return fallback;
-        }
-      }
-      return fallback;
-    };
-
-    return {
-      id: row.id as string,
-      type: row.type as Memory['type'],
-      content: row.content as string,
-      confidence: (row.confidence as number) ?? 0.8,
-      tags: parseJson<string[]>(row.tags, []),
-      relatedFiles: parseJson<string[]>(row.related_files, []),
-      relatedModules: parseJson<string[]>(row.related_modules, []),
-      createdAt: row.created_at as string,
-      lastAccessedAt: row.last_accessed_at as string,
-      accessCount: (row.access_count as number) ?? 0,
-      scope: (row.scope as Memory['scope']) ?? 'global',
-      source: (row.source as Memory['source']) ?? 'agent_explicit',
-      sessionId: (row.session_id as string) ?? '',
-      commitSha: (row.commit_sha as string | null) ?? undefined,
-      provenanceSessionIds: parseJson<string[]>(row.provenance_session_ids, []),
-      targetNodeId: (row.target_node_id as string | null) ?? undefined,
-      impactedNodeIds: parseJson<string[]>(row.impacted_node_ids, []),
-      relations: parseJson(row.relations, []),
-      decayHalfLifeDays: (row.decay_half_life_days as number | null) ?? undefined,
-      needsReview: Boolean(row.needs_review),
-      userVerified: Boolean(row.user_verified),
-      citationText: (row.citation_text as string | null) ?? undefined,
-      pinned: Boolean(row.pinned),
-      deprecated: Boolean(row.deprecated),
-      deprecatedAt: (row.deprecated_at as string | null) ?? undefined,
-      staleAt: (row.stale_at as string | null) ?? undefined,
-      projectId: row.project_id as string,
-      trustLevelScope: (row.trust_level_scope as string | null) ?? undefined,
-      chunkType: (row.chunk_type as Memory['chunkType']) ?? undefined,
-      chunkStartLine: (row.chunk_start_line as number | null) ?? undefined,
-      chunkEndLine: (row.chunk_end_line as number | null) ?? undefined,
-      contextPrefix: (row.context_prefix as string | null) ?? undefined,
-      embeddingModelId: (row.embedding_model_id as string | null) ?? undefined,
-      workUnitRef: row.work_unit_ref
-        ? parseJson(row.work_unit_ref, undefined)
-        : undefined,
-      methodology: (row.methodology as string | null) ?? undefined,
-    };
   }
 }
 
@@ -227,4 +186,73 @@ export function compactRetrievalQuery(query: string): string {
     marker,
     tailChars > 0 ? normalized.slice(-tailChars).trimStart() : '',
   ].join('');
+}
+
+function normalizeRetrievalMaxResults(maxResults: number | undefined): number {
+  if (maxResults === undefined) {
+    return DEFAULT_RETRIEVAL_MAX_RESULTS;
+  }
+  if (!Number.isFinite(maxResults)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(maxResults));
+}
+
+export function normalizeMemoryFetchIds(ids: string[], limit: number): string[] {
+  if (!Number.isFinite(limit)) {
+    return [];
+  }
+  const boundedLimit = Math.max(0, Math.floor(limit));
+  if (boundedLimit <= 0) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalizedIds: string[] = [];
+  for (const id of ids) {
+    const normalized = id.trim();
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    normalizedIds.push(normalized);
+    if (normalizedIds.length >= boundedLimit) {
+      break;
+    }
+  }
+  return normalizedIds;
+}
+
+interface RetrievalCandidateLimits {
+  bm25: number;
+  dense: number;
+  graph: number;
+  fetch: number;
+}
+
+function getRetrievalCandidateLimits(maxResults: number): RetrievalCandidateLimits {
+  const fetch = getRetrievalFetchCandidateLimit(maxResults);
+
+  return {
+    bm25: Math.min(DEFAULT_BM25_CANDIDATE_LIMIT, fetch),
+    dense: Math.min(
+      DEFAULT_DENSE_CANDIDATE_LIMIT,
+      Math.max(fetch, maxResults + 10, Math.ceil(fetch * 1.5)),
+    ),
+    graph: Math.min(
+      DEFAULT_GRAPH_CANDIDATE_LIMIT,
+      Math.max(maxResults, Math.ceil(fetch * 0.75)),
+    ),
+    fetch,
+  };
+}
+
+function getRetrievalFetchCandidateLimit(maxResults: number): number {
+  if (maxResults >= DEFAULT_RETRIEVAL_MAX_RESULTS) {
+    return DEFAULT_FETCH_CANDIDATE_LIMIT;
+  }
+
+  const scaledLimit = Math.max(maxResults, maxResults * 4, maxResults + 6);
+  return Math.min(DEFAULT_FETCH_CANDIDATE_LIMIT, scaledLimit);
 }

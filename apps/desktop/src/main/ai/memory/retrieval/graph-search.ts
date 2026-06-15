@@ -9,6 +9,12 @@
 
 import type { Client } from '@libsql/client';
 
+const CO_ACCESS_NEIGHBOR_LIMIT = 10;
+const CO_ACCESS_MEMORY_LIMIT = 5;
+const CLOSURE_NEIGHBOR_LIMIT = 15;
+const CLOSURE_MEMORY_LIMIT = 3;
+const MAX_GRAPH_RECENT_FILES = 32;
+
 export interface GraphSearchResult {
   memoryId: string;
   graphScore: number;
@@ -30,17 +36,19 @@ export async function searchGraph(
   limit: number = 15,
 ): Promise<GraphSearchResult[]> {
   const results: GraphSearchResult[] = [];
+  const boundedLimit = normalizeSearchLimit(limit);
+  const normalizedRecentFiles = normalizeRecentFiles(recentFiles);
 
-  if (recentFiles.length === 0) return results;
+  if (boundedLimit <= 0 || normalizedRecentFiles.length === 0) return results;
 
   // Path 1: File-scoped memories (directly tagged to recent files)
-  await collectFileScopedMemories(db, recentFiles, projectId, results, limit);
+  await collectFileScopedMemories(db, normalizedRecentFiles, projectId, results, boundedLimit);
 
   // Path 2: Co-access neighbors (files frequently co-accessed with recent files)
-  await collectCoAccessMemories(db, recentFiles, projectId, results);
+  await collectCoAccessMemories(db, normalizedRecentFiles, projectId, results, boundedLimit);
 
   // Path 3: Closure table 1-hop neighbors (structural dependencies)
-  await collectClosureNeighborMemories(db, recentFiles, projectId, results);
+  await collectClosureNeighborMemories(db, normalizedRecentFiles, projectId, results, boundedLimit);
 
   // Deduplicate — keep highest-scored entry per memoryId
   const seen = new Map<string, GraphSearchResult>();
@@ -53,7 +61,54 @@ export async function searchGraph(
 
   return [...seen.values()]
     .sort((a, b) => b.graphScore - a.graphScore)
-    .slice(0, limit);
+    .slice(0, boundedLimit);
+}
+
+function normalizeSearchLimit(limit: number): number {
+  if (!Number.isFinite(limit)) {
+    return 0;
+  }
+  return Math.max(0, Math.floor(limit));
+}
+
+function normalizeRecentFiles(recentFiles: string[]): string[] {
+  const seen = new Set<string>();
+  const normalizedFiles: string[] = [];
+  for (const file of recentFiles) {
+    const normalized = file.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalizedFiles.push(normalized);
+    if (normalizedFiles.length >= MAX_GRAPH_RECENT_FILES) {
+      break;
+    }
+  }
+  return normalizedFiles;
+}
+
+function getGraphSubQueryLimit(defaultLimit: number, searchLimit: number): number {
+  return Math.max(1, Math.min(defaultLimit, searchLimit));
+}
+
+function normalizeGraphId(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+  const normalized = value.trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizeGraphScore(value: unknown): number | undefined {
+  const normalized = typeof value === 'number' ? value : undefined;
+  return normalized !== undefined && Number.isFinite(normalized) ? normalized : undefined;
 }
 
 // ============================================================
@@ -82,8 +137,12 @@ async function collectFileScopedMemories(
     });
 
     for (const row of fileScoped.rows) {
+      const memoryId = normalizeGraphId(row.id);
+      if (!memoryId) {
+        continue;
+      }
       results.push({
-        memoryId: row.id as string,
+        memoryId,
         graphScore: 0.8,
         reason: 'file_scoped',
       });
@@ -98,9 +157,12 @@ async function collectCoAccessMemories(
   recentFiles: string[],
   projectId: string,
   results: GraphSearchResult[],
+  limit: number,
 ): Promise<void> {
   try {
     const placeholders = recentFiles.map(() => '?').join(',');
+    const neighborLimit = getGraphSubQueryLimit(CO_ACCESS_NEIGHBOR_LIMIT, limit);
+    const memoryLimit = getGraphSubQueryLimit(CO_ACCESS_MEMORY_LIMIT, limit);
     const coAccess = await db.execute({
       sql: `SELECT DISTINCT file_b AS neighbor, weight
         FROM observer_co_access_edges
@@ -108,13 +170,16 @@ async function collectCoAccessMemories(
           AND project_id = ?
           AND weight > 0.3
         ORDER BY weight DESC
-        LIMIT 10`,
-      args: [...recentFiles, projectId],
+        LIMIT ?`,
+      args: [...recentFiles, projectId, neighborLimit],
     });
 
     for (const row of coAccess.rows) {
-      const neighbor = row.neighbor as string;
-      const weight = row.weight as number;
+      const neighbor = normalizeGraphId(row.neighbor);
+      const weight = normalizeGraphScore(row.weight);
+      if (!neighbor || weight === undefined) {
+        continue;
+      }
 
       // Get memories for this co-accessed file
       const neighborMemories = await db.execute({
@@ -122,13 +187,17 @@ async function collectCoAccessMemories(
           WHERE project_id = ?
             AND deprecated = 0
             AND related_files LIKE ?
-          LIMIT 5`,
-        args: [projectId, `%${neighbor}%`],
+          LIMIT ?`,
+        args: [projectId, `%${neighbor}%`, memoryLimit],
       });
 
       for (const m of neighborMemories.rows) {
+        const memoryId = normalizeGraphId(m.id);
+        if (!memoryId) {
+          continue;
+        }
         results.push({
-          memoryId: m.id as string,
+          memoryId,
           graphScore: weight * 0.7,
           reason: 'co_access',
         });
@@ -144,9 +213,12 @@ async function collectClosureNeighborMemories(
   recentFiles: string[],
   projectId: string,
   results: GraphSearchResult[],
+  limit: number,
 ): Promise<void> {
   try {
     const placeholders = recentFiles.map(() => '?').join(',');
+    const neighborLimit = getGraphSubQueryLimit(CLOSURE_NEIGHBOR_LIMIT, limit);
+    const memoryLimit = getGraphSubQueryLimit(CLOSURE_MEMORY_LIMIT, limit);
     const closureNeighbors = await db.execute({
       sql: `SELECT DISTINCT gc.descendant_id
         FROM graph_closure gc
@@ -154,25 +226,32 @@ async function collectClosureNeighborMemories(
         WHERE gn.file_path IN (${placeholders})
           AND gn.project_id = ?
           AND gc.depth = 1
-        LIMIT 15`,
-      args: [...recentFiles, projectId],
+        LIMIT ?`,
+      args: [...recentFiles, projectId, neighborLimit],
     });
 
     for (const row of closureNeighbors.rows) {
-      const nodeId = row.descendant_id as string;
+      const nodeId = normalizeGraphId(row.descendant_id);
+      if (!nodeId) {
+        continue;
+      }
 
       const nodeMemories = await db.execute({
         sql: `SELECT id FROM memories
           WHERE project_id = ?
             AND deprecated = 0
             AND target_node_id = ?
-          LIMIT 3`,
-        args: [projectId, nodeId],
+          LIMIT ?`,
+        args: [projectId, nodeId, memoryLimit],
       });
 
       for (const m of nodeMemories.rows) {
+        const memoryId = normalizeGraphId(m.id);
+        if (!memoryId) {
+          continue;
+        }
         results.push({
-          memoryId: m.id as string,
+          memoryId,
           graphScore: 0.6,
           reason: 'closure_neighbor',
         });

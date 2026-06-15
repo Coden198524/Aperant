@@ -803,6 +803,36 @@ describe('MemoryServiceImpl', () => {
       expect(results[0].relatedModules).toEqual(['auth', 'billing']);
     });
 
+    it('compacts legacy row text payloads before returning memories', async () => {
+      const longContent = `content-start ${'x'.repeat(4_000)} content-end`;
+      const longCitation = `citation-start ${'y'.repeat(2_000)} citation-end`;
+      const longContext = `context-start ${'z'.repeat(1_200)} context-end`;
+
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            content: `  ${longContent}  `,
+            citation_text: `  ${longCitation}  `,
+            context_prefix: `  ${longContext}  `,
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+      const memory = results[0];
+
+      expect(memory.content.length).toBeLessThanOrEqual(2_000);
+      expect(memory.content).toContain('content-start');
+      expect(memory.content).toContain('content-end');
+      expect(memory.content).toContain('[memory middle omitted before storage]');
+      expect(memory.citationText?.length).toBeLessThanOrEqual(1_000);
+      expect(memory.citationText).toContain('citation-start');
+      expect(memory.citationText).toContain('citation-end');
+      expect(memory.contextPrefix?.length).toBeLessThanOrEqual(600);
+      expect(memory.contextPrefix).toContain('context-start');
+      expect(memory.contextPrefix).toContain('context-end');
+    });
+
     it('normalizes legacy row confidence before returning memories', async () => {
       mockExecute.mockResolvedValueOnce({
         rows: [
@@ -821,6 +851,62 @@ describe('MemoryServiceImpl', () => {
         ['high-confidence', 1],
         ['negative-confidence', 0],
       ]);
+    });
+
+    it('normalizes legacy row boolean flags before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            id: 'boolean-flags',
+            needs_review: Number.NaN,
+            user_verified: '1',
+            pinned: 'true',
+            deprecated: '0',
+          }),
+          makeMemoryRow({
+            id: 'invalid-boolean-flags',
+            needs_review: 'yes',
+            user_verified: Number.NaN,
+            pinned: 0,
+            deprecated: 1,
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(
+        results.map((memory) => [
+          memory.id,
+          memory.needsReview,
+          memory.userVerified,
+          memory.pinned,
+          memory.deprecated,
+        ]),
+      ).toEqual([
+        ['boolean-flags', false, true, true, false],
+        ['invalid-boolean-flags', false, false, false, true],
+      ]);
+    });
+
+    it('normalizes legacy row timestamps before returning memories', async () => {
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({
+            created_at: 'not-a-date',
+            last_accessed_at: ' 2024-02-03T04:05:06Z ',
+            deprecated_at: 'also-not-a-date',
+            stale_at: '2024-03-04T05:06:07Z',
+          }),
+        ],
+      });
+
+      const results = await service.search({ projectId: 'proj-001' });
+
+      expect(results[0].createdAt).toBe('1970-01-01T00:00:00.000Z');
+      expect(results[0].lastAccessedAt).toBe('2024-02-03T04:05:06.000Z');
+      expect(results[0].deprecatedAt).toBeUndefined();
+      expect(results[0].staleAt).toBe('2024-03-04T05:06:07.000Z');
     });
 
     it('normalizes legacy provenance and relation arrays before returning memories', async () => {

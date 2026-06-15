@@ -6,24 +6,15 @@
  */
 
 import type { Client } from '@libsql/client';
-import {
-  isAutocodeMemoryScope,
-  isAutocodeMemorySource,
-  isAutocodeMemoryType,
-} from '@autocode/core';
 import type {
   Memory,
   MemoryService,
   MemoryRecordEntry,
   MemorySearchFilters,
-  MemoryType,
-  MemoryScope,
-  MemorySource,
-  WorkUnitRef,
-  MemoryRelation,
 } from '@autocode/core';
 import type { EmbeddingService } from './embedding-service';
 import { buildMemoryContextualText } from './embedding-service';
+import { rowToMemory } from './row-mapper';
 import { searchBM25 } from './retrieval/bm25-search';
 import { isMemoryEligibleForPromptContext } from './retrieval/context-packer';
 import type { RetrievalPipeline } from './retrieval/pipeline';
@@ -44,141 +35,6 @@ const FILTERED_SEARCH_CANDIDATE_MULTIPLIER = 4;
 const FILTERED_SEARCH_CANDIDATE_EXTRA = 8;
 const FILTERED_SEARCH_CANDIDATE_CAP = 50;
 const PATTERN_SEARCH_CANDIDATE_LIMIT = 6;
-const MEMORY_ROW_ID_LIST_LIMIT = 64;
-const MEMORY_ROW_ID_MAX_CHARS = 128;
-const MEMORY_RELATION_TYPES = new Set<MemoryRelation['relationType']>([
-  'required_with',
-  'conflicts_with',
-  'validates',
-  'supersedes',
-  'derived_from',
-]);
-const MEMORY_CHUNK_TYPES = new Set<NonNullable<Memory['chunkType']>>([
-  'function',
-  'class',
-  'module',
-  'prose',
-]);
-
-// ============================================================
-// ROW MAPPING HELPER
-// ============================================================
-
-function rowToMemory(row: Record<string, unknown>): Memory {
-  const parseJson = <T>(val: unknown, fallback: T): T => {
-    if (typeof val === 'string') {
-      try {
-        return JSON.parse(val) as T;
-      } catch {
-        return fallback;
-      }
-    }
-    return fallback;
-  };
-  const parseJsonStringArray = (val: unknown): string[] => {
-    const parsed = parseJson<unknown>(val, []);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-    return parsed.filter((item): item is string => typeof item === 'string');
-  };
-  const parseJsonMemoryRelations = (val: unknown): MemoryRelation[] => {
-    const parsed = parseJson<unknown>(val, []);
-    if (!Array.isArray(parsed)) {
-      return [];
-    }
-
-    return parsed.flatMap((item) => {
-      if (!isRecord(item) || !isMemoryRelationType(item.relationType)) {
-        return [];
-      }
-
-      const targetMemoryId = normalizeOptionalMemoryText(item.targetMemoryId);
-      const targetFilePath = normalizeOptionalMemoryPath(item.targetFilePath);
-      if (!targetMemoryId && !targetFilePath) {
-        return [];
-      }
-
-      const relation: MemoryRelation = {
-        relationType: item.relationType,
-        confidence: normalizeMemoryConfidence(item.confidence, 0.8) ?? 0.8,
-        autoExtracted: item.autoExtracted === true,
-      };
-      if (targetMemoryId) {
-        relation.targetMemoryId = targetMemoryId;
-      }
-      if (targetFilePath) {
-        relation.targetFilePath = targetFilePath;
-      }
-      return [relation];
-    });
-  };
-
-  const tags = compactMemoryStringList(
-    parseJsonStringArray(row.tags),
-    MEMORY_STORE_TAG_LIMIT,
-    MEMORY_STORE_TAG_MAX_CHARS,
-  ) ?? [];
-  const relatedFiles = compactMemoryPathList(
-    parseJsonStringArray(row.related_files),
-    MEMORY_STORE_RELATED_FILE_LIMIT,
-    MEMORY_STORE_RELATED_FILE_MAX_CHARS,
-  ) ?? [];
-  const relatedModules = compactMemoryStringList(
-    parseJsonStringArray(row.related_modules),
-    MEMORY_STORE_RELATED_MODULE_LIMIT,
-    MEMORY_STORE_RELATED_MODULE_MAX_CHARS,
-  ) ?? [];
-  const provenanceSessionIds = compactMemoryStringList(
-    parseJsonStringArray(row.provenance_session_ids),
-    MEMORY_ROW_ID_LIST_LIMIT,
-    MEMORY_ROW_ID_MAX_CHARS,
-  ) ?? [];
-  const impactedNodeIds = compactMemoryStringList(
-    parseJsonStringArray(row.impacted_node_ids),
-    MEMORY_ROW_ID_LIST_LIMIT,
-    MEMORY_ROW_ID_MAX_CHARS,
-  ) ?? [];
-  const workUnitRef = parseJsonWorkUnitRef(row.work_unit_ref);
-
-  return {
-    id: row.id as string,
-    type: normalizeMemoryType(row.type),
-    content: row.content as string,
-    confidence: normalizeMemoryConfidence(row.confidence, 0.8) ?? 0.8,
-    tags,
-    relatedFiles,
-    relatedModules,
-    createdAt: row.created_at as string,
-    lastAccessedAt: row.last_accessed_at as string,
-    accessCount: (row.access_count as number) ?? 0,
-    scope: normalizeMemoryScope(row.scope),
-    source: normalizeMemorySource(row.source),
-    sessionId: (row.session_id as string) ?? '',
-    commitSha: (row.commit_sha as string | null) ?? undefined,
-    provenanceSessionIds,
-    targetNodeId: (row.target_node_id as string | null) ?? undefined,
-    impactedNodeIds,
-    relations: parseJsonMemoryRelations(row.relations),
-    decayHalfLifeDays: normalizePositiveMemoryNumber(row.decay_half_life_days),
-    needsReview: Boolean(row.needs_review),
-    userVerified: Boolean(row.user_verified),
-    citationText: (row.citation_text as string | null) ?? undefined,
-    pinned: Boolean(row.pinned),
-    deprecated: Boolean(row.deprecated),
-    deprecatedAt: (row.deprecated_at as string | null) ?? undefined,
-    staleAt: (row.stale_at as string | null) ?? undefined,
-    projectId: row.project_id as string,
-    trustLevelScope: (row.trust_level_scope as string | null) ?? undefined,
-    chunkType: normalizeMemoryChunkType(row.chunk_type),
-    chunkStartLine: normalizeNonNegativeMemoryInteger(row.chunk_start_line),
-    chunkEndLine: normalizeNonNegativeMemoryInteger(row.chunk_end_line),
-    contextPrefix: (row.context_prefix as string | null) ?? undefined,
-    embeddingModelId: (row.embedding_model_id as string | null) ?? undefined,
-    workUnitRef,
-    methodology: normalizeOptionalMemoryText(row.methodology),
-  };
-}
 
 function getMemorySearchResultLimit(filters: MemorySearchFilters): number {
   return Math.max(
@@ -764,105 +620,6 @@ function normalizeMemoryConfidence(value: unknown, fallback: number | undefined)
     return fallback;
   }
   return Math.min(1, Math.max(0, numericValue));
-}
-
-function normalizeMemoryType(value: unknown): MemoryType {
-  return typeof value === 'string' && isAutocodeMemoryType(value) ? value : 'gotcha';
-}
-
-function normalizeMemoryScope(value: unknown): MemoryScope {
-  return typeof value === 'string' && isAutocodeMemoryScope(value) ? value : 'global';
-}
-
-function normalizeMemorySource(value: unknown): MemorySource {
-  return typeof value === 'string' && isAutocodeMemorySource(value) ? value : 'agent_explicit';
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === 'object' && value !== null && !Array.isArray(value);
-}
-
-function isMemoryRelationType(value: unknown): value is MemoryRelation['relationType'] {
-  return typeof value === 'string' && MEMORY_RELATION_TYPES.has(value as MemoryRelation['relationType']);
-}
-
-function normalizeOptionalMemoryText(value: unknown): string | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function normalizeOptionalMemoryPath(value: unknown): string | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-  const normalized = normalizeMemoryPathListItem(value);
-  return normalized.length > 0 ? normalized : undefined;
-}
-
-function parseJsonWorkUnitRef(value: unknown): WorkUnitRef | undefined {
-  if (typeof value !== 'string') {
-    return undefined;
-  }
-
-  let parsed: unknown;
-  try {
-    parsed = JSON.parse(value);
-  } catch {
-    return undefined;
-  }
-
-  if (!isRecord(parsed)) {
-    return undefined;
-  }
-
-  const methodology = normalizeOptionalMemoryText(parsed.methodology);
-  const label = normalizeOptionalMemoryText(parsed.label);
-  if (!methodology || !label || !Array.isArray(parsed.hierarchy)) {
-    return undefined;
-  }
-
-  const hierarchy = compactMemoryStringList(
-    parsed.hierarchy.filter((item): item is string => typeof item === 'string'),
-    MEMORY_ROW_ID_LIST_LIMIT,
-    MEMORY_ROW_ID_MAX_CHARS,
-  ) ?? [];
-  if (hierarchy.length === 0) {
-    return undefined;
-  }
-
-  return { methodology, hierarchy, label };
-}
-
-function normalizeMemoryChunkType(value: unknown): Memory['chunkType'] | undefined {
-  return typeof value === 'string' && MEMORY_CHUNK_TYPES.has(value as NonNullable<Memory['chunkType']>)
-    ? (value as Memory['chunkType'])
-    : undefined;
-}
-
-function normalizeNonNegativeMemoryInteger(value: unknown): number | undefined {
-  const numericValue = toFiniteMemoryNumber(value);
-  if (numericValue === undefined || numericValue < 0) {
-    return undefined;
-  }
-  return Math.floor(numericValue);
-}
-
-function normalizePositiveMemoryNumber(value: unknown): number | undefined {
-  const numericValue = toFiniteMemoryNumber(value);
-  return numericValue !== undefined && numericValue > 0 ? numericValue : undefined;
-}
-
-function toFiniteMemoryNumber(value: unknown): number | undefined {
-  const numericValue =
-    typeof value === 'number'
-      ? value
-      : typeof value === 'string' && value.trim().length > 0
-        ? Number(value)
-        : undefined;
-  return numericValue !== undefined && Number.isFinite(numericValue) ? numericValue : undefined;
 }
 
 function uniqueMemoryFilterList<T extends string>(values: T[] | undefined): T[] | undefined {

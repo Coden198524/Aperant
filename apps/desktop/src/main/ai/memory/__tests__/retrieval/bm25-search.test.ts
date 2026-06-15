@@ -2,7 +2,7 @@
  * bm25-search.test.ts — Test FTS5 BM25 search against seeded in-memory DB
  */
 
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import type { Client } from '@libsql/client';
 import { getInMemoryClient } from '../../db';
 import { searchBM25 } from '../../retrieval/bm25-search';
@@ -48,12 +48,40 @@ beforeEach(async () => {
 
 afterEach(() => {
   client.close();
+  vi.restoreAllMocks();
 });
 
 describe('searchBM25', () => {
   it('returns empty array for empty database', async () => {
     const results = await searchBM25(client, 'authentication', 'test-project');
     expect(results).toEqual([]);
+  });
+
+  it('returns empty result without querying for blank query or nonpositive limit', async () => {
+    const executeSpy = vi.spyOn(client, 'execute');
+
+    await expect(searchBM25(client, '   \n\t   ', 'proj-a')).resolves.toEqual([]);
+    await expect(searchBM25(client, 'JWT token', 'proj-a', 0)).resolves.toEqual([]);
+    await expect(searchBM25(client, 'JWT token', 'proj-a', Number.NaN)).resolves.toEqual([]);
+
+    expect(executeSpy).not.toHaveBeenCalled();
+  });
+
+  it('filters invalid result rows before returning candidates', async () => {
+    const mockClient = {
+      execute: vi.fn().mockResolvedValue({
+        rows: [
+          { id: ' valid-memory ', bm25_score: -0.2 },
+          { id: '', bm25_score: -0.1 },
+          { id: 'bad-score', bm25_score: Number.NaN },
+          { id: 42, bm25_score: -0.3 },
+        ],
+      }),
+    } as unknown as Client;
+
+    const results = await searchBM25(mockClient, 'JWT token', 'proj-a');
+
+    expect(results).toEqual([{ memoryId: 'valid-memory', bm25Score: -0.2 }]);
   });
 
   it('finds a memory matching the search query', async () => {
