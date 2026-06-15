@@ -74,6 +74,28 @@ describe('agent subtask prompt compaction', () => {
     expect(prompt).not.toContain('PATTERN_TAIL_29.ts');
   });
 
+  it('folds repeated subtask description lines before building prompts', () => {
+    const repeatedLine = 'SUBTASK DESCRIPTION REPEAT: same implementation detail.';
+    const prompt = buildAutocodeSubtaskPrompt({
+      specDir: 'E:/project/.autocode/specs/001-task',
+      projectDir: 'E:/project',
+      subtask: {
+        id: '2.2',
+        description: [
+          'SUBTASK DESCRIPTION HEAD',
+          ...Array.from({ length: 120 }, () => repeatedLine),
+          'SUBTASK DESCRIPTION TAIL',
+        ].join('\n'),
+        status: 'pending',
+      },
+    });
+
+    expect(prompt).toContain('SUBTASK DESCRIPTION HEAD');
+    expect(prompt).toContain('SUBTASK DESCRIPTION TAIL');
+    expect(prompt).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((prompt.match(/SUBTASK DESCRIPTION REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('bounds large subtask context files with head and tail excerpts', () => {
     const context = {
       patterns: Object.fromEntries(Array.from({ length: AUTOCODE_SUBTASK_CONTEXT_FILE_LIMIT + 2 }, (_, index) => [
@@ -105,6 +127,26 @@ describe('agent subtask prompt compaction', () => {
     expect(formatted).toContain('context file(s) omitted');
     expect(formatted).not.toContain(`src/pattern-${AUTOCODE_SUBTASK_CONTEXT_FILE_LIMIT + 1}.ts`);
     expect(formatted).not.toContain('MODIFY_7_HEAD');
+  });
+
+  it('folds repeated subtask context file lines before spending context budget', () => {
+    const repeatedLine = 'SUBTASK CONTEXT REPEAT: same file content line.';
+    const formatted = formatAutocodeSubtaskContextForPrompt({
+      patterns: {
+        'src/repeated-pattern.ts': [
+          'SUBTASK CONTEXT HEAD',
+          ...Array.from({ length: 120 }, () => repeatedLine),
+          'SUBTASK CONTEXT TAIL',
+        ].join('\n'),
+      },
+      filesToModify: {},
+      specExcerpt: null,
+    });
+
+    expect(formatted).toContain('SUBTASK CONTEXT HEAD');
+    expect(formatted).toContain('SUBTASK CONTEXT TAIL');
+    expect(formatted).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((formatted.match(/SUBTASK CONTEXT REPEAT/g) ?? [])).toHaveLength(1);
   });
 
   it('bounds project instructions and planning retry context in planner prompts', () => {

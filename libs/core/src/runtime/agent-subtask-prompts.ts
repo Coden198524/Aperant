@@ -1,7 +1,10 @@
 import { resolve } from 'node:path';
 import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import { detectAutocodeWorktreeIsolation } from '../tasks/worktree-paths.js';
-import { compactAutocodePromptContextSection } from './prompt-context.js';
+import {
+  compactAutocodePromptContextSection,
+  foldRepeatedAutocodePromptLines,
+} from './prompt-context.js';
 
 export interface AutocodeSubtaskPromptInfo {
   id: string;
@@ -352,19 +355,26 @@ function appendAutocodeSubtaskContextChunk(
 
 function compactAutocodeSubtaskContextFileContent(content: string, maxChars: number): string {
   const normalized = String(content ?? '').replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  if (normalized.length <= maxChars) {
-    return normalized;
+  const compact = foldRepeatedAutocodePromptLines(normalized);
+  if (compact.length <= maxChars) {
+    return compact;
   }
 
   const marker = `\n...[file content truncated, ${normalized.length} chars total]...\n`;
   const budget = Math.max(0, maxChars - marker.length);
   const headLength = Math.floor(budget * 0.55);
   const tailLength = budget - headLength;
-  return `${normalized.slice(0, headLength).trimEnd()}${marker}${normalized.slice(normalized.length - tailLength).trimStart()}`;
+  return `${compact.slice(0, headLength).trimEnd()}${marker}${compact.slice(compact.length - tailLength).trimStart()}`;
 }
 
 function limitAutocodeSubtaskPromptText(value: string, maxChars: number): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const normalized = foldRepeatedAutocodePromptLines(
+    value
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n'),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
   if (normalized.length <= maxChars) {
     return normalized;
   }
@@ -485,7 +495,9 @@ function appendAutocodeVerificationSection(
   if (verification?.type === 'e2e') {
     const steps = verification.steps ?? [];
     sections.push('End-to-end verification steps:');
-    steps.forEach((step, index) => sections.push(`${index + 1}. ${step}`));
+    steps.forEach((step, index) => {
+      sections.push(`${index + 1}. ${step}`);
+    });
     sections.push('');
     return;
   }
