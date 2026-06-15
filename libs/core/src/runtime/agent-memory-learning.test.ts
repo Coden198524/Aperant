@@ -8,6 +8,7 @@ import {
 	formatAutocodeFailurePatternMemory,
 	formatAutocodeSuccessPatternMemory,
 	identifyAutocodeEffectiveTools,
+	identifyAutocodeKeyFiles,
 	isAutocodeSessionMetricInsight,
 	summarizeAutocodeSessionForMemory,
 } from "./agent-memory-learning.js";
@@ -118,6 +119,37 @@ describe("agent memory learning compaction", () => {
 
 		expect(summary).toContain("AuthStore must refresh token");
 		expect(summary).not.toContain("Efficient token usage");
+	});
+
+	it("normalizes and bounds learned key files including created files", () => {
+		const longCreatedFile = `src/${"deep/".repeat(40)}created-component.tsx`;
+
+		const keyFiles = identifyAutocodeKeyFiles({
+			subtask: {
+				id: "1.2-files",
+				description: "Track key files",
+				filesToModify: [
+					" ./src\\auth\\session.ts ",
+					"SRC/auth/session.ts",
+				],
+				filesToCreate: [
+					longCreatedFile,
+					...Array.from({ length: 16 }, (_, index) => `src/new-${index}.ts`),
+				],
+				patternFiles: ["src/auth/retry-policy.ts"],
+			},
+		});
+
+		expect(keyFiles).toHaveLength(12);
+		expect(keyFiles[0]).toBe("src/auth/session.ts");
+		expect(keyFiles[1]).toContain("created-component.tsx");
+		expect(keyFiles[1].length).toBeLessThanOrEqual(160);
+		expect(keyFiles).toContain("src/new-9.ts");
+		expect(keyFiles).not.toContain("src/new-10.ts");
+		expect(keyFiles).not.toContain("src/auth/retry-policy.ts");
+		expect(
+			keyFiles.filter((file) => file.toLowerCase() === "src/auth/session.ts"),
+		).toHaveLength(1);
 	});
 
 	it("skips generic success pattern memories when no reusable signal exists", () => {

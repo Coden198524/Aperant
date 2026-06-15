@@ -76,6 +76,8 @@ const AUTOCODE_MEMORY_DECISION_MAX_CHARS = 180;
 const AUTOCODE_MEMORY_TOOL_MAX_CHARS = 64;
 const AUTOCODE_MEMORY_CODE_MAX_CHARS = 420;
 const AUTOCODE_MEMORY_SUMMARY_MAX_CHARS = 900;
+const AUTOCODE_MEMORY_KEY_FILE_LIMIT = 12;
+const AUTOCODE_MEMORY_KEY_FILE_MAX_CHARS = 160;
 const AUTOCODE_MEMORY_LIST_LIMIT = 5;
 const AUTOCODE_MEMORY_CODE_PATTERN_LIMIT = 4;
 const AUTOCODE_TOOL_CONTEXT_WINDOW_CHARS = 600;
@@ -645,17 +647,34 @@ export function isAutocodeSessionMetricInsight(insight: string): boolean {
 export function identifyAutocodeKeyFiles(
 	input: Pick<AutocodeLearningAnalysisInput, "subtask">,
 ): string[] {
-	const keyFiles: string[] = [];
+	const keyFiles = [
+		...(input.subtask.filesToModify ?? []),
+		...(input.subtask.filesToCreate ?? []),
+		...(input.subtask.patternFiles ?? []),
+	];
+	const normalizedFiles: string[] = [];
+	const seen = new Set<string>();
 
-	if (input.subtask.filesToModify) {
-		keyFiles.push(...input.subtask.filesToModify);
+	for (const file of keyFiles) {
+		const normalized = normalizeAutocodeLearningFilePath(file);
+		if (!normalized) {
+			continue;
+		}
+
+		const compacted = compactAutocodeLearningFilePath(normalized);
+		const key = compacted.toLowerCase();
+		if (!compacted || seen.has(key)) {
+			continue;
+		}
+
+		seen.add(key);
+		normalizedFiles.push(compacted);
+		if (normalizedFiles.length >= AUTOCODE_MEMORY_KEY_FILE_LIMIT) {
+			break;
+		}
 	}
 
-	if (input.subtask.patternFiles) {
-		keyFiles.push(...input.subtask.patternFiles);
-	}
-
-	return [...new Set(keyFiles)];
+	return normalizedFiles;
 }
 
 export function mapAutocodeSessionOutcome(
@@ -899,4 +918,29 @@ function normalizeAutocodeLearningText(value: string): string {
 
 function normalizeAutocodeLearningTextKey(value: string): string {
 	return normalizeAutocodeLearningText(value).toLowerCase();
+}
+
+function normalizeAutocodeLearningFilePath(value: string): string {
+	return value
+		.replace(/\s+/g, " ")
+		.replace(/\\/g, "/")
+		.replace(/\/{2,}/g, "/")
+		.trim()
+		.replace(/^(?:\.\/)+/, "")
+		.replace(/\/+$/, "");
+}
+
+function compactAutocodeLearningFilePath(value: string): string {
+	if (value.length <= AUTOCODE_MEMORY_KEY_FILE_MAX_CHARS) {
+		return value;
+	}
+	const marker = "...";
+	const budget = AUTOCODE_MEMORY_KEY_FILE_MAX_CHARS - marker.length;
+	if (budget <= 0) {
+		return value.slice(0, AUTOCODE_MEMORY_KEY_FILE_MAX_CHARS);
+	}
+
+	const headChars = Math.ceil(budget * 0.35);
+	const tailChars = budget - headChars;
+	return `${value.slice(0, headChars)}${marker}${value.slice(-tailChars)}`;
 }
