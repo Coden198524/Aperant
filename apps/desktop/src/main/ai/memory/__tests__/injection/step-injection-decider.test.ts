@@ -171,6 +171,29 @@ describe('StepInjectionDecider', () => {
       expect((result?.content.match(/session-store\.ts/g) ?? [])).toHaveLength(1);
     });
 
+    it('omits gotcha file refs already visible in injected content', async () => {
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({
+          id: 'mentioned-file-gotcha',
+          content: 'session-store.ts fails after auth-token.ts retry; keep cache checks focused.',
+          relatedFiles: [
+            'src/auth/session-store.ts',
+            'src/auth/token-cache.ts',
+            'src/auth/retry-policy.ts',
+          ],
+        }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.content).toContain('session-store.ts fails');
+      expect(result?.content).toContain('(token-cache.ts, retry-policy.ts)');
+      expect((result?.content.match(/session-store\.ts/g) ?? [])).toHaveLength(1);
+    });
+
     it('keeps localized gotcha injections within an estimated token budget', async () => {
       vi.mocked(memoryService.search).mockResolvedValueOnce([
         makeMemory({

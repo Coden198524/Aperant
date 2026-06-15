@@ -196,12 +196,13 @@ export class StepInjectionDecider {
   }
 
   private formatGotchaLine(memory: Memory): string {
-    const fileContext = formatFileRefs(memory.relatedFiles);
-    return `- [${memory.type}]${fileContext}: ${truncateText(
+    const content = truncateText(
       getInjectableMemoryContent(memory),
       MAX_MEMORY_ALERT_CHARS,
       MAX_MEMORY_ALERT_TOKENS,
-    )}`;
+    );
+    const fileContext = formatFileRefs(memory.relatedFiles, content);
+    return `- [${memory.type}]${fileContext}: ${content}`;
   }
 
   private formatScratchpadEntries(entries: AcuteCandidate[]): string {
@@ -372,12 +373,13 @@ function isPreciseSearchPattern(pattern: string): boolean {
   return true;
 }
 
-function formatFileRefs(files: readonly string[]): string {
+function formatFileRefs(files: readonly string[], content = ''): string {
   if (files.length === 0) {
     return '';
   }
 
-  const uniqueFiles = uniqueFileRefs(files);
+  const uniqueFiles = uniqueFileRefs(files)
+    .filter((file) => !isFileRefMentionedInText(file, content));
   const visible = uniqueFiles
     .slice(0, MAX_MEMORY_ALERT_FILE_REFS)
     .map((file) =>
@@ -393,6 +395,36 @@ function formatFileRefs(files: readonly string[]): string {
   }
 
   return ` (${visible.join(', ')})`;
+}
+
+function isFileRefMentionedInText(filePath: string, text: string): boolean {
+  const normalizedText = normalizeTextForFileRefMatch(text);
+  if (!normalizedText) {
+    return false;
+  }
+
+  const normalizedPath = normalizeTextForFileRefMatch(filePath);
+  const fileName = normalizeTextForFileRefMatch(filePath.split(/[\\/]/).pop() ?? filePath);
+  return normalizedText.includes(normalizedPath) ||
+    (fileName.length > 0 && containsStandaloneFileRefName(normalizedText, fileName));
+}
+
+function containsStandaloneFileRefName(text: string, fileName: string): boolean {
+  return new RegExp(
+    `(?:^|[^a-z0-9_.-])${escapeRegExp(fileName)}(?:$|[^a-z0-9_.-])`,
+  ).test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeTextForFileRefMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function uniqueFileRefs(files: readonly string[]): string[] {
