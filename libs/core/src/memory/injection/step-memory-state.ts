@@ -15,8 +15,10 @@ import type { RecentToolCallContext } from './step-injection-decider.js';
 // STEP MEMORY STATE
 // ============================================================
 
+type RecentToolCall = { toolName: string; args: Record<string, unknown> };
+
 export class StepMemoryState {
-  private recentToolCalls: Array<{ toolName: string; args: Record<string, unknown> }> = [];
+  private recentToolCalls: RecentToolCall[] = [];
   private injectedMemoryIds = new Set<string>();
 
   /**
@@ -67,30 +69,55 @@ export class StepMemoryState {
 }
 
 function selectRecentUniqueToolCalls(
-  calls: Array<{ toolName: string; args: Record<string, unknown> }>,
+  calls: RecentToolCall[],
   windowSize: number,
-): Array<{ toolName: string; args: Record<string, unknown> }> {
+): RecentToolCall[] {
   const normalizedWindowSize = Number.isFinite(windowSize) ? Math.max(0, Math.floor(windowSize)) : 0;
   if (normalizedWindowSize <= 0 || calls.length === 0) {
     return [];
   }
 
   const seen = new Set<string>();
-  const selected: Array<{ toolName: string; args: Record<string, unknown> }> = [];
-  for (let index = calls.length - 1; index >= 0 && selected.length < normalizedWindowSize; index -= 1) {
-    const call = calls[index];
-    const signature = getToolCallSignature(call);
-    if (seen.has(signature)) {
-      continue;
-    }
-    seen.add(signature);
-    selected.push(call);
-  }
+  const selected: Array<{ call: RecentToolCall; index: number }> = [];
+  const collect = (predicate: (call: RecentToolCall) => boolean): void => {
+    for (let index = calls.length - 1; index >= 0 && selected.length < normalizedWindowSize; index -= 1) {
+      const call = calls[index];
+      if (!predicate(call)) {
+        continue;
+      }
 
-  return selected.reverse();
+      const signature = getToolCallSignature(call);
+      if (seen.has(signature)) {
+        continue;
+      }
+      seen.add(signature);
+      selected.push({ call, index });
+    }
+  };
+
+  collect(isMemoryTriggeringToolCall);
+  collect(() => true);
+
+  return selected
+    .sort((a, b) => a.index - b.index)
+    .map((item) => item.call);
 }
 
-function getToolCallSignature(call: { toolName: string; args: Record<string, unknown> }): string {
+function isMemoryTriggeringToolCall(call: RecentToolCall): boolean {
+  switch (call.toolName) {
+    case 'Read':
+    case 'Edit':
+      return typeof call.args.file_path === 'string' && call.args.file_path.trim().length > 0;
+    case 'Grep':
+      return typeof call.args.pattern === 'string' && call.args.pattern.trim().length > 0;
+    case 'Glob':
+      return typeof call.args.glob === 'string' && call.args.glob.trim().length > 0;
+    default:
+      return false;
+  }
+}
+
+function getToolCallSignature(call: RecentToolCall): string {
   return `${call.toolName}:${stableStringify(normalizeToolCallArgsForSignature(call.args))}`;
 }
 

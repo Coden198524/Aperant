@@ -161,6 +161,24 @@ describe('StepMemoryState', () => {
       ]);
     });
 
+    it('keeps memory-triggering calls when noisy calls would fill the recent window', () => {
+      state.recordToolCall('Read', { file_path: '/src/auth.ts' });
+      state.recordToolCall('Grep', { pattern: 'refreshToken' });
+      for (let i = 0; i < 5; i++) {
+        state.recordToolCall('Bash', { command: `npm test --run-${i}` });
+      }
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Read', args: { file_path: '/src/auth.ts' } },
+        { toolName: 'Grep', args: { pattern: 'refreshToken' } },
+        { toolName: 'Bash', args: { command: 'npm test --run-2' } },
+        { toolName: 'Bash', args: { command: 'npm test --run-3' } },
+        { toolName: 'Bash', args: { command: 'npm test --run-4' } },
+      ]);
+    });
+
     it('returns fewer entries if fewer have been recorded', () => {
       state.recordToolCall('Read', { file_path: '/a.ts' });
       state.recordToolCall('Read', { file_path: '/b.ts' });
