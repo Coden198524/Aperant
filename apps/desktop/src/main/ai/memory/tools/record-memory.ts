@@ -105,7 +105,12 @@ export function createRecordMemoryTool(
         scope: 'module',
       };
 
-      const id = await proxy.recordMemory(entry);
+      let id: string | null | undefined;
+      try {
+        id = await proxy.recordMemory(entry);
+      } catch {
+        id = undefined;
+      }
 
       if (!id) {
         return 'Memory noted locally, but could not be persisted.';
@@ -126,13 +131,18 @@ async function findDuplicateMemory(
   content: string,
 ): Promise<Memory | null> {
   const query = compactDuplicateMemoryQuery(content);
-  const memories = await proxy.searchMemory({
-    query,
-    projectId,
-    limit: DUPLICATE_MEMORY_SEARCH_LIMIT,
-    excludeDeprecated: true,
-    promptContextOnly: true,
-  });
+  let memories: Memory[];
+  try {
+    memories = await proxy.searchMemory({
+      query,
+      projectId,
+      limit: DUPLICATE_MEMORY_SEARCH_LIMIT,
+      excludeDeprecated: true,
+      promptContextOnly: true,
+    });
+  } catch {
+    return null;
+  }
 
   return memories
     .filter(isMemoryEligibleForPromptContext)

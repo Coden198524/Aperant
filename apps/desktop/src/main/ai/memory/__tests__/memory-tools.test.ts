@@ -1094,6 +1094,49 @@ describe('memory agent tools', () => {
     expect(proxy.recordMemory).toHaveBeenCalledOnce();
   });
 
+  it('records useful memory when duplicate search fails', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockRejectedValue(new Error('memory search unavailable')),
+      recordMemory: vi.fn().mockResolvedValue('aabbccdd-aaaa-bbbb-cccc-123456789abc'),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'gotcha'; content: string; relatedFiles: string[] },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: 'Retry memory persistence after transient search IPC failures.',
+      relatedFiles: ['src/main/ai/memory/tools/record-memory.ts'],
+    });
+
+    expect(result).toBe('Memory recorded (id: aabbccdd).');
+    expect(proxy.searchMemory).toHaveBeenCalledOnce();
+    expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
+      content: 'Retry memory persistence after transient search IPC failures.',
+    }));
+  });
+
+  it('returns compact failure text when record_memory persistence throws', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+      recordMemory: vi.fn().mockRejectedValue(new Error('database unavailable')),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'gotcha'; content: string },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: 'Use a compact tool response when memory persistence fails.',
+    });
+
+    expect(result).toBe('Memory noted locally, but could not be persisted.');
+    expect(result).not.toContain('database unavailable');
+    expect(result).not.toContain('Use a compact tool response');
+  });
+
   it('normalizes record_memory content and metadata before duplicate search and persistence', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([]),
