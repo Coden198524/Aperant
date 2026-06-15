@@ -8,6 +8,10 @@
  */
 
 import type { Client } from '@libsql/client';
+import {
+  getGraphFileReferenceMatchArgs,
+  GRAPH_FILE_REF_MATCH_SQL,
+} from '../graph/file-ref-match';
 
 const CO_ACCESS_NEIGHBOR_LIMIT = 10;
 const CO_ACCESS_MEMORY_LIMIT = 5;
@@ -138,17 +142,22 @@ async function collectFileScopedMemories(
   limit: number,
 ): Promise<void> {
   try {
-    const placeholders = recentFiles.map(() => '?').join(',');
+    const fileMatchArgs = getGraphFileReferenceMatchArgs(recentFiles);
+    if (fileMatchArgs.length === 0) {
+      return;
+    }
+
+    const placeholders = fileMatchArgs.map(() => '?').join(',');
     const fileScoped = await db.execute({
       sql: `SELECT DISTINCT m.id FROM memories m
         WHERE m.project_id = ?
           AND m.deprecated = 0
           AND EXISTS (
             SELECT 1 FROM json_each(m.related_files) je
-            WHERE je.value IN (${placeholders})
+            WHERE ${GRAPH_FILE_REF_MATCH_SQL} IN (${placeholders})
           )
         LIMIT ?`,
-      args: [projectId, ...recentFiles, limit],
+      args: [projectId, ...fileMatchArgs, limit],
     });
 
     for (const row of fileScoped.rows) {
@@ -197,16 +206,21 @@ async function collectCoAccessMemories(
       }
 
       // Get memories for this co-accessed file
+      const neighborMatchArgs = getGraphFileReferenceMatchArgs([neighbor]);
+      if (neighborMatchArgs.length === 0) {
+        continue;
+      }
+      const neighborPlaceholders = neighborMatchArgs.map(() => '?').join(',');
       const neighborMemories = await db.execute({
         sql: `SELECT DISTINCT m.id FROM memories m
           WHERE m.project_id = ?
             AND m.deprecated = 0
             AND EXISTS (
               SELECT 1 FROM json_each(m.related_files) je
-              WHERE je.value = ?
+              WHERE ${GRAPH_FILE_REF_MATCH_SQL} IN (${neighborPlaceholders})
             )
           LIMIT ?`,
-        args: [projectId, neighbor, memoryLimit],
+        args: [projectId, ...neighborMatchArgs, memoryLimit],
       });
 
       for (const m of neighborMemories.rows) {

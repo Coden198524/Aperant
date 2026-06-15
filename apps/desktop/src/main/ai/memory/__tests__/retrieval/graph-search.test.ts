@@ -39,7 +39,18 @@ describe('searchGraph', () => {
     await searchGraph(client, ['src\\auth.ts', './SRC/auth.ts/', 'src/auth.ts', 'src//session.ts/'], 'proj-a', 2.9);
 
     const firstStatement = execute.mock.calls[0][0] as { args: unknown[] };
-    expect(firstStatement.args).toEqual(['proj-a', 'src/auth.ts', 'src/session.ts', 2]);
+    expect(firstStatement.args).toEqual([
+      'proj-a',
+      'src/auth.ts',
+      'src/auth.ts/',
+      './src/auth.ts',
+      './src/auth.ts/',
+      'src/session.ts',
+      'src/session.ts/',
+      './src/session.ts',
+      './src/session.ts/',
+      2,
+    ]);
   });
 
   it('caps normalized recent files before building graph queries', async () => {
@@ -50,9 +61,14 @@ describe('searchGraph', () => {
 
     const firstStatement = execute.mock.calls[0][0] as { args: unknown[] };
     const filesInQuery = firstStatement.args.slice(1, -1);
-    expect(filesInQuery).toHaveLength(32);
-    expect(filesInQuery[0]).toBe('src/file-0.ts');
-    expect(filesInQuery.at(-1)).toBe('src/file-31.ts');
+    const canonicalFilesInQuery = filesInQuery.filter((value) =>
+      typeof value === 'string' && !value.startsWith('./') && !value.endsWith('/'),
+    );
+    expect(canonicalFilesInQuery).toHaveLength(32);
+    expect(canonicalFilesInQuery[0]).toBe('src/file-0.ts');
+    expect(canonicalFilesInQuery.at(-1)).toBe('src/file-31.ts');
+    expect(filesInQuery).toContain('./src/file-0.ts');
+    expect(filesInQuery).toContain('src/file-31.ts/');
   });
 
   it('scales internal neighbor and memory query limits down', async () => {
@@ -71,22 +87,34 @@ describe('searchGraph', () => {
 
     const statements = execute.mock.calls.map(([statement]) => statement as { sql: string; args: unknown[] });
     const coAccessCall = statements.find((statement) => statement.sql.includes('observer_co_access_edges'));
-    const coAccessMemoryCall = statements.find((statement) => statement.sql.includes('je.value = ?'));
+    const coAccessMemoryCall = statements.find((statement) => statement.args.includes('src/session.ts'));
     const closureCall = statements.find((statement) => statement.sql.includes('graph_closure'));
     const closureMemoryCall = statements.find((statement) => statement.sql.includes('target_node_id = ?'));
 
     expect(coAccessCall?.args.at(-1)).toBe(2);
-    expect(coAccessMemoryCall?.args).toEqual(['proj-a', 'src/session.ts', 2]);
+    expect(coAccessMemoryCall?.args).toEqual([
+      'proj-a',
+      'src/session.ts',
+      'src/session.ts/',
+      './src/session.ts',
+      './src/session.ts/',
+      2,
+    ]);
     expect(coAccessMemoryCall?.args.at(-1)).toBe(2);
     expect(coAccessMemoryCall?.sql).not.toContain('related_files LIKE');
+    expect(coAccessMemoryCall?.sql).toContain('json_each(m.related_files)');
     expect(closureCall?.args.at(-1)).toBe(2);
     expect(closureMemoryCall?.args.at(-1)).toBe(2);
   });
 
   it('filters invalid graph rows before returning candidates', async () => {
+    let relatedFileLookupCount = 0;
     const execute = vi.fn(async (statement: { sql: string }) => {
-      if (statement.sql.includes('je.value IN')) {
-        return { rows: [{ id: ' file-memory ' }, { id: '' }, { id: 42 }] };
+      if (statement.sql.includes('json_each(m.related_files)')) {
+        relatedFileLookupCount += 1;
+        return relatedFileLookupCount === 1
+          ? { rows: [{ id: ' file-memory ' }, { id: '' }, { id: 42 }] }
+          : { rows: [{ id: ' co-memory ' }, { id: '' }] };
       }
       if (statement.sql.includes('observer_co_access_edges')) {
         return {
@@ -96,9 +124,6 @@ describe('searchGraph', () => {
             { neighbor: '', weight: 0.8 },
           ],
         };
-      }
-      if (statement.sql.includes('je.value = ?')) {
-        return { rows: [{ id: ' co-memory ' }, { id: '' }] };
       }
       if (statement.sql.includes('graph_closure')) {
         return { rows: [{ descendant_id: ' node-1 ' }, { descendant_id: '' }] };
@@ -120,14 +145,14 @@ describe('searchGraph', () => {
   });
 
   it('uses exact JSON file matching for co-access memories', async () => {
-    const execute = vi.fn(async (statement: { sql: string }) => {
+    const execute = vi.fn(async (statement: { sql: string; args: unknown[] }) => {
       if (statement.sql.includes('related_files LIKE')) {
         throw new Error('substring related_files matching should not be used');
       }
       if (statement.sql.includes('observer_co_access_edges')) {
         return { rows: [{ neighbor: 'src/auth.ts', weight: 0.9 }] };
       }
-      if (statement.sql.includes('je.value = ?')) {
+      if (statement.sql.includes('json_each(m.related_files)') && statement.args.includes('src/auth.ts')) {
         return { rows: [{ id: 'exact-co-access-memory' }] };
       }
       return { rows: [] };

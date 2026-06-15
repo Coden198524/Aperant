@@ -681,8 +681,8 @@ describe('GraphDatabase - Impact Analysis', () => {
       updatedAt: Date.now(),
     });
 
-    await insertMemory('target-memory', ['src/auth.ts'], 'Auth memory');
-    await insertMemory('dependent-memory', ['src/middleware.ts'], 'Middleware memory');
+    await insertMemory('target-memory', ['SRC\\auth.ts'], 'Auth memory');
+    await insertMemory('dependent-memory', ['./src/middleware.ts/'], 'Middleware memory');
     await insertMemory('substring-memory', ['src/auth.tsx'], 'Wrong extension memory');
 
     const result = await graphDb.analyzeImpact('src/auth.ts:verifyJwt', PROJECT_ID, 3);

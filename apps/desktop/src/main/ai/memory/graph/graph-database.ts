@@ -12,6 +12,10 @@
 
 import type { Client } from '@libsql/client';
 import { createHash } from 'crypto';
+import {
+  getGraphFileReferenceMatchArgs,
+  GRAPH_FILE_REF_MATCH_SQL,
+} from './file-ref-match';
 import type {
   GraphNode,
   GraphEdge,
@@ -667,23 +671,26 @@ export class GraphDatabase {
     let affectedMemories: ImpactResult['affectedMemories'] = [];
 
     if (filePaths.length > 0) {
-      const placeholders = filePaths.map(() => '?').join(',');
-      const memoriesResult = await this.db.execute({
-        sql: `SELECT DISTINCT m.id, m.type, m.content FROM memories m
-              WHERE m.project_id = ?
-                AND m.deprecated = 0
-                AND EXISTS (
-                  SELECT 1 FROM json_each(m.related_files) je
-                  WHERE je.value IN (${placeholders})
-                )
-              LIMIT 10`,
-        args: [projectId, ...filePaths],
-      }).catch(() => ({ rows: [] }));
+      const fileMatchArgs = getGraphFileReferenceMatchArgs(filePaths);
+      if (fileMatchArgs.length > 0) {
+        const placeholders = fileMatchArgs.map(() => '?').join(',');
+        const memoriesResult = await this.db.execute({
+          sql: `SELECT DISTINCT m.id, m.type, m.content FROM memories m
+                WHERE m.project_id = ?
+                  AND m.deprecated = 0
+                  AND EXISTS (
+                    SELECT 1 FROM json_each(m.related_files) je
+                    WHERE ${GRAPH_FILE_REF_MATCH_SQL} IN (${placeholders})
+                  )
+                LIMIT 10`,
+          args: [projectId, ...fileMatchArgs],
+        }).catch(() => ({ rows: [] }));
 
-      affectedMemories = memoriesResult.rows.map(row => {
-        const r = row as unknown as { id: string; type: string; content: string };
-        return { memoryId: r.id, type: r.type, content: r.content.slice(0, 200) };
-      });
+        affectedMemories = memoriesResult.rows.map(row => {
+          const r = row as unknown as { id: string; type: string; content: string };
+          return { memoryId: r.id, type: r.type, content: r.content.slice(0, 200) };
+        });
+      }
     }
 
     return {
