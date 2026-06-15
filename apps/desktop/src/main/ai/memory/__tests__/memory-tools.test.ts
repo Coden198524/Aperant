@@ -585,6 +585,31 @@ describe('memory agent tools', () => {
     expect(result).not.toContain('SRC/auth/token.ts');
   });
 
+  it('disambiguates duplicate search_memory file reference chip names', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'duplicate-file-names',
+          content: 'Check the index module boundaries before changing exports.',
+          relatedFiles: [
+            'src/auth/index.ts',
+            'src/billing/index.ts',
+            'src/auth/session.ts',
+          ],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'index file refs', limit: 3 });
+
+    expect(result).toContain('[auth/index.ts, billing/index.ts, session.ts]');
+    expect(result).not.toContain('[index.ts, index.ts');
+  });
+
   it('does not repeat file reference chips already mentioned in search_memory content', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([

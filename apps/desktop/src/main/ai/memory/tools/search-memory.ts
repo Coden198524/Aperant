@@ -496,15 +496,65 @@ function formatFileRefs(files: readonly string[], content = ''): string {
     return '';
   }
 
-  const visible = uniqueFiles
-    .slice(0, MAX_SEARCH_FILE_REFS)
-    .map((file) => truncateText(file.split(/[\\/]/).pop() || file, MAX_SEARCH_FILE_REF_CHARS));
+  const visibleFiles = uniqueFiles.slice(0, MAX_SEARCH_FILE_REFS);
+  const visible = visibleFiles.map((file) => formatSearchFileRefChip(file, visibleFiles));
   const omitted = uniqueFiles.length - visible.length;
   if (omitted > 0) {
     visible.push(`+${omitted} more`);
   }
 
   return ` [${visible.join(', ')}]`;
+}
+
+function formatSearchFileRefChip(file: string, visibleFiles: readonly string[]): string {
+  const fileName = getSearchFileName(file);
+  if (countMatchingSearchFileNames(fileName, visibleFiles) <= 1) {
+    return truncateText(fileName, MAX_SEARCH_FILE_REF_CHARS);
+  }
+
+  return truncatePathTail(
+    getShortestUniqueSearchPathTail(file, visibleFiles),
+    MAX_SEARCH_FILE_REF_CHARS,
+  );
+}
+
+function countMatchingSearchFileNames(fileName: string, files: readonly string[]): number {
+  const key = fileName.toLowerCase();
+  return files.filter((file) => getSearchFileName(file).toLowerCase() === key).length;
+}
+
+function getShortestUniqueSearchPathTail(file: string, files: readonly string[]): string {
+  const segments = splitSearchPath(file);
+  if (segments.length <= 1) {
+    return file;
+  }
+
+  const matchingFiles = files.filter(
+    (candidate) => getSearchFileName(candidate).toLowerCase() === getSearchFileName(file).toLowerCase(),
+  );
+  for (let depth = 2; depth <= segments.length; depth += 1) {
+    const tail = segments.slice(-depth).join('/');
+    const tailKey = tail.toLowerCase();
+    const isUnique = matchingFiles.every((candidate) => {
+      if (candidate === file) {
+        return true;
+      }
+      return splitSearchPath(candidate).slice(-depth).join('/').toLowerCase() !== tailKey;
+    });
+    if (isUnique) {
+      return tail;
+    }
+  }
+
+  return file;
+}
+
+function getSearchFileName(file: string): string {
+  return splitSearchPath(file).pop() || file;
+}
+
+function splitSearchPath(path: string): string[] {
+  return normalizeToolPath(path).split('/').filter(Boolean);
 }
 
 function isPathMentionedInText(path: string, normalizedText: string): boolean {
