@@ -740,7 +740,16 @@ function appendCompactListField(
 
 function textValue(value: unknown): string {
   if (typeof value === 'string') {
-    return value.replace(/\s+/g, ' ').trim();
+    return foldRepeatedAutocodePromptLines(
+      value
+        .replace(/\r\n/g, '\n')
+        .replace(/\r/g, '\n')
+        .replace(/[ \t]+\n/g, '\n')
+        .replace(/\n{4,}/g, '\n\n\n')
+        .trim(),
+    )
+      .replace(/\s+/g, ' ')
+      .trim();
   }
   if (typeof value === 'number' || typeof value === 'boolean') {
     return String(value);

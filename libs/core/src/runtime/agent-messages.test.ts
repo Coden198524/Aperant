@@ -314,6 +314,32 @@ describe('Autocode runtime agent messages', () => {
     expect(compacted).toContain('change request field middle omitted');
     expect(compacted).toContain('RAW_TAIL_SHOULD_BE_PRESERVED');
   });
+
+  it('folds repeated change request field lines before compacting audit entries', () => {
+    const repeatedLine = 'REPEATED_CHANGE_REQUEST_LOG: renderer printed the same warning without new evidence.';
+    const feedback = [
+      'Opening feedback: keep the latest user constraint visible.',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      'Closing feedback: continue feature optimization before release checks.',
+    ].join('\n');
+
+    const compacted = compactChangeRequestJsonlForPrompt(
+      JSON.stringify({
+        id: 'CR-repeat',
+        createdAt: '2026-06-16T00:00:00.000Z',
+        scope: 'implementation',
+        feedback,
+      }),
+      { maxEntries: 1, maxChars: CHANGE_REQUEST_AUDIT_MAX_CHARS },
+    );
+
+    expect(compacted).toContain('Latest change request: CR-repeat');
+    expect(compacted).toContain('Opening feedback: keep the latest user constraint visible.');
+    expect(compacted).toContain('119 repeated line(s) omitted for prompt budget');
+    expect(compacted).toContain('Closing feedback: continue feature optimization before release checks.');
+    expect((compacted.match(/REPEATED_CHANGE_REQUEST_LOG/g) ?? [])).toHaveLength(1);
+    expect(compacted.length).toBeLessThan(feedback.length / 4);
+  });
 });
 
 function writeLargeSpecAndPlan(specDir: string): void {
