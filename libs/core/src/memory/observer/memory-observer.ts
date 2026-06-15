@@ -11,22 +11,23 @@
  * - observe() NEVER throws
  */
 
+import { foldRepeatedAutocodePromptLines } from '../../runtime/prompt-context.js';
+import { stripLowValueMemoryLines } from '../outcome-content.js';
+import {
+  type AutocodeMemoryRuntimeObservationIpcRequest,
+  compactAutocodeMemoryRuntimeToolArgs,
+} from '../runtime.js';
 import type {
+  AcuteCandidate,
   MemoryCandidate,
   SessionOutcome,
   SessionType,
-  AcuteCandidate,
 } from '../types.js';
-import {
-  compactAutocodeMemoryRuntimeToolArgs,
-  type AutocodeMemoryRuntimeObservationIpcRequest,
-} from '../runtime.js';
-import { stripLowValueMemoryLines } from '../outcome-content.js';
-import { Scratchpad } from './scratchpad.js';
 import { detectDeadEnd } from './dead-end-detector.js';
-import { applyTrustGate } from './trust-gate.js';
-import { SELF_CORRECTION_PATTERNS } from './signals.js';
 import { SESSION_TYPE_PROMOTION_LIMITS } from './promotion.js';
+import { Scratchpad } from './scratchpad.js';
+import { SELF_CORRECTION_PATTERNS } from './signals.js';
+import { applyTrustGate } from './trust-gate.js';
 
 export type MemoryObserverIpcRequest = AutocodeMemoryRuntimeObservationIpcRequest;
 
@@ -38,6 +39,7 @@ const EXTERNAL_TOOL_NAMES = new Set(['WebFetch', 'WebSearch']);
 const MAX_CO_ACCESS_CANDIDATES = 8;
 const MAX_OBSERVER_RELATED_MODULES = 6;
 const MAX_CONTEXT_COST_RELATED_FILES = 4;
+const OBSERVER_TRIGGERING_TEXT_MAX_CHARS = 600;
 const OBSERVER_ACUTE_MEMORY_SNIPPET_MAX_CHARS = 220;
 const CONTEXT_TOKEN_SPIKE_SINGLE_FILE_HINT_MAX_CHARS = 64;
 const CONTEXT_TOKEN_SPIKE_FILE_HINT_MAX_CHARS = 96;
@@ -288,7 +290,7 @@ export class MemoryObserver {
         const candidate: AcuteCandidate = {
           signalType: 'self_correction',
           rawData: {
-            triggeringText: text.slice(0, 200),
+            triggeringText: compactObserverTriggeringText(text, match[0]),
             matchedPattern: pattern.toString(),
             matchText: match[0],
           },
@@ -307,7 +309,7 @@ export class MemoryObserver {
       const candidate: AcuteCandidate = {
         signalType: 'backtrack',
         rawData: {
-          triggeringText: text.slice(0, 200),
+          triggeringText: compactObserverTriggeringText(text, deadEnd.matchedText),
           matchedPattern: deadEnd.pattern,
           matchedText: deadEnd.matchedText,
         },
@@ -534,7 +536,9 @@ export class MemoryObserver {
 }
 
 function formatObserverErrorRetrySample(sample: string | undefined): string {
-  const text = sample?.replace(/\s+/g, ' ').trim() ?? '';
+  const text = foldRepeatedAutocodePromptLines(sample ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
   if (!text) {
     return '';
   }
@@ -542,7 +546,7 @@ function formatObserverErrorRetrySample(sample: string | undefined): string {
 }
 
 function formatObserverAcuteMemorySnippet(primary: unknown, fallback: unknown): string {
-  const rawText = String(primary ?? fallback ?? '')
+  const rawText = foldRepeatedAutocodePromptLines(String(primary ?? fallback ?? ''))
     .replace(/\s+/g, ' ')
     .trim();
   const text = getObserverReusableAcuteText(rawText);
@@ -558,6 +562,51 @@ function formatObserverAcuteMemorySnippet(primary: unknown, fallback: unknown): 
   const headChars = Math.ceil(budget * 0.65);
   const tailChars = Math.max(0, budget - headChars);
   return `${text.slice(0, headChars).trimEnd()}${marker}${text.slice(-tailChars).trimStart()}`;
+}
+
+function compactObserverTriggeringText(value: string, anchor?: string): string {
+  const normalized = value
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  if (!normalized) {
+    return '';
+  }
+
+  const folded = foldRepeatedAutocodePromptLines(normalized);
+  if (folded.length <= OBSERVER_TRIGGERING_TEXT_MAX_CHARS) {
+    return folded;
+  }
+
+  const marker = '\n...[observer trigger middle omitted]...\n';
+  const anchorText = anchor ?? '';
+  const anchorIndex = anchorText ? folded.indexOf(anchorText) : -1;
+  const anchoredBudget = Math.max(0, OBSERVER_TRIGGERING_TEXT_MAX_CHARS - marker.length * 2);
+  if (anchorIndex >= 0 && anchoredBudget > 80) {
+    const edgeBudget = Math.floor(anchoredBudget * 0.4);
+    const headBudget = Math.ceil(edgeBudget / 2);
+    const tailBudget = Math.max(0, edgeBudget - headBudget);
+    const windowBudget = Math.max(0, anchoredBudget - edgeBudget);
+    const start = Math.max(0, anchorIndex - Math.floor(windowBudget * 0.4));
+    const end = Math.min(folded.length, start + windowBudget);
+    const window = folded.slice(start, end).trim();
+    if (window) {
+      return [
+        folded.slice(0, headBudget).trimEnd(),
+        marker,
+        window,
+        marker,
+        folded.slice(-tailBudget).trimStart(),
+      ].join('');
+    }
+  }
+
+  const budget = Math.max(0, OBSERVER_TRIGGERING_TEXT_MAX_CHARS - marker.length);
+  const headChars = Math.ceil(budget * 0.65);
+  const tailChars = Math.max(0, budget - headChars);
+  return `${folded.slice(0, headChars).trimEnd()}${marker}${folded.slice(-tailChars).trimStart()}`;
 }
 
 function getObserverReusableAcuteText(text: string): string {
