@@ -1,10 +1,11 @@
+import { foldRepeatedAutocodePromptLines } from '../../runtime/prompt-context.js';
 import { estimateTokens } from '../retrieval/context-packer.js';
 
 export function compactMemoryInjectionText(text: string, maxChars: number, maxTokens?: number): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
-  if (maxChars <= 0 || maxTokens !== undefined && maxTokens <= 0) {
+  if (maxChars <= 0 || (maxTokens !== undefined && maxTokens <= 0)) {
     return '';
   }
+  const compact = foldRepeatedAutocodePromptLines(text).replace(/\s+/g, ' ').trim();
   if (compact.length <= maxChars && (maxTokens === undefined || estimateTokens(compact) <= maxTokens)) {
     return compact;
   }
