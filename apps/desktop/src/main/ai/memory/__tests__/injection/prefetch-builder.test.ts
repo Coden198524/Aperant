@@ -57,7 +57,8 @@ describe('buildPrefetchPlan', () => {
 
     expect(memoryService.search).toHaveBeenCalledWith(expect.objectContaining({
       relatedModules: ['auth', 'billing'],
-      promptContextOnly: true,
+      promptContextOnly: false,
+      excludeDeprecated: true,
       recordAccess: false,
     }));
   });
@@ -209,6 +210,9 @@ describe('buildPrefetchPlan', () => {
         alwaysReadFiles: ['src/auth/low-confidence.ts'],
       }), { id: 'low', confidence: 0.2 }),
       makeMemory(JSON.stringify({
+        alwaysReadFiles: ['src/auth/wrong-type.ts'],
+      }), { id: 'wrong-type', type: 'gotcha' }),
+      makeMemory(JSON.stringify({
         alwaysReadFiles: ['src/auth/stale.ts'],
       }), { id: 'stale', staleAt: '2000-01-01T00:00:00.000Z' }),
     ]);
@@ -231,6 +235,7 @@ describe('buildPrefetchPlan', () => {
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('pnpm-lock');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('demo.mp4');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('low-confidence');
+    expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('wrong-type');
     expect([...plan.alwaysReadFiles, ...plan.frequentlyReadFiles].join('\n')).not.toContain('stale');
   });
 });

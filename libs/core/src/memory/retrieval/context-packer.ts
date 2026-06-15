@@ -166,6 +166,7 @@ export function packContext(
   const allocatedTypes = new Set(typeBudgets.keys());
   for (const [memoryType, typeMemories] of byType) {
     if (allocatedTypes.has(memoryType)) continue;
+    if (isDefaultPromptExcludedMemoryType(memoryType)) continue;
 
     const remaining = totalBudget - state.tokensUsed;
     if (remaining <= 0) break;
@@ -191,7 +192,7 @@ export function packContext(
 function groupByType(memories: Memory[]): Map<MemoryType, Memory[]> {
   const map = new Map<MemoryType, Memory[]>();
   for (const m of normalizePromptMemories(memories)) {
-    if (!isNormalizedMemoryEligibleForPromptContext(m)) {
+    if (!isNormalizedMemoryEligibleForMemoryUse(m)) {
       continue;
     }
     const group = map.get(m.type) ?? [];
@@ -204,12 +205,27 @@ function groupByType(memories: Memory[]): Map<MemoryType, Memory[]> {
   return map;
 }
 
+function isDefaultPromptExcludedMemoryType(memoryType: MemoryType): boolean {
+  return memoryType === 'prefetch_pattern' || memoryType === 'context_cost';
+}
+
 export function isMemoryEligibleForPromptContext(memory: Memory): boolean {
   const normalized = normalizePromptMemory(memory);
   if (!normalized) {
     return false;
   }
-  return isNormalizedMemoryEligibleForPromptContext(normalized);
+  return (
+    !isDefaultPromptExcludedMemoryType(normalized.type) &&
+    isNormalizedMemoryEligibleForMemoryUse(normalized)
+  );
+}
+
+export function isMemoryEligibleForAutomationContext(memory: Memory): boolean {
+  const normalized = normalizePromptMemory(memory);
+  if (!normalized) {
+    return false;
+  }
+  return isNormalizedMemoryEligibleForMemoryUse(normalized);
 }
 
 export function formatMemoryContentForPrompt(
@@ -219,7 +235,7 @@ export function formatMemoryContentForPrompt(
   return truncateText(getMemoryPromptContent(memory), maxChars);
 }
 
-function isNormalizedMemoryEligibleForPromptContext(memory: Memory): boolean {
+function isNormalizedMemoryEligibleForMemoryUse(memory: Memory): boolean {
   if (memory.deprecated) {
     return false;
   }

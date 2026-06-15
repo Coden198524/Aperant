@@ -1,5 +1,5 @@
 import { selectMemoryContextItems } from './injection/context-selection.js';
-import { estimateTokens } from './retrieval/context-packer.js';
+import { estimateTokens, isMemoryEligibleForPromptContext } from './retrieval/context-packer.js';
 import type {
   Memory,
   MemoryRecordEntry,
@@ -611,10 +611,14 @@ export function formatAutocodeMemoryRuntimeContext(
   maxItems = 6,
 ): string {
   const itemLimit = Math.max(0, maxItems);
-  const usable = selectMemoryContextItems(memories, {
-    maxItems: itemLimit * AUTOCODE_MEMORY_RUNTIME_CONTEXT_CANDIDATE_MULTIPLIER,
-    minConfidence: AUTOCODE_MEMORY_RUNTIME_CONTEXT_MIN_CONFIDENCE,
-  });
+  const usable = selectMemoryContextItems(
+    memories.filter(isAutocodeMemoryRuntimeContextMemoryEligible),
+    {
+      maxItems: itemLimit * AUTOCODE_MEMORY_RUNTIME_CONTEXT_CANDIDATE_MULTIPLIER,
+      minConfidence: AUTOCODE_MEMORY_RUNTIME_CONTEXT_MIN_CONFIDENCE,
+      getContent: formatAutocodeMemoryRuntimeContextMemoryContent,
+    },
+  );
 
   if (usable.length === 0) {
     return '';
@@ -676,6 +680,14 @@ function fitsAutocodeMemoryRuntimeContextBudget(text: string): boolean {
   );
 }
 
+function isAutocodeMemoryRuntimeContextMemoryEligible(memory: Memory): boolean {
+  return (
+    memory.type !== 'prefetch_pattern' &&
+    memory.type !== 'context_cost' &&
+    isMemoryEligibleForPromptContext(memory)
+  );
+}
+
 interface FormattedRuntimeContextLine {
   line: string;
   displayedFileKeys: string[];
@@ -705,14 +717,18 @@ function formatAutocodeMemoryRuntimeContextLine(
       ? ` Files: ${visibleFiles.join(', ')}${unseenFiles.length > visibleFiles.length ? ', ...' : ''}.`
       : '';
   return {
-    line: `- [${memory.type}] ${truncateAutocodeMemoryRuntimeTextToTokenBudget(
-      memory.content,
-      AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS,
-      AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_TOKENS,
-      { preserveTail: true },
-    )}${files}`,
+    line: `- [${memory.type}] ${formatAutocodeMemoryRuntimeContextMemoryContent(memory)}${files}`,
     displayedFileKeys: displayedFiles.map(normalizeRuntimePathKey),
   };
+}
+
+function formatAutocodeMemoryRuntimeContextMemoryContent(memory: Memory): string {
+  return truncateAutocodeMemoryRuntimeTextToTokenBudget(
+    memory.content,
+    AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS,
+    AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_TOKENS,
+    { preserveTail: true },
+  );
 }
 
 function buildAutocodeWorkUnitOutcomeContent(

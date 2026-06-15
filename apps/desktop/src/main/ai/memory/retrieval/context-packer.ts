@@ -7,6 +7,7 @@ export {
   MIN_PACKED_MEMORY_CONFIDENCE,
   estimateTokens,
   formatMemoryContentForPrompt,
+  isMemoryEligibleForAutomationContext,
   isMemoryEligibleForPromptContext,
   packContext,
 } from '@autocode/core/memory/retrieval';

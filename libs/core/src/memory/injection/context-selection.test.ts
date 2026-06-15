@@ -107,4 +107,24 @@ describe('selectMemoryContextItems', () => {
     expect(first.map((item) => item.id)).toEqual(['requirement']);
     expect(second.map((item) => item.id)).toEqual(['distinct-error-pattern']);
   });
+
+  it('deduplicates using caller-provided rendered content', () => {
+    const selected = selectMemoryContextItems([
+      memory({
+        id: 'lower',
+        content: 'Raw lower confidence detail that renders the same.',
+        confidence: 0.7,
+      }),
+      memory({
+        id: 'higher',
+        content: 'Different raw detail that renders the same.',
+        confidence: 0.95,
+      }),
+    ], {
+      maxItems: 5,
+      getContent: () => 'Rendered memory line after compaction.',
+    });
+
+    expect(selected.map((item) => item.id)).toEqual(['higher']);
+  });
 });

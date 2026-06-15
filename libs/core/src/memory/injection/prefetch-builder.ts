@@ -5,7 +5,7 @@
  * patterns stored as 'prefetch_pattern' memories.
  */
 
-import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer.js';
+import { isMemoryEligibleForAutomationContext } from '../retrieval/context-packer.js';
 import type { Memory, MemoryService } from '../types.js';
 import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
@@ -120,10 +120,11 @@ export async function buildPrefetchPlan(
         relatedModules,
         limit: 5,
         projectId,
-        promptContextOnly: true,
+        promptContextOnly: false,
+        excludeDeprecated: true,
         recordAccess: false,
       })
-    ).filter(isMemoryEligibleForPromptContext);
+    ).filter(isPrefetchPatternMemoryEligible);
 
     const parsedMemories = prefetchMemories
       .map(parsePrefetchMemory)
@@ -185,6 +186,13 @@ function parsePrefetchMemory(memory: Memory): ParsedPrefetchMemory | null {
   } catch {
     return null;
   }
+}
+
+function isPrefetchPatternMemoryEligible(memory: Memory): boolean {
+  return (
+    memory.type === 'prefetch_pattern' &&
+    isMemoryEligibleForAutomationContext(memory)
+  );
 }
 
 function collectPrefetchCandidateSources(

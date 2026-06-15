@@ -757,8 +757,21 @@ describe('MemoryServiceImpl', () => {
         needsReview: true,
         userVerified: true,
       });
+      const prefetch = makeMemoryResult({
+        id: 'prefetch',
+        type: 'prefetch_pattern',
+        content: JSON.stringify({
+          alwaysReadFiles: ['src/auth/session.ts'],
+          frequentlyReadFiles: ['src/auth/token.ts'],
+        }),
+      });
+      const contextCost = makeMemoryResult({
+        id: 'context-cost',
+        type: 'context_cost',
+        content: 'High token usage per step should be omitted from prompt context.',
+      });
       mockRetrievalSearch.mockResolvedValueOnce({
-        memories: [trusted, lowConfidence, pendingReview, stale, verified],
+        memories: [trusted, lowConfidence, pendingReview, stale, verified, prefetch, contextCost],
         formattedContext: '',
       });
 

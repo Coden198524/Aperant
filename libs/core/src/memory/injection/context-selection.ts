@@ -8,11 +8,13 @@ export interface MemoryContextSelectionOptions {
   similarityThreshold?: number;
   seenContents?: string[];
   seenFingerprints?: Set<string>;
+  getContent?: (memory: Memory) => string;
 }
 
 interface RankedMemory {
   memory: Memory;
   fingerprint: string;
+  selectionContent: string;
   rank: number;
   score: number;
 }
@@ -30,6 +32,7 @@ export function selectMemoryContextItems(
 
   const seenIds = new Set<string>();
   const byFingerprint = new Map<string, RankedMemory>();
+  const getSelectionContent = options.getContent ?? getDefaultSelectionContent;
 
   memories.forEach((memory, rank) => {
     if (memory.deprecated || seenIds.has(memory.id)) {
@@ -46,8 +49,12 @@ export function selectMemoryContextItems(
       return;
     }
 
+    const selectionContent = normalizeSelectionContent(getSelectionContent(memory));
+    if (!selectionContent) {
+      return;
+    }
     seenIds.add(memory.id);
-    const fingerprint = getMemoryContentFingerprint(memory);
+    const fingerprint = getMemoryContentFingerprint(selectionContent);
     if (!fingerprint || options.seenFingerprints?.has(fingerprint)) {
       return;
     }
@@ -55,6 +62,7 @@ export function selectMemoryContextItems(
     const candidate: RankedMemory = {
       memory,
       fingerprint,
+      selectionContent,
       rank,
       score: scoreMemoryForContext(memory),
     };
@@ -71,8 +79,8 @@ export function selectMemoryContextItems(
       break;
     }
     if (
-      isTooSimilarToSelected(candidate.memory.content, selected, similarityThreshold) ||
-      isTooSimilarToContent(candidate.memory.content, options.seenContents ?? [], similarityThreshold)
+      isTooSimilarToSelected(candidate.selectionContent, selected, similarityThreshold) ||
+      isTooSimilarToContent(candidate.selectionContent, options.seenContents ?? [], similarityThreshold)
     ) {
       continue;
     }
@@ -81,7 +89,7 @@ export function selectMemoryContextItems(
 
   for (const item of selected) {
     options.seenFingerprints?.add(item.fingerprint);
-    options.seenContents?.push(item.memory.content);
+    options.seenContents?.push(item.selectionContent);
   }
 
   return selected.map((item) => item.memory);
@@ -94,8 +102,16 @@ function scoreMemoryForContext(memory: Memory): number {
   return memory.confidence + verifiedBoost + pinnedBoost + accessBoost;
 }
 
-function getMemoryContentFingerprint(memory: Memory): string {
-  const normalized = memory.content
+function getDefaultSelectionContent(memory: Memory): string {
+  return memory.content;
+}
+
+function normalizeSelectionContent(content: string): string {
+  return content.replace(/\s+/g, ' ').trim();
+}
+
+function getMemoryContentFingerprint(content: string): string {
+  const normalized = content
     .toLowerCase()
     .replace(/[^a-z0-9\u4e00-\u9fff]+/g, ' ')
     .replace(/\s+/g, ' ')
@@ -119,7 +135,7 @@ function isTooSimilarToSelected(
   }
 
   for (const existing of selected) {
-    if (isTooSimilarToTokens(contentTokens, existing.memory.content, threshold)) {
+    if (isTooSimilarToTokens(contentTokens, existing.selectionContent, threshold)) {
       return true;
     }
   }

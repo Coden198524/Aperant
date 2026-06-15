@@ -41,6 +41,16 @@ function makeLongContent(label: string): string {
   ].join(' ');
 }
 
+function makeRenderedDuplicateContent(uniqueLabel: string): string {
+  const sharedHead = 'Use auth retry guard before saving the refreshed token. '.repeat(4);
+  const uniqueMiddle = Array.from(
+    { length: 90 },
+    (_, index) => `${uniqueLabel.toLowerCase()}_${index}`,
+  ).join(' ');
+  const sharedTail = ' Verify expired-token retry before merging the auth flow.'.repeat(4);
+  return `${sharedHead}${uniqueMiddle}${sharedTail}`;
+}
+
 function makeMemoryService(): MemoryService {
   return {
     store: vi.fn().mockResolvedValue('id'),
@@ -414,6 +424,26 @@ describe('buildPlannerMemoryContext', () => {
     expect(result).not.toContain('Third dead end');
     expect((result.match(/Do not run auth migrations/g) ?? [])).toHaveLength(1);
     expect(result.length).toBeLessThanOrEqual(1800);
+  });
+
+  it('deduplicates planner memories by their compact rendered content', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('dead_end')) {
+        return [
+          { ...makeMemory('render-low', makeRenderedDuplicateContent('LOWER'), 'dead_end'), confidence: 0.7 },
+          { ...makeMemory('render-high', makeRenderedDuplicateContent('HIGHER'), 'dead_end'), confidence: 0.95 },
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildPlannerMemoryContext('Add auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('Use auth retry guard');
+    expect(result).toContain('Verify expired-token retry');
+    expect((result.match(/\[middle omitted\]/g) ?? [])).toHaveLength(1);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(1);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('render-high');
   });
 
   it('preserves the tail of compacted planner memories', async () => {

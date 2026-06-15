@@ -10,7 +10,7 @@ import { z } from 'zod/v3';
 import type { Tool as AITool } from 'ai';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory, MemoryType, MemoryRecordEntry } from '../types';
-import { isMemoryEligibleForPromptContext, MIN_PACKED_MEMORY_CONFIDENCE } from '../retrieval/context-packer';
+import { estimateTokens, isMemoryEligibleForPromptContext, MIN_PACKED_MEMORY_CONFIDENCE } from '../retrieval/context-packer';
 
 const LOW_VALUE_MEMORY_PATTERNS = [
   /^Efficient token usage\b/i,
@@ -26,6 +26,8 @@ const LOW_VALUE_MEMORY_PATTERNS = [
 const DUPLICATE_MEMORY_SEARCH_LIMIT = 4;
 const DUPLICATE_MEMORY_SIMILARITY_THRESHOLD = 0.82;
 const MIN_DUPLICATE_MEMORY_TOKEN_UNION = 6;
+const MAX_DUPLICATE_MEMORY_QUERY_CHARS = 260;
+const MAX_DUPLICATE_MEMORY_QUERY_TOKENS = 80;
 const MAX_RECORD_MEMORY_RELATED_FILES = 12;
 const MAX_RECORD_MEMORY_RELATED_MODULES = 12;
 const MAX_RECORD_MEMORY_FILE_REF_CHARS = 160;
@@ -130,8 +132,9 @@ async function findDuplicateMemory(
   projectId: string,
   content: string,
 ): Promise<Memory | null> {
+  const query = compactDuplicateMemoryQuery(content);
   const memories = await proxy.searchMemory({
-    query: content,
+    query,
     projectId,
     limit: DUPLICATE_MEMORY_SEARCH_LIMIT,
     excludeDeprecated: true,
@@ -141,6 +144,14 @@ async function findDuplicateMemory(
   return memories
     .filter(isMemoryEligibleForPromptContext)
     .find((memory) => isDuplicateMemoryContent(content, memory.content)) ?? null;
+}
+
+function compactDuplicateMemoryQuery(content: string): string {
+  return truncateHeadTailTextToBudget(
+    content,
+    MAX_DUPLICATE_MEMORY_QUERY_CHARS,
+    MAX_DUPLICATE_MEMORY_QUERY_TOKENS,
+  );
 }
 
 function isDuplicateMemoryContent(content: string, existingContent: string): boolean {
@@ -259,6 +270,34 @@ function truncateHeadTailText(text: string, maxChars: number): string {
   const headBudget = Math.ceil(budget * 0.45);
   const tailBudget = Math.max(0, budget - headBudget);
   return `${compact.slice(0, headBudget).trimEnd()}${marker}${compact.slice(-tailBudget).trimStart()}`;
+}
+
+function truncateHeadTailTextToBudget(text: string, maxChars: number, maxTokens: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length === 0 || maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+
+  const charBounded = truncateHeadTailText(compact, maxChars);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, compact.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = truncateHeadTailText(compact, midpoint);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
 }
 
 export function createRecordMemoryStub(): AITool<RecordMemoryInput, string> {

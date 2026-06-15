@@ -4,6 +4,8 @@ import type { Memory } from '../types.js';
 import {
   type ContextPackingConfig,
   estimateTokens,
+  isMemoryEligibleForAutomationContext,
+  isMemoryEligibleForPromptContext,
   MAX_PACKED_MEMORY_FILE_REF_CHARS,
   MAX_PROMPT_CONTEXT_MEMORIES,
   MIN_PACKED_MEMORY_CONFIDENCE,
@@ -236,6 +238,71 @@ describe('packContext memory quality gate', () => {
     expect(result).toContain('+1 more');
     expect(result).not.toContain('alwaysReadFiles');
     expect(result).not.toContain('frequentlyReadFiles');
+  });
+
+  it('does not spend default prompt budget on machine-only prefetch patterns', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'gotcha',
+          type: 'gotcha',
+          content: 'Use the tested auth session helper before wiring token refresh.',
+        }),
+        makeMemory({
+          id: 'prefetch',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: ['src/auth/session.ts'],
+            frequentlyReadFiles: ['src/auth/token.ts'],
+          }),
+          relatedFiles: [],
+        }),
+      ],
+      'implement',
+    );
+
+    expect(result).toContain('Use the tested auth session helper');
+    expect(result).not.toContain('**Prefetch Pattern**');
+    expect(result).not.toContain('Always prefetch:');
+    expect(result).not.toContain('Prefetch together:');
+  });
+
+  it('keeps prefetch patterns eligible for automation but not default prompt context', () => {
+    const prefetch = makeMemory({
+      id: 'prefetch',
+      type: 'prefetch_pattern',
+      content: JSON.stringify({
+        alwaysReadFiles: ['src/auth/session.ts'],
+        frequentlyReadFiles: ['src/auth/token.ts'],
+      }),
+      relatedFiles: [],
+    });
+
+    expect(isMemoryEligibleForPromptContext(prefetch)).toBe(false);
+    expect(isMemoryEligibleForAutomationContext(prefetch)).toBe(true);
+  });
+
+  it('keeps context cost memories out of default prompt context', () => {
+    const contextCost = makeMemory({
+      id: 'context-cost',
+      type: 'context_cost',
+      content: 'High token usage per step - may need more focused approach.',
+      confidence: 0.95,
+    });
+    const result = packContext([
+      contextCost,
+      makeMemory({
+        id: 'gotcha',
+        type: 'gotcha',
+        content: 'Visible gotcha should still guide implementation.',
+      }),
+    ], 'implement');
+
+    expect(isMemoryEligibleForPromptContext(contextCost)).toBe(false);
+    expect(isMemoryEligibleForAutomationContext(contextCost)).toBe(true);
+    expect(result).toContain('Visible gotcha should still guide implementation.');
+    expect(result).not.toContain('High token usage per step');
+    expect(result).not.toContain('**Context Cost**');
   });
 
   it('deduplicates equivalent prefetch patterns by rendered prompt content', () => {

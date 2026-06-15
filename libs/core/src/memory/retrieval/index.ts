@@ -3,6 +3,7 @@ export {
   DEFAULT_PACKING_CONFIG,
   estimateTokens,
   formatMemoryContentForPrompt,
+  isMemoryEligibleForAutomationContext,
   isMemoryEligibleForPromptContext,
   MAX_PACKED_MEMORY_CITATION_CHARS,
   MAX_PACKED_MEMORY_CONTENT_CHARS,

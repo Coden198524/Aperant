@@ -14,7 +14,12 @@ import { z } from 'zod/v3';
 import type { Tool as AITool } from 'ai';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory, MemoryType, MemorySearchFilters } from '../types';
-import { estimateTokens, formatMemoryContentForPrompt, isMemoryEligibleForPromptContext } from '../retrieval/context-packer';
+import {
+  estimateTokens,
+  formatMemoryContentForPrompt,
+  isMemoryEligibleForAutomationContext,
+  isMemoryEligibleForPromptContext,
+} from '../retrieval/context-packer';
 
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 8;
@@ -112,12 +117,12 @@ export function createSearchMemoryTool(
         limit: Math.min(input.limit ?? DEFAULT_SEARCH_LIMIT, MAX_SEARCH_LIMIT),
         projectId,
         excludeDeprecated: true,
-        promptContextOnly: true,
+        promptContextOnly: shouldSearchPromptContextOnly(input.types as MemoryType[] | undefined),
         recordAccess: true,
       };
 
       const memories = dedupeMemories(
-        (await proxy.searchMemory(filters)).filter(isMemoryEligibleForPromptContext),
+        (await proxy.searchMemory(filters)).filter(isMemoryEligibleForSearchMemoryResult),
       );
 
       if (memories.length === 0) {
@@ -161,6 +166,20 @@ function dedupeMemories(memories: Memory[]): Memory[] {
     result.push(memory);
   }
   return result;
+}
+
+function shouldSearchPromptContextOnly(types: MemoryType[] | undefined): boolean {
+  return !types?.some(isMachineReadableSearchMemoryType);
+}
+
+function isMemoryEligibleForSearchMemoryResult(memory: Memory): boolean {
+  return isMachineReadableSearchMemoryType(memory.type)
+    ? isMemoryEligibleForAutomationContext(memory)
+    : isMemoryEligibleForPromptContext(memory);
+}
+
+function isMachineReadableSearchMemoryType(type: MemoryType): boolean {
+  return type === 'prefetch_pattern' || type === 'context_cost';
 }
 
 function normalizeContent(content: string): string {
@@ -269,13 +288,19 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
 
 function formatSearchMemoryResult(memory: Memory, index: number): string {
   const fileRef = formatFileRefs(memory.relatedFiles);
-  const confidence = `(confidence: ${(memory.confidence * 100).toFixed(0)}%)`;
-  return `${index}. [${memory.type}]${fileRef} ${confidence}\n   ${truncateTextToBudget(
+  const confidence = formatConfidenceHint(memory);
+  return `${index}. [${memory.type}]${fileRef}${confidence}\n   ${truncateTextToBudget(
     formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER),
     MAX_MEMORY_RESULT_CHARS,
     MAX_MEMORY_RESULT_TOKENS,
     { preserveTail: true },
   )}`;
+}
+
+function formatConfidenceHint(memory: Memory): string {
+  return memory.confidence < 0.7
+    ? ` [confidence: ${(memory.confidence * 100).toFixed(0)}%]`
+    : '';
 }
 
 function formatFileRefs(files: readonly string[]): string {

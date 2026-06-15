@@ -35,6 +35,16 @@ function makeLongContent(label: string): string {
   ].join(' ');
 }
 
+function makeRenderedDuplicateContent(uniqueLabel: string): string {
+  const sharedHead = 'Retry auth validation with fake timers before asserting token expiry. '.repeat(4);
+  const uniqueMiddle = Array.from(
+    { length: 90 },
+    (_, index) => `${uniqueLabel.toLowerCase()}_${index}`,
+  ).join(' ');
+  const sharedTail = ' Confirm callback error UI after the retry path settles.'.repeat(4);
+  return `${sharedHead}${uniqueMiddle}${sharedTail}`;
+}
+
 function makeMemoryService(): MemoryService {
   return {
     store: vi.fn().mockResolvedValue('id'),
@@ -345,6 +355,26 @@ describe('buildQaSessionContext', () => {
     expect(result).not.toContain('Third error pattern');
     expect((result.match(/Expired token tests fail/g) ?? [])).toHaveLength(1);
     expect(result.length).toBeLessThanOrEqual(1700);
+  });
+
+  it('deduplicates QA memories by their compact rendered content', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          { ...makeMemory('render-low', makeRenderedDuplicateContent('LOWER'), 'error_pattern'), confidence: 0.7 },
+          { ...makeMemory('render-high', makeRenderedDuplicateContent('HIGHER'), 'error_pattern'), confidence: 0.95 },
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('Retry auth validation');
+    expect(result).toContain('Confirm callback error UI');
+    expect((result.match(/\[middle omitted\]/g) ?? [])).toHaveLength(1);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(1);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('render-high');
   });
 
   it('preserves the tail of compacted QA memories', async () => {

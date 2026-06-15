@@ -52,6 +52,16 @@ function memory(overrides: Partial<Memory> = {}): Memory {
   };
 }
 
+function renderedDuplicateRuntimeContent(uniqueLabel: string): string {
+  const sharedHead = 'Use the shared auth retry guard before refreshing tokens. '.repeat(4);
+  const uniqueMiddle = Array.from(
+    { length: 90 },
+    (_, index) => `${uniqueLabel.toLowerCase()}_${index}`,
+  ).join(' ');
+  const sharedTail = ' Verify expired-token retry before merging.'.repeat(4);
+  return `${sharedHead}${uniqueMiddle}${sharedTail}`;
+}
+
 describe('Autocode memory runtime context formatting', () => {
   it('bounds memory context content and related file references', () => {
     const longContent = [
@@ -246,6 +256,56 @@ describe('Autocode memory runtime context formatting', () => {
     expect(formatted).not.toContain('LOW_CONFIDENCE_SHOULD_NOT_APPEAR');
     expect(formatted).not.toContain('NEEDS_REVIEW_SHOULD_NOT_APPEAR');
     expect(formatted).not.toContain('STALE_SHOULD_NOT_APPEAR');
+  });
+
+  it('omits machine-only runtime memories from project context', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'prefetch',
+        type: 'prefetch_pattern',
+        content: JSON.stringify({
+          alwaysReadFiles: ['src/auth/session.ts'],
+          frequentlyReadFiles: ['src/auth/token.ts'],
+        }),
+        confidence: 0.95,
+      }),
+      memory({
+        id: 'context-cost',
+        type: 'context_cost',
+        content: 'High token usage per step - may need more focused approach.',
+        confidence: 0.95,
+      }),
+      memory({
+        id: 'visible',
+        type: 'gotcha',
+        content: 'Visible runtime gotcha remains available.',
+        confidence: 0.95,
+      }),
+    ]);
+
+    expect(formatted).toContain('Visible runtime gotcha remains available.');
+    expect(formatted).not.toContain('prefetch_pattern');
+    expect(formatted).not.toContain('alwaysReadFiles');
+    expect(formatted).not.toContain('High token usage per step');
+  });
+
+  it('deduplicates runtime memories by their compact rendered content', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'render-low',
+        content: renderedDuplicateRuntimeContent('LOWER'),
+        confidence: 0.7,
+      }),
+      memory({
+        id: 'render-high',
+        content: renderedDuplicateRuntimeContent('HIGHER'),
+        confidence: 0.95,
+      }),
+    ]);
+
+    expect(formatted).toContain('Use the shared auth retry guard');
+    expect(formatted).toContain('Verify expired-token retry');
+    expect((formatted.match(/\[middle omitted\]/g) ?? [])).toHaveLength(1);
   });
 
   it('uses later concise memories when verbose candidates would waste the context budget', () => {

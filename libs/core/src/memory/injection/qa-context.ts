@@ -108,24 +108,28 @@ function selectQaSections(sections: QaSections): QaSections {
       minConfidence: 0.6,
       seenContents,
       seenFingerprints,
+      getContent: formatMemoryContent,
     }),
     errorPatterns: selectMemoryContextItems(sections.errorPatterns, {
       maxItems: 2,
       minConfidence: 0.6,
       seenContents,
       seenFingerprints,
+      getContent: formatMemoryContent,
     }),
     e2eObservations: selectMemoryContextItems(sections.e2eObservations, {
       maxItems: 2,
       minConfidence: 0.55,
       seenContents,
       seenFingerprints,
+      getContent: formatMemoryContent,
     }),
     recipes: selectMemoryContextItems(sections.recipes, {
       maxItems: 1,
       minConfidence: 0.55,
       seenContents,
       seenFingerprints,
+      getContent: formatMemoryContent,
     }),
   };
 }

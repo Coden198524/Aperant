@@ -251,6 +251,8 @@ describe('memory agent tools', () => {
     expect(result).toContain('Trusted auth memory remains visible.');
     expect(result).toContain('Verified low confidence memory remains visible.');
     expect(result).toContain('Pinned stale memory remains visible.');
+    expect(result).toContain('[confidence: 20%]');
+    expect(result).not.toContain('(confidence: 90%)');
     expect(result).not.toContain('Low confidence memory should be hidden.');
     expect(result).not.toContain('Pending review memory should be hidden.');
     expect(result).not.toContain('Stale memory should be hidden.');
@@ -344,6 +346,10 @@ describe('memory agent tools', () => {
     expect(result).toContain('Prefetch together: src/auth/session.ts, src/auth/token.ts');
     expect(result).not.toContain('frequentlyReadFiles');
     expect(result).not.toContain('{');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['prefetch_pattern'],
+      promptContextOnly: false,
+    }));
   });
 
   it('deduplicates search_memory prefetch patterns by rendered content', async () => {
@@ -379,6 +385,37 @@ describe('memory agent tools', () => {
     expect((result.match(/\[prefetch_pattern\]/g) ?? [])).toHaveLength(1);
     expect(result).toContain('Prefetch together: src/auth/session.ts, src/auth/token.ts');
     expect(result).not.toContain('frequentlyReadFiles');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['prefetch_pattern'],
+      promptContextOnly: false,
+    }));
+  });
+
+  it('allows explicit search_memory context cost lookups without prompt filtering', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'context-cost',
+          type: 'context_cost',
+          content: 'High token usage per step - focus the implementation search scope.',
+          confidence: 0.95,
+          relatedFiles: [],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number; types: ['context_cost'] },
+      string
+    >(tool, { query: 'token cost', limit: 3, types: ['context_cost'] });
+
+    expect(result).toContain('[context_cost]');
+    expect(result).toContain('High token usage per step');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      types: ['context_cost'],
+      promptContextOnly: false,
+    }));
   });
 
   it('preserves useful tail details when compacting search_memory result content', async () => {
@@ -528,6 +565,37 @@ describe('memory agent tools', () => {
     expect(entry.relatedModules).toHaveLength(12);
     expect(entry.relatedModules?.[0].length).toBeLessThanOrEqual(96);
     expect(entry.relatedModules?.[0]).toContain('tail');
+  });
+
+  it('compacts record_memory duplicate search queries without truncating persisted content', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+      recordMemory: vi.fn().mockResolvedValue('feedface-aaaa-bbbb-cccc-123456789abc'),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+    const longContent = [
+      'Use auth retry guard before refreshing protected API tokens.',
+      'middle duplicate search detail '.repeat(10),
+      'Verify expired-token retry before merging.',
+    ].join(' ');
+
+    await executeTool<
+      { type: 'gotcha'; content: string },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: longContent,
+    });
+
+    const duplicateQuery = vi.mocked(proxy.searchMemory).mock.calls[0][0].query ?? '';
+    expect(duplicateQuery.length).toBeLessThanOrEqual(260);
+    expect(estimateTokens(duplicateQuery)).toBeLessThanOrEqual(80);
+    expect(duplicateQuery).toContain('Use auth retry guard');
+    expect(duplicateQuery).toContain('Verify expired-token retry');
+    expect(duplicateQuery).toContain('omitted');
+    expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
+      content: longContent.replace(/\s+/g, ' ').trim(),
+    }));
   });
 
   it('skips recording near-duplicate memories that already exist', async () => {

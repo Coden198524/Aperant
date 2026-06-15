@@ -127,30 +127,35 @@ function selectPlannerSections(sections: PlannerSections): PlannerSections {
       minConfidence: 0.55,
       seenContents,
       seenFingerprints,
+      getContent: formatMemoryContent,
     }),
     calibrations: selectMemoryContextItems(sections.calibrations, {
       maxItems: 2,
       minConfidence: 0.55,
       seenContents,
       seenFingerprints,
+      getContent: formatCalibrationMemoryContent,
     }),
     deadEnds: selectMemoryContextItems(sections.deadEnds, {
       maxItems: 2,
       minConfidence: 0.6,
       seenContents,
       seenFingerprints,
+      getContent: formatMemoryContent,
     }),
     causalDeps: selectMemoryContextItems(sections.causalDeps, {
       maxItems: 2,
       minConfidence: 0.6,
       seenContents,
       seenFingerprints,
+      getContent: formatMemoryContent,
     }),
     outcomes: selectMemoryContextItems(sections.outcomes, {
       maxItems: 2,
       minConfidence: 0.55,
       seenContents,
       seenFingerprints,
+      getContent: formatOutcomeMemoryContent,
     }),
   };
 }
@@ -178,21 +183,7 @@ function formatPlannerSections(
 
   if (calibrations.length > 0) {
     const items = calibrations.map((memory) => {
-      const renderedLine = (() => {
-        try {
-          const data = JSON.parse(memory.content) as {
-            ratio?: number;
-            module?: string;
-          };
-          const ratio =
-            data.ratio != null
-              ? ` (step ratio: ${data.ratio.toFixed(2)}x)`
-              : '';
-          return `- ${data.module ?? formatMemoryContent(memory)}${ratio}`;
-        } catch {
-          return `- ${formatMemoryContent(memory)}`;
-        }
-      })();
+      const renderedLine = `- ${formatCalibrationMemoryContent(memory)}`;
       return { memory, renderedLine };
     });
     parts.push(
@@ -272,6 +263,22 @@ function formatMemoryContent(memory: Memory): string {
     MAX_PLANNER_MEMORY_ITEM_CHARS,
     MAX_PLANNER_MEMORY_ITEM_TOKENS,
   );
+}
+
+function formatCalibrationMemoryContent(memory: Memory): string {
+  try {
+    const data = JSON.parse(memory.content) as {
+      ratio?: number;
+      module?: string;
+    };
+    const ratio =
+      data.ratio != null
+        ? ` (step ratio: ${data.ratio.toFixed(2)}x)`
+        : '';
+    return `${data.module ?? formatMemoryContent(memory)}${ratio}`;
+  } catch {
+    return formatMemoryContent(memory);
+  }
 }
 
 function formatOutcomeMemoryContent(memory: Memory): string {
