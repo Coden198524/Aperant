@@ -260,10 +260,11 @@ export function compactAutocodeMemoryRuntimeToolArgs(
   const compact: Record<string, unknown> = {};
 
   for (const [key, value] of Object.entries(args)) {
-    if (AUTOCODE_MEMORY_RUNTIME_TOOL_ARG_OMITTED_KEYS.has(key)) {
+    const canonicalKey = canonicalizeAutocodeMemoryRuntimeToolArgKey(key);
+    if (AUTOCODE_MEMORY_RUNTIME_TOOL_ARG_OMITTED_KEYS.has(canonicalKey)) {
       continue;
     }
-    if (!AUTOCODE_MEMORY_RUNTIME_TOOL_ARG_KEYS.has(key)) {
+    if (!AUTOCODE_MEMORY_RUNTIME_TOOL_ARG_KEYS.has(canonicalKey)) {
       continue;
     }
 
@@ -273,11 +274,18 @@ export function compactAutocodeMemoryRuntimeToolArgs(
       { preserveTail: true },
     );
     if (compactValue !== undefined) {
-      compact[key] = compactValue;
+      compact[canonicalKey] = compactValue;
     }
   }
 
   return compact;
+}
+
+function canonicalizeAutocodeMemoryRuntimeToolArgKey(key: string): string {
+  return key
+    .replace(/([a-z0-9])([A-Z])/g, '$1_$2')
+    .replace(/[\s-]+/g, '_')
+    .toLowerCase();
 }
 
 export function compactAutocodeMemoryRuntimeRecentToolCalls(

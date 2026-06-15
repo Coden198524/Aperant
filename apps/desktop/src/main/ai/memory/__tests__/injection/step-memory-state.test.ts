@@ -65,6 +65,25 @@ describe('StepMemoryState', () => {
       expect(String(args.command)).toContain('middle omitted');
       expect(String(args.command)).toContain('FINAL_COMMAND_TAIL');
     });
+
+    it('canonicalizes camelCase tool argument names before storing recent context', () => {
+      state.recordToolCall('Read', {
+        filePath: ' src\\auth\\token.ts ',
+        oldString: 'old'.repeat(1_000),
+        newString: 'new'.repeat(1_000),
+        unexpectedPayload: 'should not be retained',
+      });
+      state.recordToolCall('Read', {
+        file_path: 'src/auth//token.ts',
+        content: 'ignored payload',
+      });
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Read', args: { file_path: 'src/auth/token.ts' } },
+      ]);
+    });
   });
 
   describe('getRecentContext()', () => {
