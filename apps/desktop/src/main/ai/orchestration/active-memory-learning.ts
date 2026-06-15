@@ -6,7 +6,7 @@
  */
 
 import { mkdir, open, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
+import { isAbsolute, join, relative, resolve } from 'node:path';
 import {
   buildAutocodeWorkUnitOutcomeMemoryEntry,
   type MemoryService,
@@ -124,7 +124,7 @@ function normalizeCodePatternFile(file: string): string {
 }
 
 export async function readCodePatternFileSample(projectDir: string, file: string): Promise<string> {
-  const filePath = join(projectDir, file);
+  const filePath = resolveCodePatternFilePath(projectDir, file);
   const handle = await open(filePath, 'r');
   try {
     const stats = await handle.stat();
@@ -150,6 +150,26 @@ export async function readCodePatternFileSample(projectDir: string, file: string
   } finally {
     await handle.close();
   }
+}
+
+function resolveCodePatternFilePath(projectDir: string, file: string): string {
+  const projectRoot = resolve(projectDir);
+  const normalizedFile = normalizeCodePatternFile(file);
+  if (!normalizedFile) {
+    throw new Error('Invalid active memory code pattern file path');
+  }
+
+  const filePath = resolve(projectRoot, normalizedFile);
+  const relativePath = relative(projectRoot, filePath);
+  if (
+    !relativePath ||
+    relativePath.startsWith('..') ||
+    isAbsolute(relativePath)
+  ) {
+    throw new Error('Active memory code pattern file is outside the project');
+  }
+
+  return filePath;
 }
 
 async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConfig): Promise<void> {

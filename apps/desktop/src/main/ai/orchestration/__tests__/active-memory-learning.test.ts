@@ -228,4 +228,17 @@ describe('active memory learning storage', () => {
     expect(sample).toContain('TAIL_SENTINEL_SHOULD_BE_SAMPLED');
     expect(sample).not.toContain(middle);
   });
+
+  it('does not sample code pattern files outside the project directory', async () => {
+    const outsideFile = join(specDir, 'outside-secret.ts');
+    await writeFile(
+      outsideFile,
+      'export const SECRET_SHOULD_NOT_BE_SAMPLED = true;',
+      'utf-8',
+    );
+
+    await expect(
+      readCodePatternFileSample(projectDir, outsideFile),
+    ).rejects.toThrow('outside the project');
+  });
 });
