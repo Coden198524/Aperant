@@ -98,6 +98,60 @@ describe('buildPrefetchPlan', () => {
     expect(plan.alwaysReadFiles.length + plan.frequentlyReadFiles.length).toBeLessThanOrEqual(plan.maxFiles);
   });
 
+  it('prioritizes files repeated across memories before one-off samples', async () => {
+    const files = Array.from({ length: 15 }, (_, index) => `src/prefetch-${index}.ts`);
+    const memoryService = makeMemoryService([
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: [
+          ...files,
+          'src/prefetch-10.ts',
+        ],
+      }), { id: 'long-history' }),
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: [
+          'src/prefetch-10.ts',
+          'src/prefetch-11.ts',
+        ],
+      }), { id: 'repeat-signal' }),
+    ]);
+
+    const plan = await buildPrefetchPlan(['auth'], memoryService, 'project-1');
+
+    expect(plan.alwaysReadFiles).toEqual([
+      'src/prefetch-10.ts',
+      'src/prefetch-11.ts',
+      'src/prefetch-0.ts',
+      'src/prefetch-1.ts',
+      'src/prefetch-2.ts',
+      'src/prefetch-14.ts',
+    ]);
+    expect(plan.alwaysReadFiles).not.toContain('src/prefetch-13.ts');
+    expect(plan.alwaysReadFiles.length + plan.frequentlyReadFiles.length).toBeLessThanOrEqual(plan.maxFiles);
+  });
+
+  it('orders repeated files first even when all candidates fit', async () => {
+    const memoryService = makeMemoryService([
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: [
+          'src/auth/session.ts',
+          'src/auth/token.ts',
+          'src/auth/guard.ts',
+        ],
+      }), { id: 'baseline' }),
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: ['src/auth/guard.ts'],
+      }), { id: 'guard-repeat' }),
+    ]);
+
+    const plan = await buildPrefetchPlan(['auth'], memoryService, 'project-1');
+
+    expect(plan.alwaysReadFiles).toEqual([
+      'src/auth/guard.ts',
+      'src/auth/session.ts',
+      'src/auth/token.ts',
+    ]);
+  });
+
   it('records access only for memories that contribute selected prefetch files', async () => {
     const files = Array.from({ length: 14 }, (_, index) => `src/prefetch-${index}.ts`);
     const memoryService = makeMemoryService([
@@ -108,8 +162,15 @@ describe('buildPrefetchPlan', () => {
         alwaysReadFiles: ['src/prefetch-0.ts'],
       }), { id: 'duplicate-selected' }),
       makeMemory(JSON.stringify({
-        alwaysReadFiles: ['src/prefetch-7.ts'],
+        alwaysReadFiles: ['src/prefetch-extra-0.ts'],
       }), { id: 'not-selected' }),
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: [
+          'src/prefetch-extra-1.ts',
+          'src/prefetch-extra-2.ts',
+          'src/prefetch-extra-3.ts',
+        ],
+      }), { id: 'tail-selected' }),
       makeMemory('{bad json', { id: 'malformed' }),
       makeMemory(JSON.stringify({
         alwaysReadFiles: ['src/prefetch-low.ts'],
@@ -123,12 +184,14 @@ describe('buildPrefetchPlan', () => {
       'src/prefetch-1.ts',
       'src/prefetch-2.ts',
       'src/prefetch-3.ts',
-      'src/prefetch-12.ts',
-      'src/prefetch-13.ts',
+      'src/prefetch-4.ts',
+      'src/prefetch-extra-3.ts',
     ]);
-    expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(1);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledTimes(2);
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('selected');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('tail-selected');
     expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('duplicate-selected');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('not-selected');
   });
 
   it('deduplicates equivalent prefetch paths before applying file budgets', async () => {

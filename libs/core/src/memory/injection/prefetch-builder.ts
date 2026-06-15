@@ -34,6 +34,8 @@ interface ParsedPrefetchMemory {
 interface PrefetchCandidateSources {
   alwaysReadFiles: string[];
   frequentlyReadFiles: string[];
+  alwaysCountByFileKey: Map<string, number>;
+  frequentCountByFileKey: Map<string, number>;
   alwaysSourceByFileKey: Map<string, Memory>;
   frequentSourceByFileKey: Map<string, Memory>;
 }
@@ -134,6 +136,7 @@ export async function buildPrefetchPlan(
     const always = selectPrefetchFiles(
       candidates.alwaysReadFiles,
       Math.min(MAX_ALWAYS_READ_FILES, DEFAULT_PREFETCH_MAX_FILES),
+      candidates.alwaysCountByFileKey,
     );
     const remainingFileBudget = Math.max(
       0,
@@ -145,6 +148,7 @@ export async function buildPrefetchPlan(
         (file) => !alwaysSet.has(normalizePrefetchFileKey(file)),
       ),
       Math.min(MAX_FREQUENTLY_READ_FILES, remainingFileBudget),
+      candidates.frequentCountByFileKey,
     );
 
     const accessedMemories = getSelectedPrefetchSourceMemories(
@@ -200,6 +204,8 @@ function collectPrefetchCandidateSources(
 ): PrefetchCandidateSources {
   const alwaysReadFiles: string[] = [];
   const frequentlyReadFiles: string[] = [];
+  const alwaysCountByFileKey = new Map<string, number>();
+  const frequentCountByFileKey = new Map<string, number>();
   const alwaysSourceByFileKey = new Map<string, Memory>();
   const frequentSourceByFileKey = new Map<string, Memory>();
 
@@ -208,12 +214,14 @@ function collectPrefetchCandidateSources(
       entry.alwaysReadFiles,
       entry.memory,
       alwaysReadFiles,
+      alwaysCountByFileKey,
       alwaysSourceByFileKey,
     );
     recordFirstPrefetchSource(
       entry.frequentlyReadFiles,
       entry.memory,
       frequentlyReadFiles,
+      frequentCountByFileKey,
       frequentSourceByFileKey,
     );
   }
@@ -221,6 +229,8 @@ function collectPrefetchCandidateSources(
   return {
     alwaysReadFiles,
     frequentlyReadFiles,
+    alwaysCountByFileKey,
+    frequentCountByFileKey,
     alwaysSourceByFileKey,
     frequentSourceByFileKey,
   };
@@ -230,10 +240,16 @@ function recordFirstPrefetchSource(
   files: readonly string[],
   memory: Memory,
   selectedFiles: string[],
+  countByFileKey: Map<string, number>,
   sourceByFileKey: Map<string, Memory>,
 ): void {
+  const seenInMemory = new Set<string>();
   for (const file of files) {
     const key = normalizePrefetchFileKey(file);
+    if (!seenInMemory.has(key)) {
+      countByFileKey.set(key, (countByFileKey.get(key) ?? 0) + 1);
+      seenInMemory.add(key);
+    }
     if (!sourceByFileKey.has(key)) {
       sourceByFileKey.set(key, memory);
       selectedFiles.push(file);
@@ -350,6 +366,56 @@ function isIgnoredPrefetchFileExtension(fileName: string): boolean {
 }
 
 function selectPrefetchFiles(
+  files: readonly string[],
+  limit: number,
+  countByFileKey: ReadonlyMap<string, number>,
+): string[] {
+  if (limit <= 0) {
+    return [];
+  }
+
+  const repeated = selectRepeatedPrefetchFiles(files, limit, countByFileKey);
+  if (repeated.length > 0) {
+    const repeatedKeys = new Set(repeated.map(normalizePrefetchFileKey));
+    return [
+      ...repeated,
+      ...selectPrefetchFilesByPosition(
+        files.filter((file) => !repeatedKeys.has(normalizePrefetchFileKey(file))),
+        limit - repeated.length,
+      ),
+    ];
+  }
+
+  if (files.length <= limit) {
+    return [...files];
+  }
+
+  return selectPrefetchFilesByPosition(files, limit);
+}
+
+function selectRepeatedPrefetchFiles(
+  files: readonly string[],
+  limit: number,
+  countByFileKey: ReadonlyMap<string, number>,
+): string[] {
+  const firstIndexByFileKey = new Map(
+    files.map((file, index) => [normalizePrefetchFileKey(file), index] as const),
+  );
+
+  return files
+    .filter((file) => (countByFileKey.get(normalizePrefetchFileKey(file)) ?? 0) > 1)
+    .sort((left, right) => {
+      const leftKey = normalizePrefetchFileKey(left);
+      const rightKey = normalizePrefetchFileKey(right);
+      const leftCount = countByFileKey.get(leftKey) ?? 0;
+      const rightCount = countByFileKey.get(rightKey) ?? 0;
+      return rightCount - leftCount ||
+        (firstIndexByFileKey.get(leftKey) ?? 0) - (firstIndexByFileKey.get(rightKey) ?? 0);
+    })
+    .slice(0, limit);
+}
+
+function selectPrefetchFilesByPosition(
   files: readonly string[],
   limit: number,
 ): string[] {
