@@ -84,6 +84,31 @@ describe('StepMemoryState', () => {
         { toolName: 'Read', args: { file_path: 'src/auth/token.ts' } },
       ]);
     });
+
+    it('canonicalizes path args for file tools before storing recent context', () => {
+      state.recordToolCall('Read', { path: './src/auth/token.ts/' });
+      state.recordToolCall('Edit', { path: ' src\\auth\\token.ts ' });
+      state.recordToolCall('Write', { path: 'src/auth//token.ts' });
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Read', args: { file_path: 'src/auth/token.ts' } },
+        { toolName: 'Edit', args: { file_path: 'src/auth/token.ts' } },
+        { toolName: 'Write', args: { file_path: 'src/auth/token.ts' } },
+      ]);
+    });
+
+    it('deduplicates file_path and path variants for the same file tool', () => {
+      state.recordToolCall('Read', { path: './src/auth/token.ts/' });
+      state.recordToolCall('Read', { file_path: 'src\\auth\\token.ts' });
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Read', args: { file_path: 'src/auth/token.ts' } },
+      ]);
+    });
   });
 
   describe('getRecentContext()', () => {
@@ -176,6 +201,23 @@ describe('StepMemoryState', () => {
         { toolName: 'Bash', args: { command: 'npm test --run-2' } },
         { toolName: 'Bash', args: { command: 'npm test --run-3' } },
         { toolName: 'Bash', args: { command: 'npm test --run-4' } },
+      ]);
+    });
+
+    it('keeps path-based file calls when noisy calls would fill the recent window', () => {
+      state.recordToolCall('Read', { path: './src/auth/token.ts/' });
+      for (let i = 0; i < 5; i++) {
+        state.recordToolCall('Bash', { command: `npm test --path-run-${i}` });
+      }
+
+      const ctx = state.getRecentContext(5);
+
+      expect(ctx.toolCalls).toEqual([
+        { toolName: 'Read', args: { file_path: 'src/auth/token.ts' } },
+        { toolName: 'Bash', args: { command: 'npm test --path-run-1' } },
+        { toolName: 'Bash', args: { command: 'npm test --path-run-2' } },
+        { toolName: 'Bash', args: { command: 'npm test --path-run-3' } },
+        { toolName: 'Bash', args: { command: 'npm test --path-run-4' } },
       ]);
     });
 

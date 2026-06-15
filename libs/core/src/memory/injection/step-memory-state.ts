@@ -27,7 +27,7 @@ export class StepMemoryState {
   recordToolCall(toolName: string, args: Record<string, unknown>): void {
     this.recentToolCalls.push({
       toolName,
-      args: normalizeMemoryToolArgs(compactAutocodeMemoryRuntimeToolArgs(args)),
+      args: normalizeMemoryToolArgs(toolName, compactAutocodeMemoryRuntimeToolArgs(args)),
     });
     if (this.recentToolCalls.length > 20) {
       this.recentToolCalls.shift();
@@ -107,7 +107,7 @@ function isMemoryTriggeringToolCall(call: RecentToolCall): boolean {
   switch (call.toolName) {
     case 'Read':
     case 'Edit':
-      return typeof call.args.file_path === 'string' && call.args.file_path.trim().length > 0;
+      return getMemoryToolFilePathArg(call).length > 0;
     case 'Grep':
       return typeof call.args.pattern === 'string' && call.args.pattern.trim().length > 0;
     case 'Glob':
@@ -132,11 +132,18 @@ function normalizeToolCallArgsForSignature(args: Record<string, unknown>): Recor
   return normalized;
 }
 
-function normalizeMemoryToolArgs(args: Record<string, unknown>): Record<string, unknown> {
+function normalizeMemoryToolArgs(toolName: string, args: Record<string, unknown>): Record<string, unknown> {
   const normalized: Record<string, unknown> = {};
   for (const [key, value] of Object.entries(args)) {
     if (typeof value !== 'string') {
       normalized[key] = value;
+      continue;
+    }
+    if (key === 'path' && isFilePathToolName(toolName)) {
+      if (typeof normalized.file_path === 'string') {
+        continue;
+      }
+      normalized.file_path = normalizeMemoryFilePathArg(value);
       continue;
     }
     if (key === 'file_path' || key === 'path') {
@@ -150,6 +157,15 @@ function normalizeMemoryToolArgs(args: Record<string, unknown>): Record<string, 
     normalized[key] = value;
   }
   return normalized;
+}
+
+function getMemoryToolFilePathArg(call: RecentToolCall): string {
+  const value = call.args.file_path ?? call.args.path;
+  return typeof value === 'string' ? value.trim() : '';
+}
+
+function isFilePathToolName(toolName: string): boolean {
+  return toolName === 'Read' || toolName === 'Edit' || toolName === 'Write';
 }
 
 function normalizeMemoryFilePathArg(value: string): string {
