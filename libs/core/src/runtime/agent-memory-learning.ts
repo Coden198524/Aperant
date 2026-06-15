@@ -3,6 +3,7 @@ import type {
 	AutocodeSessionMessage,
 	AutocodeSessionResult,
 } from "./agent-session-types.js";
+import { foldRepeatedAutocodePromptLines } from "./prompt-context.js";
 
 export interface AutocodeLearningSubtask {
 	id: string;
@@ -849,7 +850,9 @@ function stringifyAutocodeMessageContent(
 }
 
 function limitAutocodeLearningText(value: string, maxChars: number): string {
-	const normalized = value.replace(/\s+/g, " ").trim();
+	const normalized = foldRepeatedAutocodePromptLines(value)
+		.replace(/\s+/g, " ")
+		.trim();
 	if (normalized.length <= maxChars) {
 		return normalized;
 	}

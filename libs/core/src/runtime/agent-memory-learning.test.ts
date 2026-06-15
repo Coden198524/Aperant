@@ -313,4 +313,58 @@ describe("agent memory learning compaction", () => {
 		expect(summary).toContain("ERROR_TAIL_OK");
 		expect(summary.length).toBeLessThanOrEqual(900);
 	});
+
+	it("folds repeated failure text before formatting long-term memories", () => {
+		const repeatedLine =
+			"LEARNING_FAILURE_REPEAT: same stack frame repeated without new evidence.";
+		const knowledge = createAutocodeExtractedKnowledge({
+			subtask: {
+				id: "2.2",
+				description: "Diagnose noisy runtime failure",
+			},
+			sessionResult: makeSessionResult({
+				outcome: "error",
+				error: {
+					code: "opaque_failure",
+					message: [
+						"LEARNING_FAILURE_HEAD",
+						...Array.from({ length: 120 }, () => repeatedLine),
+						"LEARNING_FAILURE_TAIL",
+					].join("\n"),
+					retryable: true,
+				},
+				messages: [
+					{
+						role: "assistant",
+						content:
+							'{"toolName":"Read"} {"toolName":"Read"} {"toolName":"Read"}',
+					},
+				],
+			}),
+			sessionId: "session-repeated-failure",
+			timestamp: "2026-06-14T00:00:00.000Z",
+		});
+
+		const pattern = knowledge.failurePatterns?.[0];
+		expect(pattern).toBeDefined();
+		if (!pattern) {
+			throw new Error("Expected failure pattern");
+		}
+
+		expect(pattern.rootCause).toContain("LEARNING_FAILURE_HEAD");
+		expect(pattern.rootCause).toContain("LEARNING_FAILURE_TAIL");
+		expect(pattern.rootCause).toContain(
+			"119 repeated line(s) omitted for prompt budget",
+		);
+		expect((pattern.rootCause.match(/LEARNING_FAILURE_REPEAT/g) ?? [])).toHaveLength(
+			1,
+		);
+
+		const memoryText = formatAutocodeFailurePatternMemory(pattern);
+		const summary = summarizeAutocodeSessionForMemory(knowledge);
+		expect(memoryText).toContain("119 repeated line(s) omitted for prompt budget");
+		expect(summary).toContain("119 repeated line(s) omitted for prompt budget");
+		expect((memoryText.match(/LEARNING_FAILURE_REPEAT/g) ?? [])).toHaveLength(1);
+		expect((summary.match(/LEARNING_FAILURE_REPEAT/g) ?? [])).toHaveLength(1);
+	});
 });
