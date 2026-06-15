@@ -26,6 +26,7 @@ async function seedMemory(
   content: string,
   projectId: string,
   type: string = 'gotcha',
+  relatedFiles: string[] = [],
 ): Promise<void> {
   const now = new Date().toISOString();
 
@@ -33,8 +34,8 @@ async function seedMemory(
     sql: `INSERT INTO memories (
       id, type, content, confidence, tags, related_files, related_modules,
       created_at, last_accessed_at, access_count, scope, source, project_id, deprecated
-    ) VALUES (?, ?, ?, 0.9, '[]', '[]', '[]', ?, ?, 0, 'global', 'agent_explicit', ?, 0)`,
-    args: [id, type, content, now, now, projectId],
+    ) VALUES (?, ?, ?, 0.9, '[]', ?, '[]', ?, ?, 0, 'global', 'agent_explicit', ?, 0)`,
+    args: [id, type, content, JSON.stringify(relatedFiles), now, now, projectId],
   });
 
   await client.execute({
@@ -52,6 +53,23 @@ function makeMockEmbeddingService(): EmbeddingService {
     initialize: vi.fn().mockResolvedValue(undefined),
     getProvider: vi.fn().mockReturnValue('none'),
   } as unknown as EmbeddingService;
+}
+
+function makeCapturingReranker() {
+  const rerank = vi.fn(async (
+    _query: string,
+    candidates: Array<{ memoryId: string; content: string }>,
+    topK: number,
+  ) =>
+    candidates.slice(0, topK).map((candidate, index) => ({
+      memoryId: candidate.memoryId,
+      score: 1 - index / Math.max(candidates.length, 1),
+    })),
+  );
+  return {
+    reranker: { rerank } as unknown as Reranker,
+    rerank,
+  };
 }
 
 // ============================================================
@@ -173,6 +191,39 @@ describe('RetrievalPipeline', () => {
     expect(result.memories.length).toBeGreaterThan(0);
     expect(result.memories[0].id).toBe('mem-001');
     expect(result.formattedContext).toContain('JWT token expiry');
+  });
+
+  it('deduplicates and bounds related files before reranking candidates', async () => {
+    await seedMemory(
+      client,
+      'mem-rerank-files',
+      'JWT reranker file context should stay compact',
+      'proj-a',
+      'gotcha',
+      [
+        ' ./src\\auth\\session.ts ',
+        'SRC/auth/session.ts',
+        ...Array.from({ length: 8 }, (_, index) => `src/auth/file-${index}.ts`),
+      ],
+    );
+    const embeddingService = makeMockEmbeddingService();
+    const { reranker, rerank } = makeCapturingReranker();
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    await pipeline.search('JWT reranker compact', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+
+    const candidates = rerank.mock.calls[0][1];
+    const content = candidates[0].content;
+
+    expect(content).toContain('[gotcha] src/auth/session.ts');
+    expect(content).not.toContain('SRC/auth/session.ts');
+    expect(content).not.toContain('\\');
+    expect(content).toContain('src/auth/file-4.ts');
+    expect(content).not.toContain('src/auth/file-5.ts');
+    expect(content).toContain('JWT reranker file context should stay compact');
   });
 
   it('normalizes legacy rows fetched by query retrieval before packing context', async () => {

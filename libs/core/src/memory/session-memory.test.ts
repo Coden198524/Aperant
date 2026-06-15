@@ -1,13 +1,14 @@
 import { describe, expect, it } from 'vitest';
 
+import { estimateTokens } from './retrieval/context-packer.js';
 import {
+  type AutocodeSessionCodebaseMap,
   buildAutocodeSessionContext,
   createEmptyAutocodeSessionCodebaseMap,
   formatAutocodeGotchaMarkdownEntry,
+  parseAutocodeSessionCodebaseMap,
   recordAutocodeSessionDiscovery,
-  type AutocodeSessionCodebaseMap,
 } from './session-memory.js';
-import { estimateTokens } from './retrieval/context-packer.js';
 
 function codebaseMap(entries: Array<[string, { description: string; discovered_at: string }]>): AutocodeSessionCodebaseMap {
   return {
@@ -50,6 +51,33 @@ describe('session memory context formatting', () => {
     expect(context).toContain('session memory middle omitted');
     expect(context).not.toContain('src/old.ts');
     expect(context).not.toContain('OLD_DISCOVERY_SHOULD_BE_OMITTED');
+  });
+
+  it('deduplicates equivalent discovery paths before building context', () => {
+    const context = buildAutocodeSessionContext({
+      codebaseMap: codebaseMap([
+        [
+          'src\\auth\\session-store.ts',
+          { description: 'OLD_DUPLICATE_SHOULD_BE_OMITTED', discovered_at: '2026-01-01T00:00:00.000Z' },
+        ],
+        [
+          'SRC/auth/session-store.ts',
+          { description: 'NEW_DUPLICATE_SHOULD_REMAIN', discovered_at: '2026-01-02T00:00:00.000Z' },
+        ],
+        [
+          'src/auth/token-cache.ts',
+          { description: 'DISTINCT_DISCOVERY', discovered_at: '2026-01-03T00:00:00.000Z' },
+        ],
+      ]),
+      maxDiscoveries: 10,
+    });
+
+    expect(context).toContain('SRC/auth/session-store.ts');
+    expect(context).toContain('NEW_DUPLICATE_SHOULD_REMAIN');
+    expect(context).toContain('src/auth/token-cache.ts');
+    expect(context).toContain('DISTINCT_DISCOVERY');
+    expect(context).not.toContain('src\\auth\\session-store.ts');
+    expect(context).not.toContain('OLD_DUPLICATE_SHOULD_BE_OMITTED');
   });
 
   it('compacts gotchas and patterns with head and tail context', () => {
@@ -109,6 +137,64 @@ describe('session memory storage formatting', () => {
     expect(description).toContain('DISCOVERY_HEAD');
     expect(description).toContain('DISCOVERY_TAIL');
     expect(description).toContain('session memory entry middle omitted before storage');
+  });
+
+  it('normalizes and replaces equivalent discovery paths before storing session memory', () => {
+    const first = recordAutocodeSessionDiscovery(
+      createEmptyAutocodeSessionCodebaseMap(),
+      {
+        filePath: 'src\\auth\\session-store.ts',
+        description: 'OLD_DUPLICATE_SHOULD_BE_REPLACED',
+      },
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+    const second = recordAutocodeSessionDiscovery(
+      first,
+      {
+        filePath: 'SRC/auth/session-store.ts',
+        description: 'NEW_DISCOVERY_SHOULD_REPLACE_OLD',
+      },
+      new Date('2026-01-02T00:00:00.000Z'),
+    );
+
+    expect(Object.keys(second.discovered_files)).toEqual(['SRC/auth/session-store.ts']);
+    expect(second.discovered_files['SRC/auth/session-store.ts'].description).toBe('NEW_DISCOVERY_SHOULD_REPLACE_OLD');
+  });
+
+  it('normalizes and deduplicates discovery paths when parsing legacy maps', () => {
+    const parsed = parseAutocodeSessionCodebaseMap(JSON.stringify({
+      discovered_files: {
+        'src\\auth\\session-store.ts': {
+          description: 'OLD_DUPLICATE_SHOULD_BE_OMITTED',
+          category: 'general',
+          discovered_at: '2026-01-01T00:00:00.000Z',
+        },
+        'SRC/auth/session-store.ts': {
+          description: 'NEW_DUPLICATE_SHOULD_REMAIN',
+          category: 'auth',
+          discovered_at: '2026-01-02T00:00:00.000Z',
+        },
+        'src/auth/token-cache.ts': {
+          description: 'DISTINCT_DISCOVERY',
+          category: 'auth',
+          discovered_at: '2026-01-03T00:00:00.000Z',
+        },
+      },
+      last_updated: '2026-01-03T00:00:00.000Z',
+    }));
+
+    expect(parsed?.discovered_files).toEqual({
+      'SRC/auth/session-store.ts': {
+        description: 'NEW_DUPLICATE_SHOULD_REMAIN',
+        category: 'auth',
+        discovered_at: '2026-01-02T00:00:00.000Z',
+      },
+      'src/auth/token-cache.ts': {
+        description: 'DISTINCT_DISCOVERY',
+        category: 'auth',
+        discovered_at: '2026-01-03T00:00:00.000Z',
+      },
+    });
   });
 
   it('compacts gotcha text and context before writing markdown entries', () => {

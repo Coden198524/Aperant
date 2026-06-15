@@ -321,6 +321,7 @@ describe('buildPlannerMemoryContext', () => {
     const allSearchCalls = vi.mocked(memoryService.search).mock.calls;
     for (const call of allSearchCalls) {
       expect(call[0].projectId).toBe('my-project');
+      expect(call[0].recordAccess).toBe(false);
     }
     expect(vi.mocked(memoryService.searchWorkflowRecipe)).toHaveBeenCalledWith('task', {
       limit: 1,

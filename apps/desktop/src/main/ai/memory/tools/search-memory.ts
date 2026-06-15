@@ -213,13 +213,9 @@ function normalizeRelatedFiles(files: string[] | undefined): string[] | undefine
     return undefined;
   }
 
-  const normalized = files
-    .map((file) => truncatePathTail(
-      file.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/'),
-      MAX_SEARCH_RELATED_FILE_CHARS,
-    ))
-    .filter(Boolean);
-  return uniqueInOrder(normalized)?.slice(0, MAX_SEARCH_RELATED_FILES);
+  return uniquePathRefs(
+    files.map((file) => truncatePathTail(normalizeToolPath(file), MAX_SEARCH_RELATED_FILE_CHARS)),
+  ).slice(0, MAX_SEARCH_RELATED_FILES);
 }
 
 function uniqueInOrder<T>(values: T[] | undefined): T[] | undefined {
@@ -282,19 +278,49 @@ function formatSearchMemoryResult(memory: Memory, index: number): string {
 }
 
 function formatFileRefs(files: readonly string[]): string {
-  if (files.length === 0) {
+  const uniqueFiles = uniquePathRefs(files.map(normalizeToolPath));
+  if (uniqueFiles.length === 0) {
     return '';
   }
 
-  const visible = files
+  const visible = uniqueFiles
     .slice(0, MAX_SEARCH_FILE_REFS)
     .map((file) => truncateText(file.split(/[\\/]/).pop() || file, MAX_SEARCH_FILE_REF_CHARS));
-  const omitted = files.length - visible.length;
+  const omitted = uniqueFiles.length - visible.length;
   if (omitted > 0) {
     visible.push(`+${omitted} more`);
   }
 
   return ` [${visible.join(', ')}]`;
+}
+
+function uniquePathRefs(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeToolPath(value);
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(normalized);
+  }
+  return unique;
+}
+
+function normalizeToolPath(path: string): string {
+  let normalized = path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/');
+  while (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  return normalized.replace(/\/$/, '');
 }
 
 function fitsSearchOutputBudget(text: string): boolean {

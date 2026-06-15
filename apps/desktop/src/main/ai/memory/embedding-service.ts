@@ -63,6 +63,8 @@ export interface ASTChunk {
 // CONTEXTUAL TEXT BUILDERS (exported for use by other modules)
 // ============================================================
 
+const MEMORY_CONTEXTUAL_FILE_LIMIT = 8;
+
 /**
  * Build contextual text for an AST chunk before embedding.
  * Prepends file/chunk context to improve retrieval quality.
@@ -84,15 +86,61 @@ export function buildContextualText(chunk: ASTChunk): string {
  * Prepends file/module/type context to improve retrieval quality.
  */
 export function buildMemoryContextualText(memory: Memory): string {
+  const relatedFiles = uniqueContextualFilePaths(memory.relatedFiles).slice(0, MEMORY_CONTEXTUAL_FILE_LIMIT);
+  const primaryModule = uniqueContextualTextItems(memory.relatedModules)[0];
   const parts = [
-    memory.relatedFiles.length > 0 ? `Files: ${memory.relatedFiles.join(', ')}` : null,
-    memory.relatedModules.length > 0 ? `Module: ${memory.relatedModules[0]}` : null,
+    relatedFiles.length > 0 ? `Files: ${relatedFiles.join(', ')}` : null,
+    primaryModule ? `Module: ${primaryModule}` : null,
     `Type: ${memory.type}`,
   ]
     .filter(Boolean)
     .join(' | ');
 
   return parts ? `${parts}\n\n${memory.content}` : memory.content;
+}
+
+function uniqueContextualFilePaths(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeContextualFilePath(value);
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    files.push(normalized);
+  }
+  return files;
+}
+
+function normalizeContextualFilePath(value: string): string {
+  let normalized = value
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/');
+  while (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  return normalized.replace(/\/$/, '');
+}
+
+function uniqueContextualTextItems(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const items: string[] = [];
+  for (const value of values) {
+    const normalized = value.replace(/\s+/g, ' ').trim();
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    items.push(normalized);
+  }
+  return items;
 }
 
 // ============================================================
@@ -454,56 +502,77 @@ export class EmbeddingService {
   }
 
   private createEmbeddingModel() {
+    const config = this.config;
     switch (this.provider) {
       case 'openai': {
-        const openai = createOpenAI({ apiKey: this.config!.openaiApiKey });
-        return openai.embedding(this.config?.openaiEmbeddingModel ?? 'text-embedding-3-small');
+        if (!config?.openaiApiKey) {
+          throw new Error('OpenAI embedding provider selected without an API key.');
+        }
+        const openai = createOpenAI({ apiKey: config.openaiApiKey });
+        return openai.embedding(config.openaiEmbeddingModel ?? 'text-embedding-3-small');
       }
       case 'google': {
-        const google = createGoogleGenerativeAI({ apiKey: this.config!.googleApiKey });
-        return google.embedding(this.config?.googleEmbeddingModel ?? 'gemini-embedding-001');
+        if (!config?.googleApiKey) {
+          throw new Error('Google embedding provider selected without an API key.');
+        }
+        const google = createGoogleGenerativeAI({ apiKey: config.googleApiKey });
+        return google.embedding(config.googleEmbeddingModel ?? 'gemini-embedding-001');
       }
       case 'azure': {
-        const azure = createAzure({ apiKey: this.config!.azureApiKey, baseURL: this.config!.azureBaseUrl });
-        return azure.embedding(this.config!.azureDeployment!);
+        if (!config?.azureApiKey || !config.azureDeployment) {
+          throw new Error('Azure embedding provider selected without required deployment configuration.');
+        }
+        const azure = createAzure({ apiKey: config.azureApiKey, baseURL: config.azureBaseUrl });
+        return azure.embedding(config.azureDeployment);
       }
       case 'voyage': {
+        if (!config?.voyageApiKey) {
+          throw new Error('Voyage embedding provider selected without an API key.');
+        }
         const voyage = createOpenAICompatible({
           name: 'voyage',
-          apiKey: this.config!.voyageApiKey,
+          apiKey: config.voyageApiKey,
           baseURL: 'https://api.voyageai.com/v1',
         });
-        return voyage.textEmbeddingModel(this.config?.voyageModel ?? 'voyage-3');
+        return voyage.textEmbeddingModel(config.voyageModel ?? 'voyage-3');
       }
       default:
         return undefined;
     }
   }
 
+  private requireEmbeddingModel() {
+    const model = this.createEmbeddingModel();
+    if (!model) {
+      throw new Error(`No embedding model available for provider ${this.provider}.`);
+    }
+    return model;
+  }
+
   private async computeEmbed(text: string, dims: 256 | 1024): Promise<number[]> {
     switch (this.provider) {
       case 'openai':
       case 'azure': {
-        const model = this.createEmbeddingModel();
+        const model = this.requireEmbeddingModel();
         const { embedding } = await embed({
-          model: model!,
+          model,
           value: text,
           providerOptions: { openai: { dimensions: dims } },
         });
         return embedding;
       }
       case 'google': {
-        const model = this.createEmbeddingModel();
+        const model = this.requireEmbeddingModel();
         const { embedding } = await embed({
-          model: model!,
+          model,
           value: text,
           providerOptions: { google: { outputDimensionality: dims } },
         });
         return embedding;
       }
       case 'voyage': {
-        const model = this.createEmbeddingModel();
-        const { embedding } = await embed({ model: model!, value: text });
+        const model = this.requireEmbeddingModel();
+        const { embedding } = await embed({ model, value: text });
         return dims === 256 ? truncateToDim(embedding, 256) : embedding;
       }
 
@@ -526,26 +595,26 @@ export class EmbeddingService {
     switch (this.provider) {
       case 'openai':
       case 'azure': {
-        const model = this.createEmbeddingModel();
+        const model = this.requireEmbeddingModel();
         const { embeddings } = await embedMany({
-          model: model!,
+          model,
           values: texts,
           providerOptions: { openai: { dimensions: dims } },
         });
         return embeddings;
       }
       case 'google': {
-        const model = this.createEmbeddingModel();
+        const model = this.requireEmbeddingModel();
         const { embeddings } = await embedMany({
-          model: model!,
+          model,
           values: texts,
           providerOptions: { google: { outputDimensionality: dims } },
         });
         return embeddings;
       }
       case 'voyage': {
-        const model = this.createEmbeddingModel();
-        const { embeddings } = await embedMany({ model: model!, values: texts });
+        const model = this.requireEmbeddingModel();
+        const { embeddings } = await embedMany({ model, values: texts });
         return dims === 256 ? embeddings.map((e) => truncateToDim(e, 256)) : embeddings;
       }
 

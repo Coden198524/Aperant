@@ -119,6 +119,37 @@ describe('buildMemoryContextualText', () => {
     const text = buildMemoryContextualText(memory);
     expect(text).toMatch(/Type: gotcha\n\n/);
   });
+
+  it('deduplicates and bounds related files before building embedding context', () => {
+    const memory = makeMemory({
+      relatedFiles: [
+        ' ./src\\auth\\session.ts ',
+        'SRC/auth/session.ts',
+        ...Array.from({ length: 12 }, (_, index) => `src/auth/file-${index}.ts`),
+      ],
+    });
+
+    const text = buildMemoryContextualText(memory);
+    const filesPrefix = text.split('\n\n')[0];
+
+    expect(filesPrefix).toContain('Files: src/auth/session.ts');
+    expect(filesPrefix).not.toContain('SRC/auth/session.ts');
+    expect(filesPrefix).not.toContain('\\');
+    expect(filesPrefix).toContain('src/auth/file-6.ts');
+    expect(filesPrefix).not.toContain('src/auth/file-7.ts');
+  });
+
+  it('uses the first non-empty normalized module in embedding context', () => {
+    const memory = makeMemory({
+      relatedModules: [' ', ' auth ', 'AUTH', 'billing'],
+    });
+
+    const text = buildMemoryContextualText(memory);
+
+    expect(text).toContain('Module: auth');
+    expect(text).not.toContain('Module:  ');
+    expect(text).not.toContain('billing');
+  });
 });
 
 // ============================================================
@@ -272,7 +303,7 @@ describe('EmbeddingService (Ollama provider)', () => {
 
   beforeEach(async () => {
     // Mock Ollama responses
-    mockFetch.mockImplementation((url: string, opts?: RequestInit) => {
+    mockFetch.mockImplementation((url: string, _opts?: RequestInit) => {
       if (url.includes('/api/tags')) {
         return Promise.resolve({
           ok: true,
@@ -339,7 +370,7 @@ describe('EmbeddingService (Ollama 8b with high RAM)', () => {
 
   beforeEach(async () => {
     // Mock high RAM (>32GB)
-    vi.mock('os', () => ({
+    vi.doMock('os', () => ({
       totalmem: () => 64 * 1024 * 1024 * 1024, // 64 GB
     }));
 
@@ -371,6 +402,7 @@ describe('EmbeddingService (Ollama 8b with high RAM)', () => {
   afterEach(() => {
     client.close();
     vi.clearAllMocks();
+    vi.doUnmock('os');
     vi.restoreAllMocks();
   });
 

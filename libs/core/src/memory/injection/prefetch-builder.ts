@@ -34,8 +34,8 @@ interface ParsedPrefetchMemory {
 interface PrefetchCandidateSources {
   alwaysReadFiles: string[];
   frequentlyReadFiles: string[];
-  alwaysSourceByFile: Map<string, Memory>;
-  frequentSourceByFile: Map<string, Memory>;
+  alwaysSourceByFileKey: Map<string, Memory>;
+  frequentSourceByFileKey: Map<string, Memory>;
 }
 
 const DEFAULT_PREFETCH_TOKEN_BUDGET = 8192;
@@ -138,9 +138,11 @@ export async function buildPrefetchPlan(
       0,
       DEFAULT_PREFETCH_MAX_FILES - always.length,
     );
-    const alwaysSet = new Set(always);
+    const alwaysSet = new Set(always.map(normalizePrefetchFileKey));
     const frequent = selectPrefetchFiles(
-      candidates.frequentlyReadFiles.filter((file) => !alwaysSet.has(file)),
+      candidates.frequentlyReadFiles.filter(
+        (file) => !alwaysSet.has(normalizePrefetchFileKey(file)),
+      ),
       Math.min(MAX_FREQUENTLY_READ_FILES, remainingFileBudget),
     );
 
@@ -188,38 +190,45 @@ function parsePrefetchMemory(memory: Memory): ParsedPrefetchMemory | null {
 function collectPrefetchCandidateSources(
   memories: readonly ParsedPrefetchMemory[],
 ): PrefetchCandidateSources {
-  const alwaysSourceByFile = new Map<string, Memory>();
-  const frequentSourceByFile = new Map<string, Memory>();
+  const alwaysReadFiles: string[] = [];
+  const frequentlyReadFiles: string[] = [];
+  const alwaysSourceByFileKey = new Map<string, Memory>();
+  const frequentSourceByFileKey = new Map<string, Memory>();
 
   for (const entry of memories) {
     recordFirstPrefetchSource(
       entry.alwaysReadFiles,
       entry.memory,
-      alwaysSourceByFile,
+      alwaysReadFiles,
+      alwaysSourceByFileKey,
     );
     recordFirstPrefetchSource(
       entry.frequentlyReadFiles,
       entry.memory,
-      frequentSourceByFile,
+      frequentlyReadFiles,
+      frequentSourceByFileKey,
     );
   }
 
   return {
-    alwaysReadFiles: [...alwaysSourceByFile.keys()],
-    frequentlyReadFiles: [...frequentSourceByFile.keys()],
-    alwaysSourceByFile,
-    frequentSourceByFile,
+    alwaysReadFiles,
+    frequentlyReadFiles,
+    alwaysSourceByFileKey,
+    frequentSourceByFileKey,
   };
 }
 
 function recordFirstPrefetchSource(
   files: readonly string[],
   memory: Memory,
-  sourceByFile: Map<string, Memory>,
+  selectedFiles: string[],
+  sourceByFileKey: Map<string, Memory>,
 ): void {
   for (const file of files) {
-    if (!sourceByFile.has(file)) {
-      sourceByFile.set(file, memory);
+    const key = normalizePrefetchFileKey(file);
+    if (!sourceByFileKey.has(key)) {
+      sourceByFileKey.set(key, memory);
+      selectedFiles.push(file);
     }
   }
 }
@@ -231,13 +240,17 @@ function getSelectedPrefetchSourceMemories(
 ): Memory[] {
   const memories: Memory[] = [];
   for (const file of alwaysReadFiles) {
-    const memory = candidates.alwaysSourceByFile.get(file);
+    const memory = candidates.alwaysSourceByFileKey.get(
+      normalizePrefetchFileKey(file),
+    );
     if (memory) {
       memories.push(memory);
     }
   }
   for (const file of frequentlyReadFiles) {
-    const memory = candidates.frequentSourceByFile.get(file);
+    const memory = candidates.frequentSourceByFileKey.get(
+      normalizePrefetchFileKey(file),
+    );
     if (memory) {
       memories.push(memory);
     }
@@ -312,6 +325,10 @@ function normalizePrefetchFilePath(value: unknown): string | null {
   }
 
   return segments.join('/');
+}
+
+function normalizePrefetchFileKey(filePath: string): string {
+  return filePath.toLowerCase();
 }
 
 function isIgnoredPrefetchFileName(fileName: string): boolean {

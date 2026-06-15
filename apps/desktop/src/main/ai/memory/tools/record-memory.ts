@@ -183,13 +183,14 @@ function normalizeRelatedFiles(files: string[] | undefined): string[] {
   if (!files) {
     return [];
   }
-  return uniqueInOrder(
+  return uniqueInOrderBy(
     files
       .map((file) => truncatePathTail(
-        file.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/'),
+        normalizeToolPath(file),
         MAX_RECORD_MEMORY_FILE_REF_CHARS,
       ))
       .filter(Boolean),
+    (file) => file.toLowerCase(),
   ).slice(0, MAX_RECORD_MEMORY_RELATED_FILES);
 }
 
@@ -197,18 +198,40 @@ function normalizeRelatedModules(modules: string[] | undefined): string[] {
   if (!modules) {
     return [];
   }
-  return uniqueInOrder(
+  return uniqueInOrderBy(
     modules
       .map((module) => truncateHeadTailText(
         module.replace(/\s+/g, ' ').trim(),
         MAX_RECORD_MEMORY_MODULE_CHARS,
       ))
       .filter(Boolean),
+    (module) => module.toLowerCase(),
   ).slice(0, MAX_RECORD_MEMORY_RELATED_MODULES);
 }
 
-function uniqueInOrder(values: readonly string[]): string[] {
-  return [...new Set(values)];
+function uniqueInOrderBy(values: readonly string[], getKey: (value: string) => string): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const value of values) {
+    const key = getKey(value);
+    if (!key || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    unique.push(value);
+  }
+  return unique;
+}
+
+function normalizeToolPath(path: string): string {
+  let normalized = path
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/');
+  while (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  return normalized.replace(/\/$/, '');
 }
 
 function truncatePathTail(path: string, maxChars: number): string {

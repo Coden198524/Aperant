@@ -53,6 +53,7 @@ export async function buildPlannerMemoryContext(
               limit: 3,
               projectId,
               promptContextOnly: true,
+              recordAccess: false,
             })
           : emptySearch,
         modules.length > 0
@@ -62,6 +63,7 @@ export async function buildPlannerMemoryContext(
               limit: 3,
               projectId,
               promptContextOnly: true,
+              recordAccess: false,
             })
           : emptySearch,
         modules.length > 0
@@ -71,6 +73,7 @@ export async function buildPlannerMemoryContext(
               limit: 4,
               projectId,
               promptContextOnly: true,
+              recordAccess: false,
             })
           : emptySearch,
         modules.length > 0
@@ -81,6 +84,7 @@ export async function buildPlannerMemoryContext(
               sort: 'recency',
               projectId,
               promptContextOnly: true,
+              recordAccess: false,
             })
           : emptySearch,
         recipeSearch,

@@ -30,6 +30,7 @@ const DEFAULT_BM25_CANDIDATE_LIMIT = 20;
 const DEFAULT_DENSE_CANDIDATE_LIMIT = 30;
 const DEFAULT_GRAPH_CANDIDATE_LIMIT = 15;
 const DEFAULT_FETCH_CANDIDATE_LIMIT = 20;
+const RERANKER_RELATED_FILE_LIMIT = 6;
 
 // ============================================================
 // TYPES
@@ -122,7 +123,7 @@ export class RetrievalPipeline {
       compactQuery,
       memories.map((m) => ({
         memoryId: m.id,
-        content: `[${m.type}] ${m.relatedFiles.join(', ')}: ${m.content}`,
+        content: formatMemoryForReranker(m),
       })),
       maxResults,
     );
@@ -166,6 +167,41 @@ export class RetrievalPipeline {
       return [];
     }
   }
+}
+
+function formatMemoryForReranker(memory: Memory): string {
+  const relatedFiles = uniqueRerankerFilePaths(memory.relatedFiles).slice(0, RERANKER_RELATED_FILE_LIMIT);
+  const fileContext = relatedFiles.length > 0 ? ` ${relatedFiles.join(', ')}` : '';
+  return `[${memory.type}]${fileContext}: ${memory.content}`;
+}
+
+function uniqueRerankerFilePaths(values: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const files: string[] = [];
+  for (const value of values) {
+    const normalized = normalizeRerankerFilePath(value);
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    files.push(normalized);
+  }
+  return files;
+}
+
+function normalizeRerankerFilePath(value: string): string {
+  let normalized = value
+    .trim()
+    .replace(/\\/g, '/')
+    .replace(/\/{2,}/g, '/');
+  while (normalized.startsWith('./')) {
+    normalized = normalized.slice(2);
+  }
+  return normalized.replace(/\/$/, '');
 }
 
 export function compactRetrievalQuery(query: string): string {

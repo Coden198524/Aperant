@@ -130,6 +130,36 @@ describe('buildPrefetchPlan', () => {
     expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('duplicate-selected');
   });
 
+  it('deduplicates equivalent prefetch paths before applying file budgets', async () => {
+    const memoryService = makeMemoryService([
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: [
+          'src\\auth\\session.ts',
+          'SRC/auth/session.ts',
+          'src/auth/token.ts',
+        ],
+        frequentlyReadFiles: [
+          'SRC/AUTH/SESSION.ts',
+          'src/auth/guard.ts',
+        ],
+      }), { id: 'selected' }),
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: ['src/auth/session.ts'],
+        frequentlyReadFiles: ['SRC/auth/guard.ts'],
+      }), { id: 'duplicate-path-source' }),
+    ]);
+
+    const plan = await buildPrefetchPlan(['auth'], memoryService, 'project-1');
+
+    expect(plan.alwaysReadFiles).toEqual([
+      'src/auth/session.ts',
+      'src/auth/token.ts',
+    ]);
+    expect(plan.frequentlyReadFiles).toEqual(['src/auth/guard.ts']);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('selected');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('duplicate-path-source');
+  });
+
   it('filters low-quality memories and unsafe prefetch paths', async () => {
     const memoryService = makeMemoryService([
       makeMemory(JSON.stringify({

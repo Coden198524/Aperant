@@ -92,6 +92,7 @@ describe('memory agent tools', () => {
       relatedFiles: [
         ' src\\auth\\token.ts ',
         'src/auth//token.ts',
+        './SRC/auth/token.ts',
         '',
         'src/auth/session.ts',
       ],
@@ -287,6 +288,34 @@ describe('memory agent tools', () => {
     expect(result.length).toBeLessThanOrEqual(1800);
   });
 
+  it('deduplicates search_memory file reference chips before counting omitted files', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'duplicate-file-refs',
+          content: 'Use the shared auth refresh helper before calling protected APIs.',
+          relatedFiles: [
+            'src\\auth\\token.ts',
+            'SRC/auth/token.ts',
+            './src/auth/session.ts',
+            'src/auth/guard.ts',
+            'src/auth/guard.ts',
+          ],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth file refs', limit: 3 });
+
+    expect(result).toContain('[token.ts, session.ts, guard.ts]');
+    expect(result).not.toContain('+2 more');
+    expect(result).not.toContain('SRC/auth/token.ts');
+  });
+
   it('preserves useful tail details when compacting search_memory result content', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([
@@ -381,10 +410,11 @@ describe('memory agent tools', () => {
       relatedFiles: [
         ' src\\auth\\token.ts ',
         'src/auth//token.ts',
+        './SRC/auth/token.ts',
         '',
         'src/auth/session.ts',
       ],
-      relatedModules: [' auth ', 'auth', 'token refresh', ''],
+      relatedModules: [' auth ', 'auth', 'AUTH', 'token refresh', ''],
     });
 
     expect(result).toBe('Memory recorded (id: abcdef12).');

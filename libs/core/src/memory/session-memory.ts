@@ -134,10 +134,16 @@ export function recordAutocodeSessionDiscovery(
   now: Date = new Date(),
 ): AutocodeSessionCodebaseMap {
   const timestamp = now.toISOString();
+  const filePath = normalizeSessionDiscoveryPath(input.filePath);
+  if (!filePath) {
+    return map;
+  }
+
+  const discoveredFiles = removeEquivalentSessionDiscoveryPath(map.discovered_files, filePath);
   return {
     discovered_files: {
-      ...map.discovered_files,
-      [input.filePath]: {
+      ...discoveredFiles,
+      [filePath]: {
         description: compactAutocodeSessionStoredText(
           input.description,
           AUTOCODE_SESSION_DISCOVERY_STORED_DESCRIPTION_MAX_CHARS,
@@ -315,13 +321,7 @@ function selectRecentSessionDiscoveries(
     return [];
   }
 
-  return discoveries
-    .map(([filePath, info], index) => ({
-      filePath,
-      info,
-      index,
-      timestamp: Date.parse(info.discovered_at),
-    }))
+  return dedupeSessionDiscoveryEntries(discoveries)
     .sort((a, b) => {
       const aTime = Number.isFinite(a.timestamp) ? a.timestamp : 0;
       const bTime = Number.isFinite(b.timestamp) ? b.timestamp : 0;
@@ -329,6 +329,39 @@ function selectRecentSessionDiscoveries(
     })
     .slice(0, maxDiscoveries)
     .map((entry) => [entry.filePath, entry.info]);
+}
+
+interface RankedSessionDiscovery {
+  filePath: string;
+  info: AutocodeSessionDiscovery;
+  index: number;
+  timestamp: number;
+}
+
+function dedupeSessionDiscoveryEntries(
+  discoveries: Array<[string, AutocodeSessionDiscovery]>,
+): RankedSessionDiscovery[] {
+  const byPath = new Map<string, RankedSessionDiscovery>();
+
+  discoveries.forEach(([rawFilePath, info], index) => {
+    const filePath = normalizeSessionDiscoveryPath(rawFilePath);
+    if (!filePath) {
+      return;
+    }
+    const key = normalizeSessionDiscoveryPathKey(filePath);
+    const candidate = {
+      filePath,
+      info,
+      index,
+      timestamp: Date.parse(info.discovered_at),
+    };
+    const existing = byPath.get(key);
+    if (!existing || isNewerSessionDiscovery(candidate, existing)) {
+      byPath.set(key, candidate);
+    }
+  });
+
+  return [...byPath.values()];
 }
 
 function normalizeDiscoveredFiles(value: unknown): Record<string, AutocodeSessionDiscovery> {
@@ -348,13 +381,91 @@ function normalizeDiscoveredFiles(value: unknown): Record<string, AutocodeSessio
       continue;
     }
 
-    files[filePath] = {
+    const normalizedFilePath = normalizeSessionDiscoveryPath(filePath);
+    if (!normalizedFilePath) {
+      continue;
+    }
+
+    upsertSessionDiscovery(files, normalizedFilePath, {
       description,
       category: typeof info.category === 'string' ? info.category : 'general',
       discovered_at: typeof info.discovered_at === 'string' ? info.discovered_at : '',
-    };
+    });
   }
   return files;
+}
+
+function upsertSessionDiscovery(
+  files: Record<string, AutocodeSessionDiscovery>,
+  filePath: string,
+  discovery: AutocodeSessionDiscovery,
+): void {
+  const existingKey = findEquivalentSessionDiscoveryPath(files, filePath);
+  if (!existingKey) {
+    files[filePath] = discovery;
+    return;
+  }
+
+  if (!isNewerSessionDiscovery(
+    {
+      filePath,
+      info: discovery,
+      index: 0,
+      timestamp: Date.parse(discovery.discovered_at),
+    },
+    {
+      filePath: existingKey,
+      info: files[existingKey],
+      index: 0,
+      timestamp: Date.parse(files[existingKey].discovered_at),
+    },
+  )) {
+    return;
+  }
+
+  if (existingKey !== filePath) {
+    delete files[existingKey];
+  }
+  files[filePath] = discovery;
+}
+
+function isNewerSessionDiscovery(
+  candidate: RankedSessionDiscovery,
+  existing: RankedSessionDiscovery,
+): boolean {
+  const candidateTime = Number.isFinite(candidate.timestamp) ? candidate.timestamp : 0;
+  const existingTime = Number.isFinite(existing.timestamp) ? existing.timestamp : 0;
+  return candidateTime > existingTime || (candidateTime === existingTime && candidate.index < existing.index);
+}
+
+function removeEquivalentSessionDiscoveryPath(
+  files: Record<string, AutocodeSessionDiscovery>,
+  filePath: string,
+): Record<string, AutocodeSessionDiscovery> {
+  const next = { ...files };
+  const existingKey = findEquivalentSessionDiscoveryPath(next, filePath);
+  if (existingKey) {
+    delete next[existingKey];
+  }
+  return next;
+}
+
+function findEquivalentSessionDiscoveryPath(
+  files: Record<string, AutocodeSessionDiscovery>,
+  filePath: string,
+): string | null {
+  const key = normalizeSessionDiscoveryPathKey(filePath);
+  return Object.keys(files).find((existingPath) =>
+    normalizeSessionDiscoveryPathKey(existingPath) === key,
+  ) ?? null;
+}
+
+function normalizeSessionDiscoveryPath(filePath: string): string {
+  return filePath.trim().replace(/\\/g, '/').replace(/\/+/g, '/');
+}
+
+function normalizeSessionDiscoveryPathKey(filePath: string): string {
+  return normalizeSessionDiscoveryPath(filePath).toLowerCase();
 }
 
 function writeAutocodeSessionCodebaseMapAtomic(
