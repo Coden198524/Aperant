@@ -21,6 +21,7 @@ import { weightedRRF } from './rrf-fusion';
 import { applyGraphNeighborhoodBoost } from './graph-boost';
 import { Reranker } from './reranker';
 import { estimateTokens, packContext } from './context-packer';
+import { stripLowValueMemoryLines } from '../outcome-content';
 
 export const MAX_RETRIEVAL_QUERY_CHARS = 800;
 export const MAX_RETRIEVAL_QUERY_TOKENS = 200;
@@ -172,7 +173,7 @@ export class RetrievalPipeline {
 function formatMemoryForReranker(memory: Memory): string {
   const relatedFiles = uniqueRerankerFilePaths(memory.relatedFiles).slice(0, RERANKER_RELATED_FILE_LIMIT);
   const fileContext = relatedFiles.length > 0 ? ` ${relatedFiles.join(', ')}` : '';
-  return `[${memory.type}]${fileContext}: ${memory.content}`;
+  return `[${memory.type}]${fileContext}: ${stripLowValueMemoryLines(memory.content)}`;
 }
 
 function uniqueRerankerFilePaths(values: readonly string[]): string[] {

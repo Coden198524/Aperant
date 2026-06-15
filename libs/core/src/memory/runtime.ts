@@ -623,11 +623,7 @@ function findAutocodeMemoryRuntimeImportantTextIndex(
 export function buildAutocodeWorkUnitOutcomeMemoryEntry(
   input: AutocodeMemoryRuntimeWorkUnitOutcomeInput,
 ): MemoryRecordEntry {
-  const completedAt = input.completedAt ?? new Date().toISOString();
-  const content = buildAutocodeWorkUnitOutcomeContent({
-    ...input,
-    completedAt,
-  });
+  const content = buildAutocodeWorkUnitOutcomeContent(input);
   const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(
     input.relatedFiles,
   );
@@ -880,10 +876,8 @@ function formatAutocodeMemoryRuntimeContextMemoryContent(memory: Memory): string
   );
 }
 
-function buildAutocodeWorkUnitOutcomeContent(
-  input: AutocodeMemoryRuntimeWorkUnitOutcomeInput & { completedAt: string },
-): string {
-  const title = input.workUnitTitle ? ` (${input.workUnitTitle})` : '';
+function buildAutocodeWorkUnitOutcomeContent(input: AutocodeMemoryRuntimeWorkUnitOutcomeInput): string {
+  const title = compactAutocodeMemoryRuntimeOutcomeField(input.workUnitTitle);
   const description = compactAutocodeMemoryRuntimeOutcomeField(
     input.workUnitDescription,
   );
@@ -902,18 +896,19 @@ function buildAutocodeWorkUnitOutcomeContent(
     AUTOCODE_MEMORY_RUNTIME_OUTCOME_INLINE_FILE_REF_LIMIT,
   );
   const lines = [
-    `Work unit ${input.workUnitId}${title} finished with outcome: ${input.outcome}.`,
-    description ? `Task: ${description}` : '',
     summary ? `Summary: ${summary}` : '',
+    description
+      ? `Task: ${description}`
+      : title
+        ? `Task: ${title}`
+        : '',
     upstreamTaskIds.length > 0
       ? `Upstream tasks: ${upstreamTaskIds.join(', ')}`
       : '',
     inlineRelatedFiles.length > 0
       ? `Files: ${inlineRelatedFiles.join(', ')}${relatedFiles.length > inlineRelatedFiles.length ? ', ...' : ''}`
       : '',
-    input.durationMs ? `Duration: ${input.durationMs}ms` : '',
     error ? `Error: ${error}` : '',
-    `Completed at: ${input.completedAt}`,
   ].filter(Boolean);
 
   return truncateAutocodeMemoryRuntimeText(

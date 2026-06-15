@@ -127,4 +127,29 @@ describe('selectMemoryContextItems', () => {
 
     expect(selected.map((item) => item.id)).toEqual(['higher']);
   });
+
+  it('uses low-value filtered content for default selection', () => {
+    const selected = selectMemoryContextItems([
+      memory({
+        id: 'status-only',
+        content: [
+          'All tests passed.',
+          'No issues found.',
+          'Duration: 1234ms',
+        ].join('\n'),
+        confidence: 0.99,
+      }),
+      memory({
+        id: 'actionable',
+        content: [
+          'Mock the OAuth clock before testing refresh retries.',
+          'npm run typecheck passed.',
+          'No issues found.',
+        ].join('\n'),
+        confidence: 0.8,
+      }),
+    ], { maxItems: 5 });
+
+    expect(selected.map((item) => item.id)).toEqual(['actionable']);
+  });
 });

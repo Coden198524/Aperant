@@ -237,6 +237,45 @@ describe('buildPlannerMemoryContext', () => {
     expect(result).not.toContain('Memory search results');
   });
 
+  it('omits generic status lines from non-outcome planner memories', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('dead_end')) {
+        return [
+          makeMemory(
+            'dead-status-only',
+            [
+              'All tests passed.',
+              'No issues found.',
+              'Duration: 1234ms',
+            ].join('\n'),
+            'dead_end',
+          ),
+          makeMemory(
+            'dead-actionable',
+            [
+              'Mock the OAuth clock before testing refresh retries.',
+              'npm run typecheck passed.',
+              'No issues found.',
+            ].join('\n'),
+            'dead_end',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildPlannerMemoryContext('Add auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('DEAD ENDS');
+    expect(result).toContain('Mock the OAuth clock before testing refresh retries');
+    expect(result).not.toContain('All tests passed');
+    expect(result).not.toContain('npm run typecheck passed');
+    expect(result).not.toContain('No issues found');
+    expect(result).not.toContain('Duration: 1234ms');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('dead-actionable');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('dead-status-only');
+  });
+
   it('omits localized generic outcome lines from planner context', async () => {
     vi.mocked(memoryService.search).mockImplementation(async (filters) => {
       if (filters.types?.includes('work_unit_outcome')) {

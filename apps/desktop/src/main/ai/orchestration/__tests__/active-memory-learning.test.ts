@@ -66,6 +66,86 @@ describe('active memory learning storage', () => {
     expect(stored.some((entry) => entry.type === 'module_insight')).toBe(false);
   });
 
+  it('does not store generic success pattern memories without reusable signals', async () => {
+    const stored: Array<{ type?: string; content?: string }> = [];
+
+    await extractAndStoreKnowledge({
+      sessionResult: {
+        outcome: 'completed',
+        stepsExecuted: 2,
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        messages: [],
+        durationMs: 1,
+        toolCallCount: 0,
+      },
+      subtask: {
+        id: '1.2',
+        description: 'Update static copy',
+      },
+      projectDir,
+      specDir,
+      projectId: 'project-1',
+      memoryService: {
+        store: async (entry) => {
+          stored.push(entry);
+          return `memory-${stored.length}`;
+        },
+      },
+    });
+
+    const outcomeMemory = stored.find((entry) => entry.type === 'work_unit_outcome');
+
+    expect(outcomeMemory).toBeDefined();
+    expect(stored.some((entry) => entry.type === 'pattern')).toBe(false);
+    expect(outcomeMemory?.content).toContain('Task: Update static copy');
+    expect(outcomeMemory?.content).not.toContain('Completed work unit');
+    expect(outcomeMemory?.content).not.toContain('finished with outcome');
+  });
+
+  it('does not store generic code pattern memories', async () => {
+    const stored: Array<{ type?: string; content?: string }> = [];
+    await writeFile(
+      join(projectDir, 'generic-patterns.tsx'),
+      [
+        'export function Counter() { const [count, setCount] = useState(0); return count; }',
+        'export async function save() { try { await runGenericOperation(); } catch (error) { console.error(error); throw error; } }',
+        'export function toResponse(result: unknown) { return { success: true, data: result, error: null }; }',
+      ].join('\n'),
+      'utf-8',
+    );
+
+    await extractAndStoreKnowledge({
+      sessionResult: {
+        outcome: 'completed',
+        stepsExecuted: 2,
+        usage: { promptTokens: 100, completionTokens: 50, totalTokens: 150 },
+        messages: [],
+        durationMs: 1,
+        toolCallCount: 0,
+      },
+      subtask: {
+        id: '1.3',
+        description: 'Update generic helpers',
+        filesToModify: ['generic-patterns.tsx'],
+      },
+      projectDir,
+      specDir,
+      projectId: 'project-1',
+      memoryService: {
+        store: async (entry) => {
+          stored.push(entry);
+          return `memory-${stored.length}`;
+        },
+      },
+    });
+
+    expect(stored.some((entry) => entry.content?.includes('React useState Hook'))).toBe(false);
+    expect(stored.some((entry) => entry.content?.includes('API Response Format'))).toBe(false);
+    expect(stored.some((entry) => entry.content?.includes('Try-Catch Block'))).toBe(false);
+    expect(stored.some((entry) => entry.type === 'pattern')).toBe(false);
+    expect(stored.some((entry) => entry.type === 'work_unit_outcome')).toBe(true);
+  });
+
   it('samples large code files before active memory pattern extraction', async () => {
     const fileName = 'large.ts';
     const head = 'const [count, setCount] = useState(0);\n';

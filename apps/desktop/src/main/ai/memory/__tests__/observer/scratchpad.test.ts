@@ -58,6 +58,15 @@ describe('computeErrorFingerprint', () => {
     expect(fp1).toBe(fp2);
   });
 
+  it('normalizes Windows paths and timestamps for the same error', () => {
+    const error1 =
+      '2026-06-15T10:11:12.123Z Error: Cannot find module "./auth" in C:\\Users\\Alice\\project\\src\\main.ts:42:7';
+    const error2 =
+      '2026-06-15T12:13:14.456Z Error: Cannot find module "./auth" in D:\\Work\\Other\\src\\main.ts:99:1';
+
+    expect(computeErrorFingerprint(error1)).toBe(computeErrorFingerprint(error2));
+  });
+
   it('returns different fingerprints for different errors', () => {
     const error1 = 'TypeError: undefined is not a function';
     const error2 = 'SyntaxError: Unexpected token }';
@@ -174,6 +183,14 @@ describe('Scratchpad', () => {
 
       expect(scratchpad.analytics.errorFingerprints.size).toBe(1);
       expect([...scratchpad.analytics.errorFingerprints.values()][0]).toBe(2);
+      const sample = [...scratchpad.analytics.errorFingerprintSamples.values()][0];
+      expect(sample).toContain('Cannot find module');
+      expect(sample).toContain('<path>');
+      expect(sample).not.toContain('/home/alice');
+      expect(sample).not.toContain('/home/bob');
+      expect(sample).not.toContain(':42');
+      expect(sample).not.toContain(':99');
+      expect(sample.length).toBeLessThanOrEqual(4_000);
     });
 
     it('tracks object-shaped failed tool results', () => {
@@ -185,6 +202,24 @@ describe('Scratchpad', () => {
       }, 8);
 
       expect(scratchpad.analytics.errorFingerprints.size).toBe(1);
+    });
+
+    it('sanitizes local details in stored error samples', () => {
+      scratchpad.recordToolResult('Bash', {
+        exitCode: 1,
+        message: 'Command failed',
+        diagnosticText:
+          '2026-06-15T10:11:12.123Z Error: failed request 123e4567-e89b-12d3-a456-426614174000 while loading C:\\Users\\Alice\\repo\\src\\auth.ts:42:7 from src/auth/session.ts:99',
+      }, 8);
+
+      const sample = [...scratchpad.analytics.errorFingerprintSamples.values()][0];
+      expect(sample).toContain('<ts>');
+      expect(sample).toContain('<uuid>');
+      expect(sample).toContain('<path>');
+      expect(sample).toContain('src/auth/session.ts');
+      expect(sample).not.toContain('C:\\Users\\Alice');
+      expect(sample).not.toContain(':42:7');
+      expect(sample).not.toContain('src/auth/session.ts:99');
     });
 
     it('uses compact diagnostic text from omitted result fields for error fingerprints', () => {

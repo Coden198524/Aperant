@@ -226,6 +226,32 @@ describe('RetrievalPipeline', () => {
     expect(content).toContain('JWT reranker file context should stay compact');
   });
 
+  it('strips low-value memory lines before sending candidates to the reranker', async () => {
+    const content = [
+      'Keep OAuth refresh retry guard inside the session manager.',
+      'npm run typecheck passed.',
+      'No issues found',
+    ].join('\n');
+    await seedMemory(client, 'mem-low-value-rerank', content, 'proj-a', 'work_unit_outcome');
+
+    const embeddingService = makeMockEmbeddingService();
+    const { reranker, rerank } = makeCapturingReranker();
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const result = await pipeline.search('OAuth refresh retry guard', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+
+    const candidates = rerank.mock.calls[0][1];
+    const candidate = candidates.find((item) => item.memoryId === 'mem-low-value-rerank');
+
+    expect(result.memories[0].content).toBe(content);
+    expect(candidate?.content).toContain('Keep OAuth refresh retry guard inside the session manager.');
+    expect(candidate?.content).not.toContain('npm run typecheck passed.');
+    expect(candidate?.content).not.toContain('No issues found');
+  });
+
   it('normalizes legacy rows fetched by query retrieval before packing context', async () => {
     const longContent = `pipeline token head ${'verbose implementation detail '.repeat(180)} pipeline token tail`;
     const longCitation = `pipeline citation head ${'reference detail '.repeat(120)} pipeline citation tail`;

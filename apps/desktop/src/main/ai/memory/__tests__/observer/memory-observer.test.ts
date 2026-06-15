@@ -234,6 +234,60 @@ describe('MemoryObserver', () => {
       expect(Array.isArray(candidates)).toBe(true);
     });
 
+    it('includes a compact diagnostic sample in repeated error candidates', async () => {
+      for (let stepNumber = 1; stepNumber <= 2; stepNumber++) {
+        observer.observe({
+          type: 'memory:tool-result',
+          toolName: 'Bash',
+          result: {
+            exitCode: 1,
+            message: 'Command failed',
+            diagnosticText:
+              'stderr: TypeError: Cannot read properties of undefined in /home/alice/project/src/auth/session.ts:42',
+          },
+          stepNumber,
+        });
+      }
+
+      const candidates = await observer.finalize('success');
+      const errorRetry = candidates.find((candidate) => candidate.signalType === 'error_retry');
+
+      expect(errorRetry?.content).toContain('Recurring error pattern (2 times)');
+      expect(errorRetry?.content).toContain('Cannot read properties of undefined');
+      expect(errorRetry?.content).not.toContain('/home/alice');
+      expect(errorRetry?.content).toContain('fingerprint:');
+      expect(errorRetry?.content.length).toBeLessThan(320);
+    });
+
+    it('uses full self-correction reasoning snippets in finalized candidates', async () => {
+      observer.observe({
+        type: 'memory:reasoning',
+        text: 'Actually, the refresh token cache is in session-store.ts not token-cache.ts, so update listeners after the cache write.',
+        stepNumber: 1,
+      });
+
+      const candidates = await observer.finalize('success');
+      const selfCorrection = candidates.find(
+        (candidate) => candidate.signalType === 'self_correction',
+      );
+
+      expect(selfCorrection?.content).toContain('refresh token cache is in session-store.ts');
+      expect(selfCorrection?.content).toContain('update listeners after the cache write');
+      expect(selfCorrection?.content).not.toBe('Self-correction detected: Actually, the refresh token cache is in session-store.ts not token-cache.ts');
+    });
+
+    it('does not promote generic backtrack phrasing without actionable details', async () => {
+      observer.observe({
+        type: 'memory:reasoning',
+        text: 'Let me try a different approach to solve this problem.',
+        stepNumber: 1,
+      });
+
+      const candidates = await observer.finalize('success');
+
+      expect(candidates.some((candidate) => candidate.signalType === 'backtrack')).toBe(false);
+    });
+
     it('deduplicates reciprocal co-access pairs before promotion', async () => {
       observer.observe({
         type: 'memory:tool-call',
@@ -381,6 +435,41 @@ describe('MemoryObserver', () => {
       expect(candidates.some((candidate) => candidate.signalType === 'context_token_spike')).toBe(false);
       expect(observer.getScratchpad().analytics.totalInputTokens).toBe(7_500);
       expect(observer.getScratchpad().analytics.peakContextTokens).toBe(7_500);
+    });
+
+    it('does not promote generic repeated grep patterns into long-term memory', async () => {
+      for (const pattern of ['test', 'src', '.ts', '.*', 'import']) {
+        for (let index = 0; index < 3; index++) {
+          observer.observe({
+            type: 'memory:tool-call',
+            toolName: 'Grep',
+            args: { pattern },
+            stepNumber: index + 1,
+          });
+        }
+      }
+
+      const candidates = await observer.finalize('success');
+
+      expect(candidates.some((candidate) => candidate.signalType === 'repeated_grep')).toBe(false);
+    });
+
+    it('promotes focused repeated grep patterns into module insights', async () => {
+      for (let index = 0; index < 3; index++) {
+        observer.observe({
+          type: 'memory:tool-call',
+          toolName: 'Grep',
+          args: { pattern: 'refreshToken retry policy' },
+          stepNumber: index + 1,
+        });
+      }
+
+      const candidates = await observer.finalize('success');
+      const repeatedGrep = candidates.filter((candidate) => candidate.signalType === 'repeated_grep');
+
+      expect(repeatedGrep).toHaveLength(1);
+      expect(repeatedGrep[0].proposedType).toBe('module_insight');
+      expect(repeatedGrep[0].content).toContain('refreshToken retry policy');
     });
 
     it('only returns dead_end candidates on failed session', async () => {

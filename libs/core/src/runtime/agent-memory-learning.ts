@@ -69,6 +69,7 @@ const AUTOCODE_MEMORY_TOOL_MAX_CHARS = 64;
 const AUTOCODE_MEMORY_CODE_MAX_CHARS = 420;
 const AUTOCODE_MEMORY_SUMMARY_MAX_CHARS = 900;
 const AUTOCODE_MEMORY_LIST_LIMIT = 5;
+const AUTOCODE_MEMORY_CODE_PATTERN_LIMIT = 4;
 const AUTOCODE_SESSION_METRIC_INSIGHT_PATTERNS = [
   /^(?:Summary:\s*)?Efficient token usage\b/i,
   /^(?:Summary:\s*)?High token usage per step\b/i,
@@ -97,27 +98,131 @@ export function createAutocodeExtractedKnowledge(
     knowledge.failurePatterns = extractAutocodeFailurePatterns(input);
   }
 
-  knowledge.codePatterns = input.codePatterns ?? [];
+  knowledge.codePatterns = compactAutocodeCodePatterns(input.codePatterns ?? []);
 
   return knowledge;
+}
+
+function compactAutocodeCodePatterns(
+  patterns: readonly AutocodeCodePattern[],
+): AutocodeCodePattern[] {
+  const compacted: AutocodeCodePattern[] = [];
+  const seen = new Set<string>();
+  for (const pattern of patterns) {
+    if (!isAutocodeCodePatternWorthRemembering(pattern)) {
+      continue;
+    }
+
+    const key = getAutocodeCodePatternDedupeKey(pattern);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    compacted.push(pattern);
+    if (compacted.length >= AUTOCODE_MEMORY_CODE_PATTERN_LIMIT) {
+      break;
+    }
+  }
+  return compacted;
+}
+
+function isAutocodeCodePatternWorthRemembering(pattern: AutocodeCodePattern): boolean {
+  const code = pattern.code.trim();
+  if (!code || !pattern.sourceFile.trim()) {
+    return false;
+  }
+
+  if (isGenericAutocodeApiResponsePattern(pattern, code)) {
+    return false;
+  }
+
+  if (isGenericAutocodeRethrowPattern(pattern, code)) {
+    return false;
+  }
+
+  return !(
+    pattern.category === 'state_management' &&
+    pattern.name === 'React useState Hook' &&
+    /^const\s*\[[^\]]+\]\s*=\s*useState\([^)]*\)\s*;?$/i.test(code)
+  );
+}
+
+function isGenericAutocodeApiResponsePattern(pattern: AutocodeCodePattern, code: string): boolean {
+  if (pattern.category !== 'api_design' || pattern.name !== 'API Response Format') {
+    return false;
+  }
+
+  const identifiers = getAutocodeCodeIdentifiers(code).filter(
+    (identifier) => !AUTOCODE_GENERIC_CODE_PATTERN_IDENTIFIERS.has(identifier),
+  );
+  return identifiers.length === 0;
+}
+
+function isGenericAutocodeRethrowPattern(pattern: AutocodeCodePattern, code: string): boolean {
+  if (pattern.category !== 'error_handling' || pattern.name !== 'Try-Catch Block') {
+    return false;
+  }
+
+  const catchBody = code.match(/catch\s*\([^)]+\)\s*\{([\s\S]*)\}\s*$/)?.[1] ?? '';
+  const normalized = catchBody.replace(/\s+/g, ' ').trim();
+  return /^(?:console\.(?:error|warn|log)\([^)]*\);\s*)?throw\s+\w+;?$/.test(normalized);
+}
+
+const AUTOCODE_GENERIC_CODE_PATTERN_IDENTIFIERS = new Set([
+  'data',
+  'error',
+  'false',
+  'message',
+  'null',
+  'ok',
+  'return',
+  'result',
+  'response',
+  'success',
+  'true',
+  'value',
+]);
+
+function getAutocodeCodeIdentifiers(code: string): string[] {
+  return Array.from(code.matchAll(/\b[A-Za-z_][A-Za-z0-9_]*\b/g), (match) => match[0].toLowerCase());
+}
+
+function getAutocodeCodePatternDedupeKey(pattern: AutocodeCodePattern): string {
+  return [
+    pattern.category,
+    pattern.name,
+    pattern.code.replace(/\s+/g, ' ').trim().toLowerCase(),
+  ].join('\0');
 }
 
 export function extractAutocodeSuccessPatterns(
   input: AutocodeLearningAnalysisInput,
 ): AutocodeSuccessPattern[] {
   const toolCalls = extractAutocodeToolCallSequence(input.sessionResult);
+  const keyDecisions = extractAutocodeKeyDecisions(input.sessionResult.messages);
+  if (!hasAutocodeReusableSuccessSignal(input, keyDecisions)) {
+    return [];
+  }
 
   return [
     {
       description: limitAutocodeLearningText(input.subtask.description, AUTOCODE_MEMORY_DESCRIPTION_MAX_CHARS),
       approach: limitAutocodeLearningText(analyzeAutocodeApproach(toolCalls), AUTOCODE_MEMORY_FIELD_MAX_CHARS),
       whyItWorked: limitAutocodeLearningText(analyzeAutocodeWhyItWorked(input), AUTOCODE_MEMORY_FIELD_MAX_CHARS),
-      keyDecisions: extractAutocodeKeyDecisions(input.sessionResult.messages),
+      keyDecisions,
       effectiveTools: identifyAutocodeEffectiveTools(toolCalls)
         .map((tool) => limitAutocodeLearningText(tool, AUTOCODE_MEMORY_TOOL_MAX_CHARS)),
       confidence: 0.8,
     },
   ];
+}
+
+function hasAutocodeReusableSuccessSignal(
+  input: AutocodeLearningAnalysisInput,
+  keyDecisions: readonly string[],
+): boolean {
+  return keyDecisions.length > 0 || Boolean(input.subtask.patternFiles?.length);
 }
 
 export function extractAutocodeFailurePatterns(
@@ -411,7 +516,7 @@ export function summarizeAutocodeSessionForMemory(
 
   return parts.length > 0
     ? limitAutocodeLearningText(parts.join('\n'), AUTOCODE_MEMORY_SUMMARY_MAX_CHARS)
-    : `Completed work unit ${knowledge.subtaskId} with outcome ${knowledge.outcome}.`;
+    : '';
 }
 
 export function formatAutocodeSuccessPatternMemory(pattern: AutocodeSuccessPattern): string {
@@ -475,7 +580,7 @@ export function formatAutocodeKnowledgeSummary(knowledge: AutocodeExtractedKnowl
 
 function extractAutocodeErrorHandlingPatterns(content: string, file: string): AutocodeCodePattern[] {
   const patterns: AutocodeCodePattern[] = [];
-  const tryCatchMatch = content.match(/try\s*\{[\s\S]{20,200}\}\s*catch\s*\([^)]+\)\s*\{[\s\S]{20,200}\}/);
+  const tryCatchMatch = content.match(/try\s*\{[\s\S]{20,200}?\}\s*catch\s*\([^)]+\)\s*\{[\s\S]{20,200}?\}/);
 
   if (tryCatchMatch) {
     patterns.push({

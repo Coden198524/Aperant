@@ -6,7 +6,7 @@ const LOW_VALUE_OUTCOME_LINE_PATTERNS = [
 	/^(?:Summary:\s*)?Memory search results\b/i,
 	/^(?:Summary:\s*)?Memory system not available\b/i,
 	/^(?:Summary:\s*)?Memory (?:recorded|skipped|noted locally|system not available)\b/i,
-	/^(?:Summary:\s*)?Work unit \S+ finished with outcome:\s*success\.?$/i,
+	/^(?:Summary:\s*)?Work unit .+ finished with outcome:\s*success\.?$/i,
 	/^(?:Summary:\s*)?Completed quickly with few steps\b/i,
 	/^(?:Summary:\s*)?Many steps required\b/i,
 	/^(?:Summary:\s*)?Used diverse set of tools\b/i,

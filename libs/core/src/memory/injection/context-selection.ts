@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 
 import type { Memory } from '../types.js';
+import { stripLowValueMemoryLines } from '../outcome-content.js';
 
 export interface MemoryContextSelectionOptions {
   maxItems: number;
@@ -103,7 +104,7 @@ function scoreMemoryForContext(memory: Memory): number {
 }
 
 function getDefaultSelectionContent(memory: Memory): string {
-  return memory.content;
+  return stripLowValueMemoryLines(memory.content);
 }
 
 function normalizeSelectionContent(content: string): string {

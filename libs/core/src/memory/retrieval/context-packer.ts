@@ -9,7 +9,7 @@
  */
 
 import type { Memory, MemoryType, UniversalPhase } from '../types.js';
-import { stripLowValueOutcomeLines } from '../outcome-content.js';
+import { stripLowValueMemoryLines } from '../outcome-content.js';
 
 // ============================================================
 // TYPES & CONFIG
@@ -484,12 +484,9 @@ function truncateText(text: string, maxChars: number): string {
 
 function getMemoryPromptContent(memory: Memory): string {
   if (memory.type === 'prefetch_pattern') {
-    return formatPrefetchPatternForPrompt(memory) ?? memory.content;
+    return formatPrefetchPatternForPrompt(memory) ?? stripLowValueMemoryLines(memory.content);
   }
-  if (memory.type === 'work_unit_outcome') {
-    return stripLowValueOutcomeLines(memory.content);
-  }
-  return memory.content;
+  return stripLowValueMemoryLines(memory.content);
 }
 
 function formatPrefetchPatternForPrompt(memory: Memory): string | undefined {
@@ -738,9 +735,9 @@ function normalizePromptMemories(memories: Memory[]): Memory[] {
 
 function normalizePromptMemory(memory: Memory): Memory | undefined {
   const id = normalizePromptText(memory.id);
-  const rawContent = memory.type === 'work_unit_outcome'
-    ? stripLowValueOutcomeLines(memory.content)
-    : memory.content;
+  const rawContent = memory.type === 'context_cost'
+    ? memory.content
+    : stripLowValueMemoryLines(memory.content);
   const content = normalizePromptText(rawContent);
   if (!id || !content) {
     return undefined;

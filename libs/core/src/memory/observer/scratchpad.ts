@@ -33,6 +33,7 @@ export interface ScratchpadAnalytics {
   grepPatternCounts: Map<string, number>;
   grepPatternResults: Map<string, boolean[]>; // pattern → [result1_empty, ...]
   errorFingerprints: Map<string, number>;     // fingerprint → occurrence count
+  errorFingerprintSamples: Map<string, string>;
   currentStep: number;
   recentToolSequence: string[];               // circular buffer, last 8 tool calls
   intraSessionCoAccess: Map<string, Set<string>>; // fileA → Set<fileB> co-accessed
@@ -71,6 +72,17 @@ const SCRATCHPAD_ERROR_SIGNAL_PATTERN = /\b(error|failed|failure|exception|trace
 const SCRATCHPAD_ERROR_TEXT_MAX_CHARS = 4_000;
 const SCRATCHPAD_ERROR_TEXT_SAMPLE_CHARS = 1_800;
 const SCRATCHPAD_ERROR_OBJECT_KEY_LIMIT = 10;
+const SCRATCHPAD_ERROR_UUID_PATTERN =
+  /[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi;
+const SCRATCHPAD_ERROR_TIMESTAMP_PATTERN =
+  /\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?(?:Z|[+-]\d{2}:\d{2})?/g;
+const SCRATCHPAD_ERROR_WINDOWS_ABSOLUTE_PATH_PATTERN =
+  /(?:[A-Za-z]:\\|\\\\)[^\s'"<>|),;]+/g;
+const SCRATCHPAD_ERROR_POSIX_ABSOLUTE_PATH_PATTERN =
+  /(^|[\s("'=])\/(?:[^\s:'"<>|),;]+\/)+[^\s:'"<>|),;]+(?::\d+(?::\d+)?)?/g;
+const SCRATCHPAD_ERROR_RELATIVE_PATH_PATTERN = /\.[./][^\s:'"]+/g;
+const SCRATCHPAD_ERROR_PATH_LINE_COLUMN_PATTERN =
+  /((?:\.{1,2}[\\/]|[\w.-]+[\\/])[\w./\\@+-]+\.[A-Za-z0-9]+):\d+(?::\d+)?/g;
 const SCRATCHPAD_ERROR_OBJECT_KEYS = [
   'diagnosticText',
   'diagnostic_text',
@@ -105,16 +117,18 @@ export function isConfigFile(filePath: string): boolean {
  */
 export function computeErrorFingerprint(errorMessage: string): string {
   const normalized = compactScratchpadErrorFingerprintInput(errorMessage)
+    // Strip timestamps before generic :line matching can alter them.
+    .replace(SCRATCHPAD_ERROR_TIMESTAMP_PATTERN, '<ts>')
+    // Strip Windows absolute paths
+    .replace(SCRATCHPAD_ERROR_WINDOWS_ABSOLUTE_PATH_PATTERN, '<path>')
     // Strip absolute file paths
-    .replace(/\/[^\s:'"]+/g, '<path>')
+    .replace(SCRATCHPAD_ERROR_POSIX_ABSOLUTE_PATH_PATTERN, '$1<path>')
     // Strip relative paths
-    .replace(/\.[./][^\s:'"]+/g, '<path>')
+    .replace(SCRATCHPAD_ERROR_RELATIVE_PATH_PATTERN, '<path>')
     // Strip line/column numbers like :42 or :42:7
     .replace(/:\d+(:\d+)?/g, '')
     // Strip UUIDs
-    .replace(/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}/gi, '<uuid>')
-    // Strip timestamps
-    .replace(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}/g, '<ts>')
+    .replace(SCRATCHPAD_ERROR_UUID_PATTERN, '<uuid>')
     .trim()
     .toLowerCase();
 
@@ -134,6 +148,7 @@ function makeEmptyAnalytics(): ScratchpadAnalytics {
     grepPatternCounts: new Map(),
     grepPatternResults: new Map(),
     errorFingerprints: new Map(),
+    errorFingerprintSamples: new Map(),
     currentStep: 0,
     recentToolSequence: [],
     intraSessionCoAccess: new Map(),
@@ -234,6 +249,12 @@ export class Scratchpad {
       const fingerprint = computeErrorFingerprint(errorText);
       const count = (this.analytics.errorFingerprints.get(fingerprint) ?? 0) + 1;
       this.analytics.errorFingerprints.set(fingerprint, count);
+      if (!this.analytics.errorFingerprintSamples.has(fingerprint)) {
+        this.analytics.errorFingerprintSamples.set(
+          fingerprint,
+          sanitizeScratchpadErrorSample(compactScratchpadErrorFingerprintInput(errorText)),
+        );
+      }
     }
 
     // Track grep result empty/non-empty for pattern reliability
@@ -478,6 +499,16 @@ function compactScratchpadErrorFingerprintInput(text: string): string {
   const windowStart = Math.max(0, signalIndex - 160);
   const windowEnd = Math.min(sampled.length, signalIndex + 2_000);
   return sampled.slice(windowStart, windowEnd).trim();
+}
+
+function sanitizeScratchpadErrorSample(text: string): string {
+  return normalizeScratchpadInlineText(text)
+    .replace(SCRATCHPAD_ERROR_TIMESTAMP_PATTERN, '<ts>')
+    .replace(SCRATCHPAD_ERROR_WINDOWS_ABSOLUTE_PATH_PATTERN, '<path>')
+    .replace(SCRATCHPAD_ERROR_POSIX_ABSOLUTE_PATH_PATTERN, '$1<path>')
+    .replace(SCRATCHPAD_ERROR_PATH_LINE_COLUMN_PATTERN, '$1')
+    .replace(SCRATCHPAD_ERROR_UUID_PATTERN, '<uuid>')
+    .trim();
 }
 
 function normalizeScratchpadInlineText(text: string): string {

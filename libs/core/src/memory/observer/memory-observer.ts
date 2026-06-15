@@ -34,10 +34,53 @@ const EXTERNAL_TOOL_NAMES = new Set(['WebFetch', 'WebSearch']);
 const MAX_CO_ACCESS_CANDIDATES = 8;
 const MAX_OBSERVER_RELATED_MODULES = 6;
 const MAX_CONTEXT_COST_RELATED_FILES = 4;
+const OBSERVER_ACUTE_MEMORY_SNIPPET_MAX_CHARS = 220;
 const CONTEXT_TOKEN_SPIKE_DEFAULT_EXPECTED_TOKENS = 8_000;
 const CONTEXT_TOKEN_SPIKE_MIN_INPUT_TOKENS = 12_000;
 const CONTEXT_TOKEN_SPIKE_WINDOW_RATIO = 0.72;
 const CONTEXT_TOKEN_SPIKE_MIN_RATIO = 1.35;
+const OBSERVER_GENERIC_GREP_PATTERNS = new Set([
+  'app',
+  'apps',
+  'class',
+  'const',
+  'content',
+  'data',
+  'error',
+  'errors',
+  'export',
+  'fixme',
+  'function',
+  'import',
+  'interface',
+  'let',
+  'lib',
+  'libs',
+  'result',
+  'return',
+  'spec',
+  'src',
+  'test',
+  'tests',
+  'todo',
+  'type',
+  'types',
+  'var',
+]);
+const OBSERVER_GENERIC_GREP_FILE_EXTENSIONS = new Set([
+  '.cjs',
+  '.css',
+  '.go',
+  '.js',
+  '.json',
+  '.jsx',
+  '.md',
+  '.mjs',
+  '.py',
+  '.rs',
+  '.ts',
+  '.tsx',
+]);
 const OBSERVER_GENERIC_PATH_SEGMENTS = new Set([
   'app',
   'apps',
@@ -357,14 +400,17 @@ export class MemoryObserver {
 
   private finalizeErrorRetry(): MemoryCandidate[] {
     const candidates: MemoryCandidate[] = [];
-    const { errorFingerprints } = this.scratchpad.analytics;
+    const { errorFingerprints, errorFingerprintSamples } = this.scratchpad.analytics;
 
     for (const [fingerprint, count] of errorFingerprints) {
       if (count >= 2) {
+        const sample = formatObserverErrorRetrySample(errorFingerprintSamples.get(fingerprint));
         candidates.push({
           signalType: 'error_retry',
           proposedType: 'error_pattern',
-          content: `Recurring error pattern (fingerprint: ${fingerprint}) encountered ${count} times in this session.`,
+          content: sample
+            ? `Recurring error pattern (${count} times): ${sample} [fingerprint: ${fingerprint}]`
+            : `Recurring error pattern (fingerprint: ${fingerprint}) encountered ${count} times in this session.`,
           relatedFiles: [],
           relatedModules: [],
           confidence: 0.6 + Math.min(0.3, count * 0.05),
@@ -384,10 +430,14 @@ export class MemoryObserver {
       const rawData = acute.rawData as Record<string, unknown>;
 
       if (acute.signalType === 'self_correction') {
+        const snippet = formatObserverAcuteMemorySnippet(rawData.triggeringText, rawData.matchText);
+        if (!snippet) {
+          continue;
+        }
         candidates.push({
           signalType: 'self_correction',
           proposedType: 'gotcha',
-          content: `Self-correction detected: ${String(rawData.matchText ?? '').slice(0, 150)}`,
+          content: `Self-correction detected: ${snippet}`,
           relatedFiles: [],
           relatedModules: [],
           confidence: 0.8,
@@ -395,10 +445,14 @@ export class MemoryObserver {
           originatingStep: acute.stepNumber,
         });
       } else if (acute.signalType === 'backtrack') {
+        const snippet = formatObserverAcuteMemorySnippet(rawData.triggeringText, rawData.matchedText);
+        if (!snippet || !isObserverBacktrackSnippetWorthRemembering(snippet)) {
+          continue;
+        }
         candidates.push({
           signalType: 'backtrack',
           proposedType: 'dead_end',
-          content: `Approach abandoned mid-session: ${String(rawData.matchedText ?? '').slice(0, 150)}`,
+          content: `Approach abandoned mid-session: ${snippet}`,
           relatedFiles: [],
           relatedModules: [],
           confidence: 0.65,
@@ -416,7 +470,7 @@ export class MemoryObserver {
     const { grepPatternCounts } = this.scratchpad.analytics;
 
     for (const [pattern, count] of grepPatternCounts) {
-      if (count >= 3) {
+      if (count >= 3 && isObserverRepeatedGrepPatternWorthRemembering(pattern)) {
         candidates.push({
           signalType: 'repeated_grep',
           proposedType: 'module_insight',
@@ -470,6 +524,63 @@ export class MemoryObserver {
     // Deferred to PromotionPipeline which has access to the provider factory.
     return [];
   }
+}
+
+function formatObserverErrorRetrySample(sample: string | undefined): string {
+  const text = sample?.replace(/\s+/g, ' ').trim() ?? '';
+  if (!text) {
+    return '';
+  }
+  return formatObserverAcuteMemorySnippet(text, text);
+}
+
+function formatObserverAcuteMemorySnippet(primary: unknown, fallback: unknown): string {
+  const text = String(primary ?? fallback ?? '')
+    .replace(/\s+/g, ' ')
+    .trim();
+  if (!text) {
+    return '';
+  }
+  if (text.length <= OBSERVER_ACUTE_MEMORY_SNIPPET_MAX_CHARS) {
+    return text;
+  }
+
+  const marker = ' ... ';
+  const budget = OBSERVER_ACUTE_MEMORY_SNIPPET_MAX_CHARS - marker.length;
+  const headChars = Math.ceil(budget * 0.65);
+  const tailChars = Math.max(0, budget - headChars);
+  return `${text.slice(0, headChars).trimEnd()}${marker}${text.slice(-tailChars).trimStart()}`;
+}
+
+function isObserverBacktrackSnippetWorthRemembering(snippet: string): boolean {
+  const normalized = snippet.toLowerCase();
+  if (/^let me try a different approach(?: to solve this problem)?\.?$/.test(normalized)) {
+    return false;
+  }
+
+  return /\b(because|unavailable|deprecated|removed|environment|production|test|ci|permission|api|method|signature|path|file|module)\b/i
+    .test(snippet);
+}
+
+function isObserverRepeatedGrepPatternWorthRemembering(pattern: string): boolean {
+  const normalized = pattern.replace(/\s+/g, ' ').trim();
+  if (normalized.length < 4) {
+    return false;
+  }
+
+  const compact = normalized.toLowerCase();
+  if (
+    OBSERVER_GENERIC_GREP_PATTERNS.has(compact) ||
+    OBSERVER_GENERIC_GREP_FILE_EXTENSIONS.has(compact)
+  ) {
+    return false;
+  }
+
+  if (!/[a-z0-9_\u0080-\uffff]/i.test(normalized)) {
+    return false;
+  }
+
+  return !/^[\s\\^$.*+?()[\]{}|/-]+$/.test(normalized);
 }
 
 function formatCoAccessPrefetchPattern(pair: RankedCoAccessPair): string {

@@ -101,6 +101,37 @@ describe('packContext memory quality gate', () => {
     expect(result).not.toContain('Bad confidence should be skipped.');
   });
 
+  it('filters low-value status lines from generic prompt memories before packing context', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'status-only',
+          content: [
+            'All tests passed.',
+            'No issues found.',
+            'Duration: 1234ms',
+          ].join('\n'),
+        }),
+        makeMemory({
+          id: 'mixed-status',
+          content: [
+            'Summary: AuthStore must refresh token before notifying listeners.',
+            'npm run typecheck passed.',
+            'No issues found.',
+          ].join('\n'),
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { gotcha: 1 } },
+    );
+
+    expect(result).toContain('AuthStore must refresh token');
+    expect(result).not.toContain('All tests passed');
+    expect(result).not.toContain('npm run typecheck passed');
+    expect(result).not.toContain('No issues found');
+    expect(result).not.toContain('Duration: 1234ms');
+  });
+
   it('ignores malformed prompt metadata without aborting context packing', () => {
     const result = packContext(
       [

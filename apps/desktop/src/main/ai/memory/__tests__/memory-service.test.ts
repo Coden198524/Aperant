@@ -272,6 +272,32 @@ describe('MemoryServiceImpl', () => {
       expect(embeddingText).toContain('Module: auth');
     });
 
+    it('strips low-value lines from FTS and embedding text while preserving stored content', async () => {
+      const content = [
+        'Keep OAuth refresh retry guard inside the session manager.',
+        'npm run typecheck passed.',
+        'No issues found',
+      ].join('\n');
+
+      await service.store({
+        type: 'work_unit_outcome',
+        content,
+        projectId: 'proj-001',
+        relatedFiles: ['src/auth/session.ts'],
+      });
+
+      const batchArgs = mockBatch.mock.calls[0][0];
+      const memoriesArgs = batchArgs[0].args;
+      const ftsArgs = batchArgs[1].args;
+      const embeddingText = mockEmbed.mock.calls[0][0] as string;
+
+      expect(memoriesArgs[2]).toBe(content);
+      expect(ftsArgs[1]).toBe('Keep OAuth refresh retry guard inside the session manager.');
+      expect(embeddingText).toContain('Keep OAuth refresh retry guard inside the session manager.');
+      expect(embeddingText).not.toContain('npm run typecheck passed.');
+      expect(embeddingText).not.toContain('No issues found');
+    });
+
     it('compacts oversized memory content and metadata before storage and embedding', async () => {
       const longContent = `MEMORY_HEAD\n${'verbose implementation detail\n'.repeat(120)}MEMORY_TAIL`;
       const longCitation = `CITATION_HEAD ${'citation detail '.repeat(120)} CITATION_TAIL`;

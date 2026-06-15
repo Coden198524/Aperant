@@ -44,13 +44,16 @@ describe('agent memory learning compaction', () => {
 
     const pattern = knowledge.successPatterns?.[0];
     expect(pattern).toBeDefined();
+    if (!pattern) {
+      throw new Error('Expected success pattern');
+    }
     expect(pattern?.description).toContain('truncated');
     expect(pattern?.keyDecisions.join('\n')).toContain('truncated');
     expect(pattern?.description).toContain('DESCRIPTION_TAIL_OK');
     expect(pattern?.keyDecisions.join('\n')).toContain('DECISION_TAIL_OK');
     expect(pattern?.keyDecisions.join('\n')).toContain('APPROACH_TAIL_OK');
 
-    const memoryText = formatAutocodeSuccessPatternMemory(pattern!);
+    const memoryText = formatAutocodeSuccessPatternMemory(pattern);
     expect(memoryText).toContain('Success pattern:');
     expect(memoryText).toContain('truncated');
     expect(memoryText).not.toContain('Efficient implementation with minimal token usage');
@@ -92,6 +95,93 @@ describe('agent memory learning compaction', () => {
     expect(summary).not.toContain('Efficient token usage');
   });
 
+  it('skips generic success pattern memories when no reusable signal exists', () => {
+    const genericKnowledge = createAutocodeExtractedKnowledge({
+      subtask: { id: '1.3', description: 'Update copy' },
+      sessionResult: makeSessionResult(),
+      sessionId: 'session-generic',
+      timestamp: '2026-06-14T00:00:00.000Z',
+    });
+
+    expect(genericKnowledge.successPatterns).toEqual([]);
+    expect(summarizeAutocodeSessionForMemory(genericKnowledge)).toBe('');
+
+    const patternBackedKnowledge = createAutocodeExtractedKnowledge({
+      subtask: {
+        id: '1.4',
+        description: 'Follow existing auth retry flow',
+        patternFiles: ['src/auth/retry-policy.ts'],
+      },
+      sessionResult: makeSessionResult(),
+      sessionId: 'session-pattern-backed',
+      timestamp: '2026-06-14T00:00:00.000Z',
+    });
+
+    expect(patternBackedKnowledge.successPatterns).toHaveLength(1);
+    expect(summarizeAutocodeSessionForMemory(patternBackedKnowledge)).toContain('Follow existing auth retry flow');
+  });
+
+  it('compacts code patterns before they reach long-term memory', () => {
+    const apiPattern = {
+      category: 'api_design' as const,
+      name: 'API Response Format',
+      code: 'return { success: true, data: session, error: null }',
+      useCase: 'Session response shape',
+      language: 'typescript',
+      sourceFile: 'src/auth/api.ts',
+    };
+    const knowledge = createAutocodeExtractedKnowledge({
+      subtask: { id: '1.5', description: 'Extract code patterns' },
+      sessionResult: makeSessionResult(),
+      codePatterns: [
+        {
+          category: 'state_management',
+          name: 'React useState Hook',
+          code: 'const [count, setCount] = useState(0)',
+          useCase: 'Managing component state in React',
+          language: 'typescript',
+          sourceFile: 'src/ui/Counter.tsx',
+        },
+        {
+          category: 'api_design',
+          name: 'API Response Format',
+          code: 'return { success: true, data: result, error: null }',
+          useCase: 'Generic response shape',
+          language: 'typescript',
+          sourceFile: 'src/api/generic.ts',
+        },
+        {
+          category: 'error_handling',
+          name: 'Try-Catch Block',
+          code: 'try { await runGenericOperation(); } catch (error) { console.error(error); throw error; }',
+          useCase: 'Generic rethrow',
+          language: 'typescript',
+          sourceFile: 'src/api/generic.ts',
+        },
+        apiPattern,
+        { ...apiPattern, sourceFile: 'src/auth/api-copy.ts' },
+        ...Array.from({ length: 5 }, (_, index) => ({
+          category: 'error_handling' as const,
+          name: `Domain error handler ${index}`,
+          code: `try { await refreshToken(${index}); } catch (error) { reportAuthFailure(error); }`,
+          useCase: `Auth refresh error path ${index}`,
+          language: 'typescript',
+          sourceFile: `src/auth/retry-${index}.ts`,
+        })),
+      ],
+      sessionId: 'session-code-patterns',
+      timestamp: '2026-06-14T00:00:00.000Z',
+    });
+
+    const patterns = knowledge.codePatterns ?? [];
+
+    expect(patterns).toHaveLength(4);
+    expect(patterns.some((pattern) => pattern.name === 'React useState Hook')).toBe(false);
+    expect(patterns.filter((pattern) => pattern.name === 'API Response Format')).toHaveLength(1);
+    expect(patterns.some((pattern) => pattern.useCase === 'Generic response shape')).toBe(false);
+    expect(patterns.some((pattern) => pattern.useCase === 'Generic rethrow')).toBe(false);
+  });
+
   it('bounds failure pattern memory content and summary text', () => {
     const knowledge = createAutocodeExtractedKnowledge({
       subtask: {
@@ -116,10 +206,13 @@ describe('agent memory learning compaction', () => {
 
     const pattern = knowledge.failurePatterns?.[0];
     expect(pattern).toBeDefined();
+    if (!pattern) {
+      throw new Error('Expected failure pattern');
+    }
     expect(pattern?.rootCause).toContain('truncated');
     expect(pattern?.rootCause).toContain('ERROR_TAIL_OK');
 
-    const memoryText = formatAutocodeFailurePatternMemory(pattern!);
+    const memoryText = formatAutocodeFailurePatternMemory(pattern);
     const summary = summarizeAutocodeSessionForMemory(knowledge);
     expect(memoryText).toContain('Failure pattern:');
     expect(memoryText).toContain('ERROR_TAIL_OK');

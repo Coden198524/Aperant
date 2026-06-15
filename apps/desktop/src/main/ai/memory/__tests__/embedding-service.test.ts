@@ -234,6 +234,28 @@ describe('EmbeddingService (none / degraded fallback)', () => {
     expect(Array.isArray(embedding)).toBe(true);
     expect(embedding.length).toBeGreaterThan(0);
   });
+
+  it('strips low-value lines before embedding memory content', async () => {
+    const memory = makeMemory({
+      type: 'work_unit_outcome',
+      content: [
+        'Keep OAuth refresh retry guard inside the session manager.',
+        'npm run typecheck passed.',
+        'No issues found',
+      ].join('\n'),
+      relatedFiles: ['src/auth/session.ts'],
+    });
+    const embedSpy = vi.spyOn(service, 'embed');
+
+    await service.embedMemory(memory);
+
+    const embeddedText = embedSpy.mock.calls[0][0] as string;
+    expect(embeddedText).toContain('Files: src/auth/session.ts');
+    expect(embeddedText).toContain('Type: work_unit_outcome');
+    expect(embeddedText).toContain('Keep OAuth refresh retry guard inside the session manager.');
+    expect(embeddedText).not.toContain('npm run typecheck passed.');
+    expect(embeddedText).not.toContain('No issues found');
+  });
 });
 
 // ============================================================

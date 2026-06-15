@@ -14,6 +14,7 @@ import type {
 } from '@autocode/core';
 import type { EmbeddingService } from './embedding-service';
 import { buildMemoryContextualText } from './embedding-service';
+import { stripLowValueMemoryLines } from './outcome-content';
 import { rowToMemory } from './row-mapper';
 import { searchBM25 } from './retrieval/bm25-search';
 import { estimateTokens, isMemoryEligibleForPromptContext } from './retrieval/context-packer';
@@ -133,6 +134,7 @@ export class MemoryServiceImpl implements MemoryService {
    */
   async store(entry: MemoryRecordEntry): Promise<string> {
     const normalizedEntry = normalizeMemoryRecordEntryForStorage(entry);
+    const indexContent = getMemoryIndexContent(normalizedEntry.content);
 
     const existingId = await this.findExistingMemoryId(normalizedEntry);
     if (existingId) {
@@ -155,7 +157,7 @@ export class MemoryServiceImpl implements MemoryService {
       const memoryForEmbedding: Memory = {
         id,
         type: normalizedEntry.type,
-        content: normalizedEntry.content,
+        content: indexContent,
         confidence: normalizedEntry.confidence ?? 0.8,
         tags: normalizedEntry.tags ?? [],
         relatedFiles: normalizedEntry.relatedFiles ?? [],
@@ -243,7 +245,7 @@ export class MemoryServiceImpl implements MemoryService {
                 VALUES (?, ?, ?, ?)`,
           args: [
             id,
-            normalizedEntry.content,
+            indexContent,
             (normalizedEntry.tags ?? []).join(' '),
             (normalizedEntry.relatedFiles ?? []).join(' '),
           ],
@@ -813,6 +815,10 @@ function pathsReferToSameFile(left: string, right: string): boolean {
     return true;
   }
   return left.endsWith(`/${right}`) || right.endsWith(`/${left}`);
+}
+
+function getMemoryIndexContent(content: string): string {
+  return stripLowValueMemoryLines(content);
 }
 
 function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryRecordEntry {

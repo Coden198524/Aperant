@@ -257,6 +257,45 @@ describe('buildQaSessionContext', () => {
     expect(result).not.toContain('Auth callback tests should wait');
   });
 
+  it('omits generic status lines from QA memories before formatting', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory(
+            'ep-status-only',
+            [
+              'All tests passed.',
+              'No issues found.',
+              'Duration: 1234ms',
+            ].join('\n'),
+            'error_pattern',
+          ),
+          makeMemory(
+            'ep-actionable',
+            [
+              'OAuth retry tests need a mocked clock to avoid flaky expiry assertions.',
+              'npm run typecheck passed.',
+              'No issues found.',
+            ].join('\n'),
+            'error_pattern',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('ERROR PATTERNS');
+    expect(result).toContain('OAuth retry tests need a mocked clock');
+    expect(result).not.toContain('All tests passed');
+    expect(result).not.toContain('npm run typecheck passed');
+    expect(result).not.toContain('No issues found');
+    expect(result).not.toContain('Duration: 1234ms');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('ep-actionable');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('ep-status-only');
+  });
+
   it('records access only for QA memories visible in formatted context', async () => {
     vi.mocked(memoryService.search).mockImplementation(async (filters) => {
       if (filters.types?.includes('requirement')) {

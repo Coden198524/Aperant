@@ -630,6 +630,9 @@ describe('Autocode memory runtime context formatting', () => {
     expect(entry.content).toContain('SUMMARY_HEAD');
     expect(entry.content).toContain('ERROR_TAIL_SHOULD_BE_PRESERVED');
     expect(entry.content).toContain('[middle omitted]');
+    expect(entry.content).not.toContain('finished with outcome');
+    expect(entry.content).not.toContain('Duration:');
+    expect(entry.content).not.toContain('Completed at:');
     expect(entry.citationText?.length).toBeLessThanOrEqual(AUTOCODE_MEMORY_RUNTIME_OUTCOME_FIELD_MAX_CHARS);
     expect(entry.citationText).toContain('SUMMARY_TAIL_SHOULD_BE_PRESERVED');
     expect(entryRelatedFiles).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT);

@@ -9,6 +9,7 @@ export interface ScratchpadAnalytics {
   grepPatternCounts: Map<string, number>;
   grepPatternResults: Map<string, boolean[]>;
   errorFingerprints: Map<string, number>;
+  errorFingerprintSamples: Map<string, string>;
   currentStep: number;
   recentToolSequence: string[];
   intraSessionCoAccess: Map<string, Set<string>>;

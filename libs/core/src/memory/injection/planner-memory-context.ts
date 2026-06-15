@@ -13,7 +13,7 @@ import {
   getRenderedVisibleMemories,
   type VisibleMemoryItem,
 } from './visible-memory-items.js';
-import { stripLowValueOutcomeLines } from '../outcome-content.js';
+import { stripLowValueMemoryLines } from '../outcome-content.js';
 
 const MAX_PLANNER_MEMORY_ITEM_CHARS = 240;
 const MAX_PLANNER_MEMORY_ITEM_TOKENS = 80;
@@ -253,7 +253,7 @@ function formatMemoryLine(memory: Memory): VisibleMemoryItem {
 
 function formatMemoryContent(memory: Memory): string {
   return truncateText(
-    memory.content,
+    stripLowValueMemoryLines(memory.content),
     MAX_PLANNER_MEMORY_ITEM_CHARS,
     MAX_PLANNER_MEMORY_ITEM_TOKENS,
   );
@@ -277,7 +277,7 @@ function formatCalibrationMemoryContent(memory: Memory): string {
 
 function formatOutcomeMemoryContent(memory: Memory): string {
   return truncateText(
-    stripLowValueOutcomeLines(memory.content),
+    stripLowValueMemoryLines(memory.content),
     MAX_PLANNER_MEMORY_ITEM_CHARS,
     MAX_PLANNER_MEMORY_ITEM_TOKENS,
   );

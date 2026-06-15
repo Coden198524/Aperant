@@ -10,6 +10,7 @@ describe("low-value memory line filtering", () => {
 		const result = stripLowValueMemoryLines(
 			[
 				"Work unit s1 finished with outcome: success.",
+				"Work unit s1 (Implement auth cache) finished with outcome: success.",
 				"Summary: Auth module narrowed memory lookup before editing.",
 				"npm run typecheck passed.",
 				'Memory search results for "auth": 1. [gotcha] Already shown.',

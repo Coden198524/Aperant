@@ -22,6 +22,7 @@ import { createAzure } from '@ai-sdk/azure';
 import { createOpenAICompatible } from '@ai-sdk/openai-compatible';
 import type { Memory } from '@autocode/core';
 import type { MemoryEmbeddingProvider } from '../../../shared/types/project';
+import { stripLowValueMemoryLines } from './outcome-content';
 
 // ============================================================
 // TYPES
@@ -461,7 +462,10 @@ export class EmbeddingService {
    * Always uses 1024-dim for storage quality.
    */
   async embedMemory(memory: Memory): Promise<number[]> {
-    const contextualText = buildMemoryContextualText(memory);
+    const contextualText = buildMemoryContextualText({
+      ...memory,
+      content: stripLowValueMemoryLines(memory.content),
+    });
     return this.embed(contextualText, 1024);
   }
 
