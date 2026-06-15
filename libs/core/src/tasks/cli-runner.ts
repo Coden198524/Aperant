@@ -3,29 +3,30 @@ import { createRequire } from 'node:module';
 import { join } from 'node:path';
 import { buildAutocodeProjectDocsReferencePrompt } from '../project/project-docs.js';
 import {
+  type AutocodeAgentLanguage,
+  CHANGE_REQUEST_AUDIT_MAX_CHARS,
+  compactChangeRequestJsonlForPrompt,
+  DIRECT_CHANGE_REQUEST_LIMIT,
+} from '../runtime/agent-messages.js';
+import {
+  type AutocodeTaskRuntimeConcurrencyResolved,
+  resolveAutocodeTaskRuntimeConcurrency,
+} from '../runtime/concurrency.js';
+import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
+import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
+import {
+  type AutocodeCli,
+  getAutocodeCliPermissionArgs,
+  resolveAutocodeCliInvocation,
+} from './cli-catalog.js';
+import { loadAutocodeImplementationPlanSync } from './plan-store.js';
+import {
+  type AutocodePlanStatus,
+  type AutocodeTask,
   getAutocodeSpecDir,
   listAutocodeTasks,
   resolveAutocodeTaskDevelopmentMode,
-  type AutocodePlanStatus,
-  type AutocodeTask,
 } from './spec-store.js';
-import { AUTOCODE_TASK_ARTIFACTS } from './artifacts.js';
-import { loadAutocodeImplementationPlanSync } from './plan-store.js';
-import {
-  getAutocodeCliPermissionArgs,
-  resolveAutocodeCliInvocation,
-  type AutocodeCli,
-} from './cli-catalog.js';
-import {
-  CHANGE_REQUEST_AUDIT_MAX_CHARS,
-  DIRECT_CHANGE_REQUEST_LIMIT,
-  compactChangeRequestJsonlForPrompt,
-  type AutocodeAgentLanguage,
-} from '../runtime/agent-messages.js';
-import {
-  resolveAutocodeTaskRuntimeConcurrency,
-  type AutocodeTaskRuntimeConcurrencyResolved,
-} from '../runtime/concurrency.js';
 
 export type AutocodeTaskRunPhase = 'direct' | 'spec' | 'planning' | 'coding';
 
@@ -523,37 +524,43 @@ function limitTaskRunPromptText(value: string, maxLength: number, suffix: string
   if (maxLength <= 0) {
     return '';
   }
-  if (value.length <= maxLength) {
-    return value;
+  const compact = compactTaskRunPromptSourceText(value);
+  if (compact.length <= maxLength) {
+    return compact;
   }
   const budget = Math.max(0, maxLength - suffix.length);
   if (budget <= 0) {
-    return value.slice(0, maxLength);
+    return compact.slice(0, maxLength);
   }
   const headBudget = Math.ceil(budget * 0.65);
   const tailBudget = Math.max(0, budget - headBudget);
-  return `${value.slice(0, headBudget).trimEnd()}${suffix}${value.slice(-tailBudget).trimStart()}`;
+  return `${compact.slice(0, headBudget).trimEnd()}${suffix}${compact.slice(-tailBudget).trimStart()}`;
 }
 
 function compactTaskRunTaskDescription(value: string): string {
-  const normalized = String(value ?? '')
-    .replace(/\r\n/g, '\n')
-    .replace(/\r/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
-    .replace(/\n{4,}/g, '\n\n\n')
-    .trim();
-  if (normalized.length <= AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS) {
-    return normalized;
+  const compact = compactTaskRunPromptSourceText(value);
+  if (compact.length <= AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS) {
+    return compact;
   }
 
   const budget = Math.max(0, AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS - CLI_TASK_DESCRIPTION_COMPACTION_NOTICE.length);
   const headBudget = Math.ceil(budget * 0.65);
   const tailBudget = Math.max(0, budget - headBudget);
   return [
-    normalized.slice(0, headBudget).trimEnd(),
+    compact.slice(0, headBudget).trimEnd(),
     CLI_TASK_DESCRIPTION_COMPACTION_NOTICE,
-    normalized.slice(-tailBudget).trimStart(),
+    compact.slice(-tailBudget).trimStart(),
   ].join('');
+}
+
+function compactTaskRunPromptSourceText(value: string): string {
+  const normalized = String(value ?? '')
+    .replace(/\r\n/g, '\n')
+    .replace(/\r/g, '\n')
+    .replace(/[ \t]+\n/g, '\n')
+    .replace(/\n{4,}/g, '\n\n\n')
+    .trim();
+  return foldRepeatedAutocodePromptLines(normalized).trim();
 }
 
 function buildTaskRunLanguageInstruction(language: AutocodeAgentLanguage): string {
@@ -2675,7 +2682,8 @@ function hasDenseInjectedFullStopDamage(text) {
 function countInjectedFullStopSeparators(text) {
   let count = 0;
   for (let index = 0; index < text.length - 1; index += 1) {
-    if (text[index] === '。' && !/\s|。/.test(text[index + 1] || '')) {
+    const next = text[index + 1] || '';
+    if (text[index] === '。' && next !== '。' && next.trim() !== '') {
       count += 1;
     }
   }
@@ -2683,7 +2691,7 @@ function countInjectedFullStopSeparators(text) {
 }
 
 function normalizeLossyMojibakePunctuation(text) {
-  return text.replace(/\uFFFD\?/g, '。');
+  return text.replace(/\uFFFD[?]/g, '。');
 }
 
 function loadIconvLite() {

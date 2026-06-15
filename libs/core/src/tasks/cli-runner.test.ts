@@ -84,6 +84,40 @@ describe('Autocode CLI runner prompt', () => {
     expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
   });
 
+  it('folds repeated human feedback lines before generating run prompts', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '002-human-repeat',
+      title: 'Fold repeated human input',
+      description: 'Keep latest human feedback concise before invoking the CLI.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '002-human-repeat' });
+    const repeatedLine = 'REPEATED_CLI_HUMAN_FEEDBACK: renderer emitted the same warning without new evidence.';
+    const humanInput = [
+      'Human feedback head: preserve the newest product constraint.',
+      ...Array.from({ length: 160 }, () => repeatedLine),
+      'Human feedback tail: do not run release packaging checks.',
+    ].join('\n');
+
+    writeFileSync(join(specDir, 'HUMAN_INPUT.md'), humanInput, 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '002-human-repeat',
+      cli: 'codex',
+      phase: 'direct',
+    });
+
+    expect(plan.prompt).toContain('Human feedback head: preserve the newest product constraint.');
+    expect(plan.prompt).toContain('159 repeated line(s) omitted for prompt budget');
+    expect(plan.prompt).toContain('Human feedback tail: do not run release packaging checks.');
+    expect((plan.prompt.match(/REPEATED_CLI_HUMAN_FEEDBACK/g) ?? [])).toHaveLength(1);
+    expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
+  });
+
   it('compacts oversized task descriptions in prompts and runner scripts', () => {
     const longDescription = [
       'Opening CLI task rule: preserve structured configuration as JSON.',
@@ -124,11 +158,47 @@ describe('Autocode CLI runner prompt', () => {
     expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
   });
 
+  it('folds repeated task description lines before writing prompts and runner scripts', () => {
+    const repeatedLine = 'REPEATED_CLI_TASK_DESCRIPTION: same diagnostic pasted without new requirements.';
+    const repeatedDescription = [
+      'Opening CLI task description: optimize model context before validation.',
+      ...Array.from({ length: 160 }, () => repeatedLine),
+      'Closing CLI task description: keep functional work ahead of release checks.',
+    ].join('\n');
+
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '003-task-repeat',
+      title: 'Fold repeated task description',
+      description: repeatedDescription,
+      metadata: { developmentMode: 'direct' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '003-task-repeat',
+      cli: 'codex',
+      phase: 'direct',
+    });
+    const runner = readFileSync(plan.runnerFilePath, 'utf8');
+
+    expect(plan.prompt).toContain('Opening CLI task description: optimize model context before validation.');
+    expect(plan.prompt).toContain('159 repeated line(s) omitted for prompt budget');
+    expect(plan.prompt).toContain('Closing CLI task description: keep functional work ahead of release checks.');
+    expect(plan.prompt).not.toContain('task description middle omitted for prompt budget');
+    expect((plan.prompt.match(/REPEATED_CLI_TASK_DESCRIPTION/g) ?? [])).toHaveLength(1);
+    expect(runner).toContain('159 repeated line(s) omitted for prompt budget');
+    expect((runner.match(/REPEATED_CLI_TASK_DESCRIPTION/g) ?? [])).toHaveLength(1);
+    expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
+  });
+
   it('generates a runner script with bounded memory context injection', () => {
     createAutocodeTask({
       projectRoot,
       dataDirName,
-      specId: '003-task',
+      specId: '004-task',
       title: 'Bound memory context',
       description: 'Keep memory useful while avoiding repeated large prompt injections.',
       metadata: { developmentMode: 'direct' },
@@ -137,7 +207,7 @@ describe('Autocode CLI runner prompt', () => {
     const plan = createAutocodeTaskRunPlan({
       projectRoot,
       dataDirName,
-      taskId: '003-task',
+      taskId: '004-task',
       cli: 'codex',
       phase: 'direct',
     });
@@ -169,7 +239,7 @@ describe('Autocode CLI runner prompt', () => {
     createAutocodeTask({
       projectRoot,
       dataDirName,
-      specId: '004-task',
+      specId: '005-task',
       title: 'Bound validation retry prompt',
       description: 'Avoid reinjecting the full original prompt when artifact validation asks for a retry.',
       metadata: { developmentMode: 'standard' },
@@ -178,7 +248,7 @@ describe('Autocode CLI runner prompt', () => {
     const plan = createAutocodeTaskRunPlan({
       projectRoot,
       dataDirName,
-      taskId: '004-task',
+      taskId: '005-task',
       cli: 'codex',
       phase: 'planning',
     });
