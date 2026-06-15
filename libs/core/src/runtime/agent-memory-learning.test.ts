@@ -211,6 +211,46 @@ describe("agent memory learning compaction", () => {
 		);
 	});
 
+	it("deduplicates equivalent learned key decisions before storing success patterns", () => {
+		const knowledge = createAutocodeExtractedKnowledge({
+			subtask: {
+				id: "1.5-decisions",
+				description: "Update auth retry decisions",
+			},
+			sessionResult: makeSessionResult({
+				messages: [
+					{
+						role: "assistant",
+						content:
+							"We decided to keep auth retry state in the session store.",
+					},
+					{
+						role: "assistant",
+						content:
+							"WE DECIDED   TO keep auth retry state in the session store.",
+					},
+					{
+						role: "assistant",
+						content:
+							"Approach: refresh renderer listeners after token state settles.",
+					},
+					{
+						role: "assistant",
+						content:
+							"approach:   refresh renderer listeners after token state settles.",
+					},
+				],
+			}),
+			sessionId: "session-dedupe-decisions",
+			timestamp: "2026-06-14T00:00:00.000Z",
+		});
+
+		expect(knowledge.successPatterns?.[0]?.keyDecisions).toEqual([
+			"We decided to keep auth retry state in the session store.",
+			"Approach: refresh renderer listeners after token state settles.",
+		]);
+	});
+
 	it("keeps repeated exploration tools from crowding effective tool memories", () => {
 		expect(
 			identifyAutocodeEffectiveTools([

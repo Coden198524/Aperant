@@ -456,6 +456,20 @@ export function extractAutocodeKeyDecisions(
 	messages: readonly AutocodeSessionMessage[],
 ): string[] {
 	const decisions: string[] = [];
+	const seenDecisionKeys = new Set<string>();
+	const addDecision = (decision: string): void => {
+		const compact = limitAutocodeLearningText(
+			decision,
+			AUTOCODE_MEMORY_DECISION_MAX_CHARS,
+		);
+		const key = normalizeAutocodeLearningTextKey(compact);
+		if (!compact || seenDecisionKeys.has(key)) {
+			return;
+		}
+
+		seenDecisionKeys.add(key);
+		decisions.push(compact);
+	};
 
 	for (const message of messages) {
 		if (message.role !== "assistant" || typeof message.content !== "string") {
@@ -471,12 +485,7 @@ export function extractAutocodeKeyDecisions(
 				return partLower.includes("decided") || partLower.includes("chose");
 			});
 			if (sentence) {
-				decisions.push(
-					limitAutocodeLearningText(
-						sentence,
-						AUTOCODE_MEMORY_DECISION_MAX_CHARS,
-					),
-				);
+				addDecision(sentence);
 			}
 		}
 
@@ -488,14 +497,12 @@ export function extractAutocodeKeyDecisions(
 				);
 			});
 			if (line) {
-				decisions.push(
-					limitAutocodeLearningText(line, AUTOCODE_MEMORY_DECISION_MAX_CHARS),
-				);
+				addDecision(line);
 			}
 		}
 	}
 
-	return Array.from(new Set(decisions)).slice(0, AUTOCODE_MEMORY_LIST_LIMIT);
+	return decisions.slice(0, AUTOCODE_MEMORY_LIST_LIMIT);
 }
 
 export function identifyAutocodeEffectiveTools(
