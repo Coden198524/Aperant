@@ -401,7 +401,9 @@ export class Scratchpad {
         case 'Read':
         case 'Edit':
         case 'Write':
-          return getScratchpadRecordString(args, 'file_path') ?? null;
+          return getScratchpadRecordString(args, 'file_path') ??
+            getScratchpadRecordString(args, 'path') ??
+            null;
         case 'Glob':
           return null; // Glob returns multiple files.
         case 'Grep':

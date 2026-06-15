@@ -263,8 +263,9 @@ export class MemoryObserver {
     this.scratchpad.recordToolCall(toolName, args, stepNumber);
 
     // Track file edits
-    if ((toolName === 'Edit' || toolName === 'Write') && typeof args.file_path === 'string') {
-      this.scratchpad.recordFileEdit(args.file_path);
+    const editedFilePath = getObserverEditedFilePath(toolName, args);
+    if (editedFilePath) {
+      this.scratchpad.recordFileEdit(editedFilePath);
     }
   }
 
@@ -533,6 +534,15 @@ export class MemoryObserver {
     // Deferred to PromotionPipeline which has access to the provider factory.
     return [];
   }
+}
+
+function getObserverEditedFilePath(toolName: string, args: Record<string, unknown>): string | undefined {
+  if (toolName !== 'Edit' && toolName !== 'Write') {
+    return undefined;
+  }
+
+  const filePath = args.file_path ?? args.path;
+  return typeof filePath === 'string' ? filePath : undefined;
 }
 
 function formatObserverErrorRetrySample(sample: string | undefined): string {
