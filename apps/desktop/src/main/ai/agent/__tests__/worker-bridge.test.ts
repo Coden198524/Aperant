@@ -482,6 +482,56 @@ describe('WorkerBridge', () => {
       expect(memory.workUnitRef?.label).toContain('WORK_UNIT_LABEL_TAIL');
     });
 
+    it('strips low-value memory search response content before posting to the worker', async () => {
+      mockMemoryServiceSearch.mockResolvedValueOnce([
+        makeMemory({
+          id: 'useful-memory',
+          type: 'gotcha',
+          content: [
+            'npm run typecheck passed.',
+            'Prefer stable worker memory IPC request IDs when retrying searches.',
+            'No issues found.',
+            'Completed at: 2026-06-15T12:00:00.000Z',
+          ].join('\n'),
+        }),
+        makeMemory({
+          id: 'cost-memory',
+          type: 'context_cost',
+          content: [
+            'High token usage per step: 24k tokens.',
+            'Context token spike came from repeatedly sending full search results.',
+          ].join('\n'),
+        }),
+      ]);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-strip-noise',
+        filters: { query: 'worker memory ipc', projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-strip-noise',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-strip-noise',
+      )?.[0] as { memories: Memory[] };
+
+      expect(response.memories[0].content).toBe(
+        'Prefer stable worker memory IPC request IDs when retrying searches.',
+      );
+      expect(response.memories[0].content).not.toContain('typecheck passed');
+      expect(response.memories[0].content).not.toContain('No issues found');
+      expect(response.memories[0].content).not.toContain('Completed at');
+      expect(response.memories[1].content).toContain('High token usage per step');
+      expect(response.memories[1].content).toContain('24k tokens');
+    });
+
     it('deduplicates case and whitespace variants in memory search metadata before IPC', async () => {
       mockMemoryServiceSearch.mockResolvedValueOnce([
         makeMemory({

@@ -33,6 +33,7 @@ import type { SessionResult } from '../session/types';
 import { ProgressTracker } from '../session/progress-tracker';
 import { MemoryObserver } from '../memory/observer';
 import { StepInjectionDecider } from '../memory/injection';
+import { stripLowValueMemoryLines } from '../memory/outcome-content';
 import type { Memory, MemoryIpcRequest, MemoryCandidate, SessionOutcome, SessionType } from '../memory/types';
 import type { MemoryToolIpcRequest, MemoryIpcMessage } from '../memory/ipc/worker-observer-proxy';
 import { estimateTokens } from '../memory/retrieval/context-packer';
@@ -783,7 +784,7 @@ function compactMemorySearchResponseMemory(memory: Memory): Memory {
   return {
     ...memory,
     content: compactMemorySearchResponseText(
-      memory.content,
+      formatMemorySearchResponseContentForIpc(memory),
       MEMORY_SEARCH_RESPONSE_CONTENT_MAX_CHARS,
       MEMORY_SEARCH_RESPONSE_CONTENT_MAX_TOKENS,
     ),
@@ -846,6 +847,12 @@ function compactMemorySearchResponseMemory(memory: Memory): Memory {
       : undefined,
     relations: compactMemorySearchResponseRelations(memory.relations),
   };
+}
+
+function formatMemorySearchResponseContentForIpc(memory: Memory): string {
+  return memory.type === 'context_cost'
+    ? memory.content
+    : stripLowValueMemoryLines(memory.content);
 }
 
 function mergeDuplicateMemorySearchResponseMemory(primary: Memory, secondary: Memory): Memory {

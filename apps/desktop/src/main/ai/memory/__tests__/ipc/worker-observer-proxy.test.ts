@@ -427,6 +427,56 @@ describe('WorkerObserverProxy', () => {
       expect(id).toBe('new-mem-123');
     });
 
+    it('strips low-value record memory content before posting IPC requests', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:stored',
+        requestId,
+        id: 'new-mem-useful',
+      }));
+
+      await proxy.recordMemory({
+        type: 'gotcha',
+        content: [
+          'npm run typecheck passed.',
+          'Strip status-only lines before proxying worker memory writes.',
+          'No issues found.',
+          'Completed at: 2026-06-15T12:00:00.000Z',
+        ].join('\n'),
+        projectId: 'proj-1',
+      });
+
+      let sentMsg = mockPort.sentMessages[0] as {
+        entry: { content: string };
+      };
+      expect(sentMsg.entry.content).toBe(
+        'Strip status-only lines before proxying worker memory writes.',
+      );
+      expect(sentMsg.entry.content).not.toContain('typecheck passed');
+      expect(sentMsg.entry.content).not.toContain('No issues found');
+      expect(sentMsg.entry.content).not.toContain('Completed at');
+
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:stored',
+        requestId,
+        id: 'new-mem-cost',
+      }));
+
+      await proxy.recordMemory({
+        type: 'context_cost',
+        content: [
+          'High token usage per step: 24k tokens.',
+          'Context token spike came from large memory IPC payloads.',
+        ].join('\n'),
+        projectId: 'proj-1',
+      });
+
+      sentMsg = mockPort.sentMessages[1] as {
+        entry: { content: string };
+      };
+      expect(sentMsg.entry.content).toContain('High token usage per step');
+      expect(sentMsg.entry.content).toContain('24k tokens');
+    });
+
     it('compacts verbose memory entries before posting record IPC requests', async () => {
       setupResponseMock(mockPort, (requestId) => ({
         type: 'memory:stored',

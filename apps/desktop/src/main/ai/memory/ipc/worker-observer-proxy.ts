@@ -23,6 +23,7 @@ import {
   type MemorySearchFilters,
 } from '@autocode/core';
 import type { RecentToolCallContext, StepInjection } from '../injection/step-injection-decider';
+import { stripLowValueMemoryLines } from '../outcome-content';
 import { estimateTokens } from '../retrieval/context-packer';
 
 const IPC_TIMEOUT_MS = 3_000;
@@ -251,7 +252,7 @@ function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordE
   return {
     ...entry,
     content: compactMemoryIpcText(
-      entry.content,
+      formatMemoryRecordContentForIpc(entry),
       MEMORY_RECORD_IPC_CONTENT_MAX_CHARS,
       MEMORY_RECORD_IPC_CONTENT_MAX_TOKENS,
       MEMORY_RECORD_IPC_OMISSION_MARKER,
@@ -296,6 +297,12 @@ function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordE
     ),
     workUnitRef: compactMemoryWorkUnitRefForIpc(entry.workUnitRef),
   };
+}
+
+function formatMemoryRecordContentForIpc(entry: MemoryRecordEntry): string {
+  return entry.type === 'context_cost'
+    ? entry.content
+    : stripLowValueMemoryLines(entry.content);
 }
 
 function compactMemoryWorkUnitRefForIpc(
