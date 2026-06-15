@@ -8,6 +8,7 @@
  *   - Citation chips: [^ Memory: citationText]
  */
 
+import { foldRepeatedAutocodePromptLines } from '../../runtime/prompt-context.js';
 import {
   stripLowValueContextCostMemoryLines,
   stripLowValueMemoryLines,
@@ -517,7 +518,8 @@ function formatMemoryWithinTokenBudget(
 }
 
 function truncateText(text: string, maxChars: number): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
+  const folded = foldRepeatedAutocodePromptLines(text);
+  const compact = folded.replace(/\s+/g, ' ').trim();
   if (compact.length <= maxChars) {
     return compact;
   }
@@ -840,9 +842,10 @@ function normalizePromptMemories(memories: Memory[]): Memory[] {
 
 function normalizePromptMemory(memory: Memory): Memory | undefined {
   const id = normalizePromptText(memory.id);
-  const rawContent = memory.type === 'context_cost'
+  const cleanedContent = memory.type === 'context_cost'
     ? stripLowValueContextCostMemoryLines(memory.content)
     : stripLowValueMemoryLines(memory.content);
+  const rawContent = foldRepeatedAutocodePromptLines(cleanedContent);
   const content = normalizePromptText(rawContent);
   if (!id || !content) {
     return undefined;

@@ -217,6 +217,31 @@ describe('packContext', () => {
     expect(result.length).toBeLessThan(MAX_PACKED_MEMORY_CONTENT_CHARS + 180);
   });
 
+  it('folds repeated memory content lines before packing prompt context', () => {
+    const repeatedLine = 'REPEATED_MEMORY_LOG: worker retried the same path with no new signal.';
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'repeated-memory-log',
+          content: [
+            'Memory head: keep the useful gotcha visible.',
+            ...Array.from({ length: 140 }, () => repeatedLine),
+            'Memory tail: inspect settings write permissions before broad searches.',
+          ].join('\n'),
+          type: 'gotcha',
+          citationText: undefined,
+          relatedFiles: [],
+        }),
+      ],
+      'implement',
+    );
+
+    expect(result).toContain('Memory head: keep the useful gotcha visible.');
+    expect(result).toContain('Memory tail: inspect settings write permissions before broad searches.');
+    expect(result).toContain('139 repeated line(s) omitted for prompt budget');
+    expect((result.match(/REPEATED_MEMORY_LOG/g) ?? [])).toHaveLength(1);
+  });
+
   it('truncates long citation and file metadata before packing', () => {
     const longCitation = 'citation '.repeat(80);
     const longFile = `src/${'deep/'.repeat(40)}middleware.ts`;
