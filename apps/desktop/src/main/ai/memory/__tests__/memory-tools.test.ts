@@ -1469,6 +1469,44 @@ describe('memory agent tools', () => {
     }));
   });
 
+  it('folds repeated record_memory content before duplicate search and persistence', async () => {
+    const repeatedLine = 'RECORD_MEMORY_REPEAT: retry guard emitted the same stack frame.';
+    const rawContent = [
+      'Keep auth refresh retry guards inside the session manager.',
+      ...Array.from({ length: 6 }, () => repeatedLine),
+      'Verify expired-token retry before notifying renderer listeners.',
+    ].join('\n');
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+      recordMemory: vi.fn().mockResolvedValue('c0ffee12-aaaa-bbbb-cccc-123456789abc'),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+
+    const result = await executeTool<
+      { type: 'gotcha'; content: string },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: rawContent,
+    });
+
+    const foldedContent = [
+      'Keep auth refresh retry guards inside the session manager.',
+      repeatedLine,
+      '[... 5 repeated line(s) omitted for prompt budget ...]',
+      'Verify expired-token retry before notifying renderer listeners.',
+    ].join(' ');
+
+    expect(result).toBe('Memory recorded (c0ffee12).');
+    expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
+      query: foldedContent,
+    }));
+    expect(proxy.recordMemory).toHaveBeenCalledWith(expect.objectContaining({
+      content: foldedContent,
+    }));
+    expect(foldedContent.length).toBeLessThan(rawContent.length);
+  });
+
   it('omits record_memory modules already represented by related files', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([]),

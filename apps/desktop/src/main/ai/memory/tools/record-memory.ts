@@ -8,6 +8,7 @@
 import { tool } from 'ai';
 import { z } from 'zod/v3';
 import type { Tool as AITool } from 'ai';
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory, MemoryType, MemoryRecordEntry } from '../types';
 import { estimateTokens, isMemoryEligibleForPromptContext, MIN_PACKED_MEMORY_CONFIDENCE } from '../retrieval/context-packer';
@@ -117,7 +118,7 @@ export function createRecordMemoryTool(
 }
 
 function normalizeRecordMemoryContent(content: string): string {
-  return content.replace(/\s+/g, ' ').trim();
+  return foldRepeatedAutocodePromptLines(content).replace(/\s+/g, ' ').trim();
 }
 
 async function findDuplicateMemory(
