@@ -9,6 +9,7 @@
  * Gracefully degrades to passthrough if neither provider is available.
  */
 
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 import { estimateTokens } from './context-packer';
 
 const OLLAMA_BASE_URL = 'http://localhost:11434';
@@ -327,10 +328,10 @@ function compactRerankerText(
   maxTokens: number,
   options: { preserveTail?: boolean } = {},
 ): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
   if (maxChars <= 0 || maxTokens <= 0) {
     return '';
   }
+  const compact = foldRepeatedAutocodePromptLines(text).replace(/\s+/g, ' ').trim();
   if (compact.length <= maxChars && estimateTokens(compact) <= maxTokens) {
     return compact;
   }

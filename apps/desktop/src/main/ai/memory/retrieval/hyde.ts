@@ -11,6 +11,7 @@
 
 import { generateText } from 'ai';
 import type { LanguageModel } from 'ai';
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 import type { EmbeddingService } from '../embedding-service';
 import { estimateTokens } from './context-packer';
 
@@ -63,10 +64,10 @@ Focus on code, architecture, or development patterns.`,
 }
 
 function compactHydeText(text: string, maxChars: number, maxTokens: number): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
   if (maxChars <= 0 || maxTokens <= 0) {
     return '';
   }
+  const compact = foldRepeatedAutocodePromptLines(text).replace(/\s+/g, ' ').trim();
   if (compact.length <= maxChars && estimateTokens(compact) <= maxTokens) {
     return compact;
   }

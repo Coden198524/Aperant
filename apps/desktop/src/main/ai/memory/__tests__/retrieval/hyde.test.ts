@@ -1,5 +1,5 @@
 import { generateText } from 'ai';
-import { describe, expect, it, vi } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import type { EmbeddingService } from '../../embedding-service';
 import { estimateTokens } from '../../retrieval/context-packer';
@@ -14,6 +14,10 @@ function makeEmbeddingService(): EmbeddingService {
     embed: vi.fn().mockResolvedValue([0.1, 0.2, 0.3]),
   } as unknown as EmbeddingService;
 }
+
+afterEach(() => {
+  vi.clearAllMocks();
+});
 
 describe('hydeSearch input compaction', () => {
   it('keeps localized HyDE prompts and generated documents within token budgets', async () => {
@@ -50,6 +54,41 @@ describe('hydeSearch input compaction', () => {
     expect(embeddedText).toContain('[middle omitted]');
     expect(embeddedText.length).toBeLessThanOrEqual(900);
     expect(estimateTokens(embeddedText)).toBeLessThanOrEqual(225);
+  });
+
+  it('folds repeated HyDE query and generated document lines before model and embedding calls', async () => {
+    const repeatedQueryLine = 'HYDE_QUERY_REPEAT: same stack frame produced no new search signal.';
+    const repeatedDocumentLine = 'HYDE_DOC_REPEAT: generated fallback repeated the same memory detail.';
+    vi.mocked(generateText).mockResolvedValueOnce({
+      text: [
+        'HYDE_DOC_HEAD',
+        ...Array.from({ length: 120 }, () => repeatedDocumentLine),
+        'HYDE_DOC_TAIL',
+      ].join('\n'),
+    } as Awaited<ReturnType<typeof generateText>>);
+    const embeddingService = makeEmbeddingService();
+
+    await hydeSearch(
+      [
+        'HYDE_QUERY_HEAD',
+        ...Array.from({ length: 120 }, () => repeatedQueryLine),
+        'HYDE_QUERY_TAIL',
+      ].join('\n'),
+      embeddingService,
+      {} as never,
+    );
+
+    const prompt = String(vi.mocked(generateText).mock.calls[0]?.[0].prompt);
+    expect(prompt).toContain('HYDE_QUERY_HEAD');
+    expect(prompt).toContain('HYDE_QUERY_TAIL');
+    expect(prompt).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((prompt.match(/HYDE_QUERY_REPEAT/g) ?? [])).toHaveLength(1);
+
+    const embeddedText = vi.mocked(embeddingService.embed).mock.calls[0]?.[0] as string;
+    expect(embeddedText).toContain('HYDE_DOC_HEAD');
+    expect(embeddedText).toContain('HYDE_DOC_TAIL');
+    expect(embeddedText).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((embeddedText.match(/HYDE_DOC_REPEAT/g) ?? [])).toHaveLength(1);
   });
 
   it('embeds the compacted localized query when generation fails', async () => {

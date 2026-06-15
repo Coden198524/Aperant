@@ -149,6 +149,58 @@ describe('Reranker prompt compaction', () => {
     expect(body.documents[0]).toContain('[middle omitted]');
   });
 
+  it('folds repeated Cohere reranker query and document lines before sending them', async () => {
+    process.env.COHERE_API_KEY = 'test-key';
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ results: [{ index: 0, relevance_score: 0.91 }] }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const reranker = new Reranker('cohere');
+    const repeatedQueryLine =
+      'RERANK_QUERY_REPEAT: same stack frame produced no new ranking signal.';
+    const repeatedDocumentLine =
+      'RERANK_DOC_REPEAT: stored memory repeated the same implementation note.';
+
+    await reranker.rerank(
+      [
+        'RERANK_QUERY_HEAD',
+        ...Array.from({ length: 120 }, () => repeatedQueryLine),
+        'RERANK_QUERY_TAIL',
+      ].join('\n'),
+      [
+        {
+          memoryId: 'repeated',
+          content: [
+            'RERANK_DOC_HEAD',
+            ...Array.from({ length: 120 }, () => repeatedDocumentLine),
+            'RERANK_DOC_TAIL',
+          ].join('\n'),
+        },
+        {
+          memoryId: 'short',
+          content: 'Short comparison document.',
+        },
+      ],
+      1,
+    );
+
+    expect(fetchMock).toHaveBeenCalledOnce();
+    const firstCall = fetchMock.mock.calls[0] as unknown as [unknown, { body?: unknown }];
+    const body = JSON.parse(String(firstCall[1]?.body)) as {
+      query: string;
+      documents: string[];
+    };
+    expect(body.query).toContain('RERANK_QUERY_HEAD');
+    expect(body.query).toContain('RERANK_QUERY_TAIL');
+    expect(body.query).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((body.query.match(/RERANK_QUERY_REPEAT/g) ?? [])).toHaveLength(1);
+    expect(body.documents[0]).toContain('RERANK_DOC_HEAD');
+    expect(body.documents[0]).toContain('RERANK_DOC_TAIL');
+    expect(body.documents[0]).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((body.documents[0].match(/RERANK_DOC_REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('keeps localized Cohere reranker query and documents within token budgets', async () => {
     process.env.COHERE_API_KEY = 'test-key';
     const fetchMock = vi.fn(async () => ({
