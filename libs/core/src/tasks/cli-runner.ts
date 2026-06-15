@@ -642,6 +642,7 @@ const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
 const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
 const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
+const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
 let attemptId = 0;
 let memoryContextBlock = '';
@@ -674,11 +675,11 @@ const CLI_MEMORY_CONTEXT_MAX_CHARS = 1800;
 const CLI_MEMORY_ITEM_MAX_CHARS = 260;
 const CLI_MEMORY_RELATED_FILES_MAX = 3;
 const CLI_MEMORY_FILE_MAX_CHARS = 80;
+const CLI_MEMORY_LOCAL_CONTENT_MAX_CHARS = 600;
 const CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS = 1200;
 const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;
 const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;
 const CLI_MEMORY_STORAGE_FILE_REF_MAX_CHARS = 160;
-const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 const CLI_LOW_VALUE_WHOLE_MEMORY_LINE_PATTERNS = [
   /^(?:Summary:\\s*)?No memory search run\\b/i,
   /^(?:Summary:\\s*)?No relevant (?:[\\w/-]+\\s+)*memories found\\b/i,
@@ -884,12 +885,12 @@ function loadCliLocalSessionMemories(limit) {
       .map(({ filePath }) => {
         const insight = readJson(filePath);
         if (!insight) return null;
+        const content = compactCliLocalSessionMemoryContent(insight);
+        if (!content) return null;
         return {
           id: insight.sessionId || filePath,
           type: 'work_unit_outcome',
-          content: Array.isArray(insight.insights)
-            ? insight.insights.filter(Boolean).join('\\n')
-            : JSON.stringify(insight),
+          content,
           confidence: 0.7,
           relatedFiles: Array.isArray(insight.keyFiles) ? insight.keyFiles : [],
           createdAt: insight.timestamp || new Date().toISOString(),
@@ -899,6 +900,45 @@ function loadCliLocalSessionMemories(limit) {
   } catch {
     return [];
   }
+}
+
+function compactCliLocalSessionMemoryContent(insight) {
+  const parts = buildCliLocalSessionMemoryParts(insight)
+    .map((part) => stripCliLowValueMemoryText(
+      foldRepeatedRunnerPromptLines(cleanLogText(part)),
+    ))
+    .filter(Boolean);
+  return limitLogText(parts.join('\\n'), CLI_MEMORY_LOCAL_CONTENT_MAX_CHARS);
+}
+
+function buildCliLocalSessionMemoryParts(insight) {
+  const parts = [];
+  const successPattern = Array.isArray(insight.successPatterns) ? insight.successPatterns[0] : null;
+  if (successPattern) {
+    parts.push(
+      successPattern.description,
+      successPattern.approach,
+      successPattern.whyItWorked,
+    );
+    if (Array.isArray(successPattern.keyDecisions)) {
+      parts.push(...successPattern.keyDecisions.slice(0, 3));
+    }
+  }
+
+  const failurePattern = Array.isArray(insight.failurePatterns) ? insight.failurePatterns[0] : null;
+  if (failurePattern) {
+    parts.push(
+      failurePattern.rootCause,
+      failurePattern.prevention,
+      failurePattern.attemptedApproach,
+    );
+  }
+
+  if (Array.isArray(insight.insights)) {
+    parts.push(...insight.insights);
+  }
+
+  return parts.filter(Boolean);
 }
 
 async function searchCliMemoryDatabase(query, limit) {

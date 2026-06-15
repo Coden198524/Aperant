@@ -1,3 +1,4 @@
+import { execFileSync } from 'node:child_process';
 import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -216,6 +217,7 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('const CLI_MEMORY_CONTEXT_MAX_CHARS = 1800;');
     expect(runner).toContain('const CLI_MEMORY_ITEM_MAX_CHARS = 260;');
     expect(runner).toContain('const CLI_MEMORY_RELATED_FILES_MAX = 3;');
+    expect(runner).toContain('const CLI_MEMORY_LOCAL_CONTENT_MAX_CHARS = 600;');
     expect(runner).toContain('const CLI_MEMORY_STORAGE_CONTENT_MAX_CHARS = 1200;');
     expect(runner).toContain('const CLI_MEMORY_STORAGE_FIELD_MAX_CHARS = 500;');
     expect(runner).toContain('const CLI_MEMORY_STORAGE_FILE_REF_LIMIT = 12;');
@@ -230,6 +232,12 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).toContain('isCliLowValueWholeMemoryLine(trimmed)');
     expect(runner).toContain('function stripCliLowValueMemoryText(content)');
     expect(runner).toContain('const memoryContent = stripCliLowValueMemoryText(memory.content);');
+    expect(runner).toContain('function compactCliLocalSessionMemoryContent(insight)');
+    expect(runner).toContain('function buildCliLocalSessionMemoryParts(insight)');
+    expect(runner).toContain('foldRepeatedRunnerPromptLines(cleanLogText(part))');
+    expect(runner).toContain('successPattern.keyDecisions.slice(0, 3)');
+    expect(runner).toContain('failurePattern.rootCause');
+    expect(runner).toContain('limitLogText(parts.join');
     expect(runner).toContain('if (included === 0)');
     expect(runner).toContain('limitCliMemoryContext(lines.join');
     expect(runner).toContain('const compactSummary = limitCliMemoryStorageText(summary);');
@@ -237,6 +245,82 @@ describe('Autocode CLI runner prompt', () => {
     expect(runner).not.toContain('limitLogText(memory.content, CLI_MEMORY_ITEM_MAX_CHARS)');
     expect(runner).not.toContain('limitLogText(memory.content, 900)');
     expect(runner).not.toContain('dedupeCliMemories(memories).slice(0, 8)');
+    expect(runner).not.toContain('content: Array.isArray(insight.insights)');
+  });
+
+  it('injects compact local session memories from reusable learned patterns', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '005-local-memory',
+      title: 'Recall local learned decisions',
+      description: 'Use previous local session outcomes without generic token metrics.',
+      metadata: { developmentMode: 'direct' },
+    });
+    const specDir = getAutocodeSpecDir({ projectRoot, dataDirName, specId: '005-local-memory' });
+    const memoryDir = join(specDir, 'memory', 'session_insights');
+    mkdirSync(memoryDir, { recursive: true });
+    const repeatedDecision = 'AUTH_DECISION_REPEAT: same renderer ordering note without new evidence.';
+    writeFileSync(join(memoryDir, 'session_previous.json'), JSON.stringify({
+      sessionId: 'previous-session',
+      timestamp: '2026-06-14T00:00:00.000Z',
+      outcome: 'completed',
+      insights: [
+        'Efficient token usage - concise and focused implementation',
+        'Completed quickly with few steps - good planning',
+      ],
+      keyFiles: ['src/auth/session.ts'],
+      successPatterns: [{
+        description: 'Auth retry state',
+        approach: 'Approach: session store.',
+        whyItWorked: 'Renderer refreshes stayed consistent.',
+        keyDecisions: [
+          [
+            'We decided to refresh the AuthStore before renderer event fan-out.',
+            ...Array.from({ length: 12 }, () => repeatedDecision),
+            'Use the session store as the durable retry boundary.',
+          ].join('\n'),
+        ],
+        effectiveTools: ['Edit', 'Bash'],
+        confidence: 0.8,
+      }],
+    }), 'utf8');
+
+    const fakeCliPath = join(projectRoot, 'fake-cli.cjs');
+    const capturedPromptPath = join(projectRoot, 'captured-prompt.txt');
+    writeFileSync(fakeCliPath, [
+      "const { writeFileSync } = require('node:fs');",
+      "let input = '';",
+      "process.stdin.setEncoding('utf8');",
+      "process.stdin.on('data', (chunk) => { input += chunk; });",
+      "process.stdin.on('end', () => { writeFileSync(process.argv[2], input, 'utf8'); });",
+    ].join('\n'), 'utf8');
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '005-local-memory',
+      cli: 'custom',
+      customCommand: `node "${fakeCliPath.replace(/\\/g, '/')}" "${capturedPromptPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: { ...process.env, GRAPHITI_ENABLED: 'true' },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
+    expect(capturedPrompt).toContain('## Project Memory');
+    expect(capturedPrompt).toContain('We decided to refresh the AuthStore before renderer event fan-out.');
+    expect(capturedPrompt).toContain('AUTH_DECISION_REPEAT');
+    expect(capturedPrompt).toContain('repeated line(s) omitted');
+    expect((capturedPrompt.match(/AUTH_DECISION_REPEAT/g) ?? [])).toHaveLength(1);
+    expect(capturedPrompt).toContain('Files: src/auth/session.ts.');
+    expect(capturedPrompt).not.toContain('Efficient token usage');
+    expect(capturedPrompt).not.toContain('Completed quickly with few steps');
   });
 
   it('generates bounded artifact validation retry prompts', () => {
