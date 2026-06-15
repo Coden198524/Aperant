@@ -1,4 +1,5 @@
 import type { AgentType } from '../config/agent-configs.js';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 export const AUTOCODE_SUBAGENT_MAX_STEPS = 100;
 
@@ -209,10 +210,11 @@ function compactAutocodeSubagentText(
   maxChars: number,
   notice: string,
 ): string {
-  const normalized = String(value ?? '')
+  const normalizedLines = String(value ?? '')
     .replace(/\r\n/g, '\n')
     .replace(/\r/g, '\n')
-    .replace(/[ \t]+\n/g, '\n')
+    .replace(/[ \t]+\n/g, '\n');
+  const normalized = foldRepeatedAutocodePromptLines(normalizedLines)
     .replace(/\n{4,}/g, '\n\n\n')
     .trim();
   if (!normalized || normalized.length <= maxChars) {
