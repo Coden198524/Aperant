@@ -1,3 +1,4 @@
+import { foldRepeatedAutocodePromptLines } from '../../runtime/prompt-context.js';
 import type { Memory } from '../types.js';
 
 export interface VisibleMemoryItem {
@@ -63,5 +64,5 @@ function hasRenderedLineEndBoundary(after: string): boolean {
 }
 
 function normalizeRenderedText(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+  return foldRepeatedAutocodePromptLines(value).replace(/\s+/g, ' ').trim();
 }

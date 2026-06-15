@@ -41,6 +41,34 @@ describe('getRenderedVisibleMemories', () => {
     expect(result).toEqual([memory]);
   });
 
+  it('matches rendered lines that were folded for repeated prompt content', () => {
+    const memory = makeMemory('folded');
+    const repeatedLine =
+      'REPEATED_MEMORY_LINE: watcher emitted the same reconnect warning without new state.';
+    const rawRenderedLine = [
+      '- Investigation note:',
+      ...Array.from({ length: 8 }, () => repeatedLine),
+    ].join('\n');
+
+    const result = getRenderedVisibleMemories(
+      [
+        '=== MEMORY CONTEXT FOR QA ===',
+        '- Investigation note:',
+        repeatedLine,
+        '[... 7 repeated line(s) omitted for prompt budget ...]',
+        '=== END MEMORY CONTEXT ===',
+      ].join('\n'),
+      [
+        {
+          memory,
+          renderedLine: rawRenderedLine,
+        },
+      ],
+    );
+
+    expect(result).toEqual([memory]);
+  });
+
   it('skips memories whose rendered line was only partially retained', () => {
     const visible = makeMemory('visible');
     const partial = makeMemory('partial');
