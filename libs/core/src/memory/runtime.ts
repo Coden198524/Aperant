@@ -1,3 +1,4 @@
+import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import { selectMemoryContextItems } from './injection/context-selection.js';
 import { stripLowValueMemoryLines } from './outcome-content.js';
 import {
@@ -625,7 +626,7 @@ function flattenAutocodeMemoryRuntimeDiagnosticValue(value: unknown): string {
 export function compactAutocodeMemoryRuntimeReasoningText(
   text: string,
 ): string {
-  const cleaned = stripLowValueMemoryLines(text).replace(/\s+/g, ' ').trim();
+  const cleaned = stripLowValueMemoryLines(text);
   if (!cleaned) {
     return '';
   }
@@ -750,7 +751,7 @@ function truncateAutocodeMemoryRuntimeText(
     stripLowValueLines?: boolean;
   } = {},
 ): string {
-  const compact = text.replace(/\s+/g, ' ').trim();
+  const compact = foldRepeatedAutocodePromptLines(text).replace(/\s+/g, ' ').trim();
   if (maxChars <= 0) {
     return '';
   }
@@ -1478,7 +1479,7 @@ function truncateAutocodeMemoryRuntimeTextToTokenBudget(
     return initial;
   }
 
-  const compact = text.replace(/\s+/g, ' ').trim();
+  const compact = foldRepeatedAutocodePromptLines(text).replace(/\s+/g, ' ').trim();
   let best = '';
   let low = 1;
   let high = Math.min(maxChars, compact.length);

@@ -579,6 +579,22 @@ describe('Autocode memory runtime context formatting', () => {
     expect(compactText).toContain('FINAL_EXIT_CODE_1_SHOULD_BE_PRESERVED');
   });
 
+  it('folds repeated tool result lines before runtime memory observation', () => {
+    const repeatedLine = 'RUNTIME_TOOL_REPEAT: same log line repeated without new diagnostic signal.';
+    const compact = compactAutocodeMemoryRuntimeToolResult([
+      'RUNTIME_TOOL_HEAD',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      'RUNTIME_TOOL_TAIL',
+    ].join('\n'));
+    const compactText = String(compact);
+
+    expect(compactText.length).toBeLessThan(600);
+    expect(compactText).toContain('RUNTIME_TOOL_HEAD');
+    expect(compactText).toContain('RUNTIME_TOOL_TAIL');
+    expect(compactText).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((compactText.match(/RUNTIME_TOOL_REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('strips low-value tool result text before runtime memory observation', () => {
     const compactText = compactAutocodeMemoryRuntimeToolResult([
       'npm run typecheck passed.',
@@ -740,6 +756,21 @@ describe('Autocode memory runtime context formatting', () => {
     expect(reasoning.length).toBeLessThanOrEqual(900);
     expect(reasoning).toContain('Correction: this file is generated');
     expect(reasoning).toContain('FINAL_REASONING_TAIL');
+  });
+
+  it('folds repeated reasoning lines before runtime memory observation', () => {
+    const repeatedLine = 'RUNTIME_REASON_REPEAT: same reasoning note repeated without new signal.';
+    const reasoning = compactAutocodeMemoryRuntimeReasoningText([
+      'RUNTIME_REASON_HEAD',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      'RUNTIME_REASON_TAIL',
+    ].join('\n'));
+
+    expect(reasoning.length).toBeLessThan(600);
+    expect(reasoning).toContain('RUNTIME_REASON_HEAD');
+    expect(reasoning).toContain('RUNTIME_REASON_TAIL');
+    expect(reasoning).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((reasoning.match(/RUNTIME_REASON_REPEAT/g) ?? [])).toHaveLength(1);
   });
 
   it('drops low-value reasoning observations before runtime memory use', () => {
