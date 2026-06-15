@@ -78,6 +78,15 @@ describe('pre-implementation checklist formatting', () => {
     const memoryService = {
       search: vi.fn().mockResolvedValue([
         makeMemory({ id: 'good', content: 'Trusted historical failure should remain.' }),
+        makeMemory({
+          id: 'noisy',
+          content: [
+            'npm run typecheck passed.',
+            'Mock the OAuth clock before testing refresh retries.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+        }),
         makeMemory({ id: 'low', content: 'Low confidence failure should be hidden.', confidence: 0.2 }),
         makeMemory({ id: 'review', content: 'Pending review failure should be hidden.', needsReview: true }),
         makeMemory({
@@ -115,10 +124,15 @@ describe('pre-implementation checklist formatting', () => {
       recordAccess: false,
     }));
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('good');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('noisy');
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('verified');
     expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('low');
     expect(issues).toContain('Trusted historical failure should remain.');
+    expect(issues).toContain('Mock the OAuth clock before testing refresh retries.');
     expect(issues).toContain('Verified low confidence failure should remain.');
+    expect(issues).not.toContain('npm run typecheck passed');
+    expect(issues).not.toContain('No issues found');
+    expect(issues).not.toContain('Completed at:');
     expect(issues).not.toContain('Low confidence failure should be hidden.');
     expect(issues).not.toContain('Pending review failure should be hidden.');
     expect(issues).not.toContain('Stale failure should be hidden.');

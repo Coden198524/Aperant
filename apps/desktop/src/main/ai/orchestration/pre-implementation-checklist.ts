@@ -22,6 +22,7 @@ import {
   formatAutocodeCompactChecklistForPrompt,
 } from '@autocode/core/runtime/agent-quality-guidance';
 import {
+  formatMemoryContentForPrompt,
   isMemoryEligibleForPromptContext,
 } from '../memory/retrieval/context-packer';
 import { recordSelectedMemoryAccess } from '@autocode/core/memory/injection';
@@ -178,13 +179,16 @@ async function analyzeHistoricalFailures(
       .slice(0, PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX);
     await recordSelectedMemoryAccess(memoryService, selectedFailures);
 
-    return selectedFailures.map((failure) => ({
+    return selectedFailures.map((failure) => {
+      const content = formatMemoryContentForPrompt(failure, Number.MAX_SAFE_INTEGER);
+      return {
         category: 'historical_failure' as const,
         priority: 'high' as const,
-        issue: limitChecklistText(failure.content, PRE_IMPLEMENTATION_CHECKLIST_TEXT_MAX_CHARS),
+        issue: limitChecklistText(content, PRE_IMPLEMENTATION_CHECKLIST_TEXT_MAX_CHARS),
         prevention: `Review similar past failures and avoid the same mistakes`,
         likelihood: failure.confidence,
-      }));
+      };
+    });
   } catch (error) {
     console.error('Failed to retrieve historical failures:', error);
     return [];

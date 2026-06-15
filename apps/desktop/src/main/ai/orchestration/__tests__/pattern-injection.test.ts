@@ -36,6 +36,16 @@ describe('pattern injection memory success cases', () => {
     const memoryService = {
       search: vi.fn().mockResolvedValue([
         makeMemory({ id: 'good', content: 'Trusted success pattern should remain.' }),
+        makeMemory({
+          id: 'noisy',
+          content: [
+            'npm run typecheck passed.',
+            'Mock the OAuth clock before testing refresh retries.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          tags: ['subtask:1.9'],
+        }),
         makeMemory({ id: 'low', content: 'Low confidence pattern should be hidden.', confidence: 0.2 }),
         makeMemory({ id: 'review', content: 'Pending review pattern should be hidden.', needsReview: true }),
         makeMemory({
@@ -72,14 +82,19 @@ describe('pattern injection memory success cases', () => {
       types: ['pattern'],
     }));
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('good');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('noisy');
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('verified');
     expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('low');
     expect(result.enhancedPrompt).toContain('Trusted success pattern should remain.');
+    expect(result.enhancedPrompt).toContain('Mock the OAuth clock before testing refresh retries.');
     expect(result.enhancedPrompt).toContain('Verified low confidence pattern should remain.');
+    expect(result.enhancedPrompt).not.toContain('npm run typecheck passed');
+    expect(result.enhancedPrompt).not.toContain('No issues found');
+    expect(result.enhancedPrompt).not.toContain('Completed at:');
     expect(result.enhancedPrompt).not.toContain('Low confidence pattern should be hidden.');
     expect(result.enhancedPrompt).not.toContain('Pending review pattern should be hidden.');
     expect(result.enhancedPrompt).not.toContain('Stale pattern should be hidden.');
-    expect(result.successCases).toHaveLength(2);
+    expect(result.successCases).toHaveLength(3);
   });
 
   it('compacts long success case memories before injecting them into the prompt', async () => {
