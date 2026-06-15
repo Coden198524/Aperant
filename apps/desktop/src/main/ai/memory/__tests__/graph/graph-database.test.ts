@@ -18,6 +18,30 @@ beforeEach(async () => {
   graphDb = new GraphDatabase(db);
 });
 
+async function insertMemory(
+  id: string,
+  relatedFiles: string[],
+  content = `Memory ${id}`,
+): Promise<void> {
+  const now = new Date().toISOString();
+  await db.execute({
+    sql: `INSERT INTO memories
+      (id, type, content, confidence, tags, related_files, related_modules,
+       created_at, last_accessed_at, access_count, scope, source, session_id,
+       provenance_session_ids, project_id)
+      VALUES (?, 'gotcha', ?, 0.9, '[]', ?, '[]', ?, ?, 0, 'module',
+       'agent_explicit', 'session-1', '[]', ?)`,
+    args: [
+      id,
+      content,
+      JSON.stringify(relatedFiles),
+      now,
+      now,
+      PROJECT_ID,
+    ],
+  });
+}
+
 // ============================================================
 // NODE OPERATIONS
 // ============================================================
@@ -606,5 +630,68 @@ describe('GraphDatabase - Impact Analysis', () => {
     expect(result.directDependents).toHaveLength(1);
     expect(result.directDependents[0].label).toBe('src/middleware.ts:authMiddleware');
     expect(result.directDependents[0].edgeType).toBe('calls');
+  });
+
+  it('finds affected memories by exact JSON file matches across all impacted files', async () => {
+    const fnNode = await graphDb.upsertNode({
+      projectId: PROJECT_ID,
+      type: 'function',
+      label: 'src/auth.ts:verifyJwt',
+      filePath: 'src/auth.ts',
+      language: 'typescript',
+      startLine: 10,
+      endLine: 30,
+      layer: 1,
+      source: 'ast',
+      confidence: 'inferred',
+      metadata: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      associatedMemoryIds: [],
+    });
+
+    const callerNode = await graphDb.upsertNode({
+      projectId: PROJECT_ID,
+      type: 'function',
+      label: 'src/middleware.ts:authMiddleware',
+      filePath: 'src/middleware.ts',
+      language: 'typescript',
+      startLine: 1,
+      endLine: 20,
+      layer: 1,
+      source: 'ast',
+      confidence: 'inferred',
+      metadata: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+      associatedMemoryIds: [],
+    });
+
+    await graphDb.upsertEdge({
+      projectId: PROJECT_ID,
+      fromId: callerNode,
+      toId: fnNode,
+      type: 'calls',
+      layer: 1,
+      weight: 1.0,
+      source: 'ast',
+      confidence: 1.0,
+      metadata: {},
+      createdAt: Date.now(),
+      updatedAt: Date.now(),
+    });
+
+    await insertMemory('target-memory', ['src/auth.ts'], 'Auth memory');
+    await insertMemory('dependent-memory', ['src/middleware.ts'], 'Middleware memory');
+    await insertMemory('substring-memory', ['src/auth.tsx'], 'Wrong extension memory');
+
+    const result = await graphDb.analyzeImpact('src/auth.ts:verifyJwt', PROJECT_ID, 3);
+    const memoryIds = result.affectedMemories.map((memory) => memory.memoryId);
+
+    expect(memoryIds).toEqual(expect.arrayContaining([
+      'target-memory',
+      'dependent-memory',
+    ]));
+    expect(memoryIds).not.toContain('substring-memory');
   });
 });

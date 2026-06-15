@@ -669,19 +669,21 @@ export class GraphDatabase {
     if (filePaths.length > 0) {
       const placeholders = filePaths.map(() => '?').join(',');
       const memoriesResult = await this.db.execute({
-        sql: `SELECT id, type, content FROM memories
-              WHERE project_id = ?
-                AND deprecated = 0
-                AND related_files LIKE ?
+        sql: `SELECT DISTINCT m.id, m.type, m.content FROM memories m
+              WHERE m.project_id = ?
+                AND m.deprecated = 0
+                AND EXISTS (
+                  SELECT 1 FROM json_each(m.related_files) je
+                  WHERE je.value IN (${placeholders})
+                )
               LIMIT 10`,
-        args: [projectId, `%${filePaths[0]}%`],
+        args: [projectId, ...filePaths],
       }).catch(() => ({ rows: [] }));
 
       affectedMemories = memoriesResult.rows.map(row => {
         const r = row as unknown as { id: string; type: string; content: string };
         return { memoryId: r.id, type: r.type, content: r.content.slice(0, 200) };
       });
-      void placeholders; // Used for type checking
     }
 
     return {

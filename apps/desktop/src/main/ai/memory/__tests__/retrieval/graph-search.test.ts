@@ -71,20 +71,21 @@ describe('searchGraph', () => {
 
     const statements = execute.mock.calls.map(([statement]) => statement as { sql: string; args: unknown[] });
     const coAccessCall = statements.find((statement) => statement.sql.includes('observer_co_access_edges'));
-    const coAccessMemoryCall = statements.find((statement) => statement.sql.includes('related_files LIKE'));
+    const coAccessMemoryCall = statements.find((statement) => statement.sql.includes('je.value = ?'));
     const closureCall = statements.find((statement) => statement.sql.includes('graph_closure'));
     const closureMemoryCall = statements.find((statement) => statement.sql.includes('target_node_id = ?'));
 
     expect(coAccessCall?.args.at(-1)).toBe(2);
-    expect(coAccessMemoryCall?.args).toEqual(['proj-a', '%src/session.ts%', 2]);
+    expect(coAccessMemoryCall?.args).toEqual(['proj-a', 'src/session.ts', 2]);
     expect(coAccessMemoryCall?.args.at(-1)).toBe(2);
+    expect(coAccessMemoryCall?.sql).not.toContain('related_files LIKE');
     expect(closureCall?.args.at(-1)).toBe(2);
     expect(closureMemoryCall?.args.at(-1)).toBe(2);
   });
 
   it('filters invalid graph rows before returning candidates', async () => {
     const execute = vi.fn(async (statement: { sql: string }) => {
-      if (statement.sql.includes('json_each(m.related_files)')) {
+      if (statement.sql.includes('je.value IN')) {
         return { rows: [{ id: ' file-memory ' }, { id: '' }, { id: 42 }] };
       }
       if (statement.sql.includes('observer_co_access_edges')) {
@@ -96,7 +97,7 @@ describe('searchGraph', () => {
           ],
         };
       }
-      if (statement.sql.includes('related_files LIKE')) {
+      if (statement.sql.includes('je.value = ?')) {
         return { rows: [{ id: ' co-memory ' }, { id: '' }] };
       }
       if (statement.sql.includes('graph_closure')) {
@@ -116,5 +117,29 @@ describe('searchGraph', () => {
       { memoryId: 'co-memory', graphScore: 0.63, reason: 'co_access' },
       { memoryId: 'closure-memory', graphScore: 0.6, reason: 'closure_neighbor' },
     ]);
+  });
+
+  it('uses exact JSON file matching for co-access memories', async () => {
+    const execute = vi.fn(async (statement: { sql: string }) => {
+      if (statement.sql.includes('related_files LIKE')) {
+        throw new Error('substring related_files matching should not be used');
+      }
+      if (statement.sql.includes('observer_co_access_edges')) {
+        return { rows: [{ neighbor: 'src/auth.ts', weight: 0.9 }] };
+      }
+      if (statement.sql.includes('je.value = ?')) {
+        return { rows: [{ id: 'exact-co-access-memory' }] };
+      }
+      return { rows: [] };
+    });
+    const client = { execute } as unknown as Client;
+
+    const results = await searchGraph(client, ['src/session.ts'], 'proj-a', 5);
+
+    expect(results).toContainEqual({
+      memoryId: 'exact-co-access-memory',
+      graphScore: 0.63,
+      reason: 'co_access',
+    });
   });
 });

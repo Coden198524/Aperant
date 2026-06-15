@@ -198,12 +198,15 @@ async function collectCoAccessMemories(
 
       // Get memories for this co-accessed file
       const neighborMemories = await db.execute({
-        sql: `SELECT id FROM memories
-          WHERE project_id = ?
-            AND deprecated = 0
-            AND related_files LIKE ?
+        sql: `SELECT DISTINCT m.id FROM memories m
+          WHERE m.project_id = ?
+            AND m.deprecated = 0
+            AND EXISTS (
+              SELECT 1 FROM json_each(m.related_files) je
+              WHERE je.value = ?
+            )
           LIMIT ?`,
-        args: [projectId, `%${neighbor}%`, memoryLimit],
+        args: [projectId, neighbor, memoryLimit],
       });
 
       for (const m of neighborMemories.rows) {
