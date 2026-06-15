@@ -252,6 +252,31 @@ describe('RetrievalPipeline', () => {
     expect(candidate?.content).not.toContain('No issues found');
   });
 
+  it('preserves context_cost token signals before sending candidates to the reranker', async () => {
+    const content = [
+      'High token usage per step: 24k tokens.',
+      'Context token spike came from repeatedly sending full memory search results.',
+    ].join('\n');
+    await seedMemory(client, 'mem-context-cost-rerank', content, 'proj-a', 'context_cost');
+
+    const embeddingService = makeMockEmbeddingService();
+    const { reranker, rerank } = makeCapturingReranker();
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const result = await pipeline.search('high token usage', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+
+    const candidates = rerank.mock.calls[0][1];
+    const candidate = candidates.find((item) => item.memoryId === 'mem-context-cost-rerank');
+
+    expect(result.memories[0].content).toBe(content);
+    expect(candidate?.content).toContain('[context_cost]');
+    expect(candidate?.content).toContain('High token usage per step: 24k tokens.');
+    expect(candidate?.content).toContain('Context token spike');
+  });
+
   it('normalizes legacy rows fetched by query retrieval before packing context', async () => {
     const longContent = `pipeline token head ${'verbose implementation detail '.repeat(180)} pipeline token tail`;
     const longCitation = `pipeline citation head ${'reference detail '.repeat(120)} pipeline citation tail`;

@@ -173,7 +173,10 @@ export class RetrievalPipeline {
 function formatMemoryForReranker(memory: Memory): string {
   const relatedFiles = uniqueRerankerFilePaths(memory.relatedFiles).slice(0, RERANKER_RELATED_FILE_LIMIT);
   const fileContext = relatedFiles.length > 0 ? ` ${relatedFiles.join(', ')}` : '';
-  return `[${memory.type}]${fileContext}: ${stripLowValueMemoryLines(memory.content)}`;
+  const content = memory.type === 'context_cost'
+    ? memory.content
+    : stripLowValueMemoryLines(memory.content);
+  return `[${memory.type}]${fileContext}: ${content}`;
 }
 
 function uniqueRerankerFilePaths(values: readonly string[]): string[] {
