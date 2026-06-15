@@ -169,6 +169,8 @@ const AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS = 160;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_DIAGNOSTIC_MAX_CHARS = 360;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_KEY_LIMIT = 12;
 const AUTOCODE_MEMORY_RUNTIME_OBJECT_SCAN_KEY_LIMIT = 32;
+const AUTOCODE_MEMORY_RUNTIME_ARRAY_ITEM_LIMIT = 5;
+const AUTOCODE_MEMORY_RUNTIME_ARRAY_SCAN_ITEM_LIMIT = 24;
 export const AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT = 5;
 export const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT = 128;
 const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_MAX_CHARS = 160;
@@ -360,24 +362,16 @@ export function compactAutocodeMemoryRuntimeToolResult(
     return result;
   }
   if (Array.isArray(result)) {
-    return {
-      type: 'array',
-      length: result.length,
-      items: result
-        .slice(0, 5)
-        .map((item) =>
-          compactAutocodeMemoryRuntimeValue(
-            item,
-            AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
-            {
-              preferDiagnosticWindow: true,
-              preserveTail: true,
-              stripLowValueLines: true,
-            },
-          ),
-        )
-        .filter((item) => item !== undefined),
-    };
+    return compactAutocodeMemoryRuntimeArrayValue(
+      result,
+      AUTOCODE_MEMORY_RUNTIME_OBJECT_VALUE_MAX_CHARS,
+      {
+        preferDiagnosticWindow: true,
+        preserveTail: true,
+        stripLowValueLines: true,
+      },
+      { preserveEmptySummary: true },
+    );
   }
   if (typeof result === 'object' && result !== null) {
     return compactAutocodeMemoryRuntimeToolResultObject(result);
@@ -532,15 +526,78 @@ function compactAutocodeMemoryRuntimeValue(
     return value;
   }
   if (Array.isArray(value)) {
-    const items = value
-      .slice(0, 5)
-      .map((item) =>
-        compactAutocodeMemoryRuntimeValue(item, maxStringChars, options),
-      )
-      .filter((item) => item !== undefined);
-    return items.length > 0 ? items : undefined;
+    return compactAutocodeMemoryRuntimeArrayValue(
+      value,
+      maxStringChars,
+      options,
+    );
   }
   return undefined;
+}
+
+function compactAutocodeMemoryRuntimeArrayValue(
+  value: readonly unknown[],
+  maxStringChars: number,
+  options: {
+    preferDiagnosticWindow?: boolean;
+    preserveTail?: boolean;
+    signalPatterns?: readonly RegExp[];
+    stripLowValueLines?: boolean;
+  },
+  summaryOptions: {
+    preserveEmptySummary?: boolean;
+  } = {},
+): { type: 'array'; length: number; items: unknown[] } | undefined {
+  const items: unknown[] = [];
+  const seen = new Set<string>();
+
+  const scanLimit = Math.min(
+    value.length,
+    AUTOCODE_MEMORY_RUNTIME_ARRAY_SCAN_ITEM_LIMIT,
+  );
+  for (let index = 0; index < scanLimit; index += 1) {
+    const item = value[index];
+    const compactValue = compactAutocodeMemoryRuntimeValue(
+      item,
+      maxStringChars,
+      options,
+    );
+    if (compactValue === undefined) {
+      continue;
+    }
+
+    const key = compactAutocodeMemoryRuntimeValueKey(compactValue);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    items.push(compactValue);
+    if (items.length >= AUTOCODE_MEMORY_RUNTIME_ARRAY_ITEM_LIMIT) {
+      break;
+    }
+  }
+
+  if (items.length === 0 && !summaryOptions.preserveEmptySummary) {
+    return undefined;
+  }
+
+  return {
+    type: 'array',
+    length: value.length,
+    items,
+  };
+}
+
+function compactAutocodeMemoryRuntimeValueKey(value: unknown): string {
+  if (typeof value === 'string') {
+    return `string:${normalizeRuntimeTextKey(value)}`;
+  }
+  try {
+    return `${typeof value}:${JSON.stringify(value)}`;
+  } catch {
+    return `${typeof value}:${String(value)}`;
+  }
 }
 
 function truncateAutocodeMemoryRuntimeText(

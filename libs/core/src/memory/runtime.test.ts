@@ -558,6 +558,31 @@ describe('Autocode memory runtime context formatting', () => {
     });
   });
 
+  it('summarizes nested array tool result fields with deduplicated useful samples', () => {
+    const compact = compactAutocodeMemoryRuntimeToolResult({
+      status: 'failed',
+      logs: [
+        'No issues found.',
+        'Retry the worker memory search after sqlite releases the lock.',
+        '  Retry the worker memory search after sqlite releases the lock.  ',
+        'npm run typecheck passed.',
+        'Retry the worker memory search after sqlite releases the lock.',
+        'Use the project scoped cache key before rebuilding embeddings.',
+        'Completed at: 2026-06-15T00:00:00.000Z',
+      ],
+    }) as Record<string, unknown>;
+
+    expect(compact.status).toBe('failed');
+    expect(compact.logs).toEqual({
+      type: 'array',
+      length: 7,
+      items: [
+        'Retry the worker memory search after sqlite releases the lock.',
+        'Use the project scoped cache key before rebuilding embeddings.',
+      ],
+    });
+  });
+
   it('compacts object tool results without letting omitted bulk fields crowd diagnostics', () => {
     const compact = compactAutocodeMemoryRuntimeToolResult({
       content: 'x'.repeat(5_000),
