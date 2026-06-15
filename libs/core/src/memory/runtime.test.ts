@@ -148,10 +148,31 @@ describe('Autocode memory runtime context formatting', () => {
 
     expect(formatted).toContain('Refresh auth state before notifying renderer listeners.');
     expect(formatted).toContain('Keep auth token refresh retries inside the session store boundary.');
-    expect((formatted.match(/src\/auth\/session-store\.ts/g) ?? [])).toHaveLength(1);
+    expect(formatted).toContain('src/auth/{session-store.ts, token-cache.ts}');
     expect(formatted).not.toContain('./SRC/auth/session-store.ts');
-    expect(formatted).toContain('src/auth/token-cache.ts');
     expect(formatted).toContain('src/auth/retry-policy.ts');
+  });
+
+  it('compacts runtime context file refs that share a module path prefix', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'shared-prefix-runtime-files',
+        content: 'Keep auth retries inside the session boundary.',
+        confidence: 0.95,
+        relatedFiles: [
+          'src/auth/session-store.ts',
+          'src/auth/retry-policy.ts',
+          'src/auth/token-cache.ts',
+        ],
+      }),
+    ]);
+
+    expect(formatted).toContain(
+      'Files: src/auth/{session-store.ts, retry-policy.ts, token-cache.ts}.',
+    );
+    expect(formatted).not.toContain(
+      'src/auth/session-store.ts, src/auth/retry-policy.ts',
+    );
   });
 
   it('does not append runtime file refs already visible in memory content', () => {
@@ -215,6 +236,11 @@ describe('Autocode memory runtime context formatting', () => {
     }));
     const formatted = formatAutocodeMemoryRuntimeContext([
       ...fillers,
+      memory({
+        id: 'budget-padding',
+        content: `BUDGET_PADDING ${'padding detail '.repeat(18)}`,
+        confidence: 0.941,
+      }),
       memory({
         id: 'verbose-skipped',
         content: `VERBOSE_SKIPPED ${'large note '.repeat(80)}`,
@@ -834,6 +860,7 @@ describe('Autocode memory runtime context formatting', () => {
       'src/auth/retry-policy.ts',
     ]);
     expect(entry.relatedModules).toEqual(['auth', 'billing']);
+    expect(entry.content).toContain('Files: src/auth/{token.ts, retry-policy.ts}');
     expect(entryTags.filter((tag) => tag.toLowerCase() === 'custom-tag')).toHaveLength(1);
     expect(entryTags).toContain('upstream:task-1');
     expect(entryTags).not.toContain('upstream:TASK-1');
