@@ -10,6 +10,7 @@
 import type { Client } from '@libsql/client';
 import {
   getGraphFileReferenceMatchArgs,
+  getGraphFileReferenceMatchSql,
   GRAPH_FILE_REF_MATCH_SQL,
 } from '../graph/file-ref-match';
 
@@ -184,18 +185,23 @@ async function collectCoAccessMemories(
   limit: number,
 ): Promise<void> {
   try {
-    const placeholders = recentFiles.map(() => '?').join(',');
+    const fileMatchArgs = getGraphFileReferenceMatchArgs(recentFiles);
+    if (fileMatchArgs.length === 0) {
+      return;
+    }
+
+    const placeholders = fileMatchArgs.map(() => '?').join(',');
     const neighborLimit = getGraphSubQueryLimit(CO_ACCESS_NEIGHBOR_LIMIT, limit);
     const memoryLimit = getGraphSubQueryLimit(CO_ACCESS_MEMORY_LIMIT, limit);
     const coAccess = await db.execute({
       sql: `SELECT DISTINCT file_b AS neighbor, weight
         FROM observer_co_access_edges
-        WHERE file_a IN (${placeholders})
+        WHERE ${getGraphFileReferenceMatchSql('file_a')} IN (${placeholders})
           AND project_id = ?
           AND weight > 0.3
         ORDER BY weight DESC
         LIMIT ?`,
-      args: [...recentFiles, projectId, neighborLimit],
+      args: [...fileMatchArgs, projectId, neighborLimit],
     });
 
     for (const row of coAccess.rows) {
@@ -248,18 +254,23 @@ async function collectClosureNeighborMemories(
   limit: number,
 ): Promise<void> {
   try {
-    const placeholders = recentFiles.map(() => '?').join(',');
+    const fileMatchArgs = getGraphFileReferenceMatchArgs(recentFiles);
+    if (fileMatchArgs.length === 0) {
+      return;
+    }
+
+    const placeholders = fileMatchArgs.map(() => '?').join(',');
     const neighborLimit = getGraphSubQueryLimit(CLOSURE_NEIGHBOR_LIMIT, limit);
     const memoryLimit = getGraphSubQueryLimit(CLOSURE_MEMORY_LIMIT, limit);
     const closureNeighbors = await db.execute({
       sql: `SELECT DISTINCT gc.descendant_id
         FROM graph_closure gc
         JOIN graph_nodes gn ON gc.ancestor_id = gn.id
-        WHERE gn.file_path IN (${placeholders})
+        WHERE ${getGraphFileReferenceMatchSql('gn.file_path')} IN (${placeholders})
           AND gn.project_id = ?
           AND gc.depth = 1
         LIMIT ?`,
-      args: [...recentFiles, projectId, neighborLimit],
+      args: [...fileMatchArgs, projectId, neighborLimit],
     });
 
     for (const row of closureNeighbors.rows) {

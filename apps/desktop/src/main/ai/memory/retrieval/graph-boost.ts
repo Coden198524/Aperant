@@ -7,6 +7,10 @@
 
 import type { Client } from '@libsql/client';
 import type { RankedResult } from './rrf-fusion';
+import {
+  getGraphFileReferenceMatchArgs,
+  getGraphFileReferenceMatchSql,
+} from '../graph/file-ref-match';
 
 const GRAPH_BOOST_FACTOR = 0.3;
 const MAX_GRAPH_BOOST_CANDIDATES = 50;
@@ -78,17 +82,20 @@ export async function applyGraphNeighborhoodBoost(
 
   const neighborFileKeys = new Set<string>();
   try {
-    const filePlaceholders = topFiles.map(() => '?').join(',');
+    const fileMatchArgs = getGraphFileReferenceMatchArgs(topFiles);
+    if (fileMatchArgs.length === 0) return candidates;
+
+    const filePlaceholders = fileMatchArgs.map(() => '?').join(',');
     const neighbors = await db.execute({
       sql: `SELECT DISTINCT gn2.file_path
         FROM graph_closure gc
         JOIN graph_nodes gn ON gc.ancestor_id = gn.id
         JOIN graph_nodes gn2 ON gc.descendant_id = gn2.id
-        WHERE gn.file_path IN (${filePlaceholders})
+        WHERE ${getGraphFileReferenceMatchSql('gn.file_path')} IN (${filePlaceholders})
           AND gn.project_id = ?
           AND gc.depth = 1
           AND gn2.file_path IS NOT NULL`,
-      args: [...topFiles, projectId],
+      args: [...fileMatchArgs, projectId],
     });
 
     for (const row of neighbors.rows) {

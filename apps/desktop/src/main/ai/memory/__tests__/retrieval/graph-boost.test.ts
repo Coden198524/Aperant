@@ -66,9 +66,17 @@ describe('applyGraphNeighborhoodBoost', () => {
     );
 
     const fetchCall = execute.mock.calls[0][0] as { args: unknown[] };
-    const closureCall = execute.mock.calls[1][0] as { args: unknown[] };
+    const closureCall = execute.mock.calls[1][0] as { sql: string; args: unknown[] };
     expect(fetchCall.args).toEqual(['anchor', 'target']);
-    expect(closureCall.args).toEqual(['src/anchor.ts', 'proj-a']);
+    expect(closureCall.args).toEqual([
+      'src/anchor.ts',
+      'src/anchor.ts/',
+      './src/anchor.ts',
+      './src/anchor.ts/',
+      'proj-a',
+    ]);
+    expect(closureCall.sql).not.toContain('WHERE gn.file_path IN');
+    expect(closureCall.sql).toContain('TRIM(gn.file_path)');
     expect(results.map((result) => [result.memoryId, result.score])).toEqual([
       ['anchor', 0.9],
       ['target', 0.4],
@@ -94,8 +102,13 @@ describe('applyGraphNeighborhoodBoost', () => {
 
     const closureCall = execute.mock.calls[1][0] as { args: unknown[] };
     const filesInQuery = closureCall.args.slice(0, -1);
-    expect(filesInQuery).toHaveLength(24);
-    expect(filesInQuery[0]).toBe('src/file-0.ts');
-    expect(filesInQuery.at(-1)).toBe('src/file-23.ts');
+    const canonicalFilesInQuery = filesInQuery.filter((value) =>
+      typeof value === 'string' && !value.startsWith('./') && !value.endsWith('/'),
+    );
+    expect(canonicalFilesInQuery).toHaveLength(24);
+    expect(canonicalFilesInQuery[0]).toBe('src/file-0.ts');
+    expect(canonicalFilesInQuery.at(-1)).toBe('src/file-23.ts');
+    expect(filesInQuery).toContain('./src/file-0.ts');
+    expect(filesInQuery).toContain('src/file-23.ts/');
   });
 });

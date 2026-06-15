@@ -1,5 +1,9 @@
 export const GRAPH_FILE_REF_MATCH_SQL =
-  "LOWER(REPLACE(REPLACE(REPLACE(TRIM(je.value), char(92), '/'), '//', '/'), '//', '/'))";
+  getGraphFileReferenceMatchSql('je.value');
+
+export function getGraphFileReferenceMatchSql(expression: string): string {
+  return `LOWER(REPLACE(REPLACE(REPLACE(TRIM(${expression}), char(92), '/'), '//', '/'), '//', '/'))`;
+}
 
 export function getGraphFileReferenceMatchArgs(
   filePaths: readonly string[],

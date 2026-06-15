@@ -90,8 +90,16 @@ describe('searchGraph', () => {
     const coAccessMemoryCall = statements.find((statement) => statement.args.includes('src/session.ts'));
     const closureCall = statements.find((statement) => statement.sql.includes('graph_closure'));
     const closureMemoryCall = statements.find((statement) => statement.sql.includes('target_node_id = ?'));
+    const expectedAuthVariants = [
+      'src/auth.ts',
+      'src/auth.ts/',
+      './src/auth.ts',
+      './src/auth.ts/',
+    ];
 
-    expect(coAccessCall?.args.at(-1)).toBe(2);
+    expect(coAccessCall?.args).toEqual([...expectedAuthVariants, 'proj-a', 2]);
+    expect(coAccessCall?.sql).not.toContain('WHERE file_a IN');
+    expect(coAccessCall?.sql).toContain('TRIM(file_a)');
     expect(coAccessMemoryCall?.args).toEqual([
       'proj-a',
       'src/session.ts',
@@ -103,7 +111,9 @@ describe('searchGraph', () => {
     expect(coAccessMemoryCall?.args.at(-1)).toBe(2);
     expect(coAccessMemoryCall?.sql).not.toContain('related_files LIKE');
     expect(coAccessMemoryCall?.sql).toContain('json_each(m.related_files)');
-    expect(closureCall?.args.at(-1)).toBe(2);
+    expect(closureCall?.args).toEqual([...expectedAuthVariants, 'proj-a', 2]);
+    expect(closureCall?.sql).not.toContain('WHERE gn.file_path IN');
+    expect(closureCall?.sql).toContain('TRIM(gn.file_path)');
     expect(closureMemoryCall?.args.at(-1)).toBe(2);
   });
 
