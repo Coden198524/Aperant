@@ -153,6 +153,9 @@ describe("agent memory learning compaction", () => {
 		expect(knowledge.insights).toEqual([
 			"AuthStore must refresh token state before renderer listener fan-out.",
 		]);
+		expect(knowledge.explicitMemoryNotes).toEqual([
+			"AuthStore must refresh token state before renderer listener fan-out.",
+		]);
 		expect(summarizeAutocodeSessionForMemory(knowledge)).toContain(
 			"AuthStore must refresh token state",
 		);

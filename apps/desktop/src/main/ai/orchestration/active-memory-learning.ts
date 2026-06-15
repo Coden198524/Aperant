@@ -181,7 +181,12 @@ async function storeToMemory(knowledge: ExtractedKnowledge, config: LearningConf
 
   const memoryService = config.memoryService;
   try {
-    const longTermInsights = knowledge.insights.filter((insight) => shouldStoreModuleInsight(insight, knowledge));
+    const explicitInsightKeys = new Set(
+      (knowledge.explicitMemoryNotes ?? []).map(normalizeActiveMemoryInsightKey),
+    );
+    const longTermInsights = knowledge.insights.filter((insight) => (
+      shouldStoreModuleInsight(insight, knowledge, explicitInsightKeys)
+    ));
     await storeMemoryEntry(memoryService, buildAutocodeWorkUnitOutcomeMemoryEntry({
       projectId: config.projectId,
       sessionId: knowledge.sessionId,
@@ -267,7 +272,11 @@ async function storeMemoryEntry(
   }
 }
 
-function shouldStoreModuleInsight(insight: string, knowledge: ExtractedKnowledge): boolean {
+function shouldStoreModuleInsight(
+  insight: string,
+  knowledge: ExtractedKnowledge,
+  explicitInsightKeys: ReadonlySet<string>,
+): boolean {
   const text = insight.trim();
   if (!text) {
     return false;
@@ -277,7 +286,15 @@ function shouldStoreModuleInsight(insight: string, knowledge: ExtractedKnowledge
     return false;
   }
 
+  if (explicitInsightKeys.has(normalizeActiveMemoryInsightKey(text))) {
+    return true;
+  }
+
   return knowledge.keyFiles.length > 0 || MODULE_SPECIFIC_INSIGHT_PATTERN.test(text);
+}
+
+function normalizeActiveMemoryInsightKey(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 async function storeToLocalHistory(knowledge: ExtractedKnowledge, specDir: string): Promise<void> {

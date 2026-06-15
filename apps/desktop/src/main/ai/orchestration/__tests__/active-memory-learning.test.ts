@@ -153,6 +153,62 @@ describe('active memory learning storage', () => {
     expect(stored.some((entry) => entry.content?.includes('Efficient token usage'))).toBe(false);
   });
 
+  it('stores explicit Memory Notes as session insights without file hints', async () => {
+    const stored: Array<{
+      type?: string;
+      content?: string;
+      relatedFiles?: string[];
+      scope?: string;
+    }> = [];
+
+    await extractAndStoreKnowledge({
+      sessionResult: {
+        outcome: 'completed',
+        stepsExecuted: 20,
+        usage: {
+          promptTokens: 30_000,
+          completionTokens: 30_000,
+          totalTokens: 60_000,
+        },
+        messages: [{
+          role: 'assistant',
+          content: [
+            'Implementation complete.',
+            '## Memory Notes',
+            '- [decision] Keep functional optimization ahead of release packaging while the app is self-use.',
+            '- [module_insight] High token usage per step - may need more focused approach',
+          ].join('\n'),
+        }],
+        durationMs: 1,
+        toolCallCount: 1,
+      },
+      subtask: {
+        id: '1.2-session-memory-notes',
+        description: 'Capture session-level memory notes',
+      },
+      projectDir,
+      specDir,
+      projectId: 'project-1',
+      memoryService: {
+        store: async (entry) => {
+          stored.push(entry);
+          return `memory-${stored.length}`;
+        },
+      },
+    });
+
+    const moduleInsight = stored.find((entry) => entry.type === 'module_insight');
+    const outcomeMemory = stored.find((entry) => entry.type === 'work_unit_outcome');
+
+    expect(moduleInsight?.content).toBe(
+      'Keep functional optimization ahead of release packaging while the app is self-use.',
+    );
+    expect(moduleInsight?.relatedFiles).toEqual([]);
+    expect(moduleInsight?.scope).toBe('session');
+    expect(outcomeMemory?.content).toContain('functional optimization');
+    expect(stored.some((entry) => entry.content?.includes('High token usage'))).toBe(false);
+  });
+
   it('continues storing later memory entries when one write fails', async () => {
     const stored: Array<{ type?: string; content?: string }> = [];
     let attempts = 0;

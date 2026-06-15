@@ -34,6 +34,7 @@ export interface AutocodeExtractedKnowledge {
 	failurePatterns?: AutocodeFailureLearningPattern[];
 	codePatterns?: AutocodeCodePattern[];
 	insights: string[];
+	explicitMemoryNotes?: string[];
 	keyFiles: string[];
 }
 
@@ -109,12 +110,16 @@ const AUTOCODE_VERIFICATION_COMMAND_PATTERN =
 export function createAutocodeExtractedKnowledge(
 	input: AutocodeCreateExtractedKnowledgeInput,
 ): AutocodeExtractedKnowledge {
+	const explicitMemoryNotes = extractAutocodeExplicitMemoryNotes(
+		input.sessionResult.messages,
+	);
 	const knowledge: AutocodeExtractedKnowledge = {
 		sessionId: input.sessionId ?? generateAutocodeLearningSessionId(),
 		subtaskId: input.subtask.id,
 		timestamp: input.timestamp ?? new Date().toISOString(),
 		outcome: input.sessionResult.outcome,
-		insights: extractAutocodeInsights(input),
+		insights: extractAutocodeInsights(input, explicitMemoryNotes),
+		explicitMemoryNotes,
 		keyFiles: identifyAutocodeKeyFiles(input),
 	};
 
@@ -620,6 +625,9 @@ export function generateAutocodeFailurePreventionAdvice(
 
 export function extractAutocodeInsights(
 	input: AutocodeLearningAnalysisInput,
+	explicitMemoryNotes = extractAutocodeExplicitMemoryNotes(
+		input.sessionResult.messages,
+	),
 ): string[] {
 	const insights: string[] = [];
 	const stepsExecuted = Math.max(1, input.sessionResult.stepsExecuted);
@@ -642,9 +650,7 @@ export function extractAutocodeInsights(
 		insights.push("Used diverse set of tools - comprehensive approach");
 	}
 
-	insights.push(
-		...extractAutocodeExplicitMemoryNotes(input.sessionResult.messages),
-	);
+	insights.push(...explicitMemoryNotes);
 
 	return insights;
 }
