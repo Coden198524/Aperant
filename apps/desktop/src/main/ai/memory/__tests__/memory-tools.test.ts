@@ -192,6 +192,60 @@ describe('memory agent tools', () => {
     expect(result).toBe('No relevant memories found for this query.');
   });
 
+  it('strips low-value status lines from non-outcome search_memory results', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'gotcha-noise',
+          type: 'gotcha',
+          content: [
+            'npm run typecheck passed.',
+            'Mock the OAuth clock before testing refresh retries.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number; types: ['gotcha'] },
+      string
+    >(tool, { query: 'auth gotcha', limit: 3, types: ['gotcha'] });
+
+    expect(result).toContain('[gotcha]');
+    expect(result).toContain('Mock the OAuth clock before testing refresh retries');
+    expect(result).not.toContain('npm run typecheck passed');
+    expect(result).not.toContain('No issues found');
+    expect(result).not.toContain('Completed at:');
+  });
+
+  it('omits non-outcome search_memory results that only contain low-value lines', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'gotcha-status-only',
+          type: 'gotcha',
+          content: [
+            'npm run typecheck passed.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          confidence: 0.95,
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number; types: ['gotcha'] },
+      string
+    >(tool, { query: 'auth gotcha', limit: 3, types: ['gotcha'] });
+
+    expect(result).toBe('No relevant memories found for this query.');
+  });
+
   it('returns a focused no-result hint for machine memory searches', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([]),

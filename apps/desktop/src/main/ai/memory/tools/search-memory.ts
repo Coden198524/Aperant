@@ -20,7 +20,6 @@ import {
   isMemoryEligibleForAutomationContext,
   isMemoryEligibleForPromptContext,
 } from '../retrieval/context-packer';
-import { stripLowValueOutcomeLines } from '../outcome-content';
 
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 8;
@@ -439,8 +438,8 @@ function shouldShowSearchMemoryFileRefs(memory: Memory): boolean {
 }
 
 function formatSearchMemoryContent(memory: Memory): string {
-  const promptContent = memory.type === 'work_unit_outcome'
-    ? stripLowValueOutcomeLines(memory.content)
+  const promptContent = memory.type === 'context_cost'
+    ? memory.content
     : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER);
   const content = appendSearchMemoryMetadata(
     memory,

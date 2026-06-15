@@ -1,5 +1,5 @@
 import { selectMemoryContextItems } from './injection/context-selection.js';
-import { stripLowValueOutcomeLines } from './outcome-content.js';
+import { stripLowValueMemoryLines } from './outcome-content.js';
 import {
   estimateTokens,
   isMemoryEligibleForAutomationContext,
@@ -865,9 +865,7 @@ function formatAutocodeMemoryRuntimeContextLine(
 }
 
 function formatAutocodeMemoryRuntimeContextMemoryContent(memory: Memory): string {
-  const content = memory.type === 'work_unit_outcome'
-    ? stripLowValueOutcomeLines(memory.content)
-    : memory.content;
+  const content = stripLowValueMemoryLines(memory.content);
   return truncateAutocodeMemoryRuntimeTextToTokenBudget(
     content,
     AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS,

@@ -288,6 +288,41 @@ describe('Autocode memory runtime context formatting', () => {
     expect(formatted).not.toContain('Completed at:');
   });
 
+  it('strips generic status lines from non-outcome runtime project memory', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'gotcha-with-noise',
+        type: 'gotcha',
+        content: [
+          'npm run typecheck passed.',
+          'Mock the OAuth clock before testing refresh retries.',
+          'No issues found.',
+          'Completed at: 2026-06-15T00:00:00.000Z',
+        ].join('\n'),
+        confidence: 0.95,
+        relatedFiles: ['src/auth/session.ts'],
+      }),
+      memory({
+        id: 'gotcha-status-only',
+        type: 'gotcha',
+        content: [
+          'npm run typecheck passed.',
+          'No issues found.',
+          'Completed at: 2026-06-15T00:00:00.000Z',
+        ].join('\n'),
+        confidence: 0.95,
+      }),
+    ]);
+
+    expect(formatted).toContain('[gotcha]');
+    expect(formatted).toContain('Mock the OAuth clock before testing refresh retries');
+    expect(formatted).toContain('src/auth/session.ts');
+    expect(formatted).not.toContain('npm run typecheck passed');
+    expect(formatted).not.toContain('No issues found');
+    expect(formatted).not.toContain('Completed at:');
+    expect(formatted).not.toContain('gotcha-status-only');
+  });
+
   it('omits outcome memories that only contain low-value runtime lines', () => {
     const formatted = formatAutocodeMemoryRuntimeContext([
       memory({
