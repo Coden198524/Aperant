@@ -14,7 +14,7 @@ import { z } from 'zod/v3';
 import type { Tool as AITool } from 'ai';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory, MemoryType, MemorySearchFilters } from '../types';
-import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer';
+import { estimateTokens, isMemoryEligibleForPromptContext } from '../retrieval/context-packer';
 
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 8;
@@ -23,6 +23,12 @@ const MAX_SEARCH_OUTPUT_CHARS = 1800;
 const MAX_SEARCH_QUERY_ECHO_CHARS = 160;
 const MAX_SEARCH_FILE_REFS = 3;
 const MAX_SEARCH_FILE_REF_CHARS = 36;
+const MAX_SEARCH_QUERY_CHARS = 360;
+const MAX_SEARCH_RELATED_FILES = 8;
+const MAX_SEARCH_RELATED_FILE_CHARS = 160;
+const MAX_MEMORY_RESULT_TOKENS = Math.ceil(MAX_MEMORY_RESULT_CHARS / 4);
+const MAX_SEARCH_OUTPUT_TOKENS = Math.ceil(MAX_SEARCH_OUTPUT_CHARS / 4);
+const MAX_SEARCH_QUERY_ECHO_TOKENS = Math.ceil(MAX_SEARCH_QUERY_ECHO_CHARS / 4);
 const SEARCH_RESULT_SIMILARITY_THRESHOLD = 0.82;
 const MIN_SEARCH_RESULT_SIMILARITY_TOKEN_UNION = 6;
 
@@ -193,7 +199,12 @@ function isSimilarToSeenSearchResult(
 }
 
 function normalizeSearchQuery(query: string): string {
-  return query.replace(/\s+/g, ' ').trim();
+  return truncateTextToBudget(
+    query.replace(/\s+/g, ' ').trim(),
+    MAX_SEARCH_QUERY_CHARS,
+    Math.ceil(MAX_SEARCH_QUERY_CHARS / 4),
+    { preserveTail: true },
+  );
 }
 
 function normalizeRelatedFiles(files: string[] | undefined): string[] | undefined {
@@ -202,9 +213,12 @@ function normalizeRelatedFiles(files: string[] | undefined): string[] | undefine
   }
 
   const normalized = files
-    .map((file) => file.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/'))
+    .map((file) => truncatePathTail(
+      file.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/'),
+      MAX_SEARCH_RELATED_FILE_CHARS,
+    ))
     .filter(Boolean);
-  return uniqueInOrder(normalized);
+  return uniqueInOrder(normalized)?.slice(0, MAX_SEARCH_RELATED_FILES);
 }
 
 function uniqueInOrder<T>(values: T[] | undefined): T[] | undefined {
@@ -224,9 +238,10 @@ function uniqueInOrder<T>(values: T[] | undefined): T[] | undefined {
 }
 
 function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
-  const header = `Memory search results for "${truncateText(
+  const header = `Memory search results for "${truncateTextToBudget(
     query,
     MAX_SEARCH_QUERY_ECHO_CHARS,
+    MAX_SEARCH_QUERY_ECHO_TOKENS,
     { preserveTail: true },
   )}":`;
   const lines: string[] = [];
@@ -235,7 +250,7 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
   for (const memory of memories) {
     const line = formatSearchMemoryResult(memory, lines.length + 1);
     const candidate = `${header}\n\n${[...lines, line].join('\n\n')}`;
-    if (candidate.length <= MAX_SEARCH_OUTPUT_CHARS) {
+    if (fitsSearchOutputBudget(candidate)) {
       lines.push(line);
     } else {
       omitted += 1;
@@ -246,20 +261,21 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
   if (omitted > 0) {
     const note = `... ${omitted} more memory result(s) omitted for output budget.`;
     const withNote = `${output}\n\n${note}`;
-    if (withNote.length <= MAX_SEARCH_OUTPUT_CHARS) {
+    if (fitsSearchOutputBudget(withNote)) {
       output = withNote;
     }
   }
 
-  return truncateText(output, MAX_SEARCH_OUTPUT_CHARS, { preserveTail: true });
+  return truncateTextToBudget(output, MAX_SEARCH_OUTPUT_CHARS, MAX_SEARCH_OUTPUT_TOKENS, { preserveTail: true });
 }
 
 function formatSearchMemoryResult(memory: Memory, index: number): string {
   const fileRef = formatFileRefs(memory.relatedFiles);
   const confidence = `(confidence: ${(memory.confidence * 100).toFixed(0)}%)`;
-  return `${index}. [${memory.type}]${fileRef} ${confidence}\n   ${truncateText(
+  return `${index}. [${memory.type}]${fileRef} ${confidence}\n   ${truncateTextToBudget(
     memory.content,
     MAX_MEMORY_RESULT_CHARS,
+    MAX_MEMORY_RESULT_TOKENS,
     { preserveTail: true },
   )}`;
 }
@@ -278,6 +294,50 @@ function formatFileRefs(files: readonly string[]): string {
   }
 
   return ` [${visible.join(', ')}]`;
+}
+
+function fitsSearchOutputBudget(text: string): boolean {
+  return text.length <= MAX_SEARCH_OUTPUT_CHARS && estimateTokens(text) <= MAX_SEARCH_OUTPUT_TOKENS;
+}
+
+function truncatePathTail(path: string, maxChars: number): string {
+  const normalized = path.trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return normalized.slice(-Math.max(0, maxChars)).replace(/^\/+/, '');
+}
+
+function truncateTextToBudget(
+  text: string,
+  maxChars: number,
+  maxTokens: number,
+  options: { preserveTail?: boolean } = {},
+): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length === 0 || maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+
+  const charBounded = truncateText(compact, maxChars, options);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, compact.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = truncateText(compact, midpoint, options);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+  return best;
 }
 
 function truncateText(text: string, maxChars: number, options: { preserveTail?: boolean } = {}): string {

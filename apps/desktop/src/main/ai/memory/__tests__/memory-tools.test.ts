@@ -3,6 +3,7 @@ import { createRecordMemoryStub, createRecordMemoryTool } from '../tools/record-
 import { createSearchMemoryTool } from '../tools/search-memory';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory } from '../types';
+import { estimateTokens } from '../retrieval/context-packer';
 
 function makeMemory(overrides: Partial<Memory> = {}): Memory {
   return {
@@ -103,6 +104,54 @@ describe('memory agent tools', () => {
       projectId: 'project-1',
       promptContextOnly: true,
     }));
+  });
+
+  it('bounds search_memory query and related file filters before IPC', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+    const longQuery = `auth ${'query detail '.repeat(80)}SEARCH_QUERY_TAIL_OK`;
+    const longFile = `src/${'deep/'.repeat(60)}token-refresh-service.ts`;
+
+    await executeTool<
+      { query: string; relatedFiles: string[]; limit: number },
+      string
+    >(tool, {
+      query: longQuery,
+      relatedFiles: [
+        longFile,
+        longFile,
+        ...Array.from({ length: 12 }, (_, index) => `src/auth/file-${index}.ts`),
+      ],
+      limit: 8,
+    });
+
+    const filters = vi.mocked(proxy.searchMemory).mock.calls[0][0];
+    expect(filters.query?.length).toBeLessThanOrEqual(360);
+    expect(filters.query).toContain('SEARCH_QUERY_TAIL_OK');
+    expect(filters.relatedFiles).toHaveLength(8);
+    expect(filters.relatedFiles?.[0].length).toBeLessThanOrEqual(160);
+    expect(filters.relatedFiles?.[0]).toContain('token-refresh-service.ts');
+    expect(filters.relatedFiles?.[0]).not.toContain('omitted');
+  });
+
+  it('keeps bounded search_memory file filters as path suffixes', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+    const fullPath = `C:/repo/src/${'deep/'.repeat(80)}auth/token-refresh-service.ts`;
+
+    await executeTool<
+      { query: string; relatedFiles: string[] },
+      string
+    >(tool, { query: 'auth file suffix', relatedFiles: [fullPath] });
+
+    const filterPath = vi.mocked(proxy.searchMemory).mock.calls[0][0].relatedFiles?.[0] ?? '';
+    expect(fullPath.toLowerCase().endsWith(filterPath.toLowerCase())).toBe(true);
+    expect(filterPath).toContain('auth/token-refresh-service.ts');
+    expect(filterPath).not.toContain('omitted');
   });
 
   it('deduplicates near-duplicate search_memory memories before output', async () => {
@@ -262,6 +311,31 @@ describe('memory agent tools', () => {
     expect(result.length).toBeLessThanOrEqual(1800);
   });
 
+  it('bounds localized search_memory output by estimated tokens', async () => {
+    const cjkText = '\u8bbe\u7f6e\u4fdd\u5b58\u5931\u8d25';
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'localized-long',
+          content: `Start ${cjkText.repeat(600)} FINAL_LOCALIZED_SEARCH_TAIL_OK`,
+          relatedFiles: [],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: `${cjkText.repeat(80)} query tail`, limit: 3 });
+
+    expect(result).toContain('Start');
+    expect(result).toContain('FINAL_LOCALIZED_SEARCH_TAIL_OK');
+    expect(result).toContain('[middle omitted]');
+    expect(result.length).toBeLessThanOrEqual(1800);
+    expect(estimateTokens(result)).toBeLessThanOrEqual(450);
+  });
+
   it('does not echo full memory content after recording', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([]),
@@ -320,6 +394,43 @@ describe('memory agent tools', () => {
       relatedFiles: ['src/auth/token.ts', 'src/auth/session.ts'],
       relatedModules: ['auth', 'token refresh'],
     }));
+  });
+
+  it('bounds record_memory metadata before persistence', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([]),
+      recordMemory: vi.fn().mockResolvedValue('feedface-aaaa-bbbb-cccc-123456789abc'),
+    } as unknown as WorkerObserverProxy;
+    const tool = createRecordMemoryTool(proxy, 'project-1', 'session-1');
+    const longFile = `src/${'deep/'.repeat(80)}token-refresh-service.ts`;
+    const longModule = `auth ${'nested module '.repeat(30)}tail`;
+
+    await executeTool<
+      { type: 'gotcha'; content: string; relatedFiles: string[]; relatedModules: string[] },
+      string
+    >(tool, {
+      type: 'gotcha',
+      content: 'Use shared auth helper before retrying token refresh.',
+      relatedFiles: [
+        longFile,
+        longFile,
+        ...Array.from({ length: 16 }, (_, index) => `src/auth/file-${index}.ts`),
+      ],
+      relatedModules: [
+        longModule,
+        longModule,
+        ...Array.from({ length: 16 }, (_, index) => `auth-module-${index}`),
+      ],
+    });
+
+    const entry = vi.mocked(proxy.recordMemory).mock.calls[0][0];
+    expect(entry.relatedFiles).toHaveLength(12);
+    expect(entry.relatedFiles?.[0].length).toBeLessThanOrEqual(160);
+    expect(entry.relatedFiles?.[0]).toContain('token-refresh-service.ts');
+    expect(entry.relatedFiles?.[0]).not.toContain('omitted');
+    expect(entry.relatedModules).toHaveLength(12);
+    expect(entry.relatedModules?.[0].length).toBeLessThanOrEqual(96);
+    expect(entry.relatedModules?.[0]).toContain('tail');
   });
 
   it('skips recording near-duplicate memories that already exist', async () => {

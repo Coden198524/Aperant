@@ -305,6 +305,8 @@ describe('MemoryServiceImpl', () => {
       expect(storedTags.every((tag) => tag.length <= 64)).toBe(true);
       expect(storedRelatedFiles).toHaveLength(24);
       expect(storedRelatedFiles.every((file) => file.length <= 220)).toBe(true);
+      expect(storedRelatedFiles[0]).toContain('tail-0.ts');
+      expect(storedRelatedFiles[0]).not.toContain('omitted');
       expect(storedRelatedModules).toHaveLength(16);
       expect(storedRelatedModules.every((module) => module.length <= 96)).toBe(true);
       expect(storedCitation.length).toBeLessThanOrEqual(1000);
@@ -417,6 +419,26 @@ describe('MemoryServiceImpl', () => {
       expect(results.map((memory) => memory.id)).toEqual(['matching']);
     });
 
+    it('compacts long query searches at the service boundary before pipeline retrieval', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [],
+        formattedContext: '',
+      });
+      const longQuery = `AUTH_QUERY_HEAD ${'verbose query detail '.repeat(120)} AUTH_QUERY_TAIL`;
+
+      await service.search({
+        query: longQuery,
+        projectId: 'proj-001',
+      });
+
+      const query = mockRetrievalSearch.mock.calls[0][0] as string;
+      expect(query.length).toBeLessThanOrEqual(800);
+      expect(query).toContain('AUTH_QUERY_HEAD');
+      expect(query).toContain('AUTH_QUERY_TAIL');
+      expect(query).toContain('memory query middle omitted for retrieval budget');
+      expect(query).not.toContain('before storage');
+    });
+
     it('does not run a broad search for blank query text', async () => {
       const results = await service.search({
         query: ' \n\t ',
@@ -464,6 +486,30 @@ describe('MemoryServiceImpl', () => {
       });
       expect(results.map((memory) => memory.id)).toEqual(['first', 'second']);
     });
+
+    it('caps oversized query limits before retrieval and final slicing', async () => {
+      const memories = Array.from({ length: 60 }, (_, index) =>
+        makeMemoryResult({ id: `memory-${index}` }),
+      );
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories,
+        formattedContext: '',
+      });
+
+      const results = await service.search({
+        query: 'auth memory',
+        projectId: 'proj-001',
+        limit: 10_000,
+      });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('auth memory', {
+        phase: 'explore',
+        projectId: 'proj-001',
+        maxResults: 50,
+      });
+      expect(results).toHaveLength(50);
+    });
+
 
     it('applies minConfidence post-filter', async () => {
       const highConf = makeMemoryResult({ id: 'high', confidence: 0.95 });
@@ -1073,6 +1119,19 @@ describe('MemoryServiceImpl', () => {
       expect(args[args.length - 1]).toBe(2);
     });
 
+    it('caps oversized direct-search limits before SQL', async () => {
+      mockExecute.mockResolvedValueOnce({ rows: [] });
+
+      await service.search({
+        projectId: 'proj-001',
+        limit: 10_000,
+      });
+
+      const args = mockExecute.mock.calls[0][0].args as unknown[];
+      expect(args[args.length - 1]).toBe(50);
+    });
+
+
     it('omits non-finite direct-search minConfidence from SQL', async () => {
       mockExecute.mockResolvedValueOnce({ rows: [] });
 
@@ -1246,6 +1305,26 @@ describe('MemoryServiceImpl', () => {
       });
 
       expect(results.map((memory) => memory.id)).toEqual(['matching']);
+    });
+
+    it('keeps long direct related-file filters as suffixes for path matching', async () => {
+      const longPath = `E:/Work/Project/src/${'deep/'.repeat(80)}auth/token-refresh-service.ts`;
+      mockExecute.mockResolvedValueOnce({
+        rows: [
+          makeMemoryRow({ id: 'matching', related_files: JSON.stringify([longPath]) }),
+          makeMemoryRow({ id: 'wrong-file', related_files: '["src/auth/session.ts"]' }),
+        ],
+      });
+
+      const results = await service.search({
+        projectId: 'proj-001',
+        relatedFiles: [longPath],
+      });
+
+      expect(results.map((memory) => memory.id)).toEqual(['matching']);
+      expect(results[0].relatedFiles[0].length).toBeLessThanOrEqual(220);
+      expect(longPath.toLowerCase().endsWith(results[0].relatedFiles[0].toLowerCase())).toBe(true);
+      expect(results[0].relatedFiles[0]).not.toContain('omitted');
     });
 
     it('returns empty array if db fails', async () => {
@@ -1474,6 +1553,26 @@ describe('MemoryServiceImpl', () => {
       });
       expect(results.map((memory) => memory.id)).toEqual(['recipe-0', 'recipe-1']);
     });
+
+    it('caps oversized workflow recipe limits before retrieval and slicing', async () => {
+      const recipes = Array.from({ length: 25 }, (_, i) =>
+        makeMemoryResult({ id: `recipe-${i}`, type: 'workflow_recipe' }),
+      );
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: recipes,
+        formattedContext: '',
+      });
+
+      const results = await service.searchWorkflowRecipe('task', { limit: 10_000 });
+
+      expect(mockRetrievalSearch).toHaveBeenCalledWith('task', {
+        phase: 'implement',
+        projectId: '',
+        maxResults: 50,
+      });
+      expect(results).toHaveLength(20);
+    });
+
 
     it('normalizes task description before workflow recipe retrieval', async () => {
       mockRetrievalSearch.mockResolvedValueOnce({

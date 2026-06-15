@@ -81,7 +81,11 @@ export const MAX_PACKED_MEMORY_CONTENT_CHARS = 420;
 export const MAX_PACKED_MEMORY_CITATION_CHARS = 120;
 export const MAX_PACKED_MEMORY_FILE_REF_CHARS = 80;
 export const MIN_PACKED_MEMORY_CONFIDENCE = 0.55;
+export const MAX_PROMPT_CONTEXT_MEMORIES = 20;
 const PACKED_MEMORY_TRUNCATION_HEAD_RATIO = 0.65;
+const PACKED_MEMORY_HEADER = '## Relevant Context from Memory';
+const MIN_COMPACT_MEMORY_CONTENT_TOKENS = 12;
+const MIN_COMPACT_MEMORY_TOTAL_TOKENS = 18;
 
 // ============================================================
 // MAIN EXPORT
@@ -99,8 +103,12 @@ export function packContext(
   phase: UniversalPhase,
   config?: ContextPackingConfig,
 ): string {
-  const packingConfig = config ?? DEFAULT_PACKING_CONFIG[phase];
+  const packingConfig = normalizePackingConfig(config ?? DEFAULT_PACKING_CONFIG[phase]);
   const { totalBudget, allocation } = packingConfig;
+  const headerTokens = estimateTokens(`${PACKED_MEMORY_HEADER}\n\n`);
+  if (totalBudget <= headerTokens) {
+    return '';
+  }
 
   // Group memories by type
   const byType = groupByType(memories);
@@ -109,31 +117,48 @@ export function packContext(
   const typeBudgets = computeTypeBudgets(totalBudget, allocation);
 
   // Pack each type's memories within its budget
-  const sections: string[] = [];
-  let totalUsed = 0;
-  const globallyIncluded: string[] = [];
+  const state: PackState = {
+    sections: [],
+    tokensUsed: headerTokens,
+    globallyIncluded: [],
+  };
 
   for (const [memoryType, budget] of typeBudgets) {
     const typeMemories = byType.get(memoryType) ?? [];
     if (typeMemories.length === 0) continue;
 
-    const remaining = totalBudget - totalUsed;
+    const remaining = totalBudget - state.tokensUsed;
     const effectiveBudget = Math.min(budget, remaining);
     if (effectiveBudget <= 0) break;
 
-    const { packed, tokensUsed } = packTypeMemories(
+    packTypeMemories(
       typeMemories,
       effectiveBudget,
+      totalBudget,
       memoryType,
-      globallyIncluded,
+      state,
     );
 
-    if (packed.length > 0) {
-      sections.push(...packed);
-      totalUsed += tokensUsed;
-    }
+    if (state.tokensUsed >= totalBudget) break;
+  }
 
-    if (totalUsed >= totalBudget) break;
+  // Reclaim unused allocation from missing or sparse types before considering
+  // unallocated memory types. This keeps phase-prioritized memories useful
+  // without letting them exceed the total prompt budget.
+  for (const memoryType of typeBudgets.keys()) {
+    const typeMemories = byType.get(memoryType) ?? [];
+    if (typeMemories.length === 0) continue;
+
+    const remaining = totalBudget - state.tokensUsed;
+    if (remaining <= 0) break;
+
+    packTypeMemories(
+      typeMemories,
+      remaining,
+      totalBudget,
+      memoryType,
+      state,
+    );
   }
 
   // Include any memory types not in the allocation map (use remaining budget)
@@ -141,25 +166,21 @@ export function packContext(
   for (const [memoryType, typeMemories] of byType) {
     if (allocatedTypes.has(memoryType)) continue;
 
-    const remaining = totalBudget - totalUsed;
+    const remaining = totalBudget - state.tokensUsed;
     if (remaining <= 0) break;
 
-    const { packed, tokensUsed } = packTypeMemories(
+    packTypeMemories(
       typeMemories,
       remaining,
+      totalBudget,
       memoryType,
-      globallyIncluded,
+      state,
     );
-
-    if (packed.length > 0) {
-      sections.push(...packed);
-      totalUsed += tokensUsed;
-    }
   }
 
-  if (sections.length === 0) return '';
+  if (state.sections.length === 0) return '';
 
-  return `## Relevant Context from Memory\n\n${sections.join('\n\n')}`;
+  return `${PACKED_MEMORY_HEADER}\n\n${state.sections.join('\n\n')}`;
 }
 
 // ============================================================
@@ -168,18 +189,31 @@ export function packContext(
 
 function groupByType(memories: Memory[]): Map<MemoryType, Memory[]> {
   const map = new Map<MemoryType, Memory[]>();
-  for (const m of memories) {
-    if (!isMemoryEligibleForPromptContext(m)) {
+  let acceptedCount = 0;
+  for (const m of normalizePromptMemories(memories)) {
+    if (!isNormalizedMemoryEligibleForPromptContext(m)) {
       continue;
     }
     const group = map.get(m.type) ?? [];
     group.push(m);
     map.set(m.type, group);
+    acceptedCount += 1;
+    if (acceptedCount >= MAX_PROMPT_CONTEXT_MEMORIES) {
+      break;
+    }
   }
   return map;
 }
 
 export function isMemoryEligibleForPromptContext(memory: Memory): boolean {
+  const normalized = normalizePromptMemory(memory);
+  if (!normalized) {
+    return false;
+  }
+  return isNormalizedMemoryEligibleForPromptContext(normalized);
+}
+
+function isNormalizedMemoryEligibleForPromptContext(memory: Memory): boolean {
   if (memory.deprecated) {
     return false;
   }
@@ -211,69 +245,192 @@ function computeTypeBudgets(
   return budgets;
 }
 
-interface PackResult {
-  packed: string[];
+interface PackState {
+  sections: string[];
   tokensUsed: number;
+  globallyIncluded: string[];
 }
 
 function packTypeMemories(
   memories: Memory[],
   budget: number,
+  totalBudget: number,
   memoryType: MemoryType,
-  globallyIncluded: string[],
-): PackResult {
-  const packed: string[] = [];
-  let tokensUsed = 0;
+  state: PackState,
+): void {
+  let typeTokensUsed = 0;
   const included: string[] = []; // content strings for MMR dedup
+  const oversized: Memory[] = [];
 
   for (const memory of memories) {
     // Global diversity: avoid injecting the same lesson again under a
     // different memory type once it has already been packed for this prompt.
-    if (isTooSimilar(memory.content, globallyIncluded)) continue;
+    if (isTooSimilar(memory.content, state.globallyIncluded)) continue;
 
     const formatted = formatMemory(memory, memoryType);
     const tokens = estimateTokens(formatted);
+    const separatorTokens = state.sections.length === 0 ? 0 : estimateTokens('\n\n');
+    const availableTokens = Math.min(
+      budget - typeTokensUsed,
+      totalBudget - state.tokensUsed - separatorTokens,
+    );
 
-    if (tokensUsed + tokens > budget) {
+    if (availableTokens <= 0) {
+      break;
+    }
+
+    if (tokens > availableTokens) {
+      oversized.push(memory);
       continue;
     }
 
     // MMR diversity: skip if too similar to already-included memories
     if (isTooSimilar(memory.content, included)) continue;
 
-    packed.push(formatted);
+    packFormattedMemory(memory, formatted, tokens, separatorTokens, state);
     included.push(memory.content);
-    globallyIncluded.push(memory.content);
-    tokensUsed += tokens;
+    typeTokensUsed += separatorTokens + tokens;
   }
 
-  return { packed, tokensUsed };
+  for (const memory of oversized) {
+    if (isTooSimilar(memory.content, state.globallyIncluded)) continue;
+    if (isTooSimilar(memory.content, included)) continue;
+
+    const separatorTokens = state.sections.length === 0 ? 0 : estimateTokens('\n\n');
+    const availableTokens = Math.min(
+      budget - typeTokensUsed,
+      totalBudget - state.tokensUsed - separatorTokens,
+    );
+    const formatted = formatMemoryWithinTokenBudget(memory, memoryType, availableTokens);
+    if (!formatted) {
+      continue;
+    }
+
+    const tokens = estimateTokens(formatted);
+    if (tokens > availableTokens) {
+      continue;
+    }
+
+    packFormattedMemory(memory, formatted, tokens, separatorTokens, state);
+    included.push(memory.content);
+    typeTokensUsed += separatorTokens + tokens;
+  }
 }
 
-function formatMemory(memory: Memory, memoryType: MemoryType): string {
+function packFormattedMemory(
+  memory: Memory,
+  formatted: string,
+  tokens: number,
+  separatorTokens: number,
+  state: PackState,
+): void {
+  state.sections.push(formatted);
+  state.globallyIncluded.push(memory.content);
+  state.tokensUsed += separatorTokens + tokens;
+}
+
+interface FormatMemoryOptions {
+  contentMaxChars?: number;
+  citationMaxChars?: number;
+  fileRefMaxChars?: number;
+  includeCitation?: boolean;
+  includeFileContext?: boolean;
+  includeConfidence?: boolean;
+}
+
+function formatMemory(
+  memory: Memory,
+  memoryType: MemoryType,
+  options: FormatMemoryOptions = {},
+): string {
+  const {
+    contentMaxChars = MAX_PACKED_MEMORY_CONTENT_CHARS,
+    citationMaxChars = MAX_PACKED_MEMORY_CITATION_CHARS,
+    fileRefMaxChars = MAX_PACKED_MEMORY_FILE_REF_CHARS,
+    includeCitation = true,
+    includeFileContext = true,
+    includeConfidence = true,
+  } = options;
   const typeLabel = formatTypeLabel(memoryType);
-  const citation = memory.citationText
-    ? `[^ Memory: ${truncateText(memory.citationText, MAX_PACKED_MEMORY_CITATION_CHARS)}]`
+  const citation = includeCitation && memory.citationText
+    ? `[^ Memory: ${truncateText(memory.citationText, citationMaxChars)}]`
     : '';
 
   const fileContext =
-    memory.relatedFiles.length > 0
+    includeFileContext && memory.relatedFiles.length > 0
       ? ` (${memory.relatedFiles
           .slice(0, 2)
-          .map((file) => truncateText(file, MAX_PACKED_MEMORY_FILE_REF_CHARS))
+          .map((file) => truncateText(file, fileRefMaxChars))
           .join(', ')})`
       : '';
 
   const confidence =
-    memory.confidence < 0.7 ? ` [confidence: ${(memory.confidence * 100).toFixed(0)}%]` : '';
+    includeConfidence && memory.confidence < 0.7
+      ? ` [confidence: ${(memory.confidence * 100).toFixed(0)}%]`
+      : '';
 
   return [
     `**${typeLabel}**${fileContext}${confidence}`,
-    truncateText(memory.content, MAX_PACKED_MEMORY_CONTENT_CHARS),
+    truncateText(memory.content, contentMaxChars),
     citation,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function formatMemoryWithinTokenBudget(
+  memory: Memory,
+  memoryType: MemoryType,
+  tokenBudget: number,
+): string | undefined {
+  if (tokenBudget < MIN_COMPACT_MEMORY_TOTAL_TOKENS) {
+    return undefined;
+  }
+
+  const attempts: FormatMemoryOptions[] = [
+    {
+      contentMaxChars: Math.floor(MAX_PACKED_MEMORY_CONTENT_CHARS * 0.7),
+      citationMaxChars: Math.floor(MAX_PACKED_MEMORY_CITATION_CHARS * 0.6),
+      fileRefMaxChars: Math.floor(MAX_PACKED_MEMORY_FILE_REF_CHARS * 0.7),
+    },
+    {
+      contentMaxChars: Math.floor(MAX_PACKED_MEMORY_CONTENT_CHARS * 0.5),
+      citationMaxChars: 0,
+      fileRefMaxChars: Math.floor(MAX_PACKED_MEMORY_FILE_REF_CHARS * 0.5),
+      includeCitation: false,
+    },
+    {
+      contentMaxChars: Math.floor(MAX_PACKED_MEMORY_CONTENT_CHARS * 0.35),
+      includeCitation: false,
+      includeFileContext: false,
+    },
+  ];
+
+  for (const options of attempts) {
+    const formatted = formatMemory(memory, memoryType, options);
+    if (estimateTokens(formatted) <= tokenBudget) {
+      return formatted;
+    }
+  }
+
+  const typeLabel = formatTypeLabel(memoryType);
+  const header = `**${typeLabel}**`;
+  const contentTokenBudget = tokenBudget - estimateTokens(`${header}\n`);
+  if (contentTokenBudget < MIN_COMPACT_MEMORY_CONTENT_TOKENS) {
+    return undefined;
+  }
+
+  const content = truncateTextToTokenBudget(
+    memory.content,
+    contentTokenBudget,
+    MAX_PACKED_MEMORY_CONTENT_CHARS,
+  );
+  if (!content) {
+    return undefined;
+  }
+
+  const formatted = `${header}\n${content}`;
+  return estimateTokens(formatted) <= tokenBudget ? formatted : undefined;
 }
 
 function truncateText(text: string, maxChars: number): string {
@@ -298,6 +455,38 @@ function truncateText(text: string, maxChars: number): string {
     marker,
     tailLength > 0 ? compact.slice(-tailLength).trimStart() : '',
   ].join('');
+}
+
+function truncateTextToTokenBudget(
+  text: string,
+  maxTokens: number,
+  maxChars: number,
+): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (!compact || maxTokens <= 0 || maxChars <= 0) {
+    return '';
+  }
+
+  const initial = truncateText(compact, Math.min(maxChars, compact.length));
+  if (estimateTokens(initial) <= maxTokens) {
+    return initial;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, compact.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = truncateText(compact, midpoint);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
 }
 
 function formatTypeLabel(type: MemoryType): string {
@@ -366,8 +555,144 @@ function tokenize(text: string): string[] {
 }
 
 /**
- * Rough token estimation: ~4 characters per token.
+ * Rough token estimation for prompt budgeting.
+ * Latin text is usually close to 4 characters per token, while CJK text is
+ * often much denser. Use a conservative mixed-script estimate so localized
+ * memory content does not silently exceed the intended context budget.
  */
 export function estimateTokens(text: string): number {
-  return Math.ceil(text.length / 4);
+  if (text.length === 0) {
+    return 0;
+  }
+
+  let latinLikeChars = 0;
+  let cjkChars = 0;
+  let otherNonAsciiChars = 0;
+
+  for (const char of text) {
+    if (isCjkPromptChar(char)) {
+      cjkChars += 1;
+      continue;
+    }
+    if (char.charCodeAt(0) <= 0x7f) {
+      latinLikeChars += 1;
+      continue;
+    }
+    otherNonAsciiChars += 1;
+  }
+
+  return Math.ceil((latinLikeChars / 4) + cjkChars + (otherNonAsciiChars / 2));
+}
+
+function isCjkPromptChar(char: string): boolean {
+  const code = char.codePointAt(0) ?? 0;
+  return (
+    (code >= 0x3400 && code <= 0x9fff) ||
+    (code >= 0xf900 && code <= 0xfaff) ||
+    (code >= 0x3040 && code <= 0x30ff) ||
+    (code >= 0xac00 && code <= 0xd7af)
+  );
+}
+
+function normalizePackingConfig(config: ContextPackingConfig): ContextPackingConfig {
+  const totalBudget = Number.isFinite(config.totalBudget)
+    ? Math.max(0, Math.floor(config.totalBudget))
+    : 0;
+  const allocation: Partial<Record<MemoryType, number>> = {};
+  let allocationTotal = 0;
+
+  for (const [type, ratio] of Object.entries(config.allocation ?? {}) as [MemoryType, number][]) {
+    if (!Number.isFinite(ratio) || ratio <= 0) {
+      continue;
+    }
+    const normalizedRatio = Math.min(1, ratio);
+    allocation[type] = normalizedRatio;
+    allocationTotal += normalizedRatio;
+  }
+
+  if (allocationTotal > 1) {
+    for (const type of Object.keys(allocation) as MemoryType[]) {
+      allocation[type] = (allocation[type] ?? 0) / allocationTotal;
+    }
+  }
+
+  return { totalBudget, allocation };
+}
+
+function normalizePromptMemories(memories: Memory[]): Memory[] {
+  const seen = new Set<string>();
+  const normalizedMemories: Memory[] = [];
+
+  for (const memory of memories) {
+    const normalized = normalizePromptMemory(memory);
+    if (!normalized || seen.has(normalized.id)) {
+      continue;
+    }
+
+    seen.add(normalized.id);
+    normalizedMemories.push(normalized);
+  }
+
+  return normalizedMemories;
+}
+
+function normalizePromptMemory(memory: Memory): Memory | undefined {
+  const id = normalizePromptText(memory.id);
+  const content = normalizePromptText(memory.content);
+  if (!id || !content) {
+    return undefined;
+  }
+
+  const confidence = normalizePromptConfidence(memory.confidence);
+  if (confidence === undefined && !memory.userVerified && !memory.pinned) {
+    return undefined;
+  }
+
+  return {
+    ...memory,
+    id,
+    content,
+    confidence: confidence ?? 0,
+    relatedFiles: normalizePromptTextList(memory.relatedFiles),
+    relatedModules: normalizePromptTextList(memory.relatedModules),
+    tags: normalizePromptTextList(memory.tags),
+    citationText: normalizePromptText(memory.citationText),
+  };
+}
+
+function normalizePromptText(value: unknown): string | undefined {
+  if (typeof value !== 'string') {
+    return undefined;
+  }
+
+  const normalized = value.replace(/\s+/g, ' ').trim();
+  return normalized.length > 0 ? normalized : undefined;
+}
+
+function normalizePromptTextList(values: readonly unknown[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalizedValues: string[] = [];
+
+  for (const value of values) {
+    const normalized = typeof value === 'string' ? normalizePromptText(value) : undefined;
+    if (!normalized || seen.has(normalized)) {
+      continue;
+    }
+
+    seen.add(normalized);
+    normalizedValues.push(normalized);
+  }
+
+  return normalizedValues;
+}
+
+function normalizePromptConfidence(value: unknown): number | undefined {
+  if (!Number.isFinite(value)) {
+    return undefined;
+  }
+  return Math.min(1, Math.max(0, value as number));
 }

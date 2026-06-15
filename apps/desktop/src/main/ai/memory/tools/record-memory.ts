@@ -26,6 +26,10 @@ const LOW_VALUE_MEMORY_PATTERNS = [
 const DUPLICATE_MEMORY_SEARCH_LIMIT = 4;
 const DUPLICATE_MEMORY_SIMILARITY_THRESHOLD = 0.82;
 const MIN_DUPLICATE_MEMORY_TOKEN_UNION = 6;
+const MAX_RECORD_MEMORY_RELATED_FILES = 12;
+const MAX_RECORD_MEMORY_RELATED_MODULES = 12;
+const MAX_RECORD_MEMORY_FILE_REF_CHARS = 160;
+const MAX_RECORD_MEMORY_MODULE_CHARS = 96;
 
 const recordMemorySchema = z.object({
   type: z
@@ -181,9 +185,12 @@ function normalizeRelatedFiles(files: string[] | undefined): string[] {
   }
   return uniqueInOrder(
     files
-      .map((file) => file.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/'))
+      .map((file) => truncatePathTail(
+        file.trim().replace(/\\/g, '/').replace(/\/{2,}/g, '/'),
+        MAX_RECORD_MEMORY_FILE_REF_CHARS,
+      ))
       .filter(Boolean),
-  );
+  ).slice(0, MAX_RECORD_MEMORY_RELATED_FILES);
 }
 
 function normalizeRelatedModules(modules: string[] | undefined): string[] {
@@ -192,13 +199,43 @@ function normalizeRelatedModules(modules: string[] | undefined): string[] {
   }
   return uniqueInOrder(
     modules
-      .map((module) => module.replace(/\s+/g, ' ').trim())
+      .map((module) => truncateHeadTailText(
+        module.replace(/\s+/g, ' ').trim(),
+        MAX_RECORD_MEMORY_MODULE_CHARS,
+      ))
       .filter(Boolean),
-  );
+  ).slice(0, MAX_RECORD_MEMORY_RELATED_MODULES);
 }
 
 function uniqueInOrder(values: readonly string[]): string[] {
   return [...new Set(values)];
+}
+
+function truncatePathTail(path: string, maxChars: number): string {
+  const normalized = path.trim();
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return normalized.slice(-Math.max(0, maxChars)).replace(/^\/+/, '');
+}
+
+function truncateHeadTailText(text: string, maxChars: number): string {
+  const compact = text.replace(/\s+/g, ' ').trim();
+  if (compact.length <= maxChars) {
+    return compact;
+  }
+  if (maxChars <= 3) {
+    return compact.slice(0, maxChars);
+  }
+
+  const marker = '...[omitted]...';
+  if (marker.length >= maxChars - 2) {
+    return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
+  }
+  const budget = maxChars - marker.length;
+  const headBudget = Math.ceil(budget * 0.45);
+  const tailBudget = Math.max(0, budget - headBudget);
+  return `${compact.slice(0, headBudget).trimEnd()}${marker}${compact.slice(-tailBudget).trimStart()}`;
 }
 
 export function createRecordMemoryStub(): AITool<RecordMemoryInput, string> {

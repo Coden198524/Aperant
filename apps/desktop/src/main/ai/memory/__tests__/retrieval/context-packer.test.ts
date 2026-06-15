@@ -57,6 +57,12 @@ describe('estimateTokens', () => {
     const text = 'a'.repeat(1000);
     expect(estimateTokens(text)).toBe(250);
   });
+
+  it('uses a more conservative estimate for CJK text', () => {
+    const cjkText = '\u8bbe\u7f6e\u4fdd\u5b58\u5931\u8d25';
+    expect(estimateTokens(cjkText)).toBe(cjkText.length);
+    expect(estimateTokens(`save ${cjkText}`)).toBeGreaterThan(Math.ceil(`save ${cjkText}`.length / 4));
+  });
 });
 
 describe('DEFAULT_PACKING_CONFIG', () => {

@@ -375,7 +375,7 @@ function compactMemoryPathList(
       continue;
     }
 
-    const compactedPath = compactMemoryListItem(normalized, maxItemChars);
+    const compactedPath = truncateMemoryPathTail(normalized, maxItemChars);
     const key = normalizeFilterPath(compactedPath);
     if (seen.has(key)) {
       continue;
@@ -415,6 +415,17 @@ function compactMemoryListItem(value: string, maxChars: number): string {
   const headChars = Math.ceil(budget * 0.6);
   const tailChars = Math.max(0, budget - headChars);
   return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
+}
+
+function truncateMemoryPathTail(path: string, maxChars: number): string {
+  const normalized = path.trim();
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return normalized.slice(-maxChars).replace(/^\/+/, '');
 }
 
 function normalizeFilterPath(value: string): string {

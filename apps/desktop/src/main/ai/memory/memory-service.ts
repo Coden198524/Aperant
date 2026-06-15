@@ -28,9 +28,17 @@ const MEMORY_STORE_RELATED_FILE_LIMIT = 24;
 const MEMORY_STORE_RELATED_FILE_MAX_CHARS = 220;
 const MEMORY_STORE_RELATED_MODULE_LIMIT = 16;
 const MEMORY_STORE_RELATED_MODULE_MAX_CHARS = 96;
+const MEMORY_SEARCH_QUERY_MAX_CHARS = 800;
+const MEMORY_SEARCH_FILTER_RELATED_FILE_LIMIT = 16;
+const MEMORY_SEARCH_FILTER_RELATED_FILE_MAX_CHARS = 220;
+const MEMORY_SEARCH_FILTER_RELATED_MODULE_LIMIT = 16;
+const MEMORY_SEARCH_FILTER_RELATED_MODULE_MAX_CHARS = 96;
 const MEMORY_STORE_OMISSION_MARKER = ' ... [memory middle omitted before storage] ... ';
+const MEMORY_SEARCH_QUERY_OMISSION_MARKER = ' ... [memory query middle omitted for retrieval budget] ... ';
 const DEFAULT_QUERY_SEARCH_RESULT_LIMIT = 8;
 const DEFAULT_DIRECT_SEARCH_RESULT_LIMIT = 50;
+const MAX_MEMORY_SEARCH_RESULT_LIMIT = 50;
+const MAX_WORKFLOW_RECIPE_RESULT_LIMIT = 20;
 const FILTERED_SEARCH_CANDIDATE_MULTIPLIER = 4;
 const FILTERED_SEARCH_CANDIDATE_EXTRA = 8;
 const FILTERED_SEARCH_CANDIDATE_CAP = 50;
@@ -388,7 +396,10 @@ export class MemoryServiceImpl implements MemoryService {
     opts?: { limit?: number; projectId?: string },
   ): Promise<Memory[]> {
     const normalizedTaskDescription = normalizeMemorySearchQuery(taskDescription);
-    const limit = normalizeRequiredMemoryLimit(opts?.limit ?? 5);
+    const limit = normalizeRequiredMemoryLimit(
+      opts?.limit ?? 5,
+      MAX_WORKFLOW_RECIPE_RESULT_LIMIT,
+    );
     if (!normalizedTaskDescription || limit <= 0) {
       return [];
     }
@@ -588,18 +599,26 @@ function normalizeMemorySearchFilters(filters: MemorySearchFilters): MemorySearc
 
 function normalizeMemorySearchQuery(query: string): string | undefined {
   const normalized = query.replace(/\s+/g, ' ').trim();
-  return normalized.length > 0 ? normalized : undefined;
+  if (!normalized) {
+    return undefined;
+  }
+  return compactMemoryTextWithMarker(
+    normalized,
+    MEMORY_SEARCH_QUERY_MAX_CHARS,
+    MEMORY_SEARCH_QUERY_OMISSION_MARKER,
+  );
 }
 
 function normalizeOptionalMemoryLimit(limit: number | undefined): number | undefined {
-  return limit === undefined ? undefined : normalizeRequiredMemoryLimit(limit);
+  return limit === undefined ? undefined : normalizeRequiredMemoryLimit(limit, MAX_MEMORY_SEARCH_RESULT_LIMIT);
 }
 
-function normalizeRequiredMemoryLimit(limit: number): number {
+function normalizeRequiredMemoryLimit(limit: number, maxLimit: number): number {
   if (!Number.isFinite(limit)) {
     return 0;
   }
-  return Math.max(0, Math.floor(limit));
+  const boundedMax = Number.isFinite(maxLimit) ? Math.max(0, Math.floor(maxLimit)) : 0;
+  return Math.min(Math.max(0, Math.floor(limit)), boundedMax);
 }
 
 function normalizeMemoryMinConfidence(value: number | undefined): number | undefined {
@@ -647,7 +666,10 @@ function normalizeMemoryPathFilterList(values: string[] | undefined): string[] |
   const seen = new Set<string>();
   const normalizedValues: string[] = [];
   for (const value of values) {
-    const normalized = normalizeMemoryPathListItem(value);
+    const normalized = truncateMemoryPathTail(
+      normalizeMemoryPathListItem(value),
+      MEMORY_SEARCH_FILTER_RELATED_FILE_MAX_CHARS,
+    );
     if (!normalized) {
       continue;
     }
@@ -658,6 +680,9 @@ function normalizeMemoryPathFilterList(values: string[] | undefined): string[] |
     }
     seen.add(key);
     normalizedValues.push(normalized);
+    if (normalizedValues.length >= MEMORY_SEARCH_FILTER_RELATED_FILE_LIMIT) {
+      break;
+    }
   }
   return normalizedValues;
 }
@@ -670,7 +695,10 @@ function normalizeMemoryTextFilterList(values: string[] | undefined): string[] |
   const seen = new Set<string>();
   const normalizedValues: string[] = [];
   for (const value of values) {
-    const normalized = value.replace(/\s+/g, ' ').trim();
+    const normalized = compactMemoryListItem(
+      value.replace(/\s+/g, ' ').trim(),
+      MEMORY_SEARCH_FILTER_RELATED_MODULE_MAX_CHARS,
+    );
     if (!normalized) {
       continue;
     }
@@ -681,6 +709,9 @@ function normalizeMemoryTextFilterList(values: string[] | undefined): string[] |
     }
     seen.add(key);
     normalizedValues.push(normalized);
+    if (normalizedValues.length >= MEMORY_SEARCH_FILTER_RELATED_MODULE_LIMIT) {
+      break;
+    }
   }
   return normalizedValues;
 }
@@ -747,12 +778,15 @@ function compactOptionalMemoryStorageText(value: string | undefined, maxChars: n
 }
 
 function compactMemoryStorageText(value: string, maxChars: number): string {
+  return compactMemoryTextWithMarker(value, maxChars, MEMORY_STORE_OMISSION_MARKER);
+}
+
+function compactMemoryTextWithMarker(value: string, maxChars: number, marker: string): string {
   const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
   if (maxChars <= 0 || normalized.length <= maxChars) {
     return normalized;
   }
 
-  const marker = MEMORY_STORE_OMISSION_MARKER;
   if (marker.length >= maxChars - 2) {
     return normalized.slice(0, maxChars);
   }
@@ -800,7 +834,7 @@ function compactMemoryPathList(
       continue;
     }
 
-    const compactedPath = compactMemoryListItem(normalized, maxItemChars);
+    const compactedPath = truncateMemoryPathTail(normalized, maxItemChars);
     const key = normalizeFilterPath(compactedPath);
     if (seen.has(key)) {
       continue;
@@ -840,4 +874,15 @@ function compactMemoryListItem(value: string, maxChars: number): string {
   const headChars = Math.ceil(budget * 0.6);
   const tailChars = Math.max(0, budget - headChars);
   return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
+}
+
+function truncateMemoryPathTail(path: string, maxChars: number): string {
+  const normalized = path.trim();
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return normalized.slice(-maxChars).replace(/^\/+/, '');
 }
