@@ -121,6 +121,43 @@ describe("agent memory learning compaction", () => {
 		expect(summary).not.toContain("Efficient token usage");
 	});
 
+	it("extracts explicit memory notes as durable insights", () => {
+		const knowledge = createAutocodeExtractedKnowledge({
+			subtask: { id: "1.2-notes", description: "Update auth memory notes" },
+			sessionResult: makeSessionResult({
+				stepsExecuted: 20,
+				usage: {
+					promptTokens: 30_000,
+					completionTokens: 30_000,
+					totalTokens: 60_000,
+				},
+				messages: [
+					{
+						role: "assistant",
+						content: [
+							"Implementation complete.",
+							"## Memory Notes",
+							"- [decision] AuthStore must refresh token state before renderer listener fan-out.",
+							"- [module_insight] AuthStore must refresh token state before renderer listener fan-out.",
+							"- [module_insight] Efficient token usage - concise and focused implementation",
+							"## Verification",
+							"- npm test -- auth-store.test.ts",
+						].join("\n"),
+					},
+				],
+			}),
+			sessionId: "session-memory-notes",
+			timestamp: "2026-06-14T00:00:00.000Z",
+		});
+
+		expect(knowledge.insights).toEqual([
+			"AuthStore must refresh token state before renderer listener fan-out.",
+		]);
+		expect(summarizeAutocodeSessionForMemory(knowledge)).toContain(
+			"AuthStore must refresh token state",
+		);
+	});
+
 	it("normalizes and bounds learned key files including created files", () => {
 		const longCreatedFile = `src/${"deep/".repeat(40)}created-component.tsx`;
 

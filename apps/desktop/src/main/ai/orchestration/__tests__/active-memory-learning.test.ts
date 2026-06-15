@@ -102,6 +102,57 @@ describe('active memory learning storage', () => {
     expect(outcomeMemory?.content).not.toContain('finished with outcome');
   });
 
+  it('stores explicit Memory Notes as compact module insights', async () => {
+    const stored: Array<{ type?: string; content?: string; relatedFiles?: string[] }> = [];
+
+    await extractAndStoreKnowledge({
+      sessionResult: {
+        outcome: 'completed',
+        stepsExecuted: 20,
+        usage: {
+          promptTokens: 30_000,
+          completionTokens: 30_000,
+          totalTokens: 60_000,
+        },
+        messages: [{
+          role: 'assistant',
+          content: [
+            'Implementation complete.',
+            '## Memory Notes',
+            '- [decision] AuthStore must refresh token state before renderer listener fan-out.',
+            '- [module_insight] Efficient token usage - concise and focused implementation',
+          ].join('\n'),
+        }],
+        durationMs: 1,
+        toolCallCount: 1,
+      },
+      subtask: {
+        id: '1.2-memory-notes',
+        description: 'Update auth memory notes',
+        filesToModify: ['src/auth/session.ts'],
+      },
+      projectDir,
+      specDir,
+      projectId: 'project-1',
+      memoryService: {
+        store: async (entry) => {
+          stored.push(entry);
+          return `memory-${stored.length}`;
+        },
+      },
+    });
+
+    const moduleInsight = stored.find((entry) => entry.type === 'module_insight');
+    const outcomeMemory = stored.find((entry) => entry.type === 'work_unit_outcome');
+
+    expect(moduleInsight?.content).toBe(
+      'AuthStore must refresh token state before renderer listener fan-out.',
+    );
+    expect(moduleInsight?.relatedFiles).toEqual(['src/auth/session.ts']);
+    expect(outcomeMemory?.content).toContain('AuthStore must refresh token state');
+    expect(stored.some((entry) => entry.content?.includes('Efficient token usage'))).toBe(false);
+  });
+
   it('continues storing later memory entries when one write fails', async () => {
     const stored: Array<{ type?: string; content?: string }> = [];
     let attempts = 0;

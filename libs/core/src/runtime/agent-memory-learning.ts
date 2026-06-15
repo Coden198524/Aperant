@@ -80,6 +80,7 @@ const AUTOCODE_MEMORY_KEY_FILE_LIMIT = 12;
 const AUTOCODE_MEMORY_KEY_FILE_MAX_CHARS = 160;
 const AUTOCODE_MEMORY_LIST_LIMIT = 5;
 const AUTOCODE_MEMORY_CODE_PATTERN_LIMIT = 4;
+const AUTOCODE_MEMORY_EXPLICIT_NOTE_MIN_CHARS = 10;
 const AUTOCODE_TOOL_CONTEXT_WINDOW_CHARS = 600;
 const AUTOCODE_SESSION_METRIC_INSIGHT_PATTERNS = [
 	/^(?:Summary:\s*)?Efficient token usage\b/i,
@@ -641,7 +642,69 @@ export function extractAutocodeInsights(
 		insights.push("Used diverse set of tools - comprehensive approach");
 	}
 
+	insights.push(
+		...extractAutocodeExplicitMemoryNotes(input.sessionResult.messages),
+	);
+
 	return insights;
+}
+
+function extractAutocodeExplicitMemoryNotes(
+	messages: readonly AutocodeSessionMessage[],
+): string[] {
+	const notes: string[] = [];
+	const seen = new Set<string>();
+	for (const message of messages) {
+		if (message.role !== "assistant" || typeof message.content !== "string") {
+			continue;
+		}
+
+		for (const note of extractAutocodeMemoryNotesFromText(message.content)) {
+			const compact = limitAutocodeLearningText(
+				note,
+				AUTOCODE_MEMORY_FIELD_MAX_CHARS,
+			);
+			const key = normalizeAutocodeLearningTextKey(compact);
+			if (
+				compact.length < AUTOCODE_MEMORY_EXPLICIT_NOTE_MIN_CHARS ||
+				isAutocodeSessionMetricInsight(compact) ||
+				seen.has(key)
+			) {
+				continue;
+			}
+
+			seen.add(key);
+			notes.push(compact);
+			if (notes.length >= AUTOCODE_MEMORY_LIST_LIMIT) {
+				return notes;
+			}
+		}
+	}
+	return notes;
+}
+
+function extractAutocodeMemoryNotesFromText(content: string): string[] {
+	const normalized = content.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
+	const heading = /^#{1,6}\s*Memory Notes\s*$/im.exec(normalized);
+	if (!heading) {
+		return [];
+	}
+
+	const section = normalized.slice(heading.index + heading[0].length);
+	const nextHeading = /\n#{1,6}\s+\S/.exec(section);
+	const body = nextHeading ? section.slice(0, nextHeading.index) : section;
+	const notes: string[] = [];
+	for (const line of body.split("\n")) {
+		const bullet = /^\s*(?:[-*]|\d+[.)])\s+(.*)$/.exec(line);
+		if (!bullet) {
+			continue;
+		}
+
+		const rawNote = bullet[1].trim();
+		const typedNote = /^\[([a-z_]+)\]\s*(.*)$/i.exec(rawNote);
+		notes.push((typedNote ? typedNote[2] : rawNote).trim());
+	}
+	return notes;
 }
 
 export function isAutocodeSessionMetricInsight(insight: string): boolean {
