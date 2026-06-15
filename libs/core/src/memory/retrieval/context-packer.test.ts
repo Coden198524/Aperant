@@ -132,6 +132,38 @@ describe('packContext memory quality gate', () => {
     expect(result).not.toContain('Duration: 1234ms');
   });
 
+  it('omits redundant citation text that repeats packed memory content', () => {
+    const repeatedContent = 'AuthStore must refresh token before notifying listeners.';
+    const redundant = packContext(
+      [
+        makeMemory({
+          id: 'redundant-citation',
+          content: repeatedContent,
+          citationText: repeatedContent,
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { gotcha: 1 } },
+    );
+
+    expect(redundant).toContain(repeatedContent);
+    expect(redundant).not.toContain('[^ Memory:');
+
+    const useful = packContext(
+      [
+        makeMemory({
+          id: 'useful-citation',
+          content: repeatedContent,
+          citationText: 'Observed in auth/session-store.ts after retry audit.',
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { gotcha: 1 } },
+    );
+
+    expect(useful).toContain('[^ Memory: Observed in auth/session-store.ts after retry audit.]');
+  });
+
   it('ignores malformed prompt metadata without aborting context packing', () => {
     const result = packContext(
       [

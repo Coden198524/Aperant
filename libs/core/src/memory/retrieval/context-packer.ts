@@ -377,7 +377,11 @@ function formatMemory(
     includeConfidence = true,
   } = options;
   const typeLabel = formatTypeLabel(memoryType);
-  const citation = includeCitation && memory.citationText
+  const promptContent = getMemoryPromptContent(memory);
+  const content = truncateText(promptContent, contentMaxChars);
+  const citation = includeCitation &&
+    memory.citationText &&
+    !isRedundantCitation(memory.citationText, promptContent)
     ? `[^ Memory: ${truncateText(memory.citationText, citationMaxChars)}]`
     : '';
 
@@ -396,11 +400,23 @@ function formatMemory(
 
   return [
     `**${typeLabel}**${fileContext}${confidence}`,
-    formatMemoryContentForPrompt(memory, contentMaxChars),
+    content,
     citation,
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function isRedundantCitation(citationText: string, promptContent: string): boolean {
+  const normalizedCitation = normalizeForSimilarity(citationText);
+  const normalizedContent = normalizeForSimilarity(promptContent);
+  if (!normalizedCitation || !normalizedContent) {
+    return false;
+  }
+  if (normalizedCitation === normalizedContent) {
+    return true;
+  }
+  return isTooSimilar(citationText, [promptContent]);
 }
 
 function formatMemoryWithinTokenBudget(

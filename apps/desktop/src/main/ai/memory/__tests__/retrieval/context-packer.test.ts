@@ -149,6 +149,19 @@ describe('packContext', () => {
     expect(result).toContain('[^ Memory: JWT middleware gotcha]');
   });
 
+  it('omits redundant citation chips that repeat memory content', () => {
+    const repeatedContent = 'Always check JWT token expiry before validating claims in middleware.';
+    const result = packContext([
+      makeMemory({
+        content: repeatedContent,
+        citationText: repeatedContent,
+      }),
+    ], 'implement');
+
+    expect(result).toContain(repeatedContent);
+    expect(result).not.toContain('[^ Memory:');
+  });
+
   it('shows confidence warning for low-confidence memories', () => {
     const memory = makeMemory({ confidence: 0.6 });
     const result = packContext([memory], 'implement');
