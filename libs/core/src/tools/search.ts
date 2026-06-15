@@ -13,10 +13,13 @@ export const GLOB_SUMMARY_SAMPLE_SIZE = 30;
 const GLOB_SUMMARY_TOP_DIRECTORY_COUNT = 12;
 
 export const GREP_DEFAULT_OUTPUT_MODE = 'files_with_matches';
+export const GREP_COUNT_SUMMARY_THRESHOLD = 120;
+export const GREP_FILES_WITH_MATCHES_SUMMARY_THRESHOLD = 120;
 export const GREP_MAX_OUTPUT_LENGTH = 12_000;
 export const GREP_MAX_OUTPUT_LINE_LENGTH = 1000;
 export const GREP_MAX_FALLBACK_FILE_BYTES = 1024 * 1024;
 export const GREP_MAX_FALLBACK_FILES = 10_000;
+export const GREP_RIPGREP_MAX_FILESIZE = '1M';
 const SEARCH_OUTPUT_TRUNCATION_HEAD_RATIO = 0.65;
 const SEARCH_LINE_OMISSION_MARKER = ' ... [line middle omitted] ... ';
 
@@ -38,6 +41,17 @@ export interface GrepFallbackMatch {
   count?: number;
 }
 
+interface SearchPathSummaryOptions {
+  toolName?: string;
+  sampleHeading?: (sampleCount: number) => string;
+  guidance?: string;
+}
+
+interface GrepCountEntry {
+  file: string;
+  count: number;
+}
+
 export function normalizeSearchPathSegments(fileName: string): string[] {
   return fileName.replace(/\\/g, '/').split('/').filter(Boolean);
 }
@@ -57,6 +71,7 @@ export function summarizePathsByDirectory(
   rootDir: string,
   totalMatches: number,
   sampleSize: number = GLOB_SUMMARY_SAMPLE_SIZE,
+  options: SearchPathSummaryOptions = {},
 ): string {
   const directoryCounts = new Map<string, number>();
   for (const filePath of paths) {
@@ -70,27 +85,170 @@ export function summarizePathsByDirectory(
     .sort((a, b) => b[1] - a[1])
     .slice(0, GLOB_SUMMARY_TOP_DIRECTORY_COUNT)
     .map(([dir, count]) => `- ${dir}: ${count}`);
+  const omittedDirectoryCount = Math.max(0, directoryCounts.size - topDirectories.length);
+  if (omittedDirectoryCount > 0) {
+    topDirectories.push(`... ${omittedDirectoryCount} more directories omitted`);
+  }
 
-  const sample = paths.slice(0, sampleSize).map((filePath) => toPortableRelativeSearchPath(filePath, rootDir));
+  const sample = paths.slice(0, sampleSize).map((filePath) => formatSearchPathResult(filePath, rootDir));
+  const toolName = options.toolName ?? 'Glob';
+  const sampleHeading = options.sampleHeading?.(sample.length) ??
+    `First ${sample.length} recently modified files:`;
   return [
-    `Glob matched ${totalMatches} files. Returning a compact summary to avoid flooding the model context.`,
+    `${toolName} matched ${totalMatches} files. Returning a compact summary to avoid flooding the model context.`,
     '',
     'Top directories:',
     ...topDirectories,
     '',
-    `First ${sample.length} recently modified files:`,
+    sampleHeading,
     ...sample,
     '',
-    'Narrow the pattern or path before reading files.',
+    options.guidance ?? 'Narrow the pattern or path before reading files.',
   ].join('\n');
 }
 
+export function summarizeGrepFilesWithMatchesOutput(
+  output: string,
+  rootDir: string,
+  threshold: number = GREP_FILES_WITH_MATCHES_SUMMARY_THRESHOLD,
+): string {
+  if (isSearchStatusOutput(output)) {
+    return output;
+  }
+
+  const paths = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (paths.length <= threshold) {
+    return formatSearchPathResults(paths, rootDir, Number.MAX_SAFE_INTEGER);
+  }
+
+  return summarizePathsByDirectory(paths, rootDir, paths.length, GLOB_SUMMARY_SAMPLE_SIZE, {
+    toolName: 'Grep',
+    sampleHeading: (sampleCount) => `First ${sampleCount} matching files:`,
+    guidance: 'Narrow the pattern, glob, type, or path before reading files.',
+  });
+}
+
+function isSearchStatusOutput(output: string): boolean {
+  const trimmed = output.trimStart();
+  return trimmed.startsWith('Error:') || trimmed === 'No matches found';
+}
+
+export function summarizeGrepCountOutput(
+  output: string,
+  rootDir: string,
+  threshold: number = GREP_COUNT_SUMMARY_THRESHOLD,
+): string {
+  const entries = parseGrepCountEntries(output);
+  if (!entries) {
+    return output;
+  }
+  if (entries.length <= threshold) {
+    return entries
+      .map((entry) => `${formatSearchPathResult(entry.file, rootDir)}:${entry.count}`)
+      .join('\n');
+  }
+
+  const directoryCounts = new Map<string, { files: number; matches: number }>();
+  let totalMatches = 0;
+  for (const entry of entries) {
+    totalMatches += entry.count;
+    const rel = formatSearchPathResult(entry.file, rootDir);
+    const dir = path.dirname(rel);
+    const key = dir === '.' ? '<root>' : dir.split('/').slice(0, 3).join('/');
+    const current = directoryCounts.get(key) ?? { files: 0, matches: 0 };
+    current.files += 1;
+    current.matches += entry.count;
+    directoryCounts.set(key, current);
+  }
+
+  const topDirectories = Array.from(directoryCounts.entries())
+    .sort((a, b) => b[1].matches - a[1].matches || b[1].files - a[1].files)
+    .slice(0, GLOB_SUMMARY_TOP_DIRECTORY_COUNT)
+    .map(([dir, stats]) => `- ${dir}: ${stats.files} files, ${stats.matches} matches`);
+  const omittedDirectoryCount = Math.max(0, directoryCounts.size - topDirectories.length);
+  if (omittedDirectoryCount > 0) {
+    topDirectories.push(`... ${omittedDirectoryCount} more directories omitted`);
+  }
+
+  const sample = [...entries]
+    .sort((a, b) => b.count - a.count || a.file.localeCompare(b.file))
+    .slice(0, GLOB_SUMMARY_SAMPLE_SIZE)
+    .map((entry) => `${formatSearchPathResult(entry.file, rootDir)}:${entry.count}`);
+
+  return [
+    `Grep counted ${entries.length} matching files with ${totalMatches} total matches. Returning a compact summary to avoid flooding the model context.`,
+    '',
+    'Top directories:',
+    ...topDirectories,
+    '',
+    `Top ${sample.length} matching file counts:`,
+    ...sample,
+    '',
+    'Narrow the pattern, glob, type, or path before reading files.',
+  ].join('\n');
+}
+
+function parseGrepCountEntries(output: string): GrepCountEntry[] | null {
+  const lines = output.split(/\r?\n/).map((line) => line.trim()).filter(Boolean);
+  if (lines.length === 0) {
+    return null;
+  }
+
+  const entries: GrepCountEntry[] = [];
+  for (const line of lines) {
+    const match = /^(.+):(\d+)$/.exec(line);
+    if (!match) {
+      return null;
+    }
+    entries.push({ file: match[1], count: Number(match[2]) });
+  }
+  return entries;
+}
+
+export function formatSearchPathResults(
+  paths: string[],
+  rootDir: string,
+  maxResults: number = GLOB_MAX_RESULTS,
+): string {
+  return paths
+    .slice(0, maxResults)
+    .map((filePath) => formatSearchPathResult(filePath, rootDir))
+    .join('\n');
+}
+
+export function formatSearchPathResult(filePath: string, rootDir: string): string {
+  return toPortableRelativeSearchPath(filePath, rootDir);
+}
+
 function toPortableRelativeSearchPath(filePath: string, rootDir: string): string {
+  if (!isAbsoluteSearchPath(filePath)) {
+    return filePath.replace(/\\/g, '/').replace(/^\.\//, '');
+  }
+
+  const prefixes = buildSearchRootPrefixes(rootDir);
+  for (const prefix of prefixes) {
+    const matchLength = getSearchRootPrefixMatchLength(filePath, prefix);
+    if (matchLength === null) {
+      continue;
+    }
+    if (matchLength === filePath.length) {
+      return '.';
+    }
+    return toPortableSearchPath(filePath.slice(matchLength + 1));
+  }
+
   const relativePath = path.relative(rootDir, filePath).replace(/\\/g, '/');
   if (relativePath && !relativePath.startsWith('..') && !path.isAbsolute(relativePath)) {
     return relativePath;
   }
   return filePath.replace(/\\/g, '/');
+}
+
+function isAbsoluteSearchPath(filePath: string): boolean {
+  return path.isAbsolute(filePath) ||
+    /^[A-Za-z]:[\\/]/.test(filePath) ||
+    filePath.startsWith('\\\\') ||
+    filePath.startsWith('//');
 }
 
 export function buildRipgrepArgs(
@@ -123,7 +281,7 @@ export function buildRipgrepArgs(
     args.push('--glob', input.glob);
   }
 
-  args.push('--no-heading', '--color', 'never');
+  args.push('--no-heading', '--color', 'never', '--max-filesize', GREP_RIPGREP_MAX_FILESIZE);
   for (const dir of SEARCH_EXCLUDED_DIRS) {
     args.push('--glob', `!**/${dir}/**`);
   }
@@ -161,18 +319,44 @@ function buildSearchRootPrefixes(rootDir: string): string[] {
 
 function relativizeSearchOutputLine(line: string, prefixes: string[]): string {
   for (const prefix of prefixes) {
-    if (line === prefix) {
+    const matchLength = getSearchRootPrefixMatchLength(line, prefix);
+    if (matchLength === null) {
+      continue;
+    }
+    if (matchLength === line.length) {
       return '.';
     }
-    if (line.startsWith(`${prefix}/`) || line.startsWith(`${prefix}\\`)) {
-      return normalizeRelativeSearchOutputLine(line.slice(prefix.length + 1));
-    }
+    return normalizeRelativeSearchOutputLine(line.slice(matchLength + 1));
   }
   return line;
 }
 
+function getSearchRootPrefixMatchLength(line: string, prefix: string): number | null {
+  const comparableLine = shouldMatchSearchPrefixCaseInsensitive(prefix)
+    ? line.toLowerCase()
+    : line;
+  const comparablePrefix = shouldMatchSearchPrefixCaseInsensitive(prefix)
+    ? prefix.toLowerCase()
+    : prefix;
+
+  if (comparableLine === comparablePrefix) {
+    return prefix.length;
+  }
+  if (
+    comparableLine.startsWith(`${comparablePrefix}/`) ||
+    comparableLine.startsWith(`${comparablePrefix}\\`)
+  ) {
+    return prefix.length;
+  }
+  return null;
+}
+
+function shouldMatchSearchPrefixCaseInsensitive(prefix: string): boolean {
+  return /^[a-z]:[\\/]/i.test(prefix) || prefix.startsWith('\\\\') || prefix.startsWith('//');
+}
+
 function normalizeRelativeSearchOutputLine(line: string): string {
-  const lineNumberDelimiter = /^(.+?)([:\-]\d+(?:[:\-]|$))/.exec(line);
+  const lineNumberDelimiter = /^(.+?)([:-]\d+(?:[:-]|$))/.exec(line);
   if (!lineNumberDelimiter) {
     return toPortableSearchPath(line);
   }

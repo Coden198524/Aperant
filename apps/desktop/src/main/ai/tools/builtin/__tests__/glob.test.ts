@@ -50,12 +50,18 @@ const baseContext: ToolContext = {
  * Configure fs mocks for a glob run that returns the given absolute paths.
  * Each path gets a fake mtime so sorting can be tested.
  */
-function setupGlobMatches(absolutePaths: string[], mtimes?: number[]) {
+function setupGlobMatches(absolutePaths: string[], mtimes?: number[], searchDir = '/test/project') {
   // existsSync for the search dir
   vi.mocked(fs.existsSync).mockReturnValue(true);
 
   // globSync returns relative filenames that the tool will resolve
-  const relPaths = absolutePaths.map((p) => p.replace('/test/project/', ''));
+  const normalizedSearchDir = searchDir.replace(/\\/g, '/').replace(/\/+$/g, '');
+  const relPaths = absolutePaths.map((p) => {
+    const normalizedPath = p.replace(/\\/g, '/');
+    return normalizedPath.startsWith(`${normalizedSearchDir}/`)
+      ? normalizedPath.slice(normalizedSearchDir.length + 1)
+      : normalizedPath;
+  });
   vi.mocked(fs.globSync).mockReturnValue(relPaths);
 
   // statSync used twice: once to check isFile, once to get mtime
@@ -106,6 +112,18 @@ describe('Glob Tool', () => {
 
     expect(result).toContain('index.ts');
     expect(result).toContain('utils.ts');
+    expect(result).not.toContain('/test/project');
+  });
+
+  it('should return compact relative paths for ordinary result sets', async () => {
+    setupGlobMatches(['/test/project/src/auth/session.ts']);
+
+    const result = await globTool.config.execute(
+      { pattern: '**/*.ts' },
+      baseContext,
+    ) as string;
+
+    expect(result).toBe('src/auth/session.ts');
   });
 
   it('should return "No files found" when pattern matches nothing', async () => {
@@ -163,16 +181,17 @@ describe('Glob Tool', () => {
   });
 
   it('should use provided path instead of cwd when given', async () => {
-    setupGlobMatches(['/test/project/sub/file.ts']);
+    setupGlobMatches(['/test/project/sub/file.ts'], undefined, '/test/project/sub');
 
-    await globTool.config.execute(
+    const result = await globTool.config.execute(
       { pattern: '*.ts', path: '/test/project/sub' },
       baseContext,
-    );
+    ) as string;
 
     expect(fs.globSync).toHaveBeenCalledWith('*.ts', expect.objectContaining({
       cwd: '/test/project/sub',
     }));
+    expect(result).toBe('sub/file.ts');
   });
 
   it('should exclude generic generated and dependency directories from results', async () => {
@@ -212,6 +231,7 @@ describe('Glob Tool', () => {
 
     expect(result).toContain('Glob matched 350 files');
     expect(result).toContain('Top directories:');
+    expect(result).toContain('... 338 more directories omitted');
     expect(result).toContain(`First ${GLOB_SUMMARY_SAMPLE_SIZE} recently modified files:`);
     expect(result).toContain('src/feature0/file.ts');
     expect(result).not.toContain('/test/project/src/feature0/file.ts');
@@ -228,6 +248,7 @@ describe('Glob Tool', () => {
     ) as string;
 
     expect(result).toContain('Glob matched 150 files');
+    expect(result).toContain('... 138 more directories omitted');
     expect(result).toContain(`First ${GLOB_SUMMARY_SAMPLE_SIZE} recently modified files:`);
     expect(result).not.toContain(`src/feature${GLOB_SUMMARY_SAMPLE_SIZE}/file.ts`);
   });

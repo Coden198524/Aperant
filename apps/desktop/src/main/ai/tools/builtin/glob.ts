@@ -12,6 +12,7 @@ import * as path from 'node:path';
 import {
   GLOB_MAX_RESULTS,
   GLOB_SUMMARY_THRESHOLD,
+  formatSearchPathResults,
   shouldExcludeSearchPath,
   summarizePathsByDirectory,
 } from '@autocode/core';
@@ -109,8 +110,8 @@ export const globTool = Tool.define({
     const totalMatches = withMtime.length;
     const sortedPaths = withMtime.map((entry) => entry.filePath);
     const output = totalMatches > GLOB_SUMMARY_THRESHOLD
-      ? summarizePathsByDirectory(sortedPaths, resolvedDir, totalMatches)
-      : sortedPaths.slice(0, GLOB_MAX_RESULTS).join('\n');
+      ? summarizePathsByDirectory(sortedPaths, context.projectDir, totalMatches)
+      : formatSearchPathResults(sortedPaths, context.projectDir, GLOB_MAX_RESULTS);
 
     // Apply disk-spillover truncation for very large outputs
     const result = truncateToolOutput(output, 'Glob', context.projectDir);

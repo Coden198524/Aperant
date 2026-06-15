@@ -107,6 +107,27 @@ describe('Grep Tool', () => {
     expect(result).not.toContain('/test/project/src');
   });
 
+  it('should summarize broad files_with_matches results by directory', async () => {
+    const output = Array.from(
+      { length: 150 },
+      (_, index) => `/test/project/src/feature-${index}/file.ts`,
+    ).join('\n');
+    setupRg(output, '', 0);
+
+    const result = await grepTool.config.execute(
+      { pattern: 'useEffect' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('Grep matched 150 files');
+    expect(result).toContain('Top directories:');
+    expect(result).toContain('... 138 more directories omitted');
+    expect(result).toContain('First 30 matching files:');
+    expect(result).toContain('src/feature-0/file.ts');
+    expect(result).not.toContain('src/feature-30/file.ts');
+    expect(result).not.toContain('/test/project/src');
+  });
+
   it('should relativize content-mode rg output while preserving line numbers and text', async () => {
     setupRg('/test/project/src/auth.ts:10:const auth = true;\n', '', 0);
 
@@ -192,6 +213,49 @@ describe('Grep Tool', () => {
     expect(result).toContain('README.md:1:hello from fallback');
   });
 
+  it('should return project-relative paths from the built-in fallback for subdirectory searches', async () => {
+    mockFindExecutable.mockReturnValue(null as unknown as string);
+    vi.mocked(fs.existsSync).mockReturnValue(true);
+    vi.mocked(fs.statSync).mockImplementation((filePath) => {
+      const normalizedPath = String(filePath).replace(/\\/g, '/');
+      return {
+        isDirectory: () => normalizedPath === '/test/project/sub',
+        size: 20,
+      } as fs.Stats;
+    });
+    vi.mocked(fs.readdirSync).mockImplementation((dirPath) => {
+      const normalizedPath = String(dirPath).replace(/\\/g, '/');
+      if (normalizedPath === '/test/project/sub') {
+        return [
+          { name: 'file.ts', isDirectory: () => false, isFile: () => true },
+        ] as unknown as ReturnType<typeof fs.readdirSync>;
+      }
+      return [] as unknown as ReturnType<typeof fs.readdirSync>;
+    });
+    vi.mocked(fs.readFileSync).mockReturnValue(Buffer.from('subdir fallback match\n'));
+
+    const result = await grepTool.config.execute(
+      { pattern: 'fallback', path: '/test/project/sub', output_mode: 'content' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('sub/file.ts:1:subdir fallback match');
+    expect(result).not.toContain('\nfile.ts:');
+    expect(result).not.toContain('/test/project/sub/file.ts');
+  });
+
+  it('should preserve built-in fallback regex errors in default mode', async () => {
+    mockFindExecutable.mockReturnValue(null as unknown as string);
+
+    const result = await grepTool.config.execute(
+      { pattern: '\\' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('Error: invalid regular expression:');
+    expect(result).not.toContain('Top directories:');
+  });
+
   it('should include --files-with-matches flag in default mode', async () => {
     setupRg('/test/project/a.ts\n', '', 0);
 
@@ -202,6 +266,19 @@ describe('Grep Tool', () => {
 
     const args = mockExecFile.mock.calls[0][1] as string[];
     expect(args).toContain('--files-with-matches');
+  });
+
+  it('should limit ripgrep searches to text-sized files', async () => {
+    setupRg('/test/project/a.ts\n', '', 0);
+
+    await grepTool.config.execute(
+      { pattern: 'hello' },
+      baseContext,
+    );
+
+    const args = mockExecFile.mock.calls[0][1] as string[];
+    expect(args).toContain('--max-filesize');
+    expect(args).toContain('1M');
   });
 
   it('should include --line-number flag in content mode', async () => {
@@ -228,6 +305,39 @@ describe('Grep Tool', () => {
 
     const args = mockExecFile.mock.calls[0][1] as string[];
     expect(args).toContain('--count');
+  });
+
+  it('should preserve compact per-file counts for small count-mode results', async () => {
+    setupRg('/test/project/src/a.ts:5\n/test/project/src/b.ts:2\n', '', 0);
+
+    const result = await grepTool.config.execute(
+      { pattern: 'hello', output_mode: 'count' },
+      baseContext,
+    ) as string;
+
+    expect(result).toBe('src/a.ts:5\nsrc/b.ts:2');
+  });
+
+  it('should summarize broad count-mode results by directory and match totals', async () => {
+    const output = Array.from(
+      { length: 150 },
+      (_, index) => `/test/project/src/feature-${index}/file.ts:${index + 1}`,
+    ).join('\n');
+    setupRg(output, '', 0);
+
+    const result = await grepTool.config.execute(
+      { pattern: 'hello', output_mode: 'count' },
+      baseContext,
+    ) as string;
+
+    expect(result).toContain('Grep counted 150 matching files');
+    expect(result).toContain('total matches');
+    expect(result).toContain('Top directories:');
+    expect(result).toContain('... 138 more directories omitted');
+    expect(result).toContain('Top 30 matching file counts:');
+    expect(result).toContain('src/feature-149/file.ts:150');
+    expect(result).not.toContain('src/feature-30/file.ts');
+    expect(result).not.toContain('/test/project/src');
   });
 
   it('should add -C flag when context lines are specified in content mode', async () => {
@@ -271,14 +381,14 @@ describe('Grep Tool', () => {
 
   it('should truncate output exceeding MAX_OUTPUT_LENGTH', async () => {
     const longOutput = [
-      '/test/project/first-match.ts',
-      ...Array.from({ length: 2000 }, (_, index) => `/test/project/middle-${index}.ts`),
-      '/test/project/final-match-sentinel.ts',
+      '/test/project/first-match.ts:1:first match',
+      ...Array.from({ length: 2000 }, (_, index) => `/test/project/middle-${index}.ts:1:${'body '.repeat(10)}`),
+      '/test/project/final-match-sentinel.ts:1:final match',
     ].join('\n');
     setupRg(longOutput, '', 0);
 
     const result = await grepTool.config.execute(
-      { pattern: 'test' },
+      { pattern: 'test', output_mode: 'content' },
       baseContext,
     ) as string;
 

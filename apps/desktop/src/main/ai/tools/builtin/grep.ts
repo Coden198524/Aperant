@@ -20,6 +20,8 @@ import {
   matchesSearchType,
   relativizeSearchOutputPaths,
   shouldSkipSearchDir,
+  summarizeGrepCountOutput,
+  summarizeGrepFilesWithMatchesOutput,
   toPortableSearchPath,
   truncateSearchOutput,
   type GrepFallbackMatch,
@@ -67,6 +69,22 @@ const inputSchema = z.object({
 });
 
 type GrepToolInput = z.infer<typeof inputSchema>;
+
+function formatGrepToolOutput(
+  input: GrepToolInput,
+  output: string,
+  projectDir: string,
+): string {
+  const relativeOutput = relativizeSearchOutputPaths(output, projectDir);
+  const outputMode = input.output_mode ?? GREP_DEFAULT_OUTPUT_MODE;
+  if (outputMode === 'files_with_matches') {
+    return summarizeGrepFilesWithMatchesOutput(relativeOutput, projectDir);
+  }
+  if (outputMode === 'count') {
+    return summarizeGrepCountOutput(relativeOutput, projectDir);
+  }
+  return relativeOutput;
+}
 
 // ---------------------------------------------------------------------------
 // Helpers
@@ -117,7 +135,8 @@ function listFiles(root: string, abortSignal?: AbortSignal): string[] {
   const stack = [root];
   while (stack.length > 0) {
     if (abortSignal?.aborted) break;
-    const current = stack.pop()!;
+    const current = stack.pop();
+    if (!current) continue;
     let entries: fs.Dirent[];
     try {
       entries = fs.readdirSync(current, { withFileTypes: true });
@@ -140,6 +159,7 @@ function listFiles(root: string, abortSignal?: AbortSignal): string[] {
 async function runBuiltinSearch(
   input: GrepToolInput,
   searchPath: string,
+  outputRootDir: string,
   abortSignal?: AbortSignal,
 ): Promise<string> {
   let regex: RegExp;
@@ -182,7 +202,7 @@ async function runBuiltinSearch(
     if (isProbablyBinaryBuffer(buffer)) continue;
 
     const content = buffer.toString('utf8');
-    const relativeFile = toPortableSearchPath(path.relative(searchPath, filePath) || filePath);
+    const relativeFile = toPortableSearchPath(path.relative(outputRootDir, filePath) || filePath);
     if (outputMode === 'files_with_matches') {
       if (regex.test(content)) matches.push({ file: relativeFile });
       regex.lastIndex = 0;
@@ -239,8 +259,8 @@ export const grepTool = Tool.define({
     );
 
     if (exitCode === 127) {
-      const fallbackOutput = await runBuiltinSearch(input, resolvedPath, context.abortSignal);
-      return truncateSearchOutput(relativizeSearchOutputPaths(fallbackOutput, context.projectDir));
+      const fallbackOutput = await runBuiltinSearch(input, resolvedPath, context.projectDir, context.abortSignal);
+      return truncateSearchOutput(formatGrepToolOutput(input, fallbackOutput, context.projectDir));
     }
 
     // Exit code 1 means no matches (not an error for rg)
@@ -256,6 +276,6 @@ export const grepTool = Tool.define({
       return 'No matches found';
     }
 
-    return truncateSearchOutput(relativizeSearchOutputPaths(stdout, context.projectDir)).trimEnd();
+    return truncateSearchOutput(formatGrepToolOutput(input, stdout, context.projectDir)).trimEnd();
   },
 });
