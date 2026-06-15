@@ -338,6 +338,41 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.filters).not.toHaveProperty('filter');
     });
 
+    it('omits search modules already represented by related files before IPC', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:search-result',
+        requestId,
+        memories: [],
+      }));
+
+      await proxy.searchMemory({
+        query: 'auth token',
+        projectId: 'proj-1',
+        relatedFiles: [' src\\auth\\token.ts ', 'src/auth/session-store.ts'],
+        relatedModules: [
+          'src/auth/token.ts',
+          'token.ts',
+          'token',
+          'session-store',
+          'auth',
+          'token refresh',
+        ],
+      });
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        filters: {
+          relatedFiles?: string[];
+          relatedModules?: string[];
+        };
+      };
+
+      expect(sentMsg.filters.relatedFiles).toEqual([
+        'src/auth/token.ts',
+        'src/auth/session-store.ts',
+      ]);
+      expect(sentMsg.filters.relatedModules).toEqual(['auth', 'token refresh']);
+    });
+
     it('caps direct search limits before posting IPC requests', async () => {
       setupResponseMock(mockPort, (requestId) => ({
         type: 'memory:search-result',
@@ -606,6 +641,42 @@ describe('WorkerObserverProxy', () => {
       expect(estimateTokens(sentMsg.entry.workUnitRef?.label ?? '')).toBeLessThanOrEqual(75);
       expect(sentMsg.entry.workUnitRef?.label).toContain('LABEL_HEAD');
       expect(sentMsg.entry.workUnitRef?.label).toContain('LABEL_TAIL');
+    });
+
+    it('omits record modules already represented by related files before IPC', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:stored',
+        requestId,
+        id: 'new-mem-file-dedup',
+      }));
+
+      await proxy.recordMemory({
+        type: 'gotcha',
+        content: 'Use shared auth helper before retrying token refresh.',
+        projectId: 'proj-1',
+        relatedFiles: [' src\\auth\\token.ts ', 'src/auth/session-store.ts'],
+        relatedModules: [
+          'src/auth/token.ts',
+          'token.ts',
+          'token',
+          'session-store',
+          'auth',
+          'token refresh',
+        ],
+      });
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        entry: {
+          relatedFiles?: string[];
+          relatedModules?: string[];
+        };
+      };
+
+      expect(sentMsg.entry.relatedFiles).toEqual([
+        'src/auth/token.ts',
+        'src/auth/session-store.ts',
+      ]);
+      expect(sentMsg.entry.relatedModules).toEqual(['auth', 'token refresh']);
     });
 
     it('keeps localized memory record entries within token budgets before IPC', async () => {

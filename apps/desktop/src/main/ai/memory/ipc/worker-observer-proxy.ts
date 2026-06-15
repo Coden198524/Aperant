@@ -249,6 +249,14 @@ export class WorkerObserverProxy {
 }
 
 function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordEntry {
+  const relatedFiles = compactMemoryIpcPathList(
+    entry.relatedFiles,
+    MEMORY_RECORD_IPC_RELATED_FILE_LIMIT,
+    MEMORY_RECORD_IPC_RELATED_FILE_MAX_CHARS,
+    MEMORY_RECORD_IPC_RELATED_FILE_MAX_TOKENS,
+  );
+  const relatedFileRefs = createMemoryIpcRelatedFileRefs(relatedFiles);
+
   return {
     ...entry,
     content: compactMemoryIpcText(
@@ -264,18 +272,14 @@ function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordE
       MEMORY_RECORD_IPC_TAG_MAX_TOKENS,
       MEMORY_RECORD_IPC_OMISSION_MARKER,
     ),
-    relatedFiles: compactMemoryIpcPathList(
-      entry.relatedFiles,
-      MEMORY_RECORD_IPC_RELATED_FILE_LIMIT,
-      MEMORY_RECORD_IPC_RELATED_FILE_MAX_CHARS,
-      MEMORY_RECORD_IPC_RELATED_FILE_MAX_TOKENS,
-    ),
+    relatedFiles,
     relatedModules: compactMemoryIpcTextList(
       entry.relatedModules,
       MEMORY_RECORD_IPC_RELATED_MODULE_LIMIT,
       MEMORY_RECORD_IPC_RELATED_MODULE_MAX_CHARS,
       MEMORY_RECORD_IPC_RELATED_MODULE_MAX_TOKENS,
       MEMORY_RECORD_IPC_OMISSION_MARKER,
+      (module) => normalizeMemoryIpcRelatedModule(module, relatedFileRefs),
     ),
     citationText: compactOptionalMemoryIpcText(
       entry.citationText,
@@ -349,22 +353,26 @@ function compactMemorySearchFiltersForIpc(filters: MemorySearchFilters): MemoryS
         MEMORY_SEARCH_IPC_OMISSION_MARKER,
       )
     : serializableFilters.query;
+  const relatedFiles = compactMemoryIpcPathList(
+    serializableFilters.relatedFiles,
+    MEMORY_SEARCH_IPC_RELATED_FILE_LIMIT,
+    MEMORY_SEARCH_IPC_RELATED_FILE_MAX_CHARS,
+    MEMORY_SEARCH_IPC_RELATED_FILE_MAX_TOKENS,
+  );
+  const relatedFileRefs = createMemoryIpcRelatedFileRefs(relatedFiles);
+
   return {
     ...serializableFilters,
     query,
     limit: normalizeMemorySearchIpcLimit(serializableFilters.limit, query),
-    relatedFiles: compactMemoryIpcPathList(
-      serializableFilters.relatedFiles,
-      MEMORY_SEARCH_IPC_RELATED_FILE_LIMIT,
-      MEMORY_SEARCH_IPC_RELATED_FILE_MAX_CHARS,
-      MEMORY_SEARCH_IPC_RELATED_FILE_MAX_TOKENS,
-    ),
+    relatedFiles,
     relatedModules: compactMemoryIpcTextList(
       serializableFilters.relatedModules,
       MEMORY_SEARCH_IPC_RELATED_MODULE_LIMIT,
       MEMORY_SEARCH_IPC_RELATED_MODULE_MAX_CHARS,
       MEMORY_SEARCH_IPC_RELATED_MODULE_MAX_TOKENS,
       MEMORY_SEARCH_IPC_OMISSION_MARKER,
+      (module) => normalizeMemoryIpcRelatedModule(module, relatedFileRefs),
     ),
   };
 }
@@ -377,6 +385,73 @@ function normalizeMemorySearchIpcLimit(limit: number | undefined, query: string 
     return 0;
   }
   return Math.min(Math.max(0, Math.floor(limit)), MEMORY_SEARCH_IPC_MAX_LIMIT);
+}
+
+interface MemoryIpcRelatedFileRefs {
+  paths: Set<string>;
+  fileNames: Set<string>;
+  fileStems: Set<string>;
+}
+
+function createMemoryIpcRelatedFileRefs(
+  files: readonly string[] | undefined,
+): MemoryIpcRelatedFileRefs {
+  const paths = new Set<string>();
+  const fileNames = new Set<string>();
+  const fileStems = new Set<string>();
+
+  for (const file of files ?? []) {
+    const normalized = normalizeMemoryIpcPath(file);
+    if (!normalized) {
+      continue;
+    }
+
+    paths.add(normalized.toLowerCase());
+    const fileName = normalized.split('/').pop()?.toLowerCase();
+    if (!fileName) {
+      continue;
+    }
+
+    fileNames.add(fileName);
+    const stem = stripKnownMemoryIpcFileExtension(fileName);
+    if (stem) {
+      fileStems.add(stem);
+    }
+  }
+
+  return { paths, fileNames, fileStems };
+}
+
+function normalizeMemoryIpcRelatedModule(
+  value: string,
+  relatedFileRefs: MemoryIpcRelatedFileRefs,
+): string {
+  const module = normalizeMemoryIpcListItem(value);
+  if (!module || isRedundantMemoryIpcRelatedModule(module, relatedFileRefs)) {
+    return '';
+  }
+  return module;
+}
+
+function isRedundantMemoryIpcRelatedModule(
+  module: string,
+  relatedFileRefs: MemoryIpcRelatedFileRefs,
+): boolean {
+  const moduleKey = normalizeMemoryIpcTextKey(module);
+  if (!moduleKey) {
+    return true;
+  }
+
+  return relatedFileRefs.paths.has(normalizeMemoryIpcPathKey(module)) ||
+    relatedFileRefs.fileNames.has(moduleKey) ||
+    relatedFileRefs.fileStems.has(moduleKey);
+}
+
+function stripKnownMemoryIpcFileExtension(fileName: string): string {
+  return fileName.replace(
+    /\.(?:cjs|cts|d\.ts|e2e\.ts|js|jsx|mjs|mts|spec\.ts|test\.ts|ts|tsx)$/i,
+    '',
+  );
 }
 
 function compactOptionalMemoryIpcText(
