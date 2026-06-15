@@ -4,12 +4,21 @@ import type { Memory } from './types.js';
 import {
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT,
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS,
+  AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_TOKENS,
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS,
+  AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_TOKENS,
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_MIN_CONFIDENCE,
   AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT,
   AUTOCODE_MEMORY_RUNTIME_OUTCOME_CONTENT_MAX_CHARS,
   AUTOCODE_MEMORY_RUNTIME_OUTCOME_FIELD_MAX_CHARS,
   AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT,
+  AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_MAX_CHARS,
+  AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_LIMIT,
+  AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_MAX_CHARS,
+  AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_LIMIT,
+  AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_MAX_CHARS,
+  AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT,
+  AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_MAX_CHARS,
   AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT,
   buildAutocodeWorkUnitOutcomeMemoryEntry,
   buildAutocodeWorkUnitOutcomeSessionInsight,
@@ -20,6 +29,7 @@ import {
   formatAutocodeMemoryRuntimeContext,
   toAutocodeMemoryRuntimeRecentContext,
 } from './runtime.js';
+import { estimateTokens } from './retrieval/context-packer.js';
 
 function memory(overrides: Partial<Memory> = {}): Memory {
   return {
@@ -74,6 +84,29 @@ describe('Autocode memory runtime context formatting', () => {
     expect(formatted.match(/src\/four-should-be-omitted\.ts/g)?.length ?? 0).toBeLessThanOrEqual(1);
     expect(formatted.split('\n').filter((line) => line.startsWith('- [')).length).toBeLessThanOrEqual(6);
     expect(AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT).toBe(3);
+  });
+
+  it('keeps localized runtime context within the estimated token budget', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'localized-memory',
+        content: [
+          '本地化记忆开头',
+          '这里是会显著增加 token 的中文上下文。'.repeat(AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_TOKENS * 3),
+          '本地化记忆尾部应该保留',
+        ].join(' '),
+        confidence: 0.98,
+        relatedFiles: [
+          `src/${'深层目录/'.repeat(80)}localized-tail-preserved.ts`,
+        ],
+      }),
+    ]);
+
+    expect(formatted.length).toBeLessThanOrEqual(AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS);
+    expect(estimateTokens(formatted)).toBeLessThanOrEqual(AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_TOKENS);
+    expect(formatted).toContain('本地化记忆开头');
+    expect(formatted).toContain('本地化记忆尾部应该保留');
+    expect(formatted).toContain('localized-tail-preserved.ts');
   });
 
   it('omits deprecated memories from runtime context', () => {
@@ -317,7 +350,7 @@ describe('Autocode memory runtime context formatting', () => {
     ].join(' ');
     const relatedFiles = Array.from(
       { length: AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT + 5 },
-      (_, index) => `src/very/long/path/${index}/file-with-extra-context.ts`,
+      (_, index) => `src/${'very/long/path/'.repeat(20)}${index}/file-with-extra-context.ts`,
     );
 
     const entry = buildAutocodeWorkUnitOutcomeMemoryEntry({
@@ -344,16 +377,73 @@ describe('Autocode memory runtime context formatting', () => {
       completedAt: '2026-06-14T00:00:00.000Z',
     });
 
+    const entryRelatedFiles = entry.relatedFiles ?? [];
+
     expect(entry.content.length).toBeLessThanOrEqual(AUTOCODE_MEMORY_RUNTIME_OUTCOME_CONTENT_MAX_CHARS);
     expect(entry.content).toContain('SUMMARY_HEAD');
     expect(entry.content).toContain('ERROR_TAIL_SHOULD_BE_PRESERVED');
     expect(entry.content).toContain('[middle omitted]');
     expect(entry.citationText?.length).toBeLessThanOrEqual(AUTOCODE_MEMORY_RUNTIME_OUTCOME_FIELD_MAX_CHARS);
     expect(entry.citationText).toContain('SUMMARY_TAIL_SHOULD_BE_PRESERVED');
-    expect(entry.relatedFiles).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT);
+    expect(entryRelatedFiles).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT);
+    expect(entryRelatedFiles.every((file) => file.length <= AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_MAX_CHARS)).toBe(true);
+    expect(entryRelatedFiles.every((file) => !file.includes('[middle omitted]'))).toBe(true);
+    expect(entryRelatedFiles[0]).toContain('file-with-extra-context.ts');
     expect(insight.insights.join('\n')).toContain('SUMMARY_TAIL_SHOULD_BE_PRESERVED');
     expect(insight.insights.join('\n')).toContain('ERROR_TAIL_SHOULD_BE_PRESERVED');
     expect(insight.workUnit.description ?? '').toContain('DESCRIPTION_TAIL_SHOULD_BE_PRESERVED');
     expect(insight.keyFiles).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT);
+    expect(insight.keyFiles.every((file) => !file.includes('[middle omitted]'))).toBe(true);
+  });
+
+  it('bounds work-unit outcome tags, modules, and upstream task ids', () => {
+    const entry = buildAutocodeWorkUnitOutcomeMemoryEntry({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workUnitId: '1.2',
+      outcome: 'success',
+      tags: [
+        'custom-tag',
+        ...Array.from({ length: AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_LIMIT + 10 }, (_, index) =>
+          `tag-${index}-${'verbose-tag-detail-'.repeat(8)}TAIL`),
+      ],
+      relatedModules: Array.from(
+        { length: AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_LIMIT + 4 },
+        (_, index) => `module-${index}-${'nested-module-context-'.repeat(8)}TAIL`,
+      ),
+      upstreamTaskIds: Array.from(
+        { length: AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT + 4 },
+        (_, index) => `upstream-${index}-${'verbose-upstream-context-'.repeat(8)}TAIL`,
+      ),
+      completedAt: '2026-06-14T00:00:00.000Z',
+    });
+    const insight = buildAutocodeWorkUnitOutcomeSessionInsight({
+      projectId: 'project-1',
+      sessionId: 'session-1',
+      workUnitId: '1.2',
+      outcome: 'success',
+      upstreamTaskIds: Array.from(
+        { length: AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT + 4 },
+        (_, index) => `upstream-${index}-${'verbose-upstream-context-'.repeat(8)}TAIL`,
+      ),
+      completedAt: '2026-06-14T00:00:00.000Z',
+    });
+
+    const entryTags = entry.tags ?? [];
+    const entryRelatedModules = entry.relatedModules ?? [];
+
+    expect(entryTags).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_LIMIT);
+    expect(entryTags.every((tag) => tag.length <= AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_MAX_CHARS)).toBe(true);
+    expect(entryTags).toContain('work_unit');
+    expect(entryTags).toContain('success');
+    expect(entryTags).toContain('custom-tag');
+    expect(entryRelatedModules).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_LIMIT);
+    expect(entryRelatedModules.every((module) =>
+      module.length <= AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_MAX_CHARS)).toBe(true);
+    expect(entryRelatedModules[0]).toContain('TAIL');
+    expect(insight.workUnit.upstreamTaskIds).toHaveLength(AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT);
+    expect(insight.workUnit.upstreamTaskIds.every((taskId) =>
+      taskId.length <= AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_MAX_CHARS)).toBe(true);
+    expect(insight.workUnit.upstreamTaskIds[0]).toContain('TAIL');
   });
 });

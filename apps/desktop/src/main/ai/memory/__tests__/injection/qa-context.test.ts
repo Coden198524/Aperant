@@ -5,6 +5,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildQaSessionContext } from '../../injection/qa-context';
 import type { MemoryService, Memory } from '../../types';
+import { estimateTokens } from '../../retrieval/context-packer';
 
 function makeMemory(id: string, content: string, type: Memory['type'] = 'gotcha'): Memory {
   return {
@@ -277,6 +278,33 @@ describe('buildQaSessionContext', () => {
     expect(result).toContain('middle omitted');
     expect(result).toContain('QA_MEMORY_TAIL_OK');
     expect(result.length).toBeLessThanOrEqual(1700);
+  });
+
+  it('keeps localized QA memory context within the estimated token budget', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          makeMemory(
+            'ep-localized',
+            [
+              'QA 记忆开头',
+              '这是一段会显著增加 token 的中文验证上下文。'.repeat(120),
+              'QA 记忆尾部',
+            ].join(' '),
+            'error_pattern',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('验证认证', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('ERROR PATTERNS');
+    expect(result).toContain('QA 记忆开头');
+    expect(result).toContain('QA 记忆尾部');
+    expect(result.length).toBeLessThanOrEqual(1700);
+    expect(estimateTokens(result)).toBeLessThanOrEqual(425);
   });
 
   it('caps related file references for QA error patterns', async () => {

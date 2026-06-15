@@ -6,6 +6,7 @@ import {
   withAutocodeRuntimeFileWriteLockSync,
 } from '../runtime/workspace-claims.js';
 import { safeParseAutocodeJson } from '../tasks/json-repair.js';
+import { estimateTokens } from './retrieval/context-packer.js';
 
 export const AUTOCODE_SESSION_MEMORY_DIR_NAME = 'memory';
 export const AUTOCODE_SESSION_CODEBASE_MAP_FILE_NAME = 'codebase_map.json';
@@ -15,10 +16,15 @@ export const AUTOCODE_SESSION_PATTERNS_FILE_NAME = 'patterns.md';
 export const AUTOCODE_NO_SESSION_MEMORY_MESSAGE = 'No session memory found. This appears to be the first session.';
 export const AUTOCODE_NO_SESSION_CONTEXT_MESSAGE = 'No session context available yet.';
 const AUTOCODE_SESSION_DISCOVERY_DESCRIPTION_MAX_CHARS = 220;
+const AUTOCODE_SESSION_DISCOVERY_DESCRIPTION_MAX_TOKENS = 80;
 const AUTOCODE_SESSION_DISCOVERY_PATH_MAX_CHARS = 180;
+const AUTOCODE_SESSION_DISCOVERY_PATH_MAX_TOKENS = 80;
 const AUTOCODE_SESSION_DISCOVERY_STORED_DESCRIPTION_MAX_CHARS = 800;
+const AUTOCODE_SESSION_DISCOVERY_STORED_DESCRIPTION_MAX_TOKENS = 220;
 const AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_CHARS = 800;
+const AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_TOKENS = 220;
 const AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_CHARS = 500;
+const AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_TOKENS = 150;
 const AUTOCODE_SESSION_MARKDOWN_OMISSION_MARKER =
   '\n...[session memory middle omitted; inspect memory files for exact omitted detail]...\n';
 const AUTOCODE_SESSION_STORED_OMISSION_MARKER =
@@ -135,6 +141,7 @@ export function recordAutocodeSessionDiscovery(
         description: compactAutocodeSessionStoredText(
           input.description,
           AUTOCODE_SESSION_DISCOVERY_STORED_DESCRIPTION_MAX_CHARS,
+          AUTOCODE_SESSION_DISCOVERY_STORED_DESCRIPTION_MAX_TOKENS,
         ),
         category: input.category ?? 'general',
         discovered_at: timestamp,
@@ -199,11 +206,13 @@ export function formatAutocodeGotchaMarkdownEntry(
   const gotcha = compactAutocodeSessionStoredText(
     input.gotcha,
     AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_CHARS,
+    AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_TOKENS,
   );
   const context = input.context
     ? compactAutocodeSessionStoredText(
         input.context,
         AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_CHARS,
+        AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_TOKENS,
       )
     : '';
   let entry = `\n## [${formatAutocodeGotchaTimestamp(now)}]\n${gotcha}`;
@@ -264,10 +273,12 @@ export function buildAutocodeSessionContext(input: BuildAutocodeSessionContextIn
       const compactPath = compactAutocodeSessionContextText(
         filePath,
         AUTOCODE_SESSION_DISCOVERY_PATH_MAX_CHARS,
+        AUTOCODE_SESSION_DISCOVERY_PATH_MAX_TOKENS,
       );
       const compactDescription = compactAutocodeSessionContextText(
         info.description || 'No description',
         AUTOCODE_SESSION_DISCOVERY_DESCRIPTION_MAX_CHARS,
+        AUTOCODE_SESSION_DISCOVERY_DESCRIPTION_MAX_TOKENS,
       );
       parts.push(`- \`${compactPath}\`: ${compactDescription}`);
     }
@@ -276,13 +287,21 @@ export function buildAutocodeSessionContext(input: BuildAutocodeSessionContextIn
   const gotchas = input.gotchasMarkdown?.trim() ? input.gotchasMarkdown : '';
   if (gotchas) {
     parts.push('\n## Gotchas');
-    parts.push(compactAutocodeSessionContextText(gotchas, maxMarkdownChars));
+    parts.push(compactAutocodeSessionContextText(
+      gotchas,
+      maxMarkdownChars,
+      estimateAutocodeSessionMarkdownTokenBudget(maxMarkdownChars),
+    ));
   }
 
   const patterns = input.patternsMarkdown?.trim() ? input.patternsMarkdown : '';
   if (patterns) {
     parts.push('\n## Patterns');
-    parts.push(compactAutocodeSessionContextText(patterns, maxMarkdownChars));
+    parts.push(compactAutocodeSessionContextText(
+      patterns,
+      maxMarkdownChars,
+      estimateAutocodeSessionMarkdownTokenBudget(maxMarkdownChars),
+    ));
   }
 
   return parts.length === 0 ? AUTOCODE_NO_SESSION_CONTEXT_MESSAGE : parts.join('\n');
@@ -367,29 +386,63 @@ function isMissingOrEmptyFile(filePath: string): boolean {
   }
 }
 
-function compactAutocodeSessionContextText(value: string, maxChars: number): string {
-  return compactAutocodeSessionText(value, maxChars, AUTOCODE_SESSION_MARKDOWN_OMISSION_MARKER);
+function compactAutocodeSessionContextText(value: string, maxChars: number, maxTokens: number): string {
+  return compactAutocodeSessionText(value, maxChars, maxTokens, AUTOCODE_SESSION_MARKDOWN_OMISSION_MARKER);
 }
 
-function compactAutocodeSessionStoredText(value: string, maxChars: number): string {
-  return compactAutocodeSessionText(value, maxChars, AUTOCODE_SESSION_STORED_OMISSION_MARKER);
+function compactAutocodeSessionStoredText(value: string, maxChars: number, maxTokens: number): string {
+  return compactAutocodeSessionText(value, maxChars, maxTokens, AUTOCODE_SESSION_STORED_OMISSION_MARKER);
 }
 
-function compactAutocodeSessionText(value: string, maxChars: number, marker: string): string {
-  if (maxChars <= 0 || value.length <= maxChars) {
+function compactAutocodeSessionText(value: string, maxChars: number, maxTokens: number, marker: string): string {
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+  if (value.length <= maxChars && estimateTokens(value) <= maxTokens) {
     return value;
   }
 
-  if (marker.length >= maxChars - 2) {
+  const charBounded = compactAutocodeSessionTextByChars(value, maxChars, marker);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, value.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = compactAutocodeSessionTextByChars(value, midpoint, marker);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function compactAutocodeSessionTextByChars(value: string, maxChars: number, marker: string): string {
+  if (maxChars <= 0 || value.length <= maxChars) {
+    return value.slice(0, Math.max(0, maxChars));
+  }
+  if (maxChars <= 3) {
     return value.slice(0, maxChars);
   }
 
-  const budget = maxChars - marker.length;
+  const effectiveMarker = marker.length >= maxChars - 2 ? '...' : marker;
+  const budget = maxChars - effectiveMarker.length;
   const headChars = Math.ceil(budget * AUTOCODE_SESSION_CONTEXT_HEAD_RATIO);
   const tailChars = Math.max(0, budget - headChars);
   return [
     value.slice(0, headChars).trimEnd(),
-    marker,
+    effectiveMarker,
     tailChars > 0 ? value.slice(-tailChars).trimStart() : '',
   ].join('');
+}
+
+function estimateAutocodeSessionMarkdownTokenBudget(maxChars: number): number {
+  return Math.max(0, Math.ceil(maxChars / 4));
 }

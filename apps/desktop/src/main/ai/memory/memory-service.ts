@@ -16,23 +16,32 @@ import type { EmbeddingService } from './embedding-service';
 import { buildMemoryContextualText } from './embedding-service';
 import { rowToMemory } from './row-mapper';
 import { searchBM25 } from './retrieval/bm25-search';
-import { isMemoryEligibleForPromptContext } from './retrieval/context-packer';
+import { estimateTokens, isMemoryEligibleForPromptContext } from './retrieval/context-packer';
 import type { RetrievalPipeline } from './retrieval/pipeline';
 
 const MEMORY_STORE_CONTENT_MAX_CHARS = 2_000;
+const MEMORY_STORE_CONTENT_MAX_TOKENS = 500;
 const MEMORY_STORE_CITATION_TEXT_MAX_CHARS = 1_000;
+const MEMORY_STORE_CITATION_TEXT_MAX_TOKENS = 250;
 const MEMORY_STORE_CONTEXT_PREFIX_MAX_CHARS = 600;
+const MEMORY_STORE_CONTEXT_PREFIX_MAX_TOKENS = 150;
 const MEMORY_STORE_TAG_LIMIT = 20;
 const MEMORY_STORE_TAG_MAX_CHARS = 64;
+const MEMORY_STORE_TAG_MAX_TOKENS = 24;
 const MEMORY_STORE_RELATED_FILE_LIMIT = 24;
 const MEMORY_STORE_RELATED_FILE_MAX_CHARS = 220;
+const MEMORY_STORE_RELATED_FILE_MAX_TOKENS = 56;
 const MEMORY_STORE_RELATED_MODULE_LIMIT = 16;
 const MEMORY_STORE_RELATED_MODULE_MAX_CHARS = 96;
+const MEMORY_STORE_RELATED_MODULE_MAX_TOKENS = 32;
 const MEMORY_SEARCH_QUERY_MAX_CHARS = 800;
+const MEMORY_SEARCH_QUERY_MAX_TOKENS = 200;
 const MEMORY_SEARCH_FILTER_RELATED_FILE_LIMIT = 16;
 const MEMORY_SEARCH_FILTER_RELATED_FILE_MAX_CHARS = 220;
+const MEMORY_SEARCH_FILTER_RELATED_FILE_MAX_TOKENS = 56;
 const MEMORY_SEARCH_FILTER_RELATED_MODULE_LIMIT = 16;
 const MEMORY_SEARCH_FILTER_RELATED_MODULE_MAX_CHARS = 96;
+const MEMORY_SEARCH_FILTER_RELATED_MODULE_MAX_TOKENS = 32;
 const MEMORY_STORE_OMISSION_MARKER = ' ... [memory middle omitted before storage] ... ';
 const MEMORY_SEARCH_QUERY_OMISSION_MARKER = ' ... [memory query middle omitted for retrieval budget] ... ';
 const DEFAULT_QUERY_SEARCH_RESULT_LIMIT = 8;
@@ -605,6 +614,7 @@ function normalizeMemorySearchQuery(query: string): string | undefined {
   return compactMemoryTextWithMarker(
     normalized,
     MEMORY_SEARCH_QUERY_MAX_CHARS,
+    MEMORY_SEARCH_QUERY_MAX_TOKENS,
     MEMORY_SEARCH_QUERY_OMISSION_MARKER,
   );
 }
@@ -666,9 +676,10 @@ function normalizeMemoryPathFilterList(values: string[] | undefined): string[] |
   const seen = new Set<string>();
   const normalizedValues: string[] = [];
   for (const value of values) {
-    const normalized = truncateMemoryPathTail(
+    const normalized = truncateMemoryPathTailToBudget(
       normalizeMemoryPathListItem(value),
       MEMORY_SEARCH_FILTER_RELATED_FILE_MAX_CHARS,
+      MEMORY_SEARCH_FILTER_RELATED_FILE_MAX_TOKENS,
     );
     if (!normalized) {
       continue;
@@ -698,6 +709,7 @@ function normalizeMemoryTextFilterList(values: string[] | undefined): string[] |
     const normalized = compactMemoryListItem(
       value.replace(/\s+/g, ' ').trim(),
       MEMORY_SEARCH_FILTER_RELATED_MODULE_MAX_CHARS,
+      MEMORY_SEARCH_FILTER_RELATED_MODULE_MAX_TOKENS,
     );
     if (!normalized) {
       continue;
@@ -752,52 +764,105 @@ function pathsReferToSameFile(left: string, right: string): boolean {
 function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryRecordEntry {
   return {
     ...entry,
-    content: compactMemoryStorageText(entry.content, MEMORY_STORE_CONTENT_MAX_CHARS),
+    content: compactMemoryStorageText(
+      entry.content,
+      MEMORY_STORE_CONTENT_MAX_CHARS,
+      MEMORY_STORE_CONTENT_MAX_TOKENS,
+    ),
     confidence: normalizeMemoryConfidence(entry.confidence, undefined),
-    tags: compactMemoryStringList(entry.tags, MEMORY_STORE_TAG_LIMIT, MEMORY_STORE_TAG_MAX_CHARS),
+    tags: compactMemoryStringList(
+      entry.tags,
+      MEMORY_STORE_TAG_LIMIT,
+      MEMORY_STORE_TAG_MAX_CHARS,
+      MEMORY_STORE_TAG_MAX_TOKENS,
+    ),
     relatedFiles: compactMemoryPathList(
       entry.relatedFiles,
       MEMORY_STORE_RELATED_FILE_LIMIT,
       MEMORY_STORE_RELATED_FILE_MAX_CHARS,
+      MEMORY_STORE_RELATED_FILE_MAX_TOKENS,
     ),
     relatedModules: compactMemoryStringList(
       entry.relatedModules,
       MEMORY_STORE_RELATED_MODULE_LIMIT,
       MEMORY_STORE_RELATED_MODULE_MAX_CHARS,
+      MEMORY_STORE_RELATED_MODULE_MAX_TOKENS,
     ),
-    citationText: compactOptionalMemoryStorageText(entry.citationText, MEMORY_STORE_CITATION_TEXT_MAX_CHARS),
-    contextPrefix: compactOptionalMemoryStorageText(entry.contextPrefix, MEMORY_STORE_CONTEXT_PREFIX_MAX_CHARS),
+    citationText: compactOptionalMemoryStorageText(
+      entry.citationText,
+      MEMORY_STORE_CITATION_TEXT_MAX_CHARS,
+      MEMORY_STORE_CITATION_TEXT_MAX_TOKENS,
+    ),
+    contextPrefix: compactOptionalMemoryStorageText(
+      entry.contextPrefix,
+      MEMORY_STORE_CONTEXT_PREFIX_MAX_CHARS,
+      MEMORY_STORE_CONTEXT_PREFIX_MAX_TOKENS,
+    ),
   };
 }
 
-function compactOptionalMemoryStorageText(value: string | undefined, maxChars: number): string | undefined {
+function compactOptionalMemoryStorageText(
+  value: string | undefined,
+  maxChars: number,
+  maxTokens: number,
+): string | undefined {
   if (value === undefined) {
     return undefined;
   }
-  return compactMemoryStorageText(value, maxChars);
+  return compactMemoryStorageText(value, maxChars, maxTokens);
 }
 
-function compactMemoryStorageText(value: string, maxChars: number): string {
-  return compactMemoryTextWithMarker(value, maxChars, MEMORY_STORE_OMISSION_MARKER);
+function compactMemoryStorageText(value: string, maxChars: number, maxTokens: number): string {
+  return compactMemoryTextWithMarker(value, maxChars, maxTokens, MEMORY_STORE_OMISSION_MARKER);
 }
 
-function compactMemoryTextWithMarker(value: string, maxChars: number, marker: string): string {
+function compactMemoryTextWithMarker(value: string, maxChars: number, maxTokens: number, marker: string): string {
   const normalized = value.replace(/\r\n/g, '\n').replace(/\r/g, '\n').trim();
-  if (maxChars <= 0 || normalized.length <= maxChars) {
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+  if (normalized.length <= maxChars && estimateTokens(normalized) <= maxTokens) {
     return normalized;
   }
 
-  if (marker.length >= maxChars - 2) {
-    return normalized.slice(0, maxChars);
+  const charBounded = compactMemoryTextWithMarkerByChars(normalized, maxChars, marker);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
   }
 
-  const budget = maxChars - marker.length;
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, normalized.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = compactMemoryTextWithMarkerByChars(normalized, midpoint, marker);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function compactMemoryTextWithMarkerByChars(value: string, maxChars: number, marker: string): string {
+  if (maxChars <= 0 || value.length <= maxChars) {
+    return value.slice(0, Math.max(0, maxChars));
+  }
+  if (maxChars <= 3) {
+    return value.slice(0, maxChars);
+  }
+
+  const effectiveMarker = marker.length >= maxChars - 2 ? '...' : marker;
+  const budget = maxChars - effectiveMarker.length;
   const headChars = Math.ceil(budget * 0.55);
   const tailChars = Math.max(0, budget - headChars);
   return [
-    normalized.slice(0, headChars).trimEnd(),
-    marker,
-    tailChars > 0 ? normalized.slice(-tailChars).trimStart() : '',
+    value.slice(0, headChars).trimEnd(),
+    effectiveMarker,
+    tailChars > 0 ? value.slice(-tailChars).trimStart() : '',
   ].join('');
 }
 
@@ -805,13 +870,14 @@ function compactMemoryStringList(
   values: string[] | undefined,
   limit: number,
   maxItemChars: number,
+  maxItemTokens: number,
 ): string[] | undefined {
   if (!values) {
     return undefined;
   }
 
   const compacted = values
-    .map((value) => compactMemoryListItem(value, maxItemChars))
+    .map((value) => compactMemoryListItem(value, maxItemChars, maxItemTokens))
     .filter((value) => value.length > 0);
 
   return Array.from(new Set(compacted)).slice(0, Math.max(0, limit));
@@ -821,6 +887,7 @@ function compactMemoryPathList(
   values: string[] | undefined,
   limit: number,
   maxItemChars: number,
+  maxItemTokens: number,
 ): string[] | undefined {
   if (!values) {
     return undefined;
@@ -834,7 +901,7 @@ function compactMemoryPathList(
       continue;
     }
 
-    const compactedPath = truncateMemoryPathTail(normalized, maxItemChars);
+    const compactedPath = truncateMemoryPathTailToBudget(normalized, maxItemChars, maxItemTokens);
     const key = normalizeFilterPath(compactedPath);
     if (seen.has(key)) {
       continue;
@@ -861,19 +928,72 @@ function normalizeMemoryPathListItem(value: string): string {
   return normalized;
 }
 
-function compactMemoryListItem(value: string, maxChars: number): string {
+function compactMemoryListItem(value: string, maxChars: number, maxTokens: number): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
-  if (maxChars <= 0 || normalized.length <= maxChars) {
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+  if (normalized.length <= maxChars && estimateTokens(normalized) <= maxTokens) {
     return normalized;
   }
-  const marker = '...[omitted]...';
-  const budget = maxChars - marker.length;
-  if (budget <= 0) {
+  const charBounded = compactMemoryListItemByChars(normalized, maxChars);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, normalized.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = compactMemoryListItemByChars(normalized, midpoint);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function compactMemoryListItemByChars(normalized: string, maxChars: number): string {
+  if (maxChars <= 0 || normalized.length <= maxChars) {
+    return normalized.slice(0, Math.max(0, maxChars));
+  }
+  if (maxChars <= 3) {
     return normalized.slice(0, maxChars);
   }
+  const marker = '...[omitted]...';
+  const effectiveMarker = marker.length >= maxChars - 2 ? '...' : marker;
+  const budget = maxChars - effectiveMarker.length;
   const headChars = Math.ceil(budget * 0.6);
   const tailChars = Math.max(0, budget - headChars);
-  return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
+  return `${normalized.slice(0, headChars).trimEnd()}${effectiveMarker}${normalized.slice(-tailChars).trimStart()}`;
+}
+
+function truncateMemoryPathTailToBudget(path: string, maxChars: number, maxTokens: number): string {
+  const charBounded = truncateMemoryPathTail(path, maxChars);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, path.trim().length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = truncateMemoryPathTail(path, midpoint);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
 }
 
 function truncateMemoryPathTail(path: string, maxChars: number): string {

@@ -9,6 +9,7 @@ import { describe, it, expect, vi, beforeEach } from 'vitest';
 import type { MessagePort } from 'worker_threads';
 import { WorkerObserverProxy } from '../../ipc/worker-observer-proxy';
 import type { MemoryIpcResponse, Memory } from '../../types';
+import { estimateTokens } from '../../retrieval/context-packer';
 
 // ============================================================
 // HELPERS
@@ -253,6 +254,7 @@ describe('WorkerObserverProxy', () => {
       };
 
       expect(sentMsg.filters.query?.length).toBeLessThanOrEqual(800);
+      expect(estimateTokens(sentMsg.filters.query ?? '')).toBeLessThanOrEqual(200);
       expect(sentMsg.filters.query).toContain('SEARCH_HEAD');
       expect(sentMsg.filters.query).toContain('SEARCH_TAIL');
       expect(sentMsg.filters.query).toContain('memory search middle omitted before IPC');
@@ -260,9 +262,53 @@ describe('WorkerObserverProxy', () => {
       expect(new Set(sentMsg.filters.relatedFiles).size).toBe(sentMsg.filters.relatedFiles?.length);
       expect(sentMsg.filters.relatedFiles?.[0]).toBe('src/auth/token.ts');
       expect(sentMsg.filters.relatedFiles?.every((file) => file.length <= 180)).toBe(true);
+      expect(sentMsg.filters.relatedFiles?.every((file) => !file.includes('[omitted]'))).toBe(true);
+      expect(sentMsg.filters.relatedFiles?.some((file) => file.includes('tail-0.ts'))).toBe(true);
       expect(sentMsg.filters.relatedModules).toHaveLength(12);
       expect(sentMsg.filters.relatedModules?.every((module) => module.length <= 96)).toBe(true);
+      expect(sentMsg.filters.relatedModules?.every((module) => estimateTokens(module) <= 32)).toBe(true);
       expect(sentMsg.filters).not.toHaveProperty('filter');
+    });
+
+    it('keeps localized search filters within token budgets before IPC', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:search-result',
+        requestId,
+        memories: [],
+      }));
+
+      await proxy.searchMemory({
+        query: [
+          '查询开头',
+          '这是一段很长的中文检索条件，会比英文更快消耗 token。'.repeat(80),
+          '查询尾部',
+        ].join(' '),
+        projectId: 'proj-1',
+        relatedFiles: [
+          `src/${'深层目录/'.repeat(80)}localized-tail-preserved.ts`,
+        ],
+        relatedModules: [
+          `模块开头${'本地化模块上下文'.repeat(40)}模块尾部`,
+        ],
+      });
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        filters: {
+          query?: string;
+          relatedFiles?: string[];
+          relatedModules?: string[];
+        };
+      };
+
+      expect(sentMsg.filters.query?.length).toBeLessThanOrEqual(800);
+      expect(estimateTokens(sentMsg.filters.query ?? '')).toBeLessThanOrEqual(200);
+      expect(sentMsg.filters.query).toContain('查询开头');
+      expect(sentMsg.filters.query).toContain('查询尾部');
+      expect(sentMsg.filters.relatedFiles?.[0]).toContain('localized-tail-preserved.ts');
+      expect(sentMsg.filters.relatedFiles?.[0]).not.toContain('[omitted]');
+      expect(sentMsg.filters.relatedModules?.[0]).toContain('模块开头');
+      expect(sentMsg.filters.relatedModules?.[0]).toContain('模块尾部');
+      expect(estimateTokens(sentMsg.filters.relatedModules?.[0] ?? '')).toBeLessThanOrEqual(32);
     });
 
     it('returns empty array on error response', async () => {
@@ -348,23 +394,97 @@ describe('WorkerObserverProxy', () => {
       };
 
       expect(sentMsg.entry.content.length).toBeLessThanOrEqual(2000);
+      expect(estimateTokens(sentMsg.entry.content)).toBeLessThanOrEqual(500);
       expect(sentMsg.entry.content).toContain('MEMORY_HEAD');
       expect(sentMsg.entry.content).toContain('MEMORY_TAIL');
       expect(sentMsg.entry.content).toContain('memory record middle omitted before IPC');
       expect(sentMsg.entry.tags).toHaveLength(20);
       expect(new Set(sentMsg.entry.tags).size).toBe(sentMsg.entry.tags?.length);
       expect(sentMsg.entry.tags?.every((tag) => tag.length <= 64)).toBe(true);
+      expect(sentMsg.entry.tags?.every((tag) => estimateTokens(tag) <= 24)).toBe(true);
       expect(sentMsg.entry.relatedFiles).toHaveLength(24);
       expect(sentMsg.entry.relatedFiles?.[0]).toBe('src/auth/token.ts');
       expect(sentMsg.entry.relatedFiles?.every((file) => file.length <= 220)).toBe(true);
+      expect(sentMsg.entry.relatedFiles?.every((file) => !file.includes('[omitted]'))).toBe(true);
+      expect(sentMsg.entry.relatedFiles?.some((file) => file.includes('tail-2.ts'))).toBe(true);
       expect(sentMsg.entry.relatedModules).toHaveLength(16);
       expect(sentMsg.entry.relatedModules?.every((module) => module.length <= 96)).toBe(true);
+      expect(sentMsg.entry.relatedModules?.every((module) => estimateTokens(module) <= 32)).toBe(true);
       expect(sentMsg.entry.citationText?.length).toBeLessThanOrEqual(1000);
+      expect(estimateTokens(sentMsg.entry.citationText ?? '')).toBeLessThanOrEqual(250);
       expect(sentMsg.entry.citationText).toContain('CITATION_HEAD');
       expect(sentMsg.entry.citationText).toContain('CITATION_TAIL');
       expect(sentMsg.entry.contextPrefix?.length).toBeLessThanOrEqual(600);
+      expect(estimateTokens(sentMsg.entry.contextPrefix ?? '')).toBeLessThanOrEqual(150);
       expect(sentMsg.entry.contextPrefix).toContain('PREFIX_HEAD');
       expect(sentMsg.entry.contextPrefix).toContain('PREFIX_TAIL');
+    });
+
+    it('keeps localized memory record entries within token budgets before IPC', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:stored',
+        requestId,
+        id: 'new-mem-localized',
+      }));
+
+      await proxy.recordMemory({
+        type: 'gotcha',
+        content: [
+          '记忆开头',
+          '这是一段很长的中文记忆内容，会比英文更快消耗 token。'.repeat(140),
+          '记忆尾部',
+        ].join(' '),
+        projectId: 'proj-1',
+        tags: [
+          `标签开头${'本地化标签'.repeat(20)}标签尾部`,
+        ],
+        relatedFiles: [
+          `src/${'深层目录/'.repeat(100)}localized-record-tail.ts`,
+        ],
+        relatedModules: [
+          `模块开头${'本地化模块上下文'.repeat(40)}模块尾部`,
+        ],
+        citationText: [
+          '引用开头',
+          '本地化引用细节。'.repeat(120),
+          '引用尾部',
+        ].join(' '),
+        contextPrefix: [
+          '前缀开头',
+          '本地化上下文前缀。'.repeat(80),
+          '前缀尾部',
+        ].join(' '),
+      });
+
+      const sentMsg = mockPort.sentMessages[0] as {
+        entry: {
+          content: string;
+          tags?: string[];
+          relatedFiles?: string[];
+          relatedModules?: string[];
+          citationText?: string;
+          contextPrefix?: string;
+        };
+      };
+
+      expect(sentMsg.entry.content.length).toBeLessThanOrEqual(2000);
+      expect(estimateTokens(sentMsg.entry.content)).toBeLessThanOrEqual(500);
+      expect(sentMsg.entry.content).toContain('记忆开头');
+      expect(sentMsg.entry.content).toContain('记忆尾部');
+      expect(sentMsg.entry.tags?.[0]).toContain('标签开头');
+      expect(sentMsg.entry.tags?.[0]).toContain('标签尾部');
+      expect(estimateTokens(sentMsg.entry.tags?.[0] ?? '')).toBeLessThanOrEqual(24);
+      expect(sentMsg.entry.relatedFiles?.[0]).toContain('localized-record-tail.ts');
+      expect(sentMsg.entry.relatedFiles?.[0]).not.toContain('[omitted]');
+      expect(sentMsg.entry.relatedModules?.[0]).toContain('模块开头');
+      expect(sentMsg.entry.relatedModules?.[0]).toContain('模块尾部');
+      expect(estimateTokens(sentMsg.entry.relatedModules?.[0] ?? '')).toBeLessThanOrEqual(32);
+      expect(sentMsg.entry.citationText).toContain('引用开头');
+      expect(sentMsg.entry.citationText).toContain('引用尾部');
+      expect(estimateTokens(sentMsg.entry.citationText ?? '')).toBeLessThanOrEqual(250);
+      expect(sentMsg.entry.contextPrefix).toContain('前缀开头');
+      expect(sentMsg.entry.contextPrefix).toContain('前缀尾部');
+      expect(estimateTokens(sentMsg.entry.contextPrefix ?? '')).toBeLessThanOrEqual(150);
     });
 
     it('returns null on error response', async () => {

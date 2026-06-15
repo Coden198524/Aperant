@@ -35,18 +35,25 @@ import { MemoryObserver } from '../memory/observer';
 import { StepInjectionDecider } from '../memory/injection';
 import type { Memory, MemoryIpcRequest, MemoryCandidate, SessionOutcome, SessionType } from '../memory/types';
 import type { MemoryToolIpcRequest, MemoryIpcMessage } from '../memory/ipc/worker-observer-proxy';
+import { estimateTokens } from '../memory/retrieval/context-packer';
 import { debugLog } from '../../../shared/utils/debug-logger';
 
 const MEMORY_SEARCH_RESPONSE_CONTENT_MAX_CHARS = 900;
+const MEMORY_SEARCH_RESPONSE_CONTENT_MAX_TOKENS = 225;
 const MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS = 300;
+const MEMORY_SEARCH_RESPONSE_TEXT_MAX_TOKENS = 75;
 const MEMORY_SEARCH_RESPONSE_TAG_LIMIT = 12;
 const MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS = 64;
+const MEMORY_SEARCH_RESPONSE_TAG_MAX_TOKENS = 24;
 const MEMORY_SEARCH_RESPONSE_FILE_LIMIT = 12;
 const MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS = 180;
+const MEMORY_SEARCH_RESPONSE_FILE_MAX_TOKENS = 48;
 const MEMORY_SEARCH_RESPONSE_MODULE_LIMIT = 10;
 const MEMORY_SEARCH_RESPONSE_MODULE_MAX_CHARS = 96;
+const MEMORY_SEARCH_RESPONSE_MODULE_MAX_TOKENS = 32;
 const MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT = 12;
 const MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS = 80;
+const MEMORY_SEARCH_RESPONSE_ID_MAX_TOKENS = 24;
 const MEMORY_SEARCH_RESPONSE_RELATION_LIMIT = 8;
 const MEMORY_SEARCH_RESPONSE_OMISSION_MARKER = ' ... [memory response middle omitted before IPC] ... ';
 
@@ -683,31 +690,37 @@ function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
     content: compactMemorySearchResponseText(
       memory.content,
       MEMORY_SEARCH_RESPONSE_CONTENT_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_CONTENT_MAX_TOKENS,
     ),
-    tags: compactMemorySearchResponseList(
+    tags: compactMemorySearchResponseTextList(
       memory.tags,
       MEMORY_SEARCH_RESPONSE_TAG_LIMIT,
       MEMORY_SEARCH_RESPONSE_TAG_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_TAG_MAX_TOKENS,
     ) ?? [],
-    relatedFiles: compactMemorySearchResponseList(
+    relatedFiles: compactMemorySearchResponsePathList(
       memory.relatedFiles,
       MEMORY_SEARCH_RESPONSE_FILE_LIMIT,
       MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_FILE_MAX_TOKENS,
     ) ?? [],
-    relatedModules: compactMemorySearchResponseList(
+    relatedModules: compactMemorySearchResponseTextList(
       memory.relatedModules,
       MEMORY_SEARCH_RESPONSE_MODULE_LIMIT,
       MEMORY_SEARCH_RESPONSE_MODULE_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_MODULE_MAX_TOKENS,
     ) ?? [],
-    provenanceSessionIds: compactMemorySearchResponseList(
+    provenanceSessionIds: compactMemorySearchResponseTextList(
       memory.provenanceSessionIds,
       MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
       MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_TOKENS,
     ) ?? [],
-    impactedNodeIds: compactMemorySearchResponseList(
+    impactedNodeIds: compactMemorySearchResponseTextList(
       memory.impactedNodeIds,
       MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
       MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+      MEMORY_SEARCH_RESPONSE_ID_MAX_TOKENS,
     ),
     citationText: compactOptionalMemorySearchResponseText(memory.citationText),
     contextPrefix: compactOptionalMemorySearchResponseText(memory.contextPrefix),
@@ -717,11 +730,13 @@ function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
           label: compactMemorySearchResponseText(
             memory.workUnitRef.label,
             MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS,
+            MEMORY_SEARCH_RESPONSE_TEXT_MAX_TOKENS,
           ),
-          hierarchy: compactMemorySearchResponseList(
+          hierarchy: compactMemorySearchResponseTextList(
             memory.workUnitRef.hierarchy,
             MEMORY_SEARCH_RESPONSE_ID_LIST_LIMIT,
             MEMORY_SEARCH_RESPONSE_ID_MAX_CHARS,
+            MEMORY_SEARCH_RESPONSE_ID_MAX_TOKENS,
           ) ?? [],
         }
       : undefined,
@@ -730,9 +745,10 @@ function compactMemorySearchResponseMemories(memories: Memory[]): Memory[] {
       .map((relation) => ({
         ...relation,
         targetFilePath: relation.targetFilePath
-          ? compactMemorySearchResponseText(
+          ? compactMemorySearchResponsePathTailToBudget(
               relation.targetFilePath,
               MEMORY_SEARCH_RESPONSE_FILE_MAX_CHARS,
+              MEMORY_SEARCH_RESPONSE_FILE_MAX_TOKENS,
             )
           : relation.targetFilePath,
       })),
@@ -743,13 +759,47 @@ function compactOptionalMemorySearchResponseText(value: string | undefined): str
   if (value === undefined) {
     return undefined;
   }
-  return compactMemorySearchResponseText(value, MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS);
+  return compactMemorySearchResponseText(
+    value,
+    MEMORY_SEARCH_RESPONSE_TEXT_MAX_CHARS,
+    MEMORY_SEARCH_RESPONSE_TEXT_MAX_TOKENS,
+  );
 }
 
-function compactMemorySearchResponseText(value: string, maxChars: number): string {
+function compactMemorySearchResponseText(value: string, maxChars: number, maxTokens: number): string {
   const normalized = value.replace(/\s+/g, ' ').trim();
-  if (maxChars <= 0 || normalized.length <= maxChars) {
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+  if (normalized.length <= maxChars && estimateTokens(normalized) <= maxTokens) {
     return normalized;
+  }
+
+  const charBounded = compactMemorySearchResponseTextByChars(normalized, maxChars);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, normalized.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = compactMemorySearchResponseTextByChars(normalized, midpoint);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function compactMemorySearchResponseTextByChars(normalized: string, maxChars: number): string {
+  if (maxChars <= 0 || normalized.length <= maxChars) {
+    return normalized.slice(0, Math.max(0, maxChars));
   }
 
   const marker = MEMORY_SEARCH_RESPONSE_OMISSION_MARKER;
@@ -767,36 +817,109 @@ function compactMemorySearchResponseText(value: string, maxChars: number): strin
   ].join('');
 }
 
-function compactMemorySearchResponseList(
+function compactMemorySearchResponseTextList(
   values: string[] | undefined,
   limit: number,
   maxItemChars: number,
+  maxItemTokens: number,
 ): string[] | undefined {
   if (!values) {
     return undefined;
   }
 
-  const compacted = values
-    .map((value) => compactMemorySearchResponseListItem(value, maxItemChars))
-    .filter(Boolean);
-  return Array.from(new Set(compacted)).slice(0, Math.max(0, limit));
+  const itemLimit = Math.max(0, limit);
+  if (itemLimit === 0) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const compacted: string[] = [];
+  for (const value of values) {
+    const item = compactMemorySearchResponseText(value, maxItemChars, maxItemTokens);
+    if (!item || seen.has(item)) {
+      continue;
+    }
+
+    seen.add(item);
+    compacted.push(item);
+    if (compacted.length >= itemLimit) {
+      break;
+    }
+  }
+
+  return compacted;
 }
 
-function compactMemorySearchResponseListItem(value: string, maxChars: number): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
-  if (maxChars <= 0 || normalized.length <= maxChars) {
-    return normalized;
+function compactMemorySearchResponsePathList(
+  values: string[] | undefined,
+  limit: number,
+  maxItemChars: number,
+  maxItemTokens: number,
+): string[] | undefined {
+  if (!values) {
+    return undefined;
   }
 
-  const marker = '...[omitted]...';
-  const budget = maxChars - marker.length;
-  if (budget <= 0) {
-    return normalized.slice(0, maxChars);
+  const itemLimit = Math.max(0, limit);
+  if (itemLimit === 0) {
+    return [];
   }
 
-  const headChars = Math.ceil(budget * 0.6);
-  const tailChars = Math.max(0, budget - headChars);
-  return `${normalized.slice(0, headChars).trimEnd()}${marker}${normalized.slice(-tailChars).trimStart()}`;
+  const seen = new Set<string>();
+  const compacted: string[] = [];
+  for (const value of values) {
+    const item = compactMemorySearchResponsePathTailToBudget(value, maxItemChars, maxItemTokens);
+    const key = item.toLowerCase();
+    if (!item || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    compacted.push(item);
+    if (compacted.length >= itemLimit) {
+      break;
+    }
+  }
+
+  return compacted;
+}
+
+function compactMemorySearchResponsePathTailToBudget(value: string, maxChars: number, maxTokens: number): string {
+  const normalized = value.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+
+  const charBounded = truncateMemorySearchResponsePathTail(normalized, maxChars);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, normalized.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = truncateMemorySearchResponsePathTail(normalized, midpoint);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function truncateMemorySearchResponsePathTail(path: string, maxChars: number): string {
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (path.length <= maxChars) {
+    return path;
+  }
+  return path.slice(-maxChars).replace(/^\/+/, '');
 }
 
 function isMemoryIpcMessage(message: unknown): message is MemoryIpcMessage {

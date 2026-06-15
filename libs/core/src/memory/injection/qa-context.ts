@@ -10,7 +10,9 @@ import { compactMemoryInjectionText } from './text-compaction.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 const MAX_QA_MEMORY_ITEM_CHARS = 240;
+const MAX_QA_MEMORY_ITEM_TOKENS = 80;
 const MAX_QA_MEMORY_CONTEXT_CHARS = 1700;
+const MAX_QA_MEMORY_CONTEXT_TOKENS = 425;
 const MAX_QA_MEMORY_FILE_REFS = 3;
 const MAX_QA_MEMORY_FILE_REF_CHARS = 48;
 
@@ -129,11 +131,12 @@ function formatQaSections(sections: QaSections): string {
   return truncateText(
     `=== MEMORY CONTEXT FOR QA ===\n${parts.join('\n\n')}\n=== END MEMORY CONTEXT ===`,
     MAX_QA_MEMORY_CONTEXT_CHARS,
+    MAX_QA_MEMORY_CONTEXT_TOKENS,
   );
 }
 
 function formatMemoryContent(memory: Memory): string {
-  return truncateText(memory.content, MAX_QA_MEMORY_ITEM_CHARS);
+  return truncateText(memory.content, MAX_QA_MEMORY_ITEM_CHARS, MAX_QA_MEMORY_ITEM_TOKENS);
 }
 
 function formatRelatedFileRefs(relatedFiles: string[], seenFiles: Set<string>): string {
@@ -206,8 +209,8 @@ function uniqueFilePaths(values: readonly string[]): string[] {
   return unique;
 }
 
-function truncateText(text: string, maxChars: number): string {
-  return compactMemoryInjectionText(text, maxChars);
+function truncateText(text: string, maxChars: number, maxTokens: number): string {
+  return compactMemoryInjectionText(text, maxChars, maxTokens);
 }
 
 function normalizeTaskDescription(value: string): string {

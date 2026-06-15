@@ -7,6 +7,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { buildPlannerMemoryContext } from '../../injection/planner-memory-context';
 import type { MemoryService, Memory } from '../../types';
+import { estimateTokens } from '../../retrieval/context-packer';
 
 // ============================================================
 // HELPERS
@@ -345,6 +346,33 @@ describe('buildPlannerMemoryContext', () => {
     expect(result).toContain('middle omitted');
     expect(result).toContain('PLANNER_MEMORY_TAIL_OK');
     expect(result.length).toBeLessThanOrEqual(1800);
+  });
+
+  it('keeps localized planner memory context within the estimated token budget', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('dead_end')) {
+        return [
+          makeMemory(
+            'dead-localized',
+            [
+              '规划记忆开头',
+              '这是一段会显著增加 token 的中文规划上下文。'.repeat(120),
+              '规划记忆尾部',
+            ].join(' '),
+            'dead_end',
+          ),
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildPlannerMemoryContext('添加认证', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('DEAD ENDS');
+    expect(result).toContain('规划记忆开头');
+    expect(result).toContain('规划记忆尾部');
+    expect(result.length).toBeLessThanOrEqual(1800);
+    expect(estimateTokens(result)).toBeLessThanOrEqual(450);
   });
 
   it('filters stale planner memories unless they are pinned or user verified', async () => {

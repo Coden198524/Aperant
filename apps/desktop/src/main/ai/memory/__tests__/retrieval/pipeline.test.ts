@@ -8,10 +8,12 @@ import { getInMemoryClient } from '../../db';
 import {
   compactRetrievalQuery,
   MAX_RETRIEVAL_QUERY_CHARS,
+  MAX_RETRIEVAL_QUERY_TOKENS,
   normalizeMemoryFetchIds,
   RetrievalPipeline,
 } from '../../retrieval/pipeline';
 import { Reranker } from '../../retrieval/reranker';
+import { estimateTokens } from '../../retrieval/context-packer';
 import type { EmbeddingService } from '../../embedding-service';
 
 // ============================================================
@@ -76,6 +78,22 @@ describe('RetrievalPipeline', () => {
     expect(compact.length).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_CHARS);
     expect(compact).toContain('AUTH_QUERY_HEAD');
     expect(compact).toContain('AUTH_QUERY_TAIL');
+    expect(compact).toContain('query middle omitted for retrieval budget');
+  });
+
+  it('compacts localized retrieval queries by estimated token budget', () => {
+    const query = [
+      '检索开头',
+      '这是一段会显著增加 token 的中文检索查询。'.repeat(120),
+      '检索尾部',
+    ].join(' ');
+
+    const compact = compactRetrievalQuery(query);
+
+    expect(compact.length).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_CHARS);
+    expect(estimateTokens(compact)).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_TOKENS);
+    expect(compact).toContain('检索开头');
+    expect(compact).toContain('检索尾部');
     expect(compact).toContain('query middle omitted for retrieval budget');
   });
 
@@ -179,16 +197,66 @@ describe('RetrievalPipeline', () => {
 
     expect(memory.id).toBe('legacy-long');
     expect(memory.content.length).toBeLessThanOrEqual(2_000);
+    expect(estimateTokens(memory.content)).toBeLessThanOrEqual(500);
     expect(memory.content).toContain('pipeline token head');
     expect(memory.content).toContain('pipeline token tail');
     expect(memory.content).toContain('[memory middle omitted before storage]');
     expect(memory.citationText?.length).toBeLessThanOrEqual(1_000);
+    expect(estimateTokens(memory.citationText ?? '')).toBeLessThanOrEqual(250);
     expect(memory.citationText).toContain('pipeline citation head');
     expect(memory.citationText).toContain('pipeline citation tail');
     expect(memory.contextPrefix?.length).toBeLessThanOrEqual(600);
+    expect(estimateTokens(memory.contextPrefix ?? '')).toBeLessThanOrEqual(150);
     expect(memory.contextPrefix).toContain('pipeline context head');
     expect(memory.contextPrefix).toContain('pipeline context tail');
     expect(result.formattedContext.length).toBeLessThan(longContent.length);
+  });
+
+  it('normalizes localized legacy rows by estimated token budget before packing context', async () => {
+    const longContent = [
+      '旧行记忆开头',
+      '这是一段会显著增加 token 的中文旧行内容。'.repeat(180),
+      '旧行记忆尾部',
+    ].join(' ');
+    const longCitation = [
+      '旧行引用开头',
+      '本地化引用细节。'.repeat(120),
+      '旧行引用尾部',
+    ].join(' ');
+    const longContext = [
+      '旧行前缀开头',
+      '本地化上下文前缀。'.repeat(80),
+      '旧行前缀尾部',
+    ].join(' ');
+    await seedMemory(client, 'legacy-localized', longContent, 'proj-a');
+    await client.execute({
+      sql: `UPDATE memories SET citation_text = ?, context_prefix = ? WHERE id = ?`,
+      args: [longCitation, longContext, 'legacy-localized'],
+    });
+
+    const embeddingService = makeMockEmbeddingService();
+    const reranker = new Reranker('none');
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const result = await pipeline.search('旧行记忆开头', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+    const memory = result.memories[0];
+
+    expect(memory.id).toBe('legacy-localized');
+    expect(memory.content.length).toBeLessThanOrEqual(2_000);
+    expect(estimateTokens(memory.content)).toBeLessThanOrEqual(500);
+    expect(memory.content).toContain('旧行记忆开头');
+    expect(memory.content).toContain('旧行记忆尾部');
+    expect(memory.content).toContain('[memory middle omitted before storage]');
+    expect(memory.citationText).toContain('旧行引用开头');
+    expect(memory.citationText).toContain('旧行引用尾部');
+    expect(estimateTokens(memory.citationText ?? '')).toBeLessThanOrEqual(250);
+    expect(memory.contextPrefix).toContain('旧行前缀开头');
+    expect(memory.contextPrefix).toContain('旧行前缀尾部');
+    expect(estimateTokens(memory.contextPrefix ?? '')).toBeLessThanOrEqual(150);
+    expect(result.formattedContext).toContain('旧行记忆开头');
   });
 
   it('scopes results to correct project', async () => {
@@ -324,6 +392,30 @@ describe('RetrievalPipeline', () => {
     expect(embeddedQuery.length).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_CHARS);
     expect(embeddedQuery).toContain('AUTH_QUERY_HEAD');
     expect(embeddedQuery).toContain('AUTH_QUERY_TAIL');
+    expect(embeddedQuery).toContain('query middle omitted for retrieval budget');
+    expect(embeddedQuery).not.toBe(query);
+  });
+
+  it('uses token-aware localized retrieval queries for dense search input', async () => {
+    const embeddingService = makeMockEmbeddingService();
+    const reranker = new Reranker('none');
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+    const query = [
+      '向量检索开头',
+      '这是一段会显著增加 token 的中文 dense 查询。'.repeat(120),
+      '向量检索尾部',
+    ].join(' ');
+
+    await pipeline.search(query, {
+      phase: 'explore',
+      projectId: 'proj-a',
+    });
+
+    const embeddedQuery = vi.mocked(embeddingService.embed).mock.calls[0][0] as string;
+    expect(embeddedQuery.length).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_CHARS);
+    expect(estimateTokens(embeddedQuery)).toBeLessThanOrEqual(MAX_RETRIEVAL_QUERY_TOKENS);
+    expect(embeddedQuery).toContain('向量检索开头');
+    expect(embeddedQuery).toContain('向量检索尾部');
     expect(embeddedQuery).toContain('query middle omitted for retrieval budget');
     expect(embeddedQuery).not.toBe(query);
   });

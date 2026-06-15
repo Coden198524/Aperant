@@ -6,6 +6,7 @@ import type {
   WorkUnitRef,
 } from './types.js';
 import { selectMemoryContextItems } from './injection/context-selection.js';
+import { estimateTokens } from './retrieval/context-packer.js';
 
 export interface AutocodeMemoryRuntimeToolCall {
   toolName: string;
@@ -150,15 +151,24 @@ export const AUTOCODE_MEMORY_RUNTIME_RECENT_TOOL_CALL_LIMIT = 5;
 export const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_LIMIT = 128;
 const AUTOCODE_MEMORY_RUNTIME_INJECTED_MEMORY_ID_MAX_CHARS = 160;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS = 1_800;
+export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_TOKENS = 450;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS = 260;
+export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_TOKENS = 90;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_MIN_CONFIDENCE = 0.55;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT = 3;
 export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_CHARS = 80;
+export const AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_TOKENS = 32;
 const AUTOCODE_MEMORY_RUNTIME_CONTEXT_CANDIDATE_MULTIPLIER = 3;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_CONTENT_MAX_CHARS = 1_200;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_FIELD_MAX_CHARS = 500;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT = 12;
 export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_MAX_CHARS = 160;
+export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_LIMIT = 12;
+export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_MAX_CHARS = 96;
+export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_LIMIT = 16;
+export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_MAX_CHARS = 64;
+export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT = 12;
+export const AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_MAX_CHARS = 96;
 const AUTOCODE_MEMORY_RUNTIME_OUTCOME_INLINE_FILE_REF_LIMIT = 4;
 
 const AUTOCODE_MEMORY_RUNTIME_TOOL_ARG_KEYS = new Set([
@@ -344,8 +354,14 @@ function truncateAutocodeMemoryRuntimeText(
   options: { preferDiagnosticWindow?: boolean; preserveTail?: boolean; signalPatterns?: readonly RegExp[] } = {},
 ): string {
   const compact = text.replace(/\s+/g, ' ').trim();
+  if (maxChars <= 0) {
+    return '';
+  }
   if (compact.length <= maxChars) {
     return compact;
+  }
+  if (maxChars <= 3) {
+    return compact.slice(0, maxChars);
   }
 
   if (options.preferDiagnosticWindow) {
@@ -374,6 +390,12 @@ function truncateAutocodeMemoryRuntimeText(
 
 function truncateAutocodeMemoryRuntimeHeadTailText(text: string, maxChars: number): string {
   const marker = ' ... [middle omitted] ... ';
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (maxChars <= 3) {
+    return text.slice(0, maxChars);
+  }
   if (maxChars <= marker.length + 24) {
     return `${text.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
   }
@@ -433,6 +455,16 @@ export function buildAutocodeWorkUnitOutcomeMemoryEntry(
   const completedAt = input.completedAt ?? new Date().toISOString();
   const content = buildAutocodeWorkUnitOutcomeContent({ ...input, completedAt });
   const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(input.relatedFiles);
+  const relatedModules = compactAutocodeMemoryRuntimeBoundedTextList(
+    input.relatedModules,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_LIMIT,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_MAX_CHARS,
+  );
+  const upstreamTaskIds = compactAutocodeMemoryRuntimeBoundedTextList(
+    input.upstreamTaskIds,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_MAX_CHARS,
+  );
   const workUnitRef: WorkUnitRef = {
     methodology: 'autocode',
     hierarchy: [input.phase ?? 'coding', input.workUnitId],
@@ -440,21 +472,26 @@ export function buildAutocodeWorkUnitOutcomeMemoryEntry(
       ? `${input.workUnitId}: ${input.workUnitTitle}`
       : input.workUnitId,
   };
-
-  return {
-    type: 'work_unit_outcome',
-    content,
-    confidence: input.outcome === 'success' ? 0.82 : 0.72,
-    tags: uniqueStrings([
+  const tags = compactAutocodeMemoryRuntimeBoundedTextList(
+    [
       'work_unit',
       input.outcome,
       input.source ?? 'core-runtime',
       input.phase ?? 'coding',
       ...(input.tags ?? []),
-      ...(input.upstreamTaskIds ?? []).map((id) => `upstream:${id}`),
-    ]),
+      ...upstreamTaskIds.map((id) => `upstream:${id}`),
+    ],
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_LIMIT,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_TAG_MAX_CHARS,
+  );
+
+  return {
+    type: 'work_unit_outcome',
+    content,
+    confidence: input.outcome === 'success' ? 0.82 : 0.72,
+    tags,
     relatedFiles,
-    relatedModules: uniqueStrings(input.relatedModules),
+    relatedModules,
     scope: 'work_unit',
     source: 'agent_explicit',
     sessionId: input.sessionId,
@@ -473,6 +510,11 @@ export function buildAutocodeWorkUnitOutcomeSessionInsight(
   const summary = compactAutocodeMemoryRuntimeOutcomeField(input.summary);
   const description = compactAutocodeMemoryRuntimeOutcomeField(input.workUnitDescription);
   const error = compactAutocodeMemoryRuntimeOutcomeField(input.error);
+  const upstreamTaskIds = compactAutocodeMemoryRuntimeBoundedTextList(
+    input.upstreamTaskIds,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_MAX_CHARS,
+  );
   return {
     sessionId: input.sessionId,
     subtaskId: input.workUnitId,
@@ -488,7 +530,7 @@ export function buildAutocodeWorkUnitOutcomeSessionInsight(
       id: input.workUnitId,
       ...(input.workUnitTitle ? { title: input.workUnitTitle } : {}),
       ...(description ? { description } : {}),
-      upstreamTaskIds: uniqueStrings(input.upstreamTaskIds),
+      upstreamTaskIds,
     },
   };
 }
@@ -522,7 +564,7 @@ export function formatAutocodeMemoryRuntimeContext(memories: Memory[], maxItems 
     const formatted = formatAutocodeMemoryRuntimeContextLine(memory, seenContextFiles);
     const line = formatted.line;
     const next = [...lines, line].join('\n');
-    if (next.length > AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS) {
+    if (!fitsAutocodeMemoryRuntimeContextBudget(next)) {
       omitted += 1;
       continue;
     }
@@ -534,12 +576,24 @@ export function formatAutocodeMemoryRuntimeContext(memories: Memory[], maxItems 
   }
 
   if (omitted > 0) {
-    lines.push(`- ... ${omitted} more memory item(s) omitted; search memory only if needed.`);
+    const omittedLine = `- ... ${omitted} more memory item(s) omitted; search memory only if needed.`;
+    const next = [...lines, omittedLine].join('\n');
+    if (fitsAutocodeMemoryRuntimeContextBudget(next)) {
+      lines.push(omittedLine);
+    }
   }
 
-  return truncateAutocodeMemoryRuntimeText(
+  return truncateAutocodeMemoryRuntimeTextToTokenBudget(
     lines.join('\n'),
     AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS,
+    AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_TOKENS,
+  );
+}
+
+function fitsAutocodeMemoryRuntimeContextBudget(text: string): boolean {
+  return (
+    text.length <= AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_CHARS &&
+    estimateTokens(text) <= AUTOCODE_MEMORY_RUNTIME_CONTEXT_MAX_TOKENS
   );
 }
 
@@ -556,18 +610,19 @@ function formatAutocodeMemoryRuntimeContextLine(
   const unseenFiles = sourceFiles.filter((file) => !seenContextFiles.has(file));
   const displayedFiles = unseenFiles.slice(0, AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT);
   const visibleFiles = displayedFiles
-    .map((file) => truncateAutocodeMemoryRuntimeText(
+    .map((file) => truncateAutocodeMemoryRuntimePathTailToTokenBudget(
       file,
       AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_CHARS,
-      { preserveTail: true },
+      AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_MAX_TOKENS,
     ));
   const files = visibleFiles.length > 0
     ? ` Files: ${visibleFiles.join(', ')}${unseenFiles.length > visibleFiles.length ? ', ...' : ''}.`
     : '';
   return {
-    line: `- [${memory.type}] ${truncateAutocodeMemoryRuntimeText(
+    line: `- [${memory.type}] ${truncateAutocodeMemoryRuntimeTextToTokenBudget(
       memory.content,
       AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS,
+      AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_TOKENS,
       { preserveTail: true },
     )}${files}`,
     displayedFiles,
@@ -581,7 +636,11 @@ function buildAutocodeWorkUnitOutcomeContent(
   const description = compactAutocodeMemoryRuntimeOutcomeField(input.workUnitDescription);
   const summary = compactAutocodeMemoryRuntimeOutcomeField(input.summary);
   const error = compactAutocodeMemoryRuntimeOutcomeField(input.error);
-  const upstreamTaskIds = uniqueStrings(input.upstreamTaskIds).slice(0, AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT);
+  const upstreamTaskIds = compactAutocodeMemoryRuntimeBoundedTextList(
+    input.upstreamTaskIds,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_LIMIT,
+    AUTOCODE_MEMORY_RUNTIME_OUTCOME_UPSTREAM_TASK_MAX_CHARS,
+  );
   const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(input.relatedFiles);
   const inlineRelatedFiles = relatedFiles.slice(0, AUTOCODE_MEMORY_RUNTIME_OUTCOME_INLINE_FILE_REF_LIMIT);
   const lines = [
@@ -618,12 +677,130 @@ function compactAutocodeMemoryRuntimeOutcomeField(value: string | undefined): st
 }
 
 function compactAutocodeMemoryRuntimeOutcomeFiles(values: readonly unknown[] | undefined): string[] {
-  return uniqueStrings(values)
-    .slice(0, AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT)
-    .map((file) => truncateAutocodeMemoryRuntimeText(
+  const files: string[] = [];
+  const seen = new Set<string>();
+  for (const file of uniqueStrings(values)) {
+    const compacted = truncateAutocodeMemoryRuntimePathTail(
       file,
       AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_MAX_CHARS,
-    ));
+    );
+    const key = compacted.toLowerCase();
+    if (!compacted || seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    files.push(compacted);
+    if (files.length >= AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_LIMIT) {
+      break;
+    }
+  }
+
+  return files;
+}
+
+function compactAutocodeMemoryRuntimeBoundedTextList(
+  values: readonly unknown[] | undefined,
+  limit: number,
+  maxItemChars: number,
+): string[] {
+  const itemLimit = Math.max(0, limit);
+  if (itemLimit === 0) {
+    return [];
+  }
+
+  const compactedValues: string[] = [];
+  const seen = new Set<string>();
+  for (const value of uniqueStrings(values)) {
+    const compacted = truncateAutocodeMemoryRuntimeText(value, maxItemChars, { preserveTail: true });
+    if (!compacted || seen.has(compacted)) {
+      continue;
+    }
+
+    seen.add(compacted);
+    compactedValues.push(compacted);
+    if (compactedValues.length >= itemLimit) {
+      break;
+    }
+  }
+
+  return compactedValues;
+}
+
+function truncateAutocodeMemoryRuntimePathTail(path: string, maxChars: number): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return normalized.slice(-maxChars).replace(/^\/+/, '');
+}
+
+function truncateAutocodeMemoryRuntimePathTailToTokenBudget(
+  path: string,
+  maxChars: number,
+  maxTokens: number,
+): string {
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+
+  const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  const initial = truncateAutocodeMemoryRuntimePathTail(normalized, maxChars);
+  if (estimateTokens(initial) <= maxTokens) {
+    return initial;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, normalized.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = truncateAutocodeMemoryRuntimePathTail(normalized, midpoint);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function truncateAutocodeMemoryRuntimeTextToTokenBudget(
+  text: string,
+  maxChars: number,
+  maxTokens: number,
+  options: { preferDiagnosticWindow?: boolean; preserveTail?: boolean; signalPatterns?: readonly RegExp[] } = {},
+): string {
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+
+  const initial = truncateAutocodeMemoryRuntimeText(text, maxChars, options);
+  if (estimateTokens(initial) <= maxTokens) {
+    return initial;
+  }
+
+  const compact = text.replace(/\s+/g, ' ').trim();
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, compact.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = truncateAutocodeMemoryRuntimeText(compact, midpoint, options);
+    if (candidate.length <= maxChars && estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
 }
 
 function uniqueStrings(values: readonly unknown[] | undefined): string[] {

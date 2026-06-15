@@ -8,6 +8,7 @@ import type { Memory, MemoryRecordEntry, MemorySearchFilters } from '../types';
 import type { EmbeddingService } from '../embedding-service';
 import type { RetrievalPipeline } from '../retrieval/pipeline';
 import { MemoryServiceImpl } from '../memory-service';
+import { estimateTokens } from '../retrieval/context-packer';
 
 // ============================================================
 // MOCKS
@@ -293,6 +294,7 @@ describe('MemoryServiceImpl', () => {
       const embeddingText = mockEmbed.mock.calls[0][0] as string;
 
       expect(storedContent.length).toBeLessThanOrEqual(2000);
+      expect(estimateTokens(storedContent)).toBeLessThanOrEqual(500);
       expect(storedContent).toContain('MEMORY_HEAD');
       expect(storedContent).toContain('MEMORY_TAIL');
       expect(storedContent).toContain('memory middle omitted before storage');
@@ -303,18 +305,88 @@ describe('MemoryServiceImpl', () => {
       expect(storedTags).toHaveLength(20);
       expect(new Set(storedTags).size).toBe(storedTags.length);
       expect(storedTags.every((tag) => tag.length <= 64)).toBe(true);
+      expect(storedTags.every((tag) => estimateTokens(tag) <= 24)).toBe(true);
       expect(storedRelatedFiles).toHaveLength(24);
       expect(storedRelatedFiles.every((file) => file.length <= 220)).toBe(true);
+      expect(storedRelatedFiles.every((file) => estimateTokens(file) <= 56)).toBe(true);
       expect(storedRelatedFiles[0]).toContain('tail-0.ts');
       expect(storedRelatedFiles[0]).not.toContain('omitted');
       expect(storedRelatedModules).toHaveLength(16);
       expect(storedRelatedModules.every((module) => module.length <= 96)).toBe(true);
+      expect(storedRelatedModules.every((module) => estimateTokens(module) <= 32)).toBe(true);
       expect(storedCitation.length).toBeLessThanOrEqual(1000);
+      expect(estimateTokens(storedCitation)).toBeLessThanOrEqual(250);
       expect(storedCitation).toContain('CITATION_HEAD');
       expect(storedCitation).toContain('CITATION_TAIL');
       expect(storedContextPrefix.length).toBeLessThanOrEqual(600);
+      expect(estimateTokens(storedContextPrefix)).toBeLessThanOrEqual(150);
       expect(storedContextPrefix).toContain('PREFIX_HEAD');
       expect(storedContextPrefix).toContain('PREFIX_TAIL');
+    });
+
+    it('compacts localized memory content and metadata before storage and embedding', async () => {
+      await service.store({
+        type: 'gotcha',
+        content: [
+          '记忆开头',
+          '这是一段会显著增加 token 的中文记忆内容。'.repeat(180),
+          '记忆尾部',
+        ].join(' '),
+        projectId: 'proj-001',
+        tags: [
+          `标签开头${'本地化标签'.repeat(20)}标签尾部`,
+        ],
+        relatedFiles: [
+          `src/${'深层目录/'.repeat(100)}localized-storage-tail.ts`,
+        ],
+        relatedModules: [
+          `模块开头${'本地化模块上下文'.repeat(40)}模块尾部`,
+        ],
+        citationText: [
+          '引用开头',
+          '本地化引用细节。'.repeat(120),
+          '引用尾部',
+        ].join(' '),
+        contextPrefix: [
+          '前缀开头',
+          '本地化上下文前缀。'.repeat(80),
+          '前缀尾部',
+        ].join(' '),
+      });
+
+      const batchArgs = mockBatch.mock.calls[0][0];
+      const memoriesArgs = batchArgs[0].args;
+      const ftsArgs = batchArgs[1].args;
+      const storedContent = memoriesArgs[2] as string;
+      const storedTags = JSON.parse(memoriesArgs[4] as string) as string[];
+      const storedRelatedFiles = JSON.parse(memoriesArgs[5] as string) as string[];
+      const storedRelatedModules = JSON.parse(memoriesArgs[6] as string) as string[];
+      const storedCitation = memoriesArgs[19] as string;
+      const storedContextPrefix = memoriesArgs[23] as string;
+      const embeddingText = mockEmbed.mock.calls[0][0] as string;
+
+      expect(storedContent.length).toBeLessThanOrEqual(2000);
+      expect(estimateTokens(storedContent)).toBeLessThanOrEqual(500);
+      expect(storedContent).toContain('记忆开头');
+      expect(storedContent).toContain('记忆尾部');
+      expect(storedContent).toContain('memory middle omitted before storage');
+      expect(ftsArgs[1]).toBe(storedContent);
+      expect(embeddingText).toContain(storedContent);
+      expect(storedTags[0]).toContain('标签开头');
+      expect(storedTags[0]).toContain('标签尾部');
+      expect(estimateTokens(storedTags[0])).toBeLessThanOrEqual(24);
+      expect(storedRelatedFiles[0]).toContain('localized-storage-tail.ts');
+      expect(storedRelatedFiles[0]).not.toContain('omitted');
+      expect(estimateTokens(storedRelatedFiles[0])).toBeLessThanOrEqual(56);
+      expect(storedRelatedModules[0]).toContain('模块开头');
+      expect(storedRelatedModules[0]).toContain('模块尾部');
+      expect(estimateTokens(storedRelatedModules[0])).toBeLessThanOrEqual(32);
+      expect(storedCitation).toContain('引用开头');
+      expect(storedCitation).toContain('引用尾部');
+      expect(estimateTokens(storedCitation)).toBeLessThanOrEqual(250);
+      expect(storedContextPrefix).toContain('前缀开头');
+      expect(storedContextPrefix).toContain('前缀尾部');
+      expect(estimateTokens(storedContextPrefix)).toBeLessThanOrEqual(150);
     });
 
     it('reuses an exact active duplicate without embedding or inserting again', async () => {
@@ -433,10 +505,35 @@ describe('MemoryServiceImpl', () => {
 
       const query = mockRetrievalSearch.mock.calls[0][0] as string;
       expect(query.length).toBeLessThanOrEqual(800);
+      expect(estimateTokens(query)).toBeLessThanOrEqual(200);
       expect(query).toContain('AUTH_QUERY_HEAD');
       expect(query).toContain('AUTH_QUERY_TAIL');
       expect(query).toContain('memory query middle omitted for retrieval budget');
       expect(query).not.toContain('before storage');
+    });
+
+    it('compacts localized query searches by token budget before pipeline retrieval', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [],
+        formattedContext: '',
+      });
+      const longQuery = [
+        '服务查询开头',
+        '这是一段会显著增加 token 的中文服务层查询。'.repeat(120),
+        '服务查询尾部',
+      ].join(' ');
+
+      await service.search({
+        query: longQuery,
+        projectId: 'proj-001',
+      });
+
+      const query = mockRetrievalSearch.mock.calls[0][0] as string;
+      expect(query.length).toBeLessThanOrEqual(800);
+      expect(estimateTokens(query)).toBeLessThanOrEqual(200);
+      expect(query).toContain('服务查询开头');
+      expect(query).toContain('服务查询尾部');
+      expect(query).toContain('memory query middle omitted for retrieval budget');
     });
 
     it('does not run a broad search for blank query text', async () => {

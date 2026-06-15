@@ -10,7 +10,9 @@ import { compactMemoryInjectionText } from './text-compaction.js';
 import { normalizeMemoryModuleFilters } from './module-filters.js';
 
 const MAX_PLANNER_MEMORY_ITEM_CHARS = 240;
+const MAX_PLANNER_MEMORY_ITEM_TOKENS = 80;
 const MAX_PLANNER_MEMORY_CONTEXT_CHARS = 1800;
+const MAX_PLANNER_MEMORY_CONTEXT_TOKENS = 450;
 const LOW_VALUE_SESSION_METRIC_LINE_PATTERNS = [
   /^(?:Summary:\s*)?Efficient token usage\b/i,
   /^(?:Summary:\s*)?High token usage per step\b/i,
@@ -163,15 +165,20 @@ function formatPlannerSections(sections: PlannerSections): string {
   return truncateText(
     `=== MEMORY CONTEXT FOR PLANNER ===\n${parts.join('\n\n')}\n=== END MEMORY CONTEXT ===`,
     MAX_PLANNER_MEMORY_CONTEXT_CHARS,
+    MAX_PLANNER_MEMORY_CONTEXT_TOKENS,
   );
 }
 
 function formatMemoryContent(memory: Memory): string {
-  return truncateText(memory.content, MAX_PLANNER_MEMORY_ITEM_CHARS);
+  return truncateText(memory.content, MAX_PLANNER_MEMORY_ITEM_CHARS, MAX_PLANNER_MEMORY_ITEM_TOKENS);
 }
 
 function formatOutcomeMemoryContent(memory: Memory): string {
-  return truncateText(stripLowValueSessionMetricLines(memory.content), MAX_PLANNER_MEMORY_ITEM_CHARS);
+  return truncateText(
+    stripLowValueSessionMetricLines(memory.content),
+    MAX_PLANNER_MEMORY_ITEM_CHARS,
+    MAX_PLANNER_MEMORY_ITEM_TOKENS,
+  );
 }
 
 function stripLowValueSessionMetricLines(content: string): string {
@@ -182,8 +189,8 @@ function stripLowValueSessionMetricLines(content: string): string {
     .trim();
 }
 
-function truncateText(text: string, maxChars: number): string {
-  return compactMemoryInjectionText(text, maxChars);
+function truncateText(text: string, maxChars: number, maxTokens: number): string {
+  return compactMemoryInjectionText(text, maxChars, maxTokens);
 }
 
 function normalizeTaskDescription(value: string): string {

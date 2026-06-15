@@ -9,11 +9,15 @@
  * Gracefully degrades to passthrough if neither provider is available.
  */
 
+import { estimateTokens } from './context-packer';
+
 const OLLAMA_BASE_URL = 'http://localhost:11434';
 const COHERE_RERANK_URL = 'https://api.cohere.com/v2/rerank';
 const QWEN3_RERANKER_MODEL = 'qwen3-reranker:0.6b';
 const MAX_RERANK_QUERY_CHARS = 300;
+const MAX_RERANK_QUERY_TOKENS = 75;
 const MAX_RERANK_DOCUMENT_CHARS = 1200;
+const MAX_RERANK_DOCUMENT_TOKENS = 300;
 const MAX_RERANK_CANDIDATES = 20;
 
 export type RerankerProvider = 'ollama' | 'cohere' | 'none';
@@ -85,7 +89,12 @@ export class Reranker {
     candidates: RerankerCandidate[],
     topK: number = 8,
   ): Promise<RerankerResult[]> {
-    const compactQuery = compactRerankerText(query, MAX_RERANK_QUERY_CHARS, { preserveTail: true });
+    const compactQuery = compactRerankerText(
+      query,
+      MAX_RERANK_QUERY_CHARS,
+      MAX_RERANK_QUERY_TOKENS,
+      { preserveTail: true },
+    );
     const boundedTopK = normalizeRerankerTopK(topK);
     const compactCandidates = compactRerankerCandidates(candidates);
     const resultLimit = Math.min(boundedTopK, compactCandidates.length);
@@ -255,7 +264,12 @@ function compactRerankerCandidates(candidates: RerankerCandidate[]): RerankerCan
 
   for (const candidate of candidates) {
     const memoryId = normalizeRerankerId(candidate.memoryId);
-    const content = compactRerankerText(candidate.content, MAX_RERANK_DOCUMENT_CHARS, { preserveTail: true });
+    const content = compactRerankerText(
+      candidate.content,
+      MAX_RERANK_DOCUMENT_CHARS,
+      MAX_RERANK_DOCUMENT_TOKENS,
+      { preserveTail: true },
+    );
     if (!memoryId || !content || seen.has(memoryId)) {
       continue;
     }
@@ -310,22 +324,59 @@ function buildQwen3RerankerPrompt(query: string, document: string): string {
 function compactRerankerText(
   text: string,
   maxChars: number,
+  maxTokens: number,
   options: { preserveTail?: boolean } = {},
 ): string {
   const compact = text.replace(/\s+/g, ' ').trim();
-  if (compact.length <= maxChars) {
+  if (maxChars <= 0 || maxTokens <= 0) {
+    return '';
+  }
+  if (compact.length <= maxChars && estimateTokens(compact) <= maxTokens) {
     return compact;
   }
+
+  const charBounded = compactRerankerTextByChars(compact, maxChars, options);
+  if (estimateTokens(charBounded) <= maxTokens) {
+    return charBounded;
+  }
+
+  let best = '';
+  let low = 1;
+  let high = Math.min(maxChars, compact.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = compactRerankerTextByChars(compact, midpoint, options);
+    if (estimateTokens(candidate) <= maxTokens) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function compactRerankerTextByChars(
+  compact: string,
+  maxChars: number,
+  options: { preserveTail?: boolean } = {},
+): string {
+  if (maxChars <= 0 || compact.length <= maxChars) {
+    return compact.slice(0, Math.max(0, maxChars));
+  }
+  if (maxChars <= 3) {
+    return compact.slice(0, maxChars);
+  }
+
   if (!options.preserveTail) {
     return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
   }
 
   const marker = ' ... [middle omitted] ... ';
-  if (maxChars <= marker.length + 24) {
-    return `${compact.slice(0, Math.max(0, maxChars - 3)).trimEnd()}...`;
-  }
-  const budget = maxChars - marker.length;
+  const effectiveMarker = maxChars <= marker.length + 24 ? '...' : marker;
+  const budget = maxChars - effectiveMarker.length;
   const headBudget = Math.ceil(budget * 0.62);
   const tailBudget = Math.max(0, budget - headBudget);
-  return `${compact.slice(0, headBudget).trimEnd()}${marker}${compact.slice(-tailBudget).trimStart()}`;
+  return `${compact.slice(0, headBudget).trimEnd()}${effectiveMarker}${compact.slice(-tailBudget).trimStart()}`;
 }

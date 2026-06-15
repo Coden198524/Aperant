@@ -12,6 +12,7 @@ import { StepInjectionDecider } from '../../injection/step-injection-decider';
 import type { MemoryService, Memory } from '../../types';
 import type { Scratchpad } from '../../observer/scratchpad';
 import type { AcuteCandidate } from '../../types';
+import { estimateTokens } from '../../retrieval/context-packer';
 
 // ============================================================
 // HELPERS
@@ -139,6 +140,30 @@ describe('StepInjectionDecider', () => {
       expect(result?.content.length).toBeLessThan(longContent.length);
       expect(result?.content).toContain('middle omitted');
       expect(result?.content).toContain('GOTCHA_TAIL_OK');
+    });
+
+    it('keeps localized gotcha injections within an estimated token budget', async () => {
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({
+          id: 'localized-gotcha',
+          content: [
+            '注入记忆开头',
+            '这是一段会显著增加 token 的中文 gotcha 上下文。'.repeat(80),
+            '注入记忆尾部',
+          ].join(' '),
+          relatedFiles: ['/src/auth/本地化文件名很长很长很长很长很长.ts'],
+        }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('gotcha_injection');
+      expect(result?.content).toContain('注入记忆开头');
+      expect(result?.content).toContain('注入记忆尾部');
+      expect(estimateTokens(result?.content ?? '')).toBeLessThanOrEqual(140);
     });
 
     it('normalizes and deduplicates read paths before gotcha search', async () => {
@@ -334,6 +359,36 @@ describe('StepInjectionDecider', () => {
       expect(result?.content).toContain('middle omitted');
     });
 
+    it('keeps localized scratchpad reflections within an estimated token budget', async () => {
+      const capturedAt = Date.now();
+      scratchpad = makeScratchpad([
+        {
+          signalType: 'self_correction',
+          rawData: {
+            triggeringText: [
+              '反思开头',
+              '这是一段会显著增加 token 的中文 scratchpad 观察。'.repeat(60),
+              '反思尾部',
+            ].join(' '),
+          },
+          priority: 0.9,
+          capturedAt,
+          stepNumber: 4,
+        },
+      ]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('scratchpad_reflection');
+      expect(result?.content).toContain('反思开头');
+      expect(result?.content).toContain('反思尾部');
+      expect(estimateTokens(result?.content ?? '')).toBeLessThanOrEqual(75);
+    });
+
     it('skips low-priority scratchpad entries to avoid noisy injections', async () => {
       const newEntry: AcuteCandidate = {
         signalType: 'config_touch',
@@ -429,6 +484,28 @@ describe('StepInjectionDecider', () => {
       expect(result?.type).toBe('search_short_circuit');
       expect(result?.content).toContain('middle omitted');
       expect(result?.content).toContain('SHORT_CIRCUIT_TAIL_OK');
+    });
+
+    it('keeps localized search short-circuit injections within an estimated token budget', async () => {
+      const known = makeMemory({
+        id: 'grep-localized',
+        content: [
+          '短路记忆开头',
+          '这是一段会显著增加 token 的中文搜索短路上下文。'.repeat(80),
+          '短路记忆尾部',
+        ].join(' '),
+      });
+      vi.mocked(memoryService.searchByPattern).mockResolvedValueOnce(known);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Grep', args: { pattern: 'useCallback' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('search_short_circuit');
+      expect(result?.content).toContain('短路记忆开头');
+      expect(result?.content).toContain('短路记忆尾部');
+      expect(estimateTokens(result?.content ?? '')).toBeLessThanOrEqual(105);
     });
 
     it('skips broad Glob patterns for search_short_circuit', async () => {

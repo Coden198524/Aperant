@@ -29,12 +29,16 @@ export type StepInjection = AutocodeMemoryRuntimeStepInjection;
 const MAX_GOTCHA_INJECTION_MEMORIES = 2;
 const GOTCHA_SEARCH_CANDIDATE_LIMIT = MAX_GOTCHA_INJECTION_MEMORIES * 3;
 const MAX_MEMORY_ALERT_CHARS = 260;
+const MAX_MEMORY_ALERT_TOKENS = 85;
 const MAX_MEMORY_ALERT_FILE_REFS = 3;
 const MAX_MEMORY_ALERT_FILE_REF_CHARS = 36;
+const MAX_MEMORY_ALERT_FILE_REF_TOKENS = 16;
 const MAX_SCRATCHPAD_REFLECTIONS = 2;
 const MAX_SCRATCHPAD_TEXT_CHARS = 120;
+const MAX_SCRATCHPAD_TEXT_TOKENS = 40;
 const MIN_SCRATCHPAD_REFLECTION_PRIORITY = 0.75;
 const MAX_SHORT_CIRCUIT_CHARS = 260;
+const MAX_SHORT_CIRCUIT_TOKENS = 85;
 const MAX_SHORT_CIRCUIT_PATTERN_CHARS = 120;
 const BROAD_SEARCH_PATTERN_CHARS = 3;
 const SCRATCHPAD_MEMORY_ID_PREFIX = 'scratchpad:';
@@ -128,7 +132,11 @@ export class StepInjectionDecider {
           !recentContext.injectedMemoryIds.has(known.id)
         ) {
           return {
-            content: `MEMORY CONTEXT: ${truncateText(known.content, MAX_SHORT_CIRCUIT_CHARS)}`,
+            content: `MEMORY CONTEXT: ${truncateText(
+              known.content,
+              MAX_SHORT_CIRCUIT_CHARS,
+              MAX_SHORT_CIRCUIT_TOKENS,
+            )}`,
             type: 'search_short_circuit',
             memoryIds: [known.id],
           };
@@ -155,7 +163,11 @@ export class StepInjectionDecider {
     const bullets = memories
       .map((m) => {
         const fileContext = formatFileRefs(m.relatedFiles);
-        return `- [${m.type}]${fileContext}: ${truncateText(m.content, MAX_MEMORY_ALERT_CHARS)}`;
+        return `- [${m.type}]${fileContext}: ${truncateText(
+          m.content,
+          MAX_MEMORY_ALERT_CHARS,
+          MAX_MEMORY_ALERT_TOKENS,
+        )}`;
       })
       .join('\n');
 
@@ -170,6 +182,7 @@ export class StepInjectionDecider {
         const text = truncateText(
           String(rawData.triggeringText ?? rawData.matchedText ?? ''),
           MAX_SCRATCHPAD_TEXT_CHARS,
+          MAX_SCRATCHPAD_TEXT_TOKENS,
         );
         return `- [step ${e.stepNumber}] ${e.signalType}: ${text}`;
       })
@@ -233,7 +246,11 @@ function formatFileRefs(files: readonly string[]): string {
 
   const visible = files
     .slice(0, MAX_MEMORY_ALERT_FILE_REFS)
-    .map((file) => truncateText(file.split(/[\\/]/).pop() || file, MAX_MEMORY_ALERT_FILE_REF_CHARS));
+    .map((file) => truncateText(
+      file.split(/[\\/]/).pop() || file,
+      MAX_MEMORY_ALERT_FILE_REF_CHARS,
+      MAX_MEMORY_ALERT_FILE_REF_TOKENS,
+    ));
   const omitted = files.length - visible.length;
   if (omitted > 0) {
     visible.push(`+${omitted} more`);
@@ -242,8 +259,8 @@ function formatFileRefs(files: readonly string[]): string {
   return ` (${visible.join(', ')})`;
 }
 
-function truncateText(text: string, maxChars: number): string {
-  return compactMemoryInjectionText(text, maxChars);
+function truncateText(text: string, maxChars: number, maxTokens: number): string {
+  return compactMemoryInjectionText(text, maxChars, maxTokens);
 }
 
 function uniqueInOrder(values: readonly string[]): string[] {

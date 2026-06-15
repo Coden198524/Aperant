@@ -7,6 +7,7 @@ import {
   recordAutocodeSessionDiscovery,
   type AutocodeSessionCodebaseMap,
 } from './session-memory.js';
+import { estimateTokens } from './retrieval/context-packer.js';
 
 function codebaseMap(entries: Array<[string, { description: string; discovered_at: string }]>): AutocodeSessionCodebaseMap {
   return {
@@ -64,6 +65,31 @@ describe('session memory context formatting', () => {
     expect(context).toContain('PATTERN_TAIL');
     expect(context).toContain('session memory middle omitted');
   });
+
+  it('keeps localized gotchas and patterns within estimated token budgets', () => {
+    const context = buildAutocodeSessionContext({
+      gotchasMarkdown: [
+        '# Gotchas',
+        '会话 gotcha 开头',
+        '这是一段会显著增加 token 的中文 gotcha 历史。'.repeat(80),
+        '会话 gotcha 尾部',
+      ].join('\n'),
+      patternsMarkdown: [
+        '# Patterns',
+        '会话 pattern 开头',
+        '这是一段会显著增加 token 的中文 pattern 历史。'.repeat(80),
+        '会话 pattern 尾部',
+      ].join('\n'),
+      maxMarkdownChars: 260,
+    });
+
+    expect(context).toContain('会话 gotcha 开头');
+    expect(context).toContain('会话 gotcha 尾部');
+    expect(context).toContain('会话 pattern 开头');
+    expect(context).toContain('会话 pattern 尾部');
+    expect(context).toContain('session memory middle omitted');
+    expect(estimateTokens(context)).toBeLessThanOrEqual(180);
+  });
 });
 
 describe('session memory storage formatting', () => {
@@ -100,5 +126,53 @@ describe('session memory storage formatting', () => {
     expect(entry).toContain('CONTEXT_TAIL');
     expect(entry).toContain('session memory entry middle omitted before storage');
     expect(entry.length).toBeLessThan(1400);
+  });
+
+  it('compacts localized discovery descriptions before storing session memory', () => {
+    const map = recordAutocodeSessionDiscovery(
+      createEmptyAutocodeSessionCodebaseMap(),
+      {
+        filePath: 'src/auth.ts',
+        description: [
+          '发现开头',
+          '这是一段会显著增加 token 的中文 discovery 描述。'.repeat(120),
+          '发现尾部',
+        ].join(' '),
+      },
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    const description = map.discovered_files['src/auth.ts'].description;
+
+    expect(description.length).toBeLessThanOrEqual(800);
+    expect(estimateTokens(description)).toBeLessThanOrEqual(220);
+    expect(description).toContain('发现开头');
+    expect(description).toContain('发现尾部');
+    expect(description).toContain('session memory entry middle omitted before storage');
+  });
+
+  it('compacts localized gotcha text and context before writing markdown entries', () => {
+    const entry = formatAutocodeGotchaMarkdownEntry(
+      {
+        gotcha: [
+          'gotcha 开头',
+          '这是一段会显著增加 token 的中文 gotcha 内容。'.repeat(120),
+          'gotcha 尾部',
+        ].join(' '),
+        context: [
+          'context 开头',
+          '这是一段会显著增加 token 的中文上下文。'.repeat(90),
+          'context 尾部',
+        ].join(' '),
+      },
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    expect(entry).toContain('gotcha 开头');
+    expect(entry).toContain('gotcha 尾部');
+    expect(entry).toContain('context 开头');
+    expect(entry).toContain('context 尾部');
+    expect(entry).toContain('session memory entry middle omitted before storage');
+    expect(estimateTokens(entry)).toBeLessThanOrEqual(430);
   });
 });

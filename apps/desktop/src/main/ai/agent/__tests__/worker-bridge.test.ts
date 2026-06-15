@@ -4,6 +4,7 @@ import { EventEmitter } from 'events';
 import type { AgentExecutorConfig, WorkerMessage } from '../types';
 import type { SessionResult } from '../../session/types';
 import type { Memory } from '../../memory/types';
+import { estimateTokens } from '../../memory/retrieval/context-packer';
 
 // =============================================================================
 // Mocks
@@ -427,6 +428,7 @@ describe('WorkerBridge', () => {
       )?.[0] as { memories: Memory[] };
       const memory = response.memories[0];
       expect(memory.content.length).toBeLessThanOrEqual(900);
+      expect(estimateTokens(memory.content)).toBeLessThanOrEqual(225);
       expect(memory.content).toContain('MEMORY_HEAD');
       expect(memory.content).toContain('MEMORY_TAIL');
       expect(memory.content).toContain('memory response middle omitted before IPC');
@@ -435,14 +437,76 @@ describe('WorkerBridge', () => {
       expect(memory.tags.every((tag) => tag.length <= 64)).toBe(true);
       expect(memory.relatedFiles).toHaveLength(12);
       expect(memory.relatedFiles.every((file) => file.length <= 180)).toBe(true);
+      expect(memory.relatedFiles.every((file) => !file.includes('[omitted]'))).toBe(true);
+      expect(memory.relatedFiles[0]).toContain('tail-0.ts');
       expect(memory.relatedModules).toHaveLength(10);
       expect(memory.relatedModules.every((module) => module.length <= 96)).toBe(true);
       expect(memory.citationText?.length).toBeLessThanOrEqual(300);
+      expect(estimateTokens(memory.citationText ?? '')).toBeLessThanOrEqual(75);
       expect(memory.citationText).toContain('CITATION_HEAD');
       expect(memory.citationText).toContain('CITATION_TAIL');
       expect(memory.contextPrefix?.length).toBeLessThanOrEqual(300);
+      expect(estimateTokens(memory.contextPrefix ?? '')).toBeLessThanOrEqual(75);
       expect(memory.contextPrefix).toContain('PREFIX_HEAD');
       expect(memory.contextPrefix).toContain('PREFIX_TAIL');
+    });
+
+    it('keeps localized memory search responses within token budgets before IPC', async () => {
+      mockMemoryServiceSearch.mockResolvedValueOnce([
+        makeMemory({
+          content: [
+            '记忆开头',
+            '这是一段很长的本地化记忆内容，会比英文更快消耗 token。'.repeat(80),
+            '记忆尾部必须保留',
+          ].join(' '),
+          relatedFiles: [
+            `src/${'深层目录/'.repeat(80)}localized-tail-preserved.ts`,
+          ],
+          citationText: [
+            '引用开头',
+            '本地化引用细节。'.repeat(60),
+            '引用尾部',
+          ].join(' '),
+          contextPrefix: [
+            '前缀开头',
+            '本地化上下文前缀。'.repeat(60),
+            '前缀尾部',
+          ].join(' '),
+        }),
+      ]);
+      bridge.spawn(createConfig());
+      const worker = getWorker();
+
+      worker.emit('message', {
+        type: 'memory:search',
+        requestId: 'req-localized',
+        filters: { query: '中文记忆', projectId: 'proj-456' },
+      });
+
+      await vi.waitFor(() => {
+        expect(worker.postMessage).toHaveBeenCalledWith(expect.objectContaining({
+          type: 'memory:search-result',
+          requestId: 'req-localized',
+        }));
+      });
+      const response = worker.postMessage.mock.calls.find(
+        ([message]) => (message as { requestId?: string }).requestId === 'req-localized',
+      )?.[0] as { memories: Memory[] };
+      const memory = response.memories[0];
+
+      expect(memory.content.length).toBeLessThanOrEqual(900);
+      expect(estimateTokens(memory.content)).toBeLessThanOrEqual(225);
+      expect(memory.content).toContain('记忆开头');
+      expect(memory.content).toContain('记忆尾部必须保留');
+      expect(memory.content).toContain('memory response middle omitted before IPC');
+      expect(memory.relatedFiles[0]).toContain('localized-tail-preserved.ts');
+      expect(memory.relatedFiles[0]).not.toContain('[omitted]');
+      expect(estimateTokens(memory.citationText ?? '')).toBeLessThanOrEqual(75);
+      expect(memory.citationText).toContain('引用开头');
+      expect(memory.citationText).toContain('引用尾部');
+      expect(estimateTokens(memory.contextPrefix ?? '')).toBeLessThanOrEqual(75);
+      expect(memory.contextPrefix).toContain('前缀开头');
+      expect(memory.contextPrefix).toContain('前缀尾部');
     });
 
     it('accumulates request counts across provider sessions in one worker', () => {

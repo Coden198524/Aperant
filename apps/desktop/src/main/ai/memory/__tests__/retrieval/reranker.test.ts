@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 
 import { Reranker } from '../../retrieval/reranker';
+import { estimateTokens } from '../../retrieval/context-packer';
 
 const originalCohereApiKey = process.env.COHERE_API_KEY;
 
@@ -74,6 +75,7 @@ describe('Reranker prompt compaction', () => {
     const firstCall = fetchMock.mock.calls[0] as unknown as [unknown, { body?: unknown }];
     const firstBody = JSON.parse(String(firstCall[1]?.body)) as { prompt: string };
     expect(firstBody.prompt.length).toBeLessThanOrEqual(1700);
+    expect(estimateTokens(firstBody.prompt)).toBeLessThanOrEqual(430);
     expect(firstBody.prompt).toContain('DOC_A_HEAD');
     expect(firstBody.prompt).toContain('DOC_A_TAIL_SHOULD_BE_PRESERVED');
     expect(firstBody.prompt).toContain('[middle omitted]');
@@ -137,12 +139,62 @@ describe('Reranker prompt compaction', () => {
       documents: string[];
     };
     expect(body.query.length).toBeLessThanOrEqual(300);
+    expect(estimateTokens(body.query)).toBeLessThanOrEqual(75);
     expect(body.query).toContain('QUERY_TAIL_SHOULD_BE_PRESERVED');
     expect(body.query).toContain('[middle omitted]');
     expect(body.documents[0].length).toBeLessThanOrEqual(1200);
+    expect(estimateTokens(body.documents[0])).toBeLessThanOrEqual(300);
     expect(body.documents[0]).toContain('COHERE_DOC_HEAD');
     expect(body.documents[0]).toContain('COHERE_DOC_TAIL_SHOULD_BE_PRESERVED');
     expect(body.documents[0]).toContain('[middle omitted]');
+  });
+
+  it('keeps localized Cohere reranker query and documents within token budgets', async () => {
+    process.env.COHERE_API_KEY = 'test-key';
+    const fetchMock = vi.fn(async () => ({
+      ok: true,
+      json: async () => ({ results: [{ index: 0, relevance_score: 0.91 }] }),
+    }));
+    vi.stubGlobal('fetch', fetchMock);
+    const reranker = new Reranker('cohere');
+
+    await reranker.rerank(
+      [
+        '查询开头',
+        '这是一段会显著增加 token 的中文 rerank 查询。'.repeat(80),
+        '查询尾部',
+      ].join(' '),
+      [
+        {
+          memoryId: 'localized',
+          content: [
+            '文档开头',
+            '这是一段会显著增加 token 的中文 rerank 文档。'.repeat(200),
+            '文档尾部',
+          ].join(' '),
+        },
+        {
+          memoryId: 'short',
+          content: '短文档',
+        },
+      ],
+      1,
+    );
+
+    const firstCall = fetchMock.mock.calls[0] as unknown as [unknown, { body?: unknown }];
+    const body = JSON.parse(String(firstCall[1]?.body)) as {
+      query: string;
+      documents: string[];
+    };
+
+    expect(body.query.length).toBeLessThanOrEqual(300);
+    expect(estimateTokens(body.query)).toBeLessThanOrEqual(75);
+    expect(body.query).toContain('查询开头');
+    expect(body.query).toContain('查询尾部');
+    expect(body.documents[0].length).toBeLessThanOrEqual(1200);
+    expect(estimateTokens(body.documents[0])).toBeLessThanOrEqual(300);
+    expect(body.documents[0]).toContain('文档开头');
+    expect(body.documents[0]).toContain('文档尾部');
   });
 
   it('filters invalid Cohere result entries instead of discarding valid scores', async () => {

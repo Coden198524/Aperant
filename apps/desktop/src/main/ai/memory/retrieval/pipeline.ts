@@ -20,9 +20,10 @@ import { searchGraph } from './graph-search';
 import { weightedRRF } from './rrf-fusion';
 import { applyGraphNeighborhoodBoost } from './graph-boost';
 import { Reranker } from './reranker';
-import { packContext } from './context-packer';
+import { estimateTokens, packContext } from './context-packer';
 
 export const MAX_RETRIEVAL_QUERY_CHARS = 800;
+export const MAX_RETRIEVAL_QUERY_TOKENS = 200;
 const RETRIEVAL_QUERY_OMISSION_MARKER = ' ... [query middle omitted for retrieval budget] ... ';
 const DEFAULT_RETRIEVAL_MAX_RESULTS = 8;
 const DEFAULT_BM25_CANDIDATE_LIMIT = 20;
@@ -169,21 +170,51 @@ export class RetrievalPipeline {
 
 export function compactRetrievalQuery(query: string): string {
   const normalized = query.replace(/\s+/g, ' ').trim();
-  if (normalized.length <= MAX_RETRIEVAL_QUERY_CHARS) {
+  if (
+    normalized.length <= MAX_RETRIEVAL_QUERY_CHARS &&
+    estimateTokens(normalized) <= MAX_RETRIEVAL_QUERY_TOKENS
+  ) {
     return normalized;
   }
 
-  const marker = RETRIEVAL_QUERY_OMISSION_MARKER;
-  if (marker.length >= MAX_RETRIEVAL_QUERY_CHARS - 2) {
-    return normalized.slice(0, MAX_RETRIEVAL_QUERY_CHARS);
+  const charBounded = compactRetrievalQueryByChars(normalized, MAX_RETRIEVAL_QUERY_CHARS);
+  if (estimateTokens(charBounded) <= MAX_RETRIEVAL_QUERY_TOKENS) {
+    return charBounded;
   }
 
-  const budget = MAX_RETRIEVAL_QUERY_CHARS - marker.length;
+  let best = '';
+  let low = 1;
+  let high = Math.min(MAX_RETRIEVAL_QUERY_CHARS, normalized.length);
+  while (low <= high) {
+    const midpoint = Math.floor((low + high) / 2);
+    const candidate = compactRetrievalQueryByChars(normalized, midpoint);
+    if (estimateTokens(candidate) <= MAX_RETRIEVAL_QUERY_TOKENS) {
+      best = candidate;
+      low = midpoint + 1;
+    } else {
+      high = midpoint - 1;
+    }
+  }
+
+  return best;
+}
+
+function compactRetrievalQueryByChars(normalized: string, maxChars: number): string {
+  if (maxChars <= 0 || normalized.length <= maxChars) {
+    return normalized.slice(0, Math.max(0, maxChars));
+  }
+  if (maxChars <= 3) {
+    return normalized.slice(0, maxChars);
+  }
+
+  const marker = RETRIEVAL_QUERY_OMISSION_MARKER;
+  const effectiveMarker = marker.length >= maxChars - 2 ? '...' : marker;
+  const budget = maxChars - effectiveMarker.length;
   const headChars = Math.ceil(budget * 0.62);
   const tailChars = Math.max(0, budget - headChars);
   return [
     normalized.slice(0, headChars).trimEnd(),
-    marker,
+    effectiveMarker,
     tailChars > 0 ? normalized.slice(-tailChars).trimStart() : '',
   ].join('');
 }
