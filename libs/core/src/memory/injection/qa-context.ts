@@ -4,6 +4,7 @@
  * Builds a compact memory context block for QA agent sessions.
  */
 
+import { stripLowValueMemoryLines } from '../outcome-content.js';
 import type { Memory, MemoryService } from '../types.js';
 import { recordSelectedMemoryAccess } from './access-tracking.js';
 import { selectMemoryContextItems } from './context-selection.js';
@@ -13,7 +14,6 @@ import {
   getRenderedVisibleMemories,
   type VisibleMemoryItem,
 } from './visible-memory-items.js';
-import { stripLowValueMemoryLines } from '../outcome-content.js';
 
 const MAX_QA_MEMORY_ITEM_CHARS = 240;
 const MAX_QA_MEMORY_ITEM_TOKENS = 80;
@@ -21,6 +21,8 @@ const MAX_QA_MEMORY_CONTEXT_CHARS = 1700;
 const MAX_QA_MEMORY_CONTEXT_TOKENS = 425;
 const MAX_QA_MEMORY_FILE_REFS = 3;
 const MAX_QA_MEMORY_FILE_REF_CHARS = 48;
+const MAX_QA_RECIPE_QUERY_CHARS = 800;
+const MAX_QA_RECIPE_QUERY_TOKENS = 200;
 
 export async function buildQaSessionContext(
   specDescription: string,
@@ -355,5 +357,9 @@ function truncateText(
 }
 
 function normalizeTaskDescription(value: string): string {
-  return value.replace(/\s+/g, ' ').trim();
+  return compactMemoryInjectionText(
+    value,
+    MAX_QA_RECIPE_QUERY_CHARS,
+    MAX_QA_RECIPE_QUERY_TOKENS,
+  );
 }
