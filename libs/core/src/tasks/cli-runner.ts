@@ -1220,7 +1220,11 @@ function dedupeCliMemories(memories) {
   const result = [];
   for (const memory of memories) {
     if (!memory || !memory.content) continue;
-    const key = memory.id || memory.content;
+    const contentKey = normalizeCliMemoryNoteKey(
+      stripCliLowValueMemoryText(memory.content),
+    );
+    if (!contentKey) continue;
+    const key = (memory.type || 'memory') + ':' + contentKey;
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(memory);

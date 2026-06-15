@@ -290,6 +290,26 @@ describe('Autocode CLI runner prompt', () => {
         confidence: 0.8,
       }],
     }), 'utf8');
+    writeFileSync(join(memoryDir, 'session_duplicate.json'), JSON.stringify({
+      sessionId: 'duplicate-session',
+      timestamp: '2026-06-14T00:01:00.000Z',
+      outcome: 'completed',
+      keyFiles: ['src/auth/session.ts'],
+      successPatterns: [{
+        description: 'Auth retry state',
+        approach: 'Approach: session store.',
+        whyItWorked: 'Renderer refreshes stayed consistent.',
+        keyDecisions: [
+          [
+            'We decided to refresh the AuthStore before renderer event fan-out.',
+            ...Array.from({ length: 12 }, () => repeatedDecision),
+            'Use the session store as the durable retry boundary.',
+          ].join('\n'),
+        ],
+        effectiveTools: ['Edit', 'Bash'],
+        confidence: 0.8,
+      }],
+    }), 'utf8');
 
     const fakeCliPath = join(projectRoot, 'fake-cli.cjs');
     const capturedPromptPath = join(projectRoot, 'captured-prompt.txt');
@@ -320,6 +340,7 @@ describe('Autocode CLI runner prompt', () => {
     const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
     expect(capturedPrompt).toContain('## Project Memory');
     expect(capturedPrompt).toContain('We decided to refresh the AuthStore before renderer event fan-out.');
+    expect((capturedPrompt.match(/We decided to refresh the AuthStore/g) ?? [])).toHaveLength(1);
     expect(capturedPrompt).toContain('AUTH_DECISION_REPEAT');
     expect(capturedPrompt).toContain('repeated line(s) omitted');
     expect((capturedPrompt.match(/AUTH_DECISION_REPEAT/g) ?? [])).toHaveLength(1);
