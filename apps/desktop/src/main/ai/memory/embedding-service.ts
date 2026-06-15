@@ -90,7 +90,7 @@ export function buildMemoryContextualText(memory: Memory): string {
   const relatedFiles = uniqueContextualFilePaths(memory.relatedFiles).slice(0, MEMORY_CONTEXTUAL_FILE_LIMIT);
   const primaryModule = uniqueContextualTextItems(memory.relatedModules)[0];
   const parts = [
-    relatedFiles.length > 0 ? `Files: ${relatedFiles.join(', ')}` : null,
+    relatedFiles.length > 0 ? `Files: ${formatCompactContextualPathList(relatedFiles)}` : null,
     primaryModule ? `Module: ${primaryModule}` : null,
     `Type: ${memory.type}`,
   ]
@@ -133,6 +133,41 @@ function normalizeContextualFilePath(value: string): string {
     normalized = normalized.slice(2);
   }
   return normalized.replace(/\/$/, '');
+}
+
+function formatCompactContextualPathList(paths: readonly string[]): string {
+  const expanded = paths.join(', ');
+  if (paths.length < 2) {
+    return expanded;
+  }
+
+  const segments = paths.map(splitContextualPath);
+  if (segments.some((parts) => parts.length < 2)) {
+    return expanded;
+  }
+
+  const maxCommonDepth = Math.min(...segments.map((parts) => parts.length - 1));
+  let commonDepth = 0;
+  for (let index = 0; index < maxCommonDepth; index += 1) {
+    const segment = segments[0][index].toLowerCase();
+    if (!segments.every((parts) => parts[index].toLowerCase() === segment)) {
+      break;
+    }
+    commonDepth += 1;
+  }
+
+  if (commonDepth < 2) {
+    return expanded;
+  }
+
+  const commonDir = segments[0].slice(0, commonDepth).join('/');
+  const tails = segments.map((parts) => parts.slice(commonDepth).join('/'));
+  const compact = `${commonDir}/{${tails.join(', ')}}`;
+  return compact.length < expanded.length ? compact : expanded;
+}
+
+function splitContextualPath(path: string): string[] {
+  return normalizeContextualFilePath(path).split('/').filter(Boolean);
 }
 
 function uniqueContextualTextItems(values: readonly string[]): string[] {

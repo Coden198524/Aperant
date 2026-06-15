@@ -268,7 +268,7 @@ describe('MemoryServiceImpl', () => {
       expect(storedRelatedFiles).toEqual(['src/auth/token.ts', 'src/auth/session.ts']);
       expect(storedRelatedModules).toEqual(['auth', 'billing']);
       expect(ftsArgs[3]).toBe('src/auth/token.ts src/auth/session.ts');
-      expect(embeddingText).toContain('Files: src/auth/token.ts, src/auth/session.ts');
+      expect(embeddingText).toContain('Files: src/auth/{token.ts, session.ts}');
       expect(embeddingText).toContain('Module: auth');
     });
 

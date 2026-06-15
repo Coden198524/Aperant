@@ -132,11 +132,23 @@ describe('buildMemoryContextualText', () => {
     const text = buildMemoryContextualText(memory);
     const filesPrefix = text.split('\n\n')[0];
 
-    expect(filesPrefix).toContain('Files: src/auth/session.ts');
+    expect(filesPrefix).toContain('Files: src/auth/{session.ts');
     expect(filesPrefix).not.toContain('SRC/auth/session.ts');
     expect(filesPrefix).not.toContain('\\');
-    expect(filesPrefix).toContain('src/auth/file-6.ts');
+    expect(filesPrefix).toContain('file-6.ts');
     expect(filesPrefix).not.toContain('src/auth/file-7.ts');
+  });
+
+  it('does not compact shallow embedding file prefixes', () => {
+    const memory = makeMemory({
+      relatedFiles: ['src/auth.ts', 'src/session.ts'],
+    });
+
+    const text = buildMemoryContextualText(memory);
+    const filesPrefix = text.split('\n\n')[0];
+
+    expect(filesPrefix).toContain('Files: src/auth.ts, src/session.ts');
+    expect(filesPrefix).not.toContain('src/{auth.ts, session.ts}');
   });
 
   it('uses the first non-empty normalized module in embedding context', () => {
