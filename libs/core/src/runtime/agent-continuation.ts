@@ -3,6 +3,7 @@ import type {
   AutocodeSessionResult,
   AutocodeTokenUsage,
 } from './agent-session-types.js';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 
 export const AUTOCODE_DEFAULT_MAX_CONTINUATIONS = 5;
 export const AUTOCODE_MAX_SUMMARY_INPUT_CHARS = 20_000;
@@ -184,8 +185,12 @@ export function serializeAutocodeSessionMessages(messages: AutocodeSessionMessag
 
 export function limitAutocodeSummaryInput(messages: AutocodeSessionMessage[]): string {
   const serializedAll = serializeAutocodeSessionMessages(messages);
+  const compactSerializedAll = foldRepeatedAutocodePromptLines(serializedAll);
   if (serializedAll.length <= AUTOCODE_MAX_SUMMARY_INPUT_CHARS) {
-    return serializedAll;
+    return compactSerializedAll;
+  }
+  if (compactSerializedAll.length <= AUTOCODE_MAX_SUMMARY_INPUT_CHARS) {
+    return compactSerializedAll;
   }
 
   const { selectedMessages, omittedCount } = selectAutocodeSummaryMessages(messages);
@@ -329,8 +334,9 @@ function limitAutocodeSummaryMessageContent(content: string, maxChars: number): 
   if (maxChars <= 0) {
     return '';
   }
-  if (content.length <= maxChars) {
-    return content;
+  const compactContent = foldRepeatedAutocodePromptLines(content);
+  if (compactContent.length <= maxChars) {
+    return compactContent;
   }
 
   const suffix = `\n[... message truncated, ${content.length} chars total ...]\n`;
@@ -351,9 +357,9 @@ function limitAutocodeSummaryMessageContent(content: string, maxChars: number): 
   const adjustedHeadBudget = headBudget + Math.max(0, remainingBudget);
 
   return [
-    content.slice(0, adjustedHeadBudget).trimEnd(),
+    compactContent.slice(0, adjustedHeadBudget).trimEnd(),
     suffix.trimEnd(),
-    content.slice(Math.max(0, content.length - tailBudget)).trimStart(),
+    compactContent.slice(Math.max(0, compactContent.length - tailBudget)).trimStart(),
   ].filter(Boolean).join('\n');
 }
 
@@ -368,8 +374,9 @@ function limitAutocodeHeadTailText(
     .replace(/[ \t]+\n/g, '\n')
     .replace(/\n{4,}/g, '\n\n\n')
     .trim();
-  if (normalized.length <= maxChars) {
-    return normalized;
+  const compact = foldRepeatedAutocodePromptLines(normalized);
+  if (compact.length <= maxChars) {
+    return compact;
   }
 
   const marker = markerFactory(normalized.length);
@@ -381,9 +388,9 @@ function limitAutocodeHeadTailText(
   const headBudget = Math.ceil(bodyBudget * 0.6);
   const tailBudget = Math.max(0, bodyBudget - headBudget);
   return [
-    normalized.slice(0, headBudget).trimEnd(),
+    compact.slice(0, headBudget).trimEnd(),
     marker.trimEnd(),
-    normalized.slice(Math.max(0, normalized.length - tailBudget)).trimStart(),
+    compact.slice(Math.max(0, compact.length - tailBudget)).trimStart(),
   ].join('\n');
 }
 
@@ -391,15 +398,16 @@ function limitAutocodeSummaryMessageTail(content: string, maxChars: number): str
   if (maxChars <= 0) {
     return '';
   }
-  if (content.length <= maxChars) {
-    return content;
+  const compactContent = foldRepeatedAutocodePromptLines(content);
+  if (compactContent.length <= maxChars) {
+    return compactContent;
   }
 
   const prefix = `[... message truncated, ${content.length} chars total ...]\n`;
   if (maxChars <= prefix.length) {
     return prefix.slice(0, maxChars);
   }
-  return `${prefix}${content.slice(Math.max(0, content.length - maxChars + prefix.length)).trimStart()}`;
+  return `${prefix}${compactContent.slice(Math.max(0, compactContent.length - maxChars + prefix.length)).trimStart()}`;
 }
 
 export function addAutocodeContinuationUsage(

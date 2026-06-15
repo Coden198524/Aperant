@@ -46,6 +46,29 @@ describe('Autocode agent continuation compaction', () => {
     expect(compact).toContain('conversation truncated');
   });
 
+  it('folds repeated message lines before spending continuation summary input budget', () => {
+    const repeatedLine = 'CONTINUATION_REPEAT: tool emitted the same progress line again.';
+    const messages: AutocodeSessionMessage[] = [
+      { role: 'user', content: 'Continue the product hardening task.' },
+      {
+        role: 'assistant',
+        content: [
+          'CONTINUATION_HEAD: implementation touched memory injection.',
+          ...Array.from({ length: 180 }, () => repeatedLine),
+          'CONTINUATION_TAIL: remaining work is targeted verification.',
+        ].join('\n'),
+      },
+    ];
+
+    const compact = limitAutocodeSummaryInput(messages);
+
+    expect(compact.length).toBeLessThanOrEqual(AUTOCODE_MAX_SUMMARY_INPUT_CHARS);
+    expect(compact).toContain('CONTINUATION_HEAD');
+    expect(compact).toContain('CONTINUATION_TAIL');
+    expect(compact).toContain('179 repeated line(s) omitted for prompt budget');
+    expect((compact.match(/CONTINUATION_REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('preserves the initial task and recent progress when many old messages exceed budget', () => {
     const messages: AutocodeSessionMessage[] = [
       { role: 'user', content: 'INITIAL_GOAL: continue product hardening.' },
@@ -145,6 +168,22 @@ describe('Autocode agent continuation compaction', () => {
     expect(prompt).toContain('TAIL: remaining work is to run targeted verification.');
     expect(prompt).toContain('serialized conversation middle omitted');
     expect(prompt).toContain('## Summary:');
+  });
+
+  it('folds repeated serialized lines before building summary prompts', () => {
+    const repeatedLine = 'SERIALIZED_REPEAT: identical log line from a noisy tool.';
+    const serialized = [
+      '[USER]\nSERIALIZED_HEAD: summarize after context pressure.',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      '[ASSISTANT]\nSERIALIZED_TAIL: keep remaining work visible.',
+    ].join('\n');
+
+    const prompt = buildAutocodeSummaryPrompt(serialized);
+
+    expect(prompt).toContain('SERIALIZED_HEAD');
+    expect(prompt).toContain('SERIALIZED_TAIL');
+    expect(prompt).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((prompt.match(/SERIALIZED_REPEAT/g) ?? [])).toHaveLength(1);
   });
 
   it('continuation prompt bounds oversized generated summaries while preserving remaining work', () => {
