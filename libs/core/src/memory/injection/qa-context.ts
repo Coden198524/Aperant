@@ -158,11 +158,13 @@ function formatQaSections(sections: QaSections): FormattedQaContext {
   if (errorPatterns.length > 0) {
     const seenErrorPatternFiles = new Set<string>();
     const items = errorPatterns.map((memory) => {
+      const content = formatMemoryContent(memory);
       return {
         memory,
-        renderedLine: `- ${formatMemoryContent(memory)}${formatRelatedFileRefs(
+        renderedLine: `- ${content}${formatRelatedFileRefs(
           memory.relatedFiles,
           seenErrorPatternFiles,
+          content,
         )}`,
       };
     });
@@ -227,13 +229,16 @@ function formatMemoryContent(memory: Memory): string {
 function formatRelatedFileRefs(
   relatedFiles: string[],
   seenFiles: Set<string>,
+  content: string,
 ): string {
   if (relatedFiles.length === 0) {
     return '';
   }
 
   const uniqueUnseenFiles = uniqueFilePaths(relatedFiles).filter(
-    (filePath) => !seenFiles.has(normalizeFilePathForDedupe(filePath)),
+    (filePath) =>
+      !seenFiles.has(normalizeFilePathForDedupe(filePath)) &&
+      !isFilePathMentionedInText(filePath, content),
   );
   const displayedFiles = uniqueUnseenFiles
     .slice(0, MAX_QA_MEMORY_FILE_REFS)
@@ -261,6 +266,36 @@ function formatRelatedFileRefs(
 function formatRelatedFileName(filePath: string): string {
   const fileName = filePath.split(/[\\/]/).filter(Boolean).pop()?.trim() ?? '';
   return compactFileName(fileName, MAX_QA_MEMORY_FILE_REF_CHARS);
+}
+
+function isFilePathMentionedInText(filePath: string, text: string): boolean {
+  const normalizedText = normalizeTextForFileMatch(text);
+  if (!normalizedText) {
+    return false;
+  }
+
+  const normalizedPath = normalizeTextForFileMatch(normalizeFilePath(filePath));
+  const fileName = normalizeTextForFileMatch(formatRelatedFileName(filePath));
+  return normalizedText.includes(normalizedPath) ||
+    (fileName.length > 0 && containsStandaloneFileName(normalizedText, fileName));
+}
+
+function containsStandaloneFileName(text: string, fileName: string): boolean {
+  return new RegExp(
+    `(?:^|[^a-z0-9_.-])${escapeRegExp(fileName)}(?:$|[^a-z0-9_.-])`,
+  ).test(text);
+}
+
+function escapeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeTextForFileMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function compactFileName(fileName: string, maxChars: number): string {

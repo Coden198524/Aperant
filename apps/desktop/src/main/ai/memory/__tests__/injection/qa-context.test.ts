@@ -524,6 +524,34 @@ describe('buildQaSessionContext', () => {
     expect(result).toContain('retry-policy.test.ts');
   });
 
+  it('omits QA error file refs already visible in memory content', async () => {
+    vi.mocked(memoryService.search).mockImplementation(async (filters) => {
+      if (filters.types?.includes('error_pattern')) {
+        return [
+          {
+            ...makeMemory(
+              'ep-mentioned-file',
+              'session-store.ts assertions fail after auth-token.test.ts retries.',
+              'error_pattern',
+            ),
+            relatedFiles: [
+              'src/auth/session-store.ts',
+              'src/auth/token.test.ts',
+              'src/auth/retry-policy.test.ts',
+            ],
+          },
+        ];
+      }
+      return [];
+    });
+
+    const result = await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
+
+    expect(result).toContain('session-store.ts assertions fail');
+    expect(result).toContain('[token.test.ts, retry-policy.test.ts]');
+    expect((result.match(/session-store\.ts/g) ?? [])).toHaveLength(1);
+  });
+
   it('filters stale QA memories unless they are pinned or user verified', async () => {
     vi.mocked(memoryService.search).mockImplementation(async (filters) => {
       if (filters.types?.includes('error_pattern')) {
