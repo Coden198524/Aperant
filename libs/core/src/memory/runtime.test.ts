@@ -604,6 +604,15 @@ describe('Autocode memory runtime context formatting', () => {
       'Project scoped cache warmup must include the workspace id.',
     );
 
+    expect(compactAutocodeMemoryRuntimeToolResult({
+      status: 'success',
+      exitCode: 0,
+      summary: [
+        'No issues found.',
+        'Completed at: 2026-06-15T00:00:00.000Z',
+      ].join('\n'),
+    })).toBeUndefined();
+
     const compactArray = compactAutocodeMemoryRuntimeToolResult([
       'No issues found.',
       'Use stable worker request IDs when retrying memory searches.',
@@ -730,6 +739,24 @@ describe('Autocode memory runtime context formatting', () => {
     expect(reasoning.length).toBeLessThanOrEqual(900);
     expect(reasoning).toContain('Correction: this file is generated');
     expect(reasoning).toContain('FINAL_REASONING_TAIL');
+  });
+
+  it('drops low-value reasoning observations before runtime memory use', () => {
+    const emptyMemoryEcho = compactAutocodeMemoryRuntimeReasoningText(
+      'Wait, No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+    );
+    const emptyStatusEcho = compactAutocodeMemoryRuntimeReasoningText(
+      'Correction: npm run typecheck passed. No issues found. Completed at: 2026-06-15T00:00:00.000Z',
+    );
+    const usefulCorrection = compactAutocodeMemoryRuntimeReasoningText(
+      'Correction: retry the sqlite-backed memory search after the worker lock is released.',
+    );
+
+    expect(emptyMemoryEcho).toBe('');
+    expect(emptyStatusEcho).toBe('');
+    expect(usefulCorrection).toBe(
+      'Correction: retry the sqlite-backed memory search after the worker lock is released.',
+    );
   });
 
   it('compacts injected memory ids for runtime recent context', () => {

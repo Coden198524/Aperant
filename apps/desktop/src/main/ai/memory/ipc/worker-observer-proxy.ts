@@ -96,18 +96,28 @@ export class WorkerObserverProxy {
   }
 
   onToolResult(toolName: string, result: unknown, stepNumber: number): void {
+    const compactResult = compactAutocodeMemoryRuntimeToolResult(result);
+    if (!hasObservableMemoryToolResult(compactResult)) {
+      return;
+    }
+
     this.postFireAndForget({
       type: 'memory:tool-result',
       toolName,
-      result: compactAutocodeMemoryRuntimeToolResult(result),
+      result: compactResult,
       stepNumber,
     });
   }
 
   onReasoning(text: string, stepNumber: number): void {
+    const compactText = compactAutocodeMemoryRuntimeReasoningText(text);
+    if (!compactText) {
+      return;
+    }
+
     this.postFireAndForget({
       type: 'memory:reasoning',
-      text: compactAutocodeMemoryRuntimeReasoningText(text),
+      text: compactText,
       stepNumber,
     });
   }
@@ -253,6 +263,19 @@ export class WorkerObserverProxy {
       pending.resolve(msg);
     }
   }
+}
+
+function hasObservableMemoryToolResult(result: unknown): boolean {
+  if (result === undefined || result === null) {
+    return false;
+  }
+  if (typeof result === 'string') {
+    return result.trim().length > 0;
+  }
+  if (typeof result === 'object' && !Array.isArray(result)) {
+    return Object.keys(result).length > 0;
+  }
+  return true;
 }
 
 function compactMemoryRecordEntryForIpc(entry: MemoryRecordEntry): MemoryRecordEntry {

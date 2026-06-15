@@ -90,6 +90,26 @@ describe("low-value memory line filtering", () => {
 		expect(result).toBe("");
 	});
 
+	it("strips low-value memory echoes behind reasoning cues", () => {
+		expect(
+			stripLowValueMemoryLines(
+				"Wait, No relevant memories found for this query; continue with focused inspection instead of repeating this search.",
+			),
+		).toBe("");
+		expect(
+			stripLowValueMemoryLines(
+				"Correction: npm run typecheck passed. No issues found. Completed at: 2026-06-15T00:00:00.000Z",
+			),
+		).toBe("");
+		expect(
+			stripLowValueMemoryLines(
+				"Correction: retry the sqlite-backed memory search after the worker lock is released.",
+			),
+		).toBe(
+			"Correction: retry the sqlite-backed memory search after the worker lock is released.",
+		);
+	});
+
 	it("strips localized status fragments from compact Chinese memory", () => {
 		const result = stripLowValueMemoryLines(
 			"\u8ba4\u8bc1\u6a21\u5757\u5fc5\u987b\u5148\u51bb\u7ed3\u65f6\u949f\u518d\u9a8c\u8bc1\u91cd\u8bd5\u3002 \u5168\u90e8\u6d4b\u8bd5\u5df2\u901a\u8fc7\u3002 \u6ca1\u6709\u53d1\u73b0\u95ee\u9898\u3002",

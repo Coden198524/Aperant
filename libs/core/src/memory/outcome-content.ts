@@ -33,6 +33,8 @@ const LOW_VALUE_OUTCOME_LINE_PATTERNS = [
 ] as const;
 
 const LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN = /(?<=[.!?\u3002\uff01\uff1f])\s+|;\s+/;
+const LOW_VALUE_REASONING_CUE_PATTERN =
+	/^(?:Actually,?|Wait[,.]?|Correction:|Let me reconsider[.:]?)\s+/i;
 
 export function stripLowValueMemoryLines(content: string): string {
 	return content
@@ -71,9 +73,17 @@ function stripLowValueMemoryLine(line: string): string {
 }
 
 function isLowValueMemoryLine(line: string): boolean {
-	return LOW_VALUE_OUTCOME_LINE_PATTERNS.some((pattern) => pattern.test(line));
+	return LOW_VALUE_OUTCOME_LINE_PATTERNS.some((pattern) =>
+		pattern.test(line) || pattern.test(stripLowValueReasoningCue(line)),
+	);
 }
 
 function isLowValueWholeMemoryLine(line: string): boolean {
-	return LOW_VALUE_WHOLE_LINE_PATTERNS.some((pattern) => pattern.test(line));
+	return LOW_VALUE_WHOLE_LINE_PATTERNS.some((pattern) =>
+		pattern.test(line) || pattern.test(stripLowValueReasoningCue(line)),
+	);
+}
+
+function stripLowValueReasoningCue(line: string): string {
+	return line.replace(LOW_VALUE_REASONING_CUE_PATTERN, "").trim();
 }

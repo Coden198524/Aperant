@@ -529,6 +529,52 @@ describe('StepInjectionDecider', () => {
       expect(result?.content).not.toContain('error_retry:');
     });
 
+    it('strips low-value scratchpad status before selecting reflections', async () => {
+      const capturedAt = Date.now();
+      scratchpad = makeScratchpad([
+        {
+          signalType: 'self_correction',
+          rawData: {
+            triggeringText:
+              'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+          },
+          priority: 0.95,
+          capturedAt,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'error_retry',
+          rawData: {
+            triggeringText: [
+              'npm run typecheck passed.',
+              'Retry the sqlite-backed memory search after the worker lock is released.',
+              'No issues found.',
+              'Completed at: 2026-06-15T00:00:00.000Z',
+            ].join('\n'),
+          },
+          priority: 0.9,
+          capturedAt: capturedAt + 1,
+          stepNumber: 4,
+        },
+      ]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('scratchpad_reflection');
+      expect(result?.memoryIds).toHaveLength(1);
+      expect(result?.content).toContain(
+        'Retry the sqlite-backed memory search after the worker lock is released.',
+      );
+      expect(result?.content).not.toContain('No relevant memories found');
+      expect(result?.content).not.toContain('npm run typecheck passed');
+      expect(result?.content).not.toContain('No issues found');
+      expect(result?.content).not.toContain('Completed at:');
+    });
+
     it('deduplicates scratchpad reflections by compact rendered text before applying the limit', async () => {
       const capturedAt = Date.now();
       const sharedHead = `SCRATCH_RENDERED_DUP_HEAD ${'shared scratchpad context '.repeat(8)}`;

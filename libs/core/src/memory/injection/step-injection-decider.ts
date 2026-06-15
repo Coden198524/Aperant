@@ -283,7 +283,7 @@ function getScratchpadEntryText(entry: AcuteCandidate): string {
   const rawData = isRecord(entry.rawData) ? entry.rawData : {};
   const value = rawData.triggeringText ?? rawData.matchedText;
   return typeof value === 'string'
-    ? value.replace(/\s+/g, ' ').trim()
+    ? stripLowValueMemoryLines(value).replace(/\s+/g, ' ').trim()
     : '';
 }
 

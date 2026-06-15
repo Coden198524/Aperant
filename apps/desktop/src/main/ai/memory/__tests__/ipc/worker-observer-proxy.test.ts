@@ -179,6 +179,20 @@ describe('WorkerObserverProxy', () => {
       expect(sentMsg.result).not.toContain('Completed at');
     });
 
+    it('skips success-only tool result objects before posting observation IPC', () => {
+      proxy.onToolResult('Bash', {
+        status: 'success',
+        exitCode: 0,
+        summary: [
+          'npm run typecheck passed.',
+          'No issues found.',
+          'Completed at: 2026-06-15T00:00:00.000Z',
+        ].join('\n'),
+      }, 5);
+
+      expect(mockPort.postMessage).not.toHaveBeenCalled();
+    });
+
     it('preserves compact diagnostics for omitted object tool result fields', () => {
       proxy.onToolResult('Bash', {
         stdout: 'stdout noise '.repeat(500),
@@ -226,6 +240,19 @@ describe('WorkerObserverProxy', () => {
       const sentMsg = mockPort.sentMessages[0] as { text: string };
       expect(sentMsg.text.length).toBeLessThanOrEqual(900);
       expect(sentMsg.text).toContain('Correction: this file is generated');
+    });
+
+    it('skips low-value reasoning messages before posting observation IPC', () => {
+      proxy.onReasoning(
+        'Wait, No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+        6,
+      );
+      proxy.onReasoning(
+        'Correction: npm run typecheck passed. No issues found. Completed at: 2026-06-15T00:00:00.000Z',
+        7,
+      );
+
+      expect(mockPort.postMessage).not.toHaveBeenCalled();
     });
 
     it('onTokenUsage posts a compact memory:token-usage message', () => {

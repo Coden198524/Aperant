@@ -676,7 +676,8 @@ async function executeStream(
 
         memoryContext.proxy.onStepComplete(stepNumber);
 
-        if (!injection) {
+        const injectionContent = injection?.content.trim();
+        if (!injection || !injectionContent) {
           return systemMessage ? { system: systemMessage } : {};
         }
 
@@ -685,8 +686,8 @@ async function executeStream(
         memoryInjectionCount++;
 
         const combinedSystem = systemMessage
-          ? `${systemMessage}\n\n${injection.content}`
-          : injection.content;
+          ? `${systemMessage}\n\n${injectionContent}`
+          : injectionContent;
 
         return { system: combinedSystem };
       }

@@ -302,6 +302,30 @@ describe('MemoryObserver', () => {
       expect(selfCorrection?.content).not.toBe('Self-correction detected: Actually, the refresh token cache is in session-store.ts not token-cache.ts');
     });
 
+    it('does not promote low-value reasoning tool echoes as self-corrections', async () => {
+      observer.observe({
+        type: 'memory:reasoning',
+        text: 'Wait, No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+        stepNumber: 1,
+      });
+      observer.observe({
+        type: 'memory:reasoning',
+        text: [
+          'Correction: npm run typecheck passed.',
+          'No issues found.',
+          'Completed at: 2026-06-15T00:00:00.000Z',
+        ].join(' '),
+        stepNumber: 2,
+      });
+
+      const candidates = await observer.finalize('success');
+
+      expect(candidates.some((candidate) => candidate.signalType === 'self_correction')).toBe(false);
+      expect(candidates.map((candidate) => candidate.content).join('\n')).not.toContain(
+        'No relevant memories found',
+      );
+    });
+
     it('does not promote generic backtrack phrasing without actionable details', async () => {
       observer.observe({
         type: 'memory:reasoning',

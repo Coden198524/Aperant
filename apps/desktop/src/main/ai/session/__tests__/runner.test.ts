@@ -621,6 +621,59 @@ describe('runAgentSession', () => {
     expect(proxy.onStepComplete).toHaveBeenCalledTimes(5);
   });
 
+  it('does not spend active memory injection budget on blank injections', async () => {
+    const proxy = {
+      requestStepInjection: vi.fn()
+        .mockResolvedValueOnce({
+          type: 'gotcha_injection',
+          content: '   ',
+          memoryIds: ['blank-memory'],
+        })
+        .mockResolvedValueOnce({
+          type: 'gotcha_injection',
+          content: '  MEMORY ALERT - useful reminder  ',
+          memoryIds: ['useful-memory'],
+        }),
+      onStepComplete: vi.fn(),
+      onToolCall: vi.fn(),
+      onToolResult: vi.fn(),
+      onReasoning: vi.fn(),
+    };
+    const prompts: Array<{ stepNumber: number; prompt: { system?: string } }> = [];
+
+    mockStreamText.mockImplementation((args: {
+      prepareStep: (input: { stepNumber: number }) => Promise<{ system?: string }>;
+    }) => ({
+      fullStream: (async function* () {
+        for (const stepNumber of [6, 7]) {
+          prompts.push({
+            stepNumber,
+            prompt: await args.prepareStep({ stepNumber }),
+          });
+        }
+        yield { type: 'finish-step', usage: { inputTokens: 10, outputTokens: 5 } };
+      })(),
+      text: Promise.resolve('done'),
+      totalUsage: Promise.resolve({ inputTokens: 10, outputTokens: 5 }),
+    }));
+
+    await runAgentSession(createMockConfig({ maxSteps: 10 }), {
+      memoryContext: {
+        proxy: proxy as unknown as NonNullable<RunnerOptions['memoryContext']>['proxy'],
+      },
+    });
+
+    expect(prompts).toEqual([
+      { stepNumber: 6, prompt: {} },
+      { stepNumber: 7, prompt: { system: 'MEMORY ALERT - useful reminder' } },
+    ]);
+    expect(proxy.requestStepInjection).toHaveBeenCalledTimes(2);
+    expect(proxy.requestStepInjection).toHaveBeenNthCalledWith(1, 6, expect.any(Object));
+    expect(proxy.requestStepInjection).toHaveBeenNthCalledWith(2, 7, expect.any(Object));
+    const secondRecentContext = vi.mocked(proxy.requestStepInjection).mock.calls[1][1];
+    expect(secondRecentContext.injectedMemoryIds.has('blank-memory')).toBe(false);
+  });
+
   it('skips active memory injection when context-window usage is tight', async () => {
     const proxy = {
       requestStepInjection: vi.fn().mockResolvedValue({

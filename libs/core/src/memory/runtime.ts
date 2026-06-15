@@ -383,7 +383,7 @@ export function compactAutocodeMemoryRuntimeToolResult(
 
 function compactAutocodeMemoryRuntimeToolResultObject(
   result: object,
-): Record<string, unknown> {
+): Record<string, unknown> | undefined {
   const entries = Object.entries(result).slice(
     0,
     AUTOCODE_MEMORY_RUNTIME_OBJECT_SCAN_KEY_LIMIT,
@@ -443,7 +443,72 @@ function compactAutocodeMemoryRuntimeToolResultObject(
     }
   }
 
+  if (isLowValueAutocodeMemoryRuntimeToolResultObject(compact)) {
+    return undefined;
+  }
+
   return compact;
+}
+
+function isLowValueAutocodeMemoryRuntimeToolResultObject(
+  result: Record<string, unknown>,
+): boolean {
+  const entries = Object.entries(result);
+  if (entries.length === 0) {
+    return true;
+  }
+
+  return entries.every(([key, value]) => {
+    if (key === 'omittedKeys') {
+      return true;
+    }
+
+    const canonicalKey = canonicalizeAutocodeMemoryRuntimeResultKey(key);
+    if (canonicalKey === 'status') {
+      return isSuccessfulAutocodeMemoryRuntimeStatusValue(value);
+    }
+    if (canonicalKey === 'success' || canonicalKey === 'ok') {
+      return isTruthyAutocodeMemoryRuntimeStatusValue(value);
+    }
+    if (
+      canonicalKey === 'exit_code' ||
+      canonicalKey === 'status_code' ||
+      canonicalKey === 'code'
+    ) {
+      return isSuccessfulAutocodeMemoryRuntimeNumericStatus(value);
+    }
+
+    return false;
+  });
+}
+
+function isSuccessfulAutocodeMemoryRuntimeStatusValue(value: unknown): boolean {
+  if (typeof value !== 'string') {
+    return isTruthyAutocodeMemoryRuntimeStatusValue(value);
+  }
+  return /^(?:success|succeeded|passed|pass|ok|complete|completed)$/i.test(
+    value.trim(),
+  );
+}
+
+function isTruthyAutocodeMemoryRuntimeStatusValue(value: unknown): boolean {
+  if (typeof value === 'boolean') {
+    return value;
+  }
+  if (typeof value === 'string') {
+    return /^(?:true|success|succeeded|passed|pass|ok)$/i.test(value.trim());
+  }
+  return false;
+}
+
+function isSuccessfulAutocodeMemoryRuntimeNumericStatus(value: unknown): boolean {
+  const numericValue =
+    typeof value === 'number'
+      ? value
+      : typeof value === 'string' && value.trim()
+        ? Number(value.trim())
+        : NaN;
+  return numericValue === 0 || (numericValue >= 200 && numericValue < 300);
 }
 
 function extractAutocodeMemoryRuntimeResultDiagnosticText(
@@ -492,8 +557,13 @@ function flattenAutocodeMemoryRuntimeDiagnosticValue(value: unknown): string {
 export function compactAutocodeMemoryRuntimeReasoningText(
   text: string,
 ): string {
+  const cleaned = stripLowValueMemoryLines(text).replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return '';
+  }
+
   return truncateAutocodeMemoryRuntimeText(
-    text,
+    cleaned,
     AUTOCODE_MEMORY_RUNTIME_REASONING_TEXT_MAX_CHARS,
     {
       preferDiagnosticWindow: true,

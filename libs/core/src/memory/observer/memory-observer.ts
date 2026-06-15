@@ -21,6 +21,7 @@ import {
   compactAutocodeMemoryRuntimeToolArgs,
   type AutocodeMemoryRuntimeObservationIpcRequest,
 } from '../runtime.js';
+import { stripLowValueMemoryLines } from '../outcome-content.js';
 import { Scratchpad } from './scratchpad.js';
 import { detectDeadEnd } from './dead-end-detector.js';
 import { applyTrustGate } from './trust-gate.js';
@@ -539,9 +540,10 @@ function formatObserverErrorRetrySample(sample: string | undefined): string {
 }
 
 function formatObserverAcuteMemorySnippet(primary: unknown, fallback: unknown): string {
-  const text = String(primary ?? fallback ?? '')
+  const rawText = String(primary ?? fallback ?? '')
     .replace(/\s+/g, ' ')
     .trim();
+  const text = getObserverReusableAcuteText(rawText);
   if (!text) {
     return '';
   }
@@ -554,6 +556,15 @@ function formatObserverAcuteMemorySnippet(primary: unknown, fallback: unknown): 
   const headChars = Math.ceil(budget * 0.65);
   const tailChars = Math.max(0, budget - headChars);
   return `${text.slice(0, headChars).trimEnd()}${marker}${text.slice(-tailChars).trimStart()}`;
+}
+
+function getObserverReusableAcuteText(text: string): string {
+  const cleaned = stripLowValueMemoryLines(text).replace(/\s+/g, ' ').trim();
+  if (!cleaned) {
+    return '';
+  }
+
+  return cleaned;
 }
 
 function isObserverBacktrackSnippetWorthRemembering(snippet: string): boolean {
