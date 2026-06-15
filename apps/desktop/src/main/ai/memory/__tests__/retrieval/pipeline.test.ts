@@ -252,6 +252,61 @@ describe('RetrievalPipeline', () => {
     expect(candidate?.content).not.toContain('No issues found');
   });
 
+  it('skips low-value-only memories before reranking', async () => {
+    const content = [
+      'All tests passed.',
+      'No issues found.',
+      'Duration: 1234ms',
+    ].join('\n');
+    await seedMemory(client, 'mem-status-only', content, 'proj-a', 'work_unit_outcome');
+
+    const embeddingService = makeMockEmbeddingService();
+    const { reranker, rerank } = makeCapturingReranker();
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    const result = await pipeline.search('No issues found', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+
+    expect(result).toEqual({ memories: [], formattedContext: '' });
+    expect(rerank).not.toHaveBeenCalled();
+  });
+
+  it('formats prefetch pattern JSON compactly before reranking', async () => {
+    const content = JSON.stringify({
+      alwaysReadFiles: ['src\\auth\\session.ts', 'src/auth/session.ts'],
+      frequentlyReadFiles: [
+        'src/auth/session.ts',
+        'src/auth/token.ts',
+        'src/auth/guard.ts',
+        'src/auth/callback.ts',
+        'src/auth/routes.ts',
+        'src/auth/legacy.ts',
+      ],
+    });
+    await seedMemory(client, 'mem-prefetch-rerank', content, 'proj-a', 'prefetch_pattern');
+
+    const embeddingService = makeMockEmbeddingService();
+    const { reranker, rerank } = makeCapturingReranker();
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    await pipeline.search('session token', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+
+    const candidates = rerank.mock.calls[0][1];
+    const candidate = candidates.find((item) => item.memoryId === 'mem-prefetch-rerank');
+
+    expect(candidate?.content).toContain('[prefetch_pattern]');
+    expect(candidate?.content).toContain('Always prefetch: src/auth/session.ts');
+    expect(candidate?.content).toContain('Prefetch together: src/auth/{token.ts, guard.ts, callback.ts, routes.ts} (+1 more)');
+    expect(candidate?.content).not.toContain('alwaysReadFiles');
+    expect(candidate?.content).not.toContain('frequentlyReadFiles');
+    expect((candidate?.content.match(/src\/auth\/session\.ts/g) ?? [])).toHaveLength(1);
+  });
+
   it('preserves context_cost token signals before sending candidates to the reranker', async () => {
     const content = [
       'High token usage per step: 24k tokens.',

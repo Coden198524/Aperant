@@ -20,8 +20,7 @@ import { searchGraph } from './graph-search';
 import { weightedRRF } from './rrf-fusion';
 import { applyGraphNeighborhoodBoost } from './graph-boost';
 import { Reranker } from './reranker';
-import { estimateTokens, packContext } from './context-packer';
-import { stripLowValueMemoryLines } from '../outcome-content';
+import { estimateTokens, formatMemoryContentForPrompt, packContext } from './context-packer';
 
 export const MAX_RETRIEVAL_QUERY_CHARS = 800;
 export const MAX_RETRIEVAL_QUERY_TOKENS = 200;
@@ -120,18 +119,24 @@ export class RetrievalPipeline {
     }
 
     // Stage 3: Cross-encoder reranking (top 20 → top maxResults)
+    const rerankerCandidates = memories
+      .map(formatMemoryRerankerCandidate)
+      .filter((candidate): candidate is RerankerCandidate => candidate !== undefined);
+
+    if (rerankerCandidates.length === 0) {
+      return { memories: [], formattedContext: '' };
+    }
+
     const reranked = await this.reranker.rerank(
       compactQuery,
-      memories.map((m) => ({
-        memoryId: m.id,
-        content: formatMemoryForReranker(m),
-      })),
+      rerankerCandidates,
       maxResults,
     );
 
     // Re-order memories by reranker score
+    const memoryById = new Map(memories.map((memory) => [memory.id, memory]));
     const rerankedMemories = reranked
-      .map((r) => memories.find((m) => m.id === r.memoryId))
+      .map((r) => memoryById.get(r.memoryId))
       .filter((m): m is Memory => m !== undefined);
 
     // Stage 4: Phase-aware context packing
@@ -170,13 +175,29 @@ export class RetrievalPipeline {
   }
 }
 
-function formatMemoryForReranker(memory: Memory): string {
+interface RerankerCandidate {
+  memoryId: string;
+  content: string;
+}
+
+function formatMemoryRerankerCandidate(memory: Memory): RerankerCandidate | undefined {
+  const content = getMemoryRerankerContent(memory);
+  if (!content) {
+    return undefined;
+  }
+
   const relatedFiles = uniqueRerankerFilePaths(memory.relatedFiles).slice(0, RERANKER_RELATED_FILE_LIMIT);
   const fileContext = relatedFiles.length > 0 ? ` ${relatedFiles.join(', ')}` : '';
-  const content = memory.type === 'context_cost'
-    ? memory.content
-    : stripLowValueMemoryLines(memory.content);
-  return `[${memory.type}]${fileContext}: ${content}`;
+  return {
+    memoryId: memory.id,
+    content: `[${memory.type}]${fileContext}: ${content}`,
+  };
+}
+
+function getMemoryRerankerContent(memory: Memory): string {
+  return memory.type === 'context_cost'
+    ? memory.content.replace(/\s+/g, ' ').trim()
+    : formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER);
 }
 
 function uniqueRerankerFilePaths(values: readonly string[]): string[] {
