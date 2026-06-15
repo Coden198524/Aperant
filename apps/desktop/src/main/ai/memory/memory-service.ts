@@ -685,7 +685,7 @@ function normalizeMemorySearchFilters(filters: MemorySearchFilters): MemorySearc
 }
 
 function normalizeMemorySearchQuery(query: string): string | undefined {
-  const normalized = query.replace(/\s+/g, ' ').trim();
+  const normalized = foldRepeatedAutocodePromptLines(query).replace(/\s+/g, ' ').trim();
   if (!normalized) {
     return undefined;
   }

@@ -757,6 +757,31 @@ describe('MemoryServiceImpl', () => {
       expect(query).not.toContain('before storage');
     });
 
+    it('folds repeated query lines at the service boundary before pipeline retrieval', async () => {
+      mockRetrievalSearch.mockResolvedValueOnce({
+        memories: [],
+        formattedContext: '',
+      });
+      const repeatedLine = 'AUTH_QUERY_REPEAT: same stack frame produced no new memory signal.';
+      const repeatedQuery = [
+        'AUTH_QUERY_HEAD',
+        ...Array.from({ length: 120 }, () => repeatedLine),
+        'AUTH_QUERY_TAIL',
+      ].join('\n');
+
+      await service.search({
+        query: repeatedQuery,
+        projectId: 'proj-001',
+      });
+
+      const query = mockRetrievalSearch.mock.calls[0][0] as string;
+      expect(query.length).toBeLessThan(repeatedQuery.length / 4);
+      expect(query).toContain('AUTH_QUERY_HEAD');
+      expect(query).toContain('AUTH_QUERY_TAIL');
+      expect(query).toContain('119 repeated line(s) omitted for prompt budget');
+      expect((query.match(/AUTH_QUERY_REPEAT/g) ?? [])).toHaveLength(1);
+    });
+
     it('compacts localized query searches by token budget before pipeline retrieval', async () => {
       mockRetrievalSearch.mockResolvedValueOnce({
         memories: [],

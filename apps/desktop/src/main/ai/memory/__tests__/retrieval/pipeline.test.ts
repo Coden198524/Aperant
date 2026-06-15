@@ -99,6 +99,23 @@ describe('RetrievalPipeline', () => {
     expect(compact).toContain('query middle omitted for retrieval budget');
   });
 
+  it('folds repeated retrieval query lines before compacting by budget', () => {
+    const repeatedLine = 'RETRIEVAL_QUERY_REPEAT: same stack frame produced no new memory signal.';
+    const query = [
+      'RETRIEVAL_QUERY_HEAD',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      'RETRIEVAL_QUERY_TAIL',
+    ].join('\n');
+
+    const compact = compactRetrievalQuery(query);
+
+    expect(compact.length).toBeLessThan(query.length / 4);
+    expect(compact).toContain('RETRIEVAL_QUERY_HEAD');
+    expect(compact).toContain('RETRIEVAL_QUERY_TAIL');
+    expect(compact).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((compact.match(/RETRIEVAL_QUERY_REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('compacts localized retrieval queries by estimated token budget', () => {
     const query = [
       '检索开头',

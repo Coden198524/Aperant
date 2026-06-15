@@ -11,6 +11,7 @@
 
 import type { Client } from '@libsql/client';
 import type { Memory, UniversalPhase } from '@autocode/core';
+import { foldRepeatedAutocodePromptLines } from '@autocode/core/runtime/prompt-context';
 import type { EmbeddingService } from '../embedding-service';
 import { rowToMemory } from '../row-mapper';
 import { detectQueryType, QUERY_TYPE_WEIGHTS } from './query-classifier';
@@ -231,7 +232,7 @@ function normalizeRerankerFilePath(value: string): string {
 }
 
 export function compactRetrievalQuery(query: string): string {
-  const normalized = query.replace(/\s+/g, ' ').trim();
+  const normalized = foldRepeatedAutocodePromptLines(query).replace(/\s+/g, ' ').trim();
   if (
     normalized.length <= MAX_RETRIEVAL_QUERY_CHARS &&
     estimateTokens(normalized) <= MAX_RETRIEVAL_QUERY_TOKENS
