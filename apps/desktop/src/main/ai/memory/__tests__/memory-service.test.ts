@@ -298,6 +298,24 @@ describe('MemoryServiceImpl', () => {
       expect(embeddingText).not.toContain('No issues found');
     });
 
+    it('rejects generic memories with no reusable signal after filtering', async () => {
+      await expect(
+        service.store({
+          type: 'work_unit_outcome',
+          content: [
+            'All tests passed.',
+            'npm run typecheck passed.',
+            'No issues found.',
+            'Completed at: 2026-06-15T00:00:00.000Z',
+          ].join('\n'),
+          projectId: 'proj-001',
+        }),
+      ).rejects.toThrow('Memory has no reusable signal after filtering.');
+
+      expect(mockBatch).not.toHaveBeenCalled();
+      expect(mockEmbed).not.toHaveBeenCalled();
+    });
+
     it('preserves context_cost token signals in FTS and embedding text', async () => {
       const content = [
         'High token usage per step: 24k tokens.',

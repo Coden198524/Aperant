@@ -139,8 +139,12 @@ export class MemoryServiceImpl implements MemoryService {
   async store(entry: MemoryRecordEntry): Promise<string> {
     const normalizedEntry = normalizeMemoryRecordEntryForStorage(entry);
     const indexContent = getMemoryIndexContent(normalizedEntry);
-    if (normalizedEntry.type === 'context_cost' && !indexContent) {
-      throw new Error('Context-cost memory has no token-cost signal after filtering.');
+    if (!indexContent) {
+      throw new Error(
+        normalizedEntry.type === 'context_cost'
+          ? 'Context-cost memory has no token-cost signal after filtering.'
+          : 'Memory has no reusable signal after filtering.',
+      );
     }
 
     const existingId = await this.findExistingMemoryId(normalizedEntry, indexContent);
