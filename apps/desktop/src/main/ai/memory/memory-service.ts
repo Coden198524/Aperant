@@ -134,7 +134,7 @@ export class MemoryServiceImpl implements MemoryService {
    */
   async store(entry: MemoryRecordEntry): Promise<string> {
     const normalizedEntry = normalizeMemoryRecordEntryForStorage(entry);
-    const indexContent = getMemoryIndexContent(normalizedEntry.content);
+    const indexContent = getMemoryIndexContent(normalizedEntry);
 
     const existingId = await this.findExistingMemoryId(normalizedEntry);
     if (existingId) {
@@ -817,8 +817,10 @@ function pathsReferToSameFile(left: string, right: string): boolean {
   return left.endsWith(`/${right}`) || right.endsWith(`/${left}`);
 }
 
-function getMemoryIndexContent(content: string): string {
-  return stripLowValueMemoryLines(content);
+function getMemoryIndexContent(entry: MemoryRecordEntry): string {
+  return entry.type === 'context_cost'
+    ? entry.content
+    : stripLowValueMemoryLines(entry.content);
 }
 
 function normalizeMemoryRecordEntryForStorage(entry: MemoryRecordEntry): MemoryRecordEntry {

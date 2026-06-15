@@ -298,6 +298,28 @@ describe('MemoryServiceImpl', () => {
       expect(embeddingText).not.toContain('No issues found');
     });
 
+    it('preserves context_cost token signals in FTS and embedding text', async () => {
+      const content = [
+        'High token usage per step: 24k tokens.',
+        'Context token spike came from repeatedly sending full memory search results.',
+      ].join('\n');
+
+      await service.store({
+        type: 'context_cost',
+        content,
+        projectId: 'proj-001',
+        relatedFiles: ['src/main/ai/memory/tools/search-memory.ts'],
+      });
+
+      const batchArgs = mockBatch.mock.calls[0][0];
+      const ftsArgs = batchArgs[1].args;
+      const embeddingText = mockEmbed.mock.calls[0][0] as string;
+
+      expect(ftsArgs[1]).toBe(content);
+      expect(embeddingText).toContain('High token usage per step: 24k tokens.');
+      expect(embeddingText).toContain('Context token spike');
+    });
+
     it('compacts oversized memory content and metadata before storage and embedding', async () => {
       const longContent = `MEMORY_HEAD\n${'verbose implementation detail\n'.repeat(120)}MEMORY_TAIL`;
       const longCitation = `CITATION_HEAD ${'citation detail '.repeat(120)} CITATION_TAIL`;
