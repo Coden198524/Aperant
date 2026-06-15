@@ -943,9 +943,15 @@ function formatAutocodeMemoryRuntimeContextLine(
   memory: Memory,
   seenContextFiles: Set<string>,
 ): FormattedRuntimeContextLine {
+  const content = formatAutocodeMemoryRuntimeContextMemoryContent(memory);
   const sourceFiles = uniquePathStrings(memory.relatedFiles);
+  const mentionedFiles = sourceFiles.filter((file) =>
+    isAutocodeMemoryRuntimePathMentionedInText(file, content)
+  );
   const unseenFiles = sourceFiles.filter(
-    (file) => !seenContextFiles.has(normalizeRuntimePathKey(file)),
+    (file) =>
+      !seenContextFiles.has(normalizeRuntimePathKey(file)) &&
+      !isAutocodeMemoryRuntimePathMentionedInText(file, content),
   );
   const displayedFiles = unseenFiles.slice(
     0,
@@ -963,9 +969,51 @@ function formatAutocodeMemoryRuntimeContextLine(
       ? ` Files: ${visibleFiles.join(', ')}${unseenFiles.length > visibleFiles.length ? ', ...' : ''}.`
       : '';
   return {
-    line: `- [${memory.type}] ${formatAutocodeMemoryRuntimeContextMemoryContent(memory)}${files}`,
-    displayedFileKeys: displayedFiles.map(normalizeRuntimePathKey),
+    line: `- [${memory.type}] ${content}${files}`,
+    displayedFileKeys: [
+      ...mentionedFiles,
+      ...displayedFiles,
+    ].map(normalizeRuntimePathKey),
   };
+}
+
+function isAutocodeMemoryRuntimePathMentionedInText(
+  path: string,
+  text: string,
+): boolean {
+  const normalizedText = normalizeAutocodeMemoryRuntimeTextForPathMatch(text);
+  if (!normalizedText) {
+    return false;
+  }
+
+  const normalizedPath = normalizeAutocodeMemoryRuntimeTextForPathMatch(path);
+  const fileName = normalizeAutocodeMemoryRuntimeTextForPathMatch(
+    path.split('/').pop() ?? path,
+  );
+  return normalizedText.includes(normalizedPath) ||
+    (fileName.length > 0 &&
+      containsStandaloneAutocodeMemoryRuntimePathName(normalizedText, fileName));
+}
+
+function containsStandaloneAutocodeMemoryRuntimePathName(
+  text: string,
+  pathName: string,
+): boolean {
+  return new RegExp(
+    `(?:^|[^a-z0-9_.-])${escapeAutocodeMemoryRuntimeRegExp(pathName)}(?:$|[^a-z0-9_.-])`,
+  ).test(text);
+}
+
+function escapeAutocodeMemoryRuntimeRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizeAutocodeMemoryRuntimeTextForPathMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function formatAutocodeMemoryRuntimeContextMemoryContent(memory: Memory): string {

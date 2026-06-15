@@ -154,6 +154,37 @@ describe('Autocode memory runtime context formatting', () => {
     expect(formatted).toContain('src/auth/retry-policy.ts');
   });
 
+  it('does not append runtime file refs already visible in memory content', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext([
+      memory({
+        id: 'outcome-with-inline-files',
+        type: 'work_unit_outcome',
+        content: [
+          'Summary: Keep auth retries inside the session boundary.',
+          'Files: src/auth/session.ts, token-cache.ts',
+        ].join('\n'),
+        confidence: 0.96,
+        relatedFiles: [
+          'src/auth/session.ts',
+          'src/auth/token-cache.ts',
+          'src/auth/retry-policy.ts',
+        ],
+      }),
+      memory({
+        id: 'same-session-file',
+        type: 'gotcha',
+        content: 'Follow the same auth retry ordering in later edits.',
+        confidence: 0.95,
+        relatedFiles: ['src/auth/session.ts'],
+      }),
+    ]);
+
+    expect(formatted).toContain('Keep auth retries inside the session boundary.');
+    expect(formatted).toContain('src/auth/retry-policy.ts');
+    expect((formatted.match(/src\/auth\/session\.ts/g) ?? [])).toHaveLength(1);
+    expect((formatted.match(/token-cache\.ts/g) ?? [])).toHaveLength(1);
+  });
+
   it('reports memories omitted by the max item limit', () => {
     const formatted = formatAutocodeMemoryRuntimeContext(
       Array.from({ length: 8 }, (_, index) => memory({
