@@ -361,11 +361,33 @@ describe('packContext memory quality gate', () => {
 
     expect(result).toContain('**Prefetch Pattern**');
     expect(result).toContain('Always prefetch: src/auth/session.ts');
-    expect(result).toContain('Prefetch together: src/auth/token.ts');
+    expect(result).toContain('Prefetch together: src/auth/{token.ts, guard.ts, callback.ts, routes.ts} (+1 more)');
     expect(result).toContain('+1 more');
     expect((result.match(/src\/auth\/session\.ts/g) ?? [])).toHaveLength(1);
     expect(result).not.toContain('alwaysReadFiles');
     expect(result).not.toContain('frequentlyReadFiles');
+  });
+
+  it('compacts prefetch candidate file lists by shared path prefix', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'prefetch-candidates',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({ alwaysReadFiles: [], frequentlyReadFiles: [] }),
+          relatedFiles: [
+            'src/auth/session.ts',
+            'src/auth/token.ts',
+            'src/auth/guard.ts',
+          ],
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { prefetch_pattern: 1 } },
+    );
+
+    expect(result).toContain('Prefetch candidates: src/auth/{session.ts, token.ts, guard.ts}');
+    expect(result).not.toContain('src/auth/session.ts, src/auth/token.ts');
   });
 
   it('does not spend default prompt budget on machine-only prefetch patterns', () => {
@@ -512,7 +534,7 @@ describe('packContext memory quality gate', () => {
     );
 
     expect((result.match(/Prefetch together:/g) ?? [])).toHaveLength(1);
-    expect(result).toContain('src/auth/session.ts, src/auth/token.ts');
+    expect(result).toContain('src/auth/{session.ts, token.ts}');
     expect(result).not.toContain('frequentlyReadFiles');
   });
 

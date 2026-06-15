@@ -8,8 +8,8 @@
  *   - Citation chips: [^ Memory: citationText]
  */
 
-import type { Memory, MemoryType, UniversalPhase } from '../types.js';
 import { stripLowValueMemoryLines } from '../outcome-content.js';
+import type { Memory, MemoryType, UniversalPhase } from '../types.js';
 
 // ============================================================
 // TYPES & CONFIG
@@ -604,7 +604,42 @@ function formatPrefetchFileList(files: readonly string[]): string {
     .slice(0, MAX_PREFETCH_PATTERN_PROMPT_FILES)
     .map((file) => truncatePathTail(file, MAX_PACKED_MEMORY_FILE_REF_CHARS));
   const omitted = Math.max(0, uniqueFiles.length - visible.length);
-  return `${visible.join(', ')}${omitted > 0 ? ` (+${omitted} more)` : ''}`;
+  return `${formatCompactPromptPathList(visible)}${omitted > 0 ? ` (+${omitted} more)` : ''}`;
+}
+
+function formatCompactPromptPathList(paths: readonly string[]): string {
+  const expanded = paths.join(', ');
+  if (paths.length < 2) {
+    return expanded;
+  }
+
+  const segments = paths.map(splitPromptPath);
+  if (segments.some((parts) => parts.length < 2)) {
+    return expanded;
+  }
+
+  const maxCommonDepth = Math.min(...segments.map((parts) => parts.length - 1));
+  let commonDepth = 0;
+  for (let index = 0; index < maxCommonDepth; index += 1) {
+    const segment = segments[0][index].toLowerCase();
+    if (!segments.every((parts) => parts[index].toLowerCase() === segment)) {
+      break;
+    }
+    commonDepth += 1;
+  }
+
+  if (commonDepth === 0) {
+    return expanded;
+  }
+
+  const commonDir = segments[0].slice(0, commonDepth).join('/');
+  const tails = segments.map((parts) => parts.slice(commonDepth).join('/'));
+  const compact = `${commonDir}/{${tails.join(', ')}}`;
+  return compact.length < expanded.length ? compact : expanded;
+}
+
+function splitPromptPath(path: string): string[] {
+  return (normalizePromptPath(path) ?? '').split('/').filter(Boolean);
 }
 
 function truncatePathTail(path: string, maxChars: number): string {

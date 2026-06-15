@@ -658,10 +658,10 @@ describe('memory agent tools', () => {
     >(tool, { query: 'auth prefetch', limit: 3, types: ['prefetch_pattern'] });
 
     expect(result).toContain('[prefetch_pattern]');
-    expect(result).toContain('Prefetch together: src/auth/session.ts, src/auth/token.ts');
+    expect(result).toContain('Prefetch together: src/auth/{session.ts, token.ts}');
     expect(result).not.toContain('[session.ts, token.ts]');
     expect(result).not.toContain('frequentlyReadFiles');
-    expect(result).not.toContain('{');
+    expect(result).not.toContain('"frequentlyReadFiles"');
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       types: ['prefetch_pattern'],
       promptContextOnly: false,
@@ -699,7 +699,7 @@ describe('memory agent tools', () => {
     >(tool, { query: 'auth prefetch duplicate', limit: 3, types: ['prefetch_pattern'] });
 
     expect((result.match(/\[prefetch_pattern\]/g) ?? [])).toHaveLength(1);
-    expect(result).toContain('Prefetch together: src/auth/session.ts, src/auth/token.ts');
+    expect(result).toContain('Prefetch together: src/auth/{session.ts, token.ts}');
     expect(result).not.toContain('frequentlyReadFiles');
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       types: ['prefetch_pattern'],
