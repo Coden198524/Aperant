@@ -235,12 +235,40 @@ describe('RetrievalPipeline', () => {
     const candidates = rerank.mock.calls[0][1];
     const content = candidates[0].content;
 
-    expect(content).toContain('[gotcha] src/auth/session.ts');
+    expect(content).toContain(
+      '[gotcha] src/auth/{session.ts, file-0.ts, file-1.ts, file-2.ts, file-3.ts, file-4.ts} (+3 more):',
+    );
     expect(content).not.toContain('SRC/auth/session.ts');
     expect(content).not.toContain('\\');
-    expect(content).toContain('src/auth/file-4.ts');
-    expect(content).not.toContain('src/auth/file-5.ts');
+    expect(content).toContain('file-4.ts');
+    expect(content).not.toContain('file-5.ts');
+    expect((content.match(/src\/auth\//g) ?? [])).toHaveLength(1);
     expect(content).toContain('JWT reranker file context should stay compact');
+  });
+
+  it('keeps shallow reranker file context expanded instead of over-compressing modules', async () => {
+    await seedMemory(
+      client,
+      'mem-shallow-rerank-files',
+      'Shallow reranker file context should keep file names readable',
+      'proj-a',
+      'gotcha',
+      ['src/auth.ts', 'src/session.ts'],
+    );
+    const embeddingService = makeMockEmbeddingService();
+    const { reranker, rerank } = makeCapturingReranker();
+    const pipeline = new RetrievalPipeline(client, embeddingService, reranker);
+
+    await pipeline.search('shallow reranker file context', {
+      phase: 'implement',
+      projectId: 'proj-a',
+    });
+
+    const candidates = rerank.mock.calls[0][1];
+    const content = candidates[0].content;
+
+    expect(content).toContain('[gotcha] src/auth.ts, src/session.ts:');
+    expect(content).not.toContain('src/{auth.ts, session.ts}');
   });
 
   it('strips low-value memory lines before sending candidates to the reranker', async () => {

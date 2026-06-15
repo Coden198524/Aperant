@@ -188,8 +188,7 @@ function formatMemoryRerankerCandidate(memory: Memory): RerankerCandidate | unde
     return undefined;
   }
 
-  const relatedFiles = uniqueRerankerFilePaths(memory.relatedFiles).slice(0, RERANKER_RELATED_FILE_LIMIT);
-  const fileContext = relatedFiles.length > 0 ? ` ${relatedFiles.join(', ')}` : '';
+  const fileContext = formatRerankerFileContext(memory.relatedFiles);
   return {
     memoryId: memory.id,
     content: `[${memory.type}]${fileContext}: ${content}`,
@@ -218,6 +217,53 @@ function uniqueRerankerFilePaths(values: readonly string[]): string[] {
     files.push(normalized);
   }
   return files;
+}
+
+function formatRerankerFileContext(values: readonly string[]): string {
+  const uniqueFiles = uniqueRerankerFilePaths(values);
+  if (uniqueFiles.length === 0) {
+    return '';
+  }
+
+  const visibleFiles = uniqueFiles.slice(0, RERANKER_RELATED_FILE_LIMIT);
+  const omitted = uniqueFiles.length - visibleFiles.length;
+  const omittedText = omitted > 0 ? ` (+${omitted} more)` : '';
+  return ` ${formatCompactRerankerPathList(visibleFiles)}${omittedText}`;
+}
+
+function formatCompactRerankerPathList(paths: readonly string[]): string {
+  const expanded = paths.join(', ');
+  if (paths.length < 2) {
+    return expanded;
+  }
+
+  const segments = paths.map(splitRerankerFilePath);
+  if (segments.some((parts) => parts.length < 2)) {
+    return expanded;
+  }
+
+  const maxCommonDepth = Math.min(...segments.map((parts) => parts.length - 1));
+  let commonDepth = 0;
+  for (let index = 0; index < maxCommonDepth; index += 1) {
+    const segment = segments[0][index].toLowerCase();
+    if (!segments.every((parts) => parts[index].toLowerCase() === segment)) {
+      break;
+    }
+    commonDepth += 1;
+  }
+
+  if (commonDepth < 2) {
+    return expanded;
+  }
+
+  const commonDir = segments[0].slice(0, commonDepth).join('/');
+  const tails = segments.map((parts) => parts.slice(commonDepth).join('/'));
+  const compact = `${commonDir}/{${tails.join(', ')}}`;
+  return compact.length < expanded.length ? compact : expanded;
+}
+
+function splitRerankerFilePath(path: string): string[] {
+  return normalizeRerankerFilePath(path).split('/').filter(Boolean);
 }
 
 function normalizeRerankerFilePath(value: string): string {
