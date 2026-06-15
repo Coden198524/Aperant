@@ -164,6 +164,50 @@ describe('packContext memory quality gate', () => {
     expect(useful).toContain('[^ Memory: Observed in auth/session-store.ts after retry audit.]');
   });
 
+  it('omits packed file context already visible in memory content', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'inline-files',
+          content: [
+            'Summary: Keep auth retries inside the session boundary.',
+            'Files: src/auth/session.ts, token-cache.ts',
+          ].join('\n'),
+          relatedFiles: [
+            'src/auth/session.ts',
+            'src/auth/token-cache.ts',
+            'src/auth/retry-policy.ts',
+          ],
+          citationText: undefined,
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { gotcha: 1 } },
+    );
+
+    expect(result).toContain('**Gotcha** (src/auth/retry-policy.ts)');
+    expect((result.match(/src\/auth\/session\.ts/g) ?? [])).toHaveLength(1);
+    expect((result.match(/token-cache\.ts/g) ?? [])).toHaveLength(1);
+  });
+
+  it('does not treat partial file name matches as packed file context mentions', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'partial-file-name',
+          content: 'Check auth-token.ts before editing refresh flow.',
+          relatedFiles: ['src/auth/token.ts'],
+          citationText: undefined,
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { gotcha: 1 } },
+    );
+
+    expect(result).toContain('**Gotcha** (src/auth/token.ts)');
+    expect(result).toContain('auth-token.ts');
+  });
+
   it('ignores malformed prompt metadata without aborting context packing', () => {
     const result = packContext(
       [

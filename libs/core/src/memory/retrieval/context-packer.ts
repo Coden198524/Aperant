@@ -87,6 +87,7 @@ const PACKED_MEMORY_TRUNCATION_HEAD_RATIO = 0.65;
 const PACKED_MEMORY_HEADER = '## Relevant Context from Memory';
 const MIN_COMPACT_MEMORY_CONTENT_TOKENS = 12;
 const MIN_COMPACT_MEMORY_TOTAL_TOKENS = 18;
+const MAX_PACKED_MEMORY_FILE_CONTEXT_REFS = 2;
 const MAX_PREFETCH_PATTERN_PROMPT_FILES = 4;
 
 // ============================================================
@@ -385,13 +386,9 @@ function formatMemory(
     ? `[^ Memory: ${truncateText(memory.citationText, citationMaxChars)}]`
     : '';
 
-  const fileContext =
-    includeFileContext && memory.relatedFiles.length > 0
-      ? ` (${memory.relatedFiles
-          .slice(0, 2)
-          .map((file) => truncatePathTail(file, fileRefMaxChars))
-          .join(', ')})`
-      : '';
+  const fileContext = includeFileContext
+    ? formatMemoryFileContext(memory.relatedFiles, content, fileRefMaxChars)
+    : '';
 
   const confidence =
     includeConfidence && memory.confidence < 0.7
@@ -405,6 +402,48 @@ function formatMemory(
   ]
     .filter(Boolean)
     .join('\n');
+}
+
+function formatMemoryFileContext(
+  files: readonly string[],
+  content: string,
+  fileRefMaxChars: number,
+): string {
+  const visibleFiles = files
+    .filter((file) => !isPromptPathMentionedInText(file, content))
+    .slice(0, MAX_PACKED_MEMORY_FILE_CONTEXT_REFS)
+    .map((file) => truncatePathTail(file, fileRefMaxChars));
+  return visibleFiles.length > 0 ? ` (${visibleFiles.join(', ')})` : '';
+}
+
+function isPromptPathMentionedInText(path: string, text: string): boolean {
+  const normalizedText = normalizePromptTextForPathMatch(text);
+  if (!normalizedText) {
+    return false;
+  }
+
+  const normalizedPath = normalizePromptTextForPathMatch(path);
+  const fileName = normalizePromptTextForPathMatch(path.split('/').pop() ?? path);
+  return normalizedText.includes(normalizedPath) ||
+    (fileName.length > 0 && containsStandalonePromptPathName(normalizedText, fileName));
+}
+
+function containsStandalonePromptPathName(text: string, pathName: string): boolean {
+  return new RegExp(
+    `(?:^|[^a-z0-9_.-])${escapePromptRegExp(pathName)}(?:$|[^a-z0-9_.-])`,
+  ).test(text);
+}
+
+function escapePromptRegExp(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function normalizePromptTextForPathMatch(value: string): string {
+  return value
+    .toLowerCase()
+    .replace(/\\/g, '/')
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function isRedundantCitation(citationText: string, promptContent: string): boolean {
