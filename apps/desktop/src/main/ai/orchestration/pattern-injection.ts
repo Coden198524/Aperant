@@ -322,6 +322,7 @@ async function retrieveSuccessCases(
       limit: 8,
       excludeDeprecated: true,
       promptContextOnly: true,
+      recordAccess: false,
     });
 
     const selectedResults = searchResults

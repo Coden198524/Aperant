@@ -437,7 +437,7 @@ describe('buildQaSessionContext', () => {
           {
             ...makeMemory('ep-retry', 'Retry assertions need mocked network delays.', 'error_pattern'),
             relatedFiles: [
-              'src/auth/session-store.ts',
+              'SRC\\auth\\session-store.ts',
               'src/auth/retry-policy.test.ts',
             ],
           },

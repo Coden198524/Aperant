@@ -112,6 +112,7 @@ describe('pre-implementation checklist formatting', () => {
       excludeDeprecated: true,
       limit: 10,
       promptContextOnly: true,
+      recordAccess: false,
     }));
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('good');
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('verified');
@@ -192,5 +193,33 @@ describe('pre-implementation checklist formatting', () => {
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }
+  });
+
+  it('normalizes and deduplicates files to review before capping prompt guidance', async () => {
+    const checklist = await generatePreImplementationChecklist({
+      subtask: {
+        id: '1.4',
+        description: 'Update auth session store',
+        filesToModify: [
+          'src\\auth\\session.ts',
+          'SRC/auth/session.ts',
+        ],
+        filesToCreate: [],
+        patternFiles: [
+          ' src\\auth\\session.ts ',
+          'src/auth/session.ts',
+          'src/auth/session.test.ts',
+        ],
+      },
+      specDir: 'E:/spec',
+      projectDir: 'E:/project',
+    });
+
+    expect(checklist.filesToReview).toContain('src/auth/session.ts');
+    expect(checklist.filesToReview).toContain('src/auth/session.test.ts');
+    expect(checklist.filesToReview).toContain('src/auth/session.types.ts');
+    expect(checklist.filesToReview).not.toContain('SRC/auth/session.ts');
+    expect(checklist.filesToReview.filter((file) => file.toLowerCase() === 'src/auth/session.ts')).toHaveLength(1);
+    expect(checklist.filesToReview.every((file) => !file.includes('\\'))).toBe(true);
   });
 });

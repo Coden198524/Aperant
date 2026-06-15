@@ -128,10 +128,7 @@ export async function generatePreImplementationChecklist(
   }
 
   // Add related files based on file type
-  const relatedFiles = identifyRelatedFiles(
-    config.subtask.filesToModify || [],
-    config.projectDir,
-  );
+  const relatedFiles = identifyRelatedFiles(config.subtask.filesToModify || []);
   filesToReview.push(...relatedFiles);
 
   // 6. Calculate risk level
@@ -148,7 +145,7 @@ export async function generatePreImplementationChecklist(
   return {
     subtaskId: config.subtask.id,
     items,
-    filesToReview: [...new Set(filesToReview)].slice(0, PRE_IMPLEMENTATION_FILES_TO_REVIEW_MAX),
+    filesToReview: uniqueChecklistPaths(filesToReview).slice(0, PRE_IMPLEMENTATION_FILES_TO_REVIEW_MAX),
     riskLevel,
     generatedAt: new Date().toISOString(),
   };
@@ -173,6 +170,7 @@ async function analyzeHistoricalFailures(
       limit: 10,
       excludeDeprecated: true,
       promptContextOnly: true,
+      recordAccess: false,
     });
 
     const selectedFailures = failures
@@ -441,7 +439,7 @@ function analyzeSubtaskRisks(description: string): ChecklistItem[] {
 /**
  * Identify related files that should be reviewed.
  */
-function identifyRelatedFiles(filesToModify: string[], projectDir: string): string[] {
+function identifyRelatedFiles(filesToModify: string[]): string[] {
   const related: string[] = [];
 
   for (const file of filesToModify) {
@@ -457,6 +455,35 @@ function identifyRelatedFiles(filesToModify: string[], projectDir: string): stri
   }
 
   return related;
+}
+
+function uniqueChecklistPaths(paths: readonly string[]): string[] {
+  const unique: string[] = [];
+  const seen = new Set<string>();
+
+  for (const path of paths) {
+    const normalized = normalizeChecklistPath(path);
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(normalized);
+  }
+
+  return unique;
+}
+
+function normalizeChecklistPath(path: string): string {
+  return path
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim();
 }
 
 /**

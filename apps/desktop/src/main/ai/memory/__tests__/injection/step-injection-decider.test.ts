@@ -103,6 +103,7 @@ describe('StepInjectionDecider', () => {
         expect.objectContaining({
           types: expect.arrayContaining(['gotcha', 'error_pattern', 'dead_end']),
           promptContextOnly: true,
+          recordAccess: false,
         }),
       );
     });
@@ -141,6 +142,32 @@ describe('StepInjectionDecider', () => {
       expect(result?.content.length).toBeLessThan(longContent.length);
       expect(result?.content).toContain('middle omitted');
       expect(result?.content).toContain('GOTCHA_TAIL_OK');
+    });
+
+    it('deduplicates gotcha file references before applying the visible file limit', async () => {
+      vi.mocked(memoryService.search).mockResolvedValueOnce([
+        makeMemory({
+          id: 'path-gotcha',
+          content: 'Keep auth retry state inside the session store.',
+          relatedFiles: [
+            'src\\auth\\session-store.ts',
+            'SRC/auth/session-store.ts',
+            'src/auth/token-cache.ts',
+            'src/auth/retry-policy.ts',
+          ],
+        }),
+      ]);
+
+      const result = await decider.decide(5, {
+        toolCalls: [{ toolName: 'Read', args: { file_path: '/src/auth.ts' } }],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.content).toContain('session-store.ts');
+      expect(result?.content).toContain('token-cache.ts');
+      expect(result?.content).toContain('retry-policy.ts');
+      expect(result?.content).not.toContain('+1 more');
+      expect((result?.content.match(/session-store\.ts/g) ?? [])).toHaveLength(1);
     });
 
     it('keeps localized gotcha injections within an estimated token budget', async () => {
@@ -358,6 +385,53 @@ describe('StepInjectionDecider', () => {
       expect(result?.content).not.toContain('Third scratchpad entry');
       expect(result?.content).toContain('SCRATCHPAD_TAIL_OK');
       expect(result?.content).toContain('middle omitted');
+    });
+
+    it('skips empty scratchpad entries before applying the reflection limit', async () => {
+      const capturedAt = Date.now();
+      scratchpad = makeScratchpad([
+        {
+          signalType: 'self_correction',
+          rawData: { triggeringText: '   ' },
+          priority: 0.9,
+          capturedAt,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'error_retry',
+          rawData: {},
+          priority: 0.9,
+          capturedAt: capturedAt + 1,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'backtrack',
+          rawData: { matchedText: 'Use the stable backtrack target.' },
+          priority: 0.9,
+          capturedAt: capturedAt + 2,
+          stepNumber: 4,
+        },
+        {
+          signalType: 'parallel_conflict',
+          rawData: { triggeringText: 'Resolve the latest writer before retrying.' },
+          priority: 0.9,
+          capturedAt: capturedAt + 3,
+          stepNumber: 4,
+        },
+      ]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const result = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(result?.type).toBe('scratchpad_reflection');
+      expect(result?.memoryIds).toHaveLength(2);
+      expect(result?.content).toContain('Use the stable backtrack target.');
+      expect(result?.content).toContain('Resolve the latest writer before retrying.');
+      expect(result?.content).not.toContain('self_correction:');
+      expect(result?.content).not.toContain('error_retry:');
     });
 
     it('keeps localized scratchpad reflections within an estimated token budget', async () => {

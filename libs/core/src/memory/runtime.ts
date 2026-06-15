@@ -630,11 +630,13 @@ export function formatAutocodeMemoryRuntimeContext(
   let omitted = 0;
   let included = 0;
   const seenContextFiles = new Set<string>();
-  for (const memory of usable) {
+  for (let index = 0; index < usable.length; index++) {
     if (included >= itemLimit) {
+      omitted += usable.length - index;
       break;
     }
 
+    const memory = usable[index];
     const formatted = formatAutocodeMemoryRuntimeContextLine(
       memory,
       seenContextFiles,
@@ -646,8 +648,8 @@ export function formatAutocodeMemoryRuntimeContext(
       continue;
     }
     lines.push(line);
-    for (const file of formatted.displayedFiles) {
-      seenContextFiles.add(file);
+    for (const fileKey of formatted.displayedFileKeys) {
+      seenContextFiles.add(fileKey);
     }
     included += 1;
   }
@@ -676,15 +678,17 @@ function fitsAutocodeMemoryRuntimeContextBudget(text: string): boolean {
 
 interface FormattedRuntimeContextLine {
   line: string;
-  displayedFiles: string[];
+  displayedFileKeys: string[];
 }
 
 function formatAutocodeMemoryRuntimeContextLine(
   memory: Memory,
   seenContextFiles: Set<string>,
 ): FormattedRuntimeContextLine {
-  const sourceFiles = uniqueStrings(memory.relatedFiles);
-  const unseenFiles = sourceFiles.filter((file) => !seenContextFiles.has(file));
+  const sourceFiles = uniquePathStrings(memory.relatedFiles);
+  const unseenFiles = sourceFiles.filter(
+    (file) => !seenContextFiles.has(normalizeRuntimePathKey(file)),
+  );
   const displayedFiles = unseenFiles.slice(
     0,
     AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT,
@@ -707,7 +711,7 @@ function formatAutocodeMemoryRuntimeContextLine(
       AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_TOKENS,
       { preserveTail: true },
     )}${files}`,
-    displayedFiles,
+    displayedFileKeys: displayedFiles.map(normalizeRuntimePathKey),
   };
 }
 
@@ -772,7 +776,7 @@ function compactAutocodeMemoryRuntimeOutcomeFiles(
 ): string[] {
   const files: string[] = [];
   const seen = new Set<string>();
-  for (const file of uniqueStrings(values)) {
+  for (const file of uniquePathStrings(values)) {
     const compacted = truncateAutocodeMemoryRuntimePathTail(
       file,
       AUTOCODE_MEMORY_RUNTIME_OUTCOME_FILE_REF_MAX_CHARS,
@@ -922,6 +926,43 @@ function uniqueStrings(values: readonly unknown[] | undefined): string[] {
       values.map((value) => String(value ?? '').trim()).filter(Boolean),
     ),
   ];
+}
+
+function uniquePathStrings(values: readonly unknown[] | undefined): string[] {
+  if (!values) {
+    return [];
+  }
+
+  const paths: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values) {
+    const normalized = normalizeRuntimePath(String(value ?? ''));
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalizeRuntimePathKey(normalized);
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    paths.push(normalized);
+  }
+
+  return paths;
+}
+
+function normalizeRuntimePath(value: string): string {
+  return value
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim();
+}
+
+function normalizeRuntimePathKey(value: string): string {
+  return normalizeRuntimePath(value).toLowerCase();
 }
 
 export type AutocodeMemoryRuntimeMemoryType = MemoryType;

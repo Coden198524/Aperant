@@ -275,21 +275,30 @@ function compactFileName(fileName: string, maxChars: number): string {
 }
 
 function normalizeFilePathForDedupe(filePath: string): string {
-  return filePath.replace(/\\/g, '/').replace(/\s+/g, ' ').trim().toLowerCase();
+  return normalizeFilePath(filePath).toLowerCase();
 }
 
 function uniqueFilePaths(values: readonly string[]): string[] {
   const seen = new Set<string>();
   const unique: string[] = [];
   for (const value of values) {
-    const normalized = normalizeFilePathForDedupe(value);
-    if (!normalized || seen.has(normalized)) {
+    const normalized = normalizeFilePath(value);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) {
       continue;
     }
-    seen.add(normalized);
-    unique.push(value.trim());
+    seen.add(key);
+    unique.push(normalized);
   }
   return unique;
+}
+
+function normalizeFilePath(filePath: string): string {
+  return filePath
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim();
 }
 
 function truncateText(

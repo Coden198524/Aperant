@@ -78,6 +78,7 @@ export class StepInjectionDecider {
           minConfidence: 0.65,
           projectId: this.projectId,
           promptContextOnly: true,
+          recordAccess: false,
           filter: (m) => !recentContext.injectedMemoryIds.has(m.id),
         });
 
@@ -193,9 +194,8 @@ export class StepInjectionDecider {
     const lines = entries
       .slice(0, MAX_SCRATCHPAD_REFLECTIONS)
       .map((e) => {
-        const rawData = e.rawData as Record<string, unknown>;
         const text = truncateText(
-          String(rawData.triggeringText ?? rawData.matchedText ?? ''),
+          getScratchpadEntryText(e),
           MAX_SCRATCHPAD_TEXT_CHARS,
           MAX_SCRATCHPAD_TEXT_TOKENS,
         );
@@ -210,6 +210,7 @@ export class StepInjectionDecider {
 function shouldInjectScratchpadEntry(entry: AcuteCandidate): boolean {
   return (
     entry.priority >= MIN_SCRATCHPAD_REFLECTION_PRIORITY &&
+    getScratchpadEntryText(entry).length > 0 &&
     [
       'self_correction',
       'error_retry',
@@ -218,6 +219,18 @@ function shouldInjectScratchpadEntry(entry: AcuteCandidate): boolean {
       'parallel_conflict',
     ].includes(entry.signalType)
   );
+}
+
+function getScratchpadEntryText(entry: AcuteCandidate): string {
+  const rawData = isRecord(entry.rawData) ? entry.rawData : {};
+  const value = rawData.triggeringText ?? rawData.matchedText;
+  return typeof value === 'string'
+    ? value.replace(/\s+/g, ' ').trim()
+    : '';
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null;
 }
 
 function getScratchpadInjectionId(entry: AcuteCandidate): string {
@@ -271,7 +284,8 @@ function formatFileRefs(files: readonly string[]): string {
     return '';
   }
 
-  const visible = files
+  const uniqueFiles = uniqueFileRefs(files);
+  const visible = uniqueFiles
     .slice(0, MAX_MEMORY_ALERT_FILE_REFS)
     .map((file) =>
       truncateText(
@@ -280,12 +294,36 @@ function formatFileRefs(files: readonly string[]): string {
         MAX_MEMORY_ALERT_FILE_REF_TOKENS,
       ),
     );
-  const omitted = files.length - visible.length;
+  const omitted = uniqueFiles.length - visible.length;
   if (omitted > 0) {
     visible.push(`+${omitted} more`);
   }
 
   return ` (${visible.join(', ')})`;
+}
+
+function uniqueFileRefs(files: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const unique: string[] = [];
+  for (const file of files) {
+    const normalized = file
+      .replace(/\s+/g, ' ')
+      .replace(/\\/g, '/')
+      .replace(/\/+/g, '/')
+      .trim();
+    if (!normalized) {
+      continue;
+    }
+
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    unique.push(normalized);
+  }
+  return unique;
 }
 
 function truncateText(

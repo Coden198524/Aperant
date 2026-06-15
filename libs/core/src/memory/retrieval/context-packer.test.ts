@@ -4,6 +4,7 @@ import type { Memory } from '../types.js';
 import {
   type ContextPackingConfig,
   estimateTokens,
+  MAX_PACKED_MEMORY_FILE_REF_CHARS,
   MAX_PROMPT_CONTEXT_MEMORIES,
   MIN_PACKED_MEMORY_CONFIDENCE,
   packContext,
@@ -81,7 +82,7 @@ describe('packContext memory quality gate', () => {
           id: 'metadata',
           content: '  Metadata \n memory  ',
           citationText: '  Source \n citation  ',
-          relatedFiles: [' src/auth.ts ', 'src/auth.ts', ' src/session.ts '],
+          relatedFiles: [' src\\auth.ts ', 'SRC/auth.ts', ' src/session.ts '],
         }),
       ],
       'implement',
@@ -91,6 +92,7 @@ describe('packContext memory quality gate', () => {
     expect(result).toContain('Metadata memory');
     expect(result).toContain('[^ Memory: Source citation]');
     expect(result).toContain('src/auth.ts, src/session.ts');
+    expect(result).not.toContain('SRC/auth.ts');
     expect(result).not.toContain('blank id should be skipped');
     expect(result).not.toContain('Second duplicate should be skipped.');
     expect(result).not.toContain('Bad confidence should be skipped.');
@@ -119,6 +121,27 @@ describe('packContext memory quality gate', () => {
     expect(result).toContain('src/auth.ts, src/session.ts');
     expect(result).not.toContain('Bad id should be skipped.');
     expect(result).not.toContain('[^ Memory:');
+  });
+
+  it('preserves file path tails without spending tokens on omission markers', () => {
+    const longFile = `src/${'very/deep/'.repeat(20)}settings-store.ts`;
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'long-path',
+          content: 'Use the settings store path when writing workspace state.',
+          relatedFiles: [longFile],
+          citationText: undefined,
+        }),
+      ],
+      'implement',
+    );
+
+    const fileMatch = result.match(/\*\*Gotcha\*\* \(([^)]*)\)/);
+    expect(fileMatch?.[1]).toContain('settings-store.ts');
+    expect(fileMatch?.[1]).not.toContain('memory middle omitted');
+    expect(fileMatch?.[1].length).toBeLessThanOrEqual(MAX_PACKED_MEMORY_FILE_REF_CHARS);
+    expect(result).not.toContain(longFile);
   });
 
   it('caps prompt context candidate normalization before spending token budget', () => {
@@ -158,6 +181,29 @@ describe('packContext memory quality gate', () => {
 
     expect(result).toContain('Trusted memory after noisy candidates should still appear.');
     expect(result).not.toContain('Low confidence memory');
+  });
+
+  it('does not let low-priority type candidates hide phase-prioritized memories', () => {
+    const result = packContext(
+      [
+        ...Array.from({ length: MAX_PROMPT_CONTEXT_MEMORIES }, (_, index) =>
+          makeMemory({
+            id: `preference-${index}`,
+            type: 'preference',
+            content: `Preference candidate ${index} should not consume the gotcha candidate cap.`,
+          }),
+        ),
+        makeMemory({
+          id: 'late-gotcha',
+          type: 'gotcha',
+          content: 'Late gotcha should still appear for implementation phase.',
+        }),
+      ],
+      'implement',
+      { totalBudget: 160, allocation: { gotcha: 0.8 } },
+    );
+
+    expect(result).toContain('Late gotcha should still appear');
   });
 
   it('keeps pinned or user-verified memories even when they need review or are low confidence', () => {

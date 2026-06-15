@@ -189,18 +189,16 @@ export function packContext(
 
 function groupByType(memories: Memory[]): Map<MemoryType, Memory[]> {
   const map = new Map<MemoryType, Memory[]>();
-  let acceptedCount = 0;
   for (const m of normalizePromptMemories(memories)) {
     if (!isNormalizedMemoryEligibleForPromptContext(m)) {
       continue;
     }
     const group = map.get(m.type) ?? [];
+    if (group.length >= MAX_PROMPT_CONTEXT_MEMORIES) {
+      continue;
+    }
     group.push(m);
     map.set(m.type, group);
-    acceptedCount += 1;
-    if (acceptedCount >= MAX_PROMPT_CONTEXT_MEMORIES) {
-      break;
-    }
   }
   return map;
 }
@@ -360,7 +358,7 @@ function formatMemory(
     includeFileContext && memory.relatedFiles.length > 0
       ? ` (${memory.relatedFiles
           .slice(0, 2)
-          .map((file) => truncateText(file, fileRefMaxChars))
+          .map((file) => truncatePathTail(file, fileRefMaxChars))
           .join(', ')})`
       : '';
 
@@ -455,6 +453,17 @@ function truncateText(text: string, maxChars: number): string {
     marker,
     tailLength > 0 ? compact.slice(-tailLength).trimStart() : '',
   ].join('');
+}
+
+function truncatePathTail(path: string, maxChars: number): string {
+  const normalized = path.replace(/\\/g, '/').replace(/\/+/g, '/').trim();
+  if (maxChars <= 0) {
+    return '';
+  }
+  if (normalized.length <= maxChars) {
+    return normalized;
+  }
+  return normalized.slice(-maxChars).replace(/^\/+/, '');
 }
 
 function truncateTextToTokenBudget(
@@ -653,7 +662,7 @@ function normalizePromptMemory(memory: Memory): Memory | undefined {
     id,
     content,
     confidence: confidence ?? 0,
-    relatedFiles: normalizePromptTextList(memory.relatedFiles),
+    relatedFiles: normalizePromptPathList(memory.relatedFiles),
     relatedModules: normalizePromptTextList(memory.relatedModules),
     tags: normalizePromptTextList(memory.tags),
     citationText: normalizePromptText(memory.citationText),
@@ -688,6 +697,42 @@ function normalizePromptTextList(values: readonly unknown[] | undefined): string
   }
 
   return normalizedValues;
+}
+
+function normalizePromptPathList(values: readonly unknown[] | undefined): string[] {
+  if (!Array.isArray(values)) {
+    return [];
+  }
+
+  const seen = new Set<string>();
+  const normalizedValues: string[] = [];
+
+  for (const value of values) {
+    const normalized = typeof value === 'string'
+      ? normalizePromptPath(value)
+      : undefined;
+    if (!normalized) {
+      continue;
+    }
+    const key = normalized.toLowerCase();
+    if (seen.has(key)) {
+      continue;
+    }
+
+    seen.add(key);
+    normalizedValues.push(normalized);
+  }
+
+  return normalizedValues;
+}
+
+function normalizePromptPath(value: string): string | undefined {
+  const normalized = value
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim();
+  return normalized.length > 0 ? normalized : undefined;
 }
 
 function normalizePromptConfidence(value: unknown): number | undefined {

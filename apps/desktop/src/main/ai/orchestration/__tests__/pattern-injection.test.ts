@@ -68,6 +68,7 @@ describe('pattern injection memory success cases', () => {
       excludeDeprecated: true,
       limit: 8,
       promptContextOnly: true,
+      recordAccess: false,
       types: ['pattern'],
     }));
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('good');

@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import type { Memory } from './types.js';
+import { estimateTokens } from './retrieval/context-packer.js';
 import {
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_FILE_REF_LIMIT,
   AUTOCODE_MEMORY_RUNTIME_CONTEXT_ITEM_MAX_CHARS,
@@ -29,7 +29,7 @@ import {
   formatAutocodeMemoryRuntimeContext,
   toAutocodeMemoryRuntimeRecentContext,
 } from './runtime.js';
-import { estimateTokens } from './retrieval/context-packer.js';
+import type { Memory } from './types.js';
 
 function memory(overrides: Partial<Memory> = {}): Memory {
   return {
@@ -125,22 +125,40 @@ describe('Autocode memory runtime context formatting', () => {
         id: 'auth-gotcha',
         content: 'Refresh auth state before notifying renderer listeners.',
         confidence: 0.95,
-        relatedFiles: ['src/auth/session-store.ts', 'src/auth/token-cache.ts'],
+        relatedFiles: ['src\\auth\\session-store.ts', 'src/auth/token-cache.ts'],
       }),
       memory({
         id: 'auth-decision',
         type: 'decision',
         content: 'Keep auth token refresh retries inside the session store boundary.',
         confidence: 0.94,
-        relatedFiles: ['src/auth/session-store.ts', 'src/auth/retry-policy.ts'],
+        relatedFiles: ['SRC/auth/session-store.ts', 'src/auth/retry-policy.ts'],
       }),
     ]);
 
     expect(formatted).toContain('Refresh auth state before notifying renderer listeners.');
     expect(formatted).toContain('Keep auth token refresh retries inside the session store boundary.');
     expect((formatted.match(/src\/auth\/session-store\.ts/g) ?? [])).toHaveLength(1);
+    expect(formatted).not.toContain('SRC/auth/session-store.ts');
     expect(formatted).toContain('src/auth/token-cache.ts');
     expect(formatted).toContain('src/auth/retry-policy.ts');
+  });
+
+  it('reports memories omitted by the max item limit', () => {
+    const formatted = formatAutocodeMemoryRuntimeContext(
+      Array.from({ length: 8 }, (_, index) => memory({
+        id: `limit-${index}`,
+        content: `LIMITED_MEMORY_${index}`,
+        confidence: 0.9 - index * 0.01,
+      })),
+      3,
+    );
+
+    expect(formatted.match(/- \[/g)).toHaveLength(3);
+    expect(formatted).toContain('LIMITED_MEMORY_0');
+    expect(formatted).toContain('LIMITED_MEMORY_2');
+    expect(formatted).not.toContain('LIMITED_MEMORY_3');
+    expect(formatted).toContain('5 more memory item(s) omitted');
   });
 
   it('does not mark files as shown when a verbose memory is skipped by budget', () => {
