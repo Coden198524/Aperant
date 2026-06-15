@@ -458,6 +458,18 @@ describe('WorkerObserverProxy', () => {
       expect(result).toEqual([]);
     });
 
+    it('rejects strict memory searches on error response', async () => {
+      setupResponseMock(mockPort, (requestId) => ({
+        type: 'memory:error',
+        requestId,
+        error: 'Service unavailable',
+      }));
+
+      await expect(
+        proxy.searchMemoryOrThrow({ query: 'test', projectId: 'proj-1' }),
+      ).rejects.toThrow('Service unavailable');
+    });
+
     it('returns empty array when postMessage throws', async () => {
       mockPort.postMessage.mockImplementationOnce(() => {
         throw new Error('Port closed');

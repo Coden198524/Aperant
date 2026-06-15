@@ -160,6 +160,12 @@ describe('buildQaSessionContext', () => {
     await buildQaSessionContext('Validate auth', ['auth'], memoryService, 'proj-1');
 
     expect(memoryService.search).toHaveBeenCalledTimes(3); // e2e_obs, error_pattern, requirement
+    for (const call of vi.mocked(memoryService.search).mock.calls) {
+      expect(call[0]).toEqual(expect.objectContaining({
+        promptContextOnly: true,
+        recordAccess: false,
+      }));
+    }
     expect(memoryService.searchWorkflowRecipe).toHaveBeenCalledTimes(1);
   });
 

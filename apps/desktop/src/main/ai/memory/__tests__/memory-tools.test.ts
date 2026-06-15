@@ -69,6 +69,7 @@ describe('memory agent tools', () => {
         makeMemory({ id: 'b', content: longContent }),
         makeMemory({ id: 'c', type: 'decision', content: 'Auth tokens are stored in secure storage.' }),
       ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
     } as unknown as WorkerObserverProxy;
     const tool = createSearchMemoryTool(proxy, 'project-1');
 
@@ -81,8 +82,11 @@ describe('memory agent tools', () => {
       limit: 3,
       projectId: 'project-1',
       promptContextOnly: true,
-      recordAccess: true,
+      recordAccess: false,
     }));
+    expect(proxy.updateAccessCount).toHaveBeenCalledWith('a');
+    expect(proxy.updateAccessCount).toHaveBeenCalledWith('c');
+    expect(proxy.updateAccessCount).not.toHaveBeenCalledWith('b');
     expect((result.match(/\[gotcha\]/g) ?? [])).toHaveLength(1);
     expect(result).toContain('2. [decision]');
     expect(result.length).toBeLessThanOrEqual(1800);
@@ -120,8 +124,33 @@ describe('memory agent tools', () => {
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       query: 'auth retry memory',
       projectId: 'project-1',
-      recordAccess: true,
+      recordAccess: false,
     }));
+  });
+
+  it('uses strict search_memory IPC errors when the worker proxy exposes them', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({ id: 'fallback-result', content: 'Fallback search should not run.' }),
+      ]),
+      searchMemoryOrThrow: vi.fn().mockRejectedValue(new Error('memory ipc timeout')),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number },
+      string
+    >(tool, { query: 'auth retry memory', limit: 3 });
+
+    expect(result).toBe('Memory search unavailable; inspect focused files next.');
+    expect(result).not.toContain('memory ipc timeout');
+    expect(result).not.toContain('Fallback search should not run.');
+    expect(proxy.searchMemoryOrThrow).toHaveBeenCalledWith(expect.objectContaining({
+      query: 'auth retry memory',
+      projectId: 'project-1',
+      recordAccess: false,
+    }));
+    expect(proxy.searchMemory).not.toHaveBeenCalled();
   });
 
   it('normalizes search_memory query and filter inputs before IPC', async () => {
@@ -145,14 +174,16 @@ describe('memory agent tools', () => {
       ],
     });
 
-    expect(result).toBe('No relevant memories found for this query.');
+    expect(result).toBe(
+      'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+    );
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       query: 'auth token refresh',
       types: ['gotcha', 'decision'],
       relatedFiles: ['src/auth/token.ts', 'src/auth/session.ts'],
       projectId: 'project-1',
       promptContextOnly: true,
-      recordAccess: true,
+      recordAccess: false,
     }));
   });
 
@@ -213,7 +244,9 @@ describe('memory agent tools', () => {
       string
     >(tool, { query: 'auth outcome', limit: 3, types: ['work_unit_outcome'] });
 
-    expect(result).toBe('No relevant memories found for this query.');
+    expect(result).toBe(
+      'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+    );
   });
 
   it('strips low-value status lines from non-outcome search_memory results', async () => {
@@ -267,7 +300,9 @@ describe('memory agent tools', () => {
       string
     >(tool, { query: 'auth gotcha', limit: 3, types: ['gotcha'] });
 
-    expect(result).toBe('No relevant memories found for this query.');
+    expect(result).toBe(
+      'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
+    );
   });
 
   it('returns a focused no-result hint for machine memory searches', async () => {
@@ -282,7 +317,7 @@ describe('memory agent tools', () => {
     >(tool, { query: 'token cost and files to read for auth module', limit: 3 });
 
     expect(result).toBe(
-      'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
+      'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
     );
     expect(proxy.searchMemory).toHaveBeenCalledWith(expect.objectContaining({
       types: ['context_cost', 'prefetch_pattern'],
@@ -488,6 +523,7 @@ describe('memory agent tools', () => {
           ].join(' '),
         })),
       ),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
     } as unknown as WorkerObserverProxy;
     const tool = createSearchMemoryTool(proxy, 'project-1');
 
@@ -500,6 +536,41 @@ describe('memory agent tools', () => {
     expect(result).toContain('LONG_RESULT_0_HEAD');
     expect(result).toContain('LONG_RESULT_0_TAIL');
     expect(result).toContain('more memory result(s) omitted for output budget');
+    const visibleIds = Array.from({ length: 8 }, (_, index) => `long-${index}`)
+      .filter((id) => result.includes(`LONG_RESULT_${id.slice(5)}_HEAD`));
+    expect(proxy.updateAccessCount).toHaveBeenCalledTimes(visibleIds.length);
+    for (const id of visibleIds) {
+      expect(proxy.updateAccessCount).toHaveBeenCalledWith(id);
+    }
+    expect(visibleIds.length).toBeLessThan(8);
+  });
+
+  it('does not wait for search_memory access tracking before returning results', async () => {
+    const pendingAccessUpdate = new Promise<void>(() => {
+      // Intentionally never settles; search output must not wait for access feedback.
+    });
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'visible-memory',
+          content: 'Return useful memory results before access tracking settles.',
+        }),
+      ]),
+      updateAccessCount: vi.fn().mockReturnValue(pendingAccessUpdate),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await Promise.race([
+      executeTool<{ query: string; limit: number }, string>(
+        tool,
+        { query: 'auth memory result', limit: 3 },
+      ),
+      new Promise<string>((resolve) => setTimeout(() => resolve('__blocked__'), 25)),
+    ]);
+
+    expect(result).toContain('Return useful memory results before access tracking settles.');
+    expect(result).not.toBe('__blocked__');
+    expect(proxy.updateAccessCount).toHaveBeenCalledWith('visible-memory');
   });
 
   it('filters low-quality memories from search_memory output', async () => {
@@ -1455,8 +1526,8 @@ describe('memory agent tools', () => {
   });
 
   it.each([
+    'No relevant memories found for this query; continue with focused inspection instead of repeating this search.',
     'No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.',
-    'No relevant token-cost/file-prefetch memories found; inspect focused files next.',
     'Memory search unavailable; inspect focused files next.',
     'Memory search results for "auth": 1. [gotcha] Refresh token cache before notifying listeners.',
     'Memory system not available in this session.',

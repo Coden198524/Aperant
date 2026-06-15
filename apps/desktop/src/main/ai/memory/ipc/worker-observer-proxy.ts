@@ -134,16 +134,23 @@ export class WorkerObserverProxy {
   }
 
   async searchMemory(filters: MemorySearchFilters): Promise<Memory[]> {
-    const requestId = randomUUID();
     try {
-      const response = await this.sendRequest<AutocodeMemoryRuntimeIpcResponse>(
-        { type: 'memory:search', requestId, filters: compactMemorySearchFiltersForIpc(filters) },
-        requestId,
-      );
-      return response.type === 'memory:search-result' ? response.memories : [];
+      return await this.searchMemoryOrThrow(filters);
     } catch {
       return [];
     }
+  }
+
+  async searchMemoryOrThrow(filters: MemorySearchFilters): Promise<Memory[]> {
+    const requestId = randomUUID();
+    const response = await this.sendRequest<AutocodeMemoryRuntimeIpcResponse>(
+      { type: 'memory:search', requestId, filters: compactMemorySearchFiltersForIpc(filters) },
+      requestId,
+    );
+    if (response.type !== 'memory:search-result') {
+      throw new Error('Memory search returned an unexpected IPC response.');
+    }
+    return response.memories;
   }
 
   async recordMemory(entry: MemoryRecordEntry): Promise<string | null> {

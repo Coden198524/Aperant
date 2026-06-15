@@ -50,6 +50,7 @@ export async function buildQaSessionContext(
               sort: 'recency',
               projectId,
               promptContextOnly: true,
+              recordAccess: false,
             })
           : emptySearch,
         modules.length > 0
@@ -60,6 +61,7 @@ export async function buildQaSessionContext(
               minConfidence: 0.6,
               projectId,
               promptContextOnly: true,
+              recordAccess: false,
             })
           : emptySearch,
         modules.length > 0
@@ -69,6 +71,7 @@ export async function buildQaSessionContext(
               limit: 3,
               projectId,
               promptContextOnly: true,
+              recordAccess: false,
             })
           : emptySearch,
         recipeSearch,

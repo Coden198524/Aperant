@@ -326,21 +326,30 @@ async function retrieveSuccessCases(
       recordAccess: false,
     });
 
-    const selectedResults = searchResults
+    const selectedCases = searchResults
       .filter(isMemoryEligibleForPromptContext)
-      .slice(0, 3);
-    await recordSelectedMemoryAccess(memoryService, selectedResults);
+      .map((result) => {
+        const content = stripLowValueMemoryLines(result.content);
+        if (!content) {
+          return null;
+        }
 
-    return selectedResults.map((result) => {
-        const content = stripLowValueMemoryLines(result.content) || subtaskDescription;
         return {
-          subtaskId: result.tags?.find((tag) => tag.startsWith('subtask:'))?.slice(8) || 'unknown',
-          description: summarizeSuccessCase(content, subtaskDescription),
-          implementation: limitPromptText(content, MAX_SUCCESS_CASE_IMPLEMENTATION_CHARS),
-          whyItWorked: limitPromptText('Followed established patterns', MAX_SUCCESS_CASE_REASON_CHARS),
-          similarity: result.confidence || 0.7,
+          result,
+          successCase: {
+            subtaskId: result.tags?.find((tag) => tag.startsWith('subtask:'))?.slice(8) || 'unknown',
+            description: summarizeSuccessCase(content, subtaskDescription),
+            implementation: limitPromptText(content, MAX_SUCCESS_CASE_IMPLEMENTATION_CHARS),
+            whyItWorked: limitPromptText('Followed established patterns', MAX_SUCCESS_CASE_REASON_CHARS),
+            similarity: result.confidence || 0.7,
+          },
         };
-      });
+      })
+      .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+      .slice(0, 3);
+    await recordSelectedMemoryAccess(memoryService, selectedCases.map((candidate) => candidate.result));
+
+    return selectedCases.map((candidate) => candidate.successCase);
   } catch (error) {
     console.error('Failed to retrieve success cases from memory:', error);
     return [];

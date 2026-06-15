@@ -138,6 +138,44 @@ describe('pre-implementation checklist formatting', () => {
     expect(issues).not.toContain('Stale failure should be hidden.');
   });
 
+  it('skips memory tool echo responses before creating historical checklist items', async () => {
+    const memoryService = {
+      search: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'echo',
+          content: 'Memory search unavailable; inspect focused files next.',
+        }),
+        makeMemory({
+          id: 'useful',
+          content: 'Freeze retry timers before asserting delayed refresh failures.',
+        }),
+      ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MemoryService;
+
+    const checklist = await generatePreImplementationChecklist({
+      subtask: {
+        id: '1.15',
+        description: 'Update retry scheduler',
+        filesToModify: [],
+        filesToCreate: [],
+      },
+      specDir: 'E:/spec',
+      projectDir: 'E:/project',
+      memoryService,
+    });
+
+    const historicalItems = checklist.items.filter((item) => item.category === 'historical_failure');
+    const issues = historicalItems.map((item) => item.issue).join('\n');
+
+    expect(historicalItems).toHaveLength(1);
+    expect(issues).toContain('Freeze retry timers before asserting delayed refresh failures.');
+    expect(issues).not.toContain('Memory search unavailable');
+    expect(historicalItems.every((item) => item.issue.trim().length > 0)).toBe(true);
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('echo');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('useful');
+  });
+
   it('keeps long historical memory content compact in prompt checklist output', async () => {
     const memoryService = {
       search: vi.fn().mockResolvedValue([

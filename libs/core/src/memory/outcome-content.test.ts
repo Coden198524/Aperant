@@ -16,6 +16,8 @@ describe("low-value memory line filtering", () => {
 				'Memory search results for "auth": 1. [gotcha] Already shown.',
 				"Memory search unavailable; inspect focused files next.",
 				"Memory noted locally, but could not be persisted.",
+				"No relevant memories found for this query; continue with focused inspection instead of repeating this search.",
+				"No relevant token-cost/file-prefetch memories found; continue with focused inspection instead of repeating this search.",
 				"No issues found.",
 				"Duration: 1234ms",
 				"Completed at: 2026-06-15T00:00:00.000Z",
@@ -75,6 +77,14 @@ describe("low-value memory line filtering", () => {
 	it("strips memory tool failure responses", () => {
 		const result = stripLowValueMemoryLines(
 			"Memory search unavailable; inspect focused files next.",
+		);
+
+		expect(result).toBe("");
+	});
+
+	it("strips memory search no-result guidance", () => {
+		const result = stripLowValueMemoryLines(
+			"No relevant memories found for this query; continue with focused inspection instead of repeating this search.",
 		);
 
 		expect(result).toBe("");

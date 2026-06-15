@@ -97,6 +97,43 @@ describe('pattern injection memory success cases', () => {
     expect(result.successCases).toHaveLength(3);
   });
 
+  it('skips memory tool echo responses instead of falling back to the current subtask', async () => {
+    const memoryService = {
+      search: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'echo',
+          content: 'Memory search unavailable; inspect focused files next.',
+          tags: ['subtask:echo'],
+        }),
+        makeMemory({
+          id: 'useful',
+          content: 'Cache refresh tests should freeze the retry clock.',
+          tags: ['subtask:useful'],
+        }),
+      ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MemoryService;
+
+    const result = await enhanceCoderPrompt('Base prompt\n\n## STEP 6: IMPLEMENT THE SUBTASK', {
+      subtask: {
+        id: '2.0',
+        description: 'Retry checkout flow',
+        patternFiles: [],
+      },
+      projectDir: 'E:/project',
+      specDir: 'E:/spec',
+      memoryService,
+    });
+
+    expect(result.successCases).toHaveLength(1);
+    expect(result.successCases[0].subtaskId).toBe('useful');
+    expect(result.enhancedPrompt).toContain('Cache refresh tests should freeze the retry clock.');
+    expect(result.enhancedPrompt).not.toContain('Memory search unavailable');
+    expect(result.enhancedPrompt).not.toContain('Retry checkout flow');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('echo');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('useful');
+  });
+
   it('compacts long success case memories before injecting them into the prompt', async () => {
     const longContent = [
       'Use a shared settings writer for app and workspace updates.',

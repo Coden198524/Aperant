@@ -180,12 +180,12 @@ export function createSearchMemoryTool(
         projectId,
         excludeDeprecated: true,
         promptContextOnly: shouldSearchPromptContextOnly(types),
-        recordAccess: true,
+        recordAccess: false,
       };
 
       let searchResults: Memory[];
       try {
-        searchResults = await proxy.searchMemory(filters);
+        searchResults = await searchMemoryWithUnavailableSignal(proxy, filters);
       } catch {
         return MEMORY_SEARCH_UNAVAILABLE_RESULT;
       }
@@ -198,9 +198,23 @@ export function createSearchMemoryTool(
         return formatNoSearchMemoryResults(types);
       }
 
-      return formatSearchMemoryOutput(query, memories);
+      const result = formatSearchMemoryOutput(query, memories);
+      void recordDisplayedSearchMemoryAccess(proxy, result.memories);
+      return result.output;
     },
   });
+}
+
+function searchMemoryWithUnavailableSignal(
+  proxy: WorkerObserverProxy,
+  filters: MemorySearchFilters,
+): Promise<Memory[]> {
+  const searchMemoryOrThrow = (
+    proxy as { searchMemoryOrThrow?: (filters: MemorySearchFilters) => Promise<Memory[]> }
+  ).searchMemoryOrThrow;
+  return typeof searchMemoryOrThrow === 'function'
+    ? searchMemoryOrThrow.call(proxy, filters)
+    : proxy.searchMemory(filters);
 }
 
 /**
@@ -255,6 +269,11 @@ interface SelectedSearchMemory {
   key: string;
 }
 
+interface FormattedSearchMemoryOutput {
+  output: string;
+  memories: Memory[];
+}
+
 function isHigherQualitySearchMemory(candidate: Memory, existing: Memory): boolean {
   return scoreSearchMemory(candidate) > scoreSearchMemory(existing);
 }
@@ -277,9 +296,9 @@ function formatNoSearchMemoryResults(types: MemoryType[] | undefined): string {
       .map(formatMachineSearchMemoryKind),
   );
   if (!machineKinds || machineKinds.length === 0) {
-    return 'No relevant memories found for this query.';
+    return 'No relevant memories found for this query; continue with focused inspection instead of repeating this search.';
   }
-  return `No relevant ${machineKinds.join('/')} memories found; inspect focused files next.`;
+  return `No relevant ${machineKinds.join('/')} memories found; continue with focused inspection instead of repeating this search.`;
 }
 
 function inferSearchTypes(query: string, requestedTypes: MemoryType[] | undefined): MemoryType[] | undefined {
@@ -402,7 +421,7 @@ function uniqueInOrder<T>(values: T[] | undefined): T[] | undefined {
   return unique;
 }
 
-function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
+function formatSearchMemoryOutput(query: string, memories: Memory[]): FormattedSearchMemoryOutput {
   const header = `Memory search results for "${truncateTextToBudget(
     query,
     MAX_SEARCH_QUERY_ECHO_CHARS,
@@ -410,6 +429,7 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
     { preserveTail: true },
   )}":`;
   const lines: string[] = [];
+  const renderedMemories: Memory[] = [];
   let omitted = 0;
 
   for (const memory of memories) {
@@ -417,6 +437,7 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
     const candidate = `${header}\n\n${[...lines, line].join('\n\n')}`;
     if (fitsSearchOutputBudget(candidate)) {
       lines.push(line);
+      renderedMemories.push(memory);
     } else {
       omitted += 1;
     }
@@ -431,7 +452,36 @@ function formatSearchMemoryOutput(query: string, memories: Memory[]): string {
     }
   }
 
-  return truncateTextToBudget(output, MAX_SEARCH_OUTPUT_CHARS, MAX_SEARCH_OUTPUT_TOKENS, { preserveTail: true });
+  return {
+    output: truncateTextToBudget(output, MAX_SEARCH_OUTPUT_CHARS, MAX_SEARCH_OUTPUT_TOKENS, { preserveTail: true }),
+    memories: renderedMemories,
+  };
+}
+
+async function recordDisplayedSearchMemoryAccess(
+  proxy: WorkerObserverProxy,
+  memories: readonly Memory[],
+): Promise<void> {
+  const seen = new Set<string>();
+  const ids = memories
+    .map((memory) => memory.id.trim())
+    .filter((id) => {
+      if (!id || seen.has(id)) {
+        return false;
+      }
+      seen.add(id);
+      return true;
+    });
+
+  await Promise.all(
+    ids.map(async (id) => {
+      try {
+        await proxy.updateAccessCount(id);
+      } catch {
+        // Access feedback should not block the agent's memory search result.
+      }
+    }),
+  );
 }
 
 function formatSearchMemoryResult(memory: Memory, index: number): string {

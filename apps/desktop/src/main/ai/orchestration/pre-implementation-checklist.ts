@@ -176,11 +176,19 @@ async function analyzeHistoricalFailures(
 
     const selectedFailures = failures
       .filter(isMemoryEligibleForPromptContext)
-      .slice(0, PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX);
-    await recordSelectedMemoryAccess(memoryService, selectedFailures);
+      .map((failure) => {
+        const content = formatMemoryContentForPrompt(failure, Number.MAX_SAFE_INTEGER);
+        if (!content) {
+          return null;
+        }
 
-    return selectedFailures.map((failure) => {
-      const content = formatMemoryContentForPrompt(failure, Number.MAX_SAFE_INTEGER);
+        return { failure, content };
+      })
+      .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+      .slice(0, PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX);
+    await recordSelectedMemoryAccess(memoryService, selectedFailures.map((candidate) => candidate.failure));
+
+    return selectedFailures.map(({ failure, content }) => {
       return {
         category: 'historical_failure' as const,
         priority: 'high' as const,
