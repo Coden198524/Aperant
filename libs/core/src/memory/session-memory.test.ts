@@ -94,6 +94,25 @@ describe('session memory context formatting', () => {
     expect(context).toContain('session memory middle omitted');
   });
 
+  it('folds repeated markdown memory lines before building context', () => {
+    const repeatedLine = 'SESSION_CONTEXT_REPEAT: same historical gotcha without new signal.';
+    const context = buildAutocodeSessionContext({
+      gotchasMarkdown: [
+        '# Gotchas',
+        'SESSION_CONTEXT_HEAD',
+        ...Array.from({ length: 120 }, () => repeatedLine),
+        'SESSION_CONTEXT_TAIL',
+      ].join('\n'),
+      maxMarkdownChars: 5000,
+    });
+
+    expect(context.length).toBeLessThan(1200);
+    expect(context).toContain('SESSION_CONTEXT_HEAD');
+    expect(context).toContain('SESSION_CONTEXT_TAIL');
+    expect(context).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((context.match(/SESSION_CONTEXT_REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('keeps the newest markdown memory entries before compacting context', () => {
     const gotchasMarkdown = [
       '# Gotchas',
@@ -248,6 +267,26 @@ describe('session memory storage formatting', () => {
     expect(entry).toContain('CONTEXT_TAIL');
     expect(entry).toContain('session memory entry middle omitted before storage');
     expect(entry.length).toBeLessThan(1400);
+  });
+
+  it('folds repeated gotcha lines before storing markdown entries', () => {
+    const repeatedLine = 'SESSION_GOTCHA_REPEAT: same failure note repeated without new evidence.';
+    const entry = formatAutocodeGotchaMarkdownEntry(
+      {
+        gotcha: [
+          'SESSION_GOTCHA_HEAD',
+          ...Array.from({ length: 120 }, () => repeatedLine),
+          'SESSION_GOTCHA_TAIL',
+        ].join('\n'),
+      },
+      new Date('2026-01-01T00:00:00.000Z'),
+    );
+
+    expect(entry.length).toBeLessThan(1200);
+    expect(entry).toContain('SESSION_GOTCHA_HEAD');
+    expect(entry).toContain('SESSION_GOTCHA_TAIL');
+    expect(entry).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((entry.match(/SESSION_GOTCHA_REPEAT/g) ?? [])).toHaveLength(1);
   });
 
   it('compacts localized discovery descriptions before storing session memory', () => {

@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, renameSync, statSync, unlinkSync, writeFileSync } from 'node:fs';
 import { join } from 'node:path';
 
+import { foldRepeatedAutocodePromptLines } from '../runtime/prompt-context.js';
 import {
   inferAutocodeRuntimeFileWriteLockScopeFromSpecDir,
   withAutocodeRuntimeFileWriteLockSync,
@@ -579,21 +580,22 @@ function compactAutocodeSessionText(value: string, maxChars: number, maxTokens: 
   if (maxChars <= 0 || maxTokens <= 0) {
     return '';
   }
-  if (value.length <= maxChars && estimateTokens(value) <= maxTokens) {
-    return value;
+  const folded = foldRepeatedAutocodePromptLines(value);
+  if (folded.length <= maxChars && estimateTokens(folded) <= maxTokens) {
+    return folded;
   }
 
-  const charBounded = compactAutocodeSessionTextByChars(value, maxChars, marker);
+  const charBounded = compactAutocodeSessionTextByChars(folded, maxChars, marker);
   if (estimateTokens(charBounded) <= maxTokens) {
     return charBounded;
   }
 
   let best = '';
   let low = 1;
-  let high = Math.min(maxChars, value.length);
+  let high = Math.min(maxChars, folded.length);
   while (low <= high) {
     const midpoint = Math.floor((low + high) / 2);
-    const candidate = compactAutocodeSessionTextByChars(value, midpoint, marker);
+    const candidate = compactAutocodeSessionTextByChars(folded, midpoint, marker);
     if (estimateTokens(candidate) <= maxTokens) {
       best = candidate;
       low = midpoint + 1;
