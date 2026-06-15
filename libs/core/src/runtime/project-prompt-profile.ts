@@ -1,3 +1,5 @@
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
+
 export type AutocodeProjectSize = 'small' | 'medium' | 'large';
 export type AutocodePromptIntensity = 'lightweight' | 'standard' | 'thorough';
 export type AutocodeProjectDomain = 'general' | 'web' | 'desktop' | 'api' | 'library';
@@ -49,34 +51,61 @@ export interface AutocodeProjectPromptProfile {
 }
 
 function formatList(values: string[], fallback = 'none detected'): string {
-  if (values.length === 0) return fallback;
-  return values.slice(0, 8).join(', ');
+  const compact = uniqueProfileValues(values).slice(0, 8);
+  if (compact.length === 0) return fallback;
+  return compact.join(', ');
 }
 
 function formatCommands(commands: string[]): string {
-  if (commands.length === 0) return 'none detected';
-  return commands.slice(0, 4).map((command) => `- ${command}`).join('\n');
+  const compact = uniqueProfileValues(commands).slice(0, 4);
+  if (compact.length === 0) return 'none detected';
+  return compact.map((command) => `- ${command}`).join('\n');
 }
 
 function formatInlineList(values: string[] | undefined, fallback = 'none detected'): string {
-  if (!values || values.length === 0) return fallback;
-  return values.slice(0, 6).join(', ');
+  const compact = uniqueProfileValues(values).slice(0, 6);
+  if (compact.length === 0) return fallback;
+  return compact.join(', ');
 }
 
 function formatBulletList(values: string[] | undefined, fallback: string): string {
-  if (!values || values.length === 0) return `- ${fallback}`;
-  return values.slice(0, 6).map((value) => `- ${value}`).join('\n');
+  const compact = uniqueProfileValues(values).slice(0, 6);
+  if (compact.length === 0) return `- ${fallback}`;
+  return compact.map((value) => `- ${compactText(value, 160)}`).join('\n');
 }
 
 function compactText(value: string, maxLength: number): string {
-  if (value.length <= maxLength) return value;
-  if (maxLength <= 3) return value.slice(0, maxLength);
-  return `${value.slice(0, maxLength - 3).trimEnd()}...`;
+  const compact = normalizeProfilePromptText(value);
+  if (compact.length <= maxLength) return compact;
+  if (maxLength <= 3) return compact.slice(0, maxLength);
+  return `${compact.slice(0, maxLength - 3).trimEnd()}...`;
 }
 
 function formatCompactHints(values: string[] | undefined, fallback: string): string {
-  if (!values || values.length === 0) return fallback;
-  return values.slice(0, 2).map((value) => compactText(value, 96)).join('; ');
+  const compact = uniqueProfileValues(values).slice(0, 2);
+  if (compact.length === 0) return fallback;
+  return compact.map((value) => compactText(value, 96)).join('; ');
+}
+
+function uniqueProfileValues(values: string[] | undefined): string[] {
+  const compact: string[] = [];
+  const seen = new Set<string>();
+  for (const value of values ?? []) {
+    const normalized = normalizeProfilePromptText(value);
+    const key = normalized.toLowerCase();
+    if (!normalized || seen.has(key)) {
+      continue;
+    }
+    seen.add(key);
+    compact.push(normalized);
+  }
+  return compact;
+}
+
+function normalizeProfilePromptText(value: string): string {
+  return foldRepeatedAutocodePromptLines(String(value ?? ''))
+    .replace(/\s+/g, ' ')
+    .trim();
 }
 
 function buildProjectConventionSection(profile: AutocodeProjectPromptProfile): string {
@@ -526,12 +555,12 @@ When a bundled template asks for heavier process than this project profile requi
 export function buildAutocodeCompactProjectPromptProfileSection(
   profile: AutocodeProjectPromptProfile,
 ): string {
-  const commands = [
+  const commands = uniqueProfileValues([
     ...profile.commands.typecheck.map((command) => `typecheck: ${command}`),
     ...profile.commands.lint.map((command) => `lint: ${command}`),
     ...profile.commands.test.map((command) => `test: ${command}`),
     ...profile.commands.build.map((command) => `build: ${command}`),
-  ].slice(0, 4);
+  ]).slice(0, 4);
 
   return `## PROJECT PROFILE
 
