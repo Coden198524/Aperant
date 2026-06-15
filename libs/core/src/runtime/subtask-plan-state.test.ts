@@ -26,6 +26,25 @@ describe('Autocode subtask plan state summaries', () => {
     expect(summary).toContain('Summary tail should survive');
   });
 
+  it('folds repeated plain assistant summary lines before runtime state', () => {
+    const repeatedLine = 'SUBTASK SUMMARY REPEAT: same verification log line without new signal.';
+    const content = [
+      'SUBTASK SUMMARY HEAD',
+      ...Array.from({ length: 120 }, () => repeatedLine),
+      'SUBTASK SUMMARY TAIL',
+    ].join('\n');
+
+    const summary = summarizeAutocodeSessionResult({
+      messages: [{ role: 'assistant', content }],
+      outcome: 'completed',
+    });
+
+    expect(summary).toContain('SUBTASK SUMMARY HEAD');
+    expect(summary).toContain('SUBTASK SUMMARY TAIL');
+    expect(summary).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((summary?.match(/SUBTASK SUMMARY REPEAT/g) ?? [])).toHaveLength(1);
+  });
+
   it('compacts long completion summary tables while preserving review rows', () => {
     const longDetails = `${'implementation detail '.repeat(80)}final table tail`;
     const content = [

@@ -1,4 +1,5 @@
 import type { AutocodeSessionResult } from './agent-session-types.js';
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
 import {
   analyzeAutocodeWorkDependencies,
   buildAutocodeWorkDependencyStatusMap,
@@ -179,7 +180,6 @@ export function summarizeAutocodeSessionResult(
       .replace(/```[\s\S]*?```/g, ' ')
       .replace(/`([^`]+)`/g, '$1')
       .replace(/[#*_>\-[\]]/g, ' ')
-      .replace(/\s+/g, ' ')
       .trim();
 
     if (normalized) {
@@ -247,7 +247,13 @@ function shortenAutocodePromptText(
   value: string,
   maxLength = AUTOCODE_SESSION_RESULT_SUMMARY_MAX_CHARS,
 ): string {
-  const compact = value.replace(/\s+/g, ' ').trim();
+  const compact = foldRepeatedAutocodePromptLines(
+    value
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n'),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
   if (compact.length <= maxLength) {
     return compact;
   }
