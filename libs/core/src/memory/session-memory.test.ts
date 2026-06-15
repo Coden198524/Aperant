@@ -94,6 +94,42 @@ describe('session memory context formatting', () => {
     expect(context).toContain('session memory middle omitted');
   });
 
+  it('keeps the newest markdown memory entries before compacting context', () => {
+    const gotchasMarkdown = [
+      '# Gotchas',
+      'Things to watch.',
+      ...Array.from(
+        { length: 8 },
+        (_, index) => `## [2026-01-0${index + 1}]\nGOTCHA_${index} ${'detail '.repeat(8)}`,
+      ),
+    ].join('\n\n');
+    const patternsMarkdown = [
+      '# Patterns',
+      'Reusable approaches.',
+      ...Array.from(
+        { length: 8 },
+        (_, index) => `## Pattern ${index}\nPATTERN_${index} ${'detail '.repeat(8)}`,
+      ),
+    ].join('\n\n');
+
+    const context = buildAutocodeSessionContext({
+      gotchasMarkdown,
+      patternsMarkdown,
+      maxMarkdownChars: 1600,
+      maxMarkdownEntries: 3,
+    });
+
+    expect(context).toContain('# Gotchas');
+    expect(context).toContain('# Patterns');
+    expect(context).toContain('5 older session memory entries omitted');
+    expect(context).toContain('GOTCHA_5');
+    expect(context).toContain('GOTCHA_7');
+    expect(context).toContain('PATTERN_5');
+    expect(context).toContain('PATTERN_7');
+    expect(context).not.toContain('GOTCHA_0');
+    expect(context).not.toContain('PATTERN_0');
+  });
+
   it('keeps localized gotchas and patterns within estimated token budgets', () => {
     const context = buildAutocodeSessionContext({
       gotchasMarkdown: [

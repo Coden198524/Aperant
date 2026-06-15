@@ -1,5 +1,5 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import {
@@ -9,6 +9,7 @@ import {
 
 import type { ToolContext } from '../../types';
 import { getBuildProgressTool } from '../get-build-progress';
+import { getSessionContextTool } from '../get-session-context';
 import { updateSubtaskStatusTool } from '../update-subtask-status';
 import { updateQaStatusTool } from '../update-qa-status';
 
@@ -136,5 +137,30 @@ describe('Autocode plan update tools', () => {
     expect(result).toContain('NEXT_TAIL');
     expect(result).toContain('[middle omitted]');
     expect(result.length).toBeLessThan(1400);
+  });
+
+  it('returns recent session memory entries instead of full old markdown history', async () => {
+    const memoryDir = join(specDir, 'memory');
+    await mkdir(memoryDir, { recursive: true });
+    await writeFile(
+      join(memoryDir, 'gotchas.md'),
+      [
+        '# Gotchas',
+        'Things to watch.',
+        ...Array.from(
+          { length: 9 },
+          (_, index) => `## [2026-01-0${index + 1}]\nGOTCHA_${index} ${'detail '.repeat(8)}`,
+        ),
+      ].join('\n\n'),
+      'utf-8',
+    );
+
+    const result = await getSessionContextTool.config.execute({}, context);
+
+    expect(result).toContain('## Gotchas');
+    expect(result).toContain('3 older session memory entries omitted');
+    expect(result).toContain('GOTCHA_3');
+    expect(result).toContain('GOTCHA_8');
+    expect(result).not.toContain('GOTCHA_0');
   });
 });

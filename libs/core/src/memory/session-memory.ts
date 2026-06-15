@@ -25,6 +25,7 @@ const AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_CHARS = 800;
 const AUTOCODE_SESSION_GOTCHA_STORED_TEXT_MAX_TOKENS = 220;
 const AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_CHARS = 500;
 const AUTOCODE_SESSION_GOTCHA_STORED_CONTEXT_MAX_TOKENS = 150;
+const AUTOCODE_SESSION_MARKDOWN_ENTRY_LIMIT = 6;
 const AUTOCODE_SESSION_MARKDOWN_OMISSION_MARKER =
   '\n...[session memory middle omitted; inspect memory files for exact omitted detail]...\n';
 const AUTOCODE_SESSION_STORED_OMISSION_MARKER =
@@ -75,6 +76,7 @@ export interface BuildAutocodeSessionContextInput {
   patternsMarkdown?: string | null;
   maxDiscoveries?: number;
   maxMarkdownChars?: number;
+  maxMarkdownEntries?: number;
 }
 
 export function getAutocodeSessionMemoryDir(specDir: string): string {
@@ -267,6 +269,7 @@ export function appendAutocodeSessionGotcha(
 export function buildAutocodeSessionContext(input: BuildAutocodeSessionContextInput): string {
   const maxDiscoveries = input.maxDiscoveries ?? 20;
   const maxMarkdownChars = input.maxMarkdownChars ?? 1000;
+  const maxMarkdownEntries = input.maxMarkdownEntries ?? AUTOCODE_SESSION_MARKDOWN_ENTRY_LIMIT;
   const parts: string[] = [];
 
   const discoveries = selectRecentSessionDiscoveries(
@@ -292,25 +295,87 @@ export function buildAutocodeSessionContext(input: BuildAutocodeSessionContextIn
 
   const gotchas = input.gotchasMarkdown?.trim() ? input.gotchasMarkdown : '';
   if (gotchas) {
-    parts.push('\n## Gotchas');
-    parts.push(compactAutocodeSessionContextText(
+    const gotchasContext = compactAutocodeSessionMarkdownForContext(
       gotchas,
       maxMarkdownChars,
-      estimateAutocodeSessionMarkdownTokenBudget(maxMarkdownChars),
-    ));
+      maxMarkdownEntries,
+    );
+    if (gotchasContext) {
+      parts.push('\n## Gotchas');
+      parts.push(gotchasContext);
+    }
   }
 
   const patterns = input.patternsMarkdown?.trim() ? input.patternsMarkdown : '';
   if (patterns) {
-    parts.push('\n## Patterns');
-    parts.push(compactAutocodeSessionContextText(
+    const patternsContext = compactAutocodeSessionMarkdownForContext(
       patterns,
       maxMarkdownChars,
-      estimateAutocodeSessionMarkdownTokenBudget(maxMarkdownChars),
-    ));
+      maxMarkdownEntries,
+    );
+    if (patternsContext) {
+      parts.push('\n## Patterns');
+      parts.push(patternsContext);
+    }
   }
 
   return parts.length === 0 ? AUTOCODE_NO_SESSION_CONTEXT_MESSAGE : parts.join('\n');
+}
+
+function compactAutocodeSessionMarkdownForContext(
+  markdown: string,
+  maxChars: number,
+  maxEntries: number,
+): string {
+  const recentEntries = selectRecentAutocodeSessionMarkdownEntries(markdown, maxEntries);
+  return compactAutocodeSessionContextText(
+    recentEntries,
+    maxChars,
+    estimateAutocodeSessionMarkdownTokenBudget(maxChars),
+  );
+}
+
+function selectRecentAutocodeSessionMarkdownEntries(markdown: string, maxEntries: number): string {
+  const normalized = markdown.trim();
+  if (!normalized || maxEntries <= 0) {
+    return '';
+  }
+
+  const lines = normalized.split(/\r?\n/);
+  const firstEntryIndex = lines.findIndex((line) => isAutocodeSessionMarkdownEntryHeading(line));
+  if (firstEntryIndex < 0) {
+    return normalized;
+  }
+
+  const header = lines.slice(0, firstEntryIndex).join('\n').trim();
+  const entries: string[] = [];
+  let currentEntry: string[] = [];
+  for (const line of lines.slice(firstEntryIndex)) {
+    if (isAutocodeSessionMarkdownEntryHeading(line) && currentEntry.length > 0) {
+      entries.push(currentEntry.join('\n').trimEnd());
+      currentEntry = [];
+    }
+    currentEntry.push(line);
+  }
+  if (currentEntry.length > 0) {
+    entries.push(currentEntry.join('\n').trimEnd());
+  }
+
+  if (entries.length <= maxEntries) {
+    return normalized;
+  }
+
+  const selected = entries.slice(-maxEntries);
+  const omittedCount = entries.length - selected.length;
+  return [
+    header,
+    `[... ${omittedCount} older session memory ${omittedCount === 1 ? 'entry' : 'entries'} omitted ...]`,
+    ...selected,
+  ].filter(Boolean).join('\n\n');
+}
+
+function isAutocodeSessionMarkdownEntryHeading(line: string): boolean {
+  return /^##\s+/.test(line.trim());
 }
 
 function selectRecentSessionDiscoveries(
