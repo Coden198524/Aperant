@@ -5,6 +5,8 @@
  * Three triggers: gotcha injection, scratchpad reflection, search short-circuit.
  */
 
+import { createHash } from 'node:crypto';
+
 import type { Scratchpad } from '../observer/scratchpad.js';
 import { isMemoryEligibleForPromptContext } from '../retrieval/context-packer.js';
 import type {
@@ -40,6 +42,7 @@ const MAX_SHORT_CIRCUIT_TOKENS = 85;
 const MAX_SHORT_CIRCUIT_PATTERN_CHARS = 120;
 const BROAD_SEARCH_PATTERN_CHARS = 3;
 const SCRATCHPAD_MEMORY_ID_PREFIX = 'scratchpad:';
+const SCRATCHPAD_MEMORY_ID_HASH_CHARS = 16;
 
 // ============================================================
 // STEP INJECTION DECIDER
@@ -111,8 +114,8 @@ export class StepInjectionDecider {
         .filter((entry) => shouldInjectScratchpadEntry(entry))
         .filter(
           (entry) =>
-            !recentContext.injectedMemoryIds.has(
-              getScratchpadInjectionId(entry),
+            !getScratchpadInjectionIds(entry).some((id) =>
+              recentContext.injectedMemoryIds.has(id),
             ),
         );
       const selectedScratchpadEntries = selectScratchpadEntriesForInjection(newEntries);
@@ -292,6 +295,26 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 function getScratchpadInjectionId(entry: AcuteCandidate): string {
+  const key = getScratchpadRenderedTextKey(entry);
+  if (!key) {
+    return getLegacyScratchpadInjectionId(entry);
+  }
+
+  const hash = createHash('sha256')
+    .update(key, 'utf8')
+    .digest('hex')
+    .slice(0, SCRATCHPAD_MEMORY_ID_HASH_CHARS);
+  return `${SCRATCHPAD_MEMORY_ID_PREFIX}${hash}`;
+}
+
+function getScratchpadInjectionIds(entry: AcuteCandidate): string[] {
+  return [
+    getScratchpadInjectionId(entry),
+    getLegacyScratchpadInjectionId(entry),
+  ];
+}
+
+function getLegacyScratchpadInjectionId(entry: AcuteCandidate): string {
   return `${SCRATCHPAD_MEMORY_ID_PREFIX}${entry.signalType}:${entry.stepNumber}:${entry.capturedAt}`;
 }
 

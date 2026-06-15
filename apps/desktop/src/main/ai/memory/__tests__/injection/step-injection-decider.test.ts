@@ -413,7 +413,7 @@ describe('StepInjectionDecider', () => {
 
       expect(result).not.toBeNull();
       expect(result?.type).toBe('scratchpad_reflection');
-      expect(result?.memoryIds[0]).toMatch(/^scratchpad:self_correction:4:/);
+      expect(result?.memoryIds[0]).toMatch(/^scratchpad:[a-f0-9]{16}$/);
       expect(result?.content).toContain('MEMORY REFLECTION');
     });
 
@@ -541,10 +541,9 @@ describe('StepInjectionDecider', () => {
       });
 
       expect(result?.type).toBe('scratchpad_reflection');
-      expect(result?.memoryIds).toEqual([
-        `scratchpad:error_retry:4:${capturedAt + 1}`,
-        `scratchpad:parallel_conflict:4:${capturedAt + 2}`,
-      ]);
+      expect(result?.memoryIds).toHaveLength(2);
+      expect(result?.memoryIds.every((id) => /^scratchpad:[a-f0-9]{16}$/.test(id))).toBe(true);
+      expect(result?.memoryIds[0]).not.toBe(result?.memoryIds[1]);
       expect(result?.content).toContain('Resolve the latest writer before retrying.');
       expect(result?.content?.match(/SCRATCH_RENDERED_DUP_HEAD/g)).toHaveLength(1);
       expect(result?.content).not.toContain('self_correction:');
@@ -617,6 +616,40 @@ describe('StepInjectionDecider', () => {
       });
 
       expect(result).toBeNull();
+    });
+
+    it('does not reinject equivalent scratchpad text recorded at a later step', async () => {
+      const firstEntry: AcuteCandidate = {
+        signalType: 'self_correction',
+        rawData: { triggeringText: 'Use the stable retry helper before continuing.' },
+        priority: 0.9,
+        capturedAt: Date.now(),
+        stepNumber: 4,
+      };
+      scratchpad = makeScratchpad([firstEntry]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const firstResult = await decider.decide(5, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(),
+      });
+
+      expect(firstResult?.type).toBe('scratchpad_reflection');
+
+      const repeatedEntry: AcuteCandidate = {
+        ...firstEntry,
+        capturedAt: firstEntry.capturedAt + 10_000,
+        stepNumber: 9,
+      };
+      scratchpad = makeScratchpad([repeatedEntry]);
+      decider = new StepInjectionDecider(memoryService, scratchpad, 'proj-1');
+
+      const repeatedResult = await decider.decide(10, {
+        toolCalls: [],
+        injectedMemoryIds: new Set(firstResult?.memoryIds ?? []),
+      });
+
+      expect(repeatedResult).toBeNull();
     });
 
     it('passes stepNumber - 1 to getNewSince', async () => {
