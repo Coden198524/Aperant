@@ -316,6 +316,71 @@ describe('memory agent tools', () => {
     expect(result).not.toContain('SRC/auth/token.ts');
   });
 
+  it('formats search_memory prefetch patterns without exposing raw JSON', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'prefetch-json',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: [],
+            frequentlyReadFiles: [
+              'src/auth/session.ts',
+              'src/auth/token.ts',
+            ],
+          }),
+          relatedFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number; types: ['prefetch_pattern'] },
+      string
+    >(tool, { query: 'auth prefetch', limit: 3, types: ['prefetch_pattern'] });
+
+    expect(result).toContain('[prefetch_pattern]');
+    expect(result).toContain('Prefetch together: src/auth/session.ts, src/auth/token.ts');
+    expect(result).not.toContain('frequentlyReadFiles');
+    expect(result).not.toContain('{');
+  });
+
+  it('deduplicates search_memory prefetch patterns by rendered content', async () => {
+    const proxy = {
+      searchMemory: vi.fn().mockResolvedValue([
+        makeMemory({
+          id: 'prefetch-a',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: [],
+            frequentlyReadFiles: ['src\\auth\\session.ts', './src/auth/token.ts/'],
+          }),
+          relatedFiles: [],
+        }),
+        makeMemory({
+          id: 'prefetch-b',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: [],
+            frequentlyReadFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+          }),
+          relatedFiles: [],
+        }),
+      ]),
+    } as unknown as WorkerObserverProxy;
+    const tool = createSearchMemoryTool(proxy, 'project-1');
+
+    const result = await executeTool<
+      { query: string; limit: number; types: ['prefetch_pattern'] },
+      string
+    >(tool, { query: 'auth prefetch duplicate', limit: 3, types: ['prefetch_pattern'] });
+
+    expect((result.match(/\[prefetch_pattern\]/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('Prefetch together: src/auth/session.ts, src/auth/token.ts');
+    expect(result).not.toContain('frequentlyReadFiles');
+  });
+
   it('preserves useful tail details when compacting search_memory result content', async () => {
     const proxy = {
       searchMemory: vi.fn().mockResolvedValue([

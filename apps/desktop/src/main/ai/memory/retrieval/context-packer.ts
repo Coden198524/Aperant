@@ -6,6 +6,7 @@ export {
   MAX_PROMPT_CONTEXT_MEMORIES,
   MIN_PACKED_MEMORY_CONFIDENCE,
   estimateTokens,
+  formatMemoryContentForPrompt,
   isMemoryEligibleForPromptContext,
   packContext,
 } from '@autocode/core/memory/retrieval';

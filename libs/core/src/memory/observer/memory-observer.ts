@@ -31,6 +31,50 @@ export type MemoryObserverIpcRequest = AutocodeMemoryRuntimeObservationIpcReques
 // ============================================================
 
 const EXTERNAL_TOOL_NAMES = new Set(['WebFetch', 'WebSearch']);
+const MAX_CO_ACCESS_CANDIDATES = 8;
+const MAX_OBSERVER_RELATED_MODULES = 6;
+const OBSERVER_GENERIC_PATH_SEGMENTS = new Set([
+  'app',
+  'apps',
+  'ai',
+  'cli',
+  'client',
+  'component',
+  'components',
+  'core',
+  'desktop',
+  'e2e',
+  'feature',
+  'features',
+  'helper',
+  'helpers',
+  'lib',
+  'libs',
+  'main',
+  'package',
+  'packages',
+  'preload',
+  'renderer',
+  'server',
+  'service',
+  'services',
+  'shared',
+  'spec',
+  'specs',
+  'src',
+  'test',
+  'tests',
+  'util',
+  'utils',
+]);
+
+interface RankedCoAccessPair {
+  fileA: string;
+  fileB: string;
+  key: string;
+  accessScore: number;
+  lastAccessStep: number;
+}
 
 // ============================================================
 // MEMORY OBSERVER
@@ -99,12 +143,16 @@ export class MemoryObserver {
    * but must complete within a reasonable budget.
    */
   async finalize(outcome: SessionOutcome): Promise<MemoryCandidate[]> {
-    const candidates: MemoryCandidate[] = [
+    let candidates: MemoryCandidate[] = [
       ...this.finalizeCoAccess(),
       ...this.finalizeErrorRetry(),
       ...this.finalizeAcuteCandidates(),
       ...this.finalizeRepeatedGrep(),
     ];
+
+    if (outcome === 'failure' || outcome === 'abandoned') {
+      candidates = candidates.filter((candidate) => candidate.proposedType === 'dead_end');
+    }
 
     // Apply trust gate to all candidates
     const gated = candidates.map((c) => applyTrustGate(c, this.externalToolCallStep));
@@ -215,25 +263,52 @@ export class MemoryObserver {
   // ============================================================
 
   private finalizeCoAccess(): MemoryCandidate[] {
-    const candidates: MemoryCandidate[] = [];
-    const { intraSessionCoAccess } = this.scratchpad.analytics;
+    const { fileAccessCounts, fileLastAccess, intraSessionCoAccess } =
+      this.scratchpad.analytics;
+    const pairsByKey = new Map<string, RankedCoAccessPair>();
 
     for (const [fileA, coFiles] of intraSessionCoAccess) {
       for (const fileB of coFiles) {
-        candidates.push({
-          signalType: 'co_access',
-          proposedType: 'prefetch_pattern',
-          content: `Files "${fileA}" and "${fileB}" are frequently accessed together in the same session.`,
-          relatedFiles: [fileA, fileB],
-          relatedModules: [],
-          confidence: 0.65,
-          priority: 0.91,
-          originatingStep: this.scratchpad.analytics.currentStep,
-        });
+        const pair = rankCoAccessPair(
+          fileA,
+          fileB,
+          fileAccessCounts,
+          fileLastAccess,
+        );
+        if (!pair) {
+          continue;
+        }
+
+        const existing = pairsByKey.get(pair.key);
+        if (
+          !existing ||
+          pair.accessScore > existing.accessScore ||
+          (pair.accessScore === existing.accessScore &&
+            pair.lastAccessStep > existing.lastAccessStep)
+        ) {
+          pairsByKey.set(pair.key, pair);
+        }
       }
     }
 
-    return candidates;
+    return [...pairsByKey.values()]
+      .sort(
+        (a, b) =>
+          b.accessScore - a.accessScore ||
+          b.lastAccessStep - a.lastAccessStep ||
+          a.key.localeCompare(b.key),
+      )
+      .slice(0, MAX_CO_ACCESS_CANDIDATES)
+      .map((pair) => ({
+        signalType: 'co_access',
+        proposedType: 'prefetch_pattern',
+        content: formatCoAccessPrefetchPattern(pair),
+        relatedFiles: [pair.fileA, pair.fileB],
+        relatedModules: inferObserverRelatedModules([pair.fileA, pair.fileB]),
+        confidence: 0.65,
+        priority: 0.91,
+        originatingStep: this.scratchpad.analytics.currentStep,
+      }));
   }
 
   private finalizeErrorRetry(): MemoryCandidate[] {
@@ -327,4 +402,104 @@ export class MemoryObserver {
     // Deferred to PromotionPipeline which has access to the provider factory.
     return [];
   }
+}
+
+function formatCoAccessPrefetchPattern(pair: RankedCoAccessPair): string {
+  return JSON.stringify({
+    alwaysReadFiles: [],
+    frequentlyReadFiles: [pair.fileA, pair.fileB],
+  });
+}
+
+function rankCoAccessPair(
+  fileA: string,
+  fileB: string,
+  fileAccessCounts: ReadonlyMap<string, number>,
+  fileLastAccess: ReadonlyMap<string, number>,
+): RankedCoAccessPair | null {
+  const keyA = normalizeObserverPathKey(fileA);
+  const keyB = normalizeObserverPathKey(fileB);
+  if (!keyA || !keyB || keyA === keyB) {
+    return null;
+  }
+
+  const [firstFile, secondFile, firstKey, secondKey] =
+    keyA <= keyB
+      ? [fileA, fileB, keyA, keyB]
+      : [fileB, fileA, keyB, keyA];
+  return {
+    fileA: firstFile,
+    fileB: secondFile,
+    key: `${firstKey}\0${secondKey}`,
+    accessScore:
+      (fileAccessCounts.get(fileA) ?? 0) + (fileAccessCounts.get(fileB) ?? 0),
+    lastAccessStep: Math.max(
+      fileLastAccess.get(fileA) ?? 0,
+      fileLastAccess.get(fileB) ?? 0,
+    ),
+  };
+}
+
+function normalizeObserverPathKey(filePath: string): string {
+  return filePath
+    .replace(/\s+/g, ' ')
+    .replace(/\\/g, '/')
+    .replace(/\/+/g, '/')
+    .trim()
+    .replace(/^(?:\.\/)+/, '')
+    .replace(/\/+$/, '')
+    .toLowerCase();
+}
+
+function inferObserverRelatedModules(filePaths: readonly string[]): string[] {
+  const seen = new Set<string>();
+  const modules: string[] = [];
+
+  for (const filePath of filePaths) {
+    const normalized = normalizeObserverPathKey(filePath);
+    if (!normalized) {
+      continue;
+    }
+
+    const segments = normalized.split('/').filter(Boolean);
+    const directorySegments = getObserverModuleDirectorySegments(segments);
+    const candidates = directorySegments.length > 0
+      ? directorySegments
+      : [stripObserverFileExtension(segments.at(-1) ?? '')];
+
+    for (const segment of candidates) {
+      if (
+        !segment ||
+        OBSERVER_GENERIC_PATH_SEGMENTS.has(segment) ||
+        seen.has(segment)
+      ) {
+        continue;
+      }
+
+      seen.add(segment);
+      modules.push(segment);
+      if (modules.length >= MAX_OBSERVER_RELATED_MODULES) {
+        return modules;
+      }
+    }
+  }
+
+  return modules;
+}
+
+function stripObserverFileExtension(fileName: string): string {
+  return fileName.replace(/\.[^.]+$/, '');
+}
+
+function getObserverModuleDirectorySegments(segments: readonly string[]): string[] {
+  const directorySegments = segments.slice(0, -1);
+  const sourceIndex = directorySegments.lastIndexOf('src');
+  const scopedDirectories =
+    sourceIndex >= 0
+      ? directorySegments.slice(sourceIndex + 1)
+      : directorySegments;
+
+  return scopedDirectories.filter(
+    (segment) => !OBSERVER_GENERIC_PATH_SEGMENTS.has(segment),
+  );
 }

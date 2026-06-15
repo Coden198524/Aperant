@@ -14,7 +14,7 @@ import { z } from 'zod/v3';
 import type { Tool as AITool } from 'ai';
 import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory, MemoryType, MemorySearchFilters } from '../types';
-import { estimateTokens, isMemoryEligibleForPromptContext } from '../retrieval/context-packer';
+import { estimateTokens, formatMemoryContentForPrompt, isMemoryEligibleForPromptContext } from '../retrieval/context-packer';
 
 const DEFAULT_SEARCH_LIMIT = 3;
 const MAX_SEARCH_LIMIT = 8;
@@ -142,16 +142,17 @@ export function createSearchMemoryStub(): AITool<SearchMemoryInput, string> {
   });
 }
 
-function dedupeMemories<T extends { content: string }>(memories: T[]): T[] {
+function dedupeMemories(memories: Memory[]): Memory[] {
   const seenNormalized = new Set<string>();
   const seenTokenSets: Set<string>[] = [];
-  const result: T[] = [];
+  const result: Memory[] = [];
   for (const memory of memories) {
-    const key = normalizeContent(memory.content);
+    const promptContent = formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER);
+    const key = normalizeContent(promptContent);
     if (!key || seenNormalized.has(key)) {
       continue;
     }
-    const tokens = new Set(tokenizeContent(memory.content));
+    const tokens = new Set(tokenizeContent(promptContent));
     if (isSimilarToSeenSearchResult(tokens, seenTokenSets)) {
       continue;
     }
@@ -270,7 +271,7 @@ function formatSearchMemoryResult(memory: Memory, index: number): string {
   const fileRef = formatFileRefs(memory.relatedFiles);
   const confidence = `(confidence: ${(memory.confidence * 100).toFixed(0)}%)`;
   return `${index}. [${memory.type}]${fileRef} ${confidence}\n   ${truncateTextToBudget(
-    memory.content,
+    formatMemoryContentForPrompt(memory, Number.MAX_SAFE_INTEGER),
     MAX_MEMORY_RESULT_CHARS,
     MAX_MEMORY_RESULT_TOKENS,
     { preserveTail: true },

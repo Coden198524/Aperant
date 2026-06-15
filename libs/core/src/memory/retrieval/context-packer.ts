@@ -86,6 +86,7 @@ const PACKED_MEMORY_TRUNCATION_HEAD_RATIO = 0.65;
 const PACKED_MEMORY_HEADER = '## Relevant Context from Memory';
 const MIN_COMPACT_MEMORY_CONTENT_TOKENS = 12;
 const MIN_COMPACT_MEMORY_TOTAL_TOKENS = 18;
+const MAX_PREFETCH_PATTERN_PROMPT_FILES = 4;
 
 // ============================================================
 // MAIN EXPORT
@@ -211,6 +212,13 @@ export function isMemoryEligibleForPromptContext(memory: Memory): boolean {
   return isNormalizedMemoryEligibleForPromptContext(normalized);
 }
 
+export function formatMemoryContentForPrompt(
+  memory: Memory,
+  maxChars = MAX_PACKED_MEMORY_CONTENT_CHARS,
+): string {
+  return truncateText(getMemoryPromptContent(memory), maxChars);
+}
+
 function isNormalizedMemoryEligibleForPromptContext(memory: Memory): boolean {
   if (memory.deprecated) {
     return false;
@@ -257,13 +265,14 @@ function packTypeMemories(
   state: PackState,
 ): void {
   let typeTokensUsed = 0;
-  const included: string[] = []; // content strings for MMR dedup
+  const included: string[] = []; // prompt content strings for MMR dedup
   const oversized: Memory[] = [];
 
   for (const memory of memories) {
+    const dedupeContent = getMemoryPromptContent(memory);
     // Global diversity: avoid injecting the same lesson again under a
     // different memory type once it has already been packed for this prompt.
-    if (isTooSimilar(memory.content, state.globallyIncluded)) continue;
+    if (isTooSimilar(dedupeContent, state.globallyIncluded)) continue;
 
     const formatted = formatMemory(memory, memoryType);
     const tokens = estimateTokens(formatted);
@@ -283,16 +292,17 @@ function packTypeMemories(
     }
 
     // MMR diversity: skip if too similar to already-included memories
-    if (isTooSimilar(memory.content, included)) continue;
+    if (isTooSimilar(dedupeContent, included)) continue;
 
-    packFormattedMemory(memory, formatted, tokens, separatorTokens, state);
-    included.push(memory.content);
+    packFormattedMemory(formatted, dedupeContent, tokens, separatorTokens, state);
+    included.push(dedupeContent);
     typeTokensUsed += separatorTokens + tokens;
   }
 
   for (const memory of oversized) {
-    if (isTooSimilar(memory.content, state.globallyIncluded)) continue;
-    if (isTooSimilar(memory.content, included)) continue;
+    const dedupeContent = getMemoryPromptContent(memory);
+    if (isTooSimilar(dedupeContent, state.globallyIncluded)) continue;
+    if (isTooSimilar(dedupeContent, included)) continue;
 
     const separatorTokens = state.sections.length === 0 ? 0 : estimateTokens('\n\n');
     const availableTokens = Math.min(
@@ -309,21 +319,21 @@ function packTypeMemories(
       continue;
     }
 
-    packFormattedMemory(memory, formatted, tokens, separatorTokens, state);
-    included.push(memory.content);
+    packFormattedMemory(formatted, dedupeContent, tokens, separatorTokens, state);
+    included.push(dedupeContent);
     typeTokensUsed += separatorTokens + tokens;
   }
 }
 
 function packFormattedMemory(
-  memory: Memory,
   formatted: string,
+  dedupeContent: string,
   tokens: number,
   separatorTokens: number,
   state: PackState,
 ): void {
   state.sections.push(formatted);
-  state.globallyIncluded.push(memory.content);
+  state.globallyIncluded.push(dedupeContent);
   state.tokensUsed += separatorTokens + tokens;
 }
 
@@ -369,7 +379,7 @@ function formatMemory(
 
   return [
     `**${typeLabel}**${fileContext}${confidence}`,
-    truncateText(memory.content, contentMaxChars),
+    formatMemoryContentForPrompt(memory, contentMaxChars),
     citation,
   ]
     .filter(Boolean)
@@ -419,7 +429,7 @@ function formatMemoryWithinTokenBudget(
   }
 
   const content = truncateTextToTokenBudget(
-    memory.content,
+    getMemoryPromptContent(memory),
     contentTokenBudget,
     MAX_PACKED_MEMORY_CONTENT_CHARS,
   );
@@ -453,6 +463,67 @@ function truncateText(text: string, maxChars: number): string {
     marker,
     tailLength > 0 ? compact.slice(-tailLength).trimStart() : '',
   ].join('');
+}
+
+function getMemoryPromptContent(memory: Memory): string {
+  if (memory.type === 'prefetch_pattern') {
+    return formatPrefetchPatternForPrompt(memory) ?? memory.content;
+  }
+  return memory.content;
+}
+
+function formatPrefetchPatternForPrompt(memory: Memory): string | undefined {
+  const parsed = parsePrefetchPatternContent(memory.content);
+  const alwaysReadFiles = parsed?.alwaysReadFiles ?? [];
+  const frequentlyReadFiles = parsed?.frequentlyReadFiles ?? [];
+  const lines: string[] = [];
+
+  if (alwaysReadFiles.length > 0) {
+    lines.push(`Always prefetch: ${formatPrefetchFileList(alwaysReadFiles)}`);
+  }
+  if (frequentlyReadFiles.length > 0) {
+    lines.push(`Prefetch together: ${formatPrefetchFileList(frequentlyReadFiles)}`);
+  }
+  if (lines.length === 0 && memory.relatedFiles.length > 0) {
+    lines.push(`Prefetch candidates: ${formatPrefetchFileList(memory.relatedFiles)}`);
+  }
+
+  return lines.length > 0 ? lines.join('; ') : undefined;
+}
+
+interface ParsedPrefetchPatternContent {
+  alwaysReadFiles: string[];
+  frequentlyReadFiles: string[];
+}
+
+function parsePrefetchPatternContent(content: string): ParsedPrefetchPatternContent | undefined {
+  try {
+    const parsed = JSON.parse(content) as {
+      alwaysReadFiles?: unknown;
+      frequentlyReadFiles?: unknown;
+    };
+    return {
+      alwaysReadFiles: parsePrefetchFileArray(parsed.alwaysReadFiles),
+      frequentlyReadFiles: parsePrefetchFileArray(parsed.frequentlyReadFiles),
+    };
+  } catch {
+    return undefined;
+  }
+}
+
+function parsePrefetchFileArray(value: unknown): string[] {
+  return Array.isArray(value)
+    ? normalizePromptPathList(value)
+    : [];
+}
+
+function formatPrefetchFileList(files: readonly string[]): string {
+  const uniqueFiles = normalizePromptPathList(files);
+  const visible = uniqueFiles
+    .slice(0, MAX_PREFETCH_PATTERN_PROMPT_FILES)
+    .map((file) => truncatePathTail(file, MAX_PACKED_MEMORY_FILE_REF_CHARS));
+  const omitted = Math.max(0, uniqueFiles.length - visible.length);
+  return `${visible.join(', ')}${omitted > 0 ? ` (+${omitted} more)` : ''}`;
 }
 
 function truncatePathTail(path: string, maxChars: number): string {

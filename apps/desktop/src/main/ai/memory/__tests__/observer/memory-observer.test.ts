@@ -234,23 +234,121 @@ describe('MemoryObserver', () => {
       expect(Array.isArray(candidates)).toBe(true);
     });
 
+    it('deduplicates reciprocal co-access pairs before promotion', async () => {
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: './src/auth/a.ts/' },
+        stepNumber: 1,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src\\auth\\b.ts' },
+        stepNumber: 2,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/auth/a.ts' },
+        stepNumber: 3,
+      });
+
+      const candidates = await observer.finalize('success');
+      const coAccess = candidates.filter((candidate) => candidate.signalType === 'co_access');
+
+      expect(coAccess).toHaveLength(1);
+      expect(coAccess[0].relatedFiles).toEqual(['src/auth/a.ts', 'src/auth/b.ts']);
+      expect(coAccess[0].relatedModules).toEqual(['auth']);
+      expect(JSON.parse(coAccess[0].content)).toEqual({
+        alwaysReadFiles: [],
+        frequentlyReadFiles: ['src/auth/a.ts', 'src/auth/b.ts'],
+      });
+    });
+
+    it('infers focused modules from real workspace file paths', async () => {
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'apps/desktop/src/main/ai/memory/observer/memory-observer.ts' },
+        stepNumber: 1,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'apps/desktop/src/main/ai/memory/injection/prefetch-builder.ts' },
+        stepNumber: 2,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'apps/desktop/src/main/ai/memory/observer/memory-observer.ts' },
+        stepNumber: 3,
+      });
+
+      const candidates = await observer.finalize('success');
+      const coAccess = candidates.filter((candidate) => candidate.signalType === 'co_access');
+
+      expect(coAccess).toHaveLength(1);
+      expect(coAccess[0].relatedModules).toEqual(['memory', 'injection', 'observer']);
+      expect(coAccess[0].relatedModules).not.toContain('desktop');
+      expect(coAccess[0].relatedModules).not.toContain('main');
+      expect(coAccess[0].relatedModules).not.toContain('ai');
+    });
+
+    it('caps noisy co-access candidates before they crowd session memory', async () => {
+      for (let index = 0; index < 14; index++) {
+        observer.observe({
+          type: 'memory:tool-call',
+          toolName: 'Read',
+          args: { file_path: `src/file-${index}.ts` },
+          stepNumber: index + 1,
+        });
+      }
+
+      const candidates = await observer.finalize('success');
+      const coAccess = candidates.filter((candidate) => candidate.signalType === 'co_access');
+      const unorderedPairs = new Set(
+        coAccess.map((candidate) =>
+          [...candidate.relatedFiles].sort((a, b) => a.localeCompare(b)).join('|'),
+        ),
+      );
+
+      expect(coAccess).toHaveLength(8);
+      expect(unorderedPairs.size).toBe(coAccess.length);
+    });
+
     it('only returns dead_end candidates on failed session', async () => {
       observer.observe({
-        type: 'memory:reasoning',
-        text: 'This approach will not work in this environment.',
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/failed-a.ts' },
+        stepNumber: 1,
+      });
+      observer.observe({
+        type: 'memory:tool-call',
+        toolName: 'Read',
+        args: { file_path: 'src/failed-b.ts' },
         stepNumber: 2,
       });
       observer.observe({
         type: 'memory:reasoning',
-        text: 'Actually, I was wrong about the method signature.',
+        text: 'This approach will not work in this environment.',
         stepNumber: 3,
+      });
+      observer.observe({
+        type: 'memory:reasoning',
+        text: 'Wait, I was wrong about the method signature.',
+        stepNumber: 4,
       });
 
       const candidates = await observer.finalize('failure');
-      // On failure, only dead_end type candidates should pass
+      expect(candidates.length).toBeGreaterThan(0);
       for (const c of candidates) {
         expect(c.proposedType).toBe('dead_end');
       }
+      expect(candidates.some((c) => c.signalType === 'co_access')).toBe(false);
+      expect(candidates.some((c) => c.signalType === 'self_correction')).toBe(false);
     });
   });
 });

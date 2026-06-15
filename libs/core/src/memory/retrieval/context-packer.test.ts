@@ -207,6 +207,68 @@ describe('packContext memory quality gate', () => {
     expect(result).toContain('Late gotcha should still appear');
   });
 
+  it('formats prefetch pattern JSON as compact prompt guidance', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'prefetch',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: ['src\\auth\\session.ts', 'src/auth/session.ts'],
+            frequentlyReadFiles: [
+              'src/auth/token.ts',
+              'src/auth/guard.ts',
+              'src/auth/callback.ts',
+              'src/auth/routes.ts',
+              'src/auth/legacy.ts',
+            ],
+          }),
+          relatedFiles: [],
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { prefetch_pattern: 1 } },
+    );
+
+    expect(result).toContain('**Prefetch Pattern**');
+    expect(result).toContain('Always prefetch: src/auth/session.ts');
+    expect(result).toContain('Prefetch together: src/auth/token.ts');
+    expect(result).toContain('+1 more');
+    expect(result).not.toContain('alwaysReadFiles');
+    expect(result).not.toContain('frequentlyReadFiles');
+  });
+
+  it('deduplicates equivalent prefetch patterns by rendered prompt content', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'prefetch-a',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: [],
+            frequentlyReadFiles: ['src\\auth\\session.ts', './src/auth/token.ts/'],
+          }),
+          relatedFiles: [],
+        }),
+        makeMemory({
+          id: 'prefetch-b',
+          type: 'prefetch_pattern',
+          content: JSON.stringify({
+            alwaysReadFiles: [],
+            frequentlyReadFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+          }),
+          relatedFiles: [],
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { prefetch_pattern: 1 } },
+    );
+
+    expect((result.match(/Prefetch together:/g) ?? [])).toHaveLength(1);
+    expect(result).toContain('src/auth/session.ts, src/auth/token.ts');
+    expect(result).not.toContain('frequentlyReadFiles');
+  });
+
   it('keeps pinned or user-verified memories even when they need review or are low confidence', () => {
     const result = packContext([
       makeMemory({

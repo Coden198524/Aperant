@@ -160,6 +160,24 @@ describe('buildPrefetchPlan', () => {
     expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('duplicate-path-source');
   });
 
+  it('consumes observer-inferred co-access prefetch patterns', async () => {
+    const memoryService = makeMemoryService([
+      makeMemory(JSON.stringify({
+        alwaysReadFiles: [],
+        frequentlyReadFiles: ['src/auth/session.ts', 'src/auth/token.ts'],
+      }), { id: 'observer-co-access' }),
+    ]);
+
+    const plan = await buildPrefetchPlan(['auth'], memoryService, 'project-1');
+
+    expect(plan.alwaysReadFiles).toEqual([]);
+    expect(plan.frequentlyReadFiles).toEqual([
+      'src/auth/session.ts',
+      'src/auth/token.ts',
+    ]);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('observer-co-access');
+  });
+
   it('filters low-quality memories and unsafe prefetch paths', async () => {
     const memoryService = makeMemoryService([
       makeMemory(JSON.stringify({
