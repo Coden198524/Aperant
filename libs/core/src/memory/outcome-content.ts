@@ -27,19 +27,41 @@ const LOW_VALUE_OUTCOME_LINE_PATTERNS = [
 	/^(?:Summary:\s*)?\u65e0\u95ee\u9898/i,
 ] as const;
 
+const LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN = /(?<=[.!?\u3002\uff01\uff1f])\s+|;\s+/;
+
 export function stripLowValueMemoryLines(content: string): string {
 	return content
 		.split(/\r?\n/)
-		.filter(
-			(line) =>
-				!LOW_VALUE_OUTCOME_LINE_PATTERNS.some((pattern) =>
-					pattern.test(line.trim()),
-				),
-		)
+		.map(stripLowValueMemoryLine)
+		.filter(Boolean)
 		.join("\n")
 		.trim();
 }
 
 export function stripLowValueOutcomeLines(content: string): string {
 	return stripLowValueMemoryLines(content);
+}
+
+function stripLowValueMemoryLine(line: string): string {
+	const trimmed = line.trim();
+	if (!trimmed || isLowValueMemoryLine(trimmed)) {
+		return "";
+	}
+
+	const fragments = trimmed
+		.split(LOW_VALUE_MEMORY_FRAGMENT_SPLIT_PATTERN)
+		.map((fragment) => fragment.trim())
+		.filter(Boolean);
+	if (fragments.length <= 1) {
+		return trimmed;
+	}
+
+	return fragments
+		.filter((fragment) => !isLowValueMemoryLine(fragment))
+		.join(" ")
+		.trim();
+}
+
+function isLowValueMemoryLine(line: string): boolean {
+	return LOW_VALUE_OUTCOME_LINE_PATTERNS.some((pattern) => pattern.test(line));
 }
