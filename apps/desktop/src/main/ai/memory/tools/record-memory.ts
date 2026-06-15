@@ -22,6 +22,8 @@ const MAX_RECORD_MEMORY_RELATED_FILES = 12;
 const MAX_RECORD_MEMORY_RELATED_MODULES = 12;
 const MAX_RECORD_MEMORY_FILE_REF_CHARS = 160;
 const MAX_RECORD_MEMORY_MODULE_CHARS = 96;
+const SKIPPED_LOW_VALUE_MEMORY_RESULT =
+  'Memory skipped: only reusable project-specific lessons.';
 
 const recordMemorySchema = z.object({
   type: z
@@ -79,7 +81,7 @@ export function createRecordMemoryTool(
       );
       const confidence = input.confidence ?? 0.8;
       if (content.length < 10 || confidence < MIN_PACKED_MEMORY_CONFIDENCE) {
-        return 'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.';
+        return SKIPPED_LOW_VALUE_MEMORY_RESULT;
       }
 
       const duplicate = await findDuplicateMemory(proxy, projectId, content);

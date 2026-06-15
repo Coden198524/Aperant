@@ -5,6 +5,9 @@ import type { WorkerObserverProxy } from '../ipc/worker-observer-proxy';
 import type { Memory } from '../types';
 import { estimateTokens } from '../retrieval/context-packer';
 
+const MEMORY_SKIPPED_LOW_VALUE_RESULT =
+  'Memory skipped: only reusable project-specific lessons.';
+
 function makeMemory(overrides: Partial<Memory> = {}): Memory {
   return {
     id: 'mem-1',
@@ -1247,9 +1250,7 @@ describe('memory agent tools', () => {
       ].join('\n'),
     });
 
-    expect(result).toBe(
-      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
-    );
+    expect(result).toBe(MEMORY_SKIPPED_LOW_VALUE_RESULT);
     expect(proxy.searchMemory).not.toHaveBeenCalled();
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
@@ -1320,9 +1321,7 @@ describe('memory agent tools', () => {
       content: 'Efficient token usage - concise and focused implementation',
     });
 
-    expect(result).toBe(
-      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
-    );
+    expect(result).toBe(MEMORY_SKIPPED_LOW_VALUE_RESULT);
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
 
@@ -1341,9 +1340,7 @@ describe('memory agent tools', () => {
       content: '任务完成，所有测试通过，token 使用较少。',
     });
 
-    expect(result).toBe(
-      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
-    );
+    expect(result).toBe(MEMORY_SKIPPED_LOW_VALUE_RESULT);
     expect(proxy.searchMemory).not.toHaveBeenCalled();
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
@@ -1363,9 +1360,7 @@ describe('memory agent tools', () => {
       string
     >(tool, { type: 'module_insight', content });
 
-    expect(result).toBe(
-      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
-    );
+    expect(result).toBe(MEMORY_SKIPPED_LOW_VALUE_RESULT);
     expect(proxy.searchMemory).not.toHaveBeenCalled();
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
@@ -1390,9 +1385,7 @@ describe('memory agent tools', () => {
       content,
     });
 
-    expect(result).toBe(
-      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
-    );
+    expect(result).toBe(MEMORY_SKIPPED_LOW_VALUE_RESULT);
     expect(proxy.searchMemory).not.toHaveBeenCalled();
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
@@ -1458,9 +1451,7 @@ describe('memory agent tools', () => {
       confidence: 0.2,
     });
 
-    expect(result).toBe(
-      'Memory skipped: record only reusable project-specific gotchas, decisions, recurring errors, file couplings, or failed approaches.',
-    );
+    expect(result).toBe(MEMORY_SKIPPED_LOW_VALUE_RESULT);
     expect(proxy.recordMemory).not.toHaveBeenCalled();
   });
 
