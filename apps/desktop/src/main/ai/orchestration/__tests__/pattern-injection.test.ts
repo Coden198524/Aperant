@@ -134,6 +134,45 @@ describe('pattern injection memory success cases', () => {
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('useful');
   });
 
+  it('deduplicates repeated success case memories before capping injected cases', async () => {
+    const duplicateContent = 'Use the shared auth retry helper before notifying renderer listeners.';
+    const distinctContent = 'Flush pending OAuth timers before asserting retry backoff behavior.';
+    const memoryService = {
+      search: vi.fn().mockResolvedValue([
+        makeMemory({ id: 'dup-1', content: duplicateContent, tags: ['subtask:dup-1'] }),
+        makeMemory({ id: 'dup-2', content: duplicateContent.toUpperCase(), tags: ['subtask:dup-2'] }),
+        makeMemory({ id: 'dup-3', content: 'Use   the shared auth retry helper before notifying renderer listeners.', tags: ['subtask:dup-3'] }),
+        makeMemory({ id: 'distinct', content: distinctContent, tags: ['subtask:distinct'] }),
+      ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MemoryService;
+
+    const result = await enhanceCoderPrompt('Base prompt\n\n## STEP 6: IMPLEMENT THE SUBTASK', {
+      subtask: {
+        id: '2.05',
+        description: 'Update auth retry listeners',
+        patternFiles: [],
+      },
+      projectDir: 'E:/project',
+      specDir: 'E:/spec',
+      memoryService,
+    });
+
+    expect(result.successCases.map((successCase) => successCase.subtaskId)).toEqual([
+      'dup-1',
+      'distinct',
+    ]);
+    expect(result.enhancedPrompt).toContain(duplicateContent);
+    expect(result.enhancedPrompt).toContain(distinctContent);
+    expect((result.enhancedPrompt.match(/### Success Case/g) ?? [])).toHaveLength(2);
+    expect(result.enhancedPrompt).not.toContain('dup-2');
+    expect(result.enhancedPrompt).not.toContain('dup-3');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('dup-1');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('distinct');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('dup-2');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('dup-3');
+  });
+
   it('compacts long success case memories before injecting them into the prompt', async () => {
     const longContent = [
       'Use a shared settings writer for app and workspace updates.',

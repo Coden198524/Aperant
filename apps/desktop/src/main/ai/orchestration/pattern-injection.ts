@@ -346,6 +346,7 @@ async function retrieveSuccessCases(
         };
       })
       .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+      .filter(createUniqueSuccessCaseFilter())
       .slice(0, 3);
     await recordSelectedMemoryAccess(memoryService, selectedCases.map((candidate) => candidate.result));
 
@@ -354,6 +355,25 @@ async function retrieveSuccessCases(
     console.error('Failed to retrieve success cases from memory:', error);
     return [];
   }
+}
+
+function createUniqueSuccessCaseFilter(): (
+  candidate: { successCase: SuccessCase },
+) => boolean {
+  const seen = new Set<string>();
+  return (candidate) => {
+    const key = normalizeSuccessCaseContentKey(candidate.successCase.implementation);
+    if (!key || seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  };
+}
+
+function normalizeSuccessCaseContentKey(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 // =============================================================================
