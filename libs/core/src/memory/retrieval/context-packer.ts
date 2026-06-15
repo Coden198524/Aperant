@@ -413,7 +413,7 @@ function formatMemoryFileContext(
     .filter((file) => !isPromptPathMentionedInText(file, content))
     .slice(0, MAX_PACKED_MEMORY_FILE_CONTEXT_REFS)
     .map((file) => truncatePathTail(file, fileRefMaxChars));
-  return visibleFiles.length > 0 ? ` (${visibleFiles.join(', ')})` : '';
+  return visibleFiles.length > 0 ? ` (${formatCompactPromptPathList(visibleFiles)})` : '';
 }
 
 function isPromptPathMentionedInText(path: string, text: string): boolean {
@@ -628,7 +628,7 @@ function formatCompactPromptPathList(paths: readonly string[]): string {
     commonDepth += 1;
   }
 
-  if (commonDepth === 0) {
+  if (commonDepth < 2) {
     return expanded;
   }
 

@@ -190,6 +190,24 @@ describe('packContext memory quality gate', () => {
     expect((result.match(/token-cache\.ts/g) ?? [])).toHaveLength(1);
   });
 
+  it('compacts packed file context that shares a module path prefix', () => {
+    const result = packContext(
+      [
+        makeMemory({
+          id: 'shared-prefix-files',
+          content: 'Keep auth retries inside the session boundary.',
+          relatedFiles: ['src/auth/session-store.ts', 'src/auth/retry-policy.ts'],
+          citationText: undefined,
+        }),
+      ],
+      'implement',
+      { totalBudget: 300, allocation: { gotcha: 1 } },
+    );
+
+    expect(result).toContain('**Gotcha** (src/auth/{session-store.ts, retry-policy.ts})');
+    expect(result).not.toContain('src/auth/session-store.ts, src/auth/retry-policy.ts');
+  });
+
   it('omits packed file context already visible in citation text', () => {
     const result = packContext(
       [
