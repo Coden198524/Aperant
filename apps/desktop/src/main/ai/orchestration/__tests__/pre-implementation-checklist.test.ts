@@ -176,6 +176,43 @@ describe('pre-implementation checklist formatting', () => {
     expect(memoryService.updateAccessCount).toHaveBeenCalledWith('useful');
   });
 
+  it('deduplicates repeated historical failures before capping checklist items', async () => {
+    const duplicateContent = 'Freeze retry timers before asserting delayed refresh failures.';
+    const distinctContent = 'Mock token expiry before validating refresh recovery.';
+    const memoryService = {
+      search: vi.fn().mockResolvedValue([
+        makeMemory({ id: 'dup-1', content: duplicateContent }),
+        makeMemory({ id: 'dup-2', content: duplicateContent.toUpperCase() }),
+        makeMemory({ id: 'dup-3', content: 'Freeze   retry timers before asserting delayed refresh failures.' }),
+        makeMemory({ id: 'distinct', content: distinctContent }),
+      ]),
+      updateAccessCount: vi.fn().mockResolvedValue(undefined),
+    } as unknown as MemoryService;
+
+    const checklist = await generatePreImplementationChecklist({
+      subtask: {
+        id: '1.16',
+        description: 'Update retry scheduler',
+        filesToModify: [],
+        filesToCreate: [],
+      },
+      specDir: 'E:/spec',
+      projectDir: 'E:/project',
+      memoryService,
+    });
+
+    const historicalItems = checklist.items.filter((item) => item.category === 'historical_failure');
+    const issues = historicalItems.map((item) => item.issue).join('\n');
+
+    expect(historicalItems).toHaveLength(2);
+    expect(issues).toContain(duplicateContent);
+    expect(issues).toContain(distinctContent);
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('dup-1');
+    expect(memoryService.updateAccessCount).toHaveBeenCalledWith('distinct');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('dup-2');
+    expect(memoryService.updateAccessCount).not.toHaveBeenCalledWith('dup-3');
+  });
+
   it('keeps long historical memory content compact in prompt checklist output', async () => {
     const memoryService = {
       search: vi.fn().mockResolvedValue([

@@ -185,6 +185,7 @@ async function analyzeHistoricalFailures(
         return { failure, content };
       })
       .filter((candidate): candidate is NonNullable<typeof candidate> => candidate !== null)
+      .filter(createUniqueHistoricalFailureFilter())
       .slice(0, PRE_IMPLEMENTATION_HISTORICAL_ITEMS_MAX);
     await recordSelectedMemoryAccess(memoryService, selectedFailures.map((candidate) => candidate.failure));
 
@@ -201,6 +202,25 @@ async function analyzeHistoricalFailures(
     console.error('Failed to retrieve historical failures:', error);
     return [];
   }
+}
+
+function createUniqueHistoricalFailureFilter(): (
+  candidate: { content: string },
+) => boolean {
+  const seen = new Set<string>();
+  return (candidate) => {
+    const key = normalizeHistoricalFailureContentKey(candidate.content);
+    if (!key || seen.has(key)) {
+      return false;
+    }
+
+    seen.add(key);
+    return true;
+  };
+}
+
+function normalizeHistoricalFailureContentKey(value: string): string {
+  return value.replace(/\s+/g, ' ').trim().toLowerCase();
 }
 
 /**
