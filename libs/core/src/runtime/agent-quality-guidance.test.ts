@@ -1,9 +1,9 @@
 import { describe, expect, it } from 'vitest';
 
 import {
+  type AutocodePreImplementationChecklist,
   formatAutocodeChecklistForPrompt,
   formatAutocodeCompactChecklistForPrompt,
-  type AutocodePreImplementationChecklist,
 } from './agent-quality-guidance.js';
 
 function makeChecklist(overrides: Partial<AutocodePreImplementationChecklist> = {}): AutocodePreImplementationChecklist {
@@ -38,6 +38,33 @@ describe('agent quality guidance formatting', () => {
     expect(prompt).toContain('ISSUE_TAIL_OK');
     expect(prompt).toContain('PREVENTION_TAIL_OK');
     expect(prompt.length).toBeLessThan(700);
+  });
+
+  it('folds repeated checklist lines before formatting prompt guidance', () => {
+    const repeatedLine = 'CHECKLIST_REPEAT: same prevention detail without new signal.';
+    const checklist = makeChecklist({
+      items: [
+        {
+          category: 'historical_failure',
+          priority: 'high',
+          issue: 'Repeated implementation risk',
+          prevention: [
+            'CHECKLIST_PREVENTION_HEAD',
+            ...Array.from({ length: 120 }, () => repeatedLine),
+            'CHECKLIST_PREVENTION_TAIL',
+          ].join('\n'),
+          likelihood: 0.85,
+        },
+      ],
+    });
+
+    const prompt = formatAutocodeCompactChecklistForPrompt(checklist);
+
+    expect(prompt).toContain('Repeated implementation risk');
+    expect(prompt).toContain('CHECKLIST_PREVENTION_HEAD');
+    expect(prompt).toContain('CHECKLIST_PREVENTION_TAIL');
+    expect(prompt).toContain('119 repeated line(s) omitted for prompt budget');
+    expect((prompt.match(/CHECKLIST_REPEAT/g) ?? [])).toHaveLength(1);
   });
 
   it('bounds long references in full checklist prompts', () => {

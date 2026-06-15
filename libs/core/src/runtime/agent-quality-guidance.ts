@@ -1,3 +1,5 @@
+import { foldRepeatedAutocodePromptLines } from './prompt-context.js';
+
 export type AutocodeBuildFailureType =
   | 'broken_build'
   | 'verification_failed'
@@ -273,7 +275,13 @@ function formatChecklistReferences(references: string[]): string {
 }
 
 function limitAutocodeChecklistText(value: string, maxChars: number): string {
-  const normalized = value.replace(/\s+/g, ' ').trim();
+  const normalized = foldRepeatedAutocodePromptLines(
+    value
+      .replace(/\r\n/g, '\n')
+      .replace(/\r/g, '\n'),
+  )
+    .replace(/\s+/g, ' ')
+    .trim();
   if (normalized.length <= maxChars) {
     return normalized;
   }
