@@ -730,8 +730,9 @@ export function buildAutocodeWorkUnitOutcomeMemoryEntry(
   const relatedFiles = compactAutocodeMemoryRuntimeOutcomeFiles(
     input.relatedFiles,
   );
-  const relatedModules = compactAutocodeMemoryRuntimeBoundedTextList(
+  const relatedModules = compactAutocodeMemoryRuntimeRelatedModules(
     input.relatedModules,
+    relatedFiles,
     AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_LIMIT,
     AUTOCODE_MEMORY_RUNTIME_OUTCOME_RELATED_MODULE_MAX_CHARS,
   );
@@ -1086,6 +1087,98 @@ function compactAutocodeMemoryRuntimeBoundedTextList(
   }
 
   return compactedValues;
+}
+
+function compactAutocodeMemoryRuntimeRelatedModules(
+  values: readonly unknown[] | undefined,
+  relatedFiles: readonly string[],
+  limit: number,
+  maxItemChars: number,
+): string[] {
+  const itemLimit = Math.max(0, limit);
+  if (itemLimit === 0) {
+    return [];
+  }
+
+  const relatedFileRefs = getAutocodeMemoryRuntimeRelatedFileRefs(relatedFiles);
+  const compactedValues: string[] = [];
+  const seen = new Set<string>();
+  for (const value of uniqueStrings(values)) {
+    const compacted = truncateAutocodeMemoryRuntimeText(value, maxItemChars, {
+      preserveTail: true,
+    });
+    const key = normalizeRuntimeTextKey(compacted);
+    if (
+      !compacted ||
+      seen.has(key) ||
+      isRedundantAutocodeMemoryRuntimeRelatedModule(compacted, relatedFileRefs)
+    ) {
+      continue;
+    }
+
+    seen.add(key);
+    compactedValues.push(compacted);
+    if (compactedValues.length >= itemLimit) {
+      break;
+    }
+  }
+
+  return compactedValues;
+}
+
+interface AutocodeMemoryRuntimeRelatedFileRefs {
+  paths: Set<string>;
+  fileNames: Set<string>;
+  fileStems: Set<string>;
+}
+
+function getAutocodeMemoryRuntimeRelatedFileRefs(
+  files: readonly string[],
+): AutocodeMemoryRuntimeRelatedFileRefs {
+  const paths = new Set<string>();
+  const fileNames = new Set<string>();
+  const fileStems = new Set<string>();
+  for (const file of files) {
+    const normalized = normalizeRuntimePath(file);
+    if (!normalized) {
+      continue;
+    }
+
+    paths.add(normalizeRuntimePathKey(normalized));
+    const fileName = normalized.split('/').pop()?.toLowerCase();
+    if (!fileName) {
+      continue;
+    }
+
+    fileNames.add(fileName);
+    const stem = stripAutocodeMemoryRuntimeFileExtension(fileName);
+    if (stem) {
+      fileStems.add(stem);
+    }
+  }
+
+  return { paths, fileNames, fileStems };
+}
+
+function isRedundantAutocodeMemoryRuntimeRelatedModule(
+  module: string,
+  relatedFileRefs: AutocodeMemoryRuntimeRelatedFileRefs,
+): boolean {
+  const moduleKey = normalizeRuntimeTextKey(module);
+  if (!moduleKey) {
+    return true;
+  }
+
+  return relatedFileRefs.paths.has(normalizeRuntimePathKey(module)) ||
+    relatedFileRefs.fileNames.has(moduleKey) ||
+    relatedFileRefs.fileStems.has(moduleKey);
+}
+
+function stripAutocodeMemoryRuntimeFileExtension(fileName: string): string {
+  return fileName.replace(
+    /\.(?:cjs|cts|d\.ts|e2e\.ts|js|jsx|mjs|mts|spec\.ts|test\.ts|ts|tsx)$/i,
+    '',
+  );
 }
 
 function truncateAutocodeMemoryRuntimePathTail(
