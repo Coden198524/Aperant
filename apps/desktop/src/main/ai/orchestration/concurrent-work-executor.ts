@@ -170,6 +170,7 @@ export async function executeConcurrentWorkItems(
   const terminalFailedWorkItemIds = new Set<string>();
   let totalCompleted = 0;
   let totalFailed = 0;
+  let totalBlocked = 0;
   let roundNumber = 0;
 
   while (true) {
@@ -202,14 +203,17 @@ export async function executeConcurrentWorkItems(
     const runnableItems = dependencyAnalysis.runnable;
     if (runnableItems.length === 0) {
       const blockedSummary = describeAutocodeWorkDependencyBlockers(dependencyAnalysis.blocked, statusById);
+      const newlyBlocked = dependencyAnalysis.blocked.length;
       await planWriter(() => markDependencyBlockedWorkItems(config, dependencyAnalysis.blocked, statusById, runtime));
       await sourceSync.flush();
       await learnFromBlockedWorkItems(config, dependencyAnalysis.blocked, statusById);
+      totalBlocked += newlyBlocked;
       log(`[ConcurrentWorkExecutor] No runnable work items because dependencies are unresolved: ${blockedSummary}`);
       return {
         success: false,
         totalCompleted,
-        totalFailed: pendingItems.length,
+        totalFailed: totalFailed + newlyBlocked,
+        totalBlocked,
         error: `No runnable work items because dependencies are unresolved: ${blockedSummary}`,
       };
     }
@@ -237,7 +241,13 @@ export async function executeConcurrentWorkItems(
     for (let i = 0; i < groups.length; i++) {
       if (config.abortSignal?.aborted) {
         await sourceSync.flush();
-        return { success: false, totalCompleted: totalCompleted + roundCompleted, cancelled: true };
+        return {
+          success: false,
+          totalCompleted: totalCompleted + roundCompleted,
+          totalFailed,
+          totalBlocked,
+          cancelled: true,
+        };
       }
 
       const group = groups[i];
@@ -252,10 +262,13 @@ export async function executeConcurrentWorkItems(
       config.onGroupComplete?.(group.items, result);
 
       if (config.abortSignal?.aborted || result.sessionResult.outcome === 'cancelled') {
+        await planWriter(() => resetCancelledInProgressWorkItems(config, result.failed, runtime));
         await sourceSync.flush();
         return {
           success: false,
           totalCompleted: totalCompleted + roundCompleted + result.completed.length,
+          totalFailed: totalFailed + roundFailed,
+          totalBlocked,
           cancelled: true,
         };
       }
@@ -300,7 +313,7 @@ export async function executeConcurrentWorkItems(
   );
 
   await sourceSync.flush();
-  return { success, totalCompleted, totalFailed };
+  return { success, totalCompleted, totalFailed, totalBlocked };
 }
 
 async function executeConcurrentGroup(
@@ -1128,6 +1141,35 @@ async function markWorkItemsInProgress(
   }
 }
 
+async function resetCancelledInProgressWorkItems(
+  config: ConcurrentWorkExecutorConfig,
+  workItemIds: string[],
+  runtime: ExecutionRuntime,
+): Promise<void> {
+  if (workItemIds.length === 0) {
+    return;
+  }
+
+  const cancelledIds = new Set(workItemIds);
+  const now = new Date().toISOString();
+  let updated = false;
+  await updateImplementationPlanInFiles(config.specDir, (plan) => {
+    for (const phase of (plan as unknown as ImplementationPlan).phases ?? []) {
+      for (const subtask of phase.subtasks ?? []) {
+        if (cancelledIds.has(subtask.id) && subtask.status === 'in_progress') {
+          subtask.status = 'pending';
+          subtask.updated_at = now;
+          updated = true;
+        }
+      }
+    }
+    return updated ? plan : false;
+  });
+  if (updated) {
+    await runtime.sourceSync.request();
+  }
+}
+
 async function syncWorkItemPlanToSourceNow(config: ConcurrentWorkExecutorConfig): Promise<void> {
   if (!config.sourceSpecDir || config.sourceSpecDir === config.specDir) {
     return;
@@ -1261,7 +1303,7 @@ function hasInProgressWorkItems(plan: ImplementationPlan): boolean {
 }
 
 function hasDeclaredField(value: object, field: string): boolean {
-  return  Object.hasOwn(value, field);
+  return Object.hasOwn(value, field);
 }
 
 function hasDeclaredFileMetadata(subtask: PlanSubtask): boolean {

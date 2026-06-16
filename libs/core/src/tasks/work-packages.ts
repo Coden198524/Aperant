@@ -63,6 +63,8 @@ export interface BuildAutocodeRuntimeImplementationPlanFromTasksInput {
 }
 
 const AUTOCODE_WORK_PACKAGE_MAX_TASKS = 5;
+const AUTOCODE_WORK_PACKAGE_TARGET_EFFORT = 10;
+const AUTOCODE_WORK_PACKAGE_MAX_ESTIMATED_EFFORT = 20;
 
 export function buildAutocodeRuntimeImplementationPlanFromTasksMarkdown(
   tasksMarkdown: string,
@@ -282,6 +284,42 @@ export function groupAutocodeRuntimeTasksIntoWorkPackages(
   populateAutocodeRuntimeWorkPackageDependencies(packages);
   assertAutocodeRuntimeWorkPackagesHaveValidDependencies(packages);
   return packages;
+}
+
+export function estimateAutocodeRuntimeTaskEffort(task: AutocodeRuntimeTask): number {
+  const text = singleLine(`${task.title} ${task.description}`).toLowerCase();
+  const wordCount = text.split(/\s+/u).filter(Boolean).length;
+  let effort = 2;
+
+  effort += Math.min(4, Math.floor(wordCount / 35));
+  effort += Math.min(6, (
+    task.filesToCreate.length * 1.5 +
+    task.filesToModify.length +
+    task.patternFiles.length * 2
+  ));
+  effort += Math.min(3, task.requirements.length * 0.75);
+
+  if (stringifyAutocodeRuntimeVerification(task.verification)) {
+    effort += 1;
+  }
+
+  if (/\b(refactor|restructure|architecture|migration|global|cross-cutting|shared|security|auth|permission|database|persistence|schema|concurrent|parallel|pipeline|integration|network|protocol|state machine)\b/i.test(text)) {
+    effort += 3;
+  }
+
+  if (/\b(api|ipc|workflow|orchestration|parser|validation|test|qa|build|config|cache|sync|error handling|ui|renderer|preload)\b/i.test(text)) {
+    effort += 2;
+  }
+
+  if (
+    effort > 1 &&
+    /\b(copy|text|docs?|documentation|readme|comment|rename|style|label)\b/i.test(text) &&
+    task.filesToCreate.length + task.filesToModify.length + task.patternFiles.length <= 1
+  ) {
+    effort -= 1;
+  }
+
+  return Math.max(1, Math.min(AUTOCODE_WORK_PACKAGE_MAX_ESTIMATED_EFFORT, Math.round(effort)));
 }
 
 export function buildAutocodeRuntimeWorkPackageTitle(
@@ -601,7 +639,10 @@ function buildAutocodeRuntimeTaskDependencyChains(tasks: AutocodeRuntimeTask[]):
     chains.push(...splitAutocodeRuntimeLinearTaskChain(chain));
   }
 
-  return chains;
+  return balanceAutocodeRuntimeWorkPackageCandidates(chains, {
+    orderedTasks,
+    internalChildrenById,
+  });
 }
 
 function collectAutocodeRuntimeLinearTaskChain(input: {
@@ -640,11 +681,175 @@ function collectAutocodeRuntimeLinearTaskChain(input: {
 }
 
 function splitAutocodeRuntimeLinearTaskChain(chain: AutocodeRuntimeTask[]): AutocodeRuntimeTask[][] {
-  if (chain.length <= AUTOCODE_WORK_PACKAGE_MAX_TASKS) {
-    return [chain];
+  return chooseAutocodeRuntimeBalancedTaskGroups(chain, (packageCount) =>
+    splitOrderedAutocodeRuntimeTasksByEstimatedEffort(chain, packageCount),
+  );
+}
+
+function balanceAutocodeRuntimeWorkPackageCandidates(
+  candidates: AutocodeRuntimeTask[][],
+  input: {
+    orderedTasks: AutocodeRuntimeTask[];
+    internalChildrenById: Map<string, Set<string>>;
+  },
+): AutocodeRuntimeTask[][] {
+  const balanced: AutocodeRuntimeTask[][] = [];
+  let packableTasks: AutocodeRuntimeTask[] = [];
+  let activeDependencySignature = '';
+
+  const flushPackableTasks = () => {
+    if (packableTasks.length > 0) {
+      balanced.push(...packAutocodeRuntimeIndependentTasksByEstimatedEffort(packableTasks, input.orderedTasks));
+      packableTasks = [];
+      activeDependencySignature = '';
+    }
+  };
+
+  for (const candidate of candidates) {
+    const task = candidate.length === 1 ? candidate[0] : undefined;
+    const dependencySignature = task
+      ? getAutocodeRuntimePackableTaskDependencySignature(task, input.internalChildrenById)
+      : '';
+
+    if (!task || !dependencySignature) {
+      flushPackableTasks();
+      balanced.push(candidate);
+      continue;
+    }
+
+    if (activeDependencySignature && activeDependencySignature !== dependencySignature) {
+      flushPackableTasks();
+    }
+
+    activeDependencySignature = dependencySignature;
+    packableTasks.push(task);
   }
 
-  const packageCount = Math.ceil(chain.length / AUTOCODE_WORK_PACKAGE_MAX_TASKS);
+  flushPackableTasks();
+  return balanced;
+}
+
+function getAutocodeRuntimePackableTaskDependencySignature(
+  task: AutocodeRuntimeTask,
+  internalChildrenById: Map<string, Set<string>>,
+): string {
+  if ((internalChildrenById.get(task.id)?.size ?? 0) > 0) {
+    return '';
+  }
+
+  return task.dependsOn.length > 0
+    ? task.dependsOn.slice().sort().join('|')
+    : '__no_dependencies__';
+}
+
+function packAutocodeRuntimeIndependentTasksByEstimatedEffort(
+  tasks: AutocodeRuntimeTask[],
+  orderedTasks: AutocodeRuntimeTask[],
+): AutocodeRuntimeTask[][] {
+  return chooseAutocodeRuntimeBalancedTaskGroups(tasks, (packageCount) =>
+    packAutocodeRuntimeIndependentTasksIntoFixedBinCount(tasks, orderedTasks, packageCount),
+  );
+}
+
+function packAutocodeRuntimeIndependentTasksIntoFixedBinCount(
+  tasks: AutocodeRuntimeTask[],
+  orderedTasks: AutocodeRuntimeTask[],
+  packageCount: number,
+): AutocodeRuntimeTask[][] {
+  const bins = Array.from({ length: packageCount }, () => ({
+    effort: 0,
+    tasks: [] as AutocodeRuntimeTask[],
+  }));
+  const sortedTasks = tasks
+    .slice()
+    .sort((left, right) => {
+      const effortDelta = estimateAutocodeRuntimeTaskEffort(right) - estimateAutocodeRuntimeTaskEffort(left);
+      return effortDelta !== 0
+        ? effortDelta
+        : getAutocodeRuntimeTaskOrder(orderedTasks, left.id) - getAutocodeRuntimeTaskOrder(orderedTasks, right.id);
+    });
+
+  for (const task of sortedTasks) {
+    const taskEffort = estimateAutocodeRuntimeTaskEffort(task);
+    const targetBin = bins
+      .filter((bin) => bin.tasks.length < AUTOCODE_WORK_PACKAGE_MAX_TASKS)
+      .sort((left, right) => left.effort - right.effort || left.tasks.length - right.tasks.length)[0]
+      ?? bins[0];
+    targetBin.tasks.push(task);
+    targetBin.effort += taskEffort;
+  }
+
+  return bins
+    .filter((bin) => bin.tasks.length > 0)
+    .map((bin) => sortAutocodeRuntimeTasksByOriginalOrder(bin.tasks, orderedTasks))
+    .sort((left, right) =>
+      getAutocodeRuntimeTaskOrder(orderedTasks, left[0]?.id ?? '') -
+      getAutocodeRuntimeTaskOrder(orderedTasks, right[0]?.id ?? ''),
+    );
+}
+
+function splitOrderedAutocodeRuntimeTasksByEstimatedEffort(
+  tasks: AutocodeRuntimeTask[],
+  packageCount: number,
+): AutocodeRuntimeTask[][] {
+  const weights = tasks.map((task) => estimateAutocodeRuntimeTaskEffort(task));
+  const prefixWeights = [0];
+  for (const weight of weights) {
+    prefixWeights.push(prefixWeights[prefixWeights.length - 1] + weight);
+  }
+  const targetEffort = prefixWeights[prefixWeights.length - 1] / packageCount;
+  const scores: Array<Array<{ maxEffort: number; deviation: number; previous: number } | undefined>> =
+    Array.from({ length: packageCount + 1 }, () => Array(tasks.length + 1).fill(undefined));
+  scores[0][0] = { maxEffort: 0, deviation: 0, previous: -1 };
+
+  for (let groupCount = 1; groupCount <= packageCount; groupCount += 1) {
+    for (let end = groupCount; end <= tasks.length; end += 1) {
+      const minStart = Math.max(groupCount - 1, end - AUTOCODE_WORK_PACKAGE_MAX_TASKS);
+      for (let start = minStart; start < end; start += 1) {
+        const previous = scores[groupCount - 1][start];
+        if (!previous) {
+          continue;
+        }
+        const segmentEffort = prefixWeights[end] - prefixWeights[start];
+        const candidate = {
+          maxEffort: Math.max(previous.maxEffort, segmentEffort),
+          deviation: previous.deviation + Math.abs(segmentEffort - targetEffort),
+          previous: start,
+        };
+        const current = scores[groupCount][end];
+        if (!current || isBetterAutocodeRuntimePackagePartition(candidate, current)) {
+          scores[groupCount][end] = candidate;
+        }
+      }
+    }
+  }
+
+  const chunks: AutocodeRuntimeTask[][] = [];
+  let end = tasks.length;
+  for (let groupCount = packageCount; groupCount >= 1; groupCount -= 1) {
+    const state = scores[groupCount][end];
+    if (!state) {
+      return splitAutocodeRuntimeLinearTaskChainByCount(tasks, packageCount);
+    }
+    chunks.unshift(tasks.slice(state.previous, end));
+    end = state.previous;
+  }
+
+  return chunks.filter((chunk) => chunk.length > 0);
+}
+
+function isBetterAutocodeRuntimePackagePartition(
+  candidate: { maxEffort: number; deviation: number },
+  current: { maxEffort: number; deviation: number },
+): boolean {
+  return candidate.maxEffort < current.maxEffort ||
+    (candidate.maxEffort === current.maxEffort && candidate.deviation < current.deviation);
+}
+
+function splitAutocodeRuntimeLinearTaskChainByCount(
+  chain: AutocodeRuntimeTask[],
+  packageCount: number,
+): AutocodeRuntimeTask[][] {
   const baseSize = Math.floor(chain.length / packageCount);
   const extraCount = chain.length % packageCount;
   const chunks: AutocodeRuntimeTask[][] = [];
@@ -656,7 +861,81 @@ function splitAutocodeRuntimeLinearTaskChain(chain: AutocodeRuntimeTask[]): Auto
     offset += size;
   }
 
-  return chunks;
+  return chunks.filter((chunk) => chunk.length > 0);
+}
+
+function chooseAutocodeRuntimeBalancedTaskGroups(
+  tasks: AutocodeRuntimeTask[],
+  buildGroups: (packageCount: number) => AutocodeRuntimeTask[][],
+): AutocodeRuntimeTask[][] {
+  const minPackageCount = Math.max(1, Math.ceil(tasks.length / AUTOCODE_WORK_PACKAGE_MAX_TASKS));
+  const maxPackageCount = estimateAutocodeRuntimeMaxWorkPackageCount(tasks);
+  let bestGroups: AutocodeRuntimeTask[][] | undefined;
+  let bestScore = Number.POSITIVE_INFINITY;
+
+  for (let packageCount = minPackageCount; packageCount <= maxPackageCount; packageCount += 1) {
+    const groups = buildGroups(packageCount).filter((group) => group.length > 0);
+    if (groups.length === 0 || groups.some((group) => group.length > AUTOCODE_WORK_PACKAGE_MAX_TASKS)) {
+      continue;
+    }
+    const score = scoreAutocodeRuntimeWorkPackageBalance(groups);
+    if (score < bestScore) {
+      bestGroups = groups;
+      bestScore = score;
+    }
+  }
+
+  return bestGroups ?? splitAutocodeRuntimeLinearTaskChainByCount(tasks, minPackageCount);
+}
+
+function scoreAutocodeRuntimeWorkPackageBalance(groups: AutocodeRuntimeTask[][]): number {
+  const efforts = groups.map((group) =>
+    group.reduce((sum, task) => sum + estimateAutocodeRuntimeTaskEffort(task), 0),
+  );
+  const totalEffort = efforts.reduce((sum, effort) => sum + effort, 0);
+  const maxEffort = Math.max(...efforts);
+  const minEffort = Math.min(...efforts);
+  const imbalance = maxEffort - minEffort;
+  const targetOverflow = Math.max(0, maxEffort - AUTOCODE_WORK_PACKAGE_TARGET_EFFORT);
+  const serialUnderSplitPenalty = groups.length === 1 && totalEffort > AUTOCODE_WORK_PACKAGE_TARGET_EFFORT
+    ? AUTOCODE_WORK_PACKAGE_TARGET_EFFORT
+    : 0;
+
+  return maxEffort +
+    imbalance * 0.6 +
+    targetOverflow * 0.8 +
+    serialUnderSplitPenalty +
+    groups.length * 0.25;
+}
+
+function estimateAutocodeRuntimeMaxWorkPackageCount(tasks: AutocodeRuntimeTask[]): number {
+  if (tasks.length <= 1) {
+    return tasks.length;
+  }
+
+  const totalEffort = tasks.reduce((sum, task) => sum + estimateAutocodeRuntimeTaskEffort(task), 0);
+  const effortPackageCount = totalEffort >= AUTOCODE_WORK_PACKAGE_TARGET_EFFORT * 1.5
+    ? Math.ceil(totalEffort / AUTOCODE_WORK_PACKAGE_TARGET_EFFORT)
+    : 1;
+  return Math.max(
+    1,
+    Math.min(
+      tasks.length,
+      Math.max(
+        Math.ceil(tasks.length / AUTOCODE_WORK_PACKAGE_MAX_TASKS),
+        effortPackageCount,
+      ),
+    ),
+  );
+}
+
+function sortAutocodeRuntimeTasksByOriginalOrder(
+  tasks: AutocodeRuntimeTask[],
+  orderedTasks: AutocodeRuntimeTask[],
+): AutocodeRuntimeTask[] {
+  return tasks
+    .slice()
+    .sort((left, right) => getAutocodeRuntimeTaskOrder(orderedTasks, left.id) - getAutocodeRuntimeTaskOrder(orderedTasks, right.id));
 }
 
 function getAutocodeRuntimeTaskOrder(tasks: AutocodeRuntimeTask[], taskId: string): number {

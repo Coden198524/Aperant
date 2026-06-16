@@ -37,6 +37,7 @@ export interface WorkExecutorResult {
   success: boolean;
   totalCompleted: number;
   totalFailed?: number;
+  totalBlocked?: number;
   cancelled?: boolean;
   error?: string;
 }

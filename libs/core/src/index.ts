@@ -1436,6 +1436,7 @@ export {
   buildAutocodeRuntimeWorkPackagePhases,
   buildAutocodeRuntimeWorkPackageTitle,
   completeAutocodeRuntimeTaskDependencyGraph,
+  estimateAutocodeRuntimeTaskEffort,
   flattenAutocodeRuntimeTasks,
   groupAutocodeRuntimeTasksIntoWorkPackages,
   sanitizeAutocodeRuntimeTaskDescription,

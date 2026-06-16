@@ -642,6 +642,39 @@ describe('executeConcurrentWorkItems', () => {
     expect((getPlanState('/spec')?.phases[0].subtasks[0] as { notes?: string }).notes).toContain('missing-work');
   });
 
+  it('counts failed prerequisites and newly blocked dependents in executor result', async () => {
+    const plan = createPlan(['a.ts', 'b.ts']);
+    plan.phases[0].subtasks[1].depends_on = ['work-1'];
+    const { getPlanState } = setupPlanStates({ '/spec': plan });
+    const started: string[] = [];
+    const runWorkItemSession = vi.fn().mockImplementation(async (item) => {
+      started.push(item.id);
+      return {
+        ...makeSessionResult('error'),
+        error: { message: 'root failure' },
+      };
+    });
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      maxRetries: 0,
+      workers: 2,
+      runWorkItemSession,
+    }));
+
+    expect(result.success).toBe(false);
+    expect(result.totalCompleted).toBe(0);
+    expect(result.totalFailed).toBe(2);
+    expect(result.totalBlocked).toBe(1);
+    expect(started).toEqual(['work-1']);
+    expect(getPlanState('/spec')?.phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
+      'failed',
+      'blocked',
+    ]);
+    expect((getPlanState('/spec')?.phases[0].subtasks[1] as { notes?: string }).notes).toContain(
+      'work-1 (failed)',
+    );
+  });
+
   it('reports dependency cycles before starting sessions', async () => {
     const plan = createPlan(['a.ts', 'b.ts']);
     plan.phases[0].subtasks[0].depends_on = ['work-2'];
@@ -696,6 +729,25 @@ describe('executeConcurrentWorkItems', () => {
     expect(runWorkItemSession).toHaveBeenCalledTimes(1);
     expect(getPlanState().phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
       'completed',
+      'pending',
+      'pending',
+    ]);
+  });
+
+  it('resets cancelled in-progress work items to pending before returning', async () => {
+    const { getPlanState } = setupPlanState(['a.ts', 'b.ts']);
+    const runWorkItemSession = vi.fn().mockResolvedValue(makeSessionResult('cancelled'));
+
+    const result = await executeConcurrentWorkItems(createConfig({
+      workers: 1,
+      runWorkItemSession,
+    }));
+
+    expect(result.cancelled).toBe(true);
+    expect(result.totalCompleted).toBe(0);
+    expect(result.totalFailed).toBe(0);
+    expect(runWorkItemSession).toHaveBeenCalledTimes(1);
+    expect(getPlanState().phases[0].subtasks.map((subtask) => subtask.status)).toEqual([
       'pending',
       'pending',
     ]);
