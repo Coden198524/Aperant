@@ -481,3 +481,19 @@ export interface FileNode {
   name: string;
   isDirectory: boolean;
 }
+
+export type FileExplorerChangeType = 'add' | 'addDir' | 'unlink' | 'unlinkDir';
+
+export interface FileExplorerPathChange {
+  type: FileExplorerChangeType;
+  path: string;
+  parentPath: string;
+  isDirectory: boolean;
+}
+
+export interface FileExplorerChangeEvent {
+  projectPath: string;
+  changes: FileExplorerPathChange[];
+  affectedDirectoryPaths: string[];
+  removedDirectoryPaths: string[];
+}

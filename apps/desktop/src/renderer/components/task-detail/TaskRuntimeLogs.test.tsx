@@ -381,6 +381,36 @@ describe('TaskRuntimeLogs', () => {
     expect(screen.queryByText('export function app() {}')).not.toBeInTheDocument();
   });
 
+  it('hides repeated PowerShell command wrappers in compact tool rows', async () => {
+    const fullCommand = String.raw`"C:\Windows\System32\WindowsPowerShell\v1.0\powershell.exe" -Command "Get-Content -LiteralPath 'E:\Work\Lumen1\assets\scenes\cornell_box.json'"`;
+    const displayCommand = String.raw`Get-Content -LiteralPath 'E:\Work\Lumen1\assets\scenes\cornell_box.json'`;
+    const logs = createTaskLogs();
+    logs.phases.planning.entries = [
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'tool_start',
+        phase: 'planning',
+        content: `[Command] ${fullCommand}`,
+        tool_name: 'Command',
+        tool_input: fullCommand,
+      },
+      {
+        timestamp: '2026-01-01T00:00:02.000Z',
+        type: 'tool_end',
+        phase: 'planning',
+        content: '[Command] Done',
+        tool_name: 'Command',
+        tool_success: true,
+      },
+    ];
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: logs })) as typeof window.electronAPI.getTaskLogs;
+
+    render(<TaskRuntimeLogs task={createTask()} />);
+
+    expect(await screen.findByText(displayCommand)).toHaveAttribute('title', fullCommand);
+    expect(screen.queryByText(/WindowsPowerShell/)).not.toBeInTheDocument();
+  });
+
   it('merges streamed model tokens without waiting for a full log refresh', async () => {
     window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: null })) as typeof window.electronAPI.getTaskLogs;
 

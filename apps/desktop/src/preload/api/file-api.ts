@@ -1,6 +1,6 @@
 import { ipcRenderer, webUtils } from 'electron';
 import { IPC_CHANNELS } from '../../shared/constants';
-import type { IPCResult } from '../../shared/types';
+import type { FileExplorerChangeEvent, IPCResult } from '../../shared/types';
 
 export interface FileAPI {
   // File Explorer Operations
@@ -12,6 +12,9 @@ export interface FileAPI {
   getChangedFiles: (projectPath: string) => Promise<IPCResult<string[]>>;
   getPathForFile: (file: File) => string;
   showItemInFolder: (filePath: string) => Promise<IPCResult<void>>;
+  watchProjectFiles: (projectPath: string) => Promise<IPCResult<void>>;
+  unwatchProjectFiles: (projectPath: string) => Promise<IPCResult<void>>;
+  onProjectFilesChanged: (callback: (event: FileExplorerChangeEvent) => void) => () => void;
 }
 
 export const createFileAPI = (): FileAPI => ({
@@ -30,5 +33,16 @@ export const createFileAPI = (): FileAPI => ({
     ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPLORER_CHANGED_FILES, projectPath),
   getPathForFile: (file: File): string => webUtils.getPathForFile(file),
   showItemInFolder: (filePath: string): Promise<IPCResult<void>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPLORER_SHOW_ITEM_IN_FOLDER, filePath)
+    ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPLORER_SHOW_ITEM_IN_FOLDER, filePath),
+  watchProjectFiles: (projectPath: string): Promise<IPCResult<void>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPLORER_WATCH_PROJECT, projectPath),
+  unwatchProjectFiles: (projectPath: string): Promise<IPCResult<void>> =>
+    ipcRenderer.invoke(IPC_CHANNELS.FILE_EXPLORER_UNWATCH_PROJECT, projectPath),
+  onProjectFilesChanged: (callback: (event: FileExplorerChangeEvent) => void): (() => void) => {
+    const handler = (_event: Electron.IpcRendererEvent, event: FileExplorerChangeEvent): void => {
+      callback(event);
+    };
+    ipcRenderer.on(IPC_CHANNELS.FILE_EXPLORER_PROJECT_CHANGED, handler);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.FILE_EXPLORER_PROJECT_CHANGED, handler);
+  }
 });

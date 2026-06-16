@@ -669,16 +669,114 @@ function formatEntryTime(timestamp: string): string {
   });
 }
 
-function getToolDisplay(entry: DisplayTaskLogEntry): { name: string; input: string; status: 'running' | 'done' | 'error' } {
+interface ToolDisplay {
+  name: string;
+  input: string;
+  rawInput: string;
+  status: 'running' | 'done' | 'error';
+}
+
+interface CommandLineToken {
+  value: string;
+  end: number;
+}
+
+function tokenizeCommandLine(value: string): CommandLineToken[] {
+  const tokens: CommandLineToken[] = [];
+  let index = 0;
+
+  while (index < value.length) {
+    while (index < value.length && /\s/.test(value[index])) {
+      index += 1;
+    }
+
+    if (index >= value.length) {
+      break;
+    }
+
+    const quote = value[index] === '"' || value[index] === "'" ? value[index] : '';
+
+    if (quote) {
+      index += 1;
+      let tokenValue = '';
+
+      while (index < value.length) {
+        const char = value[index];
+        if (char === quote) {
+          index += 1;
+          break;
+        }
+        tokenValue += char;
+        index += 1;
+      }
+
+      tokens.push({ value: tokenValue, end: index });
+      continue;
+    }
+
+    const start = index;
+    while (index < value.length && !/\s/.test(value[index])) {
+      index += 1;
+    }
+
+    tokens.push({ value: value.slice(start, index), end: index });
+  }
+
+  return tokens;
+}
+
+function isPowerShellExecutable(value: string): boolean {
+  const executable = value.replace(/\//g, '\\').split('\\').pop()?.toLowerCase();
+  return executable === 'powershell.exe' || executable === 'powershell' || executable === 'pwsh.exe' || executable === 'pwsh';
+}
+
+function stripMatchingOuterQuotes(value: string): string {
+  const trimmed = value.trim();
+  if (trimmed.length < 2) {
+    return trimmed;
+  }
+
+  const quote = trimmed[0];
+  if ((quote === '"' || quote === "'") && trimmed[trimmed.length - 1] === quote) {
+    return trimmed.slice(1, -1).trim();
+  }
+
+  return trimmed;
+}
+
+function simplifyToolInputForDisplay(value: string): string {
+  const trimmed = value.trim();
+  if (!trimmed) {
+    return '';
+  }
+
+  const tokens = tokenizeCommandLine(trimmed);
+  if (tokens.length < 2 || !isPowerShellExecutable(tokens[0].value)) {
+    return trimmed;
+  }
+
+  const commandToken = tokens.find((token, index) =>
+    index > 0 && /^[-/](?:command|c)$/i.test(token.value)
+  );
+  if (!commandToken) {
+    return trimmed;
+  }
+
+  const commandPayload = stripMatchingOuterQuotes(trimmed.slice(commandToken.end));
+  return commandPayload || trimmed;
+}
+
+function getToolDisplay(entry: DisplayTaskLogEntry): ToolDisplay {
   const name = entry.tool_name || entry.content.match(/^\[([^\]]+)\]/)?.[1] || 'Tool';
-  const input = entry.tool_input || entry.content.replace(/^\[[^\]]+\]\s*/, '').replace(/^(Done|Error)$/i, '').trim();
+  const rawInput = (entry.tool_input || entry.content.replace(/^\[[^\]]+\]\s*/, '').replace(/^(Done|Error)$/i, '')).trim();
+  const input = simplifyToolInputForDisplay(rawInput);
   const status = entry.type === 'tool_start'
     ? 'running'
     : entry.tool_success === false || /\b(error|fail|failed)\b/i.test(entry.content)
       ? 'error'
       : 'done';
 
-  return { name, input, status };
+  return { name, input, rawInput, status };
 }
 
 function getCollapsedLogDetail(
@@ -1217,7 +1315,7 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
             {tool.name}
           </span>
           {tool.input && (
-            <span className="min-w-0 truncate text-muted-foreground" title={tool.input}>
+            <span className="min-w-0 truncate text-muted-foreground" title={tool.rawInput || tool.input}>
               {tool.input}
             </span>
           )}

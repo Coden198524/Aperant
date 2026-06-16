@@ -10,7 +10,7 @@ import { Textarea } from './ui/textarea';
 import { FileTree } from './FileTree';
 import { useFileExplorerStore } from '../stores/file-explorer-store';
 import { cn } from '../lib/utils';
-import type { FileNode } from '../../shared/types';
+import type { FileExplorerChangeEvent, FileNode } from '../../shared/types';
 
 interface FileExplorerPanelProps {
   projectPath: string;
@@ -322,6 +322,36 @@ function normalizeTreePath(filePath: string): string {
   return window.platform?.isWindows ? normalized.toLowerCase() : normalized;
 }
 
+function normalizeComparableTreePath(filePath: string): string {
+  const normalized = filePath.replace(/[\\/]+$/, '').replace(/\\/g, '/');
+  return window.platform?.isWindows ? normalized.toLowerCase() : normalized;
+}
+
+function isSameTreePath(pathA: string, pathB: string): boolean {
+  return normalizeComparableTreePath(pathA) === normalizeComparableTreePath(pathB);
+}
+
+function isSameOrDescendantTreePath(candidatePath: string, rootPath: string): boolean {
+  const candidate = normalizeComparableTreePath(candidatePath);
+  const root = normalizeComparableTreePath(rootPath);
+  return candidate === root || candidate.startsWith(`${root}/`);
+}
+
+function findLoadedDirectoryKey(files: Map<string, FileNode[]>, dirPath: string): string | null {
+  if (files.has(dirPath)) {
+    return dirPath;
+  }
+
+  const normalizedDirPath = normalizeComparableTreePath(dirPath);
+  for (const loadedPath of files.keys()) {
+    if (normalizeComparableTreePath(loadedPath) === normalizedDirPath) {
+      return loadedPath;
+    }
+  }
+
+  return null;
+}
+
 function buildChangedPathSets(projectPath: string, relativePaths: string[]) {
   const changedPaths = new Set<string>();
   const changedDirectoryPaths = new Set<string>();
@@ -425,9 +455,57 @@ export function FileExplorerPanel({ projectPath }: FileExplorerPanelProps) {
 
   const handleRefresh = () => {
     clearCache();
-    loadDirectory(projectPath);
+    void loadDirectory(projectPath);
     void refreshChangedFiles();
   };
+
+  const refreshLoadedProjectDirectories = useCallback(async () => {
+    const state = useFileExplorerStore.getState();
+    const loadedProjectDirectories = Array.from(state.files.keys())
+      .filter((dirPath) => isSameOrDescendantTreePath(dirPath, projectPath));
+
+    const directoriesToRefresh = loadedProjectDirectories.length > 0
+      ? loadedProjectDirectories
+      : [projectPath];
+
+    await Promise.all(
+      directoriesToRefresh.map((dirPath) => state.refreshDirectory(dirPath))
+    );
+  }, [projectPath]);
+
+  const handleProjectFilesChanged = useCallback((event: FileExplorerChangeEvent) => {
+    if (!isSameTreePath(event.projectPath, projectPath)) {
+      return;
+    }
+
+    void (async () => {
+      if (event.removedDirectoryPaths.length > 0) {
+        useFileExplorerStore.getState().invalidateDirectories(event.removedDirectoryPaths);
+      }
+
+      const state = useFileExplorerStore.getState();
+      const directoriesToRefresh = new Set<string>();
+      for (const affectedPath of event.affectedDirectoryPaths) {
+        if (!isSameOrDescendantTreePath(affectedPath, projectPath)) {
+          continue;
+        }
+
+        const loadedDirectoryKey = findLoadedDirectoryKey(state.files, affectedPath);
+        if (loadedDirectoryKey) {
+          directoriesToRefresh.add(loadedDirectoryKey);
+        } else if (isSameTreePath(affectedPath, projectPath)) {
+          directoriesToRefresh.add(projectPath);
+        }
+      }
+
+      await Promise.all(
+        Array.from(directoriesToRefresh).map((dirPath) =>
+          useFileExplorerStore.getState().refreshDirectory(dirPath)
+        )
+      );
+      await refreshChangedFiles();
+    })();
+  }, [projectPath, refreshChangedFiles]);
 
   const confirmDiscard = useCallback(() => {
     return !isDirty || window.confirm('Discard unsaved changes?');
@@ -711,8 +789,23 @@ export function FileExplorerPanel({ projectPath }: FileExplorerPanelProps) {
 
   useEffect(() => {
     if (!isOpen) return;
+    void refreshLoadedProjectDirectories();
     void refreshChangedFiles();
-  }, [isOpen, refreshChangedFiles]);
+
+    const unsubscribe = window.electronAPI.onProjectFilesChanged(handleProjectFilesChanged);
+    void window.electronAPI.watchProjectFiles(projectPath);
+
+    return () => {
+      unsubscribe();
+      void window.electronAPI.unwatchProjectFiles(projectPath);
+    };
+  }, [
+    handleProjectFilesChanged,
+    isOpen,
+    projectPath,
+    refreshChangedFiles,
+    refreshLoadedProjectDirectories
+  ]);
 
   return (
     <AnimatePresence mode="wait">

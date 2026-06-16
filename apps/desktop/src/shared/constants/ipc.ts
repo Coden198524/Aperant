@@ -568,6 +568,9 @@ export const IPC_CHANNELS = {
   FILE_EXPLORER_DIFF: 'fileExplorer:diff',
   FILE_EXPLORER_CHANGED_FILES: 'fileExplorer:changedFiles',
   FILE_EXPLORER_SHOW_ITEM_IN_FOLDER: 'fileExplorer:showItemInFolder',
+  FILE_EXPLORER_WATCH_PROJECT: 'fileExplorer:watchProject',
+  FILE_EXPLORER_UNWATCH_PROJECT: 'fileExplorer:unwatchProject',
+  FILE_EXPLORER_PROJECT_CHANGED: 'fileExplorer:projectChanged',
 
   // Git operations
   GIT_GET_BRANCHES: 'git:getBranches',

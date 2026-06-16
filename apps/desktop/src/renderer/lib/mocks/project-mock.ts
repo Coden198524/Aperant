@@ -139,6 +139,16 @@ export const projectMock = {
     success: true
   }),
 
+  watchProjectFiles: async () => ({
+    success: true
+  }),
+
+  unwatchProjectFiles: async () => ({
+    success: true
+  }),
+
+  onProjectFilesChanged: () => () => {},
+
   // Git operations
   getGitBranches: async () => ({
     success: true,

@@ -12,6 +12,7 @@ import type {
   InitializationResult,
   CreateProjectFolderResult,
   FileNode,
+  FileExplorerChangeEvent,
   ProjectContextData,
   MemorySystemStatus,
   ContextSearchResult,
@@ -953,6 +954,9 @@ export interface ElectronAPI {
   getChangedFiles: (projectPath: string) => Promise<IPCResult<string[]>>;
   getPathForFile: (file: File) => string;
   showItemInFolder: (filePath: string) => Promise<IPCResult<void>>;
+  watchProjectFiles: (projectPath: string) => Promise<IPCResult<void>>;
+  unwatchProjectFiles: (projectPath: string) => Promise<IPCResult<void>>;
+  onProjectFilesChanged: (callback: (event: FileExplorerChangeEvent) => void) => () => void;
 
   // Git operations
   /** @deprecated Will return GitBranchDetail[] in future - see getGitBranchesWithInfo */
