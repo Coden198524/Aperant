@@ -64,6 +64,8 @@ describe('electron builder release resources', () => {
     assert.ok(build.asarUnpack.some((entry) => entry.includes('@lydell/node-pty')));
     assert.ok(extraResources.includes('resources/icon.ico->icon.ico'));
     assert.ok(extraResources.includes('prompts->prompts'));
+    assert.ok(extraResources.includes('../../libs/core/package.json->node_modules/@autocode/core/package.json'));
+    assert.ok(extraResources.includes('../../libs/core/dist->node_modules/@autocode/core/dist'));
     assert.ok(extraResources.includes('../../node_modules/@libsql->node_modules/@libsql'));
     assert.ok(extraResources.includes('../../node_modules/libsql->node_modules/libsql'));
     assert.ok(extraResources.includes('../../node_modules/@neon-rs->node_modules/@neon-rs'));

@@ -63,6 +63,11 @@ export const AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS = 4_000;
 const CLI_TASK_DESCRIPTION_COMPACTION_NOTICE =
   '\n\n...[task description middle omitted for prompt budget; read the task metadata if exact omitted detail is required]...\n\n';
 
+interface AutocodeTaskRunnerDependencyResolutionOptions {
+  resolveModule?: (moduleName: string) => string;
+  resourcesPath?: string;
+}
+
 export function createAutocodeTaskRunPlan(input: CreateAutocodeTaskRunPlanInput): AutocodeTaskRunPlan {
   const task = resolveTask(input.projectRoot, input.dataDirName, input.taskId);
   if (!task) {
@@ -586,12 +591,78 @@ function isTaskRunChineseLanguage(language: AutocodeAgentLanguage): boolean {
   return typeof language === 'string' && language.trim().toLowerCase().replace(/_/g, '-').startsWith('zh');
 }
 
+export function resolveAutocodeTaskRunnerDependency(
+  moduleName: string,
+  options: AutocodeTaskRunnerDependencyResolutionOptions = {},
+): string | undefined {
+  const resolved = tryResolveAutocodeTaskRunnerDependency(
+    options.resolveModule ?? ((name) => requireFromCore.resolve(name)),
+    moduleName,
+  );
+  if (resolved) {
+    return resolved;
+  }
+
+  const resourcesPath = options.resourcesPath ?? getAutocodeElectronResourcesPath();
+  if (!resourcesPath) {
+    return undefined;
+  }
+
+  const resourcesRequire = createRequire(join(resourcesPath, 'node_modules', '__autocode_runner_dependency__.cjs'));
+  const resolvedFromResources = tryResolveAutocodeTaskRunnerDependency(
+    (name) => resourcesRequire.resolve(name),
+    moduleName,
+  );
+  if (resolvedFromResources) {
+    return resolvedFromResources;
+  }
+
+  return resolvePackagedAutocodeCoreModuleFile(moduleName, resourcesPath);
+}
+
 function resolveOptionalRunnerDependency(moduleName: string): string | undefined {
+  return resolveAutocodeTaskRunnerDependency(moduleName);
+}
+
+function tryResolveAutocodeTaskRunnerDependency(
+  resolveModule: (moduleName: string) => string,
+  moduleName: string,
+): string | undefined {
   try {
-    return requireFromCore.resolve(moduleName);
+    return resolveModule(moduleName);
   } catch {
     return undefined;
   }
+}
+
+function getAutocodeElectronResourcesPath(): string | undefined {
+  const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
+  return typeof resourcesPath === 'string' && resourcesPath.length > 0 ? resourcesPath : undefined;
+}
+
+function resolvePackagedAutocodeCoreModuleFile(
+  moduleName: string,
+  resourcesPath: string,
+): string | undefined {
+  const coreDistSubpath = getPackagedAutocodeCoreDistSubpath(moduleName);
+  if (!coreDistSubpath) {
+    return undefined;
+  }
+
+  const candidate = join(resourcesPath, 'node_modules', '@autocode', 'core', 'dist', `${coreDistSubpath}.js`);
+  return existsSync(candidate) ? candidate : undefined;
+}
+
+function getPackagedAutocodeCoreDistSubpath(moduleName: string): string | undefined {
+  if (moduleName.startsWith('@autocode/core/')) {
+    return moduleName.slice('@autocode/core/'.length);
+  }
+
+  if (moduleName.startsWith('./')) {
+    return `tasks/${moduleName.slice(2).replace(/\.js$/u, '')}`;
+  }
+
+  return undefined;
 }
 
 function buildNodeRunnerScript(input: {

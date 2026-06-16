@@ -8,6 +8,7 @@ import { DIRECT_CHANGE_REQUEST_LIMIT } from '../runtime/agent-messages.js';
 import {
   AUTOCODE_CLI_TASK_DESCRIPTION_MAX_CHARS,
   createAutocodeTaskRunPlan,
+  resolveAutocodeTaskRunnerDependency,
 } from './cli-runner.js';
 import { createAutocodeTask, getAutocodeSpecDir } from './spec-store.js';
 
@@ -83,6 +84,27 @@ describe('Autocode CLI runner prompt', () => {
     expect(plan.prompt).toContain('LATEST_CHANGE_REQUEST');
     expect(plan.prompt).not.toContain('OLD_CHANGE_REQUEST_SHOULD_NOT_APPEAR');
     expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
+  });
+
+  it('resolves packaged work package helpers from Electron resources', () => {
+    const resourcesPath = join(projectRoot, 'resources');
+    const coreTasksDir = join(resourcesPath, 'node_modules', '@autocode', 'core', 'dist', 'tasks');
+    mkdirSync(coreTasksDir, { recursive: true });
+    writeFileSync(join(coreTasksDir, 'work-packages.js'), 'export {};\n', 'utf8');
+    writeFileSync(join(coreTasksDir, 'plan-quality.js'), 'export {};\n', 'utf8');
+
+    const missingWorkspaceResolver = () => {
+      throw new Error('workspace package not available');
+    };
+
+    expect(resolveAutocodeTaskRunnerDependency('@autocode/core/tasks/work-packages', {
+      resolveModule: missingWorkspaceResolver,
+      resourcesPath,
+    })).toBe(join(coreTasksDir, 'work-packages.js'));
+    expect(resolveAutocodeTaskRunnerDependency('./plan-quality.js', {
+      resolveModule: missingWorkspaceResolver,
+      resourcesPath,
+    })).toBe(join(coreTasksDir, 'plan-quality.js'));
   });
 
   it('folds repeated human feedback lines before generating run prompts', () => {

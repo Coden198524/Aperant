@@ -201,6 +201,14 @@
         "to": "prompts"
       },
       {
+        "from": "../../libs/core/package.json",
+        "to": "node_modules/@autocode/core/package.json"
+      },
+      {
+        "from": "../../libs/core/dist",
+        "to": "node_modules/@autocode/core/dist"
+      },
+      {
         "from": "../../node_modules/@libsql",
         "to": "node_modules/@libsql"
       },
