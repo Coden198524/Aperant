@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 
 import {
   AUTOCODE_SPEC_KICKOFF_TASK_DESCRIPTION_MAX_CHARS,
+  buildAutocodeAgentKickoffMessage,
   buildAutocodeAgenticSpecOrchestratorKickoffMessage,
   buildAutocodeSpecKickoffMessage,
 } from './agent-kickoff.js';
@@ -185,6 +186,34 @@ describe('buildAutocodeSpecKickoffMessage', () => {
     expect(message).toContain('project docs reference middle omitted');
     expect(message).toContain('Product detail 219');
     expect(message.length).toBeLessThan(7_000);
+  });
+
+  it('includes product-grade QA report requirements in QA kickoff messages', () => {
+    const qaReviewer = buildAutocodeAgentKickoffMessage({
+      agentType: 'qa_reviewer',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+    });
+    const qaFixer = buildAutocodeAgentKickoffMessage({
+      agentType: 'qa_fixer',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+    });
+    const mmoReviewer = buildAutocodeAgentKickoffMessage({
+      agentType: 'mmo_qa_reviewer',
+      specDir: 'E:/Work/App/.autocode/specs/001-task',
+      projectDir: 'E:/Work/App',
+    });
+
+    expect(qaReviewer).toContain('Changed Files And Contracts');
+    expect(qaReviewer).toContain('Acceptance Matrix');
+    expect(qaReviewer).toContain('APIs, schemas, IPC/protocols');
+    expect(qaFixer).toContain('Do not edit the QA verdict');
+    expect(qaFixer).toContain('public APIs/schemas/IPC/config/data/error contracts');
+    expect(mmoReviewer).toContain('MMO Domain Matrix');
+    expect(mmoReviewer).toContain('server authority');
+    expect(mmoReviewer).toContain('sync/protocol');
+    expect(mmoReviewer).toContain('liveops/release');
   });
 
   it('compacts oversized task descriptions in agentic orchestrator kickoff', () => {

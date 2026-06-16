@@ -63,6 +63,29 @@ const EMPTY_EVIDENCE_TOKENS = new Set([
 const TRACEABLE_EVIDENCE_PATTERN =
   /\b(spec\.md|requirements\.md|context\.md|research\.md|agents\.md|readme|official|standard|docs?|source|project)\b|[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+/i;
 
+const GENERIC_TASK_TITLE_PATTERN =
+  /^(?:implement|build|add|create|update|modify|wire|integrate|refactor|fix|improve|clean ?up|test)\s+(?:the\s+)?(?:feature|functionality|logic|code|implementation|changes?|updates?|module|components?|ui|backend|frontend|api|tests?|test coverage|docs?|documentation|files?|system|workflow|integration|support|structure|bug|issue)$/i;
+
+const GENERIC_TASK_DESCRIPTION_PATTERN =
+  /^(?:update|modify|implement|add|create|fix|refactor|test)\s+(?:the\s+)?(?:code|logic|feature|functionality|implementation|files?|tests?|changes?)\.?$/i;
+
+const READ_ONLY_VALIDATION_TASK_PATTERN =
+  /\b(?:validate|verify|verification|manual qa|qa|smoke|test|typecheck|lint|build)\b/i;
+
+const PROJECT_SPECIFIC_TASK_ANCHOR_PATTERN =
+  /[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+|\b(?:package|tsconfig|vite|vitest|webpack|rollup|biome|eslint|cargo|go|pyproject)\.[A-Za-z0-9.]+|\b[A-Z][A-Za-z0-9]*(?:Service|Manager|Controller|Adapter|Provider|Store|Repository|Bridge|Machine|Orchestrator|Runner|Renderer|Handler|Client|Config|Panel|Dialog|View|Model|Schema)\b|\buse[A-Z][A-Za-z0-9]+\b|\b[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\b/;
+
+const PLAN_ARTIFACT_FILE_NAMES = new Set([
+  AUTOCODE_TASK_ARTIFACTS.specFile.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.requirements.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.context.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.research.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.tasks.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.implementationPlan.toLowerCase(),
+  AUTOCODE_TASK_ARTIFACTS.qaReport.toLowerCase(),
+  'build-progress.txt',
+]);
+
 export function validateAutocodeStandardPlanArtifacts(
   input: ValidateAutocodeStandardPlanArtifactsInput,
 ): AutocodePlanQualityResult {
@@ -124,6 +147,7 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} as a compact decision index, not a full analysis dump.`,
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.requirements} focused on requirements, acceptance criteria, constraints, evidence sources, standards, and assumptions.`,
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} concise and make every executable subtask traceable.`,
+    '- Replace generic task text with concrete behavior, affected project boundary, likely files/APIs, and the existing pattern to follow.',
     '- Preserve requirement IDs and unaffected design/task content during Request Changes iterations.',
     '- Use Evidence references instead of copying source code or long research notes.',
     '- If evidence is missing, add an assumption/open question or validation task instead of inventing implementation work.',
@@ -258,7 +282,143 @@ function validateTasksEvidence(tasksMarkdown: string): string[] {
       }
     }
   }
+  errors.push(...validateTaskProjectSpecificity(plan));
   return errors;
+}
+
+function validateTaskProjectSpecificity(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>): string[] {
+  const errors: string[] = [];
+  let executableTaskCount = 0;
+  let anchoredTaskCount = 0;
+
+  for (const phase of plan.phases ?? []) {
+    const subtasks = Array.isArray(phase.subtasks)
+      ? phase.subtasks
+      : Array.isArray(phase.chunks)
+        ? phase.chunks
+        : [];
+    for (const subtask of subtasks) {
+      executableTaskCount += 1;
+      const record = subtask as Record<string, unknown>;
+      const id = singleLine(record.id) || 'unknown';
+      const title = singleLine(record.title);
+      const description = singleLine(record.description);
+      const hasAnchor = hasProjectSpecificTaskAnchor(record);
+      if (hasAnchor) {
+        anchoredTaskCount += 1;
+      }
+
+      if (isReadOnlyValidationTask(record, title, description)) {
+        continue;
+      }
+      if (isGenericTaskTitle(title) && !hasAnchor) {
+        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} is too generic; name the concrete project boundary, behavior, and source/API pattern it follows.`);
+      } else if (isGenericTaskDescription(title, description) && !hasAnchor) {
+        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has boilerplate guidance; add project-specific files, APIs, module boundaries, or existing patterns.`);
+      }
+    }
+  }
+
+  if (executableTaskCount > 0 && anchoredTaskCount === 0) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} has no project-specific task anchors; cite source files, project docs, APIs, commands, or explicit files to create/modify.`);
+  }
+
+  return errors;
+}
+
+function isReadOnlyValidationTask(
+  subtask: Record<string, unknown>,
+  title: string,
+  description: string,
+): boolean {
+  const writeIntent = [
+    ...stringArrayField(subtask.files),
+    ...stringArrayField(subtask.files_to_create),
+    ...stringArrayField(subtask.files_to_modify),
+  ].filter((item) => !EMPTY_EVIDENCE_TOKENS.has(item.toLowerCase()));
+  if (writeIntent.length > 0) {
+    return false;
+  }
+
+  return READ_ONLY_VALIDATION_TASK_PATTERN.test([title, description].join(' '));
+}
+
+function hasProjectSpecificTaskAnchor(subtask: Record<string, unknown>): boolean {
+  const fileAnchors = [
+    ...stringArrayField(subtask.files),
+    ...stringArrayField(subtask.files_to_create),
+    ...stringArrayField(subtask.files_to_modify),
+    ...stringArrayField(subtask.pattern_files),
+  ];
+  if (fileAnchors.some(isProjectSpecificFileAnchor)) {
+    return true;
+  }
+
+  const taskText = stripPlanArtifactMentions([
+    stringifyTaskValue(subtask.title),
+    stringifyTaskValue(subtask.description),
+    stringifyTaskValue(subtask.evidence),
+    stringifyTaskValue(subtask.verification),
+  ].join(' '));
+
+  return PROJECT_SPECIFIC_TASK_ANCHOR_PATTERN.test(taskText);
+}
+
+function isGenericTaskTitle(title: string): boolean {
+  return GENERIC_TASK_TITLE_PATTERN.test(normalizeTaskQualityText(title));
+}
+
+function isGenericTaskDescription(title: string, description: string): boolean {
+  const normalizedDescription = normalizeTaskQualityText(description);
+  if (!normalizedDescription || normalizedDescription === normalizeTaskQualityText(title)) {
+    return true;
+  }
+  return GENERIC_TASK_DESCRIPTION_PATTERN.test(normalizedDescription);
+}
+
+function normalizeTaskQualityText(value: string): string {
+  return value
+    .replace(/[`*_()[\]{}:;]/g, ' ')
+    .replace(/\s+/g, ' ')
+    .trim()
+    .toLowerCase();
+}
+
+function isProjectSpecificFileAnchor(value: string): boolean {
+  const normalized = value
+    .replace(/\\/g, '/')
+    .replace(/^\.\//, '')
+    .trim()
+    .toLowerCase();
+  if (!normalized || EMPTY_EVIDENCE_TOKENS.has(normalized)) {
+    return false;
+  }
+  const fileName = normalized.split('/').pop() ?? normalized;
+  return !PLAN_ARTIFACT_FILE_NAMES.has(fileName);
+}
+
+function stripPlanArtifactMentions(value: string): string {
+  return value.replace(/\b(?:spec|requirements|context|research|tasks|implementation_plan|build-progress|qa_report|human_input|change_requests)\.(?:md|jsonl?)\b/gi, ' ');
+}
+
+function stringArrayField(value: unknown): string[] {
+  if (!Array.isArray(value)) {
+    return [];
+  }
+  return value.map((item) => singleLine(item)).filter(Boolean);
+}
+
+function stringifyTaskValue(value: unknown): string {
+  if (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean') {
+    return singleLine(value);
+  }
+  if (Array.isArray(value)) {
+    return value.map(stringifyTaskValue).filter(Boolean).join(' ');
+  }
+  if (value && typeof value === 'object') {
+    return Object.values(value as Record<string, unknown>).map(stringifyTaskValue).filter(Boolean).join(' ');
+  }
+  return '';
 }
 
 export function stringifyAutocodeContextMarkdown(contextData: unknown): string {

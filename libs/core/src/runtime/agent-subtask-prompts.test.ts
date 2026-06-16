@@ -193,4 +193,25 @@ describe('agent subtask prompt compaction', () => {
     expect(prompt).toContain('project instructions truncated');
     expect(prompt).toContain('SUBTASK_PROJECT_RULE_TAIL_PRESERVED');
   });
+
+  it('requires contract-aware code quality without default commits', () => {
+    const prompt = buildAutocodeSubtaskPrompt({
+      specDir: 'E:/project/.autocode/specs/001-task',
+      projectDir: 'E:/project',
+      subtask: {
+        id: '4.1',
+        description: 'Fix settings persistence',
+        filesToModify: ['src/settings/store.ts'],
+        patternsFrom: ['src/settings/store.test.ts'],
+      },
+    });
+
+    expect(prompt).toContain('Identify the local implementation contract');
+    expect(prompt).toContain('without placeholder code');
+    expect(prompt).toContain('closest regression test');
+    expect(prompt).toContain('Do not commit or push');
+    expect(prompt).toContain('changed files/contracts');
+    expect(prompt).toContain('No console.log/print debugging statements, placeholders');
+    expect(prompt).not.toContain('git commit -m');
+  });
 });

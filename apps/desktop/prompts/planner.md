@@ -32,17 +32,21 @@ If `HUMAN_INPUT.md` exists, treat this as an iteration of the same Standard task
 
 - Investigate enough existing code to match local architecture. Prefer targeted Grep/Glob/Read over broad scans.
 - Reuse existing module boundaries, helpers, conventions, and design patterns.
+- First identify the affected project boundary before writing tasks: UI/view, state/store, IPC/API, service/domain, persistence, worker/background process, build/tooling, tests, or docs. Mention that boundary in the relevant task guidance.
+- Capture architecture depth as concise implementation guidance, not long analysis: ownership, call/data flow, public contracts, persistence shape, side effects, failure paths, and cross-process/thread boundaries when they matter.
 - Every phase and executable subtask must be grounded in `spec.md`, `requirements.md`, `context.md`, project source/docs, or verified standards. Do not create tasks from generic model assumptions.
 - When a task depends on a framework/API/security/accessibility/gameplay/networking convention, cite the project source path or official/industry reference in the task guidance.
 - If evidence is missing, add a discovery/validation task or record an assumption; do not turn the assumption into implementation work.
 - Introduce a named pattern only when it removes real complexity.
 - Keep normal plans to 4 phases or fewer and about 24 subtasks or fewer.
 - For genuinely complex work, keep all required subtasks but shorten each note.
-- Each subtask should name likely files and the smallest reliable verification step.
+- Each subtask should name likely files, the local pattern or boundary it follows, and the smallest reliable verification step.
 - Each subtask should include one short evidence note in guidance or metadata, such as `Evidence: spec.md requirement 1`, `Evidence: src/foo.ts pattern`, or `Evidence: official SDK docs`.
 - For Request Changes iterations, update `spec.md`, `requirements.md`, and `tasks.md` only where the new requirement changes them; keep unaffected sections stable.
 - Make the next coding pass commit-ready: every new or revised task needs a focused verification command and clear completion criteria.
-- Do not include copied source, research notes, long rationale, or large examples.
+- Do not include copied source, research notes, long rationale, large examples, or standalone design sections.
+- Do not add standalone research, design, architecture review, rollout, cleanup, or broad QA phases unless project evidence or task risk makes them necessary.
+- Avoid generic task text such as "implement feature", "update code", "add tests", or "refactor structure"; name the concrete behavior and project boundary instead.
 - Do not mark subtasks complete. Use `[ ]` only.
 
 ## Parallel Execution Planning

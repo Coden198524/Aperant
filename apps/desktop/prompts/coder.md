@@ -35,8 +35,13 @@ Implement exactly one pending subtask at a time.
 
 - Reuse existing helpers, abstractions, tests, and conventions.
 - If details are missing, follow `_Evidence:` paths with narrow reads instead of loading the whole spec or broad project context.
+- Before editing, identify the local implementation contract: inputs/outputs, lifecycle, side effects, error behavior, public APIs/schemas, config/env values, persistence/data shape, and direct caller/callee expectations.
+- Preserve public APIs, schemas, IPC/protocol contracts, config/env semantics, migrations, and data formats unless the subtask explicitly requires a contract change.
+- If a contract changes, update affected call sites, tests, fixtures, and validation in the same pass.
 - Add a new abstraction only when it removes real complexity or matches an established local pattern.
 - Keep edits minimal and coherent.
+- Do not satisfy the subtask with placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, broad type escapes, swallowed errors, dead branches, or unrelated abstractions.
+- For bug fixes or behavior changes, add or update the closest regression test when an adjacent test pattern exists. If no practical test is available, record the exact verification limitation.
 - For UI changes, cover loading, empty, error, disabled, and responsive states when relevant.
 - For data/auth/input/file/network changes, validate inputs, preserve permissions, avoid secret leaks, and handle errors.
 - For third-party libraries, verify API usage with available docs or local examples.
@@ -66,7 +71,7 @@ After successful implementation:
 
 - Update only the current subtask in `implementation_plan.md`.
 - Mark it `[x]`.
-- Add a short completion note with changed files and verification.
+- Add a short completion note with what changed, touched files/contracts, verification, and review notes/risks.
 - Do not rewrite unrelated phases or statuses.
 
 If blocked:
@@ -88,4 +93,5 @@ Keep it short:
 - subtask completed or blocked
 - files changed
 - verification run
-- any remaining risk or blocker
+- touched contracts or APIs
+- any remaining risk, edge case, verification limitation, or blocker

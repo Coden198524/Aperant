@@ -40,6 +40,8 @@ import {
   stringifyAutocodeContextMarkdown,
   validateAutocodeStandardPlanArtifacts,
   validateAutocodePlanningSchedulingMetadata,
+  getAutocodeQaReportStatus,
+  validateAutocodeQaReportQuality,
   type AutocodeTaskRuntimeConcurrencyResolved,
   type Phase,
 } from '@autocode/core';
@@ -1417,8 +1419,15 @@ export class BuildOrchestrator extends EventEmitter {
     const qaReportPath = join(this.config.specDir, 'qa_report.md');
     try {
       const content = await readFile(qaReportPath, 'utf-8');
-      const lower = content.toLowerCase();
-      return lower.includes('status: passed') || lower.includes('status: approved');
+      if (getAutocodeQaReportStatus(content) !== 'passed') {
+        return false;
+      }
+      const qualityIssues = this.validateQAReportQuality(content, qaReportPath);
+      if (qualityIssues.length > 0) {
+        this.emitTyped('log', `Existing QA report has a pass verdict but is incomplete: ${qualityIssues.slice(0, 3).join('; ')}`);
+        return false;
+      }
+      return true;
     } catch {
       return false;
     }
@@ -1428,9 +1437,17 @@ export class BuildOrchestrator extends EventEmitter {
     const qaReportPath = join(this.config.specDir, 'qa_report.md');
     try {
       const content = await readFile(qaReportPath, 'utf-8');
-      const lower = content.toLowerCase();
+      const status = getAutocodeQaReportStatus(content);
 
-      if (lower.includes('status: passed') || lower.includes('status: approved')) {
+      if (status === 'passed' || status === 'failed') {
+        const qualityIssues = this.validateQAReportQuality(content, qaReportPath);
+        if (qualityIssues.length > 0) {
+          this.emitTyped('log', `QA status: UNKNOWN (report verdict is ${status} but quality is incomplete: ${qualityIssues.slice(0, 4).join('; ')})`);
+          return 'unknown';
+        }
+      }
+
+      if (status === 'passed') {
         this.emitTyped('log', 'QA status: PASSED');
         return 'passed';
       }
@@ -1438,11 +1455,7 @@ export class BuildOrchestrator extends EventEmitter {
       // Explicitly detect failure patterns so intermediate states don't short-circuit.
       // The QA fixer may write "FIXES_APPLIED" — that's an intermediate state that
       // should NOT count as a verdict. Only the reviewer writes the final verdict.
-      if (
-        lower.includes('status: failed') ||
-        lower.includes('status: rejected') ||
-        lower.includes('status: needs changes')
-      ) {
+      if (status === 'failed') {
         this.emitTyped('log', 'QA status: FAILED');
         return 'failed';
       }
@@ -1460,6 +1473,13 @@ export class BuildOrchestrator extends EventEmitter {
       this.emitTyped('log', `QA status: UNKNOWN (error reading report: ${error instanceof Error ? error.message : String(error)})`);
       return 'unknown';
     }
+  }
+
+  private validateQAReportQuality(content: string, qaReportPath: string): string[] {
+    return validateAutocodeQaReportQuality(content, qaReportPath, {
+      isGameMmo: this.getAgentForPhase('qa_review') === 'mmo_qa_reviewer' ||
+        this.config.qualityConfig?.projectType === 'game-mmo',
+    });
   }
 
   /**

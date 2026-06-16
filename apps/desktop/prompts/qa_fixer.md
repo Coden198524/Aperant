@@ -11,17 +11,21 @@ Fix every issue reported by QA.
 - Do not place deliverables in `.autocode/specs/`.
 - Keep changes scoped to QA findings.
 - Do not push to remote.
+- Preserve existing public APIs, schemas, IPC/protocol contracts, config/env behavior, data formats, persistence, side effects, and error behavior unless the QA issue explicitly requires a contract change.
+- Do not use placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, broad type escapes, swallowed errors, or unrelated abstractions as fixes.
 
 {{tool_call_json_formatting}}
 
 ## Process
 
 1. Extract every QA issue into a checklist.
-2. For each issue, read the cited location and nearby code.
-3. Implement the smallest correct fix.
-4. Add or update tests when QA requested tests or the fix needs regression coverage.
-5. Run the targeted verification QA will use.
-6. Update `implementation_plan.md` or progress notes only to record fixes, not to change the QA verdict.
+2. For each issue, identify the impacted requirement, contract, and caller/callee expectations before editing.
+3. Read the cited location and nearby code.
+4. Implement the smallest correct fix.
+5. Update callers, tests, schemas, configs, or docs when the fix intentionally changes a contract.
+6. Add or update tests when QA requested tests or the fix needs regression coverage.
+7. Run the targeted verification QA will use.
+8. Update `implementation_plan.md` or progress notes only to record fixes, not to change the QA verdict.
 
 ## Fix Rules
 
@@ -31,6 +35,8 @@ Fix every issue reported by QA.
 - If QA flags UI, verify the rendered state when possible.
 - If QA appears mistaken, make the code clearer or add a regression test proving the intended behavior.
 - Do not broaden the task into unrelated refactors.
+- Do not delete behavior to make tests pass unless the requirement explicitly removes it.
+- Keep a fix ledger in your final response: QA issue, files/contracts changed, verification, and remaining risk.
 
 ## Path Discipline
 

@@ -97,6 +97,11 @@ describe('project prompt profile', () => {
     expect(coderOverride?.content).toContain('React conventions');
     expect(coderOverride?.content).toContain('Implement the next pending subtask');
     expect(coderOverride?.content).toContain('design pattern decision');
+    expect(coderOverride?.content).toContain('Identify the local implementation contract');
+    expect(coderOverride?.content).toContain('public APIs, schemas, IPC/protocol contracts');
+    expect(coderOverride?.content).toContain('Do not leave placeholder code');
+    expect(coderOverride?.content).toContain('closest regression test');
+    expect(coderOverride?.content).toContain('touched files/contracts, verification, and review notes/risks');
     expect(coderOverride?.content).toContain('read the current narrow context');
     expect(coderOverride?.content).toContain('legacy or non-UTF-8 files as encoding-sensitive');
     expect(coderOverride?.content).toContain('TOOL CALL JSON SAFETY');
@@ -118,6 +123,21 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).toContain('File metadata is write intent');
     expect(plannerOverride?.content).toContain('source files, project docs, existing patterns, or verified official/industry references');
     expect(plannerOverride?.content).toContain('one `_Evidence: ..._` line');
+    expect(plannerOverride?.content).toContain('ARCHITECTURE GROUNDING');
+    expect(plannerOverride?.content).toContain('affected project boundary');
+    expect(plannerOverride?.content).toContain('Avoid generic titles such as "implement feature"');
+    expect(plannerOverride?.content).toContain('Do not add standalone research, design, architecture review');
+
+    const qaReviewerOverride = loadProjectPromptOverride(projectDir, 'qa_reviewer');
+    expect(qaReviewerOverride?.content).toContain('completion notes against actual changed files and changed contracts');
+    expect(qaReviewerOverride?.content).toContain('public APIs, schemas, IPC/protocols');
+    expect(qaReviewerOverride?.content).toContain('Acceptance Matrix');
+    expect(qaReviewerOverride?.content).toContain('impacted requirement/contract');
+
+    const qaFixerOverride = loadProjectPromptOverride(projectDir, 'qa_fixer');
+    expect(qaFixerOverride?.content).toContain('caller/callee expectations');
+    expect(qaFixerOverride?.content).toContain('Preserve public APIs, schemas, IPC/protocols');
+    expect(qaFixerOverride?.content).toContain('placeholder code');
   });
 
   it('builds an adaptation section for bundled prompts', () => {

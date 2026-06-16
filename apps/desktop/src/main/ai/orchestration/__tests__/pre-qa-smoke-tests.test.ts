@@ -50,6 +50,10 @@ function evidenceIndexMarkdown(files: string[], claims: string[], openQuestions:
     '## Evidence-Backed Claims',
     ...claims.map((claim) => `- ${claim}`),
     '',
+    '## Confidence And Inference Notes',
+    '- Confidence: medium unless a claim states otherwise.',
+    '- Inferred or unverified items are listed under open questions.',
+    '',
     '## Open Questions',
     ...openQuestions.map((question) => `- ${question}`),
     '',
@@ -203,8 +207,12 @@ describe('pre-QA smoke tests', () => {
     });
     await writeFile(join(specDir, 'doc_outline.md'), documentationOutlineMarkdown(['Overview', 'Core flow', 'Risks']), 'utf-8');
     await writeFile(join(specDir, 'evidence_index.md'), evidenceIndexMarkdown(
-      ['src/main.ts'],
-      ['Main flow starts in src/main.ts. Source: src/main.ts'],
+      ['src/main.ts', 'src/config.ts', 'src/state/store.ts'],
+      [
+        'Main flow starts in src/main.ts. Source: src/main.ts. Confidence: high.',
+        'Runtime configuration is loaded from src/config.ts. Source: src/config.ts. Confidence: high.',
+        'State transitions are stored in src/state/store.ts. Source: src/state/store.ts. Confidence: medium.',
+      ],
       ['Runtime configuration needs confirmation'],
     ), 'utf-8');
     await mkdir(join(specDir, 'docs'), { recursive: true });
@@ -212,15 +220,17 @@ describe('pre-QA smoke tests', () => {
       '# Source Analysis',
       '',
       '## Overview',
-      'This document summarizes the source evidence from `src/main.ts` and related files.',
+      'This document summarizes the source evidence from `src/main.ts`, `src/config.ts`, and `src/state/store.ts`.',
       '',
-      '## Key Files',
-      '| File | Role |',
-      '| --- | --- |',
-      '| `src/main.ts` | Entry point and source evidence for startup behavior. |',
+      '## Source Evidence Matrix',
+      '| File | Role | Confidence |',
+      '| --- | --- | --- |',
+      '| `src/main.ts` | Entry point and source evidence for startup behavior. | high |',
+      '| `src/config.ts` | Configuration source for runtime setup. | high |',
+      '| `src/state/store.ts` | State owner and transition evidence. | medium |',
       '',
-      '## Core Flow',
-      'The main flow loads configuration, initializes state, and dispatches work. The data flow moves from config to runtime state to output rendering.',
+      '## Core Flow And Architecture Boundaries',
+      'The main flow loads configuration, initializes state, and dispatches work. Module boundaries keep configuration, runtime state, and output rendering separate. The data flow moves from config to runtime state to output rendering.',
       '',
       '```mermaid',
       'flowchart TD',
@@ -327,11 +337,19 @@ describe('pre-QA smoke tests', () => {
     });
     await writeFile(join(specDir, 'doc_outline.md'), documentationOutlineMarkdown(['System matrix', 'Cross-end sequence', 'Data lifecycle', 'Risks']), 'utf-8');
     await writeFile(join(specDir, 'evidence_index.md'), evidenceIndexMarkdown(
-      ['Server/Combat.cpp', 'Client/CombatView.cpp', 'Config/Items.xml', 'Tools/GMTool.cs'],
       [
-        'Server authority owns combat resolution. Source: Server/Combat.cpp',
-        'Client rendering presents combat effects. Source: Client/CombatView.cpp',
-        'Config data and tooling evidence are present. Source: Config/Items.xml, Tools/GMTool.cs',
+        'Server/Combat.cpp',
+        'Client/CombatView.cpp',
+        'Engine/AnimationSystem.cpp',
+        'Config/Items.xml',
+        'Tools/GMTool.cs',
+        'Scripts/LiveOpsRelease.ts',
+      ],
+      [
+        'Server authority owns combat resolution. Source: Server/Combat.cpp. Confidence: high.',
+        'Client rendering and engine animation present combat effects. Source: Client/CombatView.cpp, Engine/AnimationSystem.cpp. Confidence: high.',
+        'Config data and tooling evidence are present. Source: Config/Items.xml, Tools/GMTool.cs. Confidence: medium.',
+        'Live operations release evidence is present. Source: Scripts/LiveOpsRelease.ts. Confidence: medium.',
       ],
       ['Replication tick rate needs runtime confirmation'],
     ), 'utf-8');
@@ -340,12 +358,12 @@ describe('pre-QA smoke tests', () => {
       '# MMO Source Analysis',
       '',
       '## Overview',
-      'This document cites evidence from `Server/Combat.cpp`, `Client/CombatView.cpp`, `Config/Items.xml`, and `Tools/GMTool.cs`.',
+      'This document cites evidence from `Server/Combat.cpp`, `Client/CombatView.cpp`, `Engine/AnimationSystem.cpp`, `Config/Items.xml`, `Tools/GMTool.cs`, and `Scripts/LiveOpsRelease.ts`.',
       '',
       '## System Matrix',
       '| System | Gameplay role | Client/engine | Server authority | Data/config | Tooling |',
       '| --- | --- | --- | --- | --- | --- |',
-      '| Combat | Gameplay combat loop and progression rewards | Client engine renders animation and effects | Server authority resolves damage and validates state | Config data drives skills and items | GM editor/tooling can inspect account state |',
+      '| Combat | Gameplay combat loop and progression rewards | Client engine renders animation and effects through `Client/CombatView.cpp` and `Engine/AnimationSystem.cpp` | Server authority resolves damage and validates state in `Server/Combat.cpp` | Config data drives skills and items from `Config/Items.xml` | GM editor/tooling can inspect account state through `Tools/GMTool.cs` and release scripts in `Scripts/LiveOpsRelease.ts` |',
       '| Economy | Economy and item progression | Client UI presents inventory | Server persists wallet and item state | Item config and content pipeline define values | Live operations tools adjust events |',
       '',
       '## Cross-End Sequence Flow',
@@ -492,6 +510,7 @@ describe('pre-QA smoke tests', () => {
         messages: [{
           role: 'assistant',
           content: [
+            'What changed: updated Server/Combat.cpp and Client/CombatPrediction.cpp for combat replication.',
             'Verification: ran targeted combat replication smoke check.',
             'Server authority remains on the server; client only sends intent.',
             'Network sync/protocol compatibility and reconciliation were reviewed.',
@@ -511,6 +530,64 @@ describe('pre-QA smoke tests', () => {
     expect(passed.issues).toEqual([]);
   });
 
+  it('requires coding completion summaries to include changed files, verification, and review notes', async () => {
+    const baseResult: SessionResult = {
+      outcome: 'completed',
+      stepsExecuted: 1,
+      usage: { promptTokens: 1, completionTokens: 1, totalTokens: 2 },
+      messages: [{ role: 'assistant', content: 'Done.' }],
+      durationMs: 1,
+      toolCallCount: 1,
+    };
+
+    const failed = await validateSubtaskQuality(
+      {
+        id: '1-1',
+        description: 'Fix auth session persistence.',
+        filesToModify: ['src/auth/session-store.ts'],
+        status: 'pending',
+      },
+      baseResult,
+      { enableIncrementalValidation: false },
+      projectDir,
+      specDir,
+    );
+
+    expect(failed.passed).toBe(false);
+    expect(failed.issues.join('\n')).toContain('concrete implementation change');
+    expect(failed.issues.join('\n')).toContain('touched files or changed contracts');
+    expect(failed.issues.join('\n')).toContain('verification run');
+    expect(failed.issues.join('\n')).toContain('review notes');
+
+    const passed = await validateSubtaskQuality(
+      {
+        id: '1-1',
+        description: 'Fix auth session persistence.',
+        filesToModify: ['src/auth/session-store.ts'],
+        status: 'pending',
+      },
+      {
+        ...baseResult,
+        messages: [{
+          role: 'assistant',
+          content: [
+            '| Item | Details |',
+            '| --- | --- |',
+            '| What changed | Fixed session persistence in `src/auth/session-store.ts` while preserving the storage contract. |',
+            '| Verification | Ran `npm test -- session-store.test.ts`. |',
+            '| Review notes | No residual risks; missing storage key edge case is covered. |',
+          ].join('\n'),
+        }],
+      },
+      { enableIncrementalValidation: false },
+      projectDir,
+      specDir,
+    );
+
+    expect(passed.passed).toBe(true);
+    expect(passed.issues).toEqual([]);
+  });
+
   it('keeps MMO completion checks accurate when useful summary appears after long logs', async () => {
     const result: SessionResult = {
       outcome: 'completed',
@@ -521,6 +598,7 @@ describe('pre-QA smoke tests', () => {
         content: [
           'Verbose command output follows.',
           'x'.repeat(QUALITY_SESSION_SUMMARY_MAX_CHARS * 2),
+          'What changed: updated Server/Combat.cpp and Client/CombatPrediction.cpp for combat replication.',
           'Verification: ran targeted combat replication smoke check.',
           'Server authority remains on the server; client only sends intent.',
           'Network sync/protocol compatibility and reconciliation were reviewed.',

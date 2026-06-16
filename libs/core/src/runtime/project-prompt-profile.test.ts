@@ -4,6 +4,7 @@ import {
   type AutocodeProjectPromptProfile,
   buildAutocodeCompactProjectPromptProfileSection,
   buildAutocodeProjectPromptProfileSection,
+  generateAutocodeProjectPromptOverrides,
 } from './project-prompt-profile.js';
 
 describe('project prompt profile formatting', () => {
@@ -30,6 +31,38 @@ describe('project prompt profile formatting', () => {
     expect((compact.match(/typecheck: npm run typecheck/g) ?? [])).toHaveLength(1);
     expect((full.match(/Reuse the renderer module flow/g) ?? [])).toHaveLength(1);
     expect(full).toContain('- Stack: TypeScript, JavaScript, React, Electron');
+  });
+
+  it('grounds generated planner prompts in project architecture instead of generic templates', () => {
+    const planner = generateAutocodeProjectPromptOverrides(createProfile()).planner;
+
+    expect(planner).toContain('ARCHITECTURE GROUNDING');
+    expect(planner).toContain('affected project boundary');
+    expect(planner).toContain('ownership, call/data flow, public contracts');
+    expect(planner).toContain('Do not add standalone research, design, architecture review');
+    expect(planner).toContain('Avoid generic titles such as "implement feature"');
+  });
+
+  it('grounds generated coder prompts in implementation contracts and reviewable summaries', () => {
+    const coder = generateAutocodeProjectPromptOverrides(createProfile()).coder;
+
+    expect(coder).toContain('Identify the local implementation contract');
+    expect(coder).toContain('public APIs, schemas, IPC/protocol contracts');
+    expect(coder).toContain('Do not leave placeholder code');
+    expect(coder).toContain('closest regression test');
+    expect(coder).toContain('touched files/contracts, verification, and review notes/risks');
+  });
+
+  it('grounds generated QA prompts in acceptance matrices and changed contracts', () => {
+    const prompts = generateAutocodeProjectPromptOverrides(createProfile());
+
+    expect(prompts.qa_reviewer).toContain('completion notes against actual changed files and changed contracts');
+    expect(prompts.qa_reviewer).toContain('public APIs, schemas, IPC/protocols');
+    expect(prompts.qa_reviewer).toContain('Acceptance Matrix');
+    expect(prompts.qa_reviewer).toContain('impacted requirement/contract');
+    expect(prompts.qa_fixer).toContain('caller/callee expectations');
+    expect(prompts.qa_fixer).toContain('Preserve public APIs, schemas, IPC/protocols');
+    expect(prompts.qa_fixer).toContain('placeholder code');
   });
 });
 

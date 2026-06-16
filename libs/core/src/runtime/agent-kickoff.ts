@@ -554,9 +554,9 @@ export function buildAutocodeAgentKickoffMessage(
     if (input.agentType === 'mmo_system_designer') {
       baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
     } else if (input.agentType === 'mmo_qa_reviewer') {
-      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, then run one focused project-appropriate verification when available. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+      baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, map changed behavior to MMO domains, then run one focused project-appropriate verification when available. Verify server authority, sync/protocol, persistence/data/config, performance, security/anti-cheat, tools/content, liveops/release, and changed contracts when relevant. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
     } else if (input.agentType === 'mmo_qa_fixer') {
-      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, and update ${promptSpecDir}/qa_report.md or implementation_plan.md to show fixes have been applied.`;
+      baseMessage = `${mmoRole}\n\nRead ${promptSpecDir}/qa_report.md, fix the reported issues in ${promptProjectDir}, preserve MMO authority/trust/protocol/save/config/tooling/release contracts unless the issue requires a contract change, and update ${promptSpecDir}/implementation_plan.md to show fixes have been applied. Do not edit the QA verdict.`;
     } else if (input.subtaskId) {
       baseMessage = [
         mmoRole,
@@ -593,10 +593,10 @@ export function buildAutocodeAgentKickoffMessage(
         baseMessage = `Complete this task directly. Project: ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request; do not read task metadata, requirements, plans, previous specs, broad listings, or candidate-file probes unless ambiguous. For simple docs, write the obvious target directly and verify once. End with a short markdown review table.`;
         break;
       case 'qa_reviewer':
-        baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, file hints, and ${promptSpecDir}/tasks.md Evidence metadata when present. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Verify changed behavior against Evidence-bound requirements before approving. Read source only when the check fails or the plan/evidence lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read the full spec, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line.`;
+        baseMessage = `Review the implementation in ${promptProjectDir} with the smallest deterministic check. First inspect ${promptSpecDir}/implementation_plan.md checkboxes, completion notes, file hints, and ${promptSpecDir}/tasks.md Evidence metadata when present. If all subtasks are completed, run one project-appropriate verification command when available; otherwise use one manual file-existence/static check. Verify changed behavior against Evidence-bound requirements, completion notes, changed files, and changed contracts before approving. Contracts include APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior. Read source only when the check fails or the plan/evidence lacks enough completion evidence, and then read only the changed or hinted files with line ranges. Do not read the full spec, README, or the same source file unless needed for a specific failed check. Do not use broad recursive searches; if a search tool is unavailable, use at most one narrow shell fallback. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
         break;
       case 'qa_fixer':
-        baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}. After fixing, update ${promptSpecDir}/qa_report.md to indicate fixes have been applied.`;
+        baseMessage = `Read ${promptSpecDir}/qa_report.md for the issues found by QA review. Fix all issues in ${promptProjectDir}, preserve public APIs/schemas/IPC/config/data/error contracts unless QA requires a contract change, and run the targeted re-verification. After fixing, update ${promptSpecDir}/implementation_plan.md to indicate fixes have been applied. Do not edit the QA verdict.`;
         break;
       default:
         baseMessage = `Complete the task described in your system prompt. Spec directory: ${promptSpecDir}. Project directory: ${promptProjectDir}`;
@@ -658,10 +658,10 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
       shared.push('', 'Create tasks.md as an Autocode Markdown checklist with executable tasks. Do not write implementation_plan.md. Use [ ] for pending tasks and concise metadata bullets for files, dependencies, requirements, and verification.');
     }
     if (input.agentType === 'mmo_qa_reviewer') {
-      shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`);
+      shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED", MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`);
     }
     if (input.agentType === 'mmo_qa_fixer') {
-      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Update qa_report.md or implementation_plan.md after fixes.`);
+      shared.push('', `Read ${promptSpecDir}/qa_report.md and fix the issues. Preserve authority/trust/protocol/save/config/tooling/release contracts and update implementation_plan.md after fixes; do not edit the QA verdict.`);
     }
     return shared.join('\n');
   }
@@ -679,9 +679,9 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
     case 'direct_task':
       return `Complete the user's task in one concise coding session for ${promptProjectDir}. If no file change is required, do not call tools; answer directly. Use the initial request as source. Avoid staged spec/plan/QA/subagents, prior specs, broad listings, candidate-file probes, and repeated validations. For simple docs, write the obvious target directly. End with a markdown table: What changed, Verification, Review notes.`;
     case 'qa_reviewer':
-      return `Review with minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED".`;
+      return `Review with minimal verification: inspect ${promptSpecDir}/implementation_plan.md, run one targeted check if available, and read only changed or hinted files when evidence is insufficient or a check fails. Verify acceptance evidence and changed contracts, then write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED", Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
     case 'qa_fixer':
-      return `Read ${promptSpecDir}/qa_report.md, fix reported issues in ${promptProjectDir}, and update ${promptSpecDir}/implementation_plan.md to show fixes were applied.`;
+      return `Read ${promptSpecDir}/qa_report.md, fix reported issues in ${promptProjectDir}, preserve public contracts unless QA requires a change, run re-verification, and update ${promptSpecDir}/implementation_plan.md to show fixes were applied.`;
     default:
       return `Complete the task in ${promptSpecDir}/spec.md for ${promptProjectDir}.`;
   }

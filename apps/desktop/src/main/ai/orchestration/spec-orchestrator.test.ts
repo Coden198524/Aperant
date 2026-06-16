@@ -1172,6 +1172,8 @@ describe('SpecOrchestrator Write tool retry helpers', () => {
       expect(plan.phases[0].subtasks[0].description).toContain('server authority');
       expect(plan.phases[0].subtasks[0].description).toContain('network sync');
       expect(plan.phases[0].subtasks[0].description).toContain('live operations');
+      expect(plan.phases[0].subtasks[0].description).toContain('concrete source/config paths');
+      expect(plan.phases[0].subtasks[0].description).toContain('system matrix with source entry points');
     } finally {
       await rm(specDir, { recursive: true, force: true });
     }

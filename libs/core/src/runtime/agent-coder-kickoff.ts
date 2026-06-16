@@ -257,15 +257,18 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     lines.push('- Do not call `Glob` with `**/*` or any all-repository recursive pattern. Use targeted source-directory or extension patterns and exclude generated/dependency directories.');
     lines.push(`- Ignore generated or dependency directories such as ${formatAutocodeIgnoredDirNamesForPrompt()}.`);
     lines.push('- Quality comes first: read enough relevant source files to support traceable conclusions. For small projects, reading all product source files is acceptable after excluding generated directories.');
+    lines.push('- Do not rely on README/manifests alone. Traverse imports/includes/routes/IPC/API/schema/config/test/build evidence until each important claim is source-backed or explicitly marked as inference.');
     lines.push('- Start with listed hints, manifests, entry files, and public interfaces, then expand through imports/includes/build manifests until the architecture, main behavior, data/state flow, and important boundaries are covered.');
     lines.push('- First write `doc_outline.md` with document type, target audience, sections, questions each section answers, and planned source references.');
-    lines.push('- Then write `evidence_index.md` with files read, evidence-backed claims, inferred claims, risks, and open questions. Every major conclusion in the final document should map to evidence or be marked as inference.');
+    lines.push('- Then write `evidence_index.md` as a claim-to-source ledger with files read, subsystem, evidence-backed claims, confidence, inferred/unverified claims, risks, uncovered areas, and open questions. Every major conclusion in the final document should map to evidence or be marked as inference.');
     lines.push('- Then write the final Markdown document from the outline and evidence index.');
-    lines.push('- The final Markdown must include overview, scope, key files/modules, core flows, data/state flow, boundaries/risks, and open questions. Use file paths for important claims.');
+    lines.push('- The final Markdown must include overview, scope, key files/modules, source evidence matrices, entry points, module ownership, public interfaces, core flows, data/state flow, boundaries/risks, and open questions. Cite concrete source/config paths for important claims.');
     if (gameMmoDocumentation) {
       lines.push('- Game project documentation profile: write for large-online-game/MMO engineering, not a generic source summary.');
       lines.push('- Cover these dimensions when evidence exists: gameplay systems, progression/economy/quests/items/combat, client runtime, engine/rendering/animation/assets/world streaming, server authority, network sync/protocol, data/config/persistence, GM/editor tools, build/release, performance, security/anti-cheat, telemetry, and live operations.');
+      lines.push('- `evidence_index.md` needs concrete source/config paths for each major system where present; if a domain is absent, mark it as not found or uncovered instead of guessing.');
       lines.push('- For each important game system, identify source entry points, runtime owner, authoritative side, key data/config files, state transitions, cross-end protocol or sync boundary, production tool path, risks, and open questions.');
+      lines.push('- The final document must include a system matrix with source entry points, runtime owner, authoritative side, protocol/config/data path, verification hooks, risks, and open questions.');
       lines.push('- Prefer system matrices, cross-end sequence flows, data lifecycle sections, state-machine notes, protocol/config evidence tables, and performance/security callouts.');
     }
     lines.push('- Avoid duplicate whole-file reads. Summarize relationships instead of copying source, and only include short code excerpts when they materially improve the document.');
@@ -281,6 +284,13 @@ export function buildAutocodeFocusedCoderKickoffMessageFromContext(
     lines.push('- For engine/runtime changes, protect initialization order, update/teardown behavior, memory ownership, threading, frame-time, IO, streaming, and platform/build configuration.');
     lines.push('- For data or content changes, preserve schema/content compatibility, migration/rollback behavior, validation, cooking/import paths, GM/editor workflows, and recovery paths.');
     lines.push('- In the completion summary, state verification run and residual MMO risks for relevant domains: server authority, network sync, persistence/data, performance, security, tools/content pipeline, and liveops/release.');
+  }
+  if (!documentationOnly) {
+    lines.push('- Code quality: before editing, identify the touched implementation contract: inputs/outputs, lifecycle, side effects, errors, persistence/config/schema/API boundaries, and caller/callee expectations.');
+    lines.push('- Preserve public APIs, schemas, IPC/protocol contracts, config/env semantics, migrations, and data formats unless the work item explicitly requires a contract change; update affected call sites and tests when a contract changes.');
+    lines.push('- Do not satisfy the task with placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, broad type escapes, swallowed errors, dead branches, or unrelated abstractions.');
+    lines.push('- For bug fixes or behavior changes, add or update the closest regression test when an adjacent test pattern exists; if no practical test is available, state the exact verification limitation.');
+    lines.push('- Completion summary must name concrete changed files/contracts, verification run or limitation, and residual risks or edge cases.');
   }
   lines.push(`- Focus on this one ${workLabel} until it is done.`);
   lines.push('- Do not re-plan completed work or scan unrelated directories unless the listed files force you to.');

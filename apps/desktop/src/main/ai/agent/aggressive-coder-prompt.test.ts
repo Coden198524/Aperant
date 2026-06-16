@@ -35,4 +35,16 @@ describe('buildAggressiveCoderPrompt', () => {
     expect(prompt).toContain('Avoid brittle smoke assertions against initial or transient task status');
     expect(prompt).toContain('do not keep rewriting commands');
   });
+
+  it('requires contract-aware implementation and auditable completion summaries', () => {
+    const prompt = buildAggressiveCoderPrompt();
+
+    expect(prompt).toContain('local implementation contract');
+    expect(prompt).toContain('public APIs, schemas, IPC/protocol contracts');
+    expect(prompt).toContain('Do not leave placeholder code');
+    expect(prompt).toContain('broad type escapes');
+    expect(prompt).toContain('closest regression test');
+    expect(prompt).toContain('Touched files/contracts');
+    expect(prompt).toContain('Review notes/risks');
+  });
 });

@@ -22,6 +22,8 @@ import {
   getDefaultAutocodeQualityConfig,
   hasAutocodeQualityFeaturesEnabled,
   isAutocodeGameMmoDocumentationPlan,
+  validateAutocodeCodingSummary,
+  validateAutocodeDocumentationEvidenceIndex,
   validateAutocodeDocumentationMarkdown,
   validateAutocodeGameMmoCodingSummary,
   validateAutocodeGameMmoDocumentationSupportContent,
@@ -210,8 +212,9 @@ export async function validateSubtaskQuality(
   // 2. Run self-critique (if enabled)
   // Note: This would require access to generated files, which we don't have here
   // Self-critique should be run within the agent session itself
+  const summary = compactQualitySessionSummary(sessionResult.messages);
+  issues.push(...validateAutocodeCodingSummary(subtask, summary));
   if (appliedConfig.projectType === 'game-mmo') {
-    const summary = compactQualitySessionSummary(sessionResult.messages);
     issues.push(...validateAutocodeGameMmoCodingSummary(subtask, summary));
   }
 
@@ -415,7 +418,9 @@ function runDocumentationQualityGate(
   const evidence = readTextFile(evidencePath);
 
   issues.push(...validateAutocodeMarkdownSupportDocument(outline, outlinePath, [/document type|document_type/i, /audience/i, /section/i]));
-  issues.push(...validateAutocodeMarkdownSupportDocument(evidence, evidencePath, [/files? read|source|evidence/i, /claims?|conclusion/i, /open questions?|risk/i]));
+  issues.push(...validateAutocodeDocumentationEvidenceIndex(evidence, evidencePath, {
+    isGameMmoDocumentation,
+  }));
   if (isGameMmoDocumentation) {
     issues.push(...validateAutocodeGameMmoDocumentationSupportContent(outline, evidence, outputs.finalMarkdown));
   }

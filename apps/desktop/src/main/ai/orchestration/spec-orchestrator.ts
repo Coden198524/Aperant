@@ -1047,10 +1047,11 @@ function getDocumentationQualityGuidance(
   return [
     `Documentation depth: ${depth}.`,
     'First write `doc_outline.md` with document type, audience, sections, questions each section answers, and planned source references.',
-    'Then write `evidence_index.md` with files read, evidence-backed claims, inferred claims, and open questions.',
+    'Then write `evidence_index.md` as a claim-to-source ledger with files read, subsystem, evidence-backed claims, confidence, inferred/unverified claims, uncovered areas, and open questions.',
     `Finally write \`${outputFile}\` as structured Markdown from the outline and evidence.`,
-    'Final Markdown must include: overview, scope, key files/modules, core flows, data/state flow, boundaries and risks, and open questions.',
-    'Mark source files for important claims; separate facts, inferences, and risks.',
+    'Final Markdown must include: overview, scope, source evidence matrix, key files/modules, entry points, module ownership, public interfaces, core flows, data/state flow, boundaries and risks, and open questions.',
+    'Cite concrete source/config paths for important claims; separate facts, inferences, and risks.',
+    'Do not rely on README/manifests alone; follow imports/routes/IPC/API/schema/config/test/build evidence until ownership and flows are clear.',
     'Use tables, flow lists, and small Mermaid diagrams where useful; do not copy large source blocks.',
   ];
 }
@@ -1072,6 +1073,8 @@ function getGameMmoDocumentationQualityGuidance(language?: SupportedLanguage): s
   return [
     'For game projects, structure the document around large-online-game dimensions: gameplay systems, client/engine, server authority, network sync, data/config/persistence, tooling, performance, security/anti-cheat, and live operations.',
     'For each important system, identify entry files, runtime ownership, key data, state transitions, cross-end protocol/sync boundaries, configuration sources, production-tool entry points, risks, and open questions.',
+    '`evidence_index.md` needs concrete source/config paths for each major system where present; if a domain is absent, mark it as not found or uncovered instead of guessing.',
+    'The final document must include a system matrix with source entry points, runtime owner, authoritative side, protocol/config/data path, verification hooks, risks, and open questions.',
     'Separate design/content data, client presentation, server adjudication, network protocol, save/economy state, and GM/liveops tools instead of merging them into one generic flow.',
     'Prefer system matrices, cross-end flows, data lifecycle notes, state/sequence diagrams, protocol/config evidence tables, and performance/security notes.',
   ];
@@ -1115,10 +1118,10 @@ function buildSourceDocumentationStandardLightPlan(
     : `Create or update the requested Markdown document. When no output file is specified, use ${outputFile}. Also create doc_outline.md and evidence_index.md.`;
   const readRule = isChinese
     ? '\u53ea\u505a\u6587\u6863\u5206\u6790\uff0c\u4e0d\u4fee\u6539\u4ea7\u54c1\u4ee3\u7801\u3002\u5148\u7528\u9879\u76ee\u6587\u6863\u53c2\u8003\u548c\u7528\u6237\u6307\u5b9a\u6587\u4ef6\u5b9a\u4f4d\u8303\u56f4\uff0c\u518d\u6cbf\u5165\u53e3\u3001\u516c\u5171\u63a5\u53e3\u3001\u914d\u7f6e\u548c\u6838\u5fc3\u8c03\u7528\u94fe\u6269\u5c55\u8bc1\u636e\u3002'
-    : 'This is documentation analysis only; do not modify product code. Use the project documentation reference and user-specified files to narrow scope, then expand evidence through entry points, public interfaces, configuration, and core call chains.';
+    : 'This is documentation analysis only; do not modify product code. Use the project documentation reference and user-specified files to narrow scope, but do not stop at README/manifests; expand evidence through entry points, public interfaces, imports/routes/IPC/API/schema/config/test/build files, and core call chains.';
   const verificationRun = isChinese
     ? `\u786e\u8ba4 ${outputFile}\u3001doc_outline.md \u548c evidence_index.md \u5df2\u751f\u6210\uff0cMarkdown \u5305\u542b\u7ed3\u6784\u5316\u6e90\u7801\u5206\u6790\u3001\u8bc1\u636e\u6587\u4ef6\u3001\u6d41\u7a0b/\u6570\u636e\u6d41\u548c\u672a\u786e\u8ba4\u9879\u3002\u4e0d\u8981\u4e3a\u7eaf\u6587\u6863\u4efb\u52a1\u8fd0\u884c\u7f16\u8bd1\u6216 QA\u3002`
-    : `Confirm ${outputFile}, doc_outline.md, and evidence_index.md exist, and the Markdown contains structured source analysis, evidence files, flows/data flow, and open questions. Do not run build or QA for documentation-only tasks.`;
+    : `Confirm ${outputFile}, doc_outline.md, and evidence_index.md exist; evidence_index.md cites concrete source/config paths; Markdown contains structured source analysis, source evidence matrix, flows/data flow, and open questions. Do not run build or QA for documentation-only tasks.`;
   const profileSpecLines = isGameMmoDocumentation
     ? isChinese
       ? [
@@ -1164,6 +1167,7 @@ function buildSourceDocumentationStandardLightPlan(
         '- Output support files: `doc_outline.md`, `evidence_index.md`.',
         `- Documentation depth: ${documentationDepth}.`,
         '- Read enough key source files to make conclusions traceable.',
+        '- Cite concrete source/config file paths for major claims.',
         '- Do not change product code.',
         ...profileSpecLines,
         '',

@@ -575,7 +575,8 @@ function buildProjectDocsTaskDescription(
     `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_OUTLINE_FILE_NAME)}\`: Markdown outline with document type, audience, sections, and source references.`,
     `- \`${joinRelativePath(outputDir, AUTOCODE_PROJECT_DOCS_EVIDENCE_FILE_NAME)}\`: Markdown evidence index with files read, evidence-backed claims, inferred claims, risks, and open questions.`,
     '',
-    'Ground major claims in source files or mark them as inference. Include product intent, architecture, conventions, verification commands, risks, and open questions.',
+    'Ground major claims in concrete source/config file paths or mark them as inference. Include product intent, architecture, conventions, verification commands, risks, and open questions.',
+    'Do not rely on README/manifests alone. Trace entry points, imports/routes/IPC/API/schema/config/test/build evidence until ownership, boundaries, and core flows are clear.',
   ].join('\n');
 }
 
@@ -627,7 +628,10 @@ function buildProjectDocsSpecMarkdown(
     '',
     '## Quality Bar',
     '- Documentation is generated from source evidence, not generic guesses.',
+    '- Generated docs cite concrete source/config file paths, not just generic source references.',
     '- Each major conclusion cites file paths or is marked as inference.',
+    '- `evidence_index.md` records files read, source-backed claims, inferred/unverified claims, confidence, risks/open questions, and uncovered areas.',
+    '- Broad docs include source evidence matrices/tables for important modules, flows, configs, commands, and APIs.',
     '- Future specs can use the documents to scope requirements, dependencies, and acceptance criteria.',
     '- Future coding sessions can use the documents to locate entry points, follow conventions, and choose validation commands.',
     '- Product source files are not changed by this task.',
@@ -729,7 +733,10 @@ function buildProjectDocsImplementationPlan(input: {
               : [
                   'Analyze the repository and write the requested project documentation.',
                   '',
-                  'Start with README/package/build manifests, entry points, public interfaces, configuration, tests, and existing docs. Expand only as needed.',
+                  'Start with README/package/build manifests, entry points, public interfaces, configuration, tests, and existing docs, but do not stop at README/manifests. Expand through imports, routes, IPC/API/schema/config/test/build evidence until source ownership, module boundaries, and core flows are clear.',
+                  'Write `doc_outline.md` before final docs. It must list sections, target audience, planned source references, and open source questions for each major section.',
+                  'Write `evidence_index.md` as a source ledger with files actually read, subsystem, claim, confidence, inferred/unverified claims, and uncovered areas.',
+                  'Final docs must include a source evidence matrix, module ownership, entry points, public interfaces, call/data/state flow, configs, validation commands, and risks/open questions.',
                   '',
                   'Required document coverage:',
                   ...sectionRequirements,
@@ -755,7 +762,7 @@ function buildProjectDocsImplementationPlan(input: {
               type: 'manual',
               run: isChinese
                 ? `确认 ${input.finalMarkdown}、${input.outline} 和 ${input.evidenceIndex} 已存在；生成的 Markdown 使用简体中文，引用源码/证据文件，覆盖流程或状态/数据流转，并列出风险或待确认问题。`
-                : `Confirm ${input.finalMarkdown}, ${input.outline}, and ${input.evidenceIndex} exist; generated Markdown cites source/evidence files, covers flows or state/data movement, and lists risks or open questions.`,
+                : `Confirm ${input.finalMarkdown}, ${input.outline}, and ${input.evidenceIndex} exist; ${input.evidenceIndex} cites concrete source/config paths; generated Markdown cites multiple source files, covers architecture boundaries plus call/data/state flow, and lists risks or open questions.`,
             },
           },
         ],
@@ -976,8 +983,11 @@ function buildProjectDocsContextData(input: {
     ],
     implementation_notes: [
       'Documentation-only task. Do not modify product source code.',
-      'Read focused project evidence before writing the generated documentation pack.',
-      'Major claims must cite source files or be marked as inference.',
+      'Read focused project evidence before writing the generated documentation pack; do not rely on README/manifests alone.',
+      'Trace entry points, imports/routes/IPC/API/schema/config/test/build evidence until source ownership, boundaries, and core flows are clear.',
+      'Major claims must cite concrete source/config file paths or be marked as inference.',
+      'The evidence index must record files actually read, subsystem, claim, confidence, inferred/unverified claims, and uncovered areas.',
+      'Final docs should include source evidence matrices for important modules, flows, configs, commands, and APIs.',
     ],
     risks: [
       'Large repositories may require sampling; document uncovered areas as open questions.',
@@ -985,8 +995,8 @@ function buildProjectDocsContextData(input: {
     ],
     verification_suggestions: [
       `Confirm ${input.outline} is structured Markdown.`,
-      `Confirm ${input.evidenceIndex} is structured Markdown.`,
-      'Confirm generated Markdown cites source/evidence files and lists risks or open questions.',
+      `Confirm ${input.evidenceIndex} is structured Markdown with concrete source/config file paths and confidence markers.`,
+      'Confirm generated Markdown cites multiple source files, analyzes entry points/module boundaries/data flow, and lists risks or open questions.',
     ],
     evidence_sources: input.evidenceSources.map((source) => ({
       path: source,

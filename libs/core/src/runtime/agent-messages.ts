@@ -152,9 +152,9 @@ export function buildAutocodeDefaultPlannerPrompt(input: BuildAutocodeAgentPromp
 
 export function buildAutocodeDefaultQAPrompt(input: BuildAutocodeAgentPromptInput): string {
   if (input.projectType === 'game-mmo') {
-    return `Review MMO spec ${input.specId} in ${input.projectRoot}. Validate implementation plus affected authority/sync/performance/content/tools/data/security/release risks. Write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with Status: PASSED or Status: FAILED.`;
+    return `Review MMO spec ${input.specId} in ${input.projectRoot}. Validate implementation plus affected server authority, network sync/protocol, persistence/data/config, performance, security/anti-cheat, tools/content pipeline, liveops/release risks, and changed contracts. Write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with exact Status: PASSED or Status: FAILED plus Scope Reviewed, MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
   }
-  return `Review implementation of spec ${input.specId} in ${input.projectRoot}. Check requirements in ${AUTOCODE_TASK_ARTIFACTS.specFile} and write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with Status: PASSED or Status: FAILED.`;
+  return `Review implementation of spec ${input.specId} in ${input.projectRoot}. Check requirements in ${AUTOCODE_TASK_ARTIFACTS.specFile}, completion notes, changed files, architecture fit, and changed contracts such as APIs/schemas/config/data flow/error behavior. Write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with exact Status: PASSED or Status: FAILED plus Scope Reviewed, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
 }
 
 export function buildAutocodeDefaultDirectTaskPrompt(input: Omit<BuildAutocodeAgentPromptInput, 'projectType'>): string {
@@ -424,7 +424,7 @@ export function buildAutocodeQAInitialMessages(
     parts.push('');
   }
 
-  parts.push(`Review against the spec, run relevant checks, and write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with "Status: PASSED" or "Status: FAILED" plus any findings.`);
+  parts.push(`Review against the spec, completion notes, changed files, and changed contracts. Run relevant checks and write ${AUTOCODE_TASK_ARTIFACTS.qaReport} with "Status: PASSED" or "Status: FAILED" plus Scope Reviewed, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks. Failed findings must include location, evidence, impacted requirement/contract, required fix, and re-verification.`);
 
   return [{ role: 'user', content: parts.join('\n') }];
 }

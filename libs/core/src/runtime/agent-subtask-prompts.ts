@@ -513,23 +513,22 @@ function appendAutocodeSubtaskInstructions(
     `## Instructions\n\n` +
     `1. **Read the pattern files** to understand code style and conventions\n` +
     `2. **Read the files to modify** (if any) to understand current implementation\n` +
-    `3. **Implement the subtask** following local patterns\n` +
-    `4. **Run verification** and fix any issues\n` +
-    `5. **Commit your changes:**\n` +
-    `   \`\`\`bash\n` +
-    `   git add .\n` +
-    `   git commit -m "autocode: ${subtask.id} - ${subtask.description.slice(0, 50)}"\n` +
-    `   \`\`\`\n` +
-    `6. **Update the plan** - set this subtask's status to "completed" in implementation_plan.md and add a structured completion_summary for human review. Use this compact Markdown review matrix exactly:\n` +
+    `3. **Identify the local implementation contract**: inputs/outputs, lifecycle, side effects, errors, config/schema/API boundaries, and caller/callee expectations\n` +
+    `4. **Implement the subtask** following local patterns without placeholder code, no-op handlers, broad type escapes, or unrelated abstractions\n` +
+    `5. **Run verification** and fix any issues. For behavior changes, add or update the closest regression test when an adjacent test pattern exists\n` +
+    `6. **Do not commit or push** unless this task explicitly requires it\n` +
+    `7. **Update the plan** - set this subtask's status to "completed" in implementation_plan.md and add a structured completion_summary for human review. Use this compact Markdown review matrix exactly:\n` +
     `   \`| Item | Details |\n| --- | --- |\n| What changed | ... |\n| Verification | ... |\n| Review notes | ... |\`\n` +
-    `   Keep each cell concise, concrete, and suitable for quick manual audit.\n\n` +
+    `   Include touched files/contracts in What changed or Review notes. Keep each cell concise, concrete, and suitable for quick manual audit.\n\n` +
     `## Quality Checklist\n\n` +
     `Before marking complete, verify:\n` +
+    `- [ ] Local implementation contract and affected call sites are understood\n` +
     `- [ ] Follows patterns from reference files\n` +
-    `- [ ] No console.log/print debugging statements\n` +
+    `- [ ] No console.log/print debugging statements, placeholders, TODO implementations, no-op handlers, fake data, or broad type escapes\n` +
     `- [ ] Error handling in place\n` +
+    `- [ ] Adjacent tests or regression coverage updated when the change affects behavior\n` +
     `- [ ] Verification passes\n` +
-    `- [ ] Clean commit with descriptive message\n\n` +
+    `- [ ] Completion summary names changed files/contracts, verification, and residual risks or edge cases\n\n` +
     `## Boundaries\n\n` +
     `- Focus on this subtask; do not modify unrelated code\n` +
     `- If verification fails because of your changes, fix it before committing\n` +

@@ -1,9 +1,17 @@
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 
 import { describe, expect, it } from 'vitest';
 
 import { specPhaseToPromptName } from '../spec-phase-prompts';
+
+const promptsDir = existsSync(join(process.cwd(), 'prompts'))
+  ? join(process.cwd(), 'prompts')
+  : join(process.cwd(), 'apps', 'desktop', 'prompts');
+
+function readPrompt(...segments: string[]): string {
+  return readFileSync(join(promptsDir, ...segments), 'utf-8');
+}
 
 describe('spec phase prompt mapping', () => {
   it('routes validation to the validation fixer prompt', () => {
@@ -11,7 +19,7 @@ describe('spec phase prompt mapping', () => {
   });
 
   it('keeps validation fixer guidance focused on edit-based fixes', () => {
-    const prompt = readFileSync(join(process.cwd(), 'prompts', 'validation_fixer.md'), 'utf-8');
+    const prompt = readPrompt('validation_fixer.md');
 
     expect(prompt).toContain('Use Edit for the smallest affected section');
     expect(prompt).toContain('do NOT rewrite the whole file with Write');
@@ -19,12 +27,9 @@ describe('spec phase prompt mapping', () => {
   });
 
   it('keeps JSON-to-Markdown guidance scoped to prose artifacts', () => {
-    const toolJsonPrompt = readFileSync(
-      join(process.cwd(), 'prompts', 'partials', 'tool_call_json_formatting.md'),
-      'utf-8',
-    );
-    const specPrompt = readFileSync(join(process.cwd(), 'prompts', 'spec_orchestrator_agentic.md'), 'utf-8');
-    const plannerPrompt = readFileSync(join(process.cwd(), 'prompts', 'planner.md'), 'utf-8');
+    const toolJsonPrompt = readPrompt('partials', 'tool_call_json_formatting.md');
+    const specPrompt = readPrompt('spec_orchestrator_agentic.md');
+    const plannerPrompt = readPrompt('planner.md');
 
     expect(toolJsonPrompt).toContain('keep app-owned configuration tables/files, manifests, settings, state, app-parsed indexes, metadata');
     expect(toolJsonPrompt).toContain('even when the model creates, reads, or updates the content');
@@ -43,5 +48,41 @@ describe('spec phase prompt mapping', () => {
     expect(specPrompt).toContain('Do not convert JSON configuration tables or app-owned structured data merely because a model prompt references them');
     expect(plannerPrompt).toContain('configuration files/tables, manifests, state, active indexes, metadata, and JSONL audit files remain JSON/JSONL even when the model reads or updates them');
     expect(plannerPrompt).toContain('Only pure model-readable prose/reference artifacts should move from JSON to Markdown');
+    expect(plannerPrompt).toContain('First identify the affected project boundary before writing tasks');
+    expect(plannerPrompt).toContain('Do not add standalone research, design, architecture review');
+    expect(plannerPrompt).toContain('Avoid generic task text such as "implement feature"');
+  });
+
+  it('keeps bundled coder prompt contract-aware and reviewable', () => {
+    const coderPrompt = readPrompt('coder.md');
+
+    expect(coderPrompt).toContain('local implementation contract');
+    expect(coderPrompt).toContain('public APIs, schemas, IPC/protocol contracts');
+    expect(coderPrompt).toContain('placeholder code');
+    expect(coderPrompt).toContain('closest regression test');
+    expect(coderPrompt).toContain('touched files/contracts, verification, and review notes/risks');
+    expect(coderPrompt).toContain('touched contracts or APIs');
+  });
+
+  it('keeps QA prompts evidence-bound and contract-aware', () => {
+    const reviewerPrompt = readPrompt('qa_reviewer.md');
+    const fixerPrompt = readPrompt('qa_fixer.md');
+    const mmoReviewerPrompt = readPrompt('mmo_qa_reviewer.md');
+    const mmoFixerPrompt = readPrompt('mmo_qa_fixer.md');
+
+    expect(reviewerPrompt).toContain('Product-Grade Review Matrix');
+    expect(reviewerPrompt).toContain('Changed Files And Contracts');
+    expect(reviewerPrompt).toContain('Acceptance Matrix');
+    expect(reviewerPrompt).toContain('impacted requirement or contract');
+    expect(reviewerPrompt).toContain('re-verification command or check');
+    expect(fixerPrompt).toContain('caller/callee expectations');
+    expect(fixerPrompt).toContain('placeholder code');
+    expect(fixerPrompt).toContain('fix ledger');
+    expect(mmoReviewerPrompt).toContain('Product-Grade MMO Review Matrix');
+    expect(mmoReviewerPrompt).toContain('MMO domain matrix');
+    expect(mmoReviewerPrompt).toContain('server authority');
+    expect(mmoReviewerPrompt).toContain('network sync/protocol');
+    expect(mmoFixerPrompt).toContain('protocol compatibility, save/config contracts');
+    expect(mmoFixerPrompt).toContain('MMO domains reviewed');
   });
 });

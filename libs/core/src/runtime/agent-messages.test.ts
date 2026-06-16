@@ -7,6 +7,7 @@ import { AUTOCODE_TASK_ARTIFACTS } from '../tasks/artifacts.js';
 import { saveAutocodeTaskRequirementsSync } from '../tasks/requirements-store.js';
 import {
   AUTOCODE_DEFAULT_SPEC_TASK_DESCRIPTION_MAX_CHARS,
+  buildAutocodeDefaultQAPrompt,
   buildAutocodeDefaultSpecPrompt,
   buildAutocodeDirectTaskExecutionMessages,
   buildAutocodeQAInitialMessages,
@@ -83,6 +84,26 @@ describe('Autocode runtime agent messages', () => {
     expect(prompt.length).toBeLessThan(AUTOCODE_DEFAULT_SPEC_TASK_DESCRIPTION_MAX_CHARS + 800);
   });
 
+  it('adds product-grade QA report requirements to default QA prompts', () => {
+    const generic = buildAutocodeDefaultQAPrompt({
+      specId: '001-task',
+      projectRoot: tempRoot,
+    });
+    const mmo = buildAutocodeDefaultQAPrompt({
+      specId: '001-task',
+      projectRoot: tempRoot,
+      projectType: 'game-mmo',
+    });
+
+    expect(generic).toContain('Changed Files And Contracts');
+    expect(generic).toContain('Acceptance Matrix');
+    expect(generic).toContain('APIs/schemas/config/data flow/error behavior');
+    expect(mmo).toContain('MMO Domain Matrix');
+    expect(mmo).toContain('server authority');
+    expect(mmo).toContain('network sync/protocol');
+    expect(mmo).toContain('liveops/release');
+  });
+
   it('compacts oversized spec and implementation plan for task execution messages', () => {
     writeLargeSpecAndPlan(specDir);
 
@@ -117,6 +138,9 @@ describe('Autocode runtime agent messages', () => {
     expect(message.content).toContain('Compact excerpt of implementation_plan.md');
     expect(message.content).toContain('[ ] 1.1 Implement focused runtime context');
     expect(message.content).toContain('Verification: npm test -- agent-messages.test.ts');
+    expect(message.content).toContain('Changed Files And Contracts');
+    expect(message.content).toContain('Acceptance Matrix');
+    expect(message.content).toContain('impacted requirement/contract');
     expect(message.content).toContain('artifact opening middle omitted');
     expect(message.content).toContain('Spec tail detail 199');
     expect(message.content).toContain('Plan tail detail 199');

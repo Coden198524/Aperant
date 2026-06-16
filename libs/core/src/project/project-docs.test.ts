@@ -36,10 +36,16 @@ describe('project documentation tasks', () => {
       expect(context).toContain('# Project Context');
       expect(context).toContain('## Evidence Sources');
       expect(context).toContain('Documentation-only task');
+      expect(context).toContain('concrete source/config file paths');
+      expect(context).toContain('source evidence matrices');
       expect(requirements).toContain('## Evidence Sources');
       expect(planText).toContain('_Depends on: none_');
       expect(planText).toMatch(/_Evidence: .*spec\.md project documentation scope/);
       expect(planText).toContain('_Verification: ');
+      expect(planText).toContain('do not stop at README/manifests');
+      expect(planText).toContain('Write `evidence_index.md` as a source ledger');
+      expect(planText).toContain('source evidence matrix');
+      expect(planText).toContain('call/data/state flow');
       expect(
         validateAutocodePlanningSchedulingMetadata(persistedPlan as AutocodePlanningSchedulePlan | null, {
           runtimeConcurrency: resolveAutocodeTaskRuntimeConcurrency(result.task.metadata),

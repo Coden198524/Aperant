@@ -43,7 +43,7 @@ import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 12;
+export const PROJECT_PROMPT_PROFILE_VERSION = 15;
 export const PROJECT_PROMPT_PROFILE_PATH = getAutocodeProjectPromptProfileRelativePath();
 export const PROJECT_PROMPTS_PATH = getAutocodeProjectPromptsRelativeDir();
 
@@ -964,9 +964,10 @@ ${buildToolCallJsonGuidance()}
 
 1. Read the spec, implementation plan, and the current pending subtask.
 2. Read the files listed on the subtask first. Search only when those files are insufficient.
-3. Implement the subtask using existing project conventions.
-4. Run the smallest relevant verification command that is available.
-5. Update the subtask checkbox in \`implementation_plan.md\` to \`[x]\` and add \`_Completion: ..._\` for human review. Use \`[-]\` for blocked or \`[!]\` for failed only when you cannot proceed.
+3. Identify the local implementation contract before editing: inputs/outputs, lifecycle, side effects, errors, public APIs/schemas/config, and caller/callee expectations.
+4. Implement the subtask using existing project conventions.
+5. Run the smallest relevant verification command that is available.
+6. Update the subtask checkbox in \`implementation_plan.md\` to \`[x]\` and add \`_Completion: ..._\` for human review. Include what changed, touched files/contracts, verification, and review notes/risks. Use \`[-]\` for blocked or \`[!]\` for failed only when you cannot proceed.
 
 ## PROJECT COMMANDS
 
@@ -988,6 +989,9 @@ ${formatCommands(profile.commands.typecheck)}
 - Keep changes scoped to the subtask.
 - Do not perform broad rewrites for small tasks.
 - Follow the design pattern decision in the plan or the nearest existing code; do not add unplanned named patterns unless clearly necessary.
+- Preserve public APIs, schemas, IPC/protocol contracts, config/env semantics, migrations, and data formats unless the subtask explicitly requires a contract change; update all affected call sites and tests when a contract changes.
+- Do not leave placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, dead branches, broad type escapes, swallowed errors, or unrelated abstractions.
+- For bug fixes or behavior changes, add or update the closest regression test when an adjacent test pattern exists; if no practical test is available, state the exact verification limitation.
 - Preserve user changes unrelated to the subtask.
 - All new file names and paths must use ASCII characters.
 - Before editing an existing file, read the current narrow context and patch only against exact current lines; if an edit misses, reread only the surrounding lines once before retrying.
@@ -1018,8 +1022,9 @@ ${buildToolCallJsonGuidance()}
 1. Read \`implementation_plan.md\` first and check that all subtasks are completed.
 2. Read only the relevant parts of \`spec.md\` if the plan does not already contain enough acceptance detail.
 3. Inspect changed files once; use line limits or targeted searches for large files.
-4. Run the smallest relevant verification command available.
-5. Report only actionable failures that block the requested task.
+4. Compare completion notes against actual changed files and changed contracts.
+5. Run the smallest relevant verification command available.
+6. Report only actionable failures that block the requested task.
 
 ## PROJECT COMMANDS
 
@@ -1039,6 +1044,10 @@ ${formatCommands(profile.commands.typecheck)}
 
 - For small project changes, do not block on missing heavyweight artifacts that were not required by the spec.
 - Verify design pattern fit: the implementation should follow the plan or nearest existing pattern without unnecessary abstractions or inconsistent pattern mixing.
+- Verify changed contracts: public APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior are preserved or intentionally updated.
+- Build an acceptance matrix that maps each changed behavior to its requirement/evidence, changed file, verification result, and residual risk.
+- \`qa_report.md\` must include: Scope Reviewed, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.
+- If failed, every finding needs title, severity, location, evidence, impacted requirement/contract, required fix, and re-verification.
 - If no automated command exists, document the manual verification performed or the reason it was skipped.
 - Match review depth to the project profile and task risk instead of applying heavyweight domain-specific requirements by default.
 `;
@@ -1056,9 +1065,11 @@ ${buildToolCallJsonGuidance()}
 ## PROCESS
 
 1. Read \`qa_report.md\`, \`spec.md\`, and \`implementation_plan.md\`.
-2. Fix only the reported blocking issues.
-3. Run the smallest relevant verification command available.
-4. Update the plan or QA notes only as needed to show fixes were applied.
+2. For each issue, identify the impacted requirement, contract, and caller/callee expectations before editing.
+3. Fix only the reported blocking issues.
+4. Update callers, tests, schemas, configs, or docs when a fix intentionally changes a contract.
+5. Run the smallest relevant verification command available.
+6. Update the plan or QA notes only as needed to show fixes were applied.
 
 ## PROJECT COMMANDS
 
@@ -1078,6 +1089,8 @@ ${formatCommands(profile.commands.typecheck)}
 
 - Do not redesign or refactor unrelated code while fixing QA findings.
 - Fix design pattern issues narrowly by aligning the affected code with the planned or existing pattern.
+- Preserve public APIs, schemas, IPC/protocols, config/env behavior, data formats, persistence, side effects, and error behavior unless QA explicitly requires a contract change.
+- Do not use placeholder code, TODO implementations, no-op handlers, fake data, disabled validation, broad type escapes, swallowed errors, or unrelated abstractions.
 - Keep the fix scoped and easy for the next QA pass to verify.
 - All new file names and paths must use ASCII characters.
 `;

@@ -153,6 +153,109 @@ function makeSessionResult(outcome: SessionResult['outcome']): SessionResult {
   };
 }
 
+function makePassedQAReport(): string {
+  return [
+    '# QA Report',
+    '',
+    'Status: PASSED',
+    '',
+    '## Scope Reviewed',
+    '- Reviewed `spec.md`, `requirements.md`, `implementation_plan.md`, `tasks.md`, and changed source path `src/file-1.ts` for the completed test fixture.',
+    '',
+    '## Changed Files And Contracts',
+    '| File | Contract / Boundary | Result |',
+    '| --- | --- | --- |',
+    '| `src/file-1.ts` | Public API, data flow, side effects, and error behavior remain compatible with the planned implementation contract. | passed |',
+    '',
+    '## Acceptance Matrix',
+    '| Requirement | Evidence | Verification | Result |',
+    '| --- | --- | --- | --- |',
+    '| Subtask 1 is complete and satisfies the fixture requirement. | `tasks.md` Evidence metadata, `implementation_plan.md` completion, `src/file-1.ts` changed source. | Manual static check: Run focused check. | passed |',
+    '',
+    '## Verification',
+    '- Manual/static check: inspected `src/file-1.ts` against the completed plan and fixture requirement.',
+    '- Automated tests not run in this unit fixture; the mocked check path is documented as the verification limitation.',
+    '',
+    '## Findings',
+    '- No blocking issues remain.',
+    '',
+    '## Residual Risks',
+    '- No residual risks beyond this mocked unit fixture not exercising a real project command.',
+  ].join('\n');
+}
+
+function makeFailedQAReport(): string {
+  return [
+    '# QA Report',
+    '',
+    'Status: FAILED',
+    '',
+    '## Scope Reviewed',
+    '- Reviewed `spec.md`, `requirements.md`, `implementation_plan.md`, `tasks.md`, and changed source path `src/file-1.ts`.',
+    '',
+    '## Changed Files And Contracts',
+    '| File | Contract / Boundary | Result |',
+    '| --- | --- | --- |',
+    '| `src/file-1.ts` | Planned behavior contract is incomplete. | failed |',
+    '',
+    '## Acceptance Matrix',
+    '| Requirement | Evidence | Verification | Result |',
+    '| --- | --- | --- | --- |',
+    '| Subtask 1 remains incomplete. | `tasks.md` Evidence metadata and `src/file-1.ts`. | Manual static check. | failed |',
+    '',
+    '## Verification',
+    '- Manual/static check: inspected the fixture state and found incomplete behavior.',
+    '',
+    '## Findings',
+    '### Missing implementation',
+    '- **Severity**: high',
+    '- **Location**: `src/file-1.ts`',
+    '- **Evidence**: the planned behavior is not complete.',
+    '- **Impacted requirement/contract**: Subtask 1 requirement and source contract.',
+    '- **Required fix**: Complete the implementation in `src/file-1.ts`.',
+    '- **Re-verification**: rerun the focused static check.',
+    '',
+    '## Residual Risks',
+    '- Risk remains until the missing implementation is fixed and re-verified.',
+  ].join('\n');
+}
+
+function makeMmoPassedQAReport(): string {
+  return [
+    '# QA Report',
+    '',
+    'Status: PASSED',
+    '',
+    '## Scope Reviewed',
+    '- Reviewed `server/combat/CombatService.cpp`, `client/combat/CombatView.cpp`, `config/items/skills.xml`, and `tools/gm/CombatInspector.cs` for the MMO fixture.',
+    '',
+    '## MMO Domain Matrix',
+    '| Domain | Source/config paths | Authority / contract | Result |',
+    '| --- | --- | --- | --- |',
+    '| Server authority | `server/combat/CombatService.cpp` | Server authoritative validation and trust boundary preserved. | passed |',
+    '| Network sync/protocol | `client/combat/CombatView.cpp` | Replication, prediction, and reconciliation assumptions unchanged. | passed |',
+    '| Persistence/data/config | `config/items/skills.xml` | Save/config data contract remains compatible. | passed |',
+    '| Tools/content/liveops/release | `tools/gm/CombatInspector.cs` | Tooling, telemetry, rollout, and release inspection remain compatible. | passed |',
+    '',
+    '## Changed Files And Contracts',
+    '- Gameplay/client, server authority, protocol, persistence, data/config, tooling, performance, security/anti-cheat, and liveops contracts were reviewed.',
+    '',
+    '## Acceptance Matrix',
+    '| Requirement | Evidence | Verification | Result |',
+    '| --- | --- | --- | --- |',
+    '| MMO fixture implementation is complete. | `tasks.md`, `server/combat/CombatService.cpp`, `client/combat/CombatView.cpp`, and `config/items/skills.xml`. | Targeted MMO static review. | passed |',
+    '',
+    '## Verification',
+    '- Manual/static check: reviewed authority, sync/protocol, persistence, performance budget, security/anti-cheat, tooling, telemetry, liveops, and release risk paths.',
+    '',
+    '## Findings',
+    '- No blocking issues remain.',
+    '',
+    '## Residual Risks',
+    '- No residual risks beyond this mocked unit fixture not exercising production bandwidth or rollout infrastructure.',
+  ].join('\n');
+}
+
 function makeOrchestrator(runSession = vi.fn().mockResolvedValue(makeSessionResult('completed'))): BuildOrchestrator {
   return new BuildOrchestrator({
     specDir: '/spec',
@@ -273,7 +376,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(codingRuns >= 2 ? makePlan(['completed']) : makePlan(['pending']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makePassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -322,7 +425,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(codingDone ? makePlan(['completed']) : makePlan(['pending']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makePassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -374,7 +477,7 @@ describe('BuildOrchestrator QA recovery', () => {
       }
       if (path.endsWith('qa_report.md')) {
         return reviewerRuns > 0
-          ? Promise.resolve('Status: PASSED')
+          ? Promise.resolve(makePassedQAReport())
           : Promise.reject(new Error('ENOENT'));
       }
       return readStandardArtifactOrReject(path);
@@ -411,7 +514,7 @@ describe('BuildOrchestrator QA recovery', () => {
         if (reviewerRuns === 0) {
           return Promise.reject(new Error('ENOENT'));
         }
-        return Promise.resolve(reviewerRuns >= 2 ? 'Status: PASSED' : '# QA Report\n\nReviewer forgot status.');
+        return Promise.resolve(reviewerRuns >= 2 ? makePassedQAReport() : '# QA Report\n\nReviewer forgot status.');
       }
       return readStandardArtifactOrReject(path);
     });
@@ -439,7 +542,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(makePlan(['completed']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makePassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -452,6 +555,35 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(outcome.success).toBe(true);
     expect(mockIterateSubtasks).not.toHaveBeenCalled();
     expect(runSession).not.toHaveBeenCalled();
+    expect(outcome.finalPhase).toBe('complete');
+  });
+
+  it('reruns QA when an existing passed QA report lacks review evidence', async () => {
+    let reviewerRuns = 0;
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('implementation_plan.md')) {
+        return Promise.resolve(makePlan(['completed']));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve(reviewerRuns > 0 ? makePassedQAReport() : 'Status: PASSED');
+      }
+      return readStandardArtifactOrReject(path);
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'qa_reviewer') {
+        reviewerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+    const orchestrator = makeOrchestrator(runSession);
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(mockIterateSubtasks).not.toHaveBeenCalled();
+    expect(runSession.mock.calls.filter(([config]) => config.agentType === 'qa_reviewer')).toHaveLength(1);
     expect(outcome.finalPhase).toBe('complete');
   });
 
@@ -483,7 +615,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(makePlan(['completed']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve(reviewerRuns >= 2 ? 'Status: PASSED' : 'Status: FAILED');
+        return Promise.resolve(reviewerRuns >= 2 ? makePassedQAReport() : makeFailedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -541,7 +673,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makePassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -651,7 +783,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makePassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -700,7 +832,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makePassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -750,7 +882,7 @@ describe('BuildOrchestrator QA recovery', () => {
           : makePlanWithSchedulingMetadata(['pending']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makePassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
@@ -808,7 +940,7 @@ describe('BuildOrchestrator QA recovery', () => {
         return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
       }
       if (path.endsWith('qa_report.md')) {
-        return Promise.resolve('Status: PASSED');
+        return Promise.resolve(makeMmoPassedQAReport());
       }
       return readStandardArtifactOrReject(path);
     });
