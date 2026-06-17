@@ -21,6 +21,8 @@ describe('agent planning retry prompt compaction', () => {
     );
 
     expect(prompt).toContain('Previous Write call failed before execution');
+    expect(prompt).toContain('Cover every requirement, scenario, acceptance criterion');
+    expect(prompt).toContain('small enough for one focused coding session');
     expect(prompt).toContain('truncated');
     expect(prompt.length).toBeLessThan(2_000);
   });
@@ -29,6 +31,7 @@ describe('agent planning retry prompt compaction', () => {
     const prompt = buildAutocodePlanningStructuredOutputValidationRetryPrompt(longErrors(12));
 
     expect(prompt).toContain('Errors:');
+    expect(prompt).toContain('Cover every requirement, scenario, acceptance criterion');
     expect(prompt).toContain('... 4 more error(s) omitted');
     expect(prompt).toContain('truncated');
     expect(prompt).not.toContain('error 11');
@@ -39,6 +42,7 @@ describe('agent planning retry prompt compaction', () => {
     const prompt = buildAutocodeStandardTasksValidationRetryPrompt(longErrors(10));
 
     expect(prompt).toContain('... 2 more error(s) omitted');
+    expect(prompt).toContain('small enough for one focused coding session');
     expect(prompt).not.toContain('error 9');
     expect(prompt.length).toBeLessThan(4_000);
   });

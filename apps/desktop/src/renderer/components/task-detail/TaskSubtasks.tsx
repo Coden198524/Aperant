@@ -10,7 +10,6 @@ import { deleteSubtask } from '../../stores/task-store';
 import type { Task, TaskLogs as TaskLogsData } from '../../../shared/types';
 import {
   TaskRuntimeLogs,
-  isWorkPackageSubtask,
   shouldSplitConcurrentWorkPackageLogs,
   type TaskRuntimeLogScope,
   useTaskModelLogs,
@@ -1643,14 +1642,12 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
     () => task.subtasks.find(subtask => subtask.id === selectedGraphNodeId) ?? null,
     [selectedGraphNodeId, task.subtasks]
   );
-  const selectedWorkPackageSubtask = splitConcurrentWorkPackageLogs &&
-    selectedGraphSubtask &&
-    isWorkPackageSubtask(selectedGraphSubtask)
+  const selectedScopedSubtask = splitConcurrentWorkPackageLogs && selectedGraphSubtask
     ? selectedGraphSubtask
     : null;
   const runtimeLogScope = useMemo<TaskRuntimeLogScope>(() => {
-    if (selectedWorkPackageSubtask) {
-      return { type: 'work-item', workItemId: selectedWorkPackageSubtask.id };
+    if (selectedScopedSubtask) {
+      return { type: 'work-item', workItemId: selectedScopedSubtask.id };
     }
 
     if (splitConcurrentWorkPackageLogs) {
@@ -1658,10 +1655,10 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
     }
 
     return { type: 'global' };
-  }, [selectedWorkPackageSubtask, splitConcurrentWorkPackageLogs]);
-  const runtimeLogTitle = selectedWorkPackageSubtask
+  }, [selectedScopedSubtask, splitConcurrentWorkPackageLogs]);
+  const runtimeLogTitle = selectedScopedSubtask
     ? t('tasks:subtasks.selectedWorkPackageModelOutput', {
-        title: selectedWorkPackageSubtask.title || selectedWorkPackageSubtask.id,
+        title: selectedScopedSubtask.title || selectedScopedSubtask.id,
         defaultValue: 'Model output · {{title}}',
       })
     : undefined;

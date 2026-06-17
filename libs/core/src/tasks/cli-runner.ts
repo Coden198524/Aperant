@@ -318,7 +318,8 @@ function buildTaskRunPrompt(input: {
       `- Write ${input.specDir}/${AUTOCODE_TASK_ARTIFACTS.tasks} as an Autocode Markdown checklist with concrete phases and tasks.`,
       `- Do not write ${AUTOCODE_TASK_ARTIFACTS.implementationPlan}; the runner derives runtime work packages from ${AUTOCODE_TASK_ARTIFACTS.tasks}.`,
       '- Ground requirements, design notes, task scope, and verification in project source/docs, existing patterns, or verified official/industry references; if evidence is missing, write an assumption or validation task instead of guessing.',
-      '- Use [ ] for pending subtasks and concise metadata bullets: _Depends on_, _Requirements_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
+      '- Use [ ] for pending subtasks and concise metadata bullets: _Depends on_, _Requirements_, _Evidence_, _Done when_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
+      '- Cover every spec success criterion with at least one task, or explicitly mark it blocked/out of scope.',
     ].join('\n')}`;
   }
 
@@ -365,8 +366,10 @@ function buildTaskRunPrompt(input: {
       '- Ground every new or revised requirement, design note, task, dependency, and verification command in project source/docs, existing patterns, or verified official/industry references.',
       '- If evidence is missing, add an assumption/open question or validation task; do not create implementation work from a guess.',
       '- Keep tasks independently implementable and verifiable.',
+      '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of silently dropping them.',
+      '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
       '- Revise the task list incrementally: keep completed work that remains valid, reset affected work to pending with a needs_revision note, add new pending subtasks for new requirements, and mark obsolete upstream checklist items as obsolete instead of deleting history.',
-      '- Every executable task must include _Depends on_, _Verification_, and a short _Evidence_ note. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
+      '- Every executable task must include _Depends on_, _Requirements_, _Verification_, and a short _Evidence_ note. Use _Depends on: none_ only for root work. Include _Files to create/modify_ when write intent is known.',
       '- Keep the iteration testable and commit-ready: every new or revised task needs a focused verification command, and the next coding pass should be able to use the normal task commit flow after validation succeeds.',
       '- Set new task checkboxes to [ ].',
     ].join('\n')}`;
@@ -709,10 +712,12 @@ const prompt = readFileSync(promptFilePath, 'utf8');
 const logPhase = phase === 'coding' || phase === 'direct' ? 'coding' : 'planning';
 const executionPhase = logPhase === 'coding' ? 'coding' : 'planning';
 const codexJsonMode = isCodexJsonInvocation(command, args);
+const directCodexGoalMode = phase === 'direct' && isCodexCommand(command);
 const activeFileWriteLockDirs = new Set();
 const maxValidationRetries = phase === 'spec' || phase === 'planning' ? 2 : 0;
 const VALIDATION_RETRY_BASE_PROMPT_MAX_CHARS = 6000;
 const VALIDATION_RETRY_ERROR_MAX_CHARS = 1200;
+const CODEX_GOAL_OBJECTIVE_MAX_CHARS = 6000;
 const RUNNER_REPEATED_LINE_MIN_CHARS = 24;
 let validationRetryCount = 0;
 let attemptId = 0;
@@ -725,6 +730,7 @@ const startMessage = logPhase === 'coding'
 emitPhase(executionPhase, startMessage, 0);
 updatePlanRunningState();
 updateTaskLogs(logPhase, 'active', startMessage);
+sanitizeCodexRulesFiles();
 
 let finalized = false;
 let tokenUsageEventCount = 0;
@@ -922,6 +928,27 @@ function buildPromptWithMemoryContext(basePrompt) {
     return basePrompt;
   }
   return [basePrompt, '', '---', '', memoryContextBlock].join('\\n');
+}
+
+function formatPromptForCli(basePrompt) {
+  if (!directCodexGoalMode) {
+    return basePrompt;
+  }
+
+  const promptText = String(basePrompt || '').trim();
+  if (/^\\/goal\\b/i.test(promptText)) {
+    return promptText.endsWith('\\n') ? promptText : promptText + '\\n';
+  }
+
+  const objective = buildCodexGoalObjective(promptText);
+  return ['/goal ' + objective, '', promptText].join('\\n').trimEnd() + '\\n';
+}
+
+function buildCodexGoalObjective(basePrompt) {
+  const compact = limitLogText(basePrompt, CODEX_GOAL_OBJECTIVE_MAX_CHARS)
+    .replace(/\\s+/g, ' ')
+    .trim();
+  return compact || 'Complete this Direct mode task.';
 }
 
 function isCliMemoryEnabled() {
@@ -1410,7 +1437,7 @@ function startAttempt(attemptPrompt, subtaskId) {
     shell: process.platform === 'win32',
   });
 
-  child.stdin.end(attemptPrompt);
+  child.stdin.end(formatPromptForCli(attemptPrompt));
   child.stdout.on('data', (data) => {
     handleChildOutput('stdout', data, state);
   });
@@ -3663,6 +3690,8 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '- A top-level phase alone is not enough.',
     '- Each task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
     '- Evidence must cite spec.md, requirements.md, context.md, project source/docs, existing project patterns, or verified official/industry references.',
+    '- Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
+    '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
     '- Keep spec.md compact as a decision index; put detailed source evidence in context.md and cite it from tasks.md.',
     '- If this is a Request Changes retry, update only affected requirement/design/task sections and preserve unaffected content.',
     '- Use _Depends on: none_ only for root work. Use _Files to modify: none_ only for read-only validation.',
@@ -3694,7 +3723,9 @@ function buildArtifactValidationRetryPrompt(validationError) {
     '    - Describe the implementation step.',
     '    - _Files to modify: path/to/file.ts_',
     '    - _Depends on: none_',
+    '    - _Requirements: 1.1_',
     '    - _Evidence: spec.md requirement 1.1; src/example.ts existing pattern_',
+    '    - _Done when: the concrete change is implemented and verification passes_',
     '    - _Verification: npm test_',
     '~~~',
   ].join('\\n');
@@ -3916,8 +3947,82 @@ function hasTaskLogRecords(logsPath) {
 }
 
 function isCodexJsonInvocation(command, args) {
+  return isCodexCommand(command) && Array.isArray(args) && args.includes('--json');
+}
+
+function isCodexCommand(command) {
   const commandName = String(command || '').split(/[\\\\/]/).pop().toLowerCase().replace(/\\.cmd$|\\.exe$/, '');
-  return commandName === 'codex' && Array.isArray(args) && args.includes('--json');
+  return commandName === 'codex';
+}
+
+function sanitizeCodexRulesFiles() {
+  if (!isCodexCommand(command)) {
+    return;
+  }
+
+  const rulesDir = resolveCodexRulesDir();
+  if (!rulesDir || !existsSync(rulesDir)) {
+    return;
+  }
+
+  let entries = [];
+  try {
+    entries = readdirSync(rulesDir, { withFileTypes: true });
+  } catch (error) {
+    appendTaskLogEntry(logPhase, 'info', 'Unable to inspect Codex rules directory: ' + formatErrorMessage(error));
+    return;
+  }
+
+  for (const entry of entries) {
+    if (!entry.isFile() || !entry.name.toLowerCase().endsWith('.rules')) {
+      continue;
+    }
+    stripUtf8BomFromFile(join(rulesDir, entry.name));
+  }
+}
+
+function resolveCodexRulesDir() {
+  const explicitHome = typeof process.env.CODEX_HOME === 'string' ? process.env.CODEX_HOME.trim() : '';
+  if (explicitHome) {
+    return join(explicitHome, 'rules');
+  }
+
+  const profileHome = typeof process.env.USERPROFILE === 'string' ? process.env.USERPROFILE.trim() : '';
+  if (profileHome) {
+    return join(profileHome, '.codex', 'rules');
+  }
+
+  const unixHome = typeof process.env.HOME === 'string' ? process.env.HOME.trim() : '';
+  return unixHome ? join(unixHome, '.codex', 'rules') : '';
+}
+
+function stripUtf8BomFromFile(filePath) {
+  let bytes;
+  try {
+    bytes = readFileSync(filePath);
+  } catch (error) {
+    appendTaskLogEntry(logPhase, 'info', 'Unable to read Codex rules file: ' + filePath + '. ' + formatErrorMessage(error));
+    return;
+  }
+
+  if (bytes.length < 3 || bytes[0] !== 0xef || bytes[1] !== 0xbb || bytes[2] !== 0xbf) {
+    return;
+  }
+
+  try {
+    writeFileSync(filePath, bytes.subarray(3));
+    appendTaskLogEntry(logPhase, 'info', 'Removed UTF-8 BOM from Codex rules file: ' + filePath);
+  } catch (error) {
+    appendTaskLogEntry(
+      logPhase,
+      'info',
+      'Codex rules file starts with a UTF-8 BOM and may fail to parse: ' + filePath + '. ' + formatErrorMessage(error),
+    );
+  }
+}
+
+function formatErrorMessage(error) {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function localizeMessage(key, fallback, values) {

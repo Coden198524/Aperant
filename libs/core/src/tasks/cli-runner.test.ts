@@ -1,7 +1,7 @@
 import { execFileSync } from 'node:child_process';
-import { mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { chmodSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { delimiter, join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 
 import { DIRECT_CHANGE_REQUEST_LIMIT } from '../runtime/agent-messages.js';
@@ -84,6 +84,44 @@ describe('Autocode CLI runner prompt', () => {
     expect(plan.prompt).toContain('LATEST_CHANGE_REQUEST');
     expect(plan.prompt).not.toContain('OLD_CHANGE_REQUEST_SHOULD_NOT_APPEAR');
     expect(readFileSync(plan.promptFilePath, 'utf8')).toBe(`${plan.prompt}\n`);
+  });
+
+  it('writes zh-CN prompts as readable Chinese and includes Codex rules preflight', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '001-zh-prompt',
+      title: '复现Lumen全局光照',
+      description: '当前截图看不出全局光照的效果，继续复现全局光照。',
+      metadata: { developmentMode: 'standard' },
+    });
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '001-zh-prompt',
+      cli: 'codex',
+      phase: 'planning',
+      language: 'zh-CN',
+    });
+    const prompt = readFileSync(plan.promptFilePath, 'utf8');
+    const runner = readFileSync(plan.runnerFilePath, 'utf8');
+
+    expect(prompt).toContain('# Autocode 任务运行');
+    expect(prompt).toContain('Task title: 复现Lumen全局光照');
+    expect(prompt).toContain('## 语言');
+    expect(prompt).toContain('## 目标');
+    expect(prompt).toContain('## 必须生成的内容');
+    expect(prompt).toContain('简体中文');
+    for (const damagedText of ['浠诲姟', '璇', '鐩爣', '蹇呴', '绠€', '鍒涘缓', '瑙勫垝']) {
+      expect(prompt).not.toContain(damagedText);
+    }
+
+    expect(runner).toContain('sanitizeCodexRulesFiles();');
+    expect(runner).toContain('function stripUtf8BomFromFile(filePath)');
+    expect(runner).toContain('Removed UTF-8 BOM from Codex rules file');
+    expect(runner).toContain('Codex rules file starts with a UTF-8 BOM');
+    expect(runner).toContain("return isCodexCommand(command) && Array.isArray(args) && args.includes('--json');");
   });
 
   it('resolves packaged work package helpers from Electron resources', () => {
@@ -422,6 +460,47 @@ describe('Autocode CLI runner prompt', () => {
     expect(memory.insights?.some((insight) => insight.includes('High token usage'))).toBe(false);
   });
 
+  it('uses Codex /goal for direct-mode Codex CLI prompts', () => {
+    createAutocodeTask({
+      projectRoot,
+      dataDirName,
+      specId: '007-codex-goal',
+      title: 'Wrap direct Codex prompt',
+      description: 'Add a Direct mode Codex goal regression test.',
+      metadata: { developmentMode: 'direct' },
+    });
+
+    const capturedPromptPath = join(projectRoot, 'captured-codex-goal.txt');
+    installFakeCodexCommand(projectRoot);
+
+    const plan = createAutocodeTaskRunPlan({
+      projectRoot,
+      dataDirName,
+      taskId: '007-codex-goal',
+      cli: 'custom',
+      customCommand: `codex "${capturedPromptPath.replace(/\\/g, '/')}"`,
+      phase: 'direct',
+    });
+
+    execFileSync(process.execPath, [plan.runnerFilePath], {
+      cwd: projectRoot,
+      env: {
+        ...process.env,
+        GRAPHITI_ENABLED: 'false',
+        PATH: `${projectRoot}${delimiter}${process.env.PATH ?? ''}`,
+      },
+      stdio: 'pipe',
+      timeout: 15_000,
+    });
+
+    const capturedPrompt = readFileSync(capturedPromptPath, 'utf8');
+    const firstLine = capturedPrompt.split(/\r?\n/, 1)[0];
+    expect(firstLine).toMatch(/^\/goal\s+/);
+    expect(firstLine).toContain('Add a Direct mode Codex goal regression test.');
+    expect(capturedPrompt).toContain('# Autocode Task Run');
+    expect(capturedPrompt).toContain('## Required Workflow');
+  });
+
   it('generates bounded artifact validation retry prompts', () => {
     createAutocodeTask({
       projectRoot,
@@ -454,3 +533,29 @@ describe('Autocode CLI runner prompt', () => {
     );
   });
 });
+
+function installFakeCodexCommand(projectRoot: string): void {
+  writeFileSync(join(projectRoot, 'codex-shim.cjs'), [
+    "const { readFileSync, writeFileSync } = require('node:fs');",
+    "const outputPath = process.argv[2];",
+    "const input = readFileSync(0, 'utf8');",
+    "writeFileSync(outputPath, input, 'utf8');",
+    "process.stdout.write('fake codex completed\\n');",
+  ].join('\n'), 'utf8');
+
+  if (process.platform === 'win32') {
+    writeFileSync(
+      join(projectRoot, 'codex.cmd'),
+      '@echo off\r\nnode "%~dp0codex-shim.cjs" %*\r\n',
+      'utf8',
+    );
+    return;
+  }
+
+  const unixShimPath = join(projectRoot, 'codex');
+  writeFileSync(unixShimPath, [
+    '#!/usr/bin/env node',
+    "require('./codex-shim.cjs');",
+  ].join('\n'), 'utf8');
+  chmodSync(unixShimPath, 0o755);
+}

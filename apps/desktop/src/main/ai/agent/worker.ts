@@ -1638,6 +1638,9 @@ async function runDefaultSession(
   // Start phase logging for default session
   if (logWriter) {
     logWriter.startPhase(defaultPhase);
+    if (session.subtaskId) {
+      logWriter.setSubtask(session.subtaskId);
+    }
   }
 
   let result: SessionResult | undefined;
@@ -1731,6 +1734,7 @@ async function runDefaultSession(
     if (logWriter) {
       const success = result?.outcome === 'completed' || result?.outcome === 'max_steps' || result?.outcome === 'context_window';
       logWriter.endPhase(defaultPhase, success ?? false);
+      logWriter.setSubtask(undefined);
     }
   }
 

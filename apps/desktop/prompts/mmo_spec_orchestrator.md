@@ -14,7 +14,8 @@ Create `spec.md` and a single Markdown `tasks.md` for an MMO-scale task. Do not 
 2. Cover only MMO domains affected by the task.
 3. Write `spec.md` with scope, requirements, risks, acceptance criteria, and validation.
 4. Write `tasks.md` as one Autocode Markdown checklist.
-5. Read both files back and fix missing required sections.
+5. Ensure every spec requirement/scenario/acceptance criterion is represented by one or more tasks, or explicitly marked blocked/out of scope.
+6. Read both files back and fix missing required sections.
 
 ## Task Format
 Use top metadata:
@@ -25,7 +26,7 @@ Workflow: ...
 Status: planned
 ```
 
-Use checklist phases and subtasks with `_Files to modify:_`, `_Depends on:_`, `_Requirements:_`, and `_Verification:_`.
+Use checklist phases and subtasks with `_Files to modify:_`, `_Depends on:_`, `_Requirements:_`, `_Evidence:_`, `_Done when:_`, and `_Verification:_`.
 
 Dependency and file rules:
 - Every executable subtask must include exactly one `_Depends on: ..._` line.
@@ -34,6 +35,7 @@ Dependency and file rules:
 - Use `_Files to modify: none_` for read-only validation or final checks.
 - If two subtasks must modify the same file, merge them or add a dependency.
 - Do not mark final verification as modifying all files unless it truly edits them.
+- Keep each executable task small enough for one focused coding session and trace it to the relevant requirement/scenario plus project evidence.
 
 ## Constraints
 - Write only spec artifacts.

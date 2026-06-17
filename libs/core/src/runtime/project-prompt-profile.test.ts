@@ -34,13 +34,26 @@ describe('project prompt profile formatting', () => {
   });
 
   it('grounds generated planner prompts in project architecture instead of generic templates', () => {
-    const planner = generateAutocodeProjectPromptOverrides(createProfile()).planner;
+    const prompts = generateAutocodeProjectPromptOverrides(createProfile());
+    const planner = prompts.planner;
 
     expect(planner).toContain('ARCHITECTURE GROUNDING');
     expect(planner).toContain('affected project boundary');
     expect(planner).toContain('ownership, call/data flow, public contracts');
     expect(planner).toContain('Do not add standalone research, design, architecture review');
     expect(planner).toContain('Avoid generic titles such as "implement feature"');
+    expect(planner).toContain('Do not cap tasks.md by phase or task count');
+    expect(planner).toContain('Cover every requirement, scenario, acceptance criterion');
+    expect(planner).toContain('small enough for one focused coding session');
+    expect(planner).toContain('REQUEST CHANGES ITERATION');
+    expect(planner).toContain('active same-task contract');
+    expect(planner).toContain('updated artifact chain');
+    expect(planner).toContain('needs_revision');
+    expect(planner).not.toContain('TASK SIZE LIMITS');
+    expect(planner).not.toContain('about 24 tasks or fewer');
+    expect(prompts.spec_quick).toContain('Do not cap task count in quick/simple mode');
+    expect(prompts.spec_quick).toContain('_Done when:');
+    expect(prompts.spec_quick).not.toContain('1-4 tasks');
   });
 
   it('grounds generated coder prompts in implementation contracts and reviewable summaries', () => {

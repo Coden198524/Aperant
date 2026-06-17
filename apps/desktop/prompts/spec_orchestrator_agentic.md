@@ -26,6 +26,8 @@ Create the required spec artifacts for the task.
 - `context.md` Evidence Sources must be Markdown bullets with `path`, optional `symbol`, optional `lines`, what the evidence proves, and confidence.
 - `spec.md` should include Evidence, Standards / References, and Assumptions / Open Questions sections.
 - `tasks.md` tasks should include source-backed guidance or an `_Evidence: ..._` metadata line.
+- `tasks.md` must cover every requirement, scenario, acceptance criterion, or success criterion from `spec.md`/`requirements.md`; call out anything blocked or out of scope instead of silently dropping it.
+- Each executable task should be small enough for one focused coding session, ordered by dependency, and include a clear done signal plus verification.
 - Never invent project architecture, framework behavior, APIs, acceptance criteria, or file ownership from general model knowledge.
 - Keep `spec.md` compact as a decision index; do not copy source code, long context, or research notes into it.
 
@@ -39,12 +41,17 @@ Create the required spec artifacts for the task.
   - _Depends on: none_
   - _Requirements: 1.1_
   - _Evidence: spec.md requirement 1.1; path/to/file.ts pattern_
+  - _Done when: setup is complete and the dependent task can start_
+  - _Verification: smallest reliable check_
 
 - [ ] 1.1 Subtask title
   - Description
   - _Files: path/to/file.ts_
   - _Depends on: 1_
   - _Requirements: 1.1_
+  - _Evidence: spec.md requirement 1.1; path/to/file.ts pattern_
+  - _Done when: behavior is implemented and acceptance check passes_
+  - _Verification: smallest reliable check_
 ```
 
 ## Constraints

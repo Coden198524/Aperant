@@ -19,7 +19,7 @@ import {
   type TechnologyStack,
 } from '@autocode/core';
 
-const PROJECT_PROMPT_PROFILE_VERSION = 12;
+const PROJECT_PROMPT_PROFILE_VERSION = 15;
 const PROJECT_PROMPT_NAMES = [
   'spec_quick',
   'planner',
@@ -435,7 +435,7 @@ function inferWorkflow(size: AutocodeProjectSize): AutocodeProjectPromptProfile[
     return {
       promptIntensity: promptIntensityBySize[size],
       specStyle: 'quick',
-      planningGuidance: 'Use one implementation phase and 1-3 subtasks unless the request clearly spans separate modules.',
+      planningGuidance: 'Use a simple implementation flow unless the request clearly spans separate modules or dependency boundaries.',
       contextGuidance: 'Prefer targeted file reads. Do not perform broad discovery when the task already points to the affected files.',
       validationGuidance: 'Run the smallest relevant build, typecheck, lint, or test command available. Manual verification is acceptable for simple UI/text changes.',
       maxRecommendedSubtasks: 3,

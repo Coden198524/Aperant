@@ -72,6 +72,9 @@ const GENERIC_TASK_DESCRIPTION_PATTERN =
 const READ_ONLY_VALIDATION_TASK_PATTERN =
   /\b(?:validate|verify|verification|manual qa|qa|smoke|test|typecheck|lint|build)\b/i;
 
+const TASK_DONE_SIGNAL_PATTERN =
+  /\b(?:done when|complete when|finished when|ready when|completion criteria|acceptance criteria|success criteria|success criterion)\b|完成条件|完成标准|验收标准|验收条件|成功标准/iu;
+
 const PROJECT_SPECIFIC_TASK_ANCHOR_PATTERN =
   /[A-Za-z0-9_.-]+[/\\][A-Za-z0-9_.()[\]-]+|\b(?:package|tsconfig|vite|vitest|webpack|rollup|biome|eslint|cargo|go|pyproject)\.[A-Za-z0-9.]+|\b[A-Z][A-Za-z0-9]*(?:Service|Manager|Controller|Adapter|Provider|Store|Repository|Bridge|Machine|Orchestrator|Runner|Renderer|Handler|Client|Config|Panel|Dialog|View|Model|Schema)\b|\buse[A-Z][A-Za-z0-9]+\b|\b[A-Za-z_$][\w$]*\.[A-Za-z_$][\w$]*\b/;
 
@@ -146,8 +149,9 @@ export function buildAutocodePlanQualityRetryPrompt(errors: string[]): string {
     'Repair only the affected artifacts with the Write/Edit tools.',
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.specFile} as a compact decision index, not a full analysis dump.`,
     `- Keep ${AUTOCODE_TASK_ARTIFACTS.requirements} focused on requirements, acceptance criteria, constraints, evidence sources, standards, and assumptions.`,
-    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} concise and make every executable subtask traceable.`,
+    `- Keep ${AUTOCODE_TASK_ARTIFACTS.tasks} concise and make every executable subtask traceable to requirements, evidence, done criteria, and verification.`,
     '- Replace generic task text with concrete behavior, affected project boundary, likely files/APIs, and the existing pattern to follow.',
+    '- Every executable task must include _Requirements: ..._, _Evidence: ..._, a done signal such as _Done when: ..._, and _Verification: ..._.',
     '- Preserve requirement IDs and unaffected design/task content during Request Changes iterations.',
     '- Use Evidence references instead of copying source code or long research notes.',
     '- If evidence is missing, add an assumption/open question or validation task instead of inventing implementation work.',
@@ -267,19 +271,24 @@ function validateTasksEvidence(tasksMarkdown: string): string[] {
   }
 
   const errors: string[] = [];
-  for (const phase of plan.phases ?? []) {
-    const subtasks = Array.isArray(phase.subtasks)
-      ? phase.subtasks
-      : Array.isArray(phase.chunks)
-        ? phase.chunks
-        : [];
-    for (const subtask of subtasks) {
-      const id = typeof subtask.id === 'string' ? subtask.id : 'unknown';
-      if (!isMeaningfulAutocodeEvidence(subtask.evidence)) {
-        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} missing _Evidence: ..._ metadata.`);
-      } else if (!isTraceableAutocodeEvidence(subtask.evidence)) {
-        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has vague _Evidence_; cite spec.md, requirements.md, ${AUTOCODE_TASK_ARTIFACTS.context}, ${AUTOCODE_TASK_ARTIFACTS.research}, project source/docs, or official/industry references.`);
-      }
+  const subtasks = getPlanSubtasks(plan);
+  if (subtasks.length === 0) {
+    errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} contains no executable subtasks.`);
+  }
+
+  for (const subtask of subtasks) {
+    const record = subtask as Record<string, unknown>;
+    const id = singleLine(record.id) || 'unknown';
+    if (!hasMeaningfulTaskRequirements(record)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} missing _Requirements: ..._ metadata; cite requirement, scenario, acceptance criterion, or success criterion IDs.`);
+    }
+    if (!isMeaningfulAutocodeEvidence(record.evidence)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} missing _Evidence: ..._ metadata.`);
+    } else if (!isTraceableAutocodeEvidence(record.evidence)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has vague _Evidence_; cite spec.md, requirements.md, ${AUTOCODE_TASK_ARTIFACTS.context}, ${AUTOCODE_TASK_ARTIFACTS.research}, project source/docs, or official/industry references.`);
+    }
+    if (!hasTaskDoneSignal(record)) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} missing a done signal; add _Done when: ..._ or explicit completion criteria.`);
     }
   }
   errors.push(...validateTaskProjectSpecificity(plan));
@@ -291,31 +300,24 @@ function validateTaskProjectSpecificity(plan: ReturnType<typeof parseAutocodeImp
   let executableTaskCount = 0;
   let anchoredTaskCount = 0;
 
-  for (const phase of plan.phases ?? []) {
-    const subtasks = Array.isArray(phase.subtasks)
-      ? phase.subtasks
-      : Array.isArray(phase.chunks)
-        ? phase.chunks
-        : [];
-    for (const subtask of subtasks) {
-      executableTaskCount += 1;
-      const record = subtask as Record<string, unknown>;
-      const id = singleLine(record.id) || 'unknown';
-      const title = singleLine(record.title);
-      const description = singleLine(record.description);
-      const hasAnchor = hasProjectSpecificTaskAnchor(record);
-      if (hasAnchor) {
-        anchoredTaskCount += 1;
-      }
+  for (const subtask of getPlanSubtasks(plan)) {
+    executableTaskCount += 1;
+    const record = subtask as Record<string, unknown>;
+    const id = singleLine(record.id) || 'unknown';
+    const title = singleLine(record.title);
+    const description = singleLine(record.description);
+    const hasAnchor = hasProjectSpecificTaskAnchor(record);
+    if (hasAnchor) {
+      anchoredTaskCount += 1;
+    }
 
-      if (isReadOnlyValidationTask(record, title, description)) {
-        continue;
-      }
-      if (isGenericTaskTitle(title) && !hasAnchor) {
-        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} is too generic; name the concrete project boundary, behavior, and source/API pattern it follows.`);
-      } else if (isGenericTaskDescription(title, description) && !hasAnchor) {
-        errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has boilerplate guidance; add project-specific files, APIs, module boundaries, or existing patterns.`);
-      }
+    if (isReadOnlyValidationTask(record, title, description)) {
+      continue;
+    }
+    if (isGenericTaskTitle(title) && !hasAnchor) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} is too generic; name the concrete project boundary, behavior, and source/API pattern it follows.`);
+    } else if (isGenericTaskDescription(title, description) && !hasAnchor) {
+      errors.push(`${AUTOCODE_TASK_ARTIFACTS.tasks} task ${id} has boilerplate guidance; add project-specific files, APIs, module boundaries, or existing patterns.`);
     }
   }
 
@@ -324,6 +326,56 @@ function validateTaskProjectSpecificity(plan: ReturnType<typeof parseAutocodeImp
   }
 
   return errors;
+}
+
+function getPlanSubtasks(plan: ReturnType<typeof parseAutocodeImplementationPlanMarkdown>): Record<string, unknown>[] {
+  const subtasks: Record<string, unknown>[] = [];
+  for (const phase of plan.phases ?? []) {
+    const phaseSubtasks = Array.isArray(phase.subtasks)
+      ? phase.subtasks
+      : Array.isArray(phase.chunks)
+        ? phase.chunks
+        : [];
+    for (const subtask of phaseSubtasks) {
+      if (subtask && typeof subtask === 'object' && !Array.isArray(subtask)) {
+        subtasks.push(subtask as Record<string, unknown>);
+      }
+    }
+  }
+  return subtasks;
+}
+
+function hasMeaningfulTaskRequirements(subtask: Record<string, unknown>): boolean {
+  return stringArrayField(subtask.requirements).some(isMeaningfulTaskRequirement);
+}
+
+function isMeaningfulTaskRequirement(value: string): boolean {
+  const text = singleLine(value).toLowerCase();
+  return text.length > 0 && !EMPTY_EVIDENCE_TOKENS.has(text) && text !== 'no requirements';
+}
+
+function hasTaskDoneSignal(subtask: Record<string, unknown>): boolean {
+  const explicitDoneFields = [
+    subtask.done_when,
+    subtask.doneWhen,
+    subtask.completion_criteria,
+    subtask.completionCriteria,
+    subtask.acceptance_criteria,
+    subtask.acceptanceCriteria,
+    subtask.success_criteria,
+    subtask.successCriteria,
+  ];
+  if (explicitDoneFields.some(isMeaningfulAutocodeEvidence)) {
+    return true;
+  }
+
+  const taskText = [
+    stringifyTaskValue(subtask.title),
+    stringifyTaskValue(subtask.description),
+    stringifyTaskValue(subtask.completion_summary),
+    stringifyTaskValue(subtask.notes),
+  ].join(' ');
+  return TASK_DONE_SIGNAL_PATTERN.test(taskText);
 }
 
 function isReadOnlyValidationTask(

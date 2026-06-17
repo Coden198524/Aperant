@@ -851,7 +851,7 @@ describe('invokeCLIAsync', () => {
       expect(terminal.activeCLI).toBe('codex');
     });
 
-    it('should include Codex bypass flag when YOLO mode is enabled', async () => {
+    it('should not include Codex bypass flag when YOLO mode is enabled', async () => {
       vi.mocked(readSettingsFileAsync).mockResolvedValue({ preferredCLI: 'claude-code' } as never);
       const terminal = createMockTerminal();
 
@@ -859,8 +859,8 @@ describe('invokeCLIAsync', () => {
       await invokeCLIAsync(terminal, '/tmp/project', undefined, () => null, vi.fn(), true, 'codex');
 
       const written = mockWriteToPty.mock.calls[0][1] as string;
-      expect(written).toBe(`${buildCdCommand('/tmp/project')}codex --dangerously-bypass-approvals-and-sandbox\r`);
-      expect(terminal.dangerouslySkipPermissions).toBe(true);
+      expect(written).toBe(`${buildCdCommand('/tmp/project')}codex\r`);
+      expect(terminal.dangerouslySkipPermissions).toBe(false);
       expect(terminal.activeCLI).toBe('codex');
     });
   });

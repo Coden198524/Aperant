@@ -113,9 +113,15 @@ describe('project prompt profile', () => {
     const plannerOverride = loadProjectPromptOverride(projectDir, 'planner');
     expect(plannerOverride?.content).toContain('Autocode Markdown checklist format');
     expect(plannerOverride?.content).toContain('Use the Write tool to create `tasks.md`');
-    expect(plannerOverride?.content).toContain('TASK SIZE LIMITS');
-    expect(plannerOverride?.content).toContain('about 24 tasks or fewer');
-    expect(plannerOverride?.content).toContain('do not omit necessary tasks');
+    expect(plannerOverride?.content).toContain('TASK DETAIL RULES');
+    expect(plannerOverride?.content).toContain('Do not cap tasks.md by phase or task count');
+    expect(plannerOverride?.content).toContain('preserve all required work items');
+    expect(plannerOverride?.content).toContain('Cover every requirement, scenario, acceptance criterion');
+    expect(plannerOverride?.content).toContain('small enough for one focused coding session');
+    expect(plannerOverride?.content).toContain('REQUEST CHANGES ITERATION');
+    expect(plannerOverride?.content).toContain('active same-task contract');
+    expect(plannerOverride?.content).toContain('updated artifact chain');
+    expect(plannerOverride?.content).toContain('needs_revision');
     expect(plannerOverride?.content).toContain('do not split tasks.md into phase files');
     expect(plannerOverride?.content).toContain('Do not include top-level `summary`, `verification_strategy`, `qa_acceptance`');
     expect(plannerOverride?.content).toContain('PARALLEL EXECUTION PLANNING');
@@ -127,6 +133,7 @@ describe('project prompt profile', () => {
     expect(plannerOverride?.content).toContain('affected project boundary');
     expect(plannerOverride?.content).toContain('Avoid generic titles such as "implement feature"');
     expect(plannerOverride?.content).toContain('Do not add standalone research, design, architecture review');
+    expect(loadProjectPromptOverride(projectDir, 'spec_quick')?.content).toContain('_Done when:');
 
     const qaReviewerOverride = loadProjectPromptOverride(projectDir, 'qa_reviewer');
     expect(qaReviewerOverride?.content).toContain('completion notes against actual changed files and changed contracts');

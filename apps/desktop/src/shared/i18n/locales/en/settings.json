@@ -306,8 +306,8 @@
     },
     "yoloMode": {
       "label": "YOLO Mode",
-      "description": "Start Claude and Codex with permission-bypass flags, skipping safety prompts. Use with extreme caution.",
-      "warning": "This mode bypasses Claude and Codex permission systems. Only enable if you fully trust the code being executed."
+      "description": "Start Claude with permission-bypass flags. Codex smart terminals keep standard approval prompts by default. Use with extreme caution.",
+      "warning": "This mode bypasses Claude permission prompts. Codex smart terminals do not add the dangerous bypass flag automatically."
     },
     "codeGraph": {
       "label": "Code Graph Optimization",

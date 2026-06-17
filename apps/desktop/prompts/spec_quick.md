@@ -21,6 +21,7 @@ Create a compact Standard spec and upstream task list for a simple, low-risk tas
 4. Write `spec.md`.
 5. Write `tasks.md`.
 6. Read back both files only enough to verify required headings and checklist format.
+7. Confirm every `spec.md` success criterion is covered by at least one `tasks.md` checkbox.
 
 ## spec.md Format
 
@@ -76,6 +77,8 @@ Status: pending
   - _Files to modify: path/to/file_
   - _Depends on: none_
   - _Requirements: 1.1_
+  - _Evidence: spec.md success criterion 1; path/to/file existing pattern_
+  - _Done when: the requested behavior is implemented and the check passes_
   - _Verification: [smallest reliable check]_
 ```
 
@@ -91,8 +94,10 @@ Status: pending
 
 Rules:
 
-- Use exactly one phase unless the task truly needs dependency order.
-- Use 1-5 tasks.
+- Choose as many phases as the task needs; use one phase only when the dependency order is simple.
+- Do not cap task count in quick/simple mode. Include every concrete task needed, keeping each item concise.
+- Cover every `spec.md` success criterion. If the only evidence is the user request, cite `spec.md` or the user-request requirement instead of omitting evidence.
+- Keep each task small enough for one focused coding session and give it a clear done signal.
 - Do not include summaries, research notes, copied source, or long analysis.
 - Use `[ ]` for all new items.
 

@@ -43,7 +43,7 @@ import { shouldSkipAutocodeWorkspaceDir } from '@autocode/core/workspace/ignore-
 import { FrameworkDetector } from '../project/framework-detector';
 import { StackDetector } from '../project/stack-detector';
 
-export const PROJECT_PROMPT_PROFILE_VERSION = 15;
+export const PROJECT_PROMPT_PROFILE_VERSION = 18;
 export const PROJECT_PROMPT_PROFILE_PATH = getAutocodeProjectPromptProfileRelativePath();
 export const PROJECT_PROMPTS_PATH = getAutocodeProjectPromptsRelativeDir();
 
@@ -476,7 +476,7 @@ function inferWorkflow(
     return {
       promptIntensity: 'lightweight',
       specStyle: 'quick',
-      planningGuidance: 'Use one implementation phase and 1-3 subtasks unless the request clearly spans separate modules.',
+      planningGuidance: 'Use a simple implementation flow unless the request clearly spans separate modules or dependency boundaries.',
       contextGuidance: 'Prefer targeted file reads. Do not perform broad discovery when the task already points to the affected files.',
       validationGuidance: 'Run the smallest relevant build, typecheck, lint, or test command available. Manual verification is acceptable for simple UI/text changes.',
       maxRecommendedSubtasks: 3,
@@ -738,7 +738,7 @@ function getComplexPlanningGuidance(profile: ProjectPromptProfile): string {
   }
 
   return [
-    '- For genuinely complex tasks, especially migrations, removals, replacements, refactors, or cross-system changes, do not compress tasks.md into the normal phase/task target.',
+    '- For genuinely complex tasks, especially migrations, removals, replacements, refactors, or cross-system changes, preserve the full task breakdown in tasks.md.',
     '- Split complex tasks by dependency boundary such as runtime behavior, UI/editor surfaces, build/tooling, CI/release, data/assets, compatibility, migration tooling, and validation/rollback when those areas are relevant.',
     '- Keep tasks.md concise with checklist Markdown when preserving necessary work would otherwise make the task list hard to review.',
   ].join('\n');
@@ -834,12 +834,14 @@ ${buildToolCallJsonGuidance()}
 1. Read the task and the project documentation reference from the kickoff message.
 2. Inspect only the files needed to identify the change.
 3. Write a compact Standard \`spec.md\` with overview, scope, files, change details, and success criteria.
-4. Write \`tasks.md\` with one phase and 1-${profile.workflow.maxRecommendedSubtasks} tasks unless the task truly needs more.
+4. Write \`tasks.md\` with the phases and tasks needed for the requested change; use a single phase only when that matches the real dependency structure.
 
-## PLAN SIZE LIMITS
+## TASK DETAIL RULES
 
-- Use exactly 1 phase for simple tasks unless there is a real dependency split.
-- Use 1-${profile.workflow.maxRecommendedSubtasks} tasks for simple tasks; if the task is no longer simple, keep all necessary tasks and make each one concise.
+- Choose phases from real dependency boundaries, not from a fixed count.
+- Do not cap task count in quick/simple mode. Include every concrete task needed, keeping each item concise.
+- Cover every \`spec.md\` success criterion. If requirements/scenarios exist, map each task's \`_Requirements:_\` metadata to the relevant requirement or scenario IDs.
+- Keep each task small enough for one focused coding session and give it a clear done signal in guidance or \`_Done when: ..._\`.
 - Keep each \`title\` under 120 characters and each \`description\` under 500 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 
@@ -868,6 +870,7 @@ Status: pending
   - _Depends on: none_
   - _Requirements: 1.1_
   - _Evidence: spec.md requirement 1.1; path/to/file existing pattern_
+  - _Done when: the requested behavior is implemented and the check passes_
   - _Verification: smallest relevant verification command_
 \`\`\`
 
@@ -903,7 +906,7 @@ Convert the existing spec into a concrete upstream task list. The runtime derive
 
 ## REQUIRED OUTPUT
 
-Use the Write tool to create \`tasks.md\` in the spec directory. Do not return the full task list as final text. Do not write \`implementation_plan.md\`.
+Use the Write tool to create \`tasks.md\` in the spec directory. For Request Changes iterations only, update \`spec.md\` and \`requirements.md\` first when the feedback changes requirements, acceptance criteria, user-visible behavior, risks, constraints, or design decisions. Do not return the full task list as final text. Do not write \`implementation_plan.md\`.
 
 ${buildToolCallJsonGuidance()}
 
@@ -913,14 +916,24 @@ ${buildToolCallJsonGuidance()}
 2. Read \`spec.md\`, \`requirements.md\`, or \`context.md\` only if the kickoff context is missing the detail needed for tasks.md; use Read \`limit\` for large files.
 3. Inspect only directly relevant project files when the spec does not identify enough detail.
 4. Ground requirements, design choices, task scope, and verification commands in source files, project docs, existing patterns, or verified official/industry references. Put gaps in assumptions or validation tasks.
-5. Create one phase and 1-${profile.workflow.maxRecommendedSubtasks} subtasks for small changes. Split into more phases only for real dependencies.
+5. Create phases and subtasks according to real dependencies and project boundaries. Keep small changes straightforward, but include every concrete required task.
 
-## TASK SIZE LIMITS
+## REQUEST CHANGES ITERATION
 
-- Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.
-- If the task is genuinely complex, do not omit necessary tasks just to hit the normal target. Preserve all required work items and make each task description shorter instead.
-- The 1-${profile.workflow.maxRecommendedSubtasks} task guidance applies to small changes only, not complex migrations or broad rewrites.
+- Treat the latest \`HUMAN_INPUT.md\`/\`change_requests.jsonl\` entry as the active same-task contract, not a new task.
+- If feedback changes requirements, acceptance criteria, user-visible behavior, risks, constraints, or design decisions, update \`spec.md\` and \`requirements.md\` before rewriting \`tasks.md\`.
+- Regenerate \`tasks.md\` from the updated artifact chain: \`requirements.md\` -> \`spec.md\`/\`context.md\` -> \`tasks.md\`.
+- Preserve completed or pending tasks that still satisfy the changed contract; reset affected tasks to pending with a \`needs_revision\` note, add new pending tasks for new requirements, and mark obsolete tasks as obsolete instead of silently deleting history.
+- Re-run coverage after changes: every new or changed requirement/scenario/acceptance criterion must appear in \`_Requirements: ..._\` metadata or be explicitly blocked/out of scope.
+- Every new or revised task must include \`_Evidence: ..._\`, \`_Done when: ..._\`, and \`_Verification: ..._\` so the next coding pass can use the normal task commit flow.
+
+## TASK DETAIL RULES
+
+- Do not cap tasks.md by phase or task count. Include all required work items and split them when it improves execution safety or reviewability.
+- If the task is genuinely complex, preserve all required work items and make each task description shorter instead of dropping tasks.
 ${getComplexPlanningGuidance(profile)}
+- Cover every requirement, scenario, acceptance criterion, or success criterion from \`spec.md\`/\`requirements.md\`; call out blocked or out-of-scope items instead of silently dropping them.
+- Keep each executable task small enough for one focused coding session and give it a clear done signal in guidance or \`_Done when: ..._\`.
 - Keep each \`title\` under 120 characters and each \`description\` under 700 characters.
 - Do not include top-level \`summary\`, \`verification_strategy\`, \`qa_acceptance\`, research notes, copied source, or long analysis.
 - Put verification on each task using the smallest relevant command or manual check.
@@ -938,7 +951,7 @@ ${buildParallelExecutionPlanningGuidance()}
 ## TASK REQUIREMENTS
 
 - Use Autocode Markdown checklist format with \`- [ ] 1. Phase title\` and \`- [ ] 1.1 Subtask title\`.
-- Each task needs an id, title, concise description bullets, pending checkbox, precise file metadata, exactly one dependency line, one \`_Evidence: ..._\` line, and verification.
+- Each task needs an id, title, concise description bullets, pending checkbox, precise file metadata, exactly one dependency line, \`_Requirements: ..._\`, one \`_Evidence: ..._\` line, a done signal, and verification.
 - When a design pattern matters, include the decision in a task bullet.
 - Prefer targeted verification commands:
 ${formatCommands([

@@ -306,7 +306,7 @@ export class TerminalManager {
     }
 
     const settings = await import('../settings-utils').then(m => m.readSettingsFileAsync());
-    const dangerouslySkipPermissions = settings?.dangerouslySkipPermissions === true;
+    const dangerouslySkipPermissions = cli === 'claude-code' && settings?.dangerouslySkipPermissions === true;
 
     const cwdCommand = (await import('../../shared/utils/shell-escape')).buildCdCommand(cwd || terminal.projectPath || terminal.cwd, terminal.shellType);
     const cliCommand = ClaudeIntegration.getCLICommand(cli, settings?.customCLIPath as string | undefined, dangerouslySkipPermissions);

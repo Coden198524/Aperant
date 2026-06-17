@@ -301,8 +301,8 @@
     },
     "yoloMode": {
       "label": "Mode YOLO",
-      "description": "Démarrer Claude et Codex avec les options de contournement des permissions, en ignorant les invites de sécurité. À utiliser avec une extrême prudence.",
-      "warning": "Ce mode contourne les systèmes de permissions de Claude et Codex. N'activez que si vous faites entièrement confiance au code exécuté."
+      "description": "Démarrer Claude avec les options de contournement des permissions. Les terminaux intelligents Codex conservent les demandes d'approbation standard par défaut. À utiliser avec une extrême prudence.",
+      "warning": "Ce mode contourne les invites de permissions de Claude. Les terminaux intelligents Codex n'ajoutent pas automatiquement l'option dangereuse de contournement."
     },
     "codeGraph": {
       "label": "Optimisation du graphe de code",

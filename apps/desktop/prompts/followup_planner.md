@@ -33,6 +33,8 @@ Append new work to an existing completed plan.
   - _Files to create: src/new-file.ts_
   - _Depends on: 4.3_
   - _Requirements: follow-up_
+  - _Evidence: FOLLOWUP_REQUEST.md; spec.md requirement or existing source pattern_
+  - _Done when: follow-up behavior is implemented and verification passes_
   - _Verification: npm test -- example.test.ts_
 ```
 
@@ -46,6 +48,8 @@ Rules:
 - If two new subtasks must modify the same file, merge them or add a dependency.
 - Use 1-3 files per subtask when possible.
 - Keep each subtask independently verifiable.
+- Cover every concrete follow-up requirement with at least one new subtask, or explicitly mark it blocked/out of scope.
+- Each new subtask should be small enough for one focused coding session and include `_Evidence: ..._`, `_Requirements: ..._`, a done signal, and `_Verification: ..._`.
 - Do not rewrite old work to make the append look cleaner.
 - Do not add long rationale, source excerpts, or broad architecture notes.
 

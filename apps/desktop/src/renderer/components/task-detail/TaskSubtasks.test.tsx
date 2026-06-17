@@ -77,6 +77,24 @@ function createConcurrentWorkPackageTask(): Task {
   };
 }
 
+function createConcurrentTaskWithRequestChangesFollowup(): Task {
+  const task = createConcurrentWorkPackageTask();
+
+  return {
+    ...task,
+    subtasks: [
+      ...task.subtasks.map(subtask => ({ ...subtask, status: 'completed' as const })),
+      {
+        id: '2.1',
+        title: 'Handle requested changes',
+        description: 'Address review feedback from Request Changes',
+        status: 'completed',
+        files: [],
+      },
+    ],
+  };
+}
+
 function createFanOutWorkPackageTask(): Task {
   return {
     ...createTask(),
@@ -385,6 +403,18 @@ function createConcurrentWorkPackageLogs(): TaskLogs {
   };
 }
 
+function createConcurrentLogsWithRequestChangesFollowup(): TaskLogs {
+  const logs = createConcurrentWorkPackageLogs();
+  logs.phases.coding.entries.push({
+    timestamp: '2026-01-01T00:00:03.000Z',
+    type: 'text',
+    phase: 'coding',
+    content: 'Request changes follow-up model output.',
+    subtask_id: '2.1',
+  });
+  return logs;
+}
+
 function getExecutionGraphEdgePaths(container: HTMLElement): SVGPathElement[] {
   return Array.from(container.querySelectorAll('svg path'))
     .filter(path => (path.getAttribute('d') ?? '').startsWith('M ')) as SVGPathElement[];
@@ -657,5 +687,30 @@ describe('TaskSubtasks', () => {
 
     expect(screen.queryByText('Board package model output.')).not.toBeInTheDocument();
     expect(screen.getByText('No model output yet')).toBeInTheDocument();
+  });
+
+  it('shows model output for Request Changes follow-up subtasks in concurrent tasks', async () => {
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({
+      success: true,
+      data: createConcurrentLogsWithRequestChangesFollowup(),
+    })) as typeof window.electronAPI.getTaskLogs;
+
+    render(
+      <TooltipProvider>
+        <TaskSubtasks task={createConcurrentTaskWithRequestChangesFollowup()} />
+      </TooltipProvider>
+    );
+
+    await waitFor(() => {
+      expect(window.electronAPI.getTaskLogs).toHaveBeenCalled();
+    });
+    expect(screen.getByText('No model output yet')).toBeInTheDocument();
+
+    fireEvent.click(screen.getByRole('button', { name: /Show model output for 2\.1/i }));
+
+    expect(await screen.findByText('Request changes follow-up model output.')).toBeInTheDocument();
+    expect(screen.getByTestId('task-runtime-logs')).toHaveTextContent('Handle requested changes');
+    expect(screen.queryByText('Board package model output.')).not.toBeInTheDocument();
+    expect(screen.queryByText('Scoring package model output.')).not.toBeInTheDocument();
   });
 });

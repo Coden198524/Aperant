@@ -243,8 +243,8 @@
     },
     "yoloMode": {
       "label": "YOLO 模式",
-      "description": "启动 Claude 和 Codex 时跳过权限确认提示。请谨慎使用。",
-      "warning": "此模式会绕过 Claude 和 Codex 的权限系统。仅在完全信任将执行的代码时启用。"
+      "description": "启动 Claude 时使用权限绕过参数；Codex 智能终端默认保留审批提示。请谨慎使用。",
+      "warning": "此模式会绕过 Claude 的权限系统。Codex 智能终端不会自动添加危险绕过参数。"
     },
     "codeGraph": {
       "label": "代码图优化",

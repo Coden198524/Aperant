@@ -125,8 +125,10 @@ export function buildAutocodePlanningStructuredOutputRetryPrompt(errorMessage: s
     'Use "- [ ] 1. Phase title" and "- [ ] 1.1 Subtask title" with _Files_, _Depends on_, _Requirements_, _Evidence_, and _Verification_.',
     'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
     'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.md, project source/docs, or verified official/industry references.',
+    'Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
+    'Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
     'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
-    'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
+    'Do not cap tasks.md by phase or task count; include every concrete required task.',
     'For complex tasks, keep necessary tasks concise in the single Markdown file.',
     'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   ].join('\n');
@@ -146,8 +148,10 @@ export function buildAutocodePlanningStructuredOutputValidationRetryPrompt(error
     `Rewrite ${AUTOCODE_TASK_ARTIFACTS.tasks} as checklist Markdown with task markers such as "- [ ] 2.1 Title".`,
     'Every executable task must include exactly one _Depends on: ..._ line; use none only for root work.',
     'Every executable task must include one _Evidence: ..._ line citing spec.md, requirements.md, context.md, project source/docs, or verified official/industry references.',
+    'Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
+    'Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
     'File metadata is write intent only. Use _Files to modify: none_ for read-only validation and do not mark final verification as modifying all files.',
-    'Normal task lists should target 4 phases or fewer and about 24 tasks or fewer.',
+    'Do not cap tasks.md by phase or task count; include every concrete required task.',
     'For complex tasks, keep descriptions concise instead of splitting files.',
     'Omit top-level summary, verification_strategy, qa_acceptance, research notes, copied source, and long analysis.',
   ].join('\n');
@@ -166,6 +170,8 @@ export function buildAutocodeStandardTasksValidationRetryPrompt(errors: string[]
     'Use checklist Markdown with phase items such as "- [ ] 1. Phase" and task items such as "- [ ] 1.1 Task".',
     'Every executable task must include _Depends on_, _Evidence_, and _Verification_. Include _Files to create/modify_ when write intent is known.',
     'Evidence must cite spec.md, requirements.md, context.md, project source/docs, existing project patterns, or verified official/industry references. Do not use "none" or vague guesses.',
+    'Cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of dropping them.',
+    'Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
     'Use _Depends on: none_ only for root tasks. Add real dependencies for tasks that share files or consume prior outputs.',
     'Keep independent tasks dependency-free when they can run safely in parallel.',
   ].join('\n');

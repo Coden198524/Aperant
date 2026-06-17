@@ -213,6 +213,22 @@
         "to": "node_modules/@libsql"
       },
       {
+        "from": "../../node_modules/js-base64",
+        "to": "node_modules/js-base64"
+      },
+      {
+        "from": "../../node_modules/promise-limit",
+        "to": "node_modules/promise-limit"
+      },
+      {
+        "from": "../../node_modules/cross-fetch",
+        "to": "node_modules/cross-fetch"
+      },
+      {
+        "from": "../../node_modules/ws",
+        "to": "node_modules/ws"
+      },
+      {
         "from": "../../node_modules/libsql",
         "to": "node_modules/libsql"
       },

@@ -11,7 +11,6 @@ import * as crypto from 'crypto';
 import { IPC_CHANNELS } from '../../shared/constants';
 import { getClaudeProfileManager, initializeClaudeProfileManager } from '../claude-profile-manager';
 import { getFullCredentialsFromKeychain, clearKeychainCache, updateProfileSubscriptionMetadata } from '../claude-profile/credential-utils';
-import { getUsageMonitor } from '../claude-profile/usage-monitor';
 import { getEmailFromConfigDir } from '../claude-profile/profile-utils';
 import * as OutputParser from './output-parser';
 import * as SessionHandler from './session-handler';
@@ -47,6 +46,9 @@ import type {
  * @returns The command string to write to the PTY
  */
 export function getCLIPermissionBypassFlag(cli: SupportedCLI, dangerouslySkipPermissions?: boolean): string {
+  if (cli !== 'claude-code') {
+    return '';
+  }
   return getAutocodeCliPermissionBypassFlag(cli as AutocodeCli, dangerouslySkipPermissions === true);
 }
 
@@ -1228,26 +1230,29 @@ export async function invokeCLIAsync(
     debugLog('[ClaudeIntegration:invokeCLIAsync] CWD:', cwd);
     debugLog('[ClaudeIntegration:invokeCLIAsync] Dangerously skip permissions:', dangerouslySkipPermissions);
 
-    // Compute extra flags for YOLO mode
-    const extraFlags = getCLIPermissionBypassFlag('claude-code', dangerouslySkipPermissions) || undefined;
+    // Dispatch to the appropriate CLI based on preferredCLI setting
+    const settings = await readSettingsFileAsync();
+    const preferredCLI = cliOverride || (settings?.preferredCLI as SupportedCLI | undefined) || 'claude-code';
+    const shouldBypassPermissions = preferredCLI === 'claude-code' && dangerouslySkipPermissions === true;
+
+    // Compute extra flags for YOLO mode. Smart-terminal non-Claude CLIs do not opt into
+    // provider-specific permission bypass flags by default.
+    const extraFlags = getCLIPermissionBypassFlag('claude-code', shouldBypassPermissions) || undefined;
 
     terminal.isCLIMode = true;
-    // Store YOLO mode setting so it persists across profile switches
-    terminal.dangerouslySkipPermissions = dangerouslySkipPermissions;
+    // Store YOLO mode only for Claude sessions so restored Codex terminals start safely.
+    terminal.dangerouslySkipPermissions = shouldBypassPermissions;
     SessionHandler.releaseSessionId(terminal.id);
     terminal.claudeSessionId = undefined;
 
     const projectPath = cwd || terminal.projectPath || terminal.cwd;
 
-    // Dispatch to the appropriate CLI based on preferredCLI setting
-    const settings = await readSettingsFileAsync();
-    const preferredCLI = cliOverride || (settings?.preferredCLI as SupportedCLI | undefined) || 'claude-code';
     terminal.activeCLI = preferredCLI;
 
     if (preferredCLI !== 'claude-code') {
       // Non-Claude CLI: change directory if needed, then run the CLI command directly
       const cwdCommand = buildCdCommand(cwd, terminal.shellType);
-      const command = getCLICommand(preferredCLI, settings?.customCLIPath as string | undefined, dangerouslySkipPermissions);
+      const command = getCLICommand(preferredCLI, settings?.customCLIPath as string | undefined, false);
       debugLog('[ClaudeIntegration:invokeCLIAsync] Non-Claude CLI dispatch:', { preferredCLI, command });
       if (cwdCommand) {
         PtyManager.writeToPty(terminal, `${cwdCommand}${command}\r`);

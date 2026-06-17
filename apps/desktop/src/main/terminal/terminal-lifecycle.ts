@@ -41,9 +41,7 @@ export interface RestoreOptions {
  */
 export type DataHandlerFn = (terminal: TerminalProcess, data: string) => void;
 
-const CODEX_YOLO_MODE_FLAG = ' --dangerously-bypass-approvals-and-sandbox';
-
-function getCLICommand(cli: SupportedCLI, customPath?: string, dangerouslySkipPermissions?: boolean): string {
+function getCLICommand(cli: SupportedCLI, customPath?: string, _dangerouslySkipPermissions?: boolean): string {
   if (cli === 'custom' && customPath) return customPath;
   const commands: Record<string, string> = {
     gemini: 'gemini',
@@ -53,8 +51,7 @@ function getCLICommand(cli: SupportedCLI, customPath?: string, dangerouslySkipPe
     deepseek: 'deepseek',
   };
   const command = commands[cli] ?? cli;
-  const bypassFlag = dangerouslySkipPermissions && cli === 'codex' ? CODEX_YOLO_MODE_FLAG : '';
-  return `${command}${bypassFlag}`;
+  return command;
 }
 
 /**
@@ -258,7 +255,9 @@ export async function restoreTerminal(
   terminal.title = session.title;
   terminal.isCLIMode = storedIsClaudeMode;
   terminal.activeCLI = storedActiveCLI;
-  terminal.dangerouslySkipPermissions = storedSession?.dangerouslySkipPermissions ?? session.dangerouslySkipPermissions;
+  terminal.dangerouslySkipPermissions = storedActiveCLI === 'claude-code'
+    ? storedSession?.dangerouslySkipPermissions ?? session.dangerouslySkipPermissions
+    : false;
   terminal.deepseekState = storedDeepSeekState;
   // Only restore worktree config if the worktree directory still exists
   // (effectiveCwd matching session.cwd means no fallback was needed)

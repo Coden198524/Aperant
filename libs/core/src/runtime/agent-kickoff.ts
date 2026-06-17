@@ -456,6 +456,8 @@ function buildAutocodeStandardPlanningEvidenceContract(
     `- In ${promptSpecDir}/${AUTOCODE_TASK_ARTIFACTS.context}, keep project context as concise Markdown and include Evidence Sources bullets with path, optional symbol/lines, what the evidence proves, and confidence.`,
     '- In spec.md, include Evidence, Standards / References, and Assumptions sections when the task is not trivial; keep it compact as a decision index.',
     '- In tasks.md, each executable task should cite a source path, project pattern, requirement ID, or standards reference in its guidance or metadata.',
+    '- tasks.md should cover every requirement, scenario, acceptance criterion, or success criterion from spec.md/requirements.md; call out blocked or out-of-scope items instead of silently dropping them.',
+    '- Keep each executable task small enough for one focused coding session and include a clear done signal in guidance or _Done when: ..._.',
     '- If evidence is missing after targeted inspection, write an open question or assumption and plan a validation task; never fill the gap with a confident guess.',
   ].join('\n');
 }
@@ -552,7 +554,7 @@ export function buildAutocodeAgentKickoffMessage(
 
   if (mmoRole) {
     if (input.agentType === 'mmo_system_designer') {
-      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks. Project root: ${promptProjectDir}`;
+      baseMessage = `${mmoRole}\n\nRead the spec at ${promptSpecDir}/spec.md and create ${promptSpecDir}/tasks.md with concrete checklist phases and tasks. Do not write implementation_plan.md; the runtime derives it as work packages. Cover every requirement/scenario/acceptance criterion, include evidence, verification, dependencies, and done signals, and cover engine, server authority, networking, content pipeline, tools, performance, security, live operations, QA, and rollout risks when affected. Project root: ${promptProjectDir}`;
     } else if (input.agentType === 'mmo_qa_reviewer') {
       baseMessage = `${mmoRole}\n\nReview the implementation in ${promptProjectDir}. Inspect ${promptSpecDir}/implementation_plan.md first, map changed behavior to MMO domains, then run one focused project-appropriate verification when available. Verify server authority, sync/protocol, persistence/data/config, performance, security/anti-cheat, tools/content, liveops/release, and changed contracts when relevant. Write ${promptSpecDir}/qa_report.md with a clear "Status: PASSED" or "Status: FAILED" line plus Scope Reviewed, MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`;
     } else if (input.agentType === 'mmo_qa_fixer') {
@@ -578,7 +580,7 @@ export function buildAutocodeAgentKickoffMessage(
           `Read the Standard task spec at ${promptSpecDir}/spec.md.`,
           'Use the Autocode Standard workflow.',
           `First update ${promptSpecDir}/spec.md with Standard sections when missing or stale: Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, Risks/Open Questions.`,
-          `Then create ${promptSpecDir}/tasks.md as a concrete Autocode Markdown checklist with executable tasks, dependencies, and verification notes.`,
+          `Then create ${promptSpecDir}/tasks.md as a concrete Autocode Markdown checklist with executable tasks, dependencies, requirement/scenario coverage, evidence, done signals, and verification notes.`,
           `Do not write ${promptSpecDir}/implementation_plan.md; the runtime derives it as work packages from tasks.md.`,
           `Project root: ${promptProjectDir}`,
         ].join(' ');
@@ -622,6 +624,7 @@ export function buildAutocodeAgentKickoffMessage(
         'Revise documents incrementally: only edit affected requirement IDs, design notes, risks, acceptance criteria, and task checklist items. Do not rewrite unaffected sections.',
         'Revise task lists incrementally: preserve completed work that remains valid, reset affected work to pending with needs_revision notes, add new pending subtasks, and mark obsolete upstream checklist items explicitly.',
         'Every new or revised requirement/design/task must carry Evidence; if evidence is missing, add an assumption/open question or validation task instead of guessing.',
+        'Every new or revised task must map to the affected requirement/scenario or acceptance criterion, include a done signal, and stay small enough for one focused coding session.',
         'Add focused verification metadata for every new or revised task so the next coding pass can test and keep the iteration commit-ready.',
         'This is a planning-only retry: do not implement code and do not mark subtasks completed.',
       ].join('\n');
@@ -655,7 +658,7 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
       shared.push('', buildAutocodeMmoSpecialistList(), '', 'Use this roster as a coverage checklist for focused MMO review; work directly with the tools available in this session.');
     }
     if (input.agentType === 'mmo_system_designer') {
-      shared.push('', 'Create tasks.md as an Autocode Markdown checklist with executable tasks. Do not write implementation_plan.md. Use [ ] for pending tasks and concise metadata bullets for files, dependencies, requirements, and verification.');
+      shared.push('', 'Create tasks.md as an Autocode Markdown checklist with executable tasks. Do not write implementation_plan.md. Use [ ] for pending tasks and concise metadata bullets for files, dependencies, requirements, evidence, done signals, and verification. Cover every affected requirement/scenario or call it blocked/out of scope.');
     }
     if (input.agentType === 'mmo_qa_reviewer') {
       shared.push('', `Write ${promptSpecDir}/qa_report.md with "Status: PASSED" or "Status: FAILED", MMO Domain Matrix, Changed Files And Contracts, Acceptance Matrix, Verification, Findings, and Residual Risks.`);
@@ -671,7 +674,7 @@ export function buildAutocodeFallbackPrompt(input: BuildAutocodeFallbackPromptIn
       return [
         `Read ${promptSpecDir}/spec.md and use the Autocode Standard workflow.`,
         `Update ${promptSpecDir}/spec.md with Proposal/Goal, Requirements, Design Decisions, Acceptance Criteria, and Risks/Open Questions when needed.`,
-        `Create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist. Do not write implementation_plan.md; the runtime derives it as work packages.`,
+        `Create ${promptSpecDir}/tasks.md as an Autocode Markdown checklist with requirement/scenario coverage, evidence, done signals, dependencies, and verification. Do not write implementation_plan.md; the runtime derives it as work packages.`,
         'Status markers: [ ] pending, [/] in progress, [x] completed, [-] blocked, [!] failed. Localize user-facing planning text when an app language is set.',
       ].join(' ');
     case 'coder':
