@@ -370,7 +370,7 @@ export function TaskMetadata({ task }: TaskMetadataProps) {
       metadata: {
         baseBranch: nextBaseBranch || undefined,
       },
-    });
+    }, task.projectId);
     setIsSavingBaseBranch(false);
 
     if (!success) {

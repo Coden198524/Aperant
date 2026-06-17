@@ -180,7 +180,8 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
         path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task'),
         '/absolute/path/to/project',
         '.autocode/specs',
-        '001-test-task'
+        '001-test-task',
+        'project-123'
       );
     });
 
@@ -370,7 +371,8 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
         'task:logsChanged',
         '001-test-task',
-        clearedLogs
+        clearedLogs,
+        'project-123'
       );
     });
 
@@ -466,7 +468,8 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
         '001-test-task',
         path.join('/absolute/path/to/project', '.autocode/specs', '001-test-task'),
         '/absolute/path/to/project',
-        '.autocode/specs'
+        '.autocode/specs',
+        'project-123'
       );
     });
 
@@ -511,7 +514,8 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
         'nonexistent-spec',
         path.join('/absolute/path/to/project', '.autocode/specs', 'nonexistent-spec'),
         '/absolute/path/to/project',
-        '.autocode/specs'
+        '.autocode/specs',
+        'project-123'
       );
     });
 
@@ -545,10 +549,10 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const { taskLogService } = await import('../../../task-log-service');
 
       const handler = ipcHandlers['task:logsUnwatch'];
-      const result = await handler({}, '001-test-task') as IPCResult;
+      const result = await handler({}, '001-test-task', 'project-123') as IPCResult;
 
       expect(result.success).toBe(true);
-      expect(taskLogService.stopWatching).toHaveBeenCalledWith('001-test-task');
+      expect(taskLogService.stopWatching).toHaveBeenCalledWith('001-test-task', 'project-123');
     });
 
     it('should handle taskLogService unwatch errors gracefully', async () => {
@@ -664,13 +668,14 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const eventHandler = onCall[1];
 
       // Trigger the event
-      eventHandler('001-test-task', mockLogs);
+      eventHandler('001-test-task', mockLogs, 'project-123');
 
       // Verify it was forwarded to renderer
       expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
         'task:logsChanged',
         '001-test-task',
-        mockLogs
+        mockLogs,
+        'project-123'
       );
     });
 
@@ -693,13 +698,14 @@ describe('Task Logs Integration (IPC → Service → State)', () => {
       const eventHandler = onCall[1];
 
       // Trigger the event
-      eventHandler('001-test-task', mockChunk);
+      eventHandler('001-test-task', mockChunk, 'project-123');
 
       // Verify it was forwarded to renderer
       expect(mockMainWindow.webContents?.send).toHaveBeenCalledWith(
         'task:logsStream',
         '001-test-task',
-        mockChunk
+        mockChunk,
+        'project-123'
       );
     });
 

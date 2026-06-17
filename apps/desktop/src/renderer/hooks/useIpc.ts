@@ -18,6 +18,8 @@ const TASK_REFRESH_COOLDOWN_MS = 1500;
  * This prevents multiple sequential re-renders when multiple IPC events arrive.
  */
 interface BatchedUpdate {
+  taskId: string;
+  projectId?: string;
   status?: TaskStatus;
   reviewReason?: import('../../shared/types').ReviewReason;
   progress?: ExecutionProgress;
@@ -31,11 +33,11 @@ interface BatchedUpdate {
  * Store action references type for batch flushing.
  */
 interface StoreActions {
-  updateTaskStatus: (taskId: string, status: TaskStatus, reviewReason?: import('../../shared/types').ReviewReason) => void;
-  updateExecutionProgress: (taskId: string, progress: ExecutionProgress) => void;
-  updateTaskTokenUsage: (taskId: string, usage: TokenUsage) => void;
-  updateTaskFromPlan: (taskId: string, plan: ImplementationPlan) => void;
-  batchAppendLogs: (taskId: string, logs: string[]) => void;
+  updateTaskStatus: (taskId: string, status: TaskStatus, reviewReason?: import('../../shared/types').ReviewReason, projectId?: string) => void;
+  updateExecutionProgress: (taskId: string, progress: ExecutionProgress, projectId?: string) => void;
+  updateTaskTokenUsage: (taskId: string, usage: TokenUsage, projectId?: string) => void;
+  updateTaskFromPlan: (taskId: string, plan: ImplementationPlan, projectId?: string) => void;
+  batchAppendLogs: (taskId: string, logs: string[], projectId?: string) => void;
 }
 
 /**
@@ -54,6 +56,10 @@ const batchQueue = new Map<string, BatchedUpdate>();
 let batchTimeout: NodeJS.Timeout | null = null;
 let storeActionsRef: StoreActions | null = null;
 
+function getBatchKey(taskId: string, projectId?: string): string {
+  return projectId ? `${projectId}::${taskId}` : taskId;
+}
+
 function flushBatch(): void {
   if (batchQueue.size === 0 || !storeActionsRef) {
     return;
@@ -69,27 +75,28 @@ function flushBatch(): void {
 
   // Batch all React updates together
   unstable_batchedUpdates(() => {
-    batchQueue.forEach((updates, taskId) => {
+    batchQueue.forEach((updates) => {
+      const { taskId, projectId } = updates;
       // Apply updates in order: plan first (has most data), then status, then progress, then logs
       if (updates.plan) {
-        actions.updateTaskFromPlan(taskId, updates.plan);
+        actions.updateTaskFromPlan(taskId, updates.plan, projectId);
         totalUpdates++;
       }
       if (updates.status) {
-        actions.updateTaskStatus(taskId, updates.status, updates.reviewReason);
+        actions.updateTaskStatus(taskId, updates.status, updates.reviewReason, projectId);
         totalUpdates++;
       }
       if (updates.progress) {
-        actions.updateExecutionProgress(taskId, updates.progress);
+        actions.updateExecutionProgress(taskId, updates.progress, projectId);
         totalUpdates++;
       }
       if (updates.tokenUsage) {
-        actions.updateTaskTokenUsage(taskId, updates.tokenUsage);
+        actions.updateTaskTokenUsage(taskId, updates.tokenUsage, projectId);
         totalUpdates++;
       }
       // Batch append all logs at once (instead of one state update per log line)
       if (updates.logs && updates.logs.length > 0) {
-        actions.batchAppendLogs(taskId, updates.logs);
+        actions.batchAppendLogs(taskId, updates.logs, projectId);
         totalLogs += updates.logs.length;
         totalUpdates++;
       }
@@ -105,8 +112,9 @@ function flushBatch(): void {
   batchTimeout = null;
 }
 
-function queueUpdate(taskId: string, update: BatchedUpdate): void {
-  const existing = batchQueue.get(taskId) || {};
+function queueUpdate(taskId: string, projectId: string | undefined, update: Omit<BatchedUpdate, 'taskId' | 'projectId'>): void {
+  const batchKey = getBatchKey(taskId, projectId);
+  const existing = batchQueue.get(batchKey) || { taskId, projectId };
 
   // FIX (ACS-55): Phase changes bypass batching - apply immediately
   // This ensures phase transitions are applied in order and not batched together,
@@ -115,7 +123,9 @@ function queueUpdate(taskId: string, update: BatchedUpdate): void {
   // Phase changes are rare (~3-4 per task) vs progress ticks (hundreds), so this is safe for perf
   if (update.progress?.phase && storeActionsRef) {
     const currentPhase = existing.progress?.phase ||
-      useTaskStore.getState().tasks.find(t => t.id === taskId || t.specId === taskId)?.executionProgress?.phase;
+      useTaskStore.getState().tasks.find(t =>
+        (!projectId || t.projectId === projectId) && (t.id === taskId || t.specId === taskId)
+      )?.executionProgress?.phase;
 
     if (update.progress.phase !== currentPhase) {
       // Flush any pending updates first to ensure correct ordering
@@ -128,7 +138,7 @@ function queueUpdate(taskId: string, update: BatchedUpdate): void {
       if (window.DEBUG) {
         console.warn(`[IPC Batch] Phase change detected: ${currentPhase} → ${update.progress.phase}, applying immediately`);
       }
-      storeActionsRef.updateExecutionProgress(taskId, update.progress);
+      storeActionsRef.updateExecutionProgress(taskId, update.progress, projectId);
       return;
     }
   }
@@ -143,9 +153,11 @@ function queueUpdate(taskId: string, update: BatchedUpdate): void {
     }
   }
 
-  batchQueue.set(taskId, {
+  batchQueue.set(batchKey, {
     ...existing,
     ...update,
+    taskId,
+    projectId,
     logs: mergedLogs,
     queuedAt: existing.queuedAt || performance.now()
   });
@@ -209,7 +221,7 @@ export function useIpcListeners(): void {
           console.log(`[useIpc] Received TASK_PROGRESS for ${taskId}:`, statusCounts);
         }
 
-        queueUpdate(taskId, { plan });
+        queueUpdate(taskId, projectId, { plan });
       }
     );
 
@@ -219,7 +231,7 @@ export function useIpcListeners(): void {
         if (!isTaskForCurrentProject(projectId)) return;
         // Errors are not batched - show immediately
         setError(`Task ${taskId}: ${error}`);
-        appendLog(taskId, `[ERROR] ${error}`);
+        appendLog(taskId, `[ERROR] ${error}`, projectId);
       }
     );
 
@@ -228,7 +240,7 @@ export function useIpcListeners(): void {
         // Filter by project to prevent multi-project interference (issue #723)
         if (!isTaskForCurrentProject(projectId)) return;
         // Logs are now batched to reduce state updates (was causing 100+ updates/sec)
-        queueUpdate(taskId, { logs: [log] });
+        queueUpdate(taskId, projectId, { logs: [log] });
       }
     );
 
@@ -255,7 +267,7 @@ export function useIpcListeners(): void {
           return;
         }
 
-        queueUpdate(taskId, { status, reviewReason });
+        queueUpdate(taskId, projectId, { status, reviewReason });
 
         // Sync roadmap feature when task completes
         if (status === 'done' || status === 'pr_created') {
@@ -287,7 +299,7 @@ export function useIpcListeners(): void {
         // This is the critical fix for issue #723 - without this check,
         // execution progress from Project A's task could update Project B's UI
         if (!isTaskForCurrentProject(projectId)) return;
-        queueUpdate(taskId, { progress });
+        queueUpdate(taskId, projectId, { progress });
       }
     );
 
@@ -296,7 +308,7 @@ export function useIpcListeners(): void {
         if (!isTaskForCurrentProject(projectId)) {
           return;
         }
-        queueUpdate(taskId, { tokenUsage });
+        queueUpdate(taskId, projectId, { tokenUsage });
       }
     );
 

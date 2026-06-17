@@ -328,7 +328,7 @@ export function Worktrees({ projectId }: WorktreesProps) {
           useTaskStore.getState().updateTask(prTask.id, {
             status: 'done',
             metadata: { ...prTask.metadata, prUrl: result.data.prUrl }
-          });
+          }, prTask.projectId);
         }
         return result.data;
       }

@@ -4,6 +4,7 @@ import type { GitLabIssue, GitLabInvestigationResult } from '../../../../shared/
 export type FilterState = 'opened' | 'closed' | 'all';
 
 export interface GitLabIssuesProps {
+  projectId?: string;
   onOpenSettings?: () => void;
   /** Navigate to view a task in the kanban board */
   onNavigateToTask?: (taskId: string) => void;

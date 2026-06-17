@@ -163,7 +163,7 @@ export function BulkPRDialog({
             useTaskStore.getState().updateTask(currentTask.id, {
               status: 'done',
               metadata: { ...currentTask.metadata, prUrl: data.prUrl }
-            });
+            }, currentTask.projectId);
           }
         } else {
           const errorMsg = prResult?.error || '';

@@ -29,7 +29,7 @@ import {
 import { FileExplorerPanel } from './FileExplorerPanel';
 import { SmartCLIStatusBadge } from './SmartCLIStatusBadge';
 import { cn } from '../lib/utils';
-import { useTerminalStore } from '../stores/terminal-store';
+import { useTerminalStore, type Terminal } from '../stores/terminal-store';
 import { useTaskStore } from '../stores/task-store';
 import { useFileExplorerStore } from '../stores/file-explorer-store';
 import { useSettingsStore } from '../stores/settings-store';
@@ -45,6 +45,24 @@ interface TerminalGridProps {
   projectPath?: string;
   onNewTaskClick?: () => void;
   isActive?: boolean;
+}
+
+function normalizeTerminalPath(path: string | undefined): string {
+  return (path || '').replace(/[\\/]+$/, '').replace(/\\/g, '/').toLowerCase();
+}
+
+function isSameOrDescendantPath(candidatePath: string | undefined, parentPath: string | undefined): boolean {
+  const candidate = normalizeTerminalPath(candidatePath);
+  const parent = normalizeTerminalPath(parentPath);
+  return Boolean(candidate && parent) && (candidate === parent || candidate.startsWith(`${parent}/`));
+}
+
+function isTerminalForProject(terminal: Terminal, projectPath: string): boolean {
+  if (terminal.projectPath) {
+    return normalizeTerminalPath(terminal.projectPath) === normalizeTerminalPath(projectPath);
+  }
+
+  return isSameOrDescendantPath(terminal.cwd, projectPath);
 }
 
 export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive = false }: TerminalGridProps) {
@@ -75,12 +93,12 @@ export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive 
     cleanupTimersRef.current.clear();
   }, []);
 
-  // Filter terminals to show only those belonging to the current project
-  // Also include legacy terminals without projectPath (created before this change)
+  // Filter terminals to show only those belonging to the current project.
+  // Legacy terminals without projectPath are included only when their cwd is inside this project.
   // Keep exited terminals in DOM during grace period to allow react-resizable-panels to reconcile
   const terminals = useMemo(() => {
     const filtered = projectPath
-      ? allTerminals.filter(t => t.projectPath === projectPath || !t.projectPath)
+      ? allTerminals.filter(t => isTerminalForProject(t, projectPath))
       : allTerminals;
 
     // Filter out exited terminals UNLESS they are still in the grace period
@@ -109,7 +127,7 @@ export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive 
   // No cleanup function here — timers must survive dependency changes
   useEffect(() => {
     const filtered = projectPath
-      ? allTerminals.filter(t => t.projectPath === projectPath || !t.projectPath)
+      ? allTerminals.filter(t => isTerminalForProject(t, projectPath))
       : allTerminals;
 
     const exitedTerminals = filtered.filter(t => t.status === 'exited');
@@ -198,12 +216,12 @@ export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive 
     }
 
     const activeTerminal = allTerminals.find((terminal) => terminal.id === activeTerminalId);
-    if (activeTerminal?.projectPath === projectPath) {
+    if (activeTerminal && isTerminalForProject(activeTerminal, projectPath)) {
       return;
     }
 
     const nextActiveTerminal = allTerminals
-      .filter((terminal) => terminal.projectPath === projectPath && terminal.status !== 'exited')
+      .filter((terminal) => isTerminalForProject(terminal, projectPath) && terminal.status !== 'exited')
       .sort((terminalA, terminalB) => (terminalA.displayOrder ?? 0) - (terminalB.displayOrder ?? 0))[0];
 
     setActiveTerminal(nextActiveTerminal?.id ?? null);
@@ -462,7 +480,7 @@ export function TerminalGrid({ projectId, projectPath, onNewTaskClick, isActive 
           queueMicrotask(async () => {
             const updatedTerminals = useTerminalStore.getState().terminals;
             const orders = updatedTerminals
-              .filter(t => t.projectPath === projectPath || !t.projectPath)
+              .filter(t => isTerminalForProject(t, projectPath))
               .map(t => ({ terminalId: t.id, displayOrder: t.displayOrder ?? 0 }));
             try {
               const result = await window.electronAPI.updateTerminalDisplayOrders(projectPath, orders);

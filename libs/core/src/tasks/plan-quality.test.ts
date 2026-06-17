@@ -3,6 +3,27 @@ import { describe, expect, it } from 'vitest';
 import { validateAutocodeStandardPlanArtifacts } from './plan-quality.js';
 
 describe('standard plan quality', () => {
+  it('accepts spec Requirements backed by a global Evidence section', () => {
+    const result = validateAutocodeStandardPlanArtifacts({
+      requireSpecEvidence: true,
+      specMarkdown: [
+        '# Spec',
+        '',
+        '## Requirements',
+        '',
+        '- The planner keeps runtime work packages traceable.',
+        '',
+        '## Evidence',
+        '',
+        '- libs/core/src/tasks/plan-quality.ts validates plan artifact quality.',
+        '',
+      ].join('\n'),
+    });
+
+    expect(result.valid).toBe(true);
+    expect(result.errors).toEqual([]);
+  });
+
   it('rejects generic tasks that have no project-specific anchor', () => {
     const result = validateAutocodeStandardPlanArtifacts({
       requireTaskEvidence: true,

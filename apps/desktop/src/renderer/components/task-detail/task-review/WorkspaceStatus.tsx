@@ -32,6 +32,7 @@ const MAX_LOG_ENTRIES = 500;
 
 interface WorkspaceStatusProps {
   taskId: string;
+  projectId?: string;
   worktreeStatus: WorktreeStatus;
   workspaceError: string | null;
   stageOnly: boolean;
@@ -91,6 +92,7 @@ const TERMINAL_LABELS: Partial<Record<SupportedTerminal, string>> = {
 
 export function WorkspaceStatus({
   taskId,
+  projectId,
   worktreeStatus,
   workspaceError,
   stageOnly,
@@ -189,9 +191,10 @@ export function WorkspaceStatus({
       }
     };
 
-    const cleanup = window.electronAPI.onMergeProgress((eventTaskId: string, progress: MergeProgress) => {
-      // Filter by task ID to prevent cross-task event leakage
+    const cleanup = window.electronAPI.onMergeProgress((eventTaskId: string, progress: MergeProgress, eventProjectId?: string) => {
+      // Filter by task and project to prevent cross-project event leakage.
       if (eventTaskId !== taskId) return;
+      if (projectId && eventProjectId !== projectId) return;
 
       setMergeProgress(progress);
       setLogEntries(prev => {
@@ -214,7 +217,7 @@ export function WorkspaceStatus({
     ipcCleanupRef.current = cleanup;
 
     return cleanup;
-  }, [isMerging, taskId]);
+  }, [isMerging, taskId, projectId]);
 
   // Ensure IPC listener cleanup on unmount during active merge
   useEffect(() => {

@@ -14,6 +14,7 @@ import type {
 } from '../../../shared/types';
 
 interface Step2ConfigureGenerateProps {
+  projectId: string;
   sourceMode: ChangelogSourceMode;
   selectedTaskIds: string[];
   doneTasks: ChangelogTask[];
@@ -59,9 +60,8 @@ export function Step2ConfigureGenerate(props: Step2ConfigureGenerateProps) {
     onChangelogEdit
   } = props;
 
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
   const projects = useProjectStore((state) => state.projects);
-  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const selectedProject = projects.find((p) => p.id === props.projectId);
   const selectedTasks = doneTasks.filter((t) => selectedTaskIds.includes(t.id));
 
   const summaryInfo = getSummaryInfo(
@@ -72,7 +72,7 @@ export function Step2ConfigureGenerate(props: Step2ConfigureGenerateProps) {
   );
 
   const imageUpload = useImageUpload({
-    projectId: selectedProjectId,
+    projectId: props.projectId,
     content: generatedChangelog,
     onContentChange: onChangelogEdit
   });

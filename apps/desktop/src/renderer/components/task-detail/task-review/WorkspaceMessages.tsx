@@ -72,7 +72,7 @@ export function NoWorkspaceMessage({ task, onClose }: NoWorkspaceMessageProps) {
 
     setIsMarkingDone(true);
     try {
-      await persistTaskStatus(task.id, 'done');
+      await persistTaskStatus(task.id, 'done', { projectId: task.projectId });
       // Auto-close modal after marking as done
       onClose?.();
     } catch (err) {
@@ -246,7 +246,7 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
       }
 
       // Mark task as done - check result since worktree is already deleted
-      const statusResult = await persistTaskStatus(task.id, 'done');
+      const statusResult = await persistTaskStatus(task.id, 'done', { projectId: task.projectId });
       if (!statusResult.success) {
         // Worktree is already deleted but status update failed - inform user of inconsistent state
         setError(
@@ -279,7 +279,7 @@ export function StagedInProjectMessage({ task, projectPath, hasWorktree = false,
     setError(null);
 
     try {
-      const result = await persistTaskStatus(task.id, 'done', { keepWorktree: true });
+      const result = await persistTaskStatus(task.id, 'done', { keepWorktree: true, projectId: task.projectId });
       if (!result.success) {
         setError(
           result.error ||

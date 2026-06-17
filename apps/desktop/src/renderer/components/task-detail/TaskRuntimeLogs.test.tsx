@@ -376,8 +376,8 @@ describe('TaskRuntimeLogs', () => {
     });
     expect(screen.getAllByText('Read')).toHaveLength(1);
     expect(screen.getByText('src/app.ts')).toBeInTheDocument();
-    expect(screen.getAllByText('tool')).toHaveLength(1);
-    expect(screen.getByText('done')).toBeInTheDocument();
+    expect(screen.queryByText('tool')).not.toBeInTheDocument();
+    expect(screen.queryByText('done')).not.toBeInTheDocument();
     expect(screen.queryByText('export function app() {}')).not.toBeInTheDocument();
   });
 
@@ -409,6 +409,39 @@ describe('TaskRuntimeLogs', () => {
 
     expect(await screen.findByText(displayCommand)).toHaveAttribute('title', fullCommand);
     expect(screen.queryByText(/WindowsPowerShell/)).not.toBeInTheDocument();
+    expect(screen.queryByText('tool')).not.toBeInTheDocument();
+    expect(screen.queryByText('done')).not.toBeInTheDocument();
+  });
+
+  it('shows completed Command tool rows without status wrapper labels', async () => {
+    const command = String.raw`Test-Path -LiteralPath 'E:\Work\Lumen1\.autocode\specs\001-lumen\direct_summary.md'`;
+    const logs = createTaskLogs();
+    logs.phases.planning.entries = [
+      {
+        timestamp: '2026-01-01T00:00:01.000Z',
+        type: 'tool_start',
+        phase: 'planning',
+        content: `[Command] ${command}`,
+        tool_name: 'Command',
+        tool_input: command,
+      },
+      {
+        timestamp: '2026-01-01T00:00:02.000Z',
+        type: 'tool_end',
+        phase: 'planning',
+        content: '[Command] Done',
+        tool_name: 'Command',
+        tool_success: true,
+      },
+    ];
+    window.electronAPI.getTaskLogs = vi.fn(async () => ({ success: true, data: logs })) as typeof window.electronAPI.getTaskLogs;
+
+    render(<TaskRuntimeLogs task={createTask()} />);
+
+    expect(await screen.findByText('Command')).toBeInTheDocument();
+    expect(screen.getByText(command)).toBeInTheDocument();
+    expect(screen.queryByText('tool')).not.toBeInTheDocument();
+    expect(screen.queryByText('done')).not.toBeInTheDocument();
   });
 
   it('merges streamed model tokens without waiting for a full log refresh', async () => {
@@ -594,10 +627,11 @@ describe('TaskRuntimeLogs', () => {
     });
 
     await waitFor(() => {
-      expect(screen.getByText('done')).toBeInTheDocument();
+      expect(screen.queryByText('running')).not.toBeInTheDocument();
     });
     expect(screen.getAllByText('Bash')).toHaveLength(1);
-    expect(screen.getAllByText('tool')).toHaveLength(1);
+    expect(screen.queryByText('tool')).not.toBeInTheDocument();
+    expect(screen.queryByText('done')).not.toBeInTheDocument();
   });
 
   it('keeps streamed failed tool calls in one row with an error status', async () => {
@@ -635,6 +669,6 @@ describe('TaskRuntimeLogs', () => {
     });
     expect(screen.queryByText('done')).not.toBeInTheDocument();
     expect(screen.getAllByText('Bash')).toHaveLength(1);
-    expect(screen.getAllByText('tool')).toHaveLength(1);
+    expect(screen.queryByText('tool')).not.toBeInTheDocument();
   });
 });

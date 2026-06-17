@@ -7,7 +7,11 @@ import { ChangelogList } from './ChangelogList';
 import { Step2ConfigureGenerate, Step3ReleaseArchive } from './ChangelogDetails';
 import { useChangelog } from './hooks/useChangelog';
 
-export function Changelog() {
+interface ChangelogProps {
+  projectId?: string;
+}
+
+export function Changelog({ projectId }: ChangelogProps) {
   const { t } = useTranslation('changelog');
   const {
     // State
@@ -80,7 +84,7 @@ export function Changelog() {
     handleBack,
     handleDone,
     handleRefresh
-  } = useChangelog();
+  } = useChangelog(projectId);
 
   if (!selectedProjectId) {
     return (
@@ -150,6 +154,7 @@ export function Changelog() {
         )}
         {step === 2 && (
           <Step2ConfigureGenerate
+            projectId={selectedProjectId}
             sourceMode={sourceMode}
             selectedTaskIds={selectedTaskIds}
             doneTasks={doneTasks}

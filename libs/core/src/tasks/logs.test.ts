@@ -64,4 +64,50 @@ describe('Autocode task logs', () => {
       ),
     ).toBe('before\nafter');
   });
+
+  it('treats tool output after a terminal phase record as renewed phase activity', () => {
+    const logs = parseAutocodeTaskLogs(
+      [
+        {
+          record_type: 'meta',
+          spec_id: '001-task',
+          created_at: '2026-06-17T03:52:55.409Z',
+          updated_at: '2026-06-17T03:52:55.409Z',
+        },
+        {
+          record_type: 'phase',
+          timestamp: '2026-06-17T03:55:40.819Z',
+          phase: 'coding',
+          status: 'failed',
+          started_at: '2026-06-17T03:54:40.287Z',
+          completed_at: '2026-06-17T03:55:40.819Z',
+        },
+        {
+          record_type: 'entry',
+          entry: {
+            timestamp: '2026-06-17T03:55:40.823Z',
+            type: 'info',
+            phase: 'coding',
+            content: '[FileCache] Session Stats',
+          },
+        },
+        {
+          record_type: 'entry',
+          entry: {
+            timestamp: '2026-06-17T03:55:52.571Z',
+            type: 'tool_start',
+            phase: 'coding',
+            content: '[Write] Z:/repo/.autocode/project-docs/doc_outline.md',
+            tool_name: 'Write',
+            tool_input: 'Z:/repo/.autocode/project-docs/doc_outline.md',
+            subtask_id: '1.1',
+          },
+        },
+      ].map((record) => JSON.stringify(record)).join('\n'),
+      '001-task',
+    );
+
+    expect(logs.phases.coding.status).toBe('active');
+    expect(logs.phases.coding.completed_at).toBeNull();
+  });
 });

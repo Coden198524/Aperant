@@ -43,8 +43,8 @@ describe('scanAndRecoverStuckTasks', () => {
       }
     );
 
-    expect(checkTaskRunning).toHaveBeenCalledWith('001');
-    expect(recoverStuckTask).toHaveBeenCalledWith('001', { autoRestart: true });
+    expect(checkTaskRunning).toHaveBeenCalledWith('001', 'project-1');
+    expect(recoverStuckTask).toHaveBeenCalledWith('001', { autoRestart: true, projectId: 'project-1' });
   });
 
   it('skips recovery when recent activity exists', async () => {
@@ -85,7 +85,7 @@ describe('scanAndRecoverStuckTasks', () => {
       }
     );
 
-    expect(checkTaskRunning).toHaveBeenCalledWith('004');
+    expect(checkTaskRunning).toHaveBeenCalledWith('004', 'project-1');
     expect(recoverStuckTask).not.toHaveBeenCalled();
   });
 
@@ -96,7 +96,7 @@ describe('scanAndRecoverStuckTasks', () => {
     await scanAndRecoverStuckTasks(
       {
         recoveringTaskIds: new Set<string>(),
-        lastRecoveryAttemptAt: new Map<string, number>([['003', 5_000]]),
+        lastRecoveryAttemptAt: new Map<string, number>([['project-1::003', 5_000]]),
       },
       {
         tasks: [createTask('003', 'ai_review')],

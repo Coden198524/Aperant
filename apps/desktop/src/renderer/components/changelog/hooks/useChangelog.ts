@@ -15,8 +15,9 @@ import { loadTasks } from '../../../stores/task-store';
 
 export type WizardStep = 1 | 2 | 3;
 
-export function useChangelog() {
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
+export function useChangelog(projectId?: string) {
+  const fallbackProjectId = useProjectStore((state) => state.activeProjectId || state.selectedProjectId);
+  const selectedProjectId = projectId ?? fallbackProjectId ?? null;
 
   // Data state
   const doneTasks = useChangelogStore((state) => state.doneTasks);

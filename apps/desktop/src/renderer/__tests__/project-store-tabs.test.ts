@@ -7,7 +7,7 @@
  * assert on them directly in these unit tests.
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useProjectStore } from '../stores/project-store';
+import { loadProjects, useProjectStore } from '../stores/project-store';
 import type { Project, ProjectSettings } from '../../shared/types';
 
 // Helper to create test projects
@@ -56,6 +56,7 @@ describe('Project Store Tab Management', () => {
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('openProjectTab', () => {
@@ -274,6 +275,37 @@ describe('Project Store Tab Management', () => {
       expect(useProjectStore.getState().openProjectIds).toEqual(['existing']);
       expect(useProjectStore.getState().activeProjectId).toBe('existing');
       expect(useProjectStore.getState().tabOrder).toEqual(['existing']);
+    });
+  });
+
+  describe('loadProjects tab restoration', () => {
+    it('aligns selectedProjectId to restored activeProjectId', async () => {
+      const project1 = createTestProject({ id: 'project-1' });
+      const project2 = createTestProject({ id: 'project-2' });
+      localStorage.setItem('lastSelectedProjectId', 'project-2');
+      vi.stubGlobal('window', {
+        electronAPI: {
+          saveTabState: vi.fn(),
+          getTabState: vi.fn().mockResolvedValue({
+            success: true,
+            data: {
+              openProjectIds: ['project-1', 'project-2'],
+              activeProjectId: 'project-1',
+              tabOrder: ['project-1', 'project-2'],
+            },
+          }),
+          getProjects: vi.fn().mockResolvedValue({
+            success: true,
+            data: [project1, project2],
+          }),
+        },
+      });
+
+      await loadProjects();
+
+      expect(useProjectStore.getState().activeProjectId).toBe('project-1');
+      expect(useProjectStore.getState().selectedProjectId).toBe('project-1');
+      expect(localStorage.getItem('lastSelectedProjectId')).toBe('project-1');
     });
   });
 

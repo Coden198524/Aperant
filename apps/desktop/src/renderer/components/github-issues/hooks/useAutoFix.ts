@@ -19,27 +19,55 @@ export function useAutoFix(projectId: string | undefined) {
 
   // Ref for auto-fix interval
   const autoFixIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const currentProjectIdRef = useRef(projectId);
+  const loadGenerationRef = useRef(0);
 
   // Load config, queue, and batches
   const loadData = useCallback(async () => {
     if (!projectId) return;
 
+    const requestProjectId = projectId;
+    currentProjectIdRef.current = requestProjectId;
+    const requestGeneration = loadGenerationRef.current + 1;
+    loadGenerationRef.current = requestGeneration;
+    const isStaleRequest = () =>
+      requestProjectId !== currentProjectIdRef.current ||
+      requestGeneration !== loadGenerationRef.current;
+
     setIsLoading(true);
     try {
       const [configResult, queueResult, batchesResult] = await Promise.all([
-        window.electronAPI.github.getAutoFixConfig(projectId),
-        window.electronAPI.github.getAutoFixQueue(projectId),
-        window.electronAPI.github.getBatches(projectId),
+        window.electronAPI.github.getAutoFixConfig(requestProjectId),
+        window.electronAPI.github.getAutoFixQueue(requestProjectId),
+        window.electronAPI.github.getBatches(requestProjectId),
       ]);
+
+      if (isStaleRequest()) {
+        return;
+      }
 
       setConfig(configResult);
       setQueue(queueResult);
       setBatches(batchesResult);
     } catch (error) {
-      console.error('Failed to load auto-fix data:', error);
+      if (!isStaleRequest()) {
+        console.error('Failed to load auto-fix data:', error);
+      }
     } finally {
-      setIsLoading(false);
+      if (!isStaleRequest()) {
+        setIsLoading(false);
+      }
     }
+  }, [projectId]);
+
+  useEffect(() => {
+    currentProjectIdRef.current = projectId;
+    loadGenerationRef.current += 1;
+    setConfig(null);
+    setQueue([]);
+    setBatches([]);
+    setIsBatchRunning(false);
+    setBatchProgress(null);
   }, [projectId]);
 
   // Load on mount and when projectId changes
@@ -54,7 +82,12 @@ export function useAutoFix(projectId: string | undefined) {
     const cleanupComplete = window.electronAPI.github.onAutoFixComplete(
       (eventProjectId: string) => {
         if (eventProjectId === projectId) {
-          window.electronAPI.github.getAutoFixQueue(projectId).then(setQueue);
+          const requestProjectId = projectId;
+          window.electronAPI.github.getAutoFixQueue(requestProjectId).then((nextQueue) => {
+            if (requestProjectId === currentProjectIdRef.current) {
+              setQueue(nextQueue);
+            }
+          });
         }
       }
     );

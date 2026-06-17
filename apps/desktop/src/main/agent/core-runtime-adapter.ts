@@ -52,11 +52,11 @@ export function createDesktopAgentRuntimeAdapter(agentManager: AgentManager): Ag
     startRuntime(request: AutocodeAgentRuntimeStartRequest): Promise<AutocodeAgentRuntimeStartResult> {
       return taskController.start(request, { startRuntime: startDesktopRuntime });
     },
-    stopRuntime(taskId: string): void {
-      agentManager.killTask(taskId);
+    stopRuntime(taskId: string, projectId?: string): void {
+      agentManager.killTask(taskId, projectId);
     },
-    isRuntimeRunning(taskId: string): boolean {
-      return agentManager.isRunning(taskId);
+    isRuntimeRunning(taskId: string, projectId?: string): boolean {
+      return agentManager.isRunning(taskId, projectId);
     },
   };
 }

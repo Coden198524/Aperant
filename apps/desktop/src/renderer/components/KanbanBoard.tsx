@@ -668,6 +668,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   const [worktreeCleanupDialog, setWorktreeCleanupDialog] = useState<{
     open: boolean;
     taskId: string | null;
+    projectId?: string;
     taskTitle: string;
     worktreePath?: string;
     isProcessing: boolean;
@@ -675,6 +676,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
   }>({
     open: false,
     taskId: null,
+    projectId: undefined,
     taskTitle: '',
     worktreePath: undefined,
     isProcessing: false,
@@ -939,13 +941,14 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     // status change or race with auto-promotion). processQueue auto-promotion
     // calls persistTaskStatus directly, never this function.
     // ============================================
-    if (newStatus === 'in_progress' && isQueueAtCapacity(taskId)) {
+    const taskProjectId = task?.projectId ?? projectId;
+    if (newStatus === 'in_progress' && isQueueAtCapacity(taskId, taskProjectId)) {
       console.log('[Queue] In Progress full, redirecting task to Queue');
       newStatus = 'queue';
     }
 
     const oldStatus = task?.status;
-    const result = await persistTaskStatus(taskId, newStatus);
+    const result = await persistTaskStatus(taskId, newStatus, task?.projectId ? { projectId: task.projectId } : undefined);
 
     if (!result.success) {
       if (result.worktreeExists) {
@@ -953,6 +956,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
         setWorktreeCleanupDialog({
           open: true,
           taskId: taskId,
+          projectId: task?.projectId,
           taskTitle: task?.title || t('tasks:untitled'),
           worktreePath: result.worktreePath,
           isProcessing: false,
@@ -980,12 +984,13 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
 
     setWorktreeCleanupDialog(prev => ({ ...prev, isProcessing: true, error: undefined }));
 
-    const result = await forceCompleteTask(worktreeCleanupDialog.taskId);
+    const result = await forceCompleteTask(worktreeCleanupDialog.taskId, worktreeCleanupDialog.projectId);
 
     if (result.success) {
       setWorktreeCleanupDialog({
         open: false,
         taskId: null,
+        projectId: undefined,
         taskTitle: '',
         worktreePath: undefined,
         isProcessing: false,
@@ -1010,7 +1015,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
 
     let movedCount = 0;
     for (const task of backlogTasks) {
-      const result = await persistTaskStatus(task.id, 'queue');
+      const result = await persistTaskStatus(task.id, 'queue', { projectId: task.projectId });
       if (result.success) {
         movedCount++;
       } else {
@@ -1019,7 +1024,7 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     }
 
     // Auto-promote queued tasks to fill available capacity
-    await processQueue();
+    await processQueue(projectId);
 
     toast({
       title: t('queue.queueAllSuccess', { count: movedCount }),
@@ -1056,7 +1061,12 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
    * Automatically move tasks from Queue to In Progress to fill available capacity
    * Promotes multiple tasks if needed (e.g., after bulk queue)
    */
-  const processQueue = useCallback(async () => {
+  const processQueue = useCallback(async (targetProjectId?: string) => {
+    const queueProjectId = targetProjectId ?? projectId;
+    if (!queueProjectId) {
+      return;
+    }
+
     // Prevent concurrent executions to avoid race conditions
     if (isProcessingQueueRef.current) {
       console.log('[Queue] Already processing queue, skipping duplicate call');
@@ -1075,15 +1085,17 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
       while (true) {
         // Get CURRENT state from store to ensure accuracy
         const currentTasks = useTaskStore.getState().tasks;
+        const queueProject = projects.find((entry) => entry.id === queueProjectId);
+        const queueMaxParallelTasks = queueProject?.settings?.maxParallelTasks ?? DEFAULT_MAX_PARALLEL_TASKS;
         const inProgressCount = currentTasks.filter((t) =>
-          t.status === 'in_progress' && !t.metadata?.archivedAt
+          t.projectId === queueProjectId && t.status === 'in_progress' && !t.metadata?.archivedAt
         ).length;
         const queuedTasks = currentTasks.filter((t) =>
-          t.status === 'queue' && !t.metadata?.archivedAt && !attemptedTaskIds.has(t.id)
+          t.projectId === queueProjectId && t.status === 'queue' && !t.metadata?.archivedAt && !attemptedTaskIds.has(t.id)
         );
 
         // Stop if no capacity, no queued tasks, or too many consecutive failures
-        if (inProgressCount >= maxParallelTasks || queuedTasks.length === 0) {
+        if (inProgressCount >= queueMaxParallelTasks || queuedTasks.length === 0) {
           break;
         }
 
@@ -1099,8 +1111,8 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
           return dateA - dateB; // Ascending order (oldest first)
         })[0];
 
-        console.log(`[Queue] Auto-promoting task ${nextTask.id} from Queue to In Progress (${inProgressCount + 1}/${maxParallelTasks})`);
-        const result = await persistTaskStatus(nextTask.id, 'in_progress');
+        console.log(`[Queue] Auto-promoting task ${nextTask.id} from Queue to In Progress (${inProgressCount + 1}/${queueMaxParallelTasks})`);
+        const result = await persistTaskStatus(nextTask.id, 'in_progress', { projectId: nextTask.projectId });
 
         if (result.success) {
           // Reset consecutive failures on success
@@ -1120,17 +1132,17 @@ export function KanbanBoard({ tasks, onTaskClick, onNewTaskClick, onRefresh, isR
     } finally {
       isProcessingQueueRef.current = false;
     }
-  }, [maxParallelTasks]);
+  }, [projectId, projects]);
 
   // Register task status change listener for queue auto-promotion
   // This ensures processQueue() is called whenever a task leaves in_progress
   useEffect(() => {
     const unregister = useTaskStore.getState().registerTaskStatusChangeListener(
-      (taskId, oldStatus, newStatus) => {
+      (taskId, oldStatus, newStatus, eventProjectId) => {
         // When a task leaves in_progress (e.g., goes to human_review), process the queue
         if (oldStatus === 'in_progress' && newStatus !== 'in_progress') {
           console.log(`[Queue] Task ${taskId} left in_progress, processing queue to fill slot`);
-          processQueue();
+          processQueue(eventProjectId);
         }
       }
     );

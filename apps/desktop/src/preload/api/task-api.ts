@@ -34,10 +34,11 @@ export interface TaskAPI {
     projectId: string,
     options?: { documentType?: ProjectDocumentType; outputDir?: string; language?: string }
   ) => Promise<IPCResult<Task>>;
-  deleteTask: (taskId: string) => Promise<IPCResult>;
+  deleteTask: (taskId: string, projectId?: string) => Promise<IPCResult>;
   updateTask: (
     taskId: string,
-    updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }
+    updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> },
+    projectId?: string
   ) => Promise<IPCResult<Task>>;
   deleteSubtask: (taskId: string, subtaskId: string, projectId?: string) => Promise<IPCResult<Task>>;
   startTask: (taskId: string, options?: TaskStartOptions) => void;
@@ -113,12 +114,12 @@ export interface TaskAPI {
   getTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs | null>>;
   clearTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs>>;
   watchTaskLogs: (projectId: string, specId: string) => Promise<IPCResult>;
-  unwatchTaskLogs: (specId: string) => Promise<IPCResult>;
-  onTaskLogsChanged: (callback: (specId: string, logs: TaskLogs) => void) => () => void;
-  onTaskLogsStream: (callback: (specId: string, chunk: TaskLogStreamChunk) => void) => () => void;
+  unwatchTaskLogs: (specId: string, projectId?: string) => Promise<IPCResult>;
+  onTaskLogsChanged: (callback: (specId: string, logs: TaskLogs, projectId?: string) => void) => () => void;
+  onTaskLogsStream: (callback: (specId: string, chunk: TaskLogStreamChunk, projectId?: string) => void) => () => void;
 
   // Merge Progress Events
-  onMergeProgress: (callback: (taskId: string, progress: MergeProgress) => void) => () => void;
+  onMergeProgress: (callback: (taskId: string, progress: MergeProgress, projectId?: string) => void) => () => void;
 }
 
 export const createTaskAPI = (): TaskAPI => ({
@@ -140,14 +141,15 @@ export const createTaskAPI = (): TaskAPI => ({
   ): Promise<IPCResult<Task>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_CREATE_PROJECT_DOCS, projectId, options),
 
-  deleteTask: (taskId: string): Promise<IPCResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_DELETE, taskId),
+  deleteTask: (taskId: string, projectId?: string): Promise<IPCResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_DELETE, taskId, projectId),
 
   updateTask: (
     taskId: string,
-    updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }
+    updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> },
+    projectId?: string
   ): Promise<IPCResult<Task>> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_UPDATE, taskId, updates),
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_UPDATE, taskId, updates, projectId),
 
   deleteSubtask: (taskId: string, subtaskId: string, projectId?: string): Promise<IPCResult<Task>> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_DELETE_SUBTASK, taskId, subtaskId, projectId),
@@ -377,18 +379,19 @@ export const createTaskAPI = (): TaskAPI => ({
   watchTaskLogs: (projectId: string, specId: string): Promise<IPCResult> =>
     ipcRenderer.invoke(IPC_CHANNELS.TASK_LOGS_WATCH, projectId, specId),
 
-  unwatchTaskLogs: (specId: string): Promise<IPCResult> =>
-    ipcRenderer.invoke(IPC_CHANNELS.TASK_LOGS_UNWATCH, specId),
+  unwatchTaskLogs: (specId: string, projectId?: string): Promise<IPCResult> =>
+    ipcRenderer.invoke(IPC_CHANNELS.TASK_LOGS_UNWATCH, specId, projectId),
 
   onTaskLogsChanged: (
-    callback: (specId: string, logs: TaskLogs) => void
+    callback: (specId: string, logs: TaskLogs, projectId?: string) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       specId: string,
-      logs: TaskLogs
+      logs: TaskLogs,
+      projectId?: string
     ): void => {
-      callback(specId, logs);
+      callback(specId, logs, projectId);
     };
     ipcRenderer.on(IPC_CHANNELS.TASK_LOGS_CHANGED, handler);
     return () => {
@@ -397,14 +400,15 @@ export const createTaskAPI = (): TaskAPI => ({
   },
 
   onTaskLogsStream: (
-    callback: (specId: string, chunk: TaskLogStreamChunk) => void
+    callback: (specId: string, chunk: TaskLogStreamChunk, projectId?: string) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       specId: string,
-      chunk: TaskLogStreamChunk
+      chunk: TaskLogStreamChunk,
+      projectId?: string
     ): void => {
-      callback(specId, chunk);
+      callback(specId, chunk, projectId);
     };
     ipcRenderer.on(IPC_CHANNELS.TASK_LOGS_STREAM, handler);
     return () => {
@@ -414,14 +418,15 @@ export const createTaskAPI = (): TaskAPI => ({
 
   // Merge Progress Events
   onMergeProgress: (
-    callback: (taskId: string, progress: MergeProgress) => void
+    callback: (taskId: string, progress: MergeProgress, projectId?: string) => void
   ): (() => void) => {
     const handler = (
       _event: Electron.IpcRendererEvent,
       taskId: string,
-      progress: MergeProgress
+      progress: MergeProgress,
+      projectId?: string
     ): void => {
-      callback(taskId, progress);
+      callback(taskId, progress, projectId);
     };
     ipcRenderer.on(IPC_CHANNELS.TASK_MERGE_PROGRESS, handler);
     return () => {

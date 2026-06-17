@@ -6,6 +6,7 @@ const existsSyncMock = vi.fn();
 const findTaskWorktreeMock = vi.fn();
 const readAutocodeTaskLogsFromSpecDirMock = vi.fn();
 const mergeAutocodeTaskLogsMock = vi.fn();
+const chokidarWatchMock = vi.fn();
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -21,6 +22,12 @@ vi.mock('@autocode/core', () => ({
   },
   mergeAutocodeTaskLogs: (...args: unknown[]) => mergeAutocodeTaskLogsMock(...args),
   readAutocodeTaskLogsFromSpecDir: (...args: unknown[]) => readAutocodeTaskLogsFromSpecDirMock(...args),
+}));
+
+vi.mock('chokidar', () => ({
+  default: {
+    watch: (...args: unknown[]) => chokidarWatchMock(...args),
+  },
 }));
 
 vi.mock('../worktree-paths', () => ({
@@ -74,6 +81,11 @@ describe('TaskLogService', () => {
   beforeEach(() => {
     vi.clearAllMocks();
     existsSyncMock.mockReturnValue(true);
+    chokidarWatchMock.mockImplementation(() => ({
+      on: vi.fn().mockReturnThis(),
+      add: vi.fn(),
+      close: vi.fn(async () => undefined),
+    }));
   });
 
   it('keeps raw file cache separate from merged log cache', async () => {
@@ -111,5 +123,51 @@ describe('TaskLogService', () => {
     expect(service.loadLogsFromPath(mainSpecDir)).toBe(mainLogs);
     service.loadLogs(mainSpecDir, projectRoot, specsRelPath, specId);
     expect(mergeAutocodeTaskLogsMock).toHaveBeenLastCalledWith(mainLogs, worktreeLogs);
+  });
+
+  it('keeps same spec watchers separate across projects', async () => {
+    const { TaskLogService } = await import('../task-log-service');
+
+    const specId = '001-project-docs';
+    const specsRelPath = '.autocode\\specs';
+    const service = new TaskLogService();
+    const watcherA = {
+      on: vi.fn().mockReturnThis(),
+      add: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+    const watcherB = {
+      on: vi.fn().mockReturnThis(),
+      add: vi.fn(),
+      close: vi.fn(async () => undefined),
+    };
+
+    chokidarWatchMock
+      .mockReturnValueOnce(watcherA)
+      .mockReturnValueOnce(watcherB);
+    findTaskWorktreeMock.mockReturnValue(null);
+    readAutocodeTaskLogsFromSpecDirMock.mockReturnValue(createLogs(specId, 'main'));
+
+    service.startWatching(
+      specId,
+      path.join('E:/ProjectA', specsRelPath, specId),
+      'E:/ProjectA',
+      specsRelPath,
+      'project-a',
+    );
+    service.startWatching(
+      specId,
+      path.join('E:/ProjectB', specsRelPath, specId),
+      'E:/ProjectB',
+      specsRelPath,
+      'project-b',
+    );
+
+    expect(chokidarWatchMock).toHaveBeenCalledTimes(2);
+
+    service.stopWatching(specId, 'project-a');
+
+    expect(watcherA.close).toHaveBeenCalledTimes(1);
+    expect(watcherB.close).not.toHaveBeenCalled();
   });
 });

@@ -19,6 +19,7 @@ const resolveAutocodeDirectSessionStateMock = vi.fn((..._args: unknown[]): unkno
 const emitSpy = vi.spyOn(process, 'emitWarning').mockImplementation(() => {});
 
 const writeFileSyncMock = vi.fn();
+const initializeClaudeProfileManagerMock = vi.fn(async (): Promise<{ hasValidAuth: () => boolean }> => ({ hasValidAuth: () => true }));
 
 vi.mock('fs', async (importOriginal) => {
   const actual = await importOriginal<typeof import('fs')>();
@@ -87,7 +88,7 @@ vi.mock('@autocode/core', async (importOriginal) => {
 });
 
 vi.mock('../claude-profile-manager', () => ({
-  initializeClaudeProfileManager: vi.fn(async () => ({ hasValidAuth: () => true })),
+  initializeClaudeProfileManager: initializeClaudeProfileManagerMock,
   getClaudeProfileManager: vi.fn(() => ({
     getActiveProfile: vi.fn(() => null),
   })),
@@ -174,6 +175,8 @@ describe('AgentManager worktree execution', () => {
     writeFileSyncMock.mockReset();
     spawnProcessMock.mockReset();
     createStartedAutocodeAgentRuntimeMock.mockClear();
+    initializeClaudeProfileManagerMock.mockReset();
+    initializeClaudeProfileManagerMock.mockResolvedValue({ hasValidAuth: () => true });
     resolveAutocodeDirectSessionStateMock.mockReset();
     resolveAutocodeDirectSessionStateMock.mockReturnValue(null);
     createOrGetWorktreeMock.mockResolvedValue({
@@ -334,6 +337,30 @@ describe('AgentManager worktree execution', () => {
       yunxiaoEnabled: false,
     });
     expect(executorConfig.session.projectDir).toBe('E:/repo');
+  });
+
+  it('emits early auth errors with project scope for every task start path', async () => {
+    initializeClaudeProfileManagerMock.mockResolvedValue({ hasValidAuth: () => false });
+    const { AgentManager } = await import('./agent-manager');
+    const manager = new AgentManager();
+    const errorListener = vi.fn();
+    manager.on('error', errorListener);
+
+    await manager.startSpecCreation('001-task', 'E:/repo', 'Task description', undefined, undefined, undefined, 'project-1');
+    await manager.startTaskExecution('001-task', 'E:/repo', '001-task', {}, 'project-1');
+    await manager.startDirectTaskExecution('001-task', 'E:/repo', '001-task', {}, 'project-1');
+    await manager.startQAProcess('001-task', 'E:/repo', '001-task', 'project-1');
+
+    expect(errorListener).toHaveBeenCalledTimes(4);
+    for (const call of errorListener.mock.calls) {
+      expect(call).toEqual([
+        '001-task',
+        'Authentication required. Please add an account in Settings > Accounts before starting tasks.',
+        'project-1',
+      ]);
+    }
+    expect(spawnWorkerProcessMock).not.toHaveBeenCalled();
+    expect(spawnProcessMock).not.toHaveBeenCalled();
   });
 
   it('continues direct tasks with an openai previous response id instead of full context', async () => {

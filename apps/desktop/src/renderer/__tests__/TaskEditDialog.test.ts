@@ -328,7 +328,7 @@ describe('TaskEditDialog Logic', () => {
         title: 'Updated Title'
       });
 
-      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { title: 'Updated Title' });
+      expect(mockUpdateTask).toHaveBeenCalledWith('task-1', { title: 'Updated Title' }, task.projectId);
       expect(result).toBe(true);
     });
 

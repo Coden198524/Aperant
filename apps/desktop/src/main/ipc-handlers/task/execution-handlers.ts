@@ -1015,7 +1015,7 @@ export function registerTaskExecutionHandlers(
 
       // Cancel any pending fallback timer from previous process exit
       // This prevents the stale timer from incorrectly stopping the newly restarted task
-      cancelFallbackTimer(taskId);
+      cancelFallbackTimer(taskId, requestedProjectId);
 
       const mainWindow = getMainWindow();
       if (!mainWindow) {
@@ -1097,7 +1097,7 @@ export function registerTaskExecutionHandlers(
       // Clear stale tracking state from any previous execution so that:
       // - terminalEventSeen doesn't suppress future PROCESS_EXITED events
       // - lastSequenceByTask doesn't drop events from the new process
-      taskStateManager.prepareForRestart(taskId);
+      taskStateManager.prepareForRestart(taskId, project.id);
 
       // Check if implementation_plan.md has valid subtasks BEFORE XState handling.
       // This is more reliable than task.subtasks.length which may not be loaded yet.
@@ -1114,7 +1114,7 @@ export function registerTaskExecutionHandlers(
       // - plan_review: User approved the plan, send PLAN_APPROVED to transition to coding
       // - human_review/error: User resuming, send USER_RESUMED
       // - backlog/other: Fresh start, send PLANNING_STARTED
-      const currentXState = taskStateManager.getCurrentState(taskId);
+      const currentXState = taskStateManager.getCurrentState(taskId, project.id);
       console.warn('[TASK_START] Current XState:', currentXState, '| Task status:', task.status, task.reviewReason);
 
       const startEvent = resolveAutocodeTaskStartEvent({
@@ -1163,7 +1163,7 @@ export function registerTaskExecutionHandlers(
    */
   ipcMain.on(IPC_CHANNELS.TASK_STOP, (_, taskId: string, projectId?: string) => {
     const runtimeMs = typeof agentManager.getTaskRuntimeMs === 'function'
-      ? agentManager.getTaskRuntimeMs(taskId)
+      ? agentManager.getTaskRuntimeMs(taskId, projectId)
       : null;
     if (runtimeMs !== null && runtimeMs < TASK_STOP_STARTUP_GRACE_MS) {
       console.warn('[TASK_STOP] Ignoring stop during startup grace period:', {
@@ -1203,7 +1203,7 @@ export function registerTaskExecutionHandlers(
     );
 
     // Clear stale tracking state so a subsequent restart works correctly
-    taskStateManager.prepareForRestart(taskId);
+    taskStateManager.prepareForRestart(taskId, project.id);
   });
 
   /**
@@ -1260,7 +1260,7 @@ export function registerTaskExecutionHandlers(
           project
         );
       } else {
-        const currentXState = taskStateManager.getCurrentState(taskId);
+        const currentXState = taskStateManager.getCurrentState(taskId, project.id);
         const isPlanReview = isPlanReviewRequest(task, currentXState);
         const isErrorRecovery = currentXState === 'error' || task.reviewReason === 'errors';
         const needsImplementationRestart = task.status === 'human_review'
@@ -1274,7 +1274,7 @@ export function registerTaskExecutionHandlers(
           const specDirForState = path.join(project.path, specsBaseDir, task.specId);
           const planHasSubtasks = hasPlanSubtasks(path.join(specDirForState, AUTOCODE_TASK_ARTIFACTS.implementationPlan));
 
-          taskStateManager.prepareForRestart(taskId);
+          taskStateManager.prepareForRestart(taskId, project.id);
 
           if (!planHasSubtasks) {
             taskStateManager.handleUiEvent(
@@ -1465,7 +1465,7 @@ export function registerTaskExecutionHandlers(
             }
           }
 
-          taskStateManager.prepareForRestart(taskId);
+          taskStateManager.prepareForRestart(taskId, project.id);
           taskStateManager.handleUiEvent(
             taskId,
             { type: 'PLANNING_STARTED' },
@@ -1552,7 +1552,7 @@ export function registerTaskExecutionHandlers(
                   patchedFiles: localPatchResult.patchedFiles,
                 },
               );
-              taskStateManager.prepareForRestart(taskId);
+              taskStateManager.prepareForRestart(taskId, project.id);
               taskStateManager.handleUiEvent(
                 taskId,
                 { type: 'USER_RESUMED' },
@@ -1576,7 +1576,7 @@ export function registerTaskExecutionHandlers(
 
             console.warn('[TASK_REVIEW] Local Standard change patch unavailable; restarting planning.', localPatchResult.reason);
             console.warn('[TASK_REVIEW] Review feedback changes planning artifacts - restarting planning.');
-            taskStateManager.prepareForRestart(taskId);
+            taskStateManager.prepareForRestart(taskId, project.id);
             taskStateManager.handleUiEvent(
               taskId,
               { type: 'PLANNING_STARTED' },
@@ -1617,7 +1617,7 @@ export function registerTaskExecutionHandlers(
             console.warn('[TASK_REVIEW] Completed plan was not reopened; restart may skip coding');
           }
 
-          taskStateManager.prepareForRestart(taskId);
+          taskStateManager.prepareForRestart(taskId, project.id);
           taskStateManager.handleUiEvent(
             taskId,
             { type: 'USER_RESUMED' },
@@ -1651,7 +1651,7 @@ export function registerTaskExecutionHandlers(
         }
 
         // Clear stale tracking state before starting new QA process
-        taskStateManager.prepareForRestart(taskId);
+        taskStateManager.prepareForRestart(taskId, project.id);
 
         // Restart QA process - use worktree path if it exists, otherwise main project
         // The QA process needs to run where the implementation_plan.md with completed subtasks is
@@ -1837,7 +1837,7 @@ export function registerTaskExecutionHandlers(
         // Auto-start task when status changes to 'in_progress' and no process is running
         if (status === 'in_progress' && !isRuntimeRunning(taskId, project.id)) {
           // Clear stale tracking state before starting a new process
-          taskStateManager.prepareForRestart(taskId);
+          taskStateManager.prepareForRestart(taskId, project.id);
           const mainWindow = getMainWindow();
 
           // Check git status before auto-starting
@@ -1887,7 +1887,7 @@ export function registerTaskExecutionHandlers(
 
           // Cancel any pending fallback timer from previous process exit
           // This prevents the stale timer from incorrectly stopping the newly started task
-          cancelFallbackTimer(taskId);
+          cancelFallbackTimer(taskId, project.id);
 
           // Reset any stuck subtasks before starting execution
           // This handles recovery from previous rate limits or crashes
@@ -2283,7 +2283,7 @@ export function registerTaskExecutionHandlers(
         let autoRestarted = false;
         if (autoRestart) {
           // Clear stale tracking state before restarting
-          taskStateManager.prepareForRestart(taskId);
+          taskStateManager.prepareForRestart(taskId, project.id);
           // Check git status before auto-restarting
           const gitStatusForRestart = checkGitStatus(project.path);
           if (!gitStatusForRestart.isGitRepo || !gitStatusForRestart.hasCommits) {
@@ -2336,7 +2336,7 @@ export function registerTaskExecutionHandlers(
           try {
             // Cancel any pending fallback timer from previous process exit
             // This prevents the stale timer from incorrectly stopping the restarted task
-            cancelFallbackTimer(taskId);
+            cancelFallbackTimer(taskId, project.id);
 
             // Set status to in_progress for the restart
             newStatus = 'in_progress';

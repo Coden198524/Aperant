@@ -370,6 +370,24 @@ describe('WorkerBridge Spawn Integration', () => {
       expect(manager.getRunningTasks()).toContain('task-2');
     }, 15000);
 
+    it('should scope matching task ids by project while running', async () => {
+      const { AgentManager } = await import('../../main/agent');
+
+      const manager = new AgentManager();
+
+      await manager.startSpecCreation('001-project-docs', '/project-a', 'Docs A', undefined, undefined, undefined, 'project-a');
+      await manager.startSpecCreation('001-project-docs', '/project-b', 'Docs B', undefined, undefined, undefined, 'project-b');
+
+      expect(createdBridges).toHaveLength(2);
+      expect(manager.isRunning('001-project-docs', 'project-a')).toBe(true);
+      expect(manager.isRunning('001-project-docs', 'project-b')).toBe(true);
+
+      manager.killTask('001-project-docs', 'project-a');
+
+      expect(manager.isRunning('001-project-docs', 'project-a')).toBe(false);
+      expect(manager.isRunning('001-project-docs', 'project-b')).toBe(true);
+    }, 15000);
+
     it('should kill all running tasks', async () => {
       const { AgentManager } = await import('../../main/agent');
 

@@ -317,8 +317,8 @@ export const TaskCard = memo(function TaskCard({
       return undefined;
     }
 
-    return subscribeStuckTask(task.id, setIsStuck);
-  }, [task.id, isRunning]);
+    return subscribeStuckTask(task.id, task.projectId, setIsStuck);
+  }, [task.id, task.projectId, isRunning]);
 
   useEffect(() => {
     if (!showDeleteDialog) {
@@ -336,14 +336,14 @@ export const TaskCard = memo(function TaskCard({
     }).catch(() => {
       setIsCheckingChanges(false);
     });
-  }, [showDeleteDialog, task.id]);
+  }, [showDeleteDialog, task.id, task.projectId]);
 
   const handleStartStop = async (e: React.MouseEvent) => {
     e.stopPropagation();
     if (isRunning) {
       // Allow stopping both running and stuck tasks
       // User should be able to force-stop a stuck task
-      stopTask(task.id);
+      stopTask(task.id, task.projectId);
     } else {
       const result = await startTaskOrQueue(task.id, task.projectId);
       if (!result.success) {
@@ -362,7 +362,7 @@ export const TaskCard = memo(function TaskCard({
     e.stopPropagation();
     setIsRecovering(true);
     // Auto-restart the task after recovery (no need to click Start again)
-    const result = await recoverStuckTask(task.id, { autoRestart: true });
+    const result = await recoverStuckTask(task.id, { autoRestart: true, projectId: task.projectId });
     if (result.success) {
       setIsStuck(false);
     }
@@ -392,7 +392,7 @@ export const TaskCard = memo(function TaskCard({
   const handleDelete = async () => {
     setIsDeleting(true);
     setDeleteError(null);
-    const result = await deleteTask(task.id);
+    const result = await deleteTask(task.id, task.projectId);
     if (result.success) {
       setShowDeleteDialog(false);
     } else {

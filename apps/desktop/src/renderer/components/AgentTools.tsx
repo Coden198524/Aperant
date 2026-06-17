@@ -691,11 +691,16 @@ function AgentCard({ id, config, modelLabel, thinkingLabel, overrides, mcpServer
   );
 }
 
-export function AgentTools() {
+interface AgentToolsProps {
+  projectId?: string;
+}
+
+export function AgentTools({ projectId }: AgentToolsProps) {
   const { t, i18n } = useTranslation(['settings']);
   const settings = useSettingsStore((state) => state.settings);
   const projects = useProjectStore((state) => state.projects);
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
+  const fallbackProjectId = useProjectStore((state) => state.activeProjectId || state.selectedProjectId);
+  const selectedProjectId = projectId ?? fallbackProjectId;
   const selectedProject = projects.find((p) => p.id === selectedProjectId);
 
   const [expandedCategories, setExpandedCategories] = useState<Set<string>>(

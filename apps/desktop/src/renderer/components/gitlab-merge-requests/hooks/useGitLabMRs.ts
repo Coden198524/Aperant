@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import type {
   GitLabMergeRequest,
   GitLabMRReviewResult,
@@ -60,6 +60,8 @@ export function useGitLabMRs(projectId?: string, options: UseGitLabMRsOptions = 
   const [selectedMRIid, setSelectedMRIid] = useState<number | null>(null);
   const [isConnected, setIsConnected] = useState(false);
   const [projectPath, setProjectPath] = useState<string | null>(null);
+  const currentProjectIdRef = useRef(projectId);
+  const fetchGenerationRef = useRef(0);
 
   // Get MR review state from the global store
   const _mrReviews = useMRReviewStore((state) => state.mrReviews);
@@ -103,31 +105,50 @@ export function useGitLabMRs(projectId?: string, options: UseGitLabMRsOptions = 
   const fetchMRs = useCallback(async () => {
     if (!projectId) return;
 
+    const requestProjectId = projectId;
+    currentProjectIdRef.current = requestProjectId;
+    const requestGeneration = fetchGenerationRef.current + 1;
+    fetchGenerationRef.current = requestGeneration;
+    const isStaleRequest = () =>
+      requestProjectId !== currentProjectIdRef.current ||
+      requestGeneration !== fetchGenerationRef.current;
+
     setIsLoading(true);
     setError(null);
 
     try {
       // First check connection
-      const connectionResult = await window.electronAPI.checkGitLabConnection(projectId);
+      const connectionResult = await window.electronAPI.checkGitLabConnection(requestProjectId);
+      if (isStaleRequest()) {
+        return;
+      }
+
       if (connectionResult.success && connectionResult.data) {
         setIsConnected(connectionResult.data.connected);
         setProjectPath(connectionResult.data.projectPathWithNamespace || null);
 
         if (connectionResult.data.connected) {
           // Fetch MRs
-          const result = await window.electronAPI.getGitLabMergeRequests(projectId, stateFilter);
+          const result = await window.electronAPI.getGitLabMergeRequests(requestProjectId, stateFilter);
+          if (isStaleRequest()) {
+            return;
+          }
+
           if (result.success && result.data) {
             setMergeRequests(result.data);
 
             // Preload review results for all MRs
             result.data.forEach(mr => {
-              const existingState = getMRReviewState(projectId, mr.iid);
+              const existingState = getMRReviewState(requestProjectId, mr.iid);
               // Only fetch from disk if we don't have a result in the store
               if (!existingState?.result && window.electronAPI.getGitLabMRReview) {
-                window.electronAPI.getGitLabMRReview(projectId, mr.iid).then(reviewResult => {
+                window.electronAPI.getGitLabMRReview(requestProjectId, mr.iid).then(reviewResult => {
+                  if (isStaleRequest()) {
+                    return;
+                  }
                   if (reviewResult) {
                     // Update store with the loaded result
-                    useMRReviewStore.getState().setMRReviewResult(projectId, reviewResult);
+                    useMRReviewStore.getState().setMRReviewResult(requestProjectId, reviewResult);
                   }
                 });
               }
@@ -140,12 +161,26 @@ export function useGitLabMRs(projectId?: string, options: UseGitLabMRsOptions = 
         setError(connectionResult.error || 'Failed to check connection');
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to fetch MRs');
-      setIsConnected(false);
+      if (!isStaleRequest()) {
+        setError(err instanceof Error ? err.message : 'Failed to fetch MRs');
+        setIsConnected(false);
+      }
     } finally {
-      setIsLoading(false);
+      if (!isStaleRequest()) {
+        setIsLoading(false);
+      }
     }
   }, [projectId, stateFilter, getMRReviewState]);
+
+  useEffect(() => {
+    currentProjectIdRef.current = projectId;
+    fetchGenerationRef.current += 1;
+    setMergeRequests([]);
+    setSelectedMRIid(null);
+    setIsConnected(false);
+    setProjectPath(null);
+    setError(null);
+  }, [projectId]);
 
   useEffect(() => {
     fetchMRs();
@@ -156,13 +191,17 @@ export function useGitLabMRs(projectId?: string, options: UseGitLabMRsOptions = 
 
     // Load existing review from disk if not already in store
     if (mrIid && projectId) {
-      const existingState = getMRReviewState(projectId, mrIid);
+      const requestProjectId = projectId;
+      const existingState = getMRReviewState(requestProjectId, mrIid);
       // Only fetch from disk if we don't have a result in the store
       if (!existingState?.result && window.electronAPI.getGitLabMRReview) {
-        window.electronAPI.getGitLabMRReview(projectId, mrIid).then(result => {
+        window.electronAPI.getGitLabMRReview(requestProjectId, mrIid).then(result => {
+          if (requestProjectId !== currentProjectIdRef.current) {
+            return;
+          }
           if (result) {
             // Update store with the loaded result
-            useMRReviewStore.getState().setMRReviewResult(projectId, result);
+            useMRReviewStore.getState().setMRReviewResult(requestProjectId, result);
           }
         });
       }

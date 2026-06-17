@@ -165,21 +165,35 @@ export function useGitHubPRs(
       if (!projectId) return;
 
       // Increment generation to invalidate any in-flight loadMore requests
-      fetchGenerationRef.current += 1;
+      const requestProjectId = projectId;
+      currentProjectIdRef.current = requestProjectId;
+      const requestGeneration = fetchGenerationRef.current + 1;
+      fetchGenerationRef.current = requestGeneration;
+      const isStaleRequest = () =>
+        requestProjectId !== currentProjectIdRef.current ||
+        requestGeneration !== fetchGenerationRef.current;
 
       setIsLoading(true);
       setError(null);
 
       try {
         // First check connection
-        const connectionResult = await window.electronAPI.github.checkGitHubConnection(projectId);
+        const connectionResult = await window.electronAPI.github.checkGitHubConnection(requestProjectId);
+        if (isStaleRequest()) {
+          return;
+        }
+
         if (connectionResult.success && connectionResult.data) {
           setIsConnected(connectionResult.data.connected);
           setRepoFullName(connectionResult.data.repoFullName || null);
 
           if (connectionResult.data.connected) {
             // Fetch PRs (returns up to 100 open PRs at once - GitHub GraphQL limit)
-            const result = await window.electronAPI.github.listPRs(projectId);
+            const result = await window.electronAPI.github.listPRs(requestProjectId);
+            if (isStaleRequest()) {
+              return;
+            }
+
             if (result) {
               // Use hasNextPage from API to determine if more PRs exist
               setHasMore(result.hasNextPage);
@@ -190,21 +204,24 @@ export function useGitHubPRs(
               // Batch preload review results for PRs not in store (single IPC call)
               // Skip PRs that are currently being reviewed - their state is managed by IPC listeners
               const prsNeedingPreload = result.prs.filter((pr) => {
-                const existingState = getPRReviewState(projectId, pr.number);
+                const existingState = getPRReviewState(requestProjectId, pr.number);
                 return !existingState?.result && !existingState?.isReviewing;
               });
 
               if (prsNeedingPreload.length > 0) {
                 const prNumbers = prsNeedingPreload.map((pr) => pr.number);
                 const batchReviews = await window.electronAPI.github.getPRReviewsBatch(
-                  projectId,
+                  requestProjectId,
                   prNumbers
                 );
+                if (isStaleRequest()) {
+                  return;
+                }
 
                 // Update store with loaded results
                 for (const reviewResult of Object.values(batchReviews)) {
                   if (reviewResult) {
-                    usePRReviewStore.getState().setLoadedReviewResult(projectId, reviewResult, {
+                    usePRReviewStore.getState().setLoadedReviewResult(requestProjectId, reviewResult, {
                       preserveNewCommitsCheck: true,
                     });
                   }
@@ -221,22 +238,18 @@ export function useGitHubPRs(
           setError(connectionResult.error || "Failed to check connection");
         }
       } catch (err) {
-        setError(err instanceof Error ? err.message : "Failed to fetch PRs");
-        setIsConnected(false);
+        if (!isStaleRequest()) {
+          setError(err instanceof Error ? err.message : "Failed to fetch PRs");
+          setIsConnected(false);
+        }
       } finally {
-        setIsLoading(false);
+        if (!isStaleRequest()) {
+          setIsLoading(false);
+        }
       }
     },
     [projectId, getPRReviewState]
   );
-
-  // Initial load
-  useEffect(() => {
-    if (projectId && !hasLoadedRef.current) {
-      hasLoadedRef.current = true;
-      fetchPRs();
-    }
-  }, [projectId, fetchPRs]);
 
   // Auto-refresh when tab becomes active (navigating to GitHub PRs tab)
   useEffect(() => {
@@ -264,7 +277,12 @@ export function useGitHubPRs(
       checkNewCommitsAbortRef.current.abort();
       checkNewCommitsAbortRef.current = null;
     }
-  }, [projectId]);
+
+    if (projectId) {
+      hasLoadedRef.current = true;
+      void fetchPRs();
+    }
+  }, [projectId, fetchPRs]);
 
   // Cleanup abort controller on unmount to prevent memory leaks
   // and avoid state updates on unmounted components
@@ -337,16 +355,21 @@ export function useGitHubPRs(
       }
 
       if (prNumber && projectId) {
+        const requestProjectId = projectId;
         // Track the current PR being fetched (for race condition prevention)
         currentFetchPRNumberRef.current = prNumber;
 
         // Fetch full PR details including files
         setIsLoadingPRDetails(true);
         window.electronAPI.github
-          .getPR(projectId, prNumber)
+          .getPR(requestProjectId, prNumber)
           .then((prDetails) => {
             // Only update if this response is still for the current PR (prevents race condition)
-            if (prDetails && prNumber === currentFetchPRNumberRef.current) {
+            if (
+              prDetails &&
+              requestProjectId === currentProjectIdRef.current &&
+              prNumber === currentFetchPRNumberRef.current
+            ) {
               setSelectedPRDetails(prDetails);
             }
           })
@@ -355,7 +378,10 @@ export function useGitHubPRs(
           })
           .finally(() => {
             // Only clear loading state if this was the last fetch
-            if (prNumber === currentFetchPRNumberRef.current) {
+            if (
+              requestProjectId === currentProjectIdRef.current &&
+              prNumber === currentFetchPRNumberRef.current
+            ) {
               setIsLoadingPRDetails(false);
             }
           });
@@ -374,6 +400,10 @@ export function useGitHubPRs(
             return;
           }
 
+          if (requestProjectId !== currentProjectIdRef.current) {
+            return;
+          }
+
           // Cancel any pending checkNewCommits request before starting a new one
           if (checkNewCommitsAbortRef.current) {
             checkNewCommitsAbortRef.current.abort();
@@ -382,7 +412,7 @@ export function useGitHubPRs(
           const currentAbortController = checkNewCommitsAbortRef.current;
 
           window.electronAPI.github
-            .checkNewCommits(projectId, prNumber)
+            .checkNewCommits(requestProjectId, prNumber)
             .then((newCommitsResult) => {
               // Check if request was aborted (user switched PRs)
               if (currentAbortController.signal.aborted) {
@@ -390,11 +420,14 @@ export function useGitHubPRs(
               }
 
               // Final race condition check before updating store
-              if (prNumber !== currentFetchPRNumberRef.current) {
+              if (
+                requestProjectId !== currentProjectIdRef.current ||
+                prNumber !== currentFetchPRNumberRef.current
+              ) {
                 return;
               }
 
-              setNewCommitsCheckAction(projectId, prNumber, newCommitsResult);
+              setNewCommitsCheckAction(requestProjectId, prNumber, newCommitsResult);
             })
             .catch((err) => {
               // Don't log errors for aborted requests
@@ -406,14 +439,17 @@ export function useGitHubPRs(
         };
 
         // Load existing review from disk if not already in store
-        const existingState = getPRReviewState(projectId, prNumber);
+        const existingState = getPRReviewState(requestProjectId, prNumber);
 
         // Only fetch from disk if we don't have a result in the store AND no review is running
         // If a review is in progress, the state is managed by IPC listeners - don't overwrite it
         if (!existingState?.result && !existingState?.isReviewing) {
-          window.electronAPI.github.getPRReview(projectId, prNumber).then((result) => {
+          window.electronAPI.github.getPRReview(requestProjectId, prNumber).then((result) => {
             // Race condition check: skip if user switched PRs
-            if (prNumber !== currentFetchPRNumberRef.current) {
+            if (
+              requestProjectId !== currentProjectIdRef.current ||
+              prNumber !== currentFetchPRNumberRef.current
+            ) {
               return;
             }
 
@@ -422,7 +458,7 @@ export function useGitHubPRs(
               // Preserve newCommitsCheck when loading existing review from disk
               usePRReviewStore
                 .getState()
-                .setLoadedReviewResult(projectId, result, { preserveNewCommitsCheck: true });
+                .setLoadedReviewResult(requestProjectId, result, { preserveNewCommitsCheck: true });
 
               // Always check for new commits when selecting a reviewed PR
               // This ensures fresh data even if we have a cached check from earlier in the session

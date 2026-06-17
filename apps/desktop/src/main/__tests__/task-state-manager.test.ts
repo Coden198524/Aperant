@@ -66,6 +66,33 @@ describe('TaskStateManager', () => {
   });
 
   describe('handleTaskEvent', () => {
+    it('scopes sequence tracking by project for matching task ids', () => {
+      const taskId = '001-project-docs';
+      const projectA = createMockProject({ id: 'project-a' });
+      const projectB = createMockProject({ id: 'project-b' });
+      const taskB = createMockTask({
+        id: taskId,
+        specId: taskId,
+        projectId: projectB.id,
+      });
+
+      manager.setLastSequence(taskId, 10, projectA.id);
+
+      const accepted = manager.handleTaskEvent(taskId, {
+        type: 'PLANNING_STARTED',
+        taskId,
+        specId: taskId,
+        projectId: projectB.id,
+        timestamp: new Date().toISOString(),
+        eventId: 'project-b-event-0',
+        sequence: 0,
+      }, taskB, projectB);
+
+      expect(accepted).toBe(true);
+      expect(manager.getLastSequence(taskId, projectA.id)).toBe(10);
+      expect(manager.getLastSequence(taskId, projectB.id)).toBe(0);
+    });
+
     it('should accept events with increasing sequence numbers', () => {
       const event1 = {
         type: 'PLANNING_STARTED',

@@ -83,7 +83,25 @@ function addTaskEvidence(plan: Record<string, unknown>): Record<string, unknown>
     for (const subtask of subtasks) {
       if (!subtask || typeof subtask !== 'object') continue;
       const subtaskRecord = subtask as Record<string, unknown>;
+      const subtaskId = typeof subtaskRecord.id === 'string' && subtaskRecord.id.trim()
+        ? subtaskRecord.id.trim()
+        : '1.1';
+      const subtaskTitle = typeof subtaskRecord.title === 'string' && subtaskRecord.title.trim()
+        ? subtaskRecord.title.trim()
+        : subtaskId;
+      if (!Array.isArray(subtaskRecord.requirements) || subtaskRecord.requirements.length === 0) {
+        subtaskRecord.requirements = [subtaskId];
+      }
       subtaskRecord.evidence ??= TEST_TASK_EVIDENCE;
+      const description = typeof subtaskRecord.description === 'string'
+        ? subtaskRecord.description.trim()
+        : '';
+      if (!/\bdone when\b/i.test(description)) {
+        subtaskRecord.description = [
+          description || subtaskTitle,
+          `Done when: ${subtaskTitle} is complete and focused verification passes.`,
+        ].filter(Boolean).join('\n');
+      }
     }
   }
   return copy;

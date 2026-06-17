@@ -136,12 +136,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
   const [showPRDialog, setShowPRDialog] = useState(false);
   const [isCreatingPR, setIsCreatingPR] = useState(false);
 
-  const currentProject = useProjectStore((state) => {
-    const currentProjectId = state.activeProjectId || state.selectedProjectId;
-    return currentProjectId
-      ? state.projects.find((project) => project.id === currentProjectId)
-      : undefined;
-  });
+  const taskProject = useProjectStore((state) => state.projects.find((project) => project.id === task.projectId));
   const logOrder = useSettingsStore(s => s.settings.logOrder);
   const isRunning = task.status === 'in_progress';
   // isActiveTask includes ai_review for stuck detection (CHANGELOG documents this feature)
@@ -163,13 +158,13 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     }
 
     const intervalId = setInterval(() => {
-      if (hasRecentActivity(task.id)) {
+      if (hasRecentActivity(task.id, task.projectId)) {
         setIsStuck(false);
         return;
       }
 
-      checkTaskRunning(task.id).then((actuallyRunning) => {
-        if (hasRecentActivity(task.id)) {
+      checkTaskRunning(task.id, task.projectId).then((actuallyRunning) => {
+        if (hasRecentActivity(task.id, task.projectId)) {
           setIsStuck(false);
         } else {
           setIsStuck(!actuallyRunning);
@@ -179,7 +174,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     }, 60_000);
 
     return () => clearInterval(intervalId);
-  }, [task.id, isActiveTask]);
+  }, [task.id, task.projectId, isActiveTask]);
 
   // Check for uncommitted worktree changes when delete dialog opens
   useEffect(() => {
@@ -349,8 +344,8 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     void window.electronAPI.watchTaskLogs(task.projectId, task.specId);
 
     // Listen for log changes
-    const unsubscribe = window.electronAPI.onTaskLogsChanged((specId, logs) => {
-      if (specId === task.specId) {
+    const unsubscribe = window.electronAPI.onTaskLogsChanged((specId, logs, projectId) => {
+      if (specId === task.specId && (!projectId || projectId === task.projectId)) {
         setPhaseLogs(logs);
         setExpandedPhases(prev => mergeExpandedPhases(prev, logs));
       }
@@ -359,7 +354,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     return () => {
       cancelled = true;
       unsubscribe();
-      void window.electronAPI.unwatchTaskLogs(task.specId);
+      void window.electronAPI.unwatchTaskLogs(task.specId, task.projectId);
     };
   }, [task.projectId, task.specId, activeTab]);
 
@@ -490,15 +485,13 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
 
       // Reload task data from store to reflect cleared staged state
       // (clearStagedState IPC already invalidated the cache)
-      if (currentProject) {
-        await loadTasks(currentProject.id);
-      }
+      await loadTasks(task.projectId);
     } catch (err) {
       console.error('Failed to reload worktree info:', err);
     } finally {
       setIsLoadingWorktree(false);
     }
-  }, [task.id, task.projectId, currentProject]);
+  }, [task.id, task.projectId]);
 
   // NOTE: Merge preview is NO LONGER auto-loaded on modal open.
   // User must click "Check for Conflicts" button to trigger the expensive preview operation.
@@ -509,8 +502,8 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
    * This prevents the "Task Incomplete" infinite loop when resuming stuck tasks.
    */
   const reloadPlanForIncompleteTask = useCallback(async (): Promise<boolean> => {
-    if (!currentProject) {
-      console.error('[reloadPlanForIncompleteTask] No current project');
+    if (!taskProject) {
+      console.error('[reloadPlanForIncompleteTask] Task project not found');
       return false;
     }
 
@@ -534,7 +527,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     setIsLoadingPlan(true);
     try {
       // Reload tasks from the project to get fresh implementation plan
-      const result = await window.electronAPI.getTasks(currentProject.id);
+      const result = await window.electronAPI.getTasks(task.projectId);
 
       if (!result.success || !result.data) {
         console.error('[reloadPlanForIncompleteTask] Failed to reload tasks:', result.error);
@@ -568,7 +561,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
         description: updatedTask.description,
         metadata: updatedTask.metadata,
         updatedAt: new Date()
-      });
+      }, task.projectId);
 
       return true;
     } catch (err) {
@@ -577,7 +570,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     } finally {
       setIsLoadingPlan(false);
     }
-  }, [currentProject, task, isIncomplete]);
+  }, [taskProject, task, isIncomplete]);
 
   return {
     // State
@@ -613,7 +606,7 @@ export function useTaskDetail({ task }: UseTaskDetailOptions) {
     expandedPhases,
     logsEndRef,
     logsContainerRef,
-    selectedProject: currentProject,
+    selectedProject: taskProject,
     isRunning,
     needsReview,
     executionPhase,

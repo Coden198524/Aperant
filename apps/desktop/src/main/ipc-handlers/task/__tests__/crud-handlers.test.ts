@@ -232,6 +232,37 @@ describe('registerTaskCRUDHandlers', () => {
     expect(updatePlanFile).not.toHaveBeenCalled();
   });
 
+  it('scopes task deletion lookup and running checks by projectId', async () => {
+    const { findTaskAndProject } = await import('../shared');
+    const { findAllSpecPaths } = await import('../../../utils/spec-path-helpers');
+
+    (findTaskAndProject as Mock).mockReturnValue({ task, project });
+    mockAgentManager.isRunning.mockReturnValue(true);
+
+    const deleteHandler = handleHandlers[IPC_CHANNELS.TASK_DELETE];
+    const result = await deleteHandler({}, task.id, project.id);
+
+    expect(findTaskAndProject).toHaveBeenCalledWith(task.id, project.id);
+    expect(mockAgentManager.isRunning).toHaveBeenCalledWith(task.id, project.id);
+    expect(findAllSpecPaths).not.toHaveBeenCalled();
+    expect(result).toEqual({
+      success: false,
+      error: 'Cannot delete a running task. Stop the task first.',
+    });
+  });
+
+  it('scopes task update lookup by projectId', async () => {
+    const { findTaskAndProject } = await import('../shared');
+
+    (findTaskAndProject as Mock).mockReturnValue({ task: undefined, project: undefined });
+
+    const updateHandler = handleHandlers[IPC_CHANNELS.TASK_UPDATE];
+    const result = await updateHandler({}, task.id, { title: 'Updated' }, project.id);
+
+    expect(findTaskAndProject).toHaveBeenCalledWith(task.id, project.id);
+    expect(result).toEqual({ success: false, error: 'Task not found' });
+  });
+
   it('passes the app language to generated task titles', async () => {
     const { projectStore } = await import('../../../project-store');
     const { titleGenerator } = await import('../../../title-generator');

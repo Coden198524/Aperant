@@ -4,6 +4,8 @@ import type { GitHubIssue } from '../../../shared/types';
 export type IssueFilterState = 'open' | 'closed' | 'all';
 
 interface IssuesState {
+  currentProjectId: string | null;
+
   // Data
   issues: GitHubIssue[];
 
@@ -19,6 +21,7 @@ interface IssuesState {
   hasMore: boolean;
 
   // Actions
+  setCurrentProjectId: (projectId: string | null) => void;
   setIssues: (issues: GitHubIssue[]) => void;
   appendIssues: (issues: GitHubIssue[]) => void;
   addIssue: (issue: GitHubIssue) => void;
@@ -41,6 +44,7 @@ interface IssuesState {
 
 export const useIssuesStore = create<IssuesState>((set, get) => ({
   // Initial state
+  currentProjectId: null,
   issues: [],
   isLoading: false,
   isLoadingMore: false,
@@ -51,6 +55,24 @@ export const useIssuesStore = create<IssuesState>((set, get) => ({
   hasMore: true,
 
   // Actions
+  setCurrentProjectId: (projectId) =>
+    set((state) => {
+      if (state.currentProjectId === projectId) {
+        return { currentProjectId: projectId };
+      }
+
+      return {
+        currentProjectId: projectId,
+        issues: [],
+        isLoading: false,
+        isLoadingMore: false,
+        error: null,
+        selectedIssueNumber: null,
+        currentPage: 1,
+        hasMore: true
+      };
+    }),
+
   setIssues: (issues) => set({ issues, error: null }),
 
   appendIssues: (newIssues) => set((state) => {
@@ -118,6 +140,26 @@ export const useIssuesStore = create<IssuesState>((set, get) => ({
   }
 }));
 
+let githubIssuesLoadRequestSeq = 0;
+let githubIssuesLoadMoreRequestSeq = 0;
+let githubIssuesImportRequestSeq = 0;
+
+function beginGitHubIssuesProjectScope(projectId: string): void {
+  const store = useIssuesStore.getState();
+  if (store.currentProjectId !== projectId) {
+    store.setCurrentProjectId(projectId);
+  }
+}
+
+function isCurrentGitHubIssuesRequest(
+  projectId: string,
+  requestSeq: number,
+  getLatestRequestSeq: () => number
+): boolean {
+  const state = useIssuesStore.getState();
+  return state.currentProjectId === projectId && getLatestRequestSeq() === requestSeq;
+}
+
 // Action functions for use outside of React components
 
 /**
@@ -131,6 +173,8 @@ export async function loadGitHubIssues(
   state?: IssueFilterState,
   fetchAll: boolean = false
 ): Promise<void> {
+  beginGitHubIssuesProjectScope(projectId);
+  const requestSeq = ++githubIssuesLoadRequestSeq;
   const store = useIssuesStore.getState();
   store.setLoading(true);
   store.setError(null);
@@ -138,6 +182,8 @@ export async function loadGitHubIssues(
 
   try {
     const result = await window.electronAPI.getGitHubIssues(projectId, state, 1, fetchAll);
+    if (!isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesLoadRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setIssues(result.data.issues);
       store.setHasMore(result.data.hasMore);
@@ -146,9 +192,12 @@ export async function loadGitHubIssues(
       store.setError(result.error || 'Failed to load GitHub issues');
     }
   } catch (error) {
+    if (!isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesLoadRequestSeq)) return;
     store.setError(error instanceof Error ? error.message : 'Unknown error');
   } finally {
-    store.setLoading(false);
+    if (isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesLoadRequestSeq)) {
+      store.setLoading(false);
+    }
   }
 }
 
@@ -159,6 +208,8 @@ export async function loadMoreGitHubIssues(
   projectId: string,
   state?: IssueFilterState
 ): Promise<void> {
+  beginGitHubIssuesProjectScope(projectId);
+  const requestSeq = ++githubIssuesLoadMoreRequestSeq;
   const store = useIssuesStore.getState();
 
   // Don't load more if already loading or no more to load
@@ -178,7 +229,11 @@ export async function loadMoreGitHubIssues(
     // Verify filter state hasn't changed during the async operation
     // This prevents appending stale data from a different filter
     const currentState = useIssuesStore.getState();
-    if (currentState.filterState !== originalFilterState) {
+    if (
+      currentState.currentProjectId !== projectId ||
+      currentState.filterState !== originalFilterState ||
+      githubIssuesLoadMoreRequestSeq !== requestSeq
+    ) {
       // Filter changed while loading - discard results
       return;
     }
@@ -191,9 +246,12 @@ export async function loadMoreGitHubIssues(
       store.setError(result.error || 'Failed to load more issues');
     }
   } catch (error) {
+    if (!isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesLoadMoreRequestSeq)) return;
     store.setError(error instanceof Error ? error.message : 'Unknown error');
   } finally {
-    store.setLoadingMore(false);
+    if (isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesLoadMoreRequestSeq)) {
+      store.setLoadingMore(false);
+    }
   }
 }
 
@@ -212,11 +270,15 @@ export async function importGitHubIssues(
   projectId: string,
   issueNumbers: number[]
 ): Promise<boolean> {
+  beginGitHubIssuesProjectScope(projectId);
+  const requestSeq = ++githubIssuesImportRequestSeq;
   const store = useIssuesStore.getState();
   store.setLoading(true);
 
   try {
     const result = await window.electronAPI.importGitHubIssues(projectId, issueNumbers);
+    if (!isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesImportRequestSeq)) return false;
+
     if (result.success) {
       return true;
     } else {
@@ -224,9 +286,12 @@ export async function importGitHubIssues(
       return false;
     }
   } catch (error) {
+    if (!isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesImportRequestSeq)) return false;
     store.setError(error instanceof Error ? error.message : 'Unknown error');
     return false;
   } finally {
-    store.setLoading(false);
+    if (isCurrentGitHubIssuesRequest(projectId, requestSeq, () => githubIssuesImportRequestSeq)) {
+      store.setLoading(false);
+    }
   }
 }

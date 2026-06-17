@@ -7,6 +7,8 @@ import type {
 } from '../../shared/types';
 
 interface ReleaseState {
+  currentProjectId: string | null;
+
   // Available versions from CHANGELOG.md
   releaseableVersions: ReleaseableVersion[];
   isLoadingVersions: boolean;
@@ -31,6 +33,7 @@ interface ReleaseState {
   error: string | null;
 
   // Actions
+  setCurrentProjectId: (projectId: string | null) => void;
   setReleaseableVersions: (versions: ReleaseableVersion[]) => void;
   setIsLoadingVersions: (loading: boolean) => void;
   setSelectedVersion: (version: string | null) => void;
@@ -46,6 +49,7 @@ interface ReleaseState {
 }
 
 const initialState = {
+  currentProjectId: null as string | null,
   releaseableVersions: [],
   isLoadingVersions: false,
   selectedVersion: null,
@@ -61,6 +65,26 @@ const initialState = {
 
 export const useReleaseStore = create<ReleaseState>((set) => ({
   ...initialState,
+
+  setCurrentProjectId: (projectId) =>
+    set((state) => {
+      if (state.currentProjectId === projectId) {
+        return { currentProjectId: projectId };
+      }
+
+      return {
+        currentProjectId: projectId,
+        releaseableVersions: [],
+        isLoadingVersions: false,
+        selectedVersion: null,
+        preflightStatus: null,
+        isRunningPreflight: false,
+        releaseProgress: null,
+        isCreatingRelease: false,
+        lastReleaseResult: null,
+        error: null
+      };
+    }),
 
   setReleaseableVersions: (versions) => set({ releaseableVersions: versions }),
   setIsLoadingVersions: (loading) => set({ isLoadingVersions: loading }),
@@ -81,6 +105,25 @@ export const useReleaseStore = create<ReleaseState>((set) => ({
   reset: () => set(initialState)
 }));
 
+let releaseVersionsRequestSeq = 0;
+let releasePreflightRequestSeq = 0;
+
+function beginReleaseProjectScope(projectId: string): void {
+  const store = useReleaseStore.getState();
+  if (store.currentProjectId !== projectId) {
+    store.setCurrentProjectId(projectId);
+  }
+}
+
+function isCurrentReleaseRequest(
+  projectId: string,
+  requestSeq: number,
+  getLatestRequestSeq: () => number
+): boolean {
+  const state = useReleaseStore.getState();
+  return state.currentProjectId === projectId && getLatestRequestSeq() === requestSeq;
+}
+
 // ============================================
 // Helper functions for loading and actions
 // ============================================
@@ -89,17 +132,21 @@ export const useReleaseStore = create<ReleaseState>((set) => ({
  * Load releaseable versions from CHANGELOG.md
  */
 export async function loadReleaseableVersions(projectId: string): Promise<void> {
+  beginReleaseProjectScope(projectId);
+  const requestSeq = ++releaseVersionsRequestSeq;
   const store = useReleaseStore.getState();
   store.setIsLoadingVersions(true);
   store.setError(null);
 
   try {
     const result = await window.electronAPI.getReleaseableVersions(projectId);
+    if (!isCurrentReleaseRequest(projectId, requestSeq, () => releaseVersionsRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setReleaseableVersions(result.data);
 
       // Auto-select first unreleased version if none selected
-      if (!store.selectedVersion) {
+      if (!useReleaseStore.getState().selectedVersion) {
         const firstUnreleased = result.data.find((v: ReleaseableVersion) => !v.isReleased);
         if (firstUnreleased) {
           store.setSelectedVersion(firstUnreleased.version);
@@ -109,9 +156,12 @@ export async function loadReleaseableVersions(projectId: string): Promise<void> 
       store.setError(result.error || 'Failed to load versions');
     }
   } catch (error) {
+    if (!isCurrentReleaseRequest(projectId, requestSeq, () => releaseVersionsRequestSeq)) return;
     store.setError(error instanceof Error ? error.message : 'Failed to load versions');
   } finally {
-    store.setIsLoadingVersions(false);
+    if (isCurrentReleaseRequest(projectId, requestSeq, () => releaseVersionsRequestSeq)) {
+      store.setIsLoadingVersions(false);
+    }
   }
 }
 
@@ -119,6 +169,8 @@ export async function loadReleaseableVersions(projectId: string): Promise<void> 
  * Run pre-flight checks for the selected version
  */
 export async function runPreflightCheck(projectId: string): Promise<void> {
+  beginReleaseProjectScope(projectId);
+  const requestSeq = ++releasePreflightRequestSeq;
   const store = useReleaseStore.getState();
   const version = store.selectedVersion;
 
@@ -132,15 +184,20 @@ export async function runPreflightCheck(projectId: string): Promise<void> {
 
   try {
     const result = await window.electronAPI.runReleasePreflightCheck(projectId, version);
+    if (!isCurrentReleaseRequest(projectId, requestSeq, () => releasePreflightRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setPreflightStatus(result.data);
     } else {
       store.setError(result.error || 'Failed to run pre-flight checks');
     }
   } catch (error) {
+    if (!isCurrentReleaseRequest(projectId, requestSeq, () => releasePreflightRequestSeq)) return;
     store.setError(error instanceof Error ? error.message : 'Failed to run pre-flight checks');
   } finally {
-    store.setIsRunningPreflight(false);
+    if (isCurrentReleaseRequest(projectId, requestSeq, () => releasePreflightRequestSeq)) {
+      store.setIsRunningPreflight(false);
+    }
   }
 }
 
@@ -148,6 +205,7 @@ export async function runPreflightCheck(projectId: string): Promise<void> {
  * Create a GitHub release
  */
 export function createRelease(projectId: string): void {
+  beginReleaseProjectScope(projectId);
   const store = useReleaseStore.getState();
   const version = store.selectedVersion;
 

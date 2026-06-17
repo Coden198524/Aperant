@@ -31,6 +31,10 @@ const TERMINAL_EVENTS = new Set<string>([
   'ALL_SUBTASKS_DONE'
 ]);
 
+function getTaskStateKey(taskId: string, projectId?: string): string {
+  return projectId ? `${projectId}::${taskId}` : taskId;
+}
+
 export class TaskStateManager {
   private actors = new Map<string, TaskActor>();
   private lastSequenceByTask = new Map<string, number>();
@@ -44,21 +48,22 @@ export class TaskStateManager {
   }
 
   handleTaskEvent(taskId: string, event: TaskEventPayload, task: Task, project: Project): boolean {
-    const lastSeq = this.lastSequenceByTask.get(taskId);
+    const stateKey = getTaskStateKey(taskId, project.id);
+    const lastSeq = this.lastSequenceByTask.get(stateKey);
     console.debug(`[TaskStateManager] handleTaskEvent: ${event.type} seq=${event.sequence}, lastSeq=${lastSeq}`);
 
-    if (!this.isNewSequence(taskId, event.sequence)) {
+    if (!this.isNewSequence(stateKey, event.sequence)) {
       console.debug(`[TaskStateManager] Event ${event.type} DROPPED - sequence ${event.sequence} not newer than ${lastSeq}`);
       return false;
     }
-    this.setTaskContext(taskId, task, project);
-    this.lastSequenceByTask.set(taskId, event.sequence);
+    this.setTaskContext(stateKey, task, project);
+    this.lastSequenceByTask.set(stateKey, event.sequence);
 
     if (TERMINAL_EVENTS.has(event.type)) {
-      this.terminalEventSeen.add(taskId);
+      this.terminalEventSeen.add(stateKey);
     }
 
-    const actor = this.getOrCreateActor(taskId);
+    const actor = this.getOrCreateActor(stateKey, taskId);
     const stateBefore = String(actor.getSnapshot().value);
     console.debug(`[TaskStateManager] Sending ${event.type} to actor in state: ${stateBefore}`);
     actor.send(event as TaskEvent);
@@ -73,13 +78,14 @@ export class TaskStateManager {
     task?: Task,
     project?: Project
   ): void {
+    const stateKey = getTaskStateKey(taskId, project?.id);
     if (task && project) {
-      this.setTaskContext(taskId, task, project);
+      this.setTaskContext(stateKey, task, project);
     }
-    if (this.terminalEventSeen.has(taskId)) {
+    if (this.terminalEventSeen.has(stateKey)) {
       return;
     }
-    const actor = this.getOrCreateActor(taskId);
+    const actor = this.getOrCreateActor(stateKey, taskId);
     // Only mark as unexpected if the process exited with a non-zero code.
     // A code-0 exit is normal (e.g., spec creation finished, plan created, waiting for review).
     // Sending unexpected:true for code-0 exits incorrectly transitions plan_review → error.
@@ -92,9 +98,10 @@ export class TaskStateManager {
   }
 
   handleUiEvent(taskId: string, event: TaskEvent, task: Task, project: Project): void {
+    const stateKey = getTaskStateKey(taskId, project.id);
     console.debug(`[TaskStateManager] handleUiEvent: ${event.type} for task ${taskId}`);
-    this.setTaskContext(taskId, task, project);
-    const actor = this.getOrCreateActor(taskId);
+    this.setTaskContext(stateKey, task, project);
+    const actor = this.getOrCreateActor(stateKey, taskId);
     const stateBefore = String(actor.getSnapshot().value);
     console.debug(`[TaskStateManager] Sending UI event ${event.type} to actor in state: ${stateBefore}`);
     actor.send(event);
@@ -103,7 +110,7 @@ export class TaskStateManager {
   }
 
   handleManualStatusChange(taskId: string, status: TaskStatus, task: Task, project: Project): boolean {
-    const currentState = this.getCurrentState(taskId);
+    const currentState = this.getCurrentState(taskId, project.id);
     const isTerminalDoneLike = (
       currentState === 'done' ||
       currentState === 'pr_created' ||
@@ -193,20 +200,35 @@ export class TaskStateManager {
     }
   }
 
-  setLastSequence(taskId: string, sequence: number): void {
-    this.lastSequenceByTask.set(taskId, sequence);
+  setLastSequence(taskId: string, sequence: number, projectId?: string): void {
+    this.lastSequenceByTask.set(getTaskStateKey(taskId, projectId), sequence);
   }
 
-  getLastSequence(taskId: string): number | undefined {
-    return this.lastSequenceByTask.get(taskId);
+  getLastSequence(taskId: string, projectId?: string): number | undefined {
+    const exact = this.lastSequenceByTask.get(getTaskStateKey(taskId, projectId));
+    if (exact !== undefined || projectId) {
+      return exact;
+    }
+
+    const matches = this.getMatchingStateKeys(taskId)
+      .map((stateKey) => this.lastSequenceByTask.get(stateKey))
+      .filter((value): value is number => value !== undefined);
+    return matches.length === 1 ? matches[0] : undefined;
   }
 
   /**
    * Get the current XState state for a task.
    * Returns undefined if no actor exists for the task.
    */
-  getCurrentState(taskId: string): string | undefined {
-    const actor = this.actors.get(taskId);
+  getCurrentState(taskId: string, projectId?: string): string | undefined {
+    const exactKey = getTaskStateKey(taskId, projectId);
+    let actor = this.actors.get(exactKey);
+    if (!actor && !projectId) {
+      const matches = this.getMatchingStateKeys(taskId)
+        .map((stateKey) => this.actors.get(stateKey))
+        .filter((value): value is TaskActor => Boolean(value));
+      actor = matches.length === 1 ? matches[0] : undefined;
+    }
     if (!actor) {
       return undefined;
     }
@@ -217,8 +239,8 @@ export class TaskStateManager {
    * Check if the task is currently in plan_review state.
    * Used by TASK_START to determine correct event to send.
    */
-  isInPlanReview(taskId: string): boolean {
-    return this.getCurrentState(taskId) === 'plan_review';
+  isInPlanReview(taskId: string, projectId?: string): boolean {
+    return this.getCurrentState(taskId, projectId) === 'plan_review';
   }
 
   /**
@@ -228,20 +250,24 @@ export class TaskStateManager {
    * as duplicates). Does NOT stop or remove the XState actor, since
    * the caller may still need to send events to it.
    */
-  prepareForRestart(taskId: string): void {
-    this.terminalEventSeen.delete(taskId);
-    this.lastSequenceByTask.delete(taskId);
+  prepareForRestart(taskId: string, projectId?: string): void {
+    for (const stateKey of this.getMatchingStateKeys(taskId, projectId)) {
+      this.terminalEventSeen.delete(stateKey);
+      this.lastSequenceByTask.delete(stateKey);
+    }
   }
 
-  clearTask(taskId: string): void {
-    this.lastSequenceByTask.delete(taskId);
-    this.lastStateByTask.delete(taskId);
-    this.terminalEventSeen.delete(taskId);
-    this.taskContextById.delete(taskId);
-    const actor = this.actors.get(taskId);
-    if (actor) {
-      actor.stop();
-      this.actors.delete(taskId);
+  clearTask(taskId: string, projectId?: string): void {
+    for (const stateKey of this.getMatchingStateKeys(taskId, projectId)) {
+      this.lastSequenceByTask.delete(stateKey);
+      this.lastStateByTask.delete(stateKey);
+      this.terminalEventSeen.delete(stateKey);
+      this.taskContextById.delete(stateKey);
+      const actor = this.actors.get(stateKey);
+      if (actor) {
+        actor.stop();
+        this.actors.delete(stateKey);
+      }
     }
   }
 
@@ -267,24 +293,46 @@ export class TaskStateManager {
     console.log('[TaskStateManager] Cleared task actors and state for refresh (preserved sequence tracking)');
   }
 
-  private setTaskContext(taskId: string, task: Task, project: Project): void {
-    this.taskContextById.set(taskId, { task, project });
+  private getMatchingStateKeys(taskId: string, projectId?: string): string[] {
+    if (projectId) {
+      return [getTaskStateKey(taskId, projectId)];
+    }
+
+    const scopedSuffix = `::${taskId}`;
+    const keys = new Set<string>([taskId]);
+    for (const key of [
+      ...this.actors.keys(),
+      ...this.lastSequenceByTask.keys(),
+      ...this.lastStateByTask.keys(),
+      ...this.taskContextById.keys(),
+      ...this.terminalEventSeen.values(),
+    ]) {
+      if (key === taskId || key.endsWith(scopedSuffix)) {
+        keys.add(key);
+      }
+    }
+    return [...keys];
+  }
+
+  private setTaskContext(stateKey: string, task: Task, project: Project): void {
+    this.taskContextById.set(stateKey, { task, project });
   }
 
   private reinitializeActorForTask(taskId: string, task: Task, project: Project): void {
-    this.clearTask(taskId);
-    this.setTaskContext(taskId, task, project);
-    this.getOrCreateActor(taskId);
+    const stateKey = getTaskStateKey(taskId, project.id);
+    this.clearTask(taskId, project.id);
+    this.setTaskContext(stateKey, task, project);
+    this.getOrCreateActor(stateKey, taskId);
   }
 
-  private getOrCreateActor(taskId: string): TaskActor {
-    const existing = this.actors.get(taskId);
+  private getOrCreateActor(stateKey: string, taskId: string): TaskActor {
+    const existing = this.actors.get(stateKey);
     if (existing) {
       console.debug(`[TaskStateManager] Using existing actor for ${taskId}, current state:`, String(existing.getSnapshot().value));
       return existing;
     }
 
-    const contextEntry = this.taskContextById.get(taskId);
+    const contextEntry = this.taskContextById.get(stateKey);
     const snapshot = contextEntry
       ? this.buildSnapshotFromTask(contextEntry.task)
       : undefined;
@@ -305,7 +353,7 @@ export class TaskStateManager {
       : createActor(taskMachine);
     actor.subscribe((snapshot) => {
       const stateValue = String(snapshot.value);
-      const lastState = this.lastStateByTask.get(taskId);
+      const lastState = this.lastStateByTask.get(stateKey);
 
       console.debug(`[TaskStateManager] XState transition for ${taskId}:`, {
         from: lastState,
@@ -316,9 +364,9 @@ export class TaskStateManager {
       if (lastState === stateValue) {
         return;
       }
-      this.lastStateByTask.set(taskId, stateValue);
+      this.lastStateByTask.set(stateKey, stateValue);
 
-      const contextEntry = this.taskContextById.get(taskId);
+      const contextEntry = this.taskContextById.get(stateKey);
       if (!contextEntry) {
         console.debug(`[TaskStateManager] No context for task ${taskId} during state transition to ${stateValue} - skipping emit (may occur after clearTask during event processing)`);
         return;
@@ -345,11 +393,11 @@ export class TaskStateManager {
       });
 
       this.persistStatus(task, project, status, reviewReason, stateValue, executionPhase);
-      this.emitStatus(taskId, status, reviewReason, project.id, executionPhase);
+      this.emitStatus(stateKey, taskId, status, reviewReason, project.id, executionPhase);
     });
 
     actor.start();
-    this.actors.set(taskId, actor);
+    this.actors.set(stateKey, actor);
     return actor;
   }
 
@@ -387,6 +435,7 @@ export class TaskStateManager {
   }
 
   private emitStatus(
+    stateKey: string,
     taskId: string,
     status: TaskStatus,
     reviewReason: ReviewReason | undefined,
@@ -409,7 +458,7 @@ export class TaskStateManager {
 
     // Also emit execution progress to update the phase in the UI
     // XState transitions (planning → coding → qa_review) need to update the phase badge
-    const actor = this.actors.get(taskId);
+    const actor = this.actors.get(stateKey);
     if (actor) {
       const xstateState = String(actor.getSnapshot().value);
       const executionPhase = executionPhaseOverride ?? this.mapStateToExecutionPhase(xstateState);

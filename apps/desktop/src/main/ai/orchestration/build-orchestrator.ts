@@ -653,7 +653,7 @@ export class BuildOrchestrator extends EventEmitter {
       requireSpecEvidence: true,
       requireRequirementsEvidence: true,
       requireTaskEvidence: true,
-      requireContextEvidence: true,
+      requireContextEvidence: Boolean(contextMarkdown),
     });
     return result.errors;
   }

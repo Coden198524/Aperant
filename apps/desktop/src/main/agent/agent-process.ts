@@ -64,6 +64,10 @@ const CLI_TOOL_ENV_MAP: Readonly<Record<CliTool, string>> = {
 
 const WORKSPACE_CLAIM_PENDING_SETUP_STALE_MS = 60_000;
 
+function getScopedProcessKey(taskId: string, projectId?: string): string {
+  return projectId ? `${projectId}::${taskId}` : taskId;
+}
+
 function deriveGitBashPath(gitExePath: string): string | null {
   if (!isWindows()) {
     return null;
@@ -133,14 +137,15 @@ export class AgentProcessManager {
     this.emitter = emitter;
   }
 
-  private deleteTrackedProcess(taskId: string): boolean {
-    const agentProcess = this.state.getProcess(taskId);
+  private deleteTrackedProcess(taskId: string, projectId?: string): boolean {
+    const processKey = getScopedProcessKey(taskId, projectId);
+    const agentProcess = this.state.getProcess(processKey);
     if (agentProcess?.workspaceClaimId) {
       autocodeRuntimeWorkspaceClaims.release(agentProcess.workspaceClaimId);
     } else {
-      autocodeRuntimeWorkspaceClaims.releaseByTask(taskId);
+      autocodeRuntimeWorkspaceClaims.releaseByTask(taskId, projectId);
     }
-    return this.state.deleteProcess(taskId);
+    return this.state.deleteProcess(processKey);
   }
 
   private async waitForRuntimeWorkspaceClaim(
@@ -154,17 +159,18 @@ export class AgentProcessManager {
       return null;
     }
 
+    const processKey = getScopedProcessKey(taskId, projectId);
     const RETRY_MS = 1000;
     let conflictNoticeEmitted = false;
 
     while (true) {
-      if (this.state.wasSpawnKilled(spawnId) || !this.state.getProcess(taskId)) {
+      if (this.state.wasSpawnKilled(spawnId) || !this.state.getProcess(processKey)) {
         return null;
       }
 
       const result = autocodeRuntimeWorkspaceClaims.tryClaim(input);
       if (result.ok) {
-        this.state.updateProcess(taskId, {
+        this.state.updateProcess(processKey, {
           workspaceClaimId: result.claim.id,
           workspaceClaim: result.claim,
           workspaceClaimStatus: 'claimed',
@@ -176,7 +182,7 @@ export class AgentProcessManager {
         continue;
       }
 
-      this.state.updateProcess(taskId, { workspaceClaimStatus: 'pending' });
+      this.state.updateProcess(processKey, { workspaceClaimStatus: 'pending' });
       if (!conflictNoticeEmitted) {
         this.emitter.emit('execution-progress', taskId, {
           phase: getAutocodeInitialPhaseForProcess(processType),
@@ -192,7 +198,9 @@ export class AgentProcessManager {
   }
 
   private releaseStaleWorkspaceConflict(conflict: AutocodeRuntimeWorkspaceConflict): boolean {
-    const activeProcess = this.state.getProcess(conflict.activeClaim.taskId);
+    const activeProcess = this.state.getProcess(
+      getScopedProcessKey(conflict.activeClaim.taskId, conflict.activeClaim.projectId),
+    );
     if (!activeProcess) {
       return autocodeRuntimeWorkspaceClaims.release(conflict.activeClaim.id);
     }
@@ -421,7 +429,8 @@ export class AgentProcessManager {
   private handleProcessFailure(
     taskId: string,
     allOutput: string,
-    processType: ProcessType
+    processType: ProcessType,
+    projectId?: string,
   ): boolean {
     console.log('[AgentProcess] Checking for rate limit in output (last 500 chars):', allOutput.slice(-500));
 
@@ -438,7 +447,8 @@ export class AgentProcessManager {
       const wasHandled = this.handleRateLimitWithAutoSwap(
         taskId,
         rateLimitDetection,
-        processType
+        processType,
+        projectId,
       );
       if (wasHandled) return true;
 
@@ -449,13 +459,14 @@ export class AgentProcessManager {
       return true;
     }
 
-    return this.handleAuthFailure(taskId, allOutput);
+    return this.handleAuthFailure(taskId, allOutput, projectId);
   }
 
   private handleRateLimitWithAutoSwap(
     taskId: string,
     rateLimitDetection: ReturnType<typeof detectRateLimit>,
-    processType: ProcessType
+    processType: ProcessType,
+    projectId?: string,
   ): boolean {
     const profileManager = getClaudeProfileManager();
     const autoSwitchSettings = profileManager.getAutoSwitchSettings();
@@ -501,11 +512,11 @@ export class AgentProcessManager {
     this.emitter.emit('sdk-rate-limit', rateLimitInfo);
 
     console.log('[AgentProcess] Emitting auto-swap-restart-task event for task:', taskId);
-    this.emitter.emit('auto-swap-restart-task', taskId, bestProfile.id);
+    this.emitter.emit('auto-swap-restart-task', taskId, bestProfile.id, projectId);
     return true;
   }
 
-  private handleAuthFailure(taskId: string, allOutput: string): boolean {
+  private handleAuthFailure(taskId: string, allOutput: string, projectId?: string): boolean {
     console.log('[AgentProcess] No rate limit detected - checking for auth failure');
     const authFailureDetection = detectAuthFailure(allOutput);
 
@@ -517,7 +528,7 @@ export class AgentProcessManager {
     console.log('[AgentProcess] Auth failure detected:', authFailureDetection);
 
     // Try auto-swap if enabled
-    const wasHandled = this.handleAuthFailureWithAutoSwap(taskId, authFailureDetection);
+    const wasHandled = this.handleAuthFailureWithAutoSwap(taskId, authFailureDetection, projectId);
 
     if (!wasHandled) {
       // Fall back to UI notification
@@ -539,7 +550,8 @@ export class AgentProcessManager {
    */
   private handleAuthFailureWithAutoSwap(
     taskId: string,
-    authFailureDetection: ReturnType<typeof detectAuthFailure>
+    authFailureDetection: ReturnType<typeof detectAuthFailure>,
+    projectId?: string,
   ): boolean {
     const profileManager = getClaudeProfileManager();
     const autoSwitchSettings = profileManager.getAutoSwitchSettings();
@@ -585,7 +597,7 @@ export class AgentProcessManager {
 
     // Reuse existing restart event
     console.log('[AgentProcess] Emitting auto-swap-restart-task event for auth failure:', taskId);
-    this.emitter.emit('auto-swap-restart-task', taskId, bestProfile.id);
+    this.emitter.emit('auto-swap-restart-task', taskId, bestProfile.id, projectId);
     return true;
   }
 
@@ -707,7 +719,8 @@ export class AgentProcessManager {
     workspaceClaim?: AutocodeRuntimeWorkspaceClaimInput | false,
   ): Promise<void> {
     const isSpecRunner = processType === 'spec-creation';
-    this.killProcess(taskId);
+    const processKey = getScopedProcessKey(taskId, projectId);
+    this.killProcess(taskId, projectId);
 
     const spawnId = this.state.generateSpawnId();
 
@@ -715,8 +728,9 @@ export class AgentProcessManager {
     // This ensures getRunningTasks() returns the task right away, preventing
     // flaky tests on slower Windows CI where async setup may take longer than
     // vi.waitFor timeout (ACS-392).
-    this.state.addProcess(taskId, {
+    this.state.addProcess(processKey, {
       taskId,
+      projectId,
       process: null, // Will be set after spawn() call completes below
       startedAt: new Date(),
       spawnId,
@@ -726,7 +740,7 @@ export class AgentProcessManager {
     if (workspaceClaim) {
       const claim = await this.waitForRuntimeWorkspaceClaim(taskId, workspaceClaim, spawnId, processType, projectId);
       if (!claim) {
-        this.deleteTrackedProcess(taskId);
+        this.deleteTrackedProcess(taskId, projectId);
         this.state.clearKilledSpawn(spawnId);
         return;
       }
@@ -778,13 +792,13 @@ export class AgentProcessManager {
     } catch (err) {
       // spawn() failed synchronously (e.g., command not found, permission denied)
       // Clean up tracking entry and propagate error
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       this.emitter.emit('error', taskId, err instanceof Error ? err.message : String(err), projectId);
       throw err;
     }
 
     // Update the tracked process with the actual spawned ChildProcess
-    this.state.updateProcess(taskId, { process: childProcess });
+    this.state.updateProcess(processKey, { process: childProcess });
 
     // Check if this spawn was killed during async setup (before spawn() completed).
     // If so, terminate the newly created process immediately to prevent orphaned processes.
@@ -795,14 +809,14 @@ export class AgentProcessManager {
     // was called during the async setup window, the taskId entry may have been deleted
     // from the process map. In that case, getProcess(taskId) returns undefined, so we
     // fall back to the local spawnId variable to check if this specific spawn was killed.
-    const currentSpawnId = this.state.getProcess(taskId)?.spawnId ?? spawnId;
+    const currentSpawnId = this.state.getProcess(processKey)?.spawnId ?? spawnId;
     if (this.state.wasSpawnKilled(currentSpawnId)) {
       console.log(`[AgentProcess] Task ${taskId} was killed during spawn setup. Terminating newly created process.`);
       killProcessGracefully(childProcess, {
         debugPrefix: '[AgentProcess]',
         debug: process.env.DEBUG === 'true' || process.env.NODE_ENV === 'development'
       });
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       this.state.clearKilledSpawn(currentSpawnId);
       return; // Do not proceed with this spawn
     }
@@ -968,7 +982,7 @@ export class AgentProcessManager {
         processLog(stderrBuffer);
       }
 
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
 
       if (this.state.wasSpawnKilled(spawnId)) {
         this.state.clearKilledSpawn(spawnId);
@@ -977,7 +991,7 @@ export class AgentProcessManager {
 
       if (code !== 0) {
         console.log('[AgentProcess] Process failed with code:', code, 'for task:', taskId);
-        const wasHandled = this.handleProcessFailure(taskId, allOutput, processType);
+        const wasHandled = this.handleProcessFailure(taskId, allOutput, processType, projectId);
 
         if (wasHandled) {
           this.emitter.emit('exit', taskId, code, processType, projectId);
@@ -1003,7 +1017,7 @@ export class AgentProcessManager {
     // Handle process error
     childProcess.on('error', (err: Error) => {
       console.error('[AgentProcess] Process error:', err.message);
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
 
       this.emitter.emit('execution-progress', taskId, {
         phase: 'failed',
@@ -1036,13 +1050,15 @@ export class AgentProcessManager {
     processType: ProcessType = 'task-execution',
     projectId?: string
   ): Promise<void> {
-    this.killProcess(taskId);
+    const processKey = getScopedProcessKey(taskId, projectId);
+    this.killProcess(taskId, projectId);
 
     const spawnId = this.state.generateSpawnId();
 
     // Add to tracking immediately (same pattern as spawnProcess)
-    this.state.addProcess(taskId, {
+    this.state.addProcess(processKey, {
       taskId,
+      projectId,
       process: null, // No ChildProcess for worker threads
       startedAt: new Date(),
       spawnId,
@@ -1059,14 +1075,14 @@ export class AgentProcessManager {
     });
     const claim = await this.waitForRuntimeWorkspaceClaim(taskId, pendingStartPlan.workspaceClaim, spawnId, processType, projectId);
     if (pendingStartPlan.workspaceClaim && !claim) {
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       this.state.clearKilledSpawn(spawnId);
       return;
     }
 
     // Check if killed during setup
     if (this.state.wasSpawnKilled(spawnId)) {
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       this.state.clearKilledSpawn(spawnId);
       return;
     }
@@ -1077,35 +1093,36 @@ export class AgentProcessManager {
 
     // Forward all bridge events to the main emitter (matching existing event contract)
     bridge.on('log', (tId: string, log: string, pId?: string) => {
-      this.emitter.emit('log', tId, log, pId);
+      this.emitter.emit('log', tId, log, pId ?? projectId);
       if (isDebug) {
         console.log(`[Agent:${tId}] ${log}`);
       }
     });
 
     bridge.on('error', (tId: string, error: string, pId?: string) => {
-      this.emitter.emit('error', tId, error, pId);
+      this.emitter.emit('error', tId, error, pId ?? projectId);
     });
 
     bridge.on('execution-progress', (tId: string, progress: ExecutionProgressData, pId?: string) => {
-      this.emitter.emit('execution-progress', tId, progress, pId);
+      this.emitter.emit('execution-progress', tId, progress, pId ?? projectId);
     });
 
     bridge.on('task-token-usage', (tId, usage, pId?: string) => {
       console.log(`[AgentProcess] Forwarding task-token-usage for ${tId}:`, usage);
-      this.emitter.emit('task-token-usage', tId, usage, pId);
+      this.emitter.emit('task-token-usage', tId, usage, pId ?? projectId);
     });
 
     bridge.on('task-event', (tId: string, event: unknown, pId?: string) => {
-      this.emitter.emit('task-event', tId, event, pId);
+      this.emitter.emit('task-event', tId, event, pId ?? projectId);
     });
 
     bridge.on('task-log-stream', (tId, chunk, pId?: string) => {
-      this.emitter.emit('task-log-stream', tId, chunk, pId);
+      this.emitter.emit('task-log-stream', tId, chunk, pId ?? projectId);
     });
 
     bridge.on('exit', (tId: string, code: number | null, pType: ProcessType, pId?: string) => {
-      this.deleteTrackedProcess(tId);
+      const eventProjectId = pId ?? projectId;
+      this.deleteTrackedProcess(tId, eventProjectId);
 
       if (this.state.wasSpawnKilled(spawnId)) {
         this.state.clearKilledSpawn(spawnId);
@@ -1122,10 +1139,10 @@ export class AgentProcessManager {
           phaseProgress: 0,
           overallProgress: 0,
           message: `Worker exited with code ${code}`,
-        }, pId);
+        }, eventProjectId);
       }
 
-      this.emitter.emit('exit', tId, code, pType, pId);
+      this.emitter.emit('exit', tId, code, pType, eventProjectId);
     });
 
     // Spawn the worker via the bridge
@@ -1169,19 +1186,19 @@ export class AgentProcessManager {
         processType,
       });
     } catch (err) {
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       this.emitter.emit('error', taskId, err instanceof Error ? err.message : String(err), projectId);
       throw err;
     }
 
     // Store the worker reference for kill support
-    this.state.updateProcess(taskId, { worker: bridge.workerInstance });
+    this.state.updateProcess(processKey, { worker: bridge.workerInstance });
 
     // Check if killed during bridge setup
-    const currentSpawnId = this.state.getProcess(taskId)?.spawnId ?? spawnId;
+    const currentSpawnId = this.state.getProcess(processKey)?.spawnId ?? spawnId;
     if (this.state.wasSpawnKilled(currentSpawnId)) {
       await bridge.terminate();
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       this.state.clearKilledSpawn(currentSpawnId);
       return;
     }
@@ -1204,8 +1221,9 @@ export class AgentProcessManager {
   /**
    * Kill a specific task's process
    */
-  killProcess(taskId: string): boolean {
-    const agentProcess = this.state.getProcess(taskId);
+  killProcess(taskId: string, projectId?: string): boolean {
+    const processKey = getScopedProcessKey(taskId, projectId);
+    const agentProcess = this.state.getProcess(processKey);
     if (!agentProcess) return false;
 
     // Mark this specific spawn as killed so its exit handler knows to ignore
@@ -1215,7 +1233,7 @@ export class AgentProcessManager {
     // just remove from tracking. The spawn() call will still complete, but the spawned process
     // will be terminated by the post-spawn wasSpawnKilled() check (see spawnProcess() after updateProcess).
     if (!agentProcess.process && !agentProcess.worker) {
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       return true;
     }
 
@@ -1226,7 +1244,7 @@ export class AgentProcessManager {
       } catch {
         // Worker may already be terminated
       }
-      this.deleteTrackedProcess(taskId);
+      this.deleteTrackedProcess(taskId, projectId);
       return true;
     }
 
@@ -1238,7 +1256,7 @@ export class AgentProcessManager {
       });
     }
 
-    this.deleteTrackedProcess(taskId);
+    this.deleteTrackedProcess(taskId, projectId);
     return true;
   }
 
@@ -1248,9 +1266,9 @@ export class AgentProcessManager {
   async killAllProcesses(): Promise<void> {
     const KILL_TIMEOUT_MS = 10000; // 10 seconds max wait
 
-    const killPromises = this.state.getRunningTaskIds().map((taskId) => {
+    const killPromises = this.state.getRunningTaskIds().map((processKey) => {
       return new Promise<void>((resolve) => {
-        const agentProcess = this.state.getProcess(taskId);
+        const agentProcess = this.state.getProcess(processKey);
 
         if (!agentProcess) {
           resolve();
@@ -1259,14 +1277,14 @@ export class AgentProcessManager {
 
         // If process/worker hasn't been spawned yet, just kill and resolve
         if (!agentProcess.process && !agentProcess.worker) {
-          this.killProcess(taskId);
+          this.killProcess(agentProcess.taskId, agentProcess.projectId);
           resolve();
           return;
         }
 
         // Worker threads terminate immediately
         if (agentProcess.worker && !agentProcess.process) {
-          this.killProcess(taskId);
+          this.killProcess(agentProcess.taskId, agentProcess.projectId);
           resolve();
           return;
         }
@@ -1286,7 +1304,7 @@ export class AgentProcessManager {
         }
 
         // Kill the process
-        this.killProcess(taskId);
+        this.killProcess(agentProcess.taskId, agentProcess.projectId);
       });
     });
 

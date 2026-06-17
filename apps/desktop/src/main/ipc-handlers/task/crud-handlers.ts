@@ -453,20 +453,20 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_DELETE,
-    async (_, taskId: string): Promise<IPCResult> => {
+    async (_, taskId: string, projectId?: string): Promise<IPCResult> => {
       const { rm } = await import('fs/promises');
 
       // Find task and project
-      const { task, project } = findTaskAndProject(taskId);
+      const { task, project } = findTaskAndProject(taskId, projectId);
 
       if (!task || !project) {
         // Make delete idempotent: if the task no longer exists, treat as already deleted.
-        taskStateManager.clearTask(taskId);
+        taskStateManager.clearTask(taskId, projectId);
         return { success: true };
       }
 
       // Check if task is currently running
-      const isRunning = agentManager.isRunning(taskId);
+      const isRunning = agentManager.isRunning(taskId, project.id);
       if (isRunning) {
         return { success: false, error: 'Cannot delete a running task. Stop the task first.' };
       }
@@ -528,7 +528,7 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
       // stale actor (stuck in a terminal state like 'human_review'), causing
       // the new task's events to be silently dropped and the task to appear
       // stuck forever.
-      taskStateManager.clearTask(taskId);
+      taskStateManager.clearTask(taskId, project.id);
 
       // Invalidate cache since a task was deleted
       projectStore.invalidateTasksCache(project.id);
@@ -572,11 +572,12 @@ export function registerTaskCRUDHandlers(agentManager: AgentManager): void {
     async (
       _,
       taskId: string,
-      updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }
+      updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> },
+      projectId?: string
     ): Promise<IPCResult<Task>> => {
       try {
         // Find task and project
-        const { task, project } = findTaskAndProject(taskId);
+        const { task, project } = findTaskAndProject(taskId, projectId);
 
         if (!task || !project) {
           return { success: false, error: 'Task not found' };

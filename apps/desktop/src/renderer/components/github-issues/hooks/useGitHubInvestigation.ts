@@ -15,7 +15,8 @@ export function useGitHubInvestigation(projectId: string | undefined) {
     investigationStatus,
     lastInvestigationResult,
     setInvestigationStatus,
-    setInvestigationResult
+    setInvestigationResult,
+    clearInvestigation
   } = useInvestigationStore();
 
   const { setError } = useIssuesStore();
@@ -51,6 +52,8 @@ export function useGitHubInvestigation(projectId: string | undefined) {
   // Set up event listeners for investigation progress
   useEffect(() => {
     if (!projectId) return;
+
+    clearInvestigation();
 
     const cleanupProgress = window.electronAPI.onGitHubInvestigationProgress(
       (eventProjectId, status) => {
@@ -94,7 +97,7 @@ export function useGitHubInvestigation(projectId: string | undefined) {
       cleanupComplete();
       cleanupError();
     };
-  }, [projectId, setInvestigationStatus, setInvestigationResult, setError, localizeInvestigationMessage]);
+  }, [projectId, setInvestigationStatus, setInvestigationResult, setError, localizeInvestigationMessage, clearInvestigation]);
 
   const startInvestigation = useCallback((issue: GitHubIssue, selectedCommentIds: number[]) => {
     if (projectId) {

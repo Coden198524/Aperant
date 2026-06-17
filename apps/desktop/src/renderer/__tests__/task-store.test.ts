@@ -3,8 +3,9 @@
  * Tests Zustand store for task state management
  */
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { useTaskStore, hasRecentActivity, clearTaskActivity } from '../stores/task-store';
-import type { Task, TaskStatus, ImplementationPlan, TokenUsage } from '../../shared/types';
+import { useTaskStore, hasRecentActivity, clearTaskActivity, isQueueAtCapacity, loadTasks, startTaskOrQueue } from '../stores/task-store';
+import { useProjectStore } from '../stores/project-store';
+import type { Project, Task, TaskStatus, ImplementationPlan, TokenUsage } from '../../shared/types';
 
 // Helper to create test tasks
 function createTestTask(overrides: Partial<Task> = {}): Task {
@@ -57,6 +58,20 @@ function createTokenUsage(overrides: Partial<TokenUsage> = {}): TokenUsage {
   };
 }
 
+function createTestProject(id: string, maxParallelTasks = 1): Project {
+  return {
+    id,
+    name: id,
+    path: `E:/Work/${id}`,
+    autoBuildPath: '.autocode',
+    settings: {
+      maxParallelTasks,
+    },
+    createdAt: new Date(),
+    updatedAt: new Date(),
+  } as Project;
+}
+
 describe('Task Store', () => {
   beforeEach(() => {
     // Reset store to initial state before each test
@@ -66,10 +81,20 @@ describe('Task Store', () => {
       isLoading: false,
       error: null
     });
+    useProjectStore.setState({
+      projects: [],
+      selectedProjectId: null,
+      activeProjectId: null,
+      openProjectIds: [],
+      tabOrder: [],
+      isLoading: false,
+      error: null,
+    });
   });
 
   afterEach(() => {
     vi.clearAllMocks();
+    vi.unstubAllGlobals();
   });
 
   describe('setTasks', () => {
@@ -681,14 +706,31 @@ describe('Task Store', () => {
       expect(hasRecentActivity('task-1')).toBe(true);
     });
 
+    it('should scope activity by project for duplicate task IDs', () => {
+      useTaskStore.setState({
+        tasks: [
+          createTestTask({ id: 'task-1', specId: '001-project-docs', projectId: 'project-a', status: 'in_progress' }),
+          createTestTask({ id: 'task-1', specId: '001-project-docs', projectId: 'project-b', status: 'in_progress' }),
+        ]
+      });
+
+      clearTaskActivity('task-1', 'project-a');
+      clearTaskActivity('task-1', 'project-b');
+
+      useTaskStore.getState().updateTaskStatus('task-1', 'in_progress', undefined, 'project-a');
+
+      expect(hasRecentActivity('task-1', 'project-a')).toBe(true);
+      expect(hasRecentActivity('task-1', 'project-b')).toBe(false);
+
+      clearTaskActivity('task-1', 'project-a');
+    });
+
     it('should not record activity for non-existent tasks in updateTaskStatus', () => {
       useTaskStore.setState({ tasks: [] });
 
-      // Status change for missing task should still record activity
-      // (recordTaskActivity fires before the index check)
       useTaskStore.getState().updateTaskStatus('nonexistent', 'in_progress');
 
-      expect(hasRecentActivity('nonexistent')).toBe(true);
+      expect(hasRecentActivity('nonexistent')).toBe(false);
       clearTaskActivity('nonexistent');
     });
   });
@@ -732,6 +774,101 @@ describe('Task Store', () => {
         expect(tasks).toHaveLength(1);
         expect(tasks[0].status).toBe(status);
       });
+    });
+  });
+
+  describe('multi-project task loading and queue capacity', () => {
+    it('does not let one project at capacity block another project from starting', async () => {
+      useProjectStore.setState({
+        projects: [
+          createTestProject('project-a', 1),
+          createTestProject('project-b', 1),
+        ],
+        activeProjectId: 'project-a',
+        selectedProjectId: 'project-a',
+      });
+      useTaskStore.setState({
+        tasks: [
+          createTestTask({
+            id: 'task-a',
+            specId: '001-same',
+            projectId: 'project-a',
+            status: 'in_progress',
+          }),
+          createTestTask({
+            id: 'task-b',
+            specId: '001-same',
+            projectId: 'project-b',
+            status: 'backlog',
+          }),
+        ],
+      });
+
+      const startTask = vi.fn();
+      vi.stubGlobal('window', {
+        electronAPI: {
+          startTask,
+          updateTaskStatus: vi.fn(),
+        },
+      });
+
+      expect(isQueueAtCapacity(undefined, 'project-a')).toBe(true);
+      expect(isQueueAtCapacity(undefined, 'project-b')).toBe(false);
+
+      const result = await startTaskOrQueue('task-b', 'project-b');
+
+      expect(result).toEqual({ action: 'started', success: true });
+      expect(startTask).toHaveBeenCalledWith('task-b', { projectId: 'project-b' });
+    });
+
+    it('ignores stale loadTasks results from a project that is no longer visible', async () => {
+      let resolveProjectA: (value: { success: true; data: Task[] }) => void = () => {};
+      let resolveProjectB: (value: { success: true; data: Task[] }) => void = () => {};
+      const projectATasks = [
+        createTestTask({ id: 'task-a', specId: '001-docs', projectId: 'project-a', title: 'Project A docs' }),
+      ];
+      const projectBTasks = [
+        createTestTask({ id: 'task-b', specId: '001-docs', projectId: 'project-b', title: 'Project B docs' }),
+      ];
+      const getTasks = vi.fn((projectId: string) =>
+        new Promise<{ success: true; data: Task[] }>((resolve) => {
+          if (projectId === 'project-a') {
+            resolveProjectA = resolve;
+            return;
+          }
+          resolveProjectB = resolve;
+        })
+      );
+      vi.stubGlobal('window', {
+        electronAPI: {
+          getTasks,
+        },
+      });
+      useProjectStore.setState({
+        projects: [
+          createTestProject('project-a'),
+          createTestProject('project-b'),
+        ],
+        activeProjectId: 'project-a',
+        selectedProjectId: 'project-a',
+      });
+
+      const projectALoad = loadTasks('project-a');
+      useProjectStore.setState({
+        activeProjectId: 'project-b',
+        selectedProjectId: 'project-b',
+      });
+      const projectBLoad = loadTasks('project-b');
+
+      resolveProjectB({ success: true, data: projectBTasks });
+      await projectBLoad;
+
+      expect(useTaskStore.getState().tasks).toEqual(projectBTasks);
+
+      resolveProjectA({ success: true, data: projectATasks });
+      await projectALoad;
+
+      expect(useTaskStore.getState().tasks).toEqual(projectBTasks);
     });
   });
 

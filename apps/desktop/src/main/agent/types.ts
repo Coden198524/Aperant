@@ -13,6 +13,7 @@ export type QueueProcessType = 'ideation' | 'roadmap';
 
 export interface AgentProcess {
   taskId: string;
+  projectId?: string;
   process: ChildProcess | null; // null during async spawn setup before ChildProcess is created
   startedAt: Date;
   projectPath?: string; // For ideation processes to load session on completion

@@ -242,13 +242,15 @@ function validateMarkdownSize(fileName: string, content: string, limit: Autocode
 
 function validateSpecEvidence(specMarkdown: string): string[] {
   const errors: string[] = [];
+  const evidenceSection = getMarkdownSection(specMarkdown, 'Evidence');
+  const hasGlobalEvidence = Boolean(evidenceSection && /(?:^|\n)\s*(?:[-*]|\d+\.)\s+\S/.test(evidenceSection));
   if (!/^\s*##\s+Evidence\b/im.test(specMarkdown)) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} missing "## Evidence" section.`);
   }
-  if (hasSectionContent(specMarkdown, 'Requirements') && !sectionContainsEvidence(specMarkdown, 'Requirements')) {
+  if (hasSectionContent(specMarkdown, 'Requirements') && !sectionContainsEvidence(specMarkdown, 'Requirements') && !hasGlobalEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Requirements section must cite Evidence for requirements or acceptance criteria.`);
   }
-  if (hasSectionContent(specMarkdown, 'Design Notes') && !sectionContainsEvidence(specMarkdown, 'Design Notes')) {
+  if (hasSectionContent(specMarkdown, 'Design Notes') && !sectionContainsEvidence(specMarkdown, 'Design Notes') && !hasGlobalEvidence) {
     errors.push(`${AUTOCODE_TASK_ARTIFACTS.specFile} Design Notes must cite Evidence or move unverified claims to Assumptions/Open Questions.`);
   }
   return errors;

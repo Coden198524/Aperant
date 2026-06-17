@@ -18,6 +18,8 @@ interface ToolUsage {
 }
 
 interface InsightsState {
+  currentProjectId: string | null;
+
   // Data
   session: InsightsSession | null;
   sessions: InsightsSessionSummary[]; // List of all sessions
@@ -32,6 +34,7 @@ interface InsightsState {
   pendingImages: ImageAttachment[]; // Images pending attachment to next message
 
   // Actions
+  setCurrentProjectId: (projectId: string | null) => void;
   setSession: (session: InsightsSession | null) => void;
   setSessions: (sessions: InsightsSessionSummary[]) => void;
   setStatus: (status: InsightsChatStatus) => void;
@@ -58,6 +61,7 @@ const initialStatus: InsightsChatStatus = {
 
 export const useInsightsStore = create<InsightsState>((set, _get) => ({
   // Initial state
+  currentProjectId: null,
   session: null,
   sessions: [],
   status: initialStatus,
@@ -71,6 +75,27 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
   pendingImages: [],
 
   // Actions
+  setCurrentProjectId: (projectId) =>
+    set((state) => {
+      if (state.currentProjectId === projectId) {
+        return { currentProjectId: projectId };
+      }
+
+      return {
+        currentProjectId: projectId,
+        session: null,
+        sessions: [],
+        status: initialStatus,
+        pendingMessage: '',
+        streamingContent: '',
+        streamingTasks: [],
+        currentTool: null,
+        toolsUsed: [],
+        isLoadingSessions: false,
+        pendingImages: []
+      };
+    }),
+
   setSession: (session) => set({ session }),
 
   setSessions: (sessions) => set({ sessions }),
@@ -90,7 +115,7 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
         return {
           session: {
             id: `session-${Date.now()}`,
-            projectId: '',
+            projectId: state.currentProjectId ?? '',
             messages: [message],
             createdAt: new Date(),
             updatedAt: new Date()
@@ -182,7 +207,7 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
           toolsUsed: [],
           session: {
             id: `session-${Date.now()}`,
-            projectId: '',
+            projectId: state.currentProjectId ?? '',
             messages: [newMessage],
             createdAt: new Date(),
             updatedAt: new Date()
@@ -218,8 +243,31 @@ export const useInsightsStore = create<InsightsState>((set, _get) => ({
 }));
 
 // Helper functions
+let insightsSessionsRequestSeq = 0;
+let insightsSessionRequestSeq = 0;
+
+function beginInsightsProjectScope(projectId: string): void {
+  const store = useInsightsStore.getState();
+  if (store.currentProjectId !== projectId) {
+    store.setCurrentProjectId(projectId);
+  }
+}
+
+function isCurrentInsightsProject(projectId: string): boolean {
+  return useInsightsStore.getState().currentProjectId === projectId;
+}
+
+function isCurrentInsightsRequest(
+  projectId: string,
+  requestSeq: number,
+  getLatestRequestSeq: () => number
+): boolean {
+  return isCurrentInsightsProject(projectId) && getLatestRequestSeq() === requestSeq;
+}
 
 export async function loadInsightsSessions(projectId: string, includeArchived?: boolean): Promise<void> {
+  beginInsightsProjectScope(projectId);
+  const requestSeq = ++insightsSessionsRequestSeq;
   const store = useInsightsStore.getState();
   store.setLoadingSessions(true);
 
@@ -228,18 +276,26 @@ export async function loadInsightsSessions(projectId: string, includeArchived?: 
 
   try {
     const result = await window.electronAPI.listInsightsSessions(projectId, archived);
+    if (!isCurrentInsightsRequest(projectId, requestSeq, () => insightsSessionsRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setSessions(result.data);
     } else {
       store.setSessions([]);
     }
   } finally {
-    store.setLoadingSessions(false);
+    if (isCurrentInsightsRequest(projectId, requestSeq, () => insightsSessionsRequestSeq)) {
+      store.setLoadingSessions(false);
+    }
   }
 }
 
 export async function loadInsightsSession(projectId: string, includeArchived?: boolean): Promise<void> {
+  beginInsightsProjectScope(projectId);
+  const requestSeq = ++insightsSessionRequestSeq;
   const result = await window.electronAPI.getInsightsSession(projectId);
+  if (!isCurrentInsightsRequest(projectId, requestSeq, () => insightsSessionRequestSeq)) return;
+
   if (result.success && result.data) {
     useInsightsStore.getState().setSession(result.data);
   } else {
@@ -250,6 +306,7 @@ export async function loadInsightsSession(projectId: string, includeArchived?: b
 }
 
 export function sendMessage(projectId: string, message: string, modelConfig?: InsightsModelConfig, images?: ImageAttachment[]): void {
+  beginInsightsProjectScope(projectId);
   const store = useInsightsStore.getState();
   const session = store.session;
 
@@ -287,6 +344,7 @@ export function sendMessage(projectId: string, message: string, modelConfig?: In
 export async function clearSession(projectId: string, includeArchived?: boolean): Promise<void> {
   const result = await window.electronAPI.clearInsightsSession(projectId);
   if (result.success) {
+    if (!isCurrentInsightsProject(projectId)) return;
     useInsightsStore.getState().clearSession();
     // Reload sessions list and current session
     await loadInsightsSession(projectId, includeArchived);
@@ -294,8 +352,9 @@ export async function clearSession(projectId: string, includeArchived?: boolean)
 }
 
 export async function newSession(projectId: string): Promise<void> {
+  beginInsightsProjectScope(projectId);
   const result = await window.electronAPI.newInsightsSession(projectId);
-  if (result.success && result.data) {
+  if (result.success && result.data && isCurrentInsightsProject(projectId)) {
     useInsightsStore.getState().setSession(result.data);
     // Reload sessions list
     await loadInsightsSessions(projectId);
@@ -304,7 +363,7 @@ export async function newSession(projectId: string): Promise<void> {
 
 export async function switchSession(projectId: string, sessionId: string): Promise<void> {
   const result = await window.electronAPI.switchInsightsSession(projectId, sessionId);
-  if (result.success && result.data) {
+  if (result.success && result.data && isCurrentInsightsProject(projectId)) {
     useInsightsStore.getState().setSession(result.data);
     // Reset streaming state when switching sessions
     useInsightsStore.getState().clearStreamingContent();
@@ -365,7 +424,7 @@ export async function updateModelConfig(projectId: string, sessionId: string, mo
   if (result.success) {
     // Update local session state
     const store = useInsightsStore.getState();
-    if (store.session?.id === sessionId) {
+    if (store.currentProjectId === projectId && store.session?.id === sessionId) {
       store.setSession({
         ...store.session,
         modelConfig,
@@ -404,7 +463,9 @@ export function setupInsightsListeners(): () => void {
 
   // Listen for streaming chunks
   const unsubStreamChunk = window.electronAPI.onInsightsStreamChunk(
-    (_projectId, chunk: InsightsStreamChunk) => {
+    (projectId, chunk: InsightsStreamChunk) => {
+      if (!isCurrentInsightsProject(projectId)) return;
+
       switch (chunk.type) {
         case 'text':
           if (chunk.content) {
@@ -464,12 +525,14 @@ export function setupInsightsListeners(): () => void {
   );
 
   // Listen for status updates
-  const unsubStatus = window.electronAPI.onInsightsStatus((_projectId, status) => {
+  const unsubStatus = window.electronAPI.onInsightsStatus((projectId, status) => {
+    if (!isCurrentInsightsProject(projectId)) return;
     store().setStatus(status);
   });
 
   // Listen for errors
-  const unsubError = window.electronAPI.onInsightsError((_projectId, error) => {
+  const unsubError = window.electronAPI.onInsightsError((projectId, error) => {
+    if (!isCurrentInsightsProject(projectId)) return;
     store().setStatus({
       phase: 'error',
       error
@@ -478,7 +541,9 @@ export function setupInsightsListeners(): () => void {
 
   // Listen for session updates (e.g., after assistant message saved with auto-generated title)
   const unsubSessionUpdated = window.electronAPI.onInsightsSessionUpdated(
-    (_projectId, session: InsightsSession) => {
+    (projectId, session: InsightsSession) => {
+      if (!isCurrentInsightsProject(projectId)) return;
+
       // Update current session if it matches
       const currentSession = store().session;
       if (currentSession?.id === session.id) {

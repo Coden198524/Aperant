@@ -226,10 +226,11 @@ export interface ElectronAPI {
     projectId: string,
     options?: { documentType?: ProjectDocumentType; outputDir?: string; language?: string }
   ) => Promise<IPCResult<Task>>;
-  deleteTask: (taskId: string) => Promise<IPCResult>;
+  deleteTask: (taskId: string, projectId?: string) => Promise<IPCResult>;
   updateTask: (
     taskId: string,
-    updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }
+    updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> },
+    projectId?: string
   ) => Promise<IPCResult<Task>>;
   deleteSubtask: (taskId: string, subtaskId: string, projectId?: string) => Promise<IPCResult<Task>>;
   startTask: (taskId: string, options?: TaskStartOptions) => void;
@@ -932,17 +933,17 @@ export interface ElectronAPI {
   getTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs | null>>;
   clearTaskLogs: (projectId: string, specId: string) => Promise<IPCResult<TaskLogs>>;
   watchTaskLogs: (projectId: string, specId: string) => Promise<IPCResult>;
-  unwatchTaskLogs: (specId: string) => Promise<IPCResult>;
+  unwatchTaskLogs: (specId: string, projectId?: string) => Promise<IPCResult>;
 
   // Task logs event listeners
   onTaskLogsChanged: (
-    callback: (specId: string, logs: TaskLogs) => void
+    callback: (specId: string, logs: TaskLogs, projectId?: string) => void
   ) => () => void;
   onTaskLogsStream: (
-    callback: (specId: string, chunk: TaskLogStreamChunk) => void
+    callback: (specId: string, chunk: TaskLogStreamChunk, projectId?: string) => void
   ) => () => void;
   onMergeProgress: (
-    callback: (taskId: string, progress: MergeProgress) => void
+    callback: (taskId: string, progress: MergeProgress, projectId?: string) => void
   ) => () => void;
 
   // File explorer operations

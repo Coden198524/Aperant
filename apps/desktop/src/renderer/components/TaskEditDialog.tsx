@@ -276,7 +276,7 @@ export function TaskEditDialog({ task, open, onOpenChange, onSaved }: TaskEditDi
       title: trimmedTitle,
       description: trimmedDescription,
       metadata: metadataUpdates
-    });
+    }, task.projectId);
 
     if (success) {
       onOpenChange(false);

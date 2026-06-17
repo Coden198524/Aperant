@@ -264,6 +264,7 @@ interface StandardLightPlan {
         files_to_create?: string[];
         files_to_modify?: string[];
         pattern_files?: string[];
+        requirements?: string[];
         evidence?: string;
         verification: {
           type: string;
@@ -394,6 +395,9 @@ interface MinimalPlanSubtask {
   status?: string;
   files_to_create?: string[];
   files_to_modify?: string[];
+  requirements?: string[];
+  upstream_task_ids?: string[];
+  work_package?: boolean;
   verification?: {
     type?: string;
     run?: string;
@@ -874,11 +878,13 @@ function _buildAggressiveStandardLightPlan(
                 task,
                 '',
                 'Implement the complete requested change in one focused coding session. Read only directly relevant files before editing.',
+                'Done when: Requested behavior is complete and focused verification is recorded.',
               ].join('\n'),
               status: 'pending',
               files_to_create: [],
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              requirements: ['1.1'],
               evidence: 'spec.md scope and user task description',
               verification: {
                 type: 'manual',
@@ -982,11 +988,13 @@ function buildLocalizedAggressiveStandardLightPlan(
                 '',
                 implementationInstruction,
                 ...(constraintReminder ? ['', constraintReminder] : []),
+                'Done when: Requested behavior is complete and focused verification is recorded.',
               ].join('\n'),
               status: 'pending',
               files_to_create: filesToCreate,
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              requirements: ['1.1'],
               evidence: 'spec.md scope and user task description',
               verification: {
                 type: 'manual',
@@ -1204,11 +1212,13 @@ function buildSourceDocumentationStandardLightPlan(
                 isChinese
                   ? '\u4f18\u5148\u7528\u8868\u683c\u3001\u5206\u5c42\u6807\u9898\u3001\u6d41\u7a0b\u5217\u8868\u5448\u73b0\uff0c\u907f\u514d\u5927\u6bb5\u5806\u53e0\u6587\u5b57\u3002'
                   : 'Prefer tables, layered headings, and flow lists instead of long prose blocks.',
+                'Done when: Requested documentation and evidence support files exist and focused verification is recorded.',
               ].join('\n'),
               status: 'pending',
               files_to_create: [outputFile, ...DOCUMENTATION_SUPPORT_FILES],
               files_to_modify: [],
               ...(patternFiles.length > 0 ? { pattern_files: patternFiles } : {}),
+              requirements: ['1.1'],
               evidence: 'spec.md documentation scope; project source files; evidence_index.md',
               verification: {
                 type: 'manual',
@@ -3033,8 +3043,10 @@ export class SpecOrchestrator extends EventEmitter {
     }
 
     if (phase === 'planning' || phase === 'quick_spec') {
+      let compactErrors: string[] = [];
       try {
         await this.deriveRuntimePlanFromTasks();
+        compactErrors = await this.compactAggressiveSimplePlan();
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
         return {
@@ -3065,7 +3077,6 @@ export class SpecOrchestrator extends EventEmitter {
         const executionErrors = result.valid && !hasExecutableSubtasks(normalizedPlan)
           ? ['Implementation plan has no executable subtasks.']
           : [];
-        const compactErrors: string[] = [];
 
         return {
           valid: result.valid && executionErrors.length === 0 && languageErrors.length === 0 && compactErrors.length === 0,
@@ -3112,8 +3123,17 @@ export class SpecOrchestrator extends EventEmitter {
       return null;
     }
 
+    const validatesContextArtifact =
+      phase === 'discovery' ||
+      phase === 'context' ||
+      Boolean(contextMarkdown && (
+        phase === 'spec_writing' ||
+        phase === 'self_critique' ||
+        phase === 'planning'
+      ));
+
     const result = validateAutocodeStandardPlanArtifacts({
-      contextMarkdown: phase === 'discovery' || phase === 'context' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
+      contextMarkdown: validatesContextArtifact
         ? contextMarkdown
         : undefined,
       requirementsMarkdown: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning'
@@ -3125,7 +3145,7 @@ export class SpecOrchestrator extends EventEmitter {
       tasksMarkdown: phase === 'planning' || phase === 'quick_spec'
         ? tasksMarkdown
         : undefined,
-      requireContextEvidence: phase === 'discovery' || phase === 'context' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
+      requireContextEvidence: validatesContextArtifact,
       requireRequirementsEvidence: phase === 'requirements' || phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
       requireSpecEvidence: phase === 'spec_writing' || phase === 'self_critique' || phase === 'planning',
       requireTaskEvidence: phase === 'planning' || phase === 'quick_spec',
@@ -3227,14 +3247,49 @@ export class SpecOrchestrator extends EventEmitter {
       const filesToCreate = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_create ?? []));
       const filesToModify = uniqueStrings(subtasks.flatMap((subtask) => subtask.files_to_modify ?? []));
       const evidence = uniqueStrings(subtasks.flatMap((subtask) => typeof subtask.evidence === 'string' ? [subtask.evidence] : []));
+      const upstreamTaskIds = uniqueStrings(subtasks.flatMap((subtask) => {
+        const ids = Array.isArray(subtask.upstream_task_ids)
+          ? subtask.upstream_task_ids.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+          : [];
+        return ids.length > 0
+          ? ids
+          : subtask.id
+            ? [String(subtask.id)]
+            : [];
+      }));
+      const requirements = uniqueStrings([
+        ...upstreamTaskIds,
+        ...subtasks.flatMap((subtask) =>
+          Array.isArray(subtask.requirements)
+            ? subtask.requirements.filter((item): item is string => typeof item === 'string' && item.trim().length > 0)
+            : [],
+        ),
+      ]);
       const verification = [...subtasks].reverse().find((subtask) => subtask.verification)?.verification
         ?? { type: 'manual', scenario: 'Review the completed change and run the project checks that apply to this task.' };
-      const taskList = subtasks
-        .map((subtask) => {
-          const label = subtask.title?.trim() || subtask.description?.trim() || subtask.id || 'Implementation step';
-          return `- ${label}`;
-        })
-        .join('\n');
+      const taskItems = subtasks.flatMap((subtask) => {
+        const description = typeof subtask.description === 'string' ? subtask.description : '';
+        if (subtask.work_package === true && /\bIncluded tasks:/i.test(description)) {
+          const includedItems = description
+            .split(/\r?\n/)
+            .map((line) => line.trim())
+            .filter((line) => /^-\s+\S+\s+.+/.test(line));
+          if (includedItems.length > 0) {
+            return includedItems;
+          }
+        }
+        const label = subtask.title?.trim() || subtask.description?.trim() || subtask.id || 'Implementation step';
+        return [`- ${label}`];
+      });
+      const taskList = taskItems.join('\n');
+      const sourceTaskTitles = taskItems
+        .map((item) => item.replace(/^-\s+/, '').replace(/^\S+\s+/, '').trim())
+        .filter(Boolean);
+      const compactTitle = sourceTaskTitles.length > 1
+        ? `Work package: ${sourceTaskTitles[0]} (+${sourceTaskTitles.length - 1} related tasks)`
+        : sourceTaskTitles[0]
+          ? `Work package: ${sourceTaskTitles[0]}`
+          : 'Work package: Implement complete task';
 
       plan.phases = [
         {
@@ -3244,18 +3299,24 @@ export class SpecOrchestrator extends EventEmitter {
           subtasks: [
             {
               id: '1.1',
-              title: 'Implement complete task',
+              title: compactTitle,
               description: [
                 'Implement the complete requested change in one focused coding session.',
                 '',
                 'Scope:',
                 taskList,
+                '',
+                'Done when: All included scope items are complete and focused verification is recorded.',
               ].join('\n'),
               status: 'pending',
               ...(filesToCreate.length > 0 ? { files_to_create: filesToCreate } : {}),
               ...(filesToModify.length > 0 ? { files_to_modify: filesToModify } : {}),
+              ...(requirements.length > 0 ? { requirements } : {}),
               ...(evidence.length > 0 ? { evidence: evidence.join('; ') } : {}),
               verification,
+              upstream_source: AUTOCODE_TASK_ARTIFACTS.tasks,
+              upstream_task_ids: upstreamTaskIds,
+              work_package: true,
             },
           ],
         },

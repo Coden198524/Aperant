@@ -78,7 +78,7 @@ const STANDARD_SPEC_MD = [
   '',
   '## Requirements',
   '',
-  '- Evidence: spec.md test fixture.',
+  '- Subtask 1 is complete and satisfies the fixture requirement.',
   '',
 ].join('\n');
 const STANDARD_REQUIREMENTS_MD = [
@@ -283,7 +283,9 @@ function makeTasks(statuses: string[], withSchedulingMetadata = true): string {
     if (withSchedulingMetadata) {
       lines.push(`    - _Files to modify: src/file-${index + 1}.ts_`);
       lines.push(`    - _Depends on: ${index === 0 ? 'none' : `1.${index}`}_`);
+      lines.push(`    - _Requirements: 1.${index + 1}_`);
       lines.push(`    - _Evidence: spec.md Subtask ${index + 1}_`);
+      lines.push(`    - _Done when: Subtask ${index + 1} is implemented and the focused check passes_`);
       lines.push('    - _Verification: Run focused check_');
     }
     lines.push('');
@@ -805,6 +807,58 @@ describe('BuildOrchestrator QA recovery', () => {
     expect(runSession.mock.calls.filter(([config]) => config.agentType === 'planner')).toHaveLength(1);
     expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
     expect(logs.some(log => log.includes('Plan validation failed'))).toBe(false);
+  });
+
+  it('does not block planning when context artifact is absent after evidence-backed planning', async () => {
+    let plannerRuns = 0;
+    let codingRuns = 0;
+
+    mockIterateSubtasks.mockImplementation(async () => {
+      codingRuns++;
+      return {
+        totalSubtasks: 1,
+        completedSubtasks: 1,
+        stuckSubtasks: [],
+        cancelled: false,
+      };
+    });
+
+    mockReadFile.mockImplementation((path: string) => {
+      if (path.endsWith('tasks.md')) {
+        return Promise.resolve(makeTasks(['pending']));
+      }
+      if (path.endsWith('implementation_plan.md')) {
+        if (plannerRuns === 0) {
+          return Promise.resolve(JSON.stringify({ phases: [] }));
+        }
+        return Promise.resolve(codingRuns > 0 ? makePlan(['completed']) : makePlan(['pending']));
+      }
+      if (path.endsWith('context.md')) {
+        return Promise.reject(new Error('ENOENT'));
+      }
+      if (path.endsWith('qa_report.md')) {
+        return Promise.resolve(makePassedQAReport());
+      }
+      return readStandardArtifactOrReject(path);
+    });
+
+    const runSession = vi.fn().mockImplementation(async (config: { agentType: string }) => {
+      if (config.agentType === 'planner') {
+        plannerRuns++;
+      }
+      return makeSessionResult('completed');
+    });
+
+    const orchestrator = makeOrchestrator(runSession);
+    const logs: string[] = [];
+    orchestrator.on('log', (message) => logs.push(message));
+
+    const outcome = await orchestrator.run();
+
+    expect(outcome.success).toBe(true);
+    expect(mockIterateSubtasks).toHaveBeenCalledTimes(1);
+    expect(logs.join('\n')).not.toContain('context.md is missing');
+    expect(logs.join('\n')).not.toContain('Requirements section must cite Evidence');
   });
 
   it('retries planning when no executable subtasks are available', async () => {

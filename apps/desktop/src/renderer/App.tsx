@@ -519,7 +519,7 @@ export function App() {
     }
 
     const updatedTask = tasks.find(
-      (t) => t.id === selectedTask.id || t.specId === selectedTask.specId
+      (t) => t.projectId === selectedTask.projectId && (t.id === selectedTask.id || t.specId === selectedTask.specId)
     );
 
     debugLog('[App] Task lookup result', {
@@ -593,7 +593,7 @@ export function App() {
       setSelectedTask(updatedTask);
     }
   // eslint-disable-next-line react-hooks/exhaustive-deps -- Intentionally omit selectedTask object to prevent infinite re-render loop
-  }, [tasks, selectedTask?.id, selectedTask?.specId, selectedTask]);
+  }, [tasks, selectedTask?.id, selectedTask?.specId, selectedTask?.projectId, selectedTask]);
 
   const handleTaskClick = (task: Task) => {
     setSelectedTask(task);
@@ -1028,6 +1028,7 @@ export function App() {
                 )}
                 {activeView === 'github-issues' && (activeProjectId || selectedProjectId) && (
                   <GitHubIssues
+                    projectId={activeProjectId || selectedProjectId!}
                     onOpenSettings={() => {
                       setSettingsInitialProjectSection('github');
                       setIsSettingsDialogOpen(true);
@@ -1037,6 +1038,7 @@ export function App() {
                 )}
                 {activeView === 'gitlab-issues' && (activeProjectId || selectedProjectId) && (
                   <GitLabIssues
+                    projectId={activeProjectId || selectedProjectId!}
                     onOpenSettings={() => {
                       setSettingsInitialProjectSection('gitlab');
                       setIsSettingsDialogOpen(true);
@@ -1046,6 +1048,7 @@ export function App() {
                 )}
                 {activeView === 'yunxiao-issues' && (activeProjectId || selectedProjectId) && (
                   <YunxiaoIssues
+                    projectId={activeProjectId || selectedProjectId!}
                     onOpenSettings={() => {
                       setSettingsInitialProjectSection('yunxiao');
                       setIsSettingsDialogOpen(true);
@@ -1057,6 +1060,7 @@ export function App() {
                 {(activeProjectId || selectedProjectId) && (
                   <div className={activeView === 'github-prs' ? 'h-full' : 'hidden'}>
                     <GitHubPRs
+                      projectId={activeProjectId || selectedProjectId!}
                       onOpenSettings={() => {
                         setSettingsInitialProjectSection('github');
                         setIsSettingsDialogOpen(true);
@@ -1075,12 +1079,14 @@ export function App() {
                   />
                 )}
                 {activeView === 'changelog' && (activeProjectId || selectedProjectId) && (
-                  <Changelog />
+                  <Changelog projectId={activeProjectId || selectedProjectId!} />
                 )}
                 {activeView === 'worktrees' && (activeProjectId || selectedProjectId) && (
                   <Worktrees projectId={activeProjectId || selectedProjectId!} />
                 )}
-                {activeView === 'agent-tools' && <AgentTools />}
+                {activeView === 'agent-tools' && (activeProjectId || selectedProjectId) && (
+                  <AgentTools projectId={activeProjectId || selectedProjectId!} />
+                )}
               </>
             ) : (
               <WelcomeScreen

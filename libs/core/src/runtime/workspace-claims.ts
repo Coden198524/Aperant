@@ -96,7 +96,7 @@ export class AutocodeRuntimeWorkspaceClaimManager {
 
   tryClaim(input: AutocodeRuntimeWorkspaceClaimInput): AutocodeRuntimeWorkspaceClaimResult {
     const requestedClaim = createAutocodeRuntimeWorkspaceClaim(input);
-    this.releaseByTask(requestedClaim.taskId);
+    this.releaseByTask(requestedClaim.taskId, requestedClaim.projectId);
 
     const conflict = this.findConflict(requestedClaim);
     if (conflict) {
@@ -119,14 +119,14 @@ export class AutocodeRuntimeWorkspaceClaimManager {
     return this.claims.delete(claimId);
   }
 
-  releaseByTask(taskId: string | null | undefined): number {
+  releaseByTask(taskId: string | null | undefined, projectId?: string): number {
     if (!taskId) {
       return 0;
     }
 
     let released = 0;
     for (const claim of this.claims.values()) {
-      if (claim.taskId === taskId) {
+      if (claim.taskId === taskId && (!projectId || claim.projectId === projectId)) {
         this.claims.delete(claim.id);
         released++;
       }
@@ -187,7 +187,7 @@ export function getAutocodeRuntimeWorkspaceConflict(
   activeClaim: AutocodeRuntimeWorkspaceClaim,
   requestedClaim: AutocodeRuntimeWorkspaceClaim,
 ): AutocodeRuntimeWorkspaceConflict | null {
-  if (activeClaim.taskId === requestedClaim.taskId) {
+  if (activeClaim.taskId === requestedClaim.taskId && activeClaim.projectId === requestedClaim.projectId) {
     return null;
   }
 

@@ -12,13 +12,17 @@ interface AutoRecoverRuntimeState {
 
 interface AutoRecoverScanDeps {
   tasks: Task[];
-  hasRecentActivity: (taskId: string) => boolean;
-  checkTaskRunning: (taskId: string) => Promise<boolean>;
+  hasRecentActivity: (taskId: string, projectId?: string) => boolean;
+  checkTaskRunning: (taskId: string, projectId?: string) => Promise<boolean>;
   recoverStuckTask: (
     taskId: string,
-    options: { autoRestart?: boolean; targetStatus?: TaskStatus }
+    options: { autoRestart?: boolean; targetStatus?: TaskStatus; projectId?: string }
   ) => Promise<{ success: boolean; message: string; autoRestarted?: boolean }>;
   now?: () => number;
+}
+
+function getTaskScopeKey(task: Task): string {
+  return `${task.projectId}::${task.id}`;
 }
 
 export function isAutoRecoverCandidateStatus(status: TaskStatus): boolean {
@@ -33,7 +37,7 @@ export async function scanAndRecoverStuckTasks(
 
   for (const task of deps.tasks) {
     if (isAutoRecoverCandidateStatus(task.status)) {
-      currentTaskIds.add(task.id);
+      currentTaskIds.add(getTaskScopeKey(task));
     }
   }
 
@@ -55,12 +59,13 @@ export async function scanAndRecoverStuckTasks(
   await Promise.allSettled(
     candidates.map(async (task) => {
       const taskId = task.id;
+      const taskScopeKey = getTaskScopeKey(task);
 
-      if (runtimeState.recoveringTaskIds.has(taskId)) {
+      if (runtimeState.recoveringTaskIds.has(taskScopeKey)) {
         return;
       }
 
-      const lastRecoveryAttemptAt = runtimeState.lastRecoveryAttemptAt.get(taskId);
+      const lastRecoveryAttemptAt = runtimeState.lastRecoveryAttemptAt.get(taskScopeKey);
       if (
         typeof lastRecoveryAttemptAt === 'number' &&
         scanStartedAt - lastRecoveryAttemptAt < AUTO_RECOVER_COOLDOWN_MS
@@ -68,22 +73,22 @@ export async function scanAndRecoverStuckTasks(
         return;
       }
 
-      if (deps.hasRecentActivity(taskId)) {
+      if (deps.hasRecentActivity(taskId, task.projectId)) {
         return;
       }
 
-      runtimeState.recoveringTaskIds.add(taskId);
+      runtimeState.recoveringTaskIds.add(taskScopeKey);
 
       try {
-        const actuallyRunning = await deps.checkTaskRunning(taskId);
+        const actuallyRunning = await deps.checkTaskRunning(taskId, task.projectId);
 
-        if (actuallyRunning || deps.hasRecentActivity(taskId)) {
+        if (actuallyRunning || deps.hasRecentActivity(taskId, task.projectId)) {
           return;
         }
 
-        runtimeState.lastRecoveryAttemptAt.set(taskId, deps.now?.() ?? Date.now());
+        runtimeState.lastRecoveryAttemptAt.set(taskScopeKey, deps.now?.() ?? Date.now());
 
-        const result = await deps.recoverStuckTask(taskId, { autoRestart: true });
+        const result = await deps.recoverStuckTask(taskId, { autoRestart: true, projectId: task.projectId });
         if (!result.success) {
           console.warn('[AutoRecover] Failed to recover stuck task:', taskId, result.message);
           return;
@@ -95,7 +100,7 @@ export async function scanAndRecoverStuckTasks(
       } catch (error) {
         console.error('[AutoRecover] Unexpected error while recovering stuck task:', taskId, error);
       } finally {
-        runtimeState.recoveringTaskIds.delete(taskId);
+        runtimeState.recoveringTaskIds.delete(taskScopeKey);
       }
     })
   );

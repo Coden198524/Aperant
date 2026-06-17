@@ -166,7 +166,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
     startX: number;
     startWidth: number;
   } | null>(null);
-  const activeProject = useProjectStore(s => s.getActiveProject());
+  const taskProject = useProjectStore((state) => state.projects.find((project) => project.id === task.projectId));
   const showFilesTab = isFilesTabEnabled();
   const progressPercent = calculateProgress(task.subtasks);
   const completedSubtasks = task.subtasks.filter(s => s.status === 'completed').length;
@@ -191,7 +191,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   // Event Handlers
   const handleStartStop = async () => {
     if (state.isRunning && !state.isStuck) {
-      stopTask(task.id);
+      stopTask(task.id, task.projectId);
     } else {
       // If task is incomplete, validate and reload plan before starting
       if (state.isIncomplete) {
@@ -223,7 +223,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
 
   const handleRecover = async () => {
     state.setIsRecovering(true);
-    const result = await recoverStuckTask(task.id, { autoRestart: true });
+    const result = await recoverStuckTask(task.id, { autoRestart: true, projectId: task.projectId });
     if (result.success) {
       state.setIsStuck(false);
       state.setHasCheckedRunning(false);
@@ -237,7 +237,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
       return;
     }
     state.setIsSubmitting(true);
-    await submitReview(task.id, false, state.feedback, state.feedbackImages);
+    await submitReview(task.id, false, state.feedback, state.feedbackImages, task.projectId);
     state.setIsSubmitting(false);
     state.setFeedback('');
     state.setFeedbackImages([]);
@@ -246,7 +246,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
   const handleDelete = async () => {
     state.setIsDeleting(true);
     state.setDeleteError(null);
-    const result = await deleteTask(task.id);
+    const result = await deleteTask(task.id, task.projectId);
     if (result.success) {
       state.setShowDeleteDialog(false);
       onOpenChange(false);
@@ -268,7 +268,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           state.setStagedProjectPath(result.data.projectPath);
           state.setSuggestedCommitMessage(result.data.suggestedCommitMessage);
         } else {
-          useTaskStore.getState().updateTaskStatus(task.id, 'done');
+          useTaskStore.getState().updateTaskStatus(task.id, 'done', undefined, task.projectId);
           void loadTasks(task.projectId, { forceRefresh: true });
           onOpenChange(false);
         }
@@ -334,7 +334,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
           useTaskStore.getState().updateTask(task.id, {
             status: 'done',
             metadata: { ...task.metadata, prUrl: result.data.prUrl }
-          });
+          }, task.projectId);
         }
         return result.data;
       }
@@ -659,7 +659,7 @@ function TaskDetailModalContent({ open, task, onOpenChange, onSwitchToTerminals,
                     <div className="mt-1 text-[11px] text-muted-foreground font-mono">
                       status={task.status} reviewReason={task.reviewReason ?? 'none'} phase={task.executionProgress?.phase ?? 'none'} reviewRequired={task.metadata?.requireReviewBeforeCoding ? 'true' : 'false'}
                       <br />
-                      projectId={activeProject?.id ?? 'none'} projectName={activeProject?.name ?? 'none'}
+                      projectId={taskProject?.id ?? 'none'} projectName={taskProject?.name ?? 'none'}
                     </div>
                   )}
                 </div>

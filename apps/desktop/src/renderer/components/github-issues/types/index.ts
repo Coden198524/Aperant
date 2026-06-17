@@ -45,6 +45,7 @@ export interface GitHubErrorInfo {
 }
 
 export interface GitHubIssuesProps {
+  projectId?: string;
   onOpenSettings?: () => void;
   /** Navigate to view a task in the kanban board */
   onNavigateToTask?: (taskId: string) => void;

@@ -83,6 +83,11 @@ export const __agentManagerTestUtils = {
 const SPEC_INITIAL_TASK_DESCRIPTION_MAX_CHARS = 4_000;
 const SPEC_INITIAL_TASK_DESCRIPTION_TRUNCATION_MARKER =
   '\n\n...[task description middle omitted for initial session budget; worker can inspect task metadata if exact omitted detail is required]...\n\n';
+
+function getScopedTaskExecutionKey(taskId: string, projectId?: string): string {
+  return projectId ? `${projectId}::${taskId}` : taskId;
+}
+
 /**
  * Check if the current Git branch is a main/trunk branch.
  * Main branches: main, master, develop, dev, trunk
@@ -268,6 +273,7 @@ export class AgentManager extends EventEmitter {
   private events: AgentEvents;
   private processManager: AgentProcessManager;
   private queueManager: AgentQueueManager;
+  private startingTaskExecutions = new Set<string>();
   private taskExecutionContext: Map<string, {
     projectPath: string;
     specId: string;
@@ -293,26 +299,27 @@ export class AgentManager extends EventEmitter {
     this.queueManager = new AgentQueueManager(this.state, this.events, this.processManager, this);
 
     // Listen for auto-swap restart events
-    this.on('auto-swap-restart-task', (taskId: string, newProfileId: string) => {
-      console.log('[AgentManager] Received auto-swap-restart-task event:', { taskId, newProfileId });
-      const success = this.restartTask(taskId, newProfileId);
+    this.on('auto-swap-restart-task', (taskId: string, newProfileId: string, projectId?: string) => {
+      console.log('[AgentManager] Received auto-swap-restart-task event:', { taskId, newProfileId, projectId });
+      const success = this.restartTask(taskId, newProfileId, projectId);
       console.log('[AgentManager] Task restart result:', success ? 'SUCCESS' : 'FAILED');
     });
 
     // Listen for task completion to clean up context (prevent memory leak)
     this.on('exit', (taskId: string, code: number | null, _processType?: string, _projectId?: string) => {
+      const executionKey = getScopedTaskExecutionKey(taskId, _projectId);
       // Clean up context when:
       // 1. Task completed successfully (code === 0), or
       // 2. Task failed and won't be restarted (handled by auto-swap logic)
 
       // Capture generation at exit time to prevent race conditions with restarts
-      const contextAtExit = this.taskExecutionContext.get(taskId);
+      const contextAtExit = this.taskExecutionContext.get(executionKey);
       const generationAtExit = contextAtExit?.generation;
 
       // Note: Auto-swap restart happens BEFORE this exit event is processed,
       // so we need a small delay to allow restart to preserve context
       setTimeout(() => {
-        const context = this.taskExecutionContext.get(taskId);
+        const context = this.taskExecutionContext.get(executionKey);
         if (!context) return; // Already cleaned up or restarted
 
         // Check if the context's generation matches - if not, a restart incremented it
@@ -323,21 +330,37 @@ export class AgentManager extends EventEmitter {
 
         // If task completed successfully, always clean up
         if (code === 0) {
-          this.taskExecutionContext.delete(taskId);
+          this.taskExecutionContext.delete(executionKey);
           // Unregister from OperationRegistry
-          getOperationRegistry().unregisterOperation(taskId);
+          getOperationRegistry().unregisterOperation(executionKey);
           return;
         }
 
         // If task failed and hit max retries, clean up
         if (context.swapCount >= 2) {
-          this.taskExecutionContext.delete(taskId);
+          this.taskExecutionContext.delete(executionKey);
           // Unregister from OperationRegistry
-          getOperationRegistry().unregisterOperation(taskId);
+          getOperationRegistry().unregisterOperation(executionKey);
         }
         // Otherwise keep context for potential restart
       }, 1000); // Delay to allow restart logic to run first
     });
+  }
+
+  resolveTaskProjectId(taskId: string, projectId?: string): string | undefined {
+    if (projectId) {
+      return projectId;
+    }
+
+    const suffix = `::${taskId}`;
+    const matches = new Set<string>();
+    for (const [executionKey, context] of this.taskExecutionContext.entries()) {
+      if ((executionKey === taskId || executionKey.endsWith(suffix)) && context.projectId) {
+        matches.add(context.projectId);
+      }
+    }
+
+    return matches.size === 1 ? [...matches][0] : undefined;
   }
 
   /**
@@ -558,7 +581,8 @@ export class AgentManager extends EventEmitter {
   private registerTaskWithOperationRegistry(
     taskId: string,
     operationType: 'spec-creation' | 'task-execution',
-    metadata: Record<string, unknown>
+    metadata: Record<string, unknown>,
+    projectId?: string,
   ): void {
     const profileManager = getClaudeProfileManager();
     const activeProfile = profileManager.getActiveProfile();
@@ -566,8 +590,10 @@ export class AgentManager extends EventEmitter {
       return;
     }
 
+    const executionKey = getScopedTaskExecutionKey(taskId, projectId);
+
     // Keep internal state tracking for backward compatibility
-    this.assignProfileToTask(taskId, activeProfile.id, activeProfile.name, 'proactive');
+    this.assignProfileToTask(taskId, activeProfile.id, activeProfile.name, 'proactive', projectId);
 
     // Register with unified registry for proactive swap
     // Note: We don't provide a stopFn because restartTask() already handles stopping
@@ -575,15 +601,16 @@ export class AgentManager extends EventEmitter {
     // stopFn would cause a redundant double-kill during profile swaps.
     const operationRegistry = getOperationRegistry();
     operationRegistry.registerOperation(
-      taskId,
+      executionKey,
       operationType,
       activeProfile.id,
       activeProfile.name,
-      (newProfileId: string) => this.restartTask(taskId, newProfileId),
+      (newProfileId: string) => this.restartTask(taskId, newProfileId, projectId),
       { metadata }
     );
     console.log('[AgentManager] Task registered with OperationRegistry:', {
       taskId,
+      projectId,
       profileId: activeProfile.id,
       profileName: activeProfile.name,
       type: operationType
@@ -609,11 +636,11 @@ export class AgentManager extends EventEmitter {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.');
+      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
       return;
     }
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.');
+      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
       return;
     }
 
@@ -671,11 +698,11 @@ export class AgentManager extends EventEmitter {
       resolved = await this.resolveAuthFromProviderQueue(specModelRequest, preferredProvider);
     } catch (error) {
       const message = error instanceof Error ? error.message : 'Failed to resolve a compatible account for this task.';
-      this.emit('error', taskId, message);
+      this.emit('error', taskId, message, projectId);
       return;
     }
     if (this.providerRequiresCredentials(resolved.provider) && !resolved.auth) {
-      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`);
+      this.emit('error', taskId, `No credentials available for provider "${resolved.provider}". Please add or fix an account in Settings > Accounts.`, projectId);
       return;
     }
     const workflowMode = metadata?.workflowMode ?? 'conservative';
@@ -761,7 +788,7 @@ export class AgentManager extends EventEmitter {
     this.storeTaskContext(taskId, projectPath, '', {}, true, taskDescription, specDir, metadata, baseBranch, projectId);
 
     // Register with unified OperationRegistry for proactive swap support
-    this.registerTaskWithOperationRegistry(taskId, 'spec-creation', { projectPath, taskDescription, specDir });
+    this.registerTaskWithOperationRegistry(taskId, 'spec-creation', { projectPath, taskDescription, specDir }, projectId);
 
     await this.processManager.spawnWorkerProcess(taskId, executorConfig, {}, 'spec-creation', projectId);
 
@@ -781,6 +808,11 @@ export class AgentManager extends EventEmitter {
     options: TaskExecutionOptions = {},
     projectId?: string
   ): Promise<void> {
+    if (!this.beginTaskExecutionStart(taskId, projectId, 'task execution')) {
+      return;
+    }
+
+    try {
     // Pre-flight auth check: Verify active profile has valid authentication
     // Ensure profile manager is initialized to prevent race condition
     let profileManager: ClaudeProfileManager;
@@ -788,11 +820,11 @@ export class AgentManager extends EventEmitter {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.');
+      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
       return;
     }
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.');
+      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
       return;
     }
 
@@ -805,6 +837,7 @@ export class AgentManager extends EventEmitter {
     });
     const workflowMode = this.resolveTaskWorkflowMode(specDir);
     if (workflowMode === 'off') {
+      this.finishTaskExecutionStart(taskId, projectId);
       await this.startDirectTaskExecution(taskId, projectPath, specId, options, projectId);
       return;
     }
@@ -966,9 +999,12 @@ export class AgentManager extends EventEmitter {
     this.storeTaskContext(taskId, projectPath, specId, options, false, undefined, undefined, undefined, undefined, projectId);
 
     // Register with unified OperationRegistry for proactive swap support
-    this.registerTaskWithOperationRegistry(taskId, 'task-execution', { projectPath, specId, options });
+    this.registerTaskWithOperationRegistry(taskId, 'task-execution', { projectPath, specId, options }, projectId);
 
     await this.processManager.spawnWorkerProcess(taskId, executorConfig, {}, 'task-execution', projectId);
+    } finally {
+      this.finishTaskExecutionStart(taskId, projectId);
+    }
 
     // Note (Python fallback preserved for reference):
     // const combinedEnv = this.processManager.getCombinedEnv(projectPath);
@@ -986,16 +1022,21 @@ export class AgentManager extends EventEmitter {
     options: TaskExecutionOptions = {},
     projectId?: string
   ): Promise<void> {
+    if (!this.beginTaskExecutionStart(taskId, projectId, 'direct task execution')) {
+      return;
+    }
+
+    try {
     let profileManager: ClaudeProfileManager;
     try {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.');
+      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
       return;
     }
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.');
+      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
       return;
     }
 
@@ -1159,9 +1200,12 @@ export class AgentManager extends EventEmitter {
     };
 
     this.storeTaskContext(taskId, projectPath, specId, options, false, undefined, undefined, undefined, undefined, projectId, true);
-    this.registerTaskWithOperationRegistry(taskId, 'task-execution', { projectPath, specId, options, direct: true });
+    this.registerTaskWithOperationRegistry(taskId, 'task-execution', { projectPath, specId, options, direct: true }, projectId);
 
     await this.processManager.spawnWorkerProcess(taskId, executorConfig, {}, 'task-execution', projectId);
+    } finally {
+      this.finishTaskExecutionStart(taskId, projectId);
+    }
   }
 
   /**
@@ -1179,11 +1223,11 @@ export class AgentManager extends EventEmitter {
       profileManager = await initializeClaudeProfileManager();
     } catch (error) {
       console.error('[AgentManager] Failed to initialize profile manager:', error);
-      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.');
+      this.emit('error', taskId, 'Failed to initialize profile manager. Please check file permissions and disk space.', projectId);
       return;
     }
     if (!profileManager.hasValidAuth() && !this.hasAnyProviderAccount()) {
-      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.');
+      this.emit('error', taskId, 'Authentication required. Please add an account in Settings > Accounts before starting tasks.', projectId);
       return;
     }
 
@@ -1329,8 +1373,8 @@ export class AgentManager extends EventEmitter {
   /**
    * Kill a specific task's process
    */
-  killTask(taskId: string): boolean {
-    return this.processManager.killProcess(taskId);
+  killTask(taskId: string, projectId?: string): boolean {
+    return this.processManager.killProcess(taskId, projectId);
   }
 
   /**
@@ -1368,15 +1412,33 @@ export class AgentManager extends EventEmitter {
     await this.processManager.killAllProcesses();
   }
 
+  private beginTaskExecutionStart(taskId: string, projectId: string | undefined, label: string): boolean {
+    const executionKey = getScopedTaskExecutionKey(taskId, projectId);
+    if (this.state.hasProcess(executionKey) || this.startingTaskExecutions.has(executionKey)) {
+      console.warn(`[AgentManager] Ignoring duplicate ${label} start for already running task:`, {
+        taskId,
+        projectId,
+      });
+      return false;
+    }
+
+    this.startingTaskExecutions.add(executionKey);
+    return true;
+  }
+
+  private finishTaskExecutionStart(taskId: string, projectId?: string): void {
+    this.startingTaskExecutions.delete(getScopedTaskExecutionKey(taskId, projectId));
+  }
+
   /**
    * Check if a task is running
    */
-  isRunning(taskId: string): boolean {
-    return this.state.hasProcess(taskId);
+  isRunning(taskId: string, projectId?: string): boolean {
+    return this.state.hasProcess(getScopedTaskExecutionKey(taskId, projectId));
   }
 
-  getTaskRuntimeMs(taskId: string): number | null {
-    const process = this.state.getProcess(taskId);
+  getTaskRuntimeMs(taskId: string, projectId?: string): number | null {
+    const process = this.state.getProcess(getScopedTaskExecutionKey(taskId, projectId));
     return process ? Date.now() - process.startedAt.getTime() : null;
   }
 
@@ -1384,7 +1446,7 @@ export class AgentManager extends EventEmitter {
    * Get all running task IDs
    */
   getRunningTasks(): string[] {
-    return this.state.getRunningTaskIds();
+    return Array.from(this.state.getAllProcesses().values()).map((process) => process.taskId);
   }
 
   /**
@@ -1403,13 +1465,14 @@ export class AgentManager extends EventEmitter {
     projectId?: string,
     isDirectExecution?: boolean
   ): void {
+    const executionKey = getScopedTaskExecutionKey(taskId, projectId);
     // Preserve swapCount if context already exists (for restarts)
-    const existingContext = this.taskExecutionContext.get(taskId);
+    const existingContext = this.taskExecutionContext.get(executionKey);
     const swapCount = existingContext?.swapCount ?? 0;
     // Increment generation on each store (restarts) to invalidate pending cleanup callbacks
     const generation = (existingContext?.generation ?? 0) + 1;
 
-    this.taskExecutionContext.set(taskId, {
+    this.taskExecutionContext.set(executionKey, {
       projectPath,
       specId,
       options,
@@ -1430,10 +1493,11 @@ export class AgentManager extends EventEmitter {
    * @param taskId - The task to restart
    * @param newProfileId - Optional new profile ID to apply (from auto-swap)
    */
-  restartTask(taskId: string, newProfileId?: string): boolean {
-    console.log('[AgentManager] restartTask called for:', taskId, 'with newProfileId:', newProfileId);
+  restartTask(taskId: string, newProfileId?: string, projectId?: string): boolean {
+    console.log('[AgentManager] restartTask called for:', taskId, 'with newProfileId:', newProfileId, 'projectId:', projectId);
 
-    const context = this.taskExecutionContext.get(taskId);
+    const executionKey = getScopedTaskExecutionKey(taskId, projectId);
+    const context = this.taskExecutionContext.get(executionKey);
     if (!context) {
       console.error('[AgentManager] No context for task:', taskId);
       console.log('[AgentManager] Available task contexts:', Array.from(this.taskExecutionContext.keys()));
@@ -1469,7 +1533,7 @@ export class AgentManager extends EventEmitter {
 
     // Kill current process
     console.log('[AgentManager] Killing current process for task:', taskId);
-    this.killTask(taskId);
+    this.killTask(taskId, context.projectId);
 
     // Wait for cleanup, then reset stuck subtasks and restart
     console.log('[AgentManager] Scheduling task restart in 500ms');
@@ -1557,30 +1621,31 @@ export class AgentManager extends EventEmitter {
     taskId: string,
     profileId: string,
     profileName: string,
-    reason: 'proactive' | 'reactive' | 'manual'
+    reason: 'proactive' | 'reactive' | 'manual',
+    projectId?: string,
   ): void {
-    this.state.assignProfileToTask(taskId, profileId, profileName, reason);
+    this.state.assignProfileToTask(getScopedTaskExecutionKey(taskId, projectId), profileId, profileName, reason);
   }
 
   /**
    * Get the profile assignment for a task
    */
-  getTaskProfileAssignment(taskId: string): { profileId: string; profileName: string; reason: string } | undefined {
-    return this.state.getTaskProfileAssignment(taskId);
+  getTaskProfileAssignment(taskId: string, projectId?: string): { profileId: string; profileName: string; reason: string } | undefined {
+    return this.state.getTaskProfileAssignment(getScopedTaskExecutionKey(taskId, projectId));
   }
 
   /**
    * Update the session ID for a task (for session resume)
    */
-  updateTaskSession(taskId: string, sessionId: string): void {
-    this.state.updateTaskSession(taskId, sessionId);
+  updateTaskSession(taskId: string, sessionId: string, projectId?: string): void {
+    this.state.updateTaskSession(getScopedTaskExecutionKey(taskId, projectId), sessionId);
   }
 
   /**
    * Get the session ID for a task
    */
-  getTaskSessionId(taskId: string): string | undefined {
-    return this.state.getTaskSessionId(taskId);
+  getTaskSessionId(taskId: string, projectId?: string): string | undefined {
+    return this.state.getTaskSessionId(getScopedTaskExecutionKey(taskId, projectId));
   }
 
   // ============================================
@@ -1745,6 +1810,7 @@ export class AgentManager extends EventEmitter {
       input.isSpecCreation
         ? { projectPath: input.projectPath, taskDescription: input.taskDescription, specDir: input.specDir }
         : { projectPath: input.projectPath, specId: input.specId, options: input.options, ...(input.direct ? { direct: true } : {}) },
+      input.projectId,
     );
 
     console.warn('[AgentManager] Routing OpenAI Codex subscription task through Codex CLI runtime:', {

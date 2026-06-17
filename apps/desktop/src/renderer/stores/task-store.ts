@@ -22,13 +22,13 @@ interface TaskState {
   // Actions
   setTasks: (tasks: Task[]) => void;
   addTask: (task: Task) => void;
-  updateTask: (taskId: string, updates: Partial<Task>) => void;
-  updateTaskStatus: (taskId: string, status: TaskStatus, reviewReason?: ReviewReason) => void;
-  updateTaskFromPlan: (taskId: string, plan: ImplementationPlan) => void;
-  updateExecutionProgress: (taskId: string, progress: Partial<ExecutionProgress>) => void;
-  updateTaskTokenUsage: (taskId: string, usage: TokenUsage) => void;
-  appendLog: (taskId: string, log: string) => void;
-  batchAppendLogs: (taskId: string, logs: string[]) => void;
+  updateTask: (taskId: string, updates: Partial<Task>, projectId?: string) => void;
+  updateTaskStatus: (taskId: string, status: TaskStatus, reviewReason?: ReviewReason, projectId?: string) => void;
+  updateTaskFromPlan: (taskId: string, plan: ImplementationPlan, projectId?: string) => void;
+  updateExecutionProgress: (taskId: string, progress: Partial<ExecutionProgress>, projectId?: string) => void;
+  updateTaskTokenUsage: (taskId: string, usage: TokenUsage, projectId?: string) => void;
+  appendLog: (taskId: string, log: string, projectId?: string) => void;
+  batchAppendLogs: (taskId: string, logs: string[], projectId?: string) => void;
   selectTask: (taskId: string | null) => void;
   setLoading: (loading: boolean) => void;
   setError: (error: string | null) => void;
@@ -42,7 +42,7 @@ interface TaskState {
   clearTaskOrder: (projectId: string) => void;
 
   // Task status change listeners (for queue auto-promotion)
-  registerTaskStatusChangeListener: (listener: (taskId: string, oldStatus: TaskStatus | undefined, newStatus: TaskStatus) => void) => () => void;
+  registerTaskStatusChangeListener: (listener: (taskId: string, oldStatus: TaskStatus | undefined, newStatus: TaskStatus, projectId?: string) => void) => () => void;
 
   // Selectors
   getSelectedTask: () => Task | undefined;
@@ -53,15 +53,58 @@ interface TaskState {
  * Helper to find task index by id or specId.
  * Returns -1 if not found.
  */
-function findTaskIndex(tasks: Task[], taskId: string): number {
-  return tasks.findIndex((t) => t.id === taskId || t.specId === taskId);
+function matchesTaskId(task: Task, taskId: string, projectId?: string): boolean {
+  if (projectId && task.projectId !== projectId) {
+    return false;
+  }
+  return task.id === taskId || task.specId === taskId;
+}
+
+function findTaskInStore(tasks: Task[], taskId: string, projectId?: string): Task | undefined {
+  return tasks.find((task) => matchesTaskId(task, taskId, projectId));
+}
+
+function findTaskIndex(tasks: Task[], taskId: string, projectId?: string): number {
+  return tasks.findIndex((task) => matchesTaskId(task, taskId, projectId));
+}
+
+function resolveTaskProjectId(taskId: string, projectId?: string): string | undefined {
+  if (projectId) {
+    return projectId;
+  }
+  return findTaskInStore(useTaskStore.getState().tasks, taskId)?.projectId;
+}
+
+function getTaskActivityKey(taskId: string, projectId?: string): string {
+  return projectId ? `${projectId}::${taskId}` : taskId;
 }
 
 /**
  * Task status change listeners for queue auto-promotion
  * Stored outside the store to avoid triggering re-renders
  */
-const taskStatusChangeListeners = new Set<(taskId: string, oldStatus: TaskStatus | undefined, newStatus: TaskStatus) => void>();
+const taskStatusChangeListeners = new Set<(taskId: string, oldStatus: TaskStatus | undefined, newStatus: TaskStatus, projectId?: string) => void>();
+const taskLoadSequencesByProject = new Map<string, number>();
+
+function getVisibleTaskProjectId(): string | null {
+  const { activeProjectId, selectedProjectId } = useProjectStore.getState();
+  return activeProjectId || selectedProjectId || null;
+}
+
+function isVisibleTaskProject(projectId: string): boolean {
+  const visibleProjectId = getVisibleTaskProjectId();
+  return !visibleProjectId || visibleProjectId === projectId;
+}
+
+function nextTaskLoadSequence(projectId: string): number {
+  const sequence = (taskLoadSequencesByProject.get(projectId) ?? 0) + 1;
+  taskLoadSequencesByProject.set(projectId, sequence);
+  return sequence;
+}
+
+function shouldApplyTaskLoad(projectId: string, sequence: number): boolean {
+  return taskLoadSequencesByProject.get(projectId) === sequence && isVisibleTaskProject(projectId);
+}
 
 /**
  * Track last activity timestamp per task for stuck detection.
@@ -75,16 +118,17 @@ const STUCK_ACTIVITY_THRESHOLD_MS = 60_000; // 60 seconds — matches catastroph
 /**
  * Record activity for a task (call this when we receive execution progress or status updates)
  */
-export function recordTaskActivity(taskId: string): void {
-  taskLastActivity.set(taskId, Date.now());
+export function recordTaskActivity(taskId: string, projectId?: string): void {
+  taskLastActivity.set(getTaskActivityKey(taskId, resolveTaskProjectId(taskId, projectId)), Date.now());
 }
 
 /**
  * Check if a task has had recent activity within the threshold.
  * Used by stuck detection to avoid false positives.
  */
-export function hasRecentActivity(taskId: string): boolean {
-  const lastActivity = taskLastActivity.get(taskId);
+export function hasRecentActivity(taskId: string, projectId?: string): boolean {
+  const resolvedProjectId = resolveTaskProjectId(taskId, projectId);
+  const lastActivity = taskLastActivity.get(getTaskActivityKey(taskId, resolvedProjectId));
   if (!lastActivity) return false;
   return Date.now() - lastActivity < STUCK_ACTIVITY_THRESHOLD_MS;
 }
@@ -92,17 +136,19 @@ export function hasRecentActivity(taskId: string): boolean {
 /**
  * Clear activity tracking for a task (call when task completes or is deleted)
  */
-export function clearTaskActivity(taskId: string): void {
+export function clearTaskActivity(taskId: string, projectId?: string): void {
+  const resolvedProjectId = resolveTaskProjectId(taskId, projectId);
+  taskLastActivity.delete(getTaskActivityKey(taskId, resolvedProjectId));
   taskLastActivity.delete(taskId);
 }
 
 /**
  * Notify all registered listeners when a task status changes
  */
-function notifyTaskStatusChange(taskId: string, oldStatus: TaskStatus | undefined, newStatus: TaskStatus): void {
+function notifyTaskStatusChange(taskId: string, oldStatus: TaskStatus | undefined, newStatus: TaskStatus, projectId?: string): void {
   for (const listener of taskStatusChangeListeners) {
     try {
-      listener(taskId, oldStatus, newStatus);
+      listener(taskId, oldStatus, newStatus, projectId);
     } catch (error) {
       console.error('[TaskStore] Error in task status change listener:', error);
     }
@@ -266,12 +312,12 @@ function isTaskAlreadyMissingError(error?: string): boolean {
   return normalized.includes('not found') || normalized.includes('already removed');
 }
 
-function removeTaskFromLocalState(taskId: string): void {
+function removeTaskFromLocalState(taskId: string, projectId?: string): void {
   useTaskStore.setState((state) => {
-    const nextTasks = state.tasks.filter((t) => t.id !== taskId && t.specId !== taskId);
+    const nextTasks = state.tasks.filter((task) => !matchesTaskId(task, taskId, projectId));
     const selectedTask = state.tasks.find((t) => t.id === state.selectedTaskId);
     const shouldClearSelection = selectedTask
-      ? (selectedTask.id === taskId || selectedTask.specId === taskId)
+      ? matchesTaskId(selectedTask, taskId, projectId)
       : false;
 
     return {
@@ -383,9 +429,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       };
     }),
 
-  updateTask: (taskId, updates) =>
+  updateTask: (taskId, updates, projectId) =>
     set((state) => {
-      const index = findTaskIndex(state.tasks, taskId);
+      const index = findTaskIndex(state.tasks, taskId, projectId);
       if (index === -1) return state;
 
       return {
@@ -393,19 +439,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       };
     }),
 
-  updateTaskStatus: (taskId, status, reviewReason) => {
+  updateTaskStatus: (taskId, status, reviewReason, projectId) => {
     // Record activity for stuck detection — status changes prove the task is alive
-    recordTaskActivity(taskId);
-
     // Capture old status before update
     const state = get();
-    const index = findTaskIndex(state.tasks, taskId);
+    const index = findTaskIndex(state.tasks, taskId, projectId);
     if (index === -1) {
       debugLog('[updateTaskStatus] Task not found:', taskId);
       return;
     }
     const oldTask = state.tasks[index];
     const oldStatus = oldTask.status;
+    // Record activity for stuck detection - status changes prove the task is alive.
+    recordTaskActivity(taskId, oldTask.projectId);
 
     // Skip if status AND reviewReason are the same
     if (oldStatus === status && oldTask.reviewReason === reviewReason) {
@@ -464,11 +510,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
 
     // Notify listeners after state update (schedule after current tick)
     queueMicrotask(() => {
-      notifyTaskStatusChange(taskId, oldStatus, status);
+      notifyTaskStatusChange(taskId, oldStatus, status, oldTask.projectId);
     });
   },
 
-  updateTaskFromPlan: (taskId, plan) =>
+  updateTaskFromPlan: (taskId, plan, projectId) =>
     set((state) => {
       // FIX (PR Review): Gate debug logging to prevent production console clutter
       debugLog('[updateTaskFromPlan] called with plan:', {
@@ -479,7 +525,7 @@ export const useTaskStore = create<TaskState>((set, get) => ({
         // Note: planData removed to avoid verbose output in logs
       });
 
-      const index = findTaskIndex(state.tasks, taskId);
+      const index = findTaskIndex(state.tasks, taskId, projectId);
       if (index === -1) {
         debugLog('[updateTaskFromPlan] Task not found:', taskId);
         return state;
@@ -565,13 +611,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
       };
     }),
 
-  updateExecutionProgress: (taskId, progress) => {
-    // Record activity for stuck detection (outside of set() to avoid triggering extra renders)
-    recordTaskActivity(taskId);
-
+  updateExecutionProgress: (taskId, progress, projectId) => {
     set((state) => {
-      const index = findTaskIndex(state.tasks, taskId);
+      const index = findTaskIndex(state.tasks, taskId, projectId);
       if (index === -1) return state;
+      recordTaskActivity(taskId, state.tasks[index].projectId);
 
       return {
         tasks: updateTaskAtIndex(state.tasks, index, (t) => {
@@ -633,17 +677,16 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     });
   },
 
-  updateTaskTokenUsage: (taskId, usage) => {
-    recordTaskActivity(taskId);
-
+  updateTaskTokenUsage: (taskId, usage, projectId) => {
     debugLog(`[TaskStore.updateTaskTokenUsage] Called for ${taskId}:`, usage);
 
     set((state) => {
-      const index = findTaskIndex(state.tasks, taskId);
+      const index = findTaskIndex(state.tasks, taskId, projectId);
       if (index === -1) {
         debugWarn(`[TaskStore.updateTaskTokenUsage] Task not found: ${taskId}`);
         return state;
       }
+      recordTaskActivity(taskId, state.tasks[index].projectId);
 
       const previousUsage = state.tasks[index].tokenUsage;
       const mergedUsage = mergeTokenUsageForTask(previousUsage, usage);
@@ -663,9 +706,9 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     });
   },
 
-  appendLog: (taskId, log) =>
+  appendLog: (taskId, log, projectId) =>
     set((state) => {
-      const index = findTaskIndex(state.tasks, taskId);
+      const index = findTaskIndex(state.tasks, taskId, projectId);
       if (index === -1) {
         debugWarn('[TaskStore.appendLog] Task not found:', taskId);
         return state;
@@ -688,19 +731,19 @@ export const useTaskStore = create<TaskState>((set, get) => ({
     }),
 
   // Batch append multiple logs at once (single state update instead of N updates)
-  batchAppendLogs: (taskId, logs) => {
+  batchAppendLogs: (taskId, logs, projectId) => {
     // Record activity for stuck detection — log output proves the task is alive
-    recordTaskActivity(taskId);
     return set((state) => {
       if (logs.length === 0) {
         debugLog('[TaskStore.batchAppendLogs] No logs to append for task:', taskId);
         return state;
       }
-      const index = findTaskIndex(state.tasks, taskId);
+      const index = findTaskIndex(state.tasks, taskId, projectId);
       if (index === -1) {
         debugWarn('[TaskStore.batchAppendLogs] Task not found:', taskId);
         return state;
       }
+      recordTaskActivity(taskId, state.tasks[index].projectId);
 
       const currentLogCount = state.tasks[index].logs?.length || 0;
       const newLogCount = currentLogCount + logs.length;
@@ -881,8 +924,11 @@ export const useTaskStore = create<TaskState>((set, get) => ({
  */
 export async function loadTasks(projectId: string, options?: { forceRefresh?: boolean }): Promise<void> {
   const store = useTaskStore.getState();
-  store.setLoading(true);
-  store.setError(null);
+  const loadSequence = nextTaskLoadSequence(projectId);
+  if (isVisibleTaskProject(projectId)) {
+    store.setLoading(true);
+    store.setError(null);
+  }
 
   debugLog('[TaskStore.loadTasks] Loading tasks for project:', {
     projectId,
@@ -900,6 +946,16 @@ export async function loadTasks(projectId: string, options?: { forceRefresh?: bo
       error: result.error
     });
 
+    if (!shouldApplyTaskLoad(projectId, loadSequence)) {
+      debugLog('[TaskStore.loadTasks] Ignoring stale or non-visible task load result:', {
+        projectId,
+        loadSequence,
+        visibleProjectId: getVisibleTaskProjectId(),
+        latestSequence: taskLoadSequencesByProject.get(projectId)
+      });
+      return;
+    }
+
     if (result.success && result.data) {
       debugLog('[TaskStore.loadTasks] Tasks loaded successfully:', {
         count: result.data.length,
@@ -912,10 +968,14 @@ export async function loadTasks(projectId: string, options?: { forceRefresh?: bo
       store.setError(result.error || 'Failed to load tasks');
     }
   } catch (error) {
-    debugWarn('[TaskStore.loadTasks] Exception while loading tasks:', error);
-    store.setError(error instanceof Error ? error.message : 'Unknown error');
+    if (shouldApplyTaskLoad(projectId, loadSequence)) {
+      debugWarn('[TaskStore.loadTasks] Exception while loading tasks:', error);
+      store.setError(error instanceof Error ? error.message : 'Unknown error');
+    }
   } finally {
-    store.setLoading(false);
+    if (shouldApplyTaskLoad(projectId, loadSequence)) {
+      store.setLoading(false);
+    }
   }
 }
 
@@ -973,7 +1033,7 @@ export async function createProjectDocumentationTask(
  * Start a task
  */
 export function startTask(taskId: string, options?: TaskStartOptions): void {
-  const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+  const task = findTaskInStore(useTaskStore.getState().tasks, taskId, options?.projectId);
   const projectId = options?.projectId ?? task?.projectId;
 
   window.electronAPI.startTask(
@@ -985,9 +1045,9 @@ export function startTask(taskId: string, options?: TaskStartOptions): void {
 /**
  * Stop a task
  */
-export function stopTask(taskId: string): void {
-  const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
-  window.electronAPI.stopTask(taskId, task?.projectId);
+export function stopTask(taskId: string, projectId?: string): void {
+  const task = findTaskInStore(useTaskStore.getState().tasks, taskId, projectId);
+  window.electronAPI.stopTask(taskId, projectId ?? task?.projectId);
 }
 
 /**
@@ -997,14 +1057,16 @@ export async function submitReview(
   taskId: string,
   approved: boolean,
   feedback?: string,
-  images?: ImageAttachment[]
+  images?: ImageAttachment[],
+  projectId?: string
 ): Promise<boolean> {
   try {
-    const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
-    const result = await window.electronAPI.submitReview(taskId, approved, feedback, images, task?.projectId);
+    const task = findTaskInStore(useTaskStore.getState().tasks, taskId, projectId);
+    const resolvedProjectId = projectId ?? task?.projectId;
+    const result = await window.electronAPI.submitReview(taskId, approved, feedback, images, resolvedProjectId);
     if (result.success) {
-      if (task?.projectId) {
-        await loadTasks(task.projectId, { forceRefresh: true });
+      if (resolvedProjectId) {
+        await loadTasks(resolvedProjectId, { forceRefresh: true });
       }
       return true;
     }
@@ -1034,7 +1096,7 @@ export async function persistTaskStatus(
   options?: { forceCleanup?: boolean; keepWorktree?: boolean; projectId?: string }
 ): Promise<PersistStatusResult> {
   const store = useTaskStore.getState();
-  const task = store.tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+  const task = findTaskInStore(store.tasks, taskId, options?.projectId);
   const projectId = options?.projectId ?? task?.projectId;
 
   try {
@@ -1061,7 +1123,7 @@ export async function persistTaskStatus(
     }
 
     // Only update local state after backend confirms success
-    store.updateTaskStatus(taskId, status);
+    store.updateTaskStatus(taskId, status, undefined, projectId);
     return { success: true };
   } catch (error) {
     console.error('Error persisting task status:', error);
@@ -1074,19 +1136,27 @@ export async function persistTaskStatus(
  * Used when user confirms they want to delete the worktree and mark as done
  * Returns full result including error details for better UX
  */
-export async function forceCompleteTask(taskId: string): Promise<PersistStatusResult> {
-  return persistTaskStatus(taskId, 'done', { forceCleanup: true });
+export async function forceCompleteTask(taskId: string, projectId?: string): Promise<PersistStatusResult> {
+  return persistTaskStatus(taskId, 'done', projectId ? { forceCleanup: true, projectId } : { forceCleanup: true });
 }
 
 /**
  * Check if the in_progress queue is at capacity.
  * @param excludeTaskId - Task ID to exclude from the count (e.g., when restarting a stuck task already in in_progress)
  */
-export function isQueueAtCapacity(excludeTaskId?: string): boolean {
-  const maxParallelTasks = useProjectStore.getState().getActiveProject()?.settings?.maxParallelTasks ?? DEFAULT_MAX_PARALLEL_TASKS;
+export function isQueueAtCapacity(excludeTaskId?: string, projectId?: string): boolean {
+  const resolvedProjectId = projectId ?? (excludeTaskId ? resolveTaskProjectId(excludeTaskId) : undefined);
+  const projectStore = useProjectStore.getState();
+  const project = resolvedProjectId
+    ? projectStore.projects.find((entry) => entry.id === resolvedProjectId)
+    : projectStore.getActiveProject() ?? projectStore.getSelectedProject();
+  const maxParallelTasks = project?.settings?.maxParallelTasks ?? DEFAULT_MAX_PARALLEL_TASKS;
   const currentTasks = useTaskStore.getState().tasks;
   const inProgressCount = currentTasks.filter((t) =>
-    t.status === 'in_progress' && !t.metadata?.archivedAt && (!excludeTaskId || t.id !== excludeTaskId)
+    t.status === 'in_progress' &&
+    !t.metadata?.archivedAt &&
+    (!resolvedProjectId || t.projectId === resolvedProjectId) &&
+    (!excludeTaskId || (t.id !== excludeTaskId && t.specId !== excludeTaskId))
   ).length;
   return inProgressCount >= maxParallelTasks;
 }
@@ -1109,12 +1179,12 @@ export interface StartTaskOrQueueResult {
  * not through this return value.
  */
 export async function startTaskOrQueue(taskId: string, projectId?: string): Promise<StartTaskOrQueueResult> {
-  const task = useTaskStore.getState().tasks.find(t => t.id === taskId);
+  const task = findTaskInStore(useTaskStore.getState().tasks, taskId, projectId);
   const resolvedProjectId = projectId ?? task?.projectId;
   // Exclude this task from the capacity check when it's already in_progress (stuck restart)
   const excludeId = task?.status === 'in_progress' ? taskId : undefined;
 
-  if (isQueueAtCapacity(excludeId)) {
+  if (isQueueAtCapacity(excludeId, resolvedProjectId)) {
     const result = await persistTaskStatus(
       taskId,
       'queue',
@@ -1136,13 +1206,16 @@ export async function startTaskOrQueue(taskId: string, projectId?: string): Prom
  */
 export async function persistUpdateTask(
   taskId: string,
-  updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> }
+  updates: { title?: string; description?: string; metadata?: Partial<TaskMetadata> },
+  projectId?: string
 ): Promise<boolean> {
   const store = useTaskStore.getState();
+  const task = findTaskInStore(store.tasks, taskId, projectId);
+  const resolvedProjectId = projectId ?? task?.projectId;
 
   try {
     // Call the IPC to persist changes to spec files
-    const result = await window.electronAPI.updateTask(taskId, updates);
+    const result = await window.electronAPI.updateTask(taskId, updates, resolvedProjectId);
 
     if (result.success && result.data) {
       // Update local state with the returned task data
@@ -1151,7 +1224,7 @@ export async function persistUpdateTask(
         description: result.data.description,
         metadata: result.data.metadata,
         updatedAt: new Date()
-      });
+      }, resolvedProjectId);
       return true;
     }
 
@@ -1168,13 +1241,15 @@ export async function persistUpdateTask(
  */
 export async function deleteSubtask(
   taskId: string,
-  subtaskId: string
+  subtaskId: string,
+  projectId?: string
 ): Promise<{ success: boolean; error?: string }> {
   const store = useTaskStore.getState();
-  const task = store.tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+  const task = findTaskInStore(store.tasks, taskId, projectId);
+  const resolvedProjectId = projectId ?? task?.projectId;
 
   try {
-    const result = await window.electronAPI.deleteSubtask(taskId, subtaskId, task?.projectId);
+    const result = await window.electronAPI.deleteSubtask(taskId, subtaskId, resolvedProjectId);
 
     if (result.success && result.data) {
       store.updateTask(taskId, {
@@ -1185,7 +1260,7 @@ export async function deleteSubtask(
         subtasks: result.data.subtasks,
         executionProgress: result.data.executionProgress,
         updatedAt: new Date()
-      });
+      }, resolvedProjectId);
       return { success: true };
     }
 
@@ -1204,10 +1279,10 @@ export async function deleteSubtask(
 /**
  * Check if a task has an active running process
  */
-export async function checkTaskRunning(taskId: string): Promise<boolean> {
+export async function checkTaskRunning(taskId: string, projectId?: string): Promise<boolean> {
   try {
-    const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
-    const result = await window.electronAPI.checkTaskRunning(taskId, task?.projectId);
+    const task = findTaskInStore(useTaskStore.getState().tasks, taskId, projectId);
+    const result = await window.electronAPI.checkTaskRunning(taskId, projectId ?? task?.projectId);
     return result.success && result.data === true;
   } catch (error) {
     console.error('Error checking task running status:', error);
@@ -1222,13 +1297,14 @@ export async function checkTaskRunning(taskId: string): Promise<boolean> {
  */
 export async function recoverStuckTask(
   taskId: string,
-  options: { targetStatus?: TaskStatus; autoRestart?: boolean } = { autoRestart: true }
+  options: { targetStatus?: TaskStatus; autoRestart?: boolean; projectId?: string } = { autoRestart: true }
 ): Promise<{ success: boolean; message: string; autoRestarted?: boolean }> {
   try {
-    const task = useTaskStore.getState().tasks.find((entry) => entry.id === taskId || entry.specId === taskId);
+    const task = findTaskInStore(useTaskStore.getState().tasks, taskId, options.projectId);
+    const projectId = options.projectId ?? task?.projectId;
     const result = await window.electronAPI.recoverStuckTask(
       taskId,
-      task?.projectId ? { ...options, projectId: task.projectId } : options
+      projectId ? { ...options, projectId } : options
     );
 
     if (result.success && result.data) {
@@ -1256,15 +1332,19 @@ export async function recoverStuckTask(
  * Delete a task and its spec directory
  */
 export async function deleteTask(
-  taskId: string
+  taskId: string,
+  projectId?: string
 ): Promise<{ success: boolean; error?: string }> {
+  const task = findTaskInStore(useTaskStore.getState().tasks, taskId, projectId);
+  const resolvedProjectId = projectId ?? task?.projectId;
+
   try {
-    const result = await window.electronAPI.deleteTask(taskId);
+    const result = await window.electronAPI.deleteTask(taskId, resolvedProjectId);
     const missingOnBackend = isTaskAlreadyMissingError(result.error);
 
     if (result.success || missingOnBackend) {
-      clearTaskActivity(taskId);
-      removeTaskFromLocalState(taskId);
+      clearTaskActivity(taskId, resolvedProjectId);
+      removeTaskFromLocalState(taskId, resolvedProjectId);
       return { success: true };
     }
 
@@ -1286,27 +1366,34 @@ export async function deleteTask(
  * Permanently removes tasks from the project
  */
 export async function deleteTasks(
-  taskIds: string[]
+  taskIds: string[],
+  projectId?: string
 ): Promise<{ success: boolean; error?: string; failedIds?: string[] }> {
   const failedIds: string[] = [];
+  const deletedScopes: Array<{ taskId: string; projectId?: string }> = [];
 
   try {
     // Delete tasks one by one (API only supports single delete)
     for (const taskId of taskIds) {
-      const result = await window.electronAPI.deleteTask(taskId);
+      const task = findTaskInStore(useTaskStore.getState().tasks, taskId, projectId);
+      const resolvedProjectId = projectId ?? task?.projectId;
+      const result = await window.electronAPI.deleteTask(taskId, resolvedProjectId);
       if (!result.success && !isTaskAlreadyMissingError(result.error)) {
         failedIds.push(taskId);
+      } else {
+        deletedScopes.push({ taskId, projectId: resolvedProjectId });
       }
     }
 
     // Remove successfully deleted tasks from local state
-    const deletedIds = new Set(taskIds.filter(id => !failedIds.includes(id)));
-    deletedIds.forEach((taskId) => clearTaskActivity(taskId));
+    deletedScopes.forEach(({ taskId, projectId }) => clearTaskActivity(taskId, projectId));
     useTaskStore.setState((state) => {
-      const nextTasks = state.tasks.filter(t => !deletedIds.has(t.id) && !deletedIds.has(t.specId || ''));
+      const nextTasks = state.tasks.filter((task) =>
+        !deletedScopes.some((scope) => matchesTaskId(task, scope.taskId, scope.projectId))
+      );
       const selectedTask = state.tasks.find((t) => t.id === state.selectedTaskId);
       const shouldClearSelection = selectedTask
-        ? deletedIds.has(selectedTask.id) || deletedIds.has(selectedTask.specId)
+        ? deletedScopes.some((scope) => matchesTaskId(selectedTask, scope.taskId, scope.projectId))
         : false;
       return {
         tasks: nextTasks,

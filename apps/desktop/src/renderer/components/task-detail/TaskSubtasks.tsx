@@ -1802,7 +1802,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
     setDeletingSubtaskId(subtaskId);
     setDeleteError(null);
 
-    const result = await deleteSubtask(task.id, subtaskId);
+    const result = await deleteSubtask(task.id, subtaskId, task.projectId);
     if (result.success) {
       setExpandedIds(prev => {
         const next = new Set(prev);
@@ -1814,7 +1814,7 @@ export function TaskSubtasks({ task }: TaskSubtasksProps) {
     }
 
     setDeletingSubtaskId(null);
-  }, [deletingSubtaskId, isTaskRunning, t, task.id]);
+  }, [deletingSubtaskId, isTaskRunning, t, task.id, task.projectId]);
 
   const allExpanded = expandedIds.size === task.subtasks.length && task.subtasks.length > 0;
 

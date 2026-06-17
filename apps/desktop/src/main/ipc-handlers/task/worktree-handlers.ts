@@ -2366,7 +2366,7 @@ export function registerWorktreeHandlers(
               percent,
               message,
               details
-            });
+            }, project.id);
           }
         };
 

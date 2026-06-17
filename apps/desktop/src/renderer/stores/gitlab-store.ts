@@ -7,6 +7,8 @@ import type {
 } from '../../shared/types';
 
 interface GitLabState {
+  currentProjectId: string | null;
+
   // Data
   issues: GitLabIssue[];
   syncStatus: GitLabSyncStatus | null;
@@ -22,6 +24,7 @@ interface GitLabState {
   lastInvestigationResult: GitLabInvestigationResult | null;
 
   // Actions
+  setCurrentProjectId: (projectId: string | null) => void;
   setIssues: (issues: GitLabIssue[]) => void;
   addIssue: (issue: GitLabIssue) => void;
   updateIssue: (issueIid: number, updates: Partial<GitLabIssue>) => void;
@@ -42,6 +45,7 @@ interface GitLabState {
 
 export const useGitLabStore = create<GitLabState>((set, get) => ({
   // Initial state
+  currentProjectId: null,
   issues: [],
   syncStatus: null,
   isLoading: false,
@@ -56,6 +60,24 @@ export const useGitLabStore = create<GitLabState>((set, get) => ({
   lastInvestigationResult: null,
 
   // Actions
+  setCurrentProjectId: (projectId) =>
+    set((state) => {
+      if (state.currentProjectId === projectId) {
+        return { currentProjectId: projectId };
+      }
+
+      return {
+        currentProjectId: projectId,
+        issues: [],
+        syncStatus: null,
+        isLoading: false,
+        error: null,
+        selectedIssueIid: null,
+        investigationStatus: { phase: 'idle', progress: 0, message: '' },
+        lastInvestigationResult: null
+      };
+    }),
+
   setIssues: (issues) => set({ issues, error: null }),
 
   addIssue: (issue) => set((state) => ({
@@ -109,8 +131,30 @@ export const useGitLabStore = create<GitLabState>((set, get) => ({
   }
 }));
 
+let gitLabIssuesRequestSeq = 0;
+let gitLabConnectionRequestSeq = 0;
+let gitLabImportRequestSeq = 0;
+
+function beginGitLabProjectScope(projectId: string): void {
+  const store = useGitLabStore.getState();
+  if (store.currentProjectId !== projectId) {
+    store.setCurrentProjectId(projectId);
+  }
+}
+
+function isCurrentGitLabRequest(
+  projectId: string,
+  requestSeq: number,
+  getLatestRequestSeq: () => number
+): boolean {
+  const state = useGitLabStore.getState();
+  return state.currentProjectId === projectId && getLatestRequestSeq() === requestSeq;
+}
+
 // Action functions for use outside of React components
 export async function loadGitLabIssues(projectId: string, state?: 'opened' | 'closed' | 'all'): Promise<void> {
+  beginGitLabProjectScope(projectId);
+  const requestSeq = ++gitLabIssuesRequestSeq;
   const store = useGitLabStore.getState();
   store.setLoading(true);
   store.setError(null);
@@ -122,23 +166,32 @@ export async function loadGitLabIssues(projectId: string, state?: 'opened' | 'cl
 
   try {
     const result = await window.electronAPI.getGitLabIssues(projectId, state);
+    if (!isCurrentGitLabRequest(projectId, requestSeq, () => gitLabIssuesRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setIssues(result.data);
     } else {
       store.setError(result.error || 'Failed to load GitLab issues');
     }
   } catch (error) {
+    if (!isCurrentGitLabRequest(projectId, requestSeq, () => gitLabIssuesRequestSeq)) return;
     store.setError(error instanceof Error ? error.message : 'Unknown error');
   } finally {
-    store.setLoading(false);
+    if (isCurrentGitLabRequest(projectId, requestSeq, () => gitLabIssuesRequestSeq)) {
+      store.setLoading(false);
+    }
   }
 }
 
 export async function checkGitLabConnection(projectId: string): Promise<GitLabSyncStatus | null> {
+  beginGitLabProjectScope(projectId);
+  const requestSeq = ++gitLabConnectionRequestSeq;
   const store = useGitLabStore.getState();
 
   try {
     const result = await window.electronAPI.checkGitLabConnection(projectId);
+    if (!isCurrentGitLabRequest(projectId, requestSeq, () => gitLabConnectionRequestSeq)) return null;
+
     if (result.success && result.data) {
       store.setSyncStatus(result.data);
       return result.data;
@@ -147,12 +200,14 @@ export async function checkGitLabConnection(projectId: string): Promise<GitLabSy
       return null;
     }
   } catch (error) {
+    if (!isCurrentGitLabRequest(projectId, requestSeq, () => gitLabConnectionRequestSeq)) return null;
     store.setError(error instanceof Error ? error.message : 'Unknown error');
     return null;
   }
 }
 
 export function investigateGitLabIssue(projectId: string, issueIid: number, selectedNoteIds?: number[]): void {
+  beginGitLabProjectScope(projectId);
   const store = useGitLabStore.getState();
   store.setInvestigationStatus({
     phase: 'fetching',
@@ -169,11 +224,15 @@ export async function importGitLabIssues(
   projectId: string,
   issueIids: number[]
 ): Promise<boolean> {
+  beginGitLabProjectScope(projectId);
+  const requestSeq = ++gitLabImportRequestSeq;
   const store = useGitLabStore.getState();
   store.setLoading(true);
 
   try {
     const result = await window.electronAPI.importGitLabIssues(projectId, issueIids);
+    if (!isCurrentGitLabRequest(projectId, requestSeq, () => gitLabImportRequestSeq)) return false;
+
     if (result.success) {
       return true;
     } else {
@@ -181,9 +240,12 @@ export async function importGitLabIssues(
       return false;
     }
   } catch (error) {
+    if (!isCurrentGitLabRequest(projectId, requestSeq, () => gitLabImportRequestSeq)) return false;
     store.setError(error instanceof Error ? error.message : 'Unknown error');
     return false;
   } finally {
-    store.setLoading(false);
+    if (isCurrentGitLabRequest(projectId, requestSeq, () => gitLabImportRequestSeq)) {
+      store.setLoading(false);
+    }
   }
 }

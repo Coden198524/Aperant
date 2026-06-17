@@ -90,7 +90,7 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
 
         // Don't fail if specDir doesn't exist yet — the agent may not have created it.
         // taskLogService.loadLogs() handles missing directories gracefully (returns null).
-        const logs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId);
+        const logs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId, projectId);
 
         debugLog('[TASK_LOGS_GET] Logs loaded:', {
           specId,
@@ -135,7 +135,7 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
         const specDir = path.join(absoluteProjectPath, specsRelPath, specId);
 
         // Preserve created_at when possible to avoid breaking timeline semantics.
-        const existingLogs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId);
+        const existingLogs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId, projectId);
         const clearedLogs = createEmptyTaskLogs(specId, existingLogs?.created_at);
 
         writeTaskLogs(specDir, clearedLogs);
@@ -146,11 +146,11 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
           writeTaskLogs(worktreeSpecDir, clearedLogs);
         }
 
-        const refreshedLogs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId) || clearedLogs;
+        const refreshedLogs = taskLogService.loadLogs(specDir, absoluteProjectPath, specsRelPath, specId, projectId) || clearedLogs;
 
         const mainWindow = getMainWindow();
         if (mainWindow) {
-          mainWindow.webContents.send(IPC_CHANNELS.TASK_LOGS_CHANGED, specId, refreshedLogs);
+          mainWindow.webContents.send(IPC_CHANNELS.TASK_LOGS_CHANGED, specId, refreshedLogs, projectId);
         }
 
         return { success: true, data: refreshedLogs };
@@ -195,7 +195,7 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
         // Start watching even if specDir doesn't exist yet — the poll loop
         // in TaskLogService handles missing files gracefully and will pick up
         // task_logs.jsonl once the agent creates it during execution.
-        taskLogService.startWatching(specId, specDir, absoluteProjectPath, specsRelPath);
+        taskLogService.startWatching(specId, specDir, absoluteProjectPath, specsRelPath, projectId);
         return { success: true };
       } catch (error) {
         console.error('[TASK_LOGS_WATCH] Failed to start watching task logs:', error);
@@ -212,13 +212,13 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
    */
   ipcMain.handle(
     IPC_CHANNELS.TASK_LOGS_UNWATCH,
-    async (_, specId: string): Promise<IPCResult> => {
+    async (_, specId: string, projectId?: string): Promise<IPCResult> => {
       try {
         if (!isValidTaskId(specId)) {
           return { success: false, error: 'Invalid spec ID' };
         }
 
-        taskLogService.stopWatching(specId);
+        taskLogService.stopWatching(specId, projectId);
         return { success: true };
       } catch (error) {
         console.error('Failed to stop watching task logs:', error);
@@ -233,17 +233,17 @@ export function registerTaskLogsHandlers(getMainWindow: () => BrowserWindow | nu
   /**
    * Setup task log service event forwarding to renderer
    */
-  taskLogService.on('logs-changed', (specId: string, logs: TaskLogs) => {
+  taskLogService.on('logs-changed', (specId: string, logs: TaskLogs, projectId?: string) => {
     const mainWindow = getMainWindow();
     if (mainWindow) {
-      mainWindow.webContents.send(IPC_CHANNELS.TASK_LOGS_CHANGED, specId, logs);
+      mainWindow.webContents.send(IPC_CHANNELS.TASK_LOGS_CHANGED, specId, logs, projectId);
     }
   });
 
-  taskLogService.on('stream-chunk', (specId: string, chunk: TaskLogStreamChunk) => {
+  taskLogService.on('stream-chunk', (specId: string, chunk: TaskLogStreamChunk, projectId?: string) => {
     const mainWindow = getMainWindow();
     if (mainWindow) {
-      mainWindow.webContents.send(IPC_CHANNELS.TASK_LOGS_STREAM, specId, chunk);
+      mainWindow.webContents.send(IPC_CHANNELS.TASK_LOGS_STREAM, specId, chunk, projectId);
     }
   });
 }

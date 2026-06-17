@@ -30,6 +30,21 @@ const STUCK_TASK_FALLBACK_TIMEOUT_MS = 500;
 // Map to store active fallback timers so they can be cancelled on task restart
 const fallbackTimers = new Map<string, NodeJS.Timeout>();
 
+function getTaskEventScopeKey(taskId: string, projectId?: string): string {
+  return projectId ? `${projectId}::${taskId}` : taskId;
+}
+
+function getMatchingTaskEventScopeKeys(taskId: string, projectId?: string): string[] {
+  if (projectId) {
+    return [getTaskEventScopeKey(taskId, projectId)];
+  }
+  const suffix = `::${taskId}`;
+  return [...new Set([
+    taskId,
+    ...[...fallbackTimers.keys()].filter((key) => key === taskId || key.endsWith(suffix)),
+  ])];
+}
+
 /**
  * Register all agent-events-related IPC handlers
  */
@@ -51,19 +66,19 @@ export function registerAgenteventsHandlers(
   // ============================================
 
   agentManager.on("log", (taskId: string, log: string, projectId?: string) => {
-    // Use projectId from event when available; fall back to lookup for backward compatibility
+    // Use projectId from event when available; fall back to the active execution context
+    // for backward compatibility with older emitters.
     if (!projectId) {
-      const { project } = findTaskAndProject(taskId);
-      projectId = project?.id;
+      projectId = agentManager.resolveTaskProjectId(taskId);
     }
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_LOG, taskId, log, projectId);
   });
 
   agentManager.on("error", (taskId: string, error: string, projectId?: string) => {
-    // Use projectId from event when available; fall back to lookup for backward compatibility
+    // Use projectId from event when available; fall back to the active execution context
+    // for backward compatibility with older emitters.
     if (!projectId) {
-      const { project } = findTaskAndProject(taskId);
-      projectId = project?.id;
+      projectId = agentManager.resolveTaskProjectId(taskId);
     }
     safeSendToRenderer(getMainWindow, IPC_CHANNELS.TASK_ERROR, taskId, error, projectId);
   });
@@ -76,7 +91,8 @@ export function registerAgenteventsHandlers(
       getMainWindow,
       IPC_CHANNELS.TASK_LOGS_STREAM,
       specId,
-      chunk
+      chunk,
+      projectId
     );
   });
 
@@ -122,6 +138,7 @@ export function registerAgenteventsHandlers(
     // Use projectId from event to scope the lookup (prevents cross-project contamination)
     const { task: exitTask, project: exitProject } = findTaskAndProject(taskId, projectId);
     const exitProjectId = exitProject?.id || projectId;
+    const eventScopeKey = getTaskEventScopeKey(taskId, exitProjectId);
 
     // Skip handleProcessExited for successful spec-creation exits 鈥?the spec 鈫?build
     // transition (line 132+) will start a new agent, and calling handleProcessExited
@@ -140,10 +157,10 @@ export function registerAgenteventsHandlers(
     // Store timer reference so it can be cancelled if task restarts within the window.
     if (isSpecToBuildTransition) {
       // Cancel any existing timer and skip setting a new one
-      cancelFallbackTimer(taskId);
+      cancelFallbackTimer(taskId, exitProjectId);
     }
     const timer = !isSpecToBuildTransition ? setTimeout(() => {
-      const currentState = taskStateManager.getCurrentState(taskId);
+      const currentState = taskStateManager.getCurrentState(taskId, exitProjectId);
 
       if (currentState && XSTATE_ACTIVE_STATES.has(currentState)) {
         const { task: checkTask, project: checkProject } = findTaskAndProject(taskId, projectId);
@@ -181,12 +198,12 @@ export function registerAgenteventsHandlers(
         }
       }
       // Clean up timer reference after it fires
-      fallbackTimers.delete(taskId);
+      fallbackTimers.delete(eventScopeKey);
     }, STUCK_TASK_FALLBACK_TIMEOUT_MS) : null;
 
     // Store timer reference for potential cancellation
     if (timer) {
-      fallbackTimers.set(taskId, timer);
+      fallbackTimers.set(eventScopeKey, timer);
     }
 
     // Send final plan state to renderer BEFORE unwatching
@@ -343,7 +360,7 @@ export function registerAgenteventsHandlers(
   agentManager.on("task-event", (taskId: string, event, projectId?: string) => {
     console.debug(`[agent-events-handlers] Received task-event for ${taskId}:`, event.type, event);
 
-    if (taskStateManager.getLastSequence(taskId) === undefined) {
+    if (taskStateManager.getLastSequence(taskId, projectId) === undefined) {
       const { task, project } = findTaskAndProject(taskId, projectId);
       if (task && project) {
         try {
@@ -351,7 +368,7 @@ export function registerAgenteventsHandlers(
           const plan = loadAutocodeImplementationPlanSync(planPath) as { lastEvent?: { sequence?: unknown } } | null;
           const lastSeq = plan?.lastEvent?.sequence;
           if (typeof lastSeq === "number" && lastSeq >= 0) {
-            taskStateManager.setLastSequence(taskId, lastSeq);
+            taskStateManager.setLastSequence(taskId, lastSeq, project.id);
           }
         } catch {
           // Ignore missing/invalid plan files
@@ -443,7 +460,7 @@ export function registerAgenteventsHandlers(
     // PLANNING_COMPLETE. The exit handler emits execution-progress with phase='failed',
     // which would incorrectly overwrite status='human_review' with status='error' via
     // persistPlanPhaseSync.
-    const currentXState = taskStateManager.getCurrentState(taskId);
+    const currentXState = taskStateManager.getCurrentState(taskId, taskProjectId);
     const xstateInTerminalState = currentXState && XSTATE_SETTLED_STATES.has(currentXState);
 
     // Persist phase to plan file for restoration on app refresh
@@ -542,7 +559,7 @@ export function registerAgenteventsHandlers(
     // the entire file and strips the frontend's status/xstateState/executionPhase fields.
     // This causes tasks to snap back to backlog on refresh.
     const planWithStatus = plan as { xstateState?: string; executionPhase?: string; status?: string };
-    const currentXState = taskStateManager.getCurrentState(taskId);
+    const currentXState = taskStateManager.getCurrentState(taskId, resolvedProjectId);
     if (currentXState && !planWithStatus.xstateState && task && project) {
       console.debug(`[agent-events-handlers] Re-stamping XState status on plan file for ${taskId} (state: ${currentXState})`);
       const mainPlanPath = getPlanPath(project, task);
@@ -579,11 +596,13 @@ export function registerAgenteventsHandlers(
  * Should be called when a task is restarted to prevent the stale timer
  * from incorrectly stopping the new process.
  */
-export function cancelFallbackTimer(taskId: string): void {
-  const timer = fallbackTimers.get(taskId);
-  if (timer) {
-    clearTimeout(timer);
-    fallbackTimers.delete(taskId);
-    console.debug(`[agent-events-handlers] Cancelled fallback timer for task ${taskId}`);
+export function cancelFallbackTimer(taskId: string, projectId?: string): void {
+  for (const scopeKey of getMatchingTaskEventScopeKeys(taskId, projectId)) {
+    const timer = fallbackTimers.get(scopeKey);
+    if (timer) {
+      clearTimeout(timer);
+      fallbackTimers.delete(scopeKey);
+      console.debug(`[agent-events-handlers] Cancelled fallback timer for task ${taskId}`, { projectId });
+    }
   }
 }

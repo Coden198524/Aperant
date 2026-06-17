@@ -14,11 +14,12 @@ import {
 import type { GitLabIssue } from "../../shared/types";
 import type { GitLabIssuesProps } from "./gitlab-issues/types";
 
-export function GitLabIssues({ onOpenSettings, onNavigateToTask }: GitLabIssuesProps) {
+export function GitLabIssues({ projectId, onOpenSettings, onNavigateToTask }: GitLabIssuesProps) {
   const { t } = useTranslation("gitlab");
   const projects = useProjectStore((state) => state.projects);
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
-  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const fallbackProjectId = useProjectStore((state) => state.activeProjectId || state.selectedProjectId);
+  const currentProjectId = projectId ?? fallbackProjectId ?? undefined;
+  const selectedProject = projects.find((p) => p.id === currentProjectId);
   const tasks = useTaskStore((state) => state.tasks);
 
   const {

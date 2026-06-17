@@ -8,6 +8,8 @@ import type {
 } from '../../shared/types';
 
 interface ContextState {
+  currentProjectId: string | null;
+
   // Deprecated project-index compatibility state
   projectIndex: ProjectIndex | null;
   indexLoading: boolean;
@@ -29,6 +31,7 @@ interface ContextState {
   searchQuery: string;
 
   // Actions
+  setCurrentProjectId: (projectId: string | null) => void;
   setProjectIndex: (index: ProjectIndex | null) => void;
   setIndexLoading: (loading: boolean) => void;
   setIndexError: (error: string | null) => void;
@@ -45,6 +48,8 @@ interface ContextState {
 }
 
 export const useContextStore = create<ContextState>((set) => ({
+  currentProjectId: null,
+
   // Deprecated project-index compatibility state
   projectIndex: null,
   indexLoading: false,
@@ -66,6 +71,28 @@ export const useContextStore = create<ContextState>((set) => ({
   searchQuery: '',
 
   // Actions
+  setCurrentProjectId: (projectId) =>
+    set((state) => {
+      if (state.currentProjectId === projectId) {
+        return { currentProjectId: projectId };
+      }
+
+      return {
+        currentProjectId: projectId,
+        projectIndex: null,
+        indexLoading: false,
+        indexError: null,
+        memoryStatus: null,
+        memoryState: null,
+        memoryLoading: false,
+        memoryError: null,
+        recentMemories: [],
+        memoriesLoading: false,
+        searchResults: [],
+        searchLoading: false,
+        searchQuery: ''
+      };
+    }),
   setProjectIndex: (index) => set({ projectIndex: index }),
   setIndexLoading: (loading) => set({ indexLoading: loading }),
   setIndexError: (error) => set({ indexError: error }),
@@ -80,6 +107,7 @@ export const useContextStore = create<ContextState>((set) => ({
   setSearchQuery: (query) => set({ searchQuery: query }),
   clearAll: () =>
     set({
+      currentProjectId: null,
       projectIndex: null,
       indexLoading: false,
       indexError: null,
@@ -95,10 +123,32 @@ export const useContextStore = create<ContextState>((set) => ({
     })
 }));
 
+let projectContextRequestSeq = 0;
+let memorySearchRequestSeq = 0;
+let recentMemoriesRequestSeq = 0;
+
+function beginContextProjectScope(projectId: string): void {
+  const store = useContextStore.getState();
+  if (store.currentProjectId !== projectId) {
+    store.setCurrentProjectId(projectId);
+  }
+}
+
+function isCurrentContextRequest(
+  projectId: string,
+  requestSeq: number,
+  getLatestRequestSeq: () => number
+): boolean {
+  const state = useContextStore.getState();
+  return state.currentProjectId === projectId && getLatestRequestSeq() === requestSeq;
+}
+
 /**
  * Load project context (legacy project-index placeholder + memory status)
  */
 export async function loadProjectContext(projectId: string): Promise<void> {
+  beginContextProjectScope(projectId);
+  const requestSeq = ++projectContextRequestSeq;
   const store = useContextStore.getState();
   store.setIndexLoading(true);
   store.setMemoryLoading(true);
@@ -107,6 +157,8 @@ export async function loadProjectContext(projectId: string): Promise<void> {
 
   try {
     const result = await window.electronAPI.getProjectContext(projectId);
+    if (!isCurrentContextRequest(projectId, requestSeq, () => projectContextRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setProjectIndex(result.data.projectIndex);
       store.setMemoryStatus(result.data.memoryStatus);
@@ -116,10 +168,13 @@ export async function loadProjectContext(projectId: string): Promise<void> {
       store.setIndexError(result.error || 'Failed to load project context');
     }
   } catch (error) {
+    if (!isCurrentContextRequest(projectId, requestSeq, () => projectContextRequestSeq)) return;
     store.setIndexError(error instanceof Error ? error.message : 'Unknown error');
   } finally {
-    store.setIndexLoading(false);
-    store.setMemoryLoading(false);
+    if (isCurrentContextRequest(projectId, requestSeq, () => projectContextRequestSeq)) {
+      store.setIndexLoading(false);
+      store.setMemoryLoading(false);
+    }
   }
 }
 
@@ -130,6 +185,8 @@ export async function searchMemories(
   projectId: string,
   query: string
 ): Promise<void> {
+  beginContextProjectScope(projectId);
+  const requestSeq = ++memorySearchRequestSeq;
   const store = useContextStore.getState();
   store.setSearchQuery(query);
 
@@ -142,15 +199,20 @@ export async function searchMemories(
 
   try {
     const result = await window.electronAPI.searchMemories(projectId, query);
+    if (!isCurrentContextRequest(projectId, requestSeq, () => memorySearchRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setSearchResults(result.data);
     } else {
       store.setSearchResults([]);
     }
   } catch (_error) {
+    if (!isCurrentContextRequest(projectId, requestSeq, () => memorySearchRequestSeq)) return;
     store.setSearchResults([]);
   } finally {
-    store.setSearchLoading(false);
+    if (isCurrentContextRequest(projectId, requestSeq, () => memorySearchRequestSeq)) {
+      store.setSearchLoading(false);
+    }
   }
 }
 
@@ -161,18 +223,24 @@ export async function loadRecentMemories(
   projectId: string,
   limit: number = 20
 ): Promise<void> {
+  beginContextProjectScope(projectId);
+  const requestSeq = ++recentMemoriesRequestSeq;
   const store = useContextStore.getState();
   store.setMemoriesLoading(true);
 
   try {
     const result = await window.electronAPI.getRecentMemories(projectId, limit);
+    if (!isCurrentContextRequest(projectId, requestSeq, () => recentMemoriesRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setRecentMemories(result.data);
     }
   } catch (_error) {
     // Silently fail - memories are optional
   } finally {
-    store.setMemoriesLoading(false);
+    if (isCurrentContextRequest(projectId, requestSeq, () => recentMemoriesRequestSeq)) {
+      store.setMemoriesLoading(false);
+    }
   }
 }
 

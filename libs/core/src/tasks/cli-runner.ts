@@ -3516,15 +3516,16 @@ async function validateStandardPlanArtifactQuality() {
   try {
     const moduleUrl = pathToFileURL(planQualityModulePath).href;
     const planQuality = await import(moduleUrl);
+    const contextMarkdown = readOptionalArtifact(artifacts.context || 'context.md');
     const result = planQuality.validateAutocodeStandardPlanArtifacts({
       specMarkdown: readOptionalArtifact(artifacts.specFile),
       requirementsMarkdown: readOptionalArtifact(artifacts.requirements),
       tasksMarkdown: readOptionalArtifact(artifacts.tasks || 'tasks.md'),
-      contextMarkdown: readOptionalArtifact(artifacts.context || 'context.md'),
+      contextMarkdown,
       requireSpecEvidence: phase === 'planning',
       requireRequirementsEvidence: phase === 'planning',
       requireTaskEvidence: true,
-      requireContextEvidence: phase === 'planning',
+      requireContextEvidence: phase === 'planning' && Boolean(contextMarkdown),
     });
     if (!result || result.valid) {
       return undefined;

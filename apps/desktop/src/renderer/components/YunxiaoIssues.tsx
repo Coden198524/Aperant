@@ -41,6 +41,7 @@ import { useAnalyzePreview } from './yunxiao-issues/hooks/useAnalyzePreview';
 import { YunxiaoBatchReviewWizard } from './yunxiao-issues/components/YunxiaoBatchReviewWizard';
 
 interface YunxiaoIssuesProps {
+  projectId?: string;
   onOpenSettings: () => void;
   onNavigateToTask: (taskId: string) => void;
 }
@@ -169,12 +170,13 @@ function YunxiaoIssueImage({ projectId, issue, src, alt, fallbackErrorText }: Yu
   );
 }
 
-export function YunxiaoIssues({ onOpenSettings, onNavigateToTask }: YunxiaoIssuesProps) {
+export function YunxiaoIssues({ projectId, onOpenSettings, onNavigateToTask }: YunxiaoIssuesProps) {
   const { t } = useTranslation('common');
   const { toast } = useToast();
   const projects = useProjectStore((state) => state.projects);
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
-  const selectedProject = projects.find((project) => project.id === selectedProjectId);
+  const fallbackProjectId = useProjectStore((state) => state.activeProjectId || state.selectedProjectId);
+  const currentProjectId = projectId ?? fallbackProjectId ?? undefined;
+  const selectedProject = projects.find((project) => project.id === currentProjectId);
   const tasks = useTaskStore((state) => state.tasks);
   const {
     config: autoFixConfig,

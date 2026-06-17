@@ -25,6 +25,8 @@ function tChangelog(key: string, defaultValue: string, options?: Record<string, 
 }
 
 interface ChangelogState {
+  currentProjectId: string | null;
+
   // Data
   doneTasks: ChangelogTask[];
   selectedTaskIds: string[];
@@ -71,6 +73,7 @@ interface ChangelogState {
   error: string | null;
 
   // Actions
+  setCurrentProjectId: (projectId: string | null) => void;
   setDoneTasks: (tasks: ChangelogTask[]) => void;
   setSelectedTaskIds: (ids: string[]) => void;
   toggleTaskSelection: (taskId: string) => void;
@@ -129,6 +132,8 @@ const getDefaultDate = (): string => {
 };
 
 const initialState = {
+  currentProjectId: null as string | null,
+
   doneTasks: [] as ChangelogTask[],
   selectedTaskIds: [] as string[],
   loadedSpecs: [] as TaskSpecContent[],
@@ -177,6 +182,35 @@ export const useChangelogStore = create<ChangelogState>((set, get) => ({
   ...initialState,
 
   // Data actions
+  setCurrentProjectId: (projectId) =>
+    set((state) => {
+      if (state.currentProjectId === projectId) {
+        return { currentProjectId: projectId };
+      }
+
+      return {
+        currentProjectId: projectId,
+        doneTasks: [],
+        selectedTaskIds: [],
+        loadedSpecs: [],
+        existingChangelog: null,
+        branches: [],
+        tags: [],
+        currentBranch: '',
+        defaultBranch: 'main',
+        previewCommits: [],
+        isLoadingGitData: false,
+        isLoadingCommits: false,
+        baseBranch: '',
+        compareBranch: '',
+        generationProgress: null,
+        generatedChangelog: '',
+        isGenerating: false,
+        error: null,
+        date: getDefaultDate()
+      };
+    }),
+
   setDoneTasks: (tasks) => set({ doneTasks: tasks }),
 
   setSelectedTaskIds: (ids) => set({ selectedTaskIds: ids }),
@@ -280,8 +314,32 @@ export const useChangelogStore = create<ChangelogState>((set, get) => ({
   updateGeneratedChangelog: (changelog) => set({ generatedChangelog: changelog })
 }));
 
+let changelogDataRequestSeq = 0;
+let changelogSpecsRequestSeq = 0;
+let changelogGitDataRequestSeq = 0;
+let changelogCommitsRequestSeq = 0;
+let changelogGenerateRequestSeq = 0;
+
+function beginChangelogProjectScope(projectId: string): void {
+  const store = useChangelogStore.getState();
+  if (store.currentProjectId !== projectId) {
+    store.setCurrentProjectId(projectId);
+  }
+}
+
+function isCurrentChangelogRequest(
+  projectId: string,
+  requestSeq: number,
+  getLatestRequestSeq: () => number
+): boolean {
+  const state = useChangelogStore.getState();
+  return state.currentProjectId === projectId && getLatestRequestSeq() === requestSeq;
+}
+
 // Helper functions for loading data
 export async function loadChangelogData(projectId: string): Promise<void> {
+  beginChangelogProjectScope(projectId);
+  const requestSeq = ++changelogDataRequestSeq;
   const store = useChangelogStore.getState();
 
   try {
@@ -289,20 +347,25 @@ export async function loadChangelogData(projectId: string): Promise<void> {
     // This is necessary because the Kanban board updates task status in the Zustand store,
     // but the backend reads from the filesystem which doesn't reflect UI-only changes
     const taskStore = useTaskStore.getState();
-    const tasks = taskStore.tasks;
+    const tasks = taskStore.tasks.filter((task) => task.projectId === projectId);
 
     // Load done tasks - pass the renderer's task list to get correct status
     const tasksResult = await window.electronAPI.getChangelogDoneTasks(projectId, tasks);
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogDataRequestSeq)) return;
+
     if (tasksResult.success && tasksResult.data) {
       store.setDoneTasks(tasksResult.data);
     }
 
     // Load existing changelog
     const changelogResult = await window.electronAPI.readExistingChangelog(projectId);
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogDataRequestSeq)) return;
+
     if (changelogResult.success && changelogResult.data) {
       store.setExistingChangelog(changelogResult.data);
     }
   } catch (error) {
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogDataRequestSeq)) return;
     store.setError(
       error instanceof Error ? error.message : tChangelog('store.loadDataFailed', 'Failed to load changelog data')
     );
@@ -310,14 +373,19 @@ export async function loadChangelogData(projectId: string): Promise<void> {
 }
 
 export async function loadTaskSpecs(projectId: string, taskIds: string[]): Promise<void> {
+  beginChangelogProjectScope(projectId);
+  const requestSeq = ++changelogSpecsRequestSeq;
   const store = useChangelogStore.getState();
 
   try {
     const result = await window.electronAPI.loadTaskSpecs(projectId, taskIds);
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogSpecsRequestSeq)) return;
+
     if (result.success && result.data) {
       store.setLoadedSpecs(result.data);
     }
   } catch (error) {
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogSpecsRequestSeq)) return;
     store.setError(
       error instanceof Error ? error.message : tChangelog('store.loadTaskSpecsFailed', 'Failed to load task specs')
     );
@@ -325,6 +393,8 @@ export async function loadTaskSpecs(projectId: string, taskIds: string[]): Promi
 }
 
 export async function loadGitData(projectId: string): Promise<void> {
+  beginChangelogProjectScope(projectId);
+  const requestSeq = ++changelogGitDataRequestSeq;
   const store = useChangelogStore.getState();
 
   store.setIsLoadingGitData(true);
@@ -337,6 +407,8 @@ export async function loadGitData(projectId: string): Promise<void> {
       window.electronAPI.getChangelogTags(projectId)
     ]);
 
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogGitDataRequestSeq)) return;
+
     if (branchesResult.success && branchesResult.data) {
       store.setBranches(branchesResult.data);
 
@@ -345,7 +417,7 @@ export async function loadGitData(projectId: string): Promise<void> {
       if (currentBranch) {
         store.setCurrentBranch(currentBranch.name);
         // Default compare branch to current branch for branch-diff mode
-        if (!store.compareBranch) {
+        if (!useChangelogStore.getState().compareBranch) {
           store.setCompareBranch(currentBranch.name);
         }
       }
@@ -363,28 +435,33 @@ export async function loadGitData(projectId: string): Promise<void> {
       store.setTags(tagsResult.data);
 
       // Auto-set tag range if tags exist
-      if (tagsResult.data.length > 0 && !store.gitHistoryFromTag) {
+      if (tagsResult.data.length > 0 && !useChangelogStore.getState().gitHistoryFromTag) {
         store.setGitHistoryFromTag(tagsResult.data[0].name);
       }
-      if (tagsResult.data.length > 1 && !store.gitHistoryToTag) {
+      if (tagsResult.data.length > 1 && !useChangelogStore.getState().gitHistoryToTag) {
         store.setGitHistoryToTag(tagsResult.data[1].name);
       }
 
       // Auto-set since-version to newest tag if not already set
-      if (tagsResult.data.length > 0 && !store.gitHistorySinceVersion) {
+      if (tagsResult.data.length > 0 && !useChangelogStore.getState().gitHistorySinceVersion) {
         store.setGitHistorySinceVersion(tagsResult.data[0].name);
       }
     }
   } catch (error) {
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogGitDataRequestSeq)) return;
     store.setError(
       error instanceof Error ? error.message : tChangelog('store.loadGitDataFailed', 'Failed to load git data')
     );
   } finally {
-    store.setIsLoadingGitData(false);
+    if (isCurrentChangelogRequest(projectId, requestSeq, () => changelogGitDataRequestSeq)) {
+      store.setIsLoadingGitData(false);
+    }
   }
 }
 
 export async function loadCommitsPreview(projectId: string): Promise<void> {
+  beginChangelogProjectScope(projectId);
+  const requestSeq = ++changelogCommitsRequestSeq;
   const store = useChangelogStore.getState();
 
   store.setIsLoadingCommits(true);
@@ -421,6 +498,7 @@ export async function loadCommitsPreview(projectId: string): Promise<void> {
     }
 
     const result = await window.electronAPI.getChangelogCommitsPreview(projectId, options, mode);
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogCommitsRequestSeq)) return;
 
     if (result.success && result.data) {
       store.setPreviewCommits(result.data);
@@ -429,12 +507,15 @@ export async function loadCommitsPreview(projectId: string): Promise<void> {
       store.setPreviewCommits([]);
     }
   } catch (error) {
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogCommitsRequestSeq)) return;
     store.setError(
       error instanceof Error ? error.message : tChangelog('store.loadCommitsPreviewFailed', 'Failed to load commits preview')
     );
     store.setPreviewCommits([]);
   } finally {
-    store.setIsLoadingCommits(false);
+    if (isCurrentChangelogRequest(projectId, requestSeq, () => changelogCommitsRequestSeq)) {
+      store.setIsLoadingCommits(false);
+    }
   }
 }
 
@@ -450,6 +531,8 @@ function handleGenerationError(store: ReturnType<typeof useChangelogStore.getSta
 }
 
 export async function generateChangelog(projectId: string): Promise<void> {
+  beginChangelogProjectScope(projectId);
+  const requestSeq = ++changelogGenerateRequestSeq;
   const store = useChangelogStore.getState();
 
   // Validate based on source mode
@@ -542,12 +625,14 @@ export async function generateChangelog(projectId: string): Promise<void> {
 
     // Check if generation started successfully
     if (!result.success) {
+      if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogGenerateRequestSeq)) return;
       handleGenerationError(
         store,
         result.error || tChangelog('store.startGenerationFailed', 'Failed to start changelog generation')
       );
     }
   } catch (error) {
+    if (!isCurrentChangelogRequest(projectId, requestSeq, () => changelogGenerateRequestSeq)) return;
     const errorMessage = error instanceof Error
       ? error.message
       : tChangelog('store.startGenerationFailed', 'Failed to start changelog generation');
@@ -560,6 +645,11 @@ export async function saveChangelog(
   mode: 'prepend' | 'overwrite' | 'append' = 'prepend'
 ): Promise<boolean> {
   const store = useChangelogStore.getState();
+
+  if (store.currentProjectId !== projectId) {
+    store.setError(tChangelog('store.projectChanged', 'Project changed. Please regenerate the changelog for the current project.'));
+    return false;
+  }
 
   if (!store.generatedChangelog) {
     store.setError(tChangelog('store.noChangelogToSave', 'No changelog to save'));

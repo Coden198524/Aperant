@@ -312,10 +312,15 @@ export async function loadProjects(): Promise<void> {
         debugLog('[ProjectStore] Tab state is valid, no cleanup needed');
       }
 
-      // Restore last selected project from localStorage for backward compatibility,
-      // or fall back to active project, or first project
+      // Keep the legacy selected project aligned with the active tab. Several
+      // older components still read selectedProjectId, while the tabbed UI uses
+      // activeProjectId as the visible project.
       const updatedState = useProjectStore.getState();
-      if (!updatedState.selectedProjectId && result.data.length > 0) {
+      if (validActiveProjectId && updatedState.selectedProjectId !== validActiveProjectId) {
+        store.selectProject(validActiveProjectId);
+      } else if (!updatedState.selectedProjectId && result.data.length > 0) {
+        // Restore last selected project from localStorage for backward compatibility,
+        // or fall back to active project, or first project.
         const lastSelectedId = localStorage.getItem(LAST_SELECTED_PROJECT_KEY);
         const projectExists = lastSelectedId && result.data.some((p) => p.id === lastSelectedId);
 

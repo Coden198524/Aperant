@@ -59,7 +59,7 @@ export function StagedSuccessMessage({
         return;
       }
 
-      const statusResult = await persistTaskStatus(task.id, 'done');
+      const statusResult = await persistTaskStatus(task.id, 'done', { projectId: task.projectId });
       if (!statusResult.success) {
         setError(t('taskReview:stagedSuccess.errors.worktreeDeletedButStatusFailed', { error: statusResult.error || 'Unknown error' }));
         return;
@@ -79,7 +79,7 @@ export function StagedSuccessMessage({
     setError(null);
 
     try {
-      const result = await persistTaskStatus(task.id, 'done', { keepWorktree: true });
+      const result = await persistTaskStatus(task.id, 'done', { keepWorktree: true, projectId: task.projectId });
       if (!result.success) {
         setError(result.error || t('taskReview:stagedSuccess.errors.failedToMarkAsDone'));
         return;

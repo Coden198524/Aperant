@@ -23,11 +23,12 @@ import { isGitHubAutomationModuleMissingError } from "../lib/github-error-locali
 import type { GitHubIssue } from "../../shared/types";
 import type { GitHubIssuesProps } from "./github-issues/types";
 
-export function GitHubIssues({ onOpenSettings, onNavigateToTask }: GitHubIssuesProps) {
+export function GitHubIssues({ projectId, onOpenSettings, onNavigateToTask }: GitHubIssuesProps) {
   const { t } = useTranslation("common");
   const projects = useProjectStore((state) => state.projects);
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
-  const selectedProject = projects.find((p) => p.id === selectedProjectId);
+  const fallbackProjectId = useProjectStore((state) => state.activeProjectId || state.selectedProjectId);
+  const currentProjectId = projectId ?? fallbackProjectId ?? undefined;
+  const selectedProject = projects.find((p) => p.id === currentProjectId);
   const tasks = useTaskStore((state) => state.tasks);
 
   const {

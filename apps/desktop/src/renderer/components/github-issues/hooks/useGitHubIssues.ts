@@ -35,7 +35,7 @@ export function useGitHubIssues(projectId: string | undefined) {
   // Reset search state when projectId changes to prevent incorrect fetchAll mode
   useEffect(() => {
     setIsSearchActive(false);
-  }, []);
+  }, [projectId]);
 
   // Always check connection when component mounts or projectId changes
   useEffect(() => {

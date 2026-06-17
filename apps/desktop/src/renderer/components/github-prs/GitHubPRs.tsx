@@ -8,6 +8,7 @@ import { Button } from "../ui/button";
 import { ResizablePanels } from "../ui/resizable-panels";
 
 interface GitHubPRsProps {
+  projectId?: string;
   onOpenSettings?: () => void;
   isActive?: boolean;
 }
@@ -49,9 +50,10 @@ function EmptyState({ message }: { message: string }) {
   );
 }
 
-export function GitHubPRs({ onOpenSettings, isActive = false }: GitHubPRsProps) {
+export function GitHubPRs({ projectId, onOpenSettings, isActive = false }: GitHubPRsProps) {
   const { t } = useTranslation("common");
-  const selectedProjectId = useProjectStore((state) => state.selectedProjectId);
+  const fallbackProjectId = useProjectStore((state) => state.activeProjectId || state.selectedProjectId);
+  const currentProjectId = projectId ?? fallbackProjectId ?? undefined;
 
   const {
     prs,
@@ -84,7 +86,7 @@ export function GitHubPRs({ onOpenSettings, isActive = false }: GitHubPRsProps) 
     repoFullName,
     getReviewStateForPR,
     selectedPR,
-  } = useGitHubPRs(selectedProjectId || undefined, { isActive });
+  } = useGitHubPRs(currentProjectId, { isActive });
 
   // Get newCommitsCheck for the selected PR (other values come from hook to ensure consistency)
   const selectedPRReviewState = selectedPRNumber ? getReviewStateForPR(selectedPRNumber) : null;
@@ -184,11 +186,11 @@ export function GitHubPRs({ onOpenSettings, isActive = false }: GitHubPRsProps) 
   );
 
   const handleGetLogs = useCallback(async () => {
-    if (selectedProjectId && selectedPRNumber) {
-      return await window.electronAPI.github.getPRLogs(selectedProjectId, selectedPRNumber);
+    if (currentProjectId && selectedPRNumber) {
+      return await window.electronAPI.github.getPRLogs(currentProjectId, selectedPRNumber);
     }
     return null;
-  }, [selectedProjectId, selectedPRNumber]);
+  }, [currentProjectId, selectedPRNumber]);
 
   const handleMarkReviewPosted = useCallback(async (prNumber: number) => {
     await markReviewPosted(prNumber);
@@ -263,7 +265,7 @@ export function GitHubPRs({ onOpenSettings, isActive = false }: GitHubPRsProps) 
           selectedPR ? (
             <PRDetail
               pr={selectedPR}
-              projectId={selectedProjectId || ""}
+              projectId={currentProjectId || ""}
               reviewResult={reviewResult}
               previousReviewResult={previousReviewResult}
               reviewProgress={reviewProgress}

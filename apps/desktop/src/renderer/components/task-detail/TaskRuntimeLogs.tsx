@@ -389,12 +389,30 @@ function getPhaseStatusRank(status: TaskLogsData['phases'][TaskLogPhase]['status
 }
 
 function pickMergedPhaseStatus(
-  currentStatus: TaskLogsData['phases'][TaskLogPhase]['status'],
-  nextStatus: TaskLogsData['phases'][TaskLogPhase]['status'],
+  currentPhase: TaskLogsData['phases'][TaskLogPhase],
+  nextPhase: TaskLogsData['phases'][TaskLogPhase],
 ): TaskLogsData['phases'][TaskLogPhase]['status'] {
-  return getPhaseStatusRank(currentStatus) > getPhaseStatusRank(nextStatus)
-    ? currentStatus
-    : nextStatus;
+  const currentTimestamp = getPhaseActivityTimestamp(currentPhase);
+  const nextTimestamp = getPhaseActivityTimestamp(nextPhase);
+
+  if (nextTimestamp > currentTimestamp) {
+    return nextPhase.status;
+  }
+  if (currentTimestamp > nextTimestamp) {
+    return currentPhase.status;
+  }
+
+  return getPhaseStatusRank(currentPhase.status) > getPhaseStatusRank(nextPhase.status)
+    ? currentPhase.status
+    : nextPhase.status;
+}
+
+function getPhaseActivityTimestamp(phase: TaskLogsData['phases'][TaskLogPhase]): number {
+  return Math.max(
+    getLogTimestamp(phase.completed_at),
+    getLogTimestamp(phase.started_at),
+    ...phase.entries.map(entry => getLogTimestamp(entry.timestamp))
+  );
 }
 
 function getEntryExactKey(entry: TaskLogEntry): string {
@@ -529,7 +547,7 @@ function mergeFullLogsWithoutRegressingStream(
 
     mergedLogs.phases[phase] = {
       ...nextPhase,
-      status: pickMergedPhaseStatus(currentPhase.status, nextPhase.status),
+      status: pickMergedPhaseStatus(currentPhase, nextPhase),
       started_at: nextPhase.started_at ?? currentPhase.started_at,
       completed_at: nextPhase.completed_at ?? currentPhase.completed_at,
       entries: mergeTaskLogEntries(nextPhase.entries, currentPhase.entries),
@@ -949,13 +967,13 @@ export function useTaskModelLogs(
     void loadModelLogs();
     void window.electronAPI.watchTaskLogs(task.projectId, task.specId);
 
-    const unsubscribe = window.electronAPI.onTaskLogsChanged((specId, logs) => {
-      if (specId === task.specId) {
+    const unsubscribe = window.electronAPI.onTaskLogsChanged((specId, logs, projectId) => {
+      if (specId === task.specId && (!projectId || projectId === task.projectId)) {
         setModelLogs(currentLogs => mergeFullLogsWithoutRegressingStream(currentLogs, logs));
       }
     });
-    const unsubscribeStream = window.electronAPI.onTaskLogsStream((specId, chunk) => {
-      if (specId === task.specId) {
+    const unsubscribeStream = window.electronAPI.onTaskLogsStream((specId, chunk, projectId) => {
+      if (specId === task.specId && (!projectId || projectId === task.projectId)) {
         setModelLogs(currentLogs => mergeModelTextChunk(currentLogs, task.specId, chunk));
       }
     });
@@ -964,7 +982,7 @@ export function useTaskModelLogs(
       cancelled = true;
       unsubscribe();
       unsubscribeStream();
-      void window.electronAPI.unwatchTaskLogs(task.specId);
+      void window.electronAPI.unwatchTaskLogs(task.specId, task.projectId);
     };
   }, [enabled, task.projectId, task.specId]);
 
@@ -987,7 +1005,7 @@ export function TaskRuntimeLogs({
   const modelEndRef = useRef<HTMLDivElement | null>(null);
   const isModelPinnedToBottomRef = useRef(true);
   const liveTask = useTaskStore(state =>
-    state.tasks.find(item => item.id === task.id || item.specId === task.specId)
+    state.tasks.find(item => item.projectId === task.projectId && (item.id === task.id || item.specId === task.specId))
   );
   const runtimeSourceTask = liveTask ?? task;
   const scopeKey = scope.type === 'work-item' ? `work-item:${scope.workItemId}` : scope.type;
@@ -1299,9 +1317,6 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
           ) : (
             <span className={cn('shrink-0', styles.prompt)}>{'>'}</span>
           )}
-          <span className={cn('shrink-0 rounded border px-1.5 py-0.5 text-[10px] uppercase', styles.chip)}>
-            tool
-          </span>
           <span
             className={cn(
               'shrink-0 font-medium',
@@ -1319,18 +1334,18 @@ function ModelOutputEntry({ entry, isLatest, isStreaming, t }: ModelOutputEntryP
               {tool.input}
             </span>
           )}
-          <span
-            className={cn(
-              'ml-auto shrink-0 text-[10px]',
-              tool.status === 'error'
-                ? 'text-destructive'
-                : tool.status === 'done'
-                  ? 'text-success'
+          {tool.status !== 'done' && (
+            <span
+              className={cn(
+                'ml-auto shrink-0 text-[10px]',
+                tool.status === 'error'
+                  ? 'text-destructive'
                   : 'text-muted-foreground'
-            )}
-          >
-            {tool.status}
-          </span>
+              )}
+            >
+              {tool.status}
+            </span>
+          )}
         </div>
         {collapsedDetail && isExpanded && (
           <pre className="mt-2 max-h-72 overflow-auto whitespace-pre-wrap break-words rounded border border-border bg-muted/40 p-2 text-[11px] leading-relaxed text-muted-foreground">

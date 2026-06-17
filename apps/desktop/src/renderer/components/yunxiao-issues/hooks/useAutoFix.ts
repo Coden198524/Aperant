@@ -8,20 +8,43 @@ export function useAutoFix(projectId: string | undefined) {
   const [isLoading, setIsLoading] = useState(false);
   const [runningWorkItemIds, setRunningWorkItemIds] = useState<Set<string>>(new Set());
   const intervalRef = useRef<NodeJS.Timeout | null>(null);
+  const currentProjectIdRef = useRef(projectId);
+  const loadGenerationRef = useRef(0);
 
   const loadData = useCallback(async () => {
     if (!projectId) return;
+    const requestProjectId = projectId;
+    currentProjectIdRef.current = requestProjectId;
+    const requestGeneration = loadGenerationRef.current + 1;
+    loadGenerationRef.current = requestGeneration;
+    const isStaleRequest = () =>
+      requestProjectId !== currentProjectIdRef.current ||
+      requestGeneration !== loadGenerationRef.current;
+
     setIsLoading(true);
     try {
       const [nextConfig, nextQueue] = await Promise.all([
-        window.electronAPI.getYunxiaoAutoFixConfig(projectId),
-        window.electronAPI.getYunxiaoAutoFixQueue(projectId),
+        window.electronAPI.getYunxiaoAutoFixConfig(requestProjectId),
+        window.electronAPI.getYunxiaoAutoFixQueue(requestProjectId),
       ]);
+      if (isStaleRequest()) {
+        return;
+      }
       setConfig(nextConfig);
       setQueue(nextQueue);
     } finally {
-      setIsLoading(false);
+      if (!isStaleRequest()) {
+        setIsLoading(false);
+      }
     }
+  }, [projectId]);
+
+  useEffect(() => {
+    currentProjectIdRef.current = projectId;
+    loadGenerationRef.current += 1;
+    setConfig(null);
+    setQueue([]);
+    setRunningWorkItemIds(new Set());
   }, [projectId]);
 
   useEffect(() => {
@@ -46,13 +69,19 @@ export function useAutoFix(projectId: string | undefined) {
 
     const cleanupComplete = window.electronAPI.onYunxiaoAutoFixComplete((eventProjectId) => {
       if (eventProjectId !== projectId) return;
+      const requestProjectId = projectId;
       setRunningWorkItemIds(new Set());
-      void window.electronAPI.getYunxiaoAutoFixQueue(projectId).then(setQueue);
-      void loadTasks(projectId, { forceRefresh: true });
+      void window.electronAPI.getYunxiaoAutoFixQueue(requestProjectId).then((nextQueue) => {
+        if (requestProjectId === currentProjectIdRef.current) {
+          setQueue(nextQueue);
+        }
+      });
+      void loadTasks(requestProjectId, { forceRefresh: true });
     });
 
     const cleanupError = window.electronAPI.onYunxiaoAutoFixError((eventProjectId, error) => {
       if (eventProjectId !== projectId) return;
+      const requestProjectId = projectId;
       if (error.workItemId) {
         setRunningWorkItemIds((prev) => {
           const next = new Set(prev);
@@ -62,7 +91,11 @@ export function useAutoFix(projectId: string | undefined) {
       } else {
         setRunningWorkItemIds(new Set());
       }
-      void window.electronAPI.getYunxiaoAutoFixQueue(projectId).then(setQueue);
+      void window.electronAPI.getYunxiaoAutoFixQueue(requestProjectId).then((nextQueue) => {
+        if (requestProjectId === currentProjectIdRef.current) {
+          setQueue(nextQueue);
+        }
+      });
     });
 
     return () => {

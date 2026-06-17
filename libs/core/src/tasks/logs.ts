@@ -488,11 +488,36 @@ function applyTaskLogJsonlRecord(
     if (phaseLog.status === 'pending') {
       phaseLog.status = 'active';
       phaseLog.started_at = phaseLog.started_at ?? entry.timestamp;
+    } else if (isTaskLogActiveOutputEntry(entry) && isEntryAfterPhaseCompletion(entry, phaseLog)) {
+      phaseLog.status = 'active';
+      phaseLog.completed_at = null;
+      phaseLog.started_at = phaseLog.started_at ?? entry.timestamp;
     }
     phaseLog.entries.push(entry);
     logs.phases[entry.phase] = phaseLog;
     touchLogs(logs, entry.timestamp);
   }
+}
+
+function isTaskLogActiveOutputEntry(entry: AutocodeTaskLogEntry): boolean {
+  return entry.type === 'text' ||
+    entry.type === 'tool_start' ||
+    entry.type === 'tool_end' ||
+    entry.type === 'error' ||
+    entry.type === 'success';
+}
+
+function isEntryAfterPhaseCompletion(
+  entry: AutocodeTaskLogEntry,
+  phaseLog: AutocodeTaskPhaseLog,
+): boolean {
+  if (phaseLog.status !== 'completed' && phaseLog.status !== 'failed') {
+    return false;
+  }
+  if (!phaseLog.completed_at) {
+    return false;
+  }
+  return Date.parse(entry.timestamp) > Date.parse(phaseLog.completed_at);
 }
 
 function createMetaRecord(logs: AutocodeTaskLogs): AutocodeTaskLogMetaRecord {

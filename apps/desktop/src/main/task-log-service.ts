@@ -19,6 +19,10 @@ function findWorktreeSpecDir(projectPath: string, specId: string, specsRelPath: 
   return null;
 }
 
+function getTaskLogWatchKey(specId: string, projectId?: string): string {
+  return projectId ? `${projectId}::${specId}` : specId;
+}
+
 /**
  * Service for loading and watching phase-based task logs (task_logs.jsonl)
  *
@@ -37,7 +41,7 @@ export class TaskLogService extends EventEmitter {
   private mergedLogCache: Map<string, TaskLogs> = new Map();
   private fileWatchers: Map<string, FSWatcher> = new Map();
   private pollIntervals: Map<string, NodeJS.Timeout> = new Map();
-  // Store paths being watched for each specId (main + worktree)
+  // Store paths being watched for each project/spec pair (main + worktree)
   private watchedPaths: Map<string, { mainSpecDir: string; worktreeSpecDir: string | null; specsRelPath: string }> = new Map();
 
   // Worktree discovery is the only polling left; file changes are event-driven.
@@ -129,13 +133,14 @@ export class TaskLogService extends EventEmitter {
    * @param specsRelPath - Optional: Relative path to specs (e.g., "autocode/specs")
    * @param specId - Optional: Spec ID (needed to find worktree if not registered)
    */
-  loadLogs(specDir: string, projectPath?: string, specsRelPath?: string, specId?: string): TaskLogs | null {
+  loadLogs(specDir: string, projectPath?: string, specsRelPath?: string, specId?: string, projectId?: string): TaskLogs | null {
     debugLog('[TaskLogService.loadLogs] Loading logs:', {
       specDir,
       projectPath,
       specsRelPath,
       specId,
-      watchedPathsCount: this.watchedPaths.size
+      watchedPathsCount: this.watchedPaths.size,
+      projectId,
     });
 
     // First try to load from main spec dir
@@ -143,7 +148,7 @@ export class TaskLogService extends EventEmitter {
 
     // Check if we have worktree paths registered for this spec
     const watchedInfo = specId
-      ? this.watchedPaths.get(specId)
+      ? this.watchedPaths.get(getTaskLogWatchKey(specId, projectId))
       : Array.from(this.watchedPaths.values()).find(
         (info) => info.mainSpecDir === specDir
       );
@@ -213,23 +218,26 @@ export class TaskLogService extends EventEmitter {
    * @param projectPath - Optional: Project root path (needed to find worktree)
    * @param specsRelPath - Optional: Relative path to specs (e.g., "autocode/specs")
    */
-  startWatching(specId: string, specDir: string, projectPath?: string, specsRelPath?: string): void {
+  startWatching(specId: string, specDir: string, projectPath?: string, specsRelPath?: string, projectId?: string): void {
+    const watchKey = getTaskLogWatchKey(specId, projectId);
     debugLog('[TaskLogService.startWatching] Starting watch:', {
       specId,
+      projectId,
+      watchKey,
       specDir,
       projectPath,
       specsRelPath
     });
 
     // Check if already watching with the same parameters (prevents rapid watch/unwatch cycles)
-    const existingWatch = this.watchedPaths.get(specId);
+    const existingWatch = this.watchedPaths.get(watchKey);
     if (existingWatch && existingWatch.mainSpecDir === specDir) {
       debugLog('[TaskLogService.startWatching] Already watching this spec, skipping');
       return;
     }
 
     // Stop any existing watch (different spec dir or first time)
-    this.stopWatching(specId);
+    this.stopWatching(specId, projectId);
 
     const mainLogFile = path.join(specDir, AUTOCODE_TASK_ARTIFACTS.taskLogs);
 
@@ -240,7 +248,7 @@ export class TaskLogService extends EventEmitter {
     }
 
     // Store watched paths for this specId
-    this.watchedPaths.set(specId, {
+    this.watchedPaths.set(watchKey, {
       mainSpecDir: specDir,
       worktreeSpecDir,
       specsRelPath: specsRelPath || ''
@@ -248,7 +256,7 @@ export class TaskLogService extends EventEmitter {
 
     // Do initial merged load
     debugLog('[TaskLogService.startWatching] Loading initial logs');
-    const initialLogs = this.loadLogs(specDir);
+    const initialLogs = this.loadLogs(specDir, projectPath, specsRelPath, specId, projectId);
     if (initialLogs) {
       debugLog('[TaskLogService.startWatching] Initial logs loaded:', {
         specId: initialLogs.spec_id,
@@ -275,22 +283,22 @@ export class TaskLogService extends EventEmitter {
         pollInterval: 100
       }
     });
-    watcher.on('add', (changedPath) => this.handleLogFileChanged(specId, specDir, changedPath));
-    watcher.on('change', (changedPath) => this.handleLogFileChanged(specId, specDir, changedPath));
+    watcher.on('add', (changedPath) => this.handleLogFileChanged(specId, specDir, changedPath, projectId));
+    watcher.on('change', (changedPath) => this.handleLogFileChanged(specId, specDir, changedPath, projectId));
     watcher.on('error', (error) => {
       debugWarn('[TaskLogService] Watcher error:', {
         specId,
         error: error instanceof Error ? error.message : String(error)
       });
     });
-    this.fileWatchers.set(specId, watcher);
+    this.fileWatchers.set(watchKey, watcher);
 
     if (!worktreeSpecDir && projectPath && specsRelPath) {
       const discoveryInterval = setInterval(() => {
-        const watchedInfo = this.watchedPaths.get(specId);
+        const watchedInfo = this.watchedPaths.get(watchKey);
         if (watchedInfo?.worktreeSpecDir) {
           clearInterval(discoveryInterval);
-          this.pollIntervals.delete(specId);
+          this.pollIntervals.delete(watchKey);
           return;
         }
 
@@ -300,9 +308,9 @@ export class TaskLogService extends EventEmitter {
         }
 
         clearInterval(discoveryInterval);
-        this.pollIntervals.delete(specId);
+        this.pollIntervals.delete(watchKey);
 
-        this.watchedPaths.set(specId, {
+        this.watchedPaths.set(watchKey, {
           mainSpecDir: specDir,
           worktreeSpecDir: discoveredWorktree,
           specsRelPath
@@ -314,11 +322,11 @@ export class TaskLogService extends EventEmitter {
           worktreeSpecDir: discoveredWorktree
         });
         if (existsSync(worktreeLogFile)) {
-          this.handleLogFileChanged(specId, specDir, worktreeLogFile);
+          this.handleLogFileChanged(specId, specDir, worktreeLogFile, projectId);
         }
       }, this.WORKTREE_DISCOVERY_INTERVAL_MS);
 
-      this.pollIntervals.set(specId, discoveryInterval);
+      this.pollIntervals.set(watchKey, discoveryInterval);
     }
 
     debugLog('[TaskLogService] Started watching spec:', {
@@ -331,14 +339,14 @@ export class TaskLogService extends EventEmitter {
     });
   }
 
-  private handleLogFileChanged(specId: string, specDir: string, changedPath: string): void {
+  private handleLogFileChanged(specId: string, specDir: string, changedPath: string, projectId?: string): void {
     debugLog('[TaskLogService] Log file changed:', {
       specId,
       changedPath
     });
 
     const previousLogs = this.mergedLogCache.get(specDir);
-    const logs = this.loadLogs(specDir, undefined, undefined, specId);
+    const logs = this.loadLogs(specDir, undefined, undefined, specId, projectId);
 
     if (logs) {
       debugLog('[TaskLogService] Emitting logs-changed event:', {
@@ -350,8 +358,8 @@ export class TaskLogService extends EventEmitter {
         }
       });
 
-      this.emit('logs-changed', specId, logs);
-      this.emitNewEntries(specId, previousLogs, logs);
+      this.emit('logs-changed', specId, logs, projectId);
+      this.emitNewEntries(specId, previousLogs, logs, projectId);
     } else {
       debugWarn('[TaskLogService] No logs loaded after file change:', specId);
     }
@@ -360,27 +368,33 @@ export class TaskLogService extends EventEmitter {
   /**
    * Stop watching a spec directory
    */
-  stopWatching(specId: string): void {
-    const watcher = this.fileWatchers.get(specId);
-    if (watcher) {
-      debugLog('[TaskLogService.stopWatching] Closing file watcher for spec:', specId);
-      this.fileWatchers.delete(specId);
-      void watcher.close().catch((error: unknown) => {
-        debugWarn('[TaskLogService.stopWatching] Failed to close file watcher:', {
-          specId,
-          error: error instanceof Error ? error.message : String(error)
+  stopWatching(specId: string, projectId?: string): void {
+    const watchKeys = projectId
+      ? [getTaskLogWatchKey(specId, projectId)]
+      : this.getMatchingWatchKeys(specId);
+
+    for (const watchKey of watchKeys) {
+      const watcher = this.fileWatchers.get(watchKey);
+      if (watcher) {
+        debugLog('[TaskLogService.stopWatching] Closing file watcher for spec:', specId);
+        this.fileWatchers.delete(watchKey);
+        void watcher.close().catch((error: unknown) => {
+          debugWarn('[TaskLogService.stopWatching] Failed to close file watcher:', {
+            specId,
+            error: error instanceof Error ? error.message : String(error)
+          });
         });
-      });
-    }
+      }
 
-    const interval = this.pollIntervals.get(specId);
-    if (interval) {
-      debugLog('[TaskLogService.stopWatching] Stopping worktree discovery for spec:', specId);
-      clearInterval(interval);
-      this.pollIntervals.delete(specId);
-    }
+      const interval = this.pollIntervals.get(watchKey);
+      if (interval) {
+        debugLog('[TaskLogService.stopWatching] Stopping worktree discovery for spec:', specId);
+        clearInterval(interval);
+        this.pollIntervals.delete(watchKey);
+      }
 
-    this.watchedPaths.delete(specId);
+      this.watchedPaths.delete(watchKey);
+    }
   }
 
   /**
@@ -396,7 +410,7 @@ export class TaskLogService extends EventEmitter {
   /**
    * Emit streaming updates for new log entries
    */
-  private emitNewEntries(specId: string, previousLogs: TaskLogs | undefined, currentLogs: TaskLogs): void {
+  private emitNewEntries(specId: string, previousLogs: TaskLogs | undefined, currentLogs: TaskLogs, projectId?: string): void {
     const phases: TaskLogPhase[] = ['planning', 'coding', 'validation'];
 
     for (const phase of phases) {
@@ -413,14 +427,14 @@ export class TaskLogService extends EventEmitter {
             phase,
             timestamp: currPhase.started_at || new Date().toISOString(),
             source: 'task_logs'
-          } as TaskLogStreamChunk);
+          } as TaskLogStreamChunk, projectId);
         } else if (currPhase.status === 'completed' || currPhase.status === 'failed') {
           this.emit('stream-chunk', specId, {
             type: 'phase_end',
             phase,
             timestamp: currPhase.completed_at || new Date().toISOString(),
             source: 'task_logs'
-          } as TaskLogStreamChunk);
+          } as TaskLogStreamChunk, projectId);
         }
       }
 
@@ -451,10 +465,20 @@ export class TaskLogService extends EventEmitter {
             };
           }
 
-          this.emit('stream-chunk', specId, streamUpdate);
+          this.emit('stream-chunk', specId, streamUpdate, projectId);
         }
       }
     }
+  }
+
+  private getMatchingWatchKeys(specId: string): string[] {
+    const suffix = `::${specId}`;
+    return [...new Set([
+      specId,
+      ...[...this.fileWatchers.keys()].filter((key) => key === specId || key.endsWith(suffix)),
+      ...[...this.pollIntervals.keys()].filter((key) => key === specId || key.endsWith(suffix)),
+      ...[...this.watchedPaths.keys()].filter((key) => key === specId || key.endsWith(suffix)),
+    ])];
   }
 
   /**
